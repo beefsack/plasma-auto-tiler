@@ -991,6 +991,153 @@ export class WorkspaceNativeAdapter {
         this.enforceSharedTrailing(visible, occupied);
     }
 
+    private terminalRunStart(orderedIds: ReadonlyArray<string>, occupied: Set<string>): number {
+        let start = orderedIds.length;
+        for (let index = orderedIds.length - 1; index >= 0; index -= 1) {
+            const id = orderedIds[index] as string;
+            if (occupied.has(id)) {
+                break;
+            }
+            start = index;
+        }
+        return start;
+    }
+
+    private collapseManagedTerminalRun(
+        orderedIds: ReadonlyArray<string>,
+        visible: Set<string>,
+        occupied: Set<string>,
+        remove: (id: string) => boolean,
+    ): void {
+        if (orderedIds.length === 0) {
+            return;
+        }
+        const start = this.terminalRunStart(orderedIds, occupied);
+        const run = orderedIds.slice(start);
+        if (run.length <= 1) {
+            return;
+        }
+        for (const id of run) {
+            if (visible.has(id)) {
+                return;
+            }
+        }
+        const extras = run.slice(1);
+        for (const id of extras) {
+            const live = this.liveOrdered();
+            if (live === null || live.length <= MIN_GLOBAL_DESKTOPS) {
+                return;
+            }
+            if (visible.has(id) || occupied.has(id)) {
+                continue;
+            }
+            if (!remove(id)) {
+                return;
+            }
+        }
+    }
+
+    private removeManagedTerminalLocal(id: string, visible: Set<string>): boolean {
+        if (visible.has(id)) {
+            return false;
+        }
+        const live = this.liveOrdered();
+        if (live === null || live.length <= MIN_GLOBAL_DESKTOPS) {
+            return false;
+        }
+        const target = live.find((entry) => entry.id === id);
+        if (target === undefined) {
+            return false;
+        }
+        const surface = this.liveWorkspace();
+        if (surface === null) {
+            return false;
+        }
+        const fn = readProp(surface, "removeDesktop");
+        if (typeof fn !== "function") {
+            return false;
+        }
+        try {
+            Reflect.apply(fn as (...args: ReadonlyArray<unknown>) => unknown, surface, [target.ref]);
+        } catch (error) {
+            void error;
+            return false;
+        }
+        this.owned.delete(id);
+        for (const list of this.localWorkspaces.values()) {
+            const at = list.indexOf(id);
+            if (at >= 0) {
+                list.splice(at, 1);
+            }
+        }
+        this.logToken(`workspace-cleanup-removed:${id}`);
+        return true;
+    }
+
+    private removeManagedTerminalGlobal(id: string, visible: Set<string>): boolean {
+        if (visible.has(id)) {
+            return false;
+        }
+        const live = this.liveOrdered();
+        if (live === null || live.length <= MIN_GLOBAL_DESKTOPS) {
+            return false;
+        }
+        const target = live.find((entry) => entry.id === id);
+        if (target === undefined) {
+            return false;
+        }
+        const surface = this.liveWorkspace();
+        if (surface === null) {
+            return false;
+        }
+        const fn = readProp(surface, "removeDesktop");
+        if (typeof fn !== "function") {
+            return false;
+        }
+        try {
+            Reflect.apply(fn as (...args: ReadonlyArray<unknown>) => unknown, surface, [target.ref]);
+        } catch (error) {
+            void error;
+            return false;
+        }
+        this.owned.delete(id);
+        this.unassignGlobal(id);
+        this.logToken(`workspace-cleanup-removed:${id}`);
+        return true;
+    }
+
+    private removeManagedTerminalShared(id: string, visible: Set<string>): boolean {
+        if (visible.has(id)) {
+            return false;
+        }
+        const live = this.liveOrdered();
+        if (live === null || live.length <= MIN_GLOBAL_DESKTOPS) {
+            return false;
+        }
+        const target = live.find((entry) => entry.id === id);
+        if (target === undefined) {
+            return false;
+        }
+        const surface = this.liveWorkspace();
+        if (surface === null) {
+            return false;
+        }
+        const fn = readProp(surface, "removeDesktop");
+        if (typeof fn !== "function") {
+            return false;
+        }
+        try {
+            Reflect.apply(fn as (...args: ReadonlyArray<unknown>) => unknown, surface, [target.ref]);
+        } catch (error) {
+            void error;
+            return false;
+        }
+        this.owned.delete(id);
+        this.rebuildSharedMapping();
+        this.logToken(`workspace-cleanup-removed:${id}`);
+        return true;
+    }
+
     private enforceLocalTrailing(visible: Set<string>, occupied: Set<string>): void {
         const screens = this.liveScreens();
         const live = this.liveOrdered();
@@ -1015,6 +1162,15 @@ export class WorkspaceNativeAdapter {
                     removeDesktop: (id) => this.removeOwnedEmpty(id, visible),
                     createDesktop: () => this.appendDesktopForOutputKey(key),
                 });
+                const membership = new Set(this.localWorkspaces.get(key) ?? []);
+                const refreshed = this.liveOrdered();
+                const domainIds =
+                    refreshed === null
+                        ? [...membership]
+                        : refreshed.filter((entry) => membership.has(entry.id)).map((entry) => entry.id);
+                this.collapseManagedTerminalRun(domainIds, visible, occupied, (id) =>
+                    this.removeManagedTerminalLocal(id, visible),
+                );
             }
             const assigned = new Set<string>();
             for (const ids of this.localWorkspaces.values()) {
@@ -1058,6 +1214,12 @@ export class WorkspaceNativeAdapter {
                     removeDesktop: (id) => this.removeOwnedEmptyGlobal(id, visible),
                     createDesktop: () => this.appendDesktopForGlobalKey(key),
                 });
+                const refreshed = this.liveOrdered();
+                const domainIds =
+                    refreshed === null ? orderedIds : this.globalOrdered(refreshed, key).map((entry) => entry.id);
+                this.collapseManagedTerminalRun(domainIds, visible, occupied, (id) =>
+                    this.removeManagedTerminalGlobal(id, visible),
+                );
             }
         } finally {
             this.reconciling = false;
@@ -1078,6 +1240,11 @@ export class WorkspaceNativeAdapter {
                 removeDesktop: (id) => this.removeOwnedEmptyShared(id, visible),
                 createDesktop: () => this.appendDesktopForSharedIdOnly(),
             });
+            const refreshed = this.liveOrdered();
+            const domainIds = refreshed === null ? live.map((entry) => entry.id) : refreshed.map((entry) => entry.id);
+            this.collapseManagedTerminalRun(domainIds, visible, occupied, (id) =>
+                this.removeManagedTerminalShared(id, visible),
+            );
         } finally {
             this.reconciling = false;
         }

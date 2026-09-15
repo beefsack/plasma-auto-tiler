@@ -1704,6 +1704,22 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 return false;
             }
         },
+        subscribeMoverDesktops: (moverRef, handler) => {
+            try {
+                return connectSignal(readSignal(moverRef, "desktopsChanged"), handler);
+            } catch (error) {
+                void error;
+                return null;
+            }
+        },
+        subscribeWindowGeometry: (windowRef, handler) => {
+            try {
+                return connectSignal(readSignal(windowRef, "moveResizedChanged"), handler);
+            } catch (error) {
+                void error;
+                return null;
+            }
+        },
         switchToTarget: (desktopRef) => {
             try {
                 const surface = liveWorkspace as Record<string, unknown>;

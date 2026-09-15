@@ -23,6 +23,7 @@
 // single check (never duplicated here).
 
 import { normalizeNativeId } from "./native-id";
+import { connectSignal, readSignal } from "./signal-capability";
 import {
     WORKSPACE_SEND_DBUS_SERVICE,
     WORKSPACE_SEND_START_METHOD,
@@ -569,6 +570,22 @@ export function startWorkspaceSendAdapterEntry(
             } catch (error) {
                 void error;
                 return false;
+            }
+        },
+        subscribeMoverDesktops: (moverRef, handler) => {
+            try {
+                return connectSignal(readSignal(moverRef, "desktopsChanged"), handler);
+            } catch (error) {
+                void error;
+                return null;
+            }
+        },
+        subscribeWindowGeometry: (windowRef, handler) => {
+            try {
+                return connectSignal(readSignal(windowRef, "moveResizedChanged"), handler);
+            } catch (error) {
+                void error;
+                return null;
             }
         },
         switchToTarget: (desktopRef) => {

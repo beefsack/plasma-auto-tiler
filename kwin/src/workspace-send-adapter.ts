@@ -165,6 +165,19 @@ export interface WorkspaceSendAdapterEnv {
     readonly setDesktops: (target: object, refs: ReadonlyArray<object>) => boolean;
     readonly switchToTarget?: (desktopRef: object) => boolean;
     readonly focusWindow?: (windowRef: object) => boolean;
+    // Narrow mover desktop-change subscription seam for the bounded signal
+    // fence. Production entries bind this to the mover Window.desktopsChanged
+    // public signal via the shared signal-capability helpers. One-shot: the
+    // adapter detaches after the first echo and on every terminal path.
+    // Absent only in legacy isolated core tests, which retain the exact
+    // synchronous post-write observe path.
+    readonly subscribeMoverDesktops?: (moverRef: object, handler: () => void) => (() => void) | null;
+    // Narrow geometry-change subscription seam for the bounded signal fence.
+    // Production entries bind this to each changed Window.moveResizedChanged
+    // public signal via the shared signal-capability helpers. One-shot per
+    // window: detached after its echo and on every terminal path. Absent only
+    // in legacy isolated tests, which retain the mover-only fence.
+    readonly subscribeWindowGeometry?: (windowRef: object, handler: () => void) => (() => void) | null;
 }
 
 export interface WorkspaceSendEnableAuth {
@@ -702,6 +715,11 @@ export class WorkspaceSendAdapter {
     private pending: WorkspacePendingFlight | null = null;
     private seq = 0;
     private lossReported = false;
+    private echoDetach: (() => void) | null = null;
+    private echoArmed = false;
+    private moverSeen = false;
+    private geoDetaches = new Map<string, () => void>();
+    private geoPending = new Set<string>();
 
     constructor(private readonly env: WorkspaceSendAdapterEnv) {}
 
@@ -731,6 +749,11 @@ export class WorkspaceSendAdapter {
         this.pending = null;
         this.seq = 0;
         this.lossReported = false;
+        this.echoDetach = null;
+        this.echoArmed = false;
+        this.moverSeen = false;
+        this.geoDetaches = new Map<string, () => void>();
+        this.geoPending = new Set<string>();
         return true;
     }
 
@@ -751,6 +774,7 @@ export class WorkspaceSendAdapter {
         this.pinnedOwner = null;
         this.activationStep = 0;
         this.clearTimer();
+        this.clearEcho();
     }
 
     requestSend(targetWorkspace: unknown): boolean {
@@ -1031,6 +1055,7 @@ export class WorkspaceSendAdapter {
     ): void {
         this.inFlight = true;
         this.callbackSeen = false;
+        this.clearEcho();
         this.pending = {
             correlation,
             snapshot,
@@ -1323,8 +1348,11 @@ export class WorkspaceSendAdapter {
     // Reply-boundary revalidation: never touch a possibly-destroyed Window
     // observed before dispatch. Re-observe synchronously, exact-revalidate the
     // source+target scope against the flight snapshot, then apply geometry and
-    // the mover's desktop membership. Re-observe again for the verified
-    // post-observation, then ack.
+    // the mover's desktop membership. With the mover echo seam present the
+    // verified post-observation runs only after the mover desktopsChanged echo
+    // plus every required geometry echo; without the seam the exact
+    // synchronous post-write observe path runs for legacy isolated tests.
+    // Then ack.
     private applyPlanned(planned: WorkspacePlanned, flight: number, correlation: string): void {
         const pending = this.pending;
         if (pending === null) {
@@ -1347,15 +1375,208 @@ export class WorkspaceSendAdapter {
         pending.preconditions = planned.preconditions;
         pending.operation = planned.operation;
         pending.planned = planned;
+        const subscribe = this.env.subscribeMoverDesktops;
+        if (typeof subscribe !== "function") {
+            // Native writes: direct geometry in the shared grow-before-shrink
+            // order, then only the mover's desktop membership. Desktop follow and
+            // mover focus happen only after the verify commit (see onVerifyReply).
+            if (!this.writeGeometries(planned, pending, fresh)) {
+                this.failFlight(flight, correlation, "write-failed");
+                return;
+            }
+            if (!this.writeMoverDesktops(pending, fresh)) {
+                this.failFlight(flight, correlation, "write-failed");
+                return;
+            }
+            this.completePostWrite(planned, flight, correlation);
+            return;
+        }
+        // Bounded signal fence grounded in actual expected native writes: arm
+        // one-shot mover plus required geometry echoes before any native
+        // write, then write geometry plus mover membership and defer the
+        // strict post-observation plus accepted ack until the mover membership
+        // echo and every required geometry-write echo have occurred.
+        // Unchanged geometry never waits for a signal.
+        const moverRef = this.resolveMoverRef(pending, fresh);
+        if (moverRef === null) {
+            this.failFlight(flight, correlation, "write-failed");
+            return;
+        }
+        let detach: (() => void) | null = null;
+        try {
+            detach = subscribe(moverRef, () => this.onMoverEcho(flight, correlation));
+        } catch (error) {
+            void error;
+            detach = null;
+        }
+        if (detach === null || typeof detach !== "function") {
+            this.failFlight(flight, correlation, "write-failed");
+            return;
+        }
+        this.echoDetach = detach;
+        this.echoArmed = true;
+        this.moverSeen = false;
+        this.geoDetaches = new Map<string, () => void>();
+        this.geoPending = new Set<string>();
+        const changedIds = this.changedGeometryIds(planned, fresh);
+        const subscribeGeo = this.env.subscribeWindowGeometry;
+        if (changedIds.length > 0 && typeof subscribeGeo === "function") {
+            const byRef = new Map<string, object>();
+            for (const entry of fresh.sourceWindows) {
+                byRef.set(entry.id, entry.ref);
+            }
+            for (const entry of fresh.targetWindows) {
+                byRef.set(entry.id, entry.ref);
+            }
+            for (const id of changedIds) {
+                const ref = byRef.get(id);
+                if (ref === undefined) {
+                    this.clearEcho();
+                    this.failFlight(flight, correlation, "write-failed");
+                    return;
+                }
+                const windowId = id;
+                let geoDetach: (() => void) | null = null;
+                try {
+                    geoDetach = subscribeGeo(ref, () => this.onGeometryEcho(windowId, flight, correlation));
+                } catch (error) {
+                    void error;
+                    geoDetach = null;
+                }
+                if (geoDetach === null || typeof geoDetach !== "function") {
+                    this.clearEcho();
+                    this.failFlight(flight, correlation, "write-failed");
+                    return;
+                }
+                this.geoDetaches.set(windowId, geoDetach);
+                this.geoPending.add(windowId);
+            }
+        }
         // Native writes: direct geometry in the shared grow-before-shrink
         // order, then only the mover's desktop membership. Desktop follow and
         // mover focus happen only after the verify commit (see onVerifyReply).
         if (!this.writeGeometries(planned, pending, fresh)) {
+            this.clearEcho();
             this.failFlight(flight, correlation, "write-failed");
             return;
         }
         if (!this.writeMoverDesktops(pending, fresh)) {
+            this.clearEcho();
             this.failFlight(flight, correlation, "write-failed");
+            return;
+        }
+        this.diag("request", correlation, planned.baseRevision, "plan-echo", "waiting");
+        if (this.geoPending.size > 0) {
+            this.diag("request", correlation, planned.baseRevision, "plan-geometry", "waiting");
+        }
+    }
+
+    private resolveMoverRef(pending: WorkspacePendingFlight, current: WorkspaceSendObserved): object | null {
+        for (const entry of current.sourceWindows) {
+            if (entry.id === pending.moverId) {
+                return entry.ref;
+            }
+        }
+        for (const entry of current.targetWindows) {
+            if (entry.id === pending.moverId) {
+                return entry.ref;
+            }
+        }
+        return null;
+    }
+
+    private changedGeometryIds(planned: WorkspacePlanned, current: WorkspaceSendObserved): string[] {
+        const freshById = new Map<string, WorkspaceSendRect>();
+        for (const entry of current.sourceWindows) {
+            freshById.set(entry.id, entry.rect);
+        }
+        for (const entry of current.targetWindows) {
+            freshById.set(entry.id, entry.rect);
+        }
+        const changed: string[] = [];
+        for (const entry of planned.geometry) {
+            const fresh = freshById.get(entry.window);
+            if (fresh === undefined) {
+                continue;
+            }
+            if (fresh.x !== entry.rect.x || fresh.y !== entry.rect.y || fresh.w !== entry.rect.w || fresh.h !== entry.rect.h) {
+                changed.push(entry.window);
+            }
+        }
+        return changed;
+    }
+
+    private onMoverEcho(flight: number, correlation: string): void {
+        if (!this.inFlight || flight !== this.activeToken || !this.echoArmed) {
+            return;
+        }
+        const pending = this.pending;
+        const planned = pending?.planned ?? null;
+        if (pending === null || planned === null) {
+            return;
+        }
+        // One-shot: detach before any further fence progress so a duplicate
+        // echo cannot produce a duplicate membership write or ack.
+        const detach = this.echoDetach;
+        this.echoDetach = null;
+        this.echoArmed = false;
+        if (detach !== null) {
+            try {
+                detach();
+            } catch (error) {
+                void error;
+            }
+        }
+        this.moverSeen = true;
+        this.diag("request", correlation, planned.baseRevision, "plan-echo", "consumed");
+        this.tryMaybeComplete(flight, correlation);
+    }
+
+    private onGeometryEcho(windowId: string, flight: number, correlation: string): void {
+        if (!this.inFlight || flight !== this.activeToken) {
+            return;
+        }
+        if (!this.geoPending.has(windowId)) {
+            return;
+        }
+        const pending = this.pending;
+        const planned = pending?.planned ?? null;
+        if (pending === null || planned === null) {
+            return;
+        }
+        const detach = this.geoDetaches.get(windowId);
+        if (detach !== undefined) {
+            this.geoDetaches.delete(windowId);
+            try {
+                detach();
+            } catch (error) {
+                void error;
+            }
+        }
+        this.geoPending.delete(windowId);
+        this.diag("request", correlation, planned.baseRevision, "plan-geometry", "consumed");
+        this.tryMaybeComplete(flight, correlation);
+    }
+
+    private tryMaybeComplete(flight: number, correlation: string): void {
+        if (!this.inFlight || flight !== this.activeToken) {
+            return;
+        }
+        if (!this.moverSeen || this.geoPending.size > 0) {
+            return;
+        }
+        const pending = this.pending;
+        const planned = pending?.planned ?? null;
+        if (pending === null || planned === null) {
+            return;
+        }
+        this.completePostWrite(planned, flight, correlation);
+    }
+
+    private completePostWrite(planned: WorkspacePlanned, flight: number, correlation: string): void {
+        const pending = this.pending;
+        if (pending === null) {
+            this.failFlight(flight, correlation, "stale-scope");
             return;
         }
         // Exact re-observation after the writes becomes the verified
@@ -1384,6 +1605,29 @@ export class WorkspaceSendAdapter {
         }
         this.diag("request", correlation, planned.baseRevision, "plan", "planned");
         this.sendAck(flight, correlation, payload);
+    }
+
+    private clearEcho(): void {
+        const detach = this.echoDetach;
+        this.echoDetach = null;
+        this.echoArmed = false;
+        this.moverSeen = false;
+        if (detach !== null) {
+            try {
+                detach();
+            } catch (error) {
+                void error;
+            }
+        }
+        for (const geoDetach of this.geoDetaches.values()) {
+            try {
+                geoDetach();
+            } catch (error) {
+                void error;
+            }
+        }
+        this.geoDetaches = new Map<string, () => void>();
+        this.geoPending = new Set<string>();
     }
 
     private writeGeometries(
@@ -1692,6 +1936,7 @@ export class WorkspaceSendAdapter {
         this.inFlight = false;
         this.pending = null;
         this.activationStep = 0;
+        this.clearEcho();
     }
 
     // Legacy follow after a fully committed send: switch to the Rust-planned
@@ -1776,6 +2021,7 @@ export class WorkspaceSendAdapter {
         this.pending = null;
         this.activationStep = 0;
         this.pinnedOwner = null;
+        this.clearEcho();
         this.diag("result", correlation, revision, "result", outcome);
         this.disable();
     }
@@ -1793,12 +2039,15 @@ export class WorkspaceSendAdapter {
         const revision = pending === null ? 0 : pending.baseRevision;
         this.clearTimer();
         // Post-plan timeout (ack/verify waiting on a valid planned reply) also
-        // reports one best-effort adapter-lost to the pinned owner.
+        // reports one best-effort adapter-lost to the pinned owner. The
+        // whole-flight deadline stays the only terminal deadline while the
+        // mover echo is pending.
         this.reportAdapterLost();
         this.inFlight = false;
         this.pending = null;
         this.activationStep = 0;
         this.pinnedOwner = null;
+        this.clearEcho();
         this.diag("result", correlation, revision, `timeout-${stage}`, "timeout");
         this.disable();
     }

@@ -2,13 +2,14 @@
 
 Only meaningful pending or active work is listed.
 
-- P0 | Dynamic workspace dogfooding live gate | Trailing-empty lifecycle,
-  selected workspace modes, and `Meta+0..9` / `Meta+Shift+0..9` are restored
-  and statically verified. Successful sends follow the moved window to the
-  destination and focus it, as explicitly selected by the user. Restart the
-  foreground dev session and verify physical selection, sends, and trailing-empty
-  lifecycle. Remains the immediate dogfooding priority until live acceptance.
-  [record](changes/archive/rust-workspace-lifecycle.md)
+- P0 | Workspace-send empty-source live gate | The named vye2tM run failed
+  geometry verification after membership echo, before commit/follow; geometry
+  converged later. Static correction fences both membership and changed-window
+  geometry signals, accepts an empty source, and retires safe preexisting extras
+  only in the mapped contiguous terminal empty run. Verify the user's four-
+  workspace 3->2 send, target reflow/follow/focus, retirement of 4 while retaining
+  3, and repeat sends. Reported stale active border remains live-unattributed.
+  [record](changes/archive/workspace-send-echo-fence.md)
 - P1 | Temporary active-group highlight live gate | Named-log diagnosis found
   retained-focus lookup and missing completed-geometry refresh defects; both are
   corrected and statically verified. Restart the foreground dev session and

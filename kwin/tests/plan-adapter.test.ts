@@ -4113,3 +4113,68 @@ describe("plan adapter observational highlight refresh edge", () => {
         assert.equal(adapter.isInFlight, true);
     });
 });
+
+describe("plan entry workspace-send mover echo wiring", () => {
+    it("binds both send entries to the mover desktopsChanged signal via signal-capability helpers", () => {
+        const srcDir = kwinSrcDir();
+        for (const name of ["plan-adapter-entry.ts", "workspace-send-adapter-entry.ts"]) {
+            const body = readFileSync(join(srcDir, name), "utf8");
+            assert.ok(body.includes("subscribeMoverDesktops"), name);
+            assert.ok(body.includes("desktopsChanged"), name);
+            assert.ok(body.includes("subscribeWindowGeometry"), name);
+            assert.ok(body.includes("moveResizedChanged"), name);
+            assert.ok(body.includes("connectSignal"), name);
+            assert.ok(body.includes("readSignal"), name);
+        }
+        const adapterSrc = readFileSync(join(srcDir, "workspace-send-adapter.ts"), "utf8");
+        assert.ok(adapterSrc.includes("subscribeMoverDesktops"), "adapter seam");
+        assert.ok(adapterSrc.includes("subscribeWindowGeometry"), "geometry seam");
+        assert.ok(adapterSrc.includes("plan-echo"), "waiting/disposition diagnostic");
+        assert.ok(adapterSrc.includes("plan-geometry"), "geometry readiness diagnostic");
+        assert.ok(adapterSrc.includes("onMoverEcho"), "one-shot echo handler");
+        assert.ok(adapterSrc.includes("onGeometryEcho"), "one-shot geometry handler");
+    });
+
+    it("exposes a real move-workspace shortcut chord feeding the send transport", () => {
+        const world = fakeWorld();
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        const move = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-move-workspace-2");
+        assert.ok(move !== undefined, "current Meta+Shift+2 move chord must exist");
+        assert.equal(move.sequence, "Meta+Shift+2");
+        handle.stop();
+    });
+
+    it("supports a native mover desktopsChanged echo through the fake signal seam", () => {
+        const world = fakeWorld();
+        const mover = world.wins[0] as object;
+        const seam = world.winDesktops.get(mover);
+        assert.ok(seam !== undefined, "mover must expose a desktopsChanged fake signal");
+        let observed = 0;
+        const detach = (() => {
+            try {
+                const signal = (mover as Record<string, unknown>)["desktopsChanged"] as {
+                    connect: (handler: () => void) => void;
+                    disconnect: (handler: () => void) => void;
+                };
+                const handler = (): void => {
+                    observed += 1;
+                };
+                signal.connect(handler);
+                return (): void => {
+                    signal.disconnect(handler);
+                };
+            } catch (error) {
+                void error;
+                return null;
+            }
+        })();
+        assert.ok(detach !== null, "fake desktopsChanged must be connectable");
+        for (const handler of seam.handlers) {
+            handler();
+        }
+        assert.equal(observed, 1, "echo fires exactly once through the connectable signal");
+        detach();
+        assert.equal(seam.handlers.length, 0, "one-shot detach releases the echo subscription");
+    });
+});

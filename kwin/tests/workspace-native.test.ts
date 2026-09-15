@@ -174,6 +174,31 @@ function fakeWorld(mode: unknown, outputNames: string[], desktopIds: string[]): 
     return { world, logs };
 }
 
+const moverEchoes = new WeakMap<object, FakeSignal>();
+const geometryEchoes = new WeakMap<object, FakeSignal>();
+
+function fireMoverEcho(win: object): void {
+    const seam = moverEchoes.get(win);
+    if (seam === undefined) {
+        return;
+    }
+    for (const handler of [...seam.handlers]) {
+        handler();
+    }
+}
+
+function fireAllGeometry(world: FakeWorld): void {
+    for (const win of world.wins) {
+        const seam = geometryEchoes.get(win as object);
+        if (seam === undefined) {
+            continue;
+        }
+        for (const handler of [...seam.handlers]) {
+            handler();
+        }
+    }
+}
+
 function addWindow(
     world: FakeWorld,
     id: string,
@@ -184,6 +209,8 @@ function addWindow(
     if (output === undefined) {
         throw new Error("no output");
     }
+    const echo = fakeSignal();
+    const geo = fakeSignal();
     const win: FakeWindow = {
         normalWindow: true,
         managed: opts.managed ?? true,
@@ -196,11 +223,13 @@ function addWindow(
         output,
         desktops: opts.onAllDesktops === true ? [] : [desktop],
         frameGeometry: { x: 0, y: 0, width: 100, height: 100 },
-        moveResizedChanged: fakeSignal().signal,
+        moveResizedChanged: geo.signal,
         fullScreenChanged: fakeSignal().signal,
         maximizedChanged: fakeSignal().signal,
-        desktopsChanged: fakeSignal().signal,
+        desktopsChanged: echo.signal,
     };
+    moverEchoes.set(win, echo);
+    geometryEchoes.set(win, geo);
     world.wins.push(win);
     (world.workspace["activeWindow"] as unknown) = win;
     return win;
@@ -704,6 +733,19 @@ describe("workspace production entry routing and handoff", () => {
         assert.ok(request !== undefined);
         const correlation = (JSON.parse(request.payload) as Record<string, unknown>)["correlation_id"] as string;
         mocks.callbacks[mocks.callbacks.length - 1]?.(plannedReply(correlation));
+        // Bounded fence: native writes applied, but the accepted ack waits
+        // for the mover desktopsChanged echo plus required geometry echoes.
+        assert.equal(
+            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted")),
+            false,
+        );
+        fireMoverEcho(moverBefore as object);
+        assert.equal(
+            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted")),
+            false,
+            "mover echo alone must not ack while geometry echoes are pending",
+        );
+        fireAllGeometry(world);
         const ackCall = mocks.dbusCalls.find((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted"));
         assert.ok(ackCall !== undefined);
         mocks.callbacks[mocks.callbacks.length - 1]?.(
@@ -770,6 +812,12 @@ describe("workspace production entry routing and handoff", () => {
             },
         });
         mocks.callbacks[mocks.callbacks.length - 1]?.(emptyPlanned);
+        assert.equal(
+            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted")),
+            false,
+        );
+        fireMoverEcho(moverBefore as object);
+        fireAllGeometry(world);
         mocks.callbacks[mocks.callbacks.length - 1]?.(
             JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", kind: "send-to-workspace", base_revision: 0 }),
         );
@@ -966,6 +1014,472 @@ describe("workspace production entry routing and handoff", () => {
         handle?.stop();
         assert.equal(sigB.handlers.length, 0, "stop detaches remaining per-window subscriptions");
         assert.equal(sigT.handlers.length, 0, "stop detaches all per-window subscriptions");
+    });
+});
+
+describe("four-desktop terminal-run send with bounded fence", () => {
+    interface DelayedState {
+        visibleRect: { x: number; y: number; width: number; height: number };
+        pendingRect: { x: number; y: number; width: number; height: number } | null;
+        visibleDesktops: FakeDesktop[];
+        pendingDesktops: FakeDesktop[] | null;
+        desktopsSig: FakeSignal;
+        geoSig: FakeSignal;
+    }
+
+    const delayedStates = new WeakMap<object, DelayedState>();
+
+    function makeDelayedWindow(
+        world: FakeWorld,
+        id: string,
+        desktop: FakeDesktop,
+        initial: { x: number; y: number; width: number; height: number },
+    ): FakeWindow {
+        const output = world.outputs[0];
+        if (output === undefined) {
+            throw new Error("no output");
+        }
+        const desktopsSig = fakeSignal();
+        const geoSig = fakeSignal();
+        const state: DelayedState = {
+            visibleRect: { ...initial },
+            pendingRect: null,
+            visibleDesktops: [desktop],
+            pendingDesktops: null,
+            desktopsSig,
+            geoSig,
+        };
+        const win = {
+            normalWindow: true,
+            managed: true,
+            minimized: false,
+            fullScreen: false,
+            maximizeMode: 0,
+            onAllDesktops: false,
+            internalId: id,
+            resourceClass: "test-app",
+            output,
+            fullScreenChanged: fakeSignal().signal,
+            maximizedChanged: fakeSignal().signal,
+        } as unknown as FakeWindow;
+        Object.defineProperties(win, {
+            frameGeometry: {
+                get: () => ({ ...state.visibleRect }),
+                set: (value: unknown) => {
+                    const record = value as Record<string, unknown>;
+                    const widthRaw = record["width"] !== undefined ? record["width"] : record["w"];
+                    const heightRaw = record["height"] !== undefined ? record["height"] : record["h"];
+                    state.pendingRect = {
+                        x: record["x"] as number,
+                        y: record["y"] as number,
+                        width: widthRaw as number,
+                        height: heightRaw as number,
+                    };
+                },
+                enumerable: true,
+                configurable: true,
+            },
+            desktops: {
+                get: () => [...state.visibleDesktops],
+                set: (value: unknown) => {
+                    state.pendingDesktops = [...(value as FakeDesktop[])];
+                },
+                enumerable: true,
+                configurable: true,
+            },
+            desktopsChanged: {
+                get: () => state.desktopsSig.signal,
+                enumerable: true,
+                configurable: true,
+            },
+            moveResizedChanged: {
+                get: () => state.geoSig.signal,
+                enumerable: true,
+                configurable: true,
+            },
+        });
+        delayedStates.set(win, state);
+        moverEchoes.set(win as object, state.desktopsSig);
+        geometryEchoes.set(win as object, state.geoSig);
+        world.wins.push(win);
+        (world.workspace["activeWindow"] as unknown) = win;
+        return win;
+    }
+
+    function promoteDesktops(win: object): void {
+        const state = delayedStates.get(win);
+        if (state !== undefined && state.pendingDesktops !== null) {
+            state.visibleDesktops = [...state.pendingDesktops];
+            state.pendingDesktops = null;
+        }
+    }
+
+    function promoteGeometry(win: object): void {
+        const state = delayedStates.get(win);
+        if (state !== undefined && state.pendingRect !== null) {
+            state.visibleRect = { ...state.pendingRect };
+            state.pendingRect = null;
+        }
+    }
+
+    function fireDesktopsWithPromote(win: object): void {
+        promoteDesktops(win);
+        fireMoverEcho(win);
+    }
+
+    function fireGeometryWithPromote(win: object): void {
+        promoteGeometry(win);
+        const seam = geometryEchoes.get(win);
+        if (seam === undefined) {
+            return;
+        }
+        for (const handler of [...seam.handlers]) {
+            handler();
+        }
+    }
+
+    it("moves 3->2 with delayed signals, follows, then collapses only the preexisting terminal empty", () => {
+        const built = fakeWorld("per-output-local", ["out-1"], ["ws-1", "ws-2", "ws-3", "ws-4"]);
+        const world = built.world;
+        const ws1 = world.desktops[0] as FakeDesktop;
+        const ws2 = world.desktops[1] as FakeDesktop;
+        const ws3 = world.desktops[2] as FakeDesktop;
+        const ws4 = world.desktops[3] as FakeDesktop;
+        assert.ok(ws1 !== undefined && ws2 !== undefined && ws3 !== undefined && ws4 !== undefined);
+        const win1a = addWindow(world, "win-1a", ws1);
+        win1a.frameGeometry = { x: 0, y: 0, width: 600, height: 800 };
+        const win1b = addWindow(world, "win-1b", ws1);
+        win1b.frameGeometry = { x: 600, y: 0, width: 600, height: 800 };
+        addWindow(world, "win-full", ws1, { fullScreen: true });
+        addWindow(world, "win-max", ws1, { maximizeMode: 3 });
+        addWindow(world, "win-sticky", ws1, { onAllDesktops: true });
+        const winT = makeDelayedWindow(world, "win-t", ws2, { x: 0, y: 0, width: 600, height: 800 });
+        const winM = makeDelayedWindow(world, "win-m", ws3, { x: 0, y: 0, width: 1200, height: 800 });
+        world.currentByOutput.set(world.outputs[0] as never, ws3 as never);
+        world.globalCurrent = ws3;
+        (world.workspace as Record<string, unknown>)["currentDesktop"] = ws3;
+        (world.workspace["activeWindow"] as unknown) = winM;
+        const mocks = { dbusCalls: [] as Array<{ service: string; method: string; payload: string }>, callbacks: [] as Array<(reply: unknown) => void>, logs: [] as string[], shortcuts: [] as Array<{ action: string; sequence: string; callback: () => void }> };
+        const handle = startPlanAdapterEntry({
+            workspace: world.workspace,
+            callDbus: (service, _path, _iface, method, payload, callback): void => {
+                mocks.dbusCalls.push({ service, method, payload });
+                mocks.callbacks.push(callback);
+            },
+            scheduleOnce: (): (() => void) => (): void => {},
+            log: (message): void => {
+                mocks.logs.push(message);
+            },
+            owner: "owner-1",
+            generation: "gen-1",
+            registerShortcutFn: (action, _text, sequence, callback): boolean => {
+                mocks.shortcuts.push({ action, sequence, callback });
+                return true;
+            },
+            readProfileFn: (): string => "cosmic",
+            readWorkspaceModeFn: (): unknown => "per-output-local",
+        });
+        assert.ok(handle !== null);
+        assert.equal(world.desktops.length, 4);
+        handle.requestWorkspaceMove(2);
+        mocks.callbacks[0]?.(":1.7");
+        const request = mocks.dbusCalls.find((call) => call.payload.includes("\"op\":\"send-to-workspace\""));
+        assert.ok(request !== undefined);
+        const correlation = (JSON.parse(request.payload) as Record<string, unknown>)["correlation_id"] as string;
+        const planned = JSON.stringify({
+            v: 1,
+            correlation_id: correlation,
+            outcome: "planned",
+            kind: "send-to-workspace",
+            base_revision: 0,
+            desired_geometry: [
+                { window: "win-m", leaf: "leaf-win-m", output: "out-1", workspace: "ws-2", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                { window: "win-t", leaf: "leaf-win-t", output: "out-1", workspace: "ws-2", rect: { x: 0, y: 0, w: 600, h: 800 } },
+            ],
+            desired_focus: { domain_output: "out-1", domain_workspace: "ws-2", leaf: "leaf-win-m" },
+            preconditions: ["window-observed", "desired-topology-valid", "adapter-must-verify-postconditions"],
+            operation: {
+                op: "move-tiled",
+                window: "win-m",
+                leaf: "leaf-win-m",
+                source_output: "out-1",
+                source_workspace: "ws-3",
+                target_output: "out-1",
+                target_workspace: "ws-2",
+            },
+        });
+        mocks.callbacks[mocks.callbacks.length - 1]?.(planned);
+        assert.ok(mocks.logs.some((l) => l.includes("event=plan-echo") && l.includes("outcome=waiting")), mocks.logs.join("\n"));
+        assert.ok(mocks.logs.some((l) => l.includes("event=plan-geometry") && l.includes("outcome=waiting")), mocks.logs.join("\n"));
+        assert.equal(
+            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted")),
+            false,
+        );
+        fireDesktopsWithPromote(winM as object);
+        assert.equal(
+            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted")),
+            false,
+            "desktopsChanged before geometry must not ack",
+        );
+        assert.ok(world.desktops.some((entry) => entry.id === "ws-4"), "no early retirement while ws-3 current");
+        assert.ok(world.desktops.some((entry) => entry.id === "ws-3"), "empty source retained while current");
+        fireGeometryWithPromote(winM as object);
+        const ackCall = mocks.dbusCalls.find((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted"));
+        assert.ok(ackCall !== undefined, "ack only after mover plus required geometry echo");
+        const ackPayload = JSON.parse(ackCall.payload) as Record<string, unknown>;
+        const ackWindows = ackPayload["windows"] as Array<Record<string, unknown>>;
+        const ackTargets = ackPayload["target_windows"] as Array<Record<string, unknown>>;
+        assert.deepEqual(ackWindows, [], "empty source accepted");
+        assert.equal(ackTargets.length, 2);
+        const byId = new Map(ackTargets.map((entry) => [entry["window"], entry["rect"]]));
+        assert.deepEqual(byId.get("win-m"), { x: 600, y: 0, w: 600, h: 800 });
+        assert.deepEqual(byId.get("win-t"), { x: 0, y: 0, w: 600, h: 800 });
+        mocks.callbacks[mocks.callbacks.length - 1]?.(
+            JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", kind: "send-to-workspace", base_revision: 0 }),
+        );
+        const verifyCall = mocks.dbusCalls.find((call) => call.payload.includes("send-to-workspace-verify"));
+        assert.ok(verifyCall !== undefined);
+        mocks.callbacks[mocks.callbacks.length - 1]?.(
+            JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", kind: "send-to-workspace", base_revision: 1 }),
+        );
+        assert.equal(world.currentByOutput.get(world.outputs[0] as never), ws2);
+        assert.equal(world.workspace["activeWindow"], winM);
+        assert.ok((winM.desktops as unknown[]).includes(ws2), "mover membership in target");
+        assert.ok(world.desktops.some((entry) => entry.id === "ws-4"), "still no retirement before post-follow cleanup");
+        fireMoverEcho(winM as object);
+        assert.ok(!world.desktops.some((entry) => entry.id === "ws-4"), "preexisting terminal empty 4 removed only after follow to 2");
+        assert.ok(world.desktops.some((entry) => entry.id === "ws-3"), "empty source 3 retained as trailing");
+        assert.ok(world.desktops.some((entry) => entry.id === "ws-1"), "occupied ws-1 with fullscreen/maximized survives");
+        assert.ok(world.desktops.some((entry) => entry.id === "ws-2"), "current target survives");
+        assert.equal(world.desktops.length, 3);
+        handle.requestWorkspaceMove(3);
+        mocks.callbacks[mocks.callbacks.length - 1]?.(":1.7");
+        const request2 = mocks.dbusCalls.filter((call) => call.payload.includes("\"op\":\"send-to-workspace\""))[1];
+        assert.ok(request2 !== undefined, "adapter remains usable for a subsequent send");
+        const correlation2 = (JSON.parse(request2.payload) as Record<string, unknown>)["correlation_id"] as string;
+        const planned2 = JSON.stringify({
+            v: 1,
+            correlation_id: correlation2,
+            outcome: "planned",
+            kind: "send-to-workspace",
+            base_revision: 1,
+            desired_geometry: [
+                { window: "win-m", leaf: "leaf-win-m", output: "out-1", workspace: "ws-3", rect: { x: 0, y: 0, w: 1200, h: 800 } },
+                { window: "win-t", leaf: "leaf-win-t", output: "out-1", workspace: "ws-2", rect: { x: 0, y: 0, w: 1200, h: 800 } },
+            ],
+            desired_focus: { domain_output: "out-1", domain_workspace: "ws-3", leaf: "leaf-win-m" },
+            preconditions: ["window-observed", "desired-topology-valid", "adapter-must-verify-postconditions"],
+            operation: {
+                op: "move-tiled",
+                window: "win-m",
+                leaf: "leaf-win-m",
+                source_output: "out-1",
+                source_workspace: "ws-2",
+                target_output: "out-1",
+                target_workspace: "ws-3",
+            },
+        });
+        mocks.callbacks[mocks.callbacks.length - 1]?.(planned2);
+        fireDesktopsWithPromote(winM as object);
+        fireGeometryWithPromote(winM as object);
+        fireGeometryWithPromote(winT as object);
+        const ack2 = mocks.dbusCalls.find((call) => call.payload.includes(correlation2) && call.payload.includes("accepted"));
+        assert.ok(ack2 !== undefined, "second send completes the fence");
+        mocks.callbacks[mocks.callbacks.length - 1]?.(
+            JSON.stringify({ v: 1, correlation_id: correlation2, outcome: "acknowledged", kind: "send-to-workspace", base_revision: 1 }),
+        );
+        mocks.callbacks[mocks.callbacks.length - 1]?.(
+            JSON.stringify({ v: 1, correlation_id: correlation2, outcome: "committed", kind: "send-to-workspace", base_revision: 2 }),
+        );
+        assert.equal(world.currentByOutput.get(world.outputs[0] as never), ws3);
+        assert.ok(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length >= 2);
+        handle?.stop();
+    });
+});
+
+describe("global-unique and shared preexisting terminal collapse", () => {
+    function setCurrent(world: FakeWorld, desktop: FakeDesktop): void {
+        const output = world.outputs[0];
+        assert.ok(output !== undefined);
+        world.currentByOutput.set(output, desktop);
+        world.globalCurrent = desktop;
+        (world.workspace as Record<string, unknown>)["currentDesktop"] = desktop;
+    }
+
+    function ids(world: FakeWorld): string[] {
+        return world.desktops.map((entry) => entry.id);
+    }
+
+    it("global-unique retains first terminal empty and removes later only when nonvisible", () => {
+        const built = fakeWorld("global-unique", ["out-1"], ["ws-1", "ws-2", "ws-3", "ws-4"]);
+        const world = built.world;
+        const ws1 = world.desktops[0] as FakeDesktop;
+        assert.ok(ws1 !== undefined);
+        addWindow(world, "win-keep", ws1);
+        const { adapter } = startNative(world, "global-unique");
+        adapter.handleTopologySignal();
+        const after = ids(world);
+        assert.ok(after.includes("ws-1"), "occupied head survives");
+        assert.ok(after.includes("ws-2"), "first terminal empty retained");
+        assert.ok(!after.includes("ws-3") && !after.includes("ws-4"), `later empties removed: ${after.join(",")}`);
+        assert.equal(world.desktops.length, 2, "floor of two global desktops");
+        adapter.disable();
+
+        const gated = fakeWorld("global-unique", ["out-1"], ["ws-1", "ws-2", "ws-3", "ws-4"]);
+        const gworld = gated.world;
+        const gws1 = gworld.desktops[0] as FakeDesktop;
+        const gws4 = gworld.desktops[3] as FakeDesktop;
+        assert.ok(gws1 !== undefined && gws4 !== undefined);
+        addWindow(gworld, "win-keep", gws1);
+        setCurrent(gworld, gws4);
+        const { adapter: second } = startNative(gworld, "global-unique");
+        second.handleTopologySignal();
+        assert.deepEqual(ids(gworld), ["ws-1", "ws-2", "ws-3", "ws-4"], "visible terminal blocks collapse");
+        setCurrent(gworld, gws1);
+        second.handleTopologySignal();
+        const collapsed = ids(gworld);
+        assert.ok(collapsed.includes("ws-1") && collapsed.includes("ws-2"), `first retained after nonvisible: ${collapsed.join(",")}`);
+        assert.ok(!collapsed.includes("ws-3") && !collapsed.includes("ws-4"), `later removed after nonvisible: ${collapsed.join(",")}`);
+        second.disable();
+    });
+
+    it("global-unique preserves gap, occupied terminal, floor and visible", () => {
+        const gap = fakeWorld("global-unique", ["out-1"], ["ws-1", "ws-2", "ws-3", "ws-4", "ws-5"]);
+        const gworld = gap.world;
+        const gws1 = gworld.desktops[0] as FakeDesktop;
+        const gws3 = gworld.desktops[2] as FakeDesktop;
+        assert.ok(gws1 !== undefined && gws3 !== undefined);
+        addWindow(gworld, "win-a", gws1);
+        addWindow(gworld, "win-b", gws3);
+        const { adapter } = startNative(gworld, "global-unique");
+        adapter.handleTopologySignal();
+        const after = ids(gworld);
+        assert.ok(after.includes("ws-2"), `empty gap preserved: ${after.join(",")}`);
+        assert.ok(after.includes("ws-4"), `first terminal empty retained: ${after.join(",")}`);
+        assert.ok(!after.includes("ws-5"), `only literal-last extra removed: ${after.join(",")}`);
+        assert.ok(after.includes("ws-1") && after.includes("ws-3"), "occupied members survive");
+        adapter.disable();
+
+        for (const kind of ["fullscreen", "maximized", "tiled"] as const) {
+            const built = fakeWorld("global-unique", ["out-1"], ["ws-1", "ws-2", "ws-3", "ws-4"]);
+            const world = built.world;
+            const ws1 = world.desktops[0] as FakeDesktop;
+            const ws4 = world.desktops[3] as FakeDesktop;
+            assert.ok(ws1 !== undefined && ws4 !== undefined);
+            addWindow(world, "win-keep", ws1);
+            if (kind === "fullscreen") {
+                addWindow(world, "win-term", ws4, { fullScreen: true });
+            } else if (kind === "maximized") {
+                addWindow(world, "win-term", ws4, { maximizeMode: 3 });
+            } else {
+                addWindow(world, "win-term", ws4);
+            }
+            const { adapter: handle } = startNative(world, "global-unique");
+            handle.handleTopologySignal();
+            assert.ok(ids(world).includes("ws-4"), `${kind} occupied terminal preserved`);
+            handle.disable();
+        }
+
+        const sticky = fakeWorld("global-unique", ["out-1"], ["ws-1", "ws-2", "ws-3", "ws-4"]);
+        const sworld = sticky.world;
+        const sws1 = sworld.desktops[0] as FakeDesktop;
+        const sws4 = sworld.desktops[3] as FakeDesktop;
+        assert.ok(sws1 !== undefined && sws4 !== undefined);
+        addWindow(sworld, "win-keep", sws1);
+        addWindow(sworld, "win-sticky", sws4, { onAllDesktops: true });
+        const { adapter: shandle } = startNative(sworld, "global-unique");
+        shandle.handleTopologySignal();
+        assert.ok(!ids(sworld).includes("ws-4"), "sticky-only terminal still collapses to one trailing");
+        assert.ok(ids(sworld).includes("ws-2"), "first terminal retained");
+        shandle.disable();
+
+        const floor = fakeWorld("global-unique", ["out-1"], ["ws-1", "ws-2"]);
+        const fworld = floor.world;
+        const fws1 = fworld.desktops[0] as FakeDesktop;
+        assert.ok(fws1 !== undefined);
+        addWindow(fworld, "win-keep", fws1);
+        const { adapter: fhandle } = startNative(fworld, "global-unique");
+        fhandle.handleTopologySignal();
+        assert.ok(fworld.desktops.length >= 2, "never below two global desktops");
+        fhandle.disable();
+    });
+
+    it("shared retains first terminal empty and removes later only when nonvisible", () => {
+        const built = fakeWorld("shared", ["out-1"], ["ws-1", "ws-2", "ws-3", "ws-4"]);
+        const world = built.world;
+        const ws1 = world.desktops[0] as FakeDesktop;
+        assert.ok(ws1 !== undefined);
+        addWindow(world, "win-keep", ws1);
+        const { adapter } = startNative(world, "shared");
+        adapter.handleTopologySignal();
+        const after = ids(world);
+        assert.ok(after.includes("ws-1") && after.includes("ws-2"), `first retained: ${after.join(",")}`);
+        assert.ok(!after.includes("ws-3") && !after.includes("ws-4"), `later removed: ${after.join(",")}`);
+        assert.equal(world.desktops.length, 2);
+        adapter.disable();
+
+        const gated = fakeWorld("shared", ["out-1"], ["ws-1", "ws-2", "ws-3", "ws-4"]);
+        const gworld = gated.world;
+        const gws1 = gworld.desktops[0] as FakeDesktop;
+        const gws4 = gworld.desktops[3] as FakeDesktop;
+        assert.ok(gws1 !== undefined && gws4 !== undefined);
+        addWindow(gworld, "win-keep", gws1);
+        setCurrent(gworld, gws4);
+        const { adapter: second } = startNative(gworld, "shared");
+        second.handleTopologySignal();
+        assert.deepEqual(ids(gworld), ["ws-1", "ws-2", "ws-3", "ws-4"], "visible terminal blocks collapse");
+        setCurrent(gworld, gws1);
+        second.handleTopologySignal();
+        const collapsed = ids(gworld);
+        assert.ok(!collapsed.includes("ws-3") && !collapsed.includes("ws-4"), `later removed after nonvisible: ${collapsed.join(",")}`);
+        second.disable();
+    });
+
+    it("shared preserves gap, occupied terminal, floor and visible", () => {
+        const gap = fakeWorld("shared", ["out-1"], ["ws-1", "ws-2", "ws-3", "ws-4", "ws-5"]);
+        const gworld = gap.world;
+        const gws1 = gworld.desktops[0] as FakeDesktop;
+        const gws3 = gworld.desktops[2] as FakeDesktop;
+        assert.ok(gws1 !== undefined && gws3 !== undefined);
+        addWindow(gworld, "win-a", gws1);
+        addWindow(gworld, "win-b", gws3);
+        const { adapter } = startNative(gworld, "shared");
+        adapter.handleTopologySignal();
+        const after = ids(gworld);
+        assert.ok(after.includes("ws-2"), `empty gap preserved: ${after.join(",")}`);
+        assert.ok(after.includes("ws-4"), "first terminal retained");
+        assert.ok(!after.includes("ws-5"), "literal-last extra removed");
+        adapter.disable();
+
+        for (const kind of ["fullscreen", "maximized", "tiled"] as const) {
+            const built = fakeWorld("shared", ["out-1"], ["ws-1", "ws-2", "ws-3", "ws-4"]);
+            const world = built.world;
+            const ws1 = world.desktops[0] as FakeDesktop;
+            const ws4 = world.desktops[3] as FakeDesktop;
+            assert.ok(ws1 !== undefined && ws4 !== undefined);
+            addWindow(world, "win-keep", ws1);
+            if (kind === "fullscreen") {
+                addWindow(world, "win-term", ws4, { fullScreen: true });
+            } else if (kind === "maximized") {
+                addWindow(world, "win-term", ws4, { maximizeMode: 3 });
+            } else {
+                addWindow(world, "win-term", ws4);
+            }
+            const { adapter: handle } = startNative(world, "shared");
+            handle.handleTopologySignal();
+            assert.ok(ids(world).includes("ws-4"), `${kind} occupied terminal preserved`);
+            handle.disable();
+        }
+
+        const floor = fakeWorld("shared", ["out-1"], ["ws-1", "ws-2"]);
+        const fworld = floor.world;
+        const fws1 = fworld.desktops[0] as FakeDesktop;
+        assert.ok(fws1 !== undefined);
+        addWindow(fworld, "win-keep", fws1);
+        const { adapter: fhandle } = startNative(fworld, "shared");
+        fhandle.handleTopologySignal();
+        assert.ok(fworld.desktops.length >= 2, "never below two global desktops");
+        fhandle.disable();
     });
 });
 

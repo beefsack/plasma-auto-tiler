@@ -329,8 +329,10 @@ Historical implementation detail is recoverable in Git history.
   output domains; `shared` selects the same backing desktop on every output.
   The adapter keeps one structurally trailing empty backing desktop per relevant
   domain, reusing it for `Meta+0` and `Meta+Shift+0` before creating one. It
-  retires only session-owned, empty, non-current, non-visible desktops while
-  retaining at least two global desktops. Mapping and output identity are
+  retires session-owned empties and safe preexisting extras only from the
+  mapped native-order terminal empty run, retaining its first desktop and at
+  least two global desktops. Occupied, current, visible, intermediate, and
+  unmapped desktops remain protected. Mapping and output identity are
   session-local; hotplug/replug recovery remains unselected.
 - `Meta+1..9` select an existing 1-based logical workspace without creation.
   `Meta+Shift+1..9` send only the focused tiled window to an existing
