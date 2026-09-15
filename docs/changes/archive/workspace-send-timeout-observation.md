@@ -68,19 +68,48 @@
   --lib` (17); and `cargo test --test session_send_to_workspace` (4). No live
   KWin, D-Bus, window, desktop, focus, or session action occurred.
 
+- The later exact authorized capture
+  `/run/user/1000/plasma-auto-tiler-dev.pJOooO.log` resolves the former opaque
+  settlement branch. `plan-1-w0` and `plan-1-w1` both commit and complete
+  state-confirmed follow (lines 27, 44, 51-52 and 65, 80, 87-88). The later
+  `plan-1-w2` has two planned geometry entries (line 91), consumes its mover
+  and one geometry fence (lines 95-98), then rejects its one-shot settlement
+  with `verify_reason=geometry-rect-mismatch verify_geo_idx=1
+  fence_pending=1 fence_total=2 mover_seen=1 fence_idx=1` (line 101). It
+  reports `adapter-lost`/diverged and timeout (lines 99-102). The file has no
+  same-instance retry, availability, or refusal after the reported 15-second
+  wait, so that later availability is not evidenced by this capture.
+- `fence_idx=1` and `verify_geo_idx=1` are both plan-relative indices:
+  `geoPending` maps its remaining window back to frozen `planned.geometry`,
+  while the exact verifier iterates that same order. Thus entry 1 was still
+  armed and its fresh rectangle differed from its planned rectangle; entry 0
+  was the sole consumed geometry echo. This rules out a missing mover callback,
+  unavailable settlement observation, and a focus verifier as the failure
+  predicate. The redacted capture does not identify whether the unfulfilled
+  geometry write was native adjustment, deferred convergence, or external
+  drift.
+- KWin 6.7.3 source confirms `frameGeometry` writes call `moveResize` and
+  `frameGeometryChanged` reports actual geometry changes, while Wayland xdg
+  configure application can be deferred and coalesced. That is compatible with
+  the observed race but does not identify this unfulfilled entry's native
+  cause. A candidate change to retain a geometry subscription across an
+  intermediate echo was rejected: it cannot affect the captured entry 1,
+  which emitted no consumable echo and remained mismatched at timeout. No code
+  or behavior changed.
+
 ## Product Decision
 
 - None. The known terminal policy is retained without a governance change.
-- The unresolved work is to identify why the exact pre-ack settlement rejected
-  its fresh observation or could not arm its acknowledgement continuation.
+- The unresolved work is to identify why planned geometry entry 1 did not
+  converge to its exact rectangle and did not produce its confirmation. No
+  recovery or terminal-policy redesign is selected.
 
 ## Backlog Recommendation
 
 - Proposed factual update for the parent-owned backlog:
-  `P0 | Workspace-send pre-ack timeout diagnosis | WLS1RE proves a partial
-  echo-fenced pre-ack send reached terminal adapter-lost and subsequent
-  same-instance refusal, but not why the authorized exact timeout settlement
-  failed. Preserve the existing terminal policy while one correlated
-  reproduction identifies the rejected settlement predicate and remaining
-  geometry fences. Visible display and border causation remain unproven.`
+  `P0 | Workspace-send pre-ack timeout diagnosis | The pJOooO capture proves
+  timeout settlement rejected plan geometry index 1 on exact rect mismatch
+  while that same index remained the sole armed fence; mover was seen. Determine
+  why that native geometry write neither converged nor confirmed before changing
+  exact terminal policy. Visible display and border causation remain unproven.`
   Retain the existing record link and leave P1 unchanged.
