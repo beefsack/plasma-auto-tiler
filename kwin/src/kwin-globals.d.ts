@@ -26,7 +26,8 @@ declare function registerShortcut(
 //     QVariant readConfig(QString key, QVariant defaultValue = QVariant())
 // Reads the script's config value for key; without a default and with no stored
 // value an undefined value is returned. Used here only for the selected
-// shortcut-profile key; no other script configuration is read.
+// shortcut-profile, workspace-mode, and bounded gap keys; no other script
+// configuration is read.
 declare function readConfig(key: string, defaultValue?: unknown): unknown;
 
 // src/scripting/scripting.h:

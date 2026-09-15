@@ -31,7 +31,7 @@
 // exact frameGeometry rectangles applied only when changed, then focus is
 // retained on the focused window. All logs are fixed redacted tokens.
 
-import { DOMAIN_GAP, OUTER_DOMAIN_GAP } from "./domain-gap";
+import { DOMAIN_GAP_DEFAULT, DomainGaps, OUTER_DOMAIN_GAP_DEFAULT, readDomainGaps } from "./domain-gap";
 import { normalizeNativeId } from "./native-id";
 import { ResizeAdapter, ResizeObserved, resizeFingerprint } from "./resize-adapter";
 import { connectSignal, readSignal } from "./signal-capability";
@@ -52,6 +52,8 @@ export interface ResizeEntryOverrides {
     readonly generation?: unknown;
     readonly revision?: unknown;
     readonly hasExclusiveResizeAuthority?: () => boolean;
+    readonly readInnerGapFn?: () => unknown;
+    readonly readOuterGapFn?: () => unknown;
 }
 
 export interface ResizeEntryHandle {
@@ -216,7 +218,11 @@ function activeIneligibilityCategory(ref: object, domainOutput: string, desktopR
     return null;
 }
 
-function observeNative(liveWorkspace: unknown, log?: (message: string) => void): ResizeObserved | null {
+function observeNative(
+    liveWorkspace: unknown,
+    log?: (message: string) => void,
+    gaps?: DomainGaps,
+): ResizeObserved | null {
     const fail = (predicate: string): null => {
         try {
             log?.(`${ENTRY_SCOPE}:${predicate}`);
@@ -448,15 +454,15 @@ function observeNative(liveWorkspace: unknown, log?: (message: string) => void):
             domainOutput,
             domainWorkspace,
             domainBounds: Object.freeze({ ...domainBounds }),
-            domainGap: DOMAIN_GAP,
-            domainOuterGap: OUTER_DOMAIN_GAP,
+            domainGap: gaps !== undefined ? gaps.innerGap : DOMAIN_GAP_DEFAULT,
+            domainOuterGap: gaps !== undefined ? gaps.outerGap : OUTER_DOMAIN_GAP_DEFAULT,
             focusedId: activeId,
             windows: frozenWindows,
             activeRef,
             fingerprint: expected,
             revalidate: () => {
                 try {
-                    const fresh = observeNative(liveWorkspace, log);
+                    const fresh = observeNative(liveWorkspace, log, gaps);
                     if (fresh === null) {
                         return false;
                     }
@@ -648,11 +654,15 @@ export function startResizeAdapterEntry(
             return null;
         }
     };
+    const domainGaps: DomainGaps = readDomainGaps({
+        readInnerGapFn: overrides.readInnerGapFn,
+        readOuterGapFn: overrides.readOuterGapFn,
+    });
     const adapter = new ResizeAdapter({
         callDbus,
         scheduleOnce,
         log,
-        observe: () => observeNative(liveWorkspace, log),
+        observe: () => observeNative(liveWorkspace, log, domainGaps),
         setGeometry: (target, rect) => {
             try {
                 Reflect.set(target, "frameGeometry", {
@@ -721,7 +731,7 @@ export function startResizeAdapterEntry(
     if (!enabled) {
         return null;
     }
-    if (observeNative(liveWorkspace, log) === null) {
+    if (observeNative(liveWorkspace, log, domainGaps) === null) {
         adapter.disable();
         try {
             log(ENTRY_SCOPE_REJECT);

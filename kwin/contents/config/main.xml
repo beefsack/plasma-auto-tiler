@@ -46,5 +46,17 @@
             <label>Show a destination outline while dragging a tiled window</label>
             <default>false</default>
         </entry>
+        <entry name="innerGap" type="Int">
+            <label>Gap between tiled windows</label>
+            <default>8</default>
+            <min>0</min>
+            <max>64</max>
+        </entry>
+        <entry name="outerGap" type="Int">
+            <label>Gap between tiled windows and the work area edge</label>
+            <default>8</default>
+            <min>0</min>
+            <max>64</max>
+        </entry>
     </group>
 </kcfg>

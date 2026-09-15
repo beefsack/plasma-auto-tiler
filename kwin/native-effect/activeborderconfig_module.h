@@ -63,6 +63,8 @@ private:
     ::Ui::ActiveBorderConfig m_ui;
     QVariantMap m_loadedScriptValues;
     bool m_loadedDropOutlinePreviewRawValid = true;
+    bool m_loadedInnerGapRawValid = true;
+    bool m_loadedOuterGapRawValid = true;
     bool m_effectReconfigurePending = false;
     bool m_scriptReconfigurePending = false;
     ShortcutStore *m_shortcutStore = nullptr;

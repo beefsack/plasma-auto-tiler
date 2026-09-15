@@ -17,7 +17,7 @@
 // write, scope-transition, echo-fence, and refusal lines, plus one bounded
 // shortcut-failed line and one bounded plan-ready startup line.
 
-import { DOMAIN_GAP, OUTER_DOMAIN_GAP } from "./domain-gap";
+import { DomainGaps, readDomainGaps } from "./domain-gap";
 import { deriveOracleEdge, startDragOraclePullEntry, DragOracleFinishContext, DragOracleVerdict } from "./drag-oracle-pull";
 import { normalizeNativeId } from "./native-id";
 import {
@@ -75,6 +75,8 @@ export interface PlanEntryOverrides {
     ) => boolean;
     readonly readProfileFn?: () => unknown;
     readonly readWorkspaceModeFn?: () => unknown;
+    readonly readInnerGapFn?: () => unknown;
+    readonly readOuterGapFn?: () => unknown;
 }
 
 export interface PlanEntryHandle {
@@ -865,6 +867,7 @@ function observeNative(
     liveWorkspace: unknown,
     cache: Map<string, string>,
     floatingIds: ReadonlySet<string>,
+    gaps: DomainGaps,
     reportEligibility?: EligibilityReporter,
 ): PlanObserved | null {
     try {
@@ -1099,8 +1102,8 @@ function observeNative(
             domainOutput,
             domainWorkspace,
             domainBounds: Object.freeze({ x: domainBounds.x, y: domainBounds.y, w: domainBounds.w, h: domainBounds.h }),
-            domainGap: DOMAIN_GAP,
-            domainOuterGap: OUTER_DOMAIN_GAP,
+            domainGap: gaps.innerGap,
+            domainOuterGap: gaps.outerGap,
             focusedId: activeId,
             activeExcluded,
             windows: frozenWindows,
@@ -1108,7 +1111,7 @@ function observeNative(
             fingerprint: expected,
             revalidate: () => {
                 try {
-                    const fresh = observeNative(liveWorkspace, cache, floatingIds, reportEligibility);
+                    const fresh = observeNative(liveWorkspace, cache, floatingIds, gaps, reportEligibility);
                     if (
                         fresh === null ||
                         fresh.fingerprint !== expected ||
@@ -1520,6 +1523,12 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // Eviction is explicit when the adapter identifies a removed string id.
     const nativeIds = new Map<string, string>();
     const floatingIds = new Set<string>();
+    // Startup-bound validated gap configuration: resolved once, reused for
+    // every observation. No reload, reseed, or in-flight mutation.
+    const domainGaps: DomainGaps = readDomainGaps({
+        readInnerGapFn: overrides.readInnerGapFn,
+        readOuterGapFn: overrides.readOuterGapFn,
+    });
     const eligibilityReasons = new Map<string, string>();
     const reportEligibility: EligibilityReporter = (ref, reason): void => {
         const id = readNativeId(ref);
@@ -1567,7 +1576,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 void error;
             }
         },
-        observe: () => observeNative(liveWorkspace, nativeIds, floatingIds, reportEligibility),
+        observe: () => observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility),
         clearMaximize: (target) => {
             try {
                 const method = readProp(target, "setMaximize");
@@ -1738,7 +1747,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     if (!enabled) {
         return null;
     }
-    const initial = observeNative(liveWorkspace, nativeIds, floatingIds, reportEligibility);
+    const initial = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility);
     if (initial === null || initial.windows.length === 0) {
         adapter.disable();
         return null;
@@ -1842,7 +1851,8 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     });
     workspaceNative.enable();
     const sendNativeIds = new Map<string, string>();
-    const workspaceSend = new WorkspaceSendAdapter({
+    const workspaceSend = new WorkspaceSendAdapter(
+        {
         callDbus,
         scheduleOnce,
         log,
@@ -2002,7 +2012,9 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 return false;
             }
         },
-    });
+        },
+        { innerGap: domainGaps.innerGap, outerGap: domainGaps.outerGap },
+    );
     // Terminal send semantics: the send adapter may enable once at startup.
     // Thereafter a terminal disable (pending mismatch, owner loss, refusal,
     // or reset correlation sequence) stays fail-closed. No normal workspace
@@ -2199,7 +2211,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     };
     const captureOracleStart = (ref: object): void => {
         try {
-            const observed = observeNative(liveWorkspace, nativeIds, floatingIds, reportEligibility);
+            const observed = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility);
             if (observed === null) return;
             for (const entry of observed.windows) {
                 if (entry.ref === ref) {
@@ -2256,7 +2268,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 try { log("plasma-auto-tiler:route-diag:drag-context-invalid"); } catch (error) { void error; }
                 return;
             }
-            const observed = observeNative(liveWorkspace, nativeIds, floatingIds, reportEligibility);
+            const observed = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility);
             if (observed === null) {
                 takeOwnStart(ctx);
                 try { log("plasma-auto-tiler:route-diag:drag-scope-invalid"); } catch (error) { void error; }
@@ -2434,7 +2446,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                     observe: (): ActiveGroupObserved | null => {
                         let seen: PlanObserved | null = null;
                         try {
-                            seen = observeNative(liveWorkspace, nativeIds, floatingIds, reportEligibility);
+                            seen = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility);
                         } catch (error) {
                             void error;
                             return null;

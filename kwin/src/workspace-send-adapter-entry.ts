@@ -23,6 +23,7 @@
 // single check (never duplicated here).
 
 import { normalizeNativeId } from "./native-id";
+import { readDomainGaps } from "./domain-gap";
 import { connectSignal, readSignal } from "./signal-capability";
 import {
     WORKSPACE_SEND_DBUS_SERVICE,
@@ -46,6 +47,8 @@ export interface WorkspaceSendEntryOverrides {
     readonly log?: (message: string) => void;
     readonly owner?: unknown;
     readonly generation?: unknown;
+    readonly readInnerGapFn?: () => unknown;
+    readonly readOuterGapFn?: () => unknown;
 }
 
 export interface WorkspaceSendEntryHandle {
@@ -569,6 +572,10 @@ export function startWorkspaceSendAdapterEntry(
         }
     }
     const nativeIds = new Map<string, string>();
+    const domainGaps = readDomainGaps({
+        readInnerGapFn: overrides.readInnerGapFn,
+        readOuterGapFn: overrides.readOuterGapFn,
+    });
     const adapter = new WorkspaceSendAdapter({
         callDbus,
         scheduleOnce,
@@ -647,7 +654,9 @@ export function startWorkspaceSendAdapterEntry(
                 return false;
             }
         },
-    });
+        },
+        { innerGap: domainGaps.innerGap, outerGap: domainGaps.outerGap },
+    );
     const enabled = adapter.enable({ owner: overrides.owner, generation: overrides.generation });
     if (!enabled) {
         return fail();

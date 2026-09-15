@@ -51,7 +51,7 @@
 // All logs are fixed redacted tokens. Only minimal public events are used and
 // all are detached on disable. No polling.
 
-import { DOMAIN_GAP, OUTER_DOMAIN_GAP } from "./domain-gap";
+import { DOMAIN_GAP_DEFAULT, DomainGaps, normalizeGap, OUTER_DOMAIN_GAP_DEFAULT, readDomainGaps } from "./domain-gap";
 import { orderGeometryWrites } from "./geometry-order";
 
 export const WORKSPACE_SEND_SERVICE = "org.plasmaautotiler.Planner";
@@ -822,11 +822,21 @@ interface WorkspacePendingFlight {
 // stay terminal elsewhere. Post-plan/native-mutated phases never use this.
 const TERMINAL_REQUEST_REJECTION = "pending-exists";
 
+export interface WorkspaceSendGaps {
+    readonly innerGap?: unknown;
+    readonly outerGap?: unknown;
+}
+
 export class WorkspaceSendAdapter {
     private enabled = false;
     private startupEnabled = false;
     private owner = "";
     private generation = "";
+    // Startup-bound validated gap configuration: resolved once at
+    // construction, reused for every request builder. No reload or
+    // in-flight mutation.
+    private readonly innerGap: number;
+    private readonly outerGap: number;
     private inFlight = false;
     private token = 0;
     private activeToken = 0;
@@ -846,7 +856,29 @@ export class WorkspaceSendAdapter {
     private geoDetaches = new Map<string, () => void>();
     private geoPending = new Set<string>();
 
-    constructor(private readonly env: WorkspaceSendAdapterEnv) {}
+    constructor(
+        private readonly env: WorkspaceSendAdapterEnv,
+        gaps?: WorkspaceSendGaps,
+    ) {
+        let resolved: DomainGaps | null = null;
+        try {
+            if (gaps !== undefined) {
+                resolved = { innerGap: normalizeGap(gaps.innerGap), outerGap: normalizeGap(gaps.outerGap) };
+            } else {
+                resolved = readDomainGaps();
+            }
+        } catch (error) {
+            void error;
+            resolved = null;
+        }
+        if (resolved === null) {
+            this.innerGap = DOMAIN_GAP_DEFAULT;
+            this.outerGap = OUTER_DOMAIN_GAP_DEFAULT;
+        } else {
+            this.innerGap = resolved.innerGap;
+            this.outerGap = resolved.outerGap;
+        }
+    }
 
     get isEnabled(): boolean {
         return this.enabled;
@@ -1017,8 +1049,8 @@ export class WorkspaceSendAdapter {
                         w: observed.sourceBounds.w,
                         h: observed.sourceBounds.h,
                     },
-                    gap: DOMAIN_GAP,
-                    outer_gap: OUTER_DOMAIN_GAP,
+                    gap: this.innerGap,
+                    outer_gap: this.outerGap,
                 },
                 target_domain: {
                     output: observed.targetOutput,
@@ -1029,8 +1061,8 @@ export class WorkspaceSendAdapter {
                         w: observed.targetBounds.w,
                         h: observed.targetBounds.h,
                     },
-                    gap: DOMAIN_GAP,
-                    outer_gap: OUTER_DOMAIN_GAP,
+                    gap: this.innerGap,
+                    outer_gap: this.outerGap,
                 },
                 focused_window: observed.focusedId,
                 windows: sourceWindows,
@@ -1080,8 +1112,8 @@ export class WorkspaceSendAdapter {
                         w: observed.sourceBounds.w,
                         h: observed.sourceBounds.h,
                     },
-                    gap: DOMAIN_GAP,
-                    outer_gap: OUTER_DOMAIN_GAP,
+                    gap: this.innerGap,
+                    outer_gap: this.outerGap,
                 },
                 target_domain: {
                     output: observed.targetOutput,
@@ -1092,8 +1124,8 @@ export class WorkspaceSendAdapter {
                         w: observed.targetBounds.w,
                         h: observed.targetBounds.h,
                     },
-                    gap: DOMAIN_GAP,
-                    outer_gap: OUTER_DOMAIN_GAP,
+                    gap: this.innerGap,
+                    outer_gap: this.outerGap,
                 },
                 focused_window: observed.focusedId,
                 windows: sourceWindows,
@@ -1142,8 +1174,8 @@ export class WorkspaceSendAdapter {
                         w: observed.sourceBounds.w,
                         h: observed.sourceBounds.h,
                     },
-                    gap: DOMAIN_GAP,
-                    outer_gap: OUTER_DOMAIN_GAP,
+                    gap: this.innerGap,
+                    outer_gap: this.outerGap,
                 },
                 target_domain: {
                     output: observed.targetOutput,
@@ -1154,8 +1186,8 @@ export class WorkspaceSendAdapter {
                         w: observed.targetBounds.w,
                         h: observed.targetBounds.h,
                     },
-                    gap: DOMAIN_GAP,
-                    outer_gap: OUTER_DOMAIN_GAP,
+                    gap: this.innerGap,
+                    outer_gap: this.outerGap,
                 },
                 focused_window: observed.focusedId,
                 windows: sourceWindows,
@@ -2682,8 +2714,8 @@ export class WorkspaceSendAdapter {
                         w: pending.snapshot.sourceBounds.w,
                         h: pending.snapshot.sourceBounds.h,
                     },
-                    gap: DOMAIN_GAP,
-                    outer_gap: OUTER_DOMAIN_GAP,
+                    gap: this.innerGap,
+                    outer_gap: this.outerGap,
                 },
                 target_domain: {
                     output: pending.snapshot.targetOutput,
@@ -2694,8 +2726,8 @@ export class WorkspaceSendAdapter {
                         w: pending.snapshot.targetBounds.w,
                         h: pending.snapshot.targetBounds.h,
                     },
-                    gap: DOMAIN_GAP,
-                    outer_gap: OUTER_DOMAIN_GAP,
+                    gap: this.innerGap,
+                    outer_gap: this.outerGap,
                 },
                 focused_window: "",
                 windows: [],

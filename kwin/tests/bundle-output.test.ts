@@ -37,6 +37,8 @@ describe("production bundle compatibility", () => {
         assert.match(schema, /<entry name="workspaceMode" type="Enum">/);
         assert.match(schema, /<entry name="shortcutProfile" type="Enum">/);
         assert.match(schema, /<entry name="dropOutlinePreview" type="Bool">/);
+        assert.match(schema, /<entry name="innerGap" type="Int">/);
+        assert.match(schema, /<entry name="outerGap" type="Int">/);
         assert.doesNotMatch(schema, /engineAuthorityMode/);
     });
 
@@ -46,6 +48,8 @@ describe("production bundle compatibility", () => {
         assert.match(schema, /<default>per-output-local<\/default>/);
         assert.match(schema, /<default>cosmic<\/default>/);
         assert.match(schema, /<entry name="dropOutlinePreview" type="Bool">[\s\S]*?<default>false<\/default>/);
+        assert.match(schema, /<entry name="innerGap" type="Int">[\s\S]*?<default>8<\/default>[\s\S]*?<min>0<\/min>[\s\S]*?<max>64<\/max>/);
+        assert.match(schema, /<entry name="outerGap" type="Int">[\s\S]*?<default>8<\/default>[\s\S]*?<min>0<\/min>[\s\S]*?<max>64<\/max>/);
         assert.doesNotMatch(schema, /engineAuthorityMode/);
         for (const preset of ["columns", "rows", "balanced-grid", "dwindle"]) {
             assert.match(schema, new RegExp(`<choice name="${preset}" value="${preset}"\\/>`));
@@ -68,6 +72,8 @@ describe("production bundle compatibility", () => {
             assert.match(ui, new RegExp(`name="kcfg_${entry}"`));
         }
         assert.match(ui, /<widget class="QCheckBox" name="kcfg_dropOutlinePreview">/);
+        assert.match(ui, /<widget class="QSpinBox" name="kcfg_innerGap">/);
+        assert.match(ui, /<widget class="QSpinBox" name="kcfg_outerGap">/);
         assert.doesNotMatch(ui, /engineAuthorityMode/);
     });
 

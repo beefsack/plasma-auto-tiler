@@ -14,11 +14,40 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSpinBox>
 
 K_PLUGIN_CLASS_WITH_JSON(KWin::ActiveBorderConfigModule, "activeborderconfig_module.json")
 
 namespace KWin
 {
+
+namespace
+{
+
+int readBoundedGap(const KConfigGroup &group, const QString &key)
+{
+    if (!group.hasKey(key)) {
+        return 8;
+    }
+    bool ok = false;
+    const int parsed = group.readEntry(key, QString()).toInt(&ok);
+    if (ok && parsed >= 0 && parsed <= 64) {
+        return parsed;
+    }
+    return 8;
+}
+
+bool isBoundedGapRawValid(const KConfigGroup &group, const QString &key)
+{
+    if (!group.hasKey(key)) {
+        return true;
+    }
+    bool ok = false;
+    const int parsed = group.readEntry(key, QString()).toInt(&ok);
+    return ok && parsed >= 0 && parsed <= 64;
+}
+
+} // namespace
 
 ActiveBorderConfigModule::ActiveBorderConfigModule(QObject *parent, const KPluginMetaData &data)
     : KCModule(parent, data)
@@ -49,6 +78,8 @@ ActiveBorderConfigModule::ActiveBorderConfigModule(QObject *parent, const KPlugi
     connect(m_ui.workspaceModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ActiveBorderConfigModule::updateScriptState);
     connect(m_ui.shortcutProfileCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ActiveBorderConfigModule::updateScriptState);
     connect(m_ui.dropOutlinePreviewCheckBox, &QCheckBox::toggled, this, &ActiveBorderConfigModule::updateScriptState);
+    connect(m_ui.innerGapSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, &ActiveBorderConfigModule::updateScriptState);
+    connect(m_ui.outerGapSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, &ActiveBorderConfigModule::updateScriptState);
 
     m_shortcutStore = createLiveShortcutStore();
     m_shortcutJournal = createLiveShortcutJournal(defaultShortcutJournalPath());
@@ -421,6 +452,8 @@ QVariantMap ActiveBorderConfigModule::currentScriptValues() const
         {QStringLiteral("workspaceMode"), m_ui.workspaceModeCombo->currentData()},
         {QStringLiteral("shortcutProfile"), m_ui.shortcutProfileCombo->currentData()},
         {QStringLiteral("dropOutlinePreview"), m_ui.dropOutlinePreviewCheckBox->isChecked()},
+        {QStringLiteral("innerGap"), m_ui.innerGapSpinBox->value()},
+        {QStringLiteral("outerGap"), m_ui.outerGapSpinBox->value()},
     };
 }
 
@@ -433,6 +466,8 @@ void ActiveBorderConfigModule::updateScriptState()
         {QStringLiteral("workspaceMode"), QStringLiteral("per-output-local")},
         {QStringLiteral("shortcutProfile"), QStringLiteral("cosmic")},
         {QStringLiteral("dropOutlinePreview"), false},
+        {QStringLiteral("innerGap"), 8},
+        {QStringLiteral("outerGap"), 8},
     };
     unmanagedWidgetChangeState(!m_loadedScriptValues.isEmpty() && current != m_loadedScriptValues);
     unmanagedWidgetDefaultState(current == defaults);
@@ -456,17 +491,25 @@ void ActiveBorderConfigModule::load()
     m_loadedDropOutlinePreviewRawValid = !group.hasKey(QStringLiteral("dropOutlinePreview"))
         || dropOutlinePreviewRaw.compare(QStringLiteral("true"), Qt::CaseInsensitive) == 0
         || dropOutlinePreviewRaw.compare(QStringLiteral("false"), Qt::CaseInsensitive) == 0;
+    const int innerGap = readBoundedGap(group, QStringLiteral("innerGap"));
+    const int outerGap = readBoundedGap(group, QStringLiteral("outerGap"));
+    m_loadedInnerGapRawValid = isBoundedGapRawValid(group, QStringLiteral("innerGap"));
+    m_loadedOuterGapRawValid = isBoundedGapRawValid(group, QStringLiteral("outerGap"));
     select(m_ui.tilingAlgorithmCombo, tilingAlgorithm, QStringLiteral("dwindle"));
     select(m_ui.automaticSplitTargetCombo, automaticSplitTarget, QStringLiteral("dwindle"));
     select(m_ui.workspaceModeCombo, workspaceMode, QStringLiteral("per-output-local"));
     select(m_ui.shortcutProfileCombo, shortcutProfile, QStringLiteral("cosmic"));
     m_ui.dropOutlinePreviewCheckBox->setChecked(group.readEntry(QStringLiteral("dropOutlinePreview"), false));
+    m_ui.innerGapSpinBox->setValue(innerGap);
+    m_ui.outerGapSpinBox->setValue(outerGap);
     m_loadedScriptValues = {
         {QStringLiteral("tilingAlgorithm"), tilingAlgorithm},
         {QStringLiteral("automaticSplitTarget"), automaticSplitTarget},
         {QStringLiteral("workspaceMode"), workspaceMode},
         {QStringLiteral("shortcutProfile"), shortcutProfile},
         {QStringLiteral("dropOutlinePreview"), m_ui.dropOutlinePreviewCheckBox->isChecked()},
+        {QStringLiteral("innerGap"), innerGap},
+        {QStringLiteral("outerGap"), outerGap},
     };
     updateScriptState();
     refreshShortcutState();
@@ -478,7 +521,7 @@ void ActiveBorderConfigModule::save()
     KCModule::save();
 
     const QVariantMap current = currentScriptValues();
-    if (!m_loadedDropOutlinePreviewRawValid || current != m_loadedScriptValues) {
+    if (!m_loadedDropOutlinePreviewRawValid || !m_loadedInnerGapRawValid || !m_loadedOuterGapRawValid || current != m_loadedScriptValues) {
         KConfigGroup group(KSharedConfig::openConfig(QStringLiteral("kwinrc")), QStringLiteral("Script-plasma-auto-tiler-kwin"));
         if (current.value(QStringLiteral("tilingAlgorithm")) != m_loadedScriptValues.value(QStringLiteral("tilingAlgorithm"))) {
             group.writeEntry(QStringLiteral("tilingAlgorithm"), current.value(QStringLiteral("tilingAlgorithm")).toString());
@@ -495,9 +538,17 @@ void ActiveBorderConfigModule::save()
         if (!m_loadedDropOutlinePreviewRawValid || current.value(QStringLiteral("dropOutlinePreview")) != m_loadedScriptValues.value(QStringLiteral("dropOutlinePreview"))) {
             group.writeEntry(QStringLiteral("dropOutlinePreview"), current.value(QStringLiteral("dropOutlinePreview")).toBool());
         }
+        if (!m_loadedInnerGapRawValid || current.value(QStringLiteral("innerGap")) != m_loadedScriptValues.value(QStringLiteral("innerGap"))) {
+            group.writeEntry(QStringLiteral("innerGap"), current.value(QStringLiteral("innerGap")).toInt());
+        }
+        if (!m_loadedOuterGapRawValid || current.value(QStringLiteral("outerGap")) != m_loadedScriptValues.value(QStringLiteral("outerGap"))) {
+            group.writeEntry(QStringLiteral("outerGap"), current.value(QStringLiteral("outerGap")).toInt());
+        }
         group.sync();
         m_loadedScriptValues = current;
         m_loadedDropOutlinePreviewRawValid = true;
+        m_loadedInnerGapRawValid = true;
+        m_loadedOuterGapRawValid = true;
     }
     updateScriptState();
 
@@ -532,6 +583,8 @@ void ActiveBorderConfigModule::defaults()
     m_ui.workspaceModeCombo->setCurrentIndex(m_ui.workspaceModeCombo->findData(QStringLiteral("per-output-local")));
     m_ui.shortcutProfileCombo->setCurrentIndex(m_ui.shortcutProfileCombo->findData(QStringLiteral("cosmic")));
     m_ui.dropOutlinePreviewCheckBox->setChecked(false);
+    m_ui.innerGapSpinBox->setValue(8);
+    m_ui.outerGapSpinBox->setValue(8);
     updateScriptState();
 }
 

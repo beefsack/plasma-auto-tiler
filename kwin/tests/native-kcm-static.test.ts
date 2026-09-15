@@ -27,6 +27,8 @@ const SCRIPT_SETTINGS = {
     workspaceMode: { type: "Enum", defaultValue: "per-output-local" },
     shortcutProfile: { type: "Enum", defaultValue: "cosmic" },
     dropOutlinePreview: { type: "Bool", defaultValue: "false" },
+    innerGap: { type: "Int", defaultValue: "8" },
+    outerGap: { type: "Int", defaultValue: "8" },
 } as const;
 
 function schemaEntries(): Record<string, { type: string; defaultValue: string }> {
@@ -77,11 +79,14 @@ describe("native KCM static contract", () => {
         assert.ok(cmake.includes("-P ${CMAKE_CURRENT_SOURCE_DIR}/validate-metadata.cmake"));
     });
 
-    it("keeps the five script keys and defaults identical between schema and native KCM", () => {
+    it("keeps the seven script keys and defaults identical between schema and native KCM", () => {
         assert.deepEqual(schemaEntries(), SCRIPT_SETTINGS);
         assert.match(kcfg, /<group name="Effect-plasma-auto-tiler-active-border">/);
 
         for (const [key, setting] of Object.entries(SCRIPT_SETTINGS)) {
+            if (key === "innerGap" || key === "outerGap") {
+                continue;
+            }
             const defaultExpression =
                 setting.defaultValue === "false"
                     ? "false"
@@ -94,6 +99,13 @@ describe("native KCM static contract", () => {
             );
             assert.match(module, new RegExp(`writeEntry\\(QStringLiteral\\("${key}"\\)`));
         }
+        for (const key of ["innerGap", "outerGap"]) {
+            assert.match(module, new RegExp(`readBoundedGap\\(group, QStringLiteral\\("${key}"\\)\\)`));
+            assert.match(module, new RegExp(`isBoundedGapRawValid\\(group, QStringLiteral\\("${key}"\\)\\)`));
+            assert.match(module, new RegExp(`writeEntry\\(QStringLiteral\\("${key}"\\)`));
+            assert.match(module, new RegExp(`${key}SpinBox->setValue\\(8\\)`));
+            assert.match(module, new RegExp(`${key}SpinBox->value\\(\\)`));
+        }
 
         assert.match(module, /tilingAlgorithmCombo->findData\(QStringLiteral\("dwindle"\)\)/);
         assert.match(module, /automaticSplitTargetCombo->findData\(QStringLiteral\("dwindle"\)\)/);
@@ -101,6 +113,8 @@ describe("native KCM static contract", () => {
         assert.match(module, /shortcutProfileCombo->findData\(QStringLiteral\("cosmic"\)\)/);
         assert.doesNotMatch(module, /engineAuthorityModeCombo/);
         assert.match(module, /dropOutlinePreviewCheckBox->setChecked\(false\)/);
+        assert.match(module, /innerGapSpinBox->setValue\(8\)/);
+        assert.match(module, /outerGapSpinBox->setValue\(8\)/);
     });
 
     it("reads and writes script settings only through the script config group and falls back invalid tiling to dwindle", () => {
@@ -168,8 +182,10 @@ describe("native KCM static contract", () => {
         assert.match(module, /const QString dropOutlinePreviewRaw = group\.readEntry\(QStringLiteral\("dropOutlinePreview"\), QString\(\)\)/);
         assert.match(module, /m_loadedDropOutlinePreviewRawValid = !group\.hasKey\(QStringLiteral\("dropOutlinePreview"\)\)/);
         assert.doesNotMatch(module, /setNeedsSave\(false\)/);
-        assert.match(module, /if \(!m_loadedDropOutlinePreviewRawValid \|\| current != m_loadedScriptValues\)/);
+        assert.match(module, /if \(!m_loadedDropOutlinePreviewRawValid \|\| !m_loadedInnerGapRawValid \|\| !m_loadedOuterGapRawValid \|\| current != m_loadedScriptValues\)/);
         assert.match(module, /if \(!m_loadedDropOutlinePreviewRawValid \|\| current\.value\(QStringLiteral\("dropOutlinePreview"\)\) != m_loadedScriptValues/);
+        assert.match(module, /if \(!m_loadedInnerGapRawValid \|\| current\.value\(QStringLiteral\("innerGap"\)\) != m_loadedScriptValues/);
+        assert.match(module, /if \(!m_loadedOuterGapRawValid \|\| current\.value\(QStringLiteral\("outerGap"\)\) != m_loadedScriptValues/);
         assert.match(module, /m_loadedScriptValues = \{/);
     });
 
@@ -179,6 +195,8 @@ describe("native KCM static contract", () => {
             ["label_automaticSplitTarget", "automaticSplitTargetCombo"],
             ["label_workspaceMode", "workspaceModeCombo"],
             ["label_shortcutProfile", "shortcutProfileCombo"],
+            ["label_innerGap", "innerGapSpinBox"],
+            ["label_outerGap", "outerGapSpinBox"],
             ["label_BorderColor", "kcfg_BorderColor"],
             ["label_BorderWidth", "kcfg_BorderWidth"],
             ["label_BorderRadius", "kcfg_BorderRadius"],

@@ -184,11 +184,10 @@
 - The active-border effect does handle a KWin reconfigure call: it rereads its
   configuration and updates the outline and border at
   `kwin/native-effect/activewindowborder.cpp:45-50`.
-- The KCM writes five script settings to `kwinrc`:
-  `kwin/native-effect/activeborderconfig_module.cpp:416-501`. Production reads
-  only `shortcutProfile`, once during startup, and registers its shortcuts once:
-  `kwin/src/plan-adapter-entry.ts:247-270,757-809`. No production script source
-  subscribes to a configuration-change or reconfigure signal.
+- The KCM writes seven script settings to `kwinrc`, including bounded
+  `innerGap` and `outerGap` values. Production reads `shortcutProfile`,
+  `workspaceMode`, and the gap pair once during startup; no production script
+  source subscribes to a configuration-change or reconfigure signal.
 - KCM Apply queues an unacknowledged KWin `reconfigure` call:
   `kwin/native-effect/activeborderconfig_module.cpp:128-136,514-523`.
   This matches `docs/decisions.md:123-128`: a session restart is required before
@@ -199,10 +198,10 @@
   recorded-postimage drift when opened: `kwin/native-effect/activeborderconfig_module.cpp:376-414`.
   No running-script watcher reconciles externally changed shortcuts or `kwinrc`.
 - Expected failure: hand-edited `kwinrc`, externally changed script settings, or
-  a KCM shortcut-profile change can leave the already running script using its
-  startup profile and existing shortcut registrations. KCM's queued reconfigure
-  provides no acknowledged script reload. Border settings are the only confirmed
-  reconfigure-aware configuration path.
+  a KCM change can leave the already running script using its startup values,
+  including its gap pair and existing shortcut registrations. KCM's queued
+  reconfigure provides no acknowledged script reload. Border settings are the
+  only confirmed reconfigure-aware configuration path.
 
 ## Proposed Slices
 
