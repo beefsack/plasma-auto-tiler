@@ -840,6 +840,7 @@ dev-status:
 # Optional `verbose` arg enables Planner full request/reply logging to its own log file:
 # `just dev verbose` (or `PLASMA_AUTO_TILER_PLANNER_VERBOSE=1 just dev` via env passthrough).
 # Foreground full-solution dev session: build all components, refuse unless DOWN, run dev-on, tail logs, and tear down on exit/Ctrl-C.
+[continue]
 dev mode="":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -890,6 +891,7 @@ dev mode="":
     # From here the session is UP via this command, so arm receipt-bound
     # teardown for exit/Ctrl-C before touching logs.
     TEARDOWN_DONE=0
+    INT_RECEIVED=0
     TAIL_PID=""
     JOURNAL_PID=""
     FOLLOW_PID=""
@@ -921,11 +923,14 @@ dev mode="":
           echo "error: just dev: teardown is unverified; do not retry unload. Recover with logout/login." >&2
           exit "$OFF_RC"
         fi
+        if [[ "${INT_RECEIVED:-0}" -eq 1 && "$rc" -eq 130 ]]; then
+          rc=0
+        fi
       fi
       exit "$rc"
     }
     trap dev_cleanup EXIT
-    trap 'exit 130' INT
+    trap 'INT_RECEIVED=1; exit 130' INT
     trap 'exit 143' TERM
     [[ -f "$STATE_DIR/planner-log" ]] || { echo "error: just dev: missing planner log pointer ($STATE_DIR/planner-log)" >&2; exit 1; }
     PLANNER_LOG="$(cat "$STATE_DIR/planner-log")"

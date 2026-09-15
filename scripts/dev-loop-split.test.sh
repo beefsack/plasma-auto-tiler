@@ -895,7 +895,7 @@ assert_calls_missing "start-test start" "dev native fail no start"
 assert_calls_missing "tail " "dev native fail no tail"
 assert_calls_missing "journalctl " "dev native fail no journal"
 
-# dev: Ctrl-C during streaming tears down via dev-off with exit 130.
+# dev: Ctrl-C during streaming tears down via dev-off with exit 0.
 reset_state
 set_controller false
 sleep 300 &
@@ -933,7 +933,7 @@ else
   wait "$JUST_PID" 2>/dev/null
   EXIT=$?
   set -e
-  check_exit 130 "dev SIGINT exit"
+  check_exit 0 "dev SIGINT exit"
   assert_calls_contain "start-test stop 7" "dev SIGINT teardown stop"
   assert_calls_contain "dogfood enable" "dev SIGINT teardown enable"
   if [[ ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-log" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-planner-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-kwin-stream" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev SIGINT stream state removed]" >&2; FAIL=$((FAIL + 1)); fi
@@ -941,6 +941,53 @@ fi
 unset FAKE_TAIL_FOLLOW_BLOCK
 kill "$DEV_INT_PID" 2>/dev/null || true
 wait "$DEV_INT_PID" 2>/dev/null || true
+
+# dev: Ctrl-C plus dev-off failure stays nonzero and skips re-enable.
+reset_state
+set_controller false
+touch "$WORK/state/stop-fails"
+sleep 300 &
+DEV_INT_FAIL_PID=$!
+make_planner_proc "$DEV_INT_FAIL_PID" 777003
+printf '%s\n' "$DEV_INT_FAIL_PID" > "$WORK/state/owner-pid"
+export FAKE_TAIL_FOLLOW_BLOCK=1
+: > "$OUTPUT"
+run_just_async dev
+JUST_PID="$JUST_ASYNC_PID"
+READY=0
+for _ in $(seq 1 50); do
+  if grep -Fq "combined log:" "$OUTPUT" 2>/dev/null; then READY=1; break; fi
+  if ! kill -0 "$JUST_PID" 2>/dev/null; then break; fi
+  sleep 0.2
+done
+if [[ "$READY" -ne 1 ]]; then
+  echo "FAIL [dev SIGINT fail setup missing combined log]" >&2
+  cat "$OUTPUT" >&2
+  FAIL=$((FAIL + 1))
+  kill "$JUST_PID" 2>/dev/null || true
+  kill -KILL "$JUST_PID" 2>/dev/null || true
+  set +e; wait "$JUST_PID" 2>/dev/null; set -e
+  EXIT=1
+else
+  kill -INT "$JUST_PID" 2>/dev/null || true
+  kill -INT -- "-$JUST_PID" 2>/dev/null || true
+  set +e
+  N=0
+  while kill -0 "$JUST_PID" 2>/dev/null; do
+    N=$((N + 1))
+    if [[ "$N" -gt 50 ]]; then kill -KILL "$JUST_PID" 2>/dev/null || true; break; fi
+    sleep 0.2
+  done
+  wait "$JUST_PID" 2>/dev/null
+  EXIT=$?
+  set -e
+  check_exit 1 "dev SIGINT teardown-fail exit"
+  assert_calls_contain "start-test stop 7" "dev SIGINT teardown-fail stop"
+  assert_calls_missing "dogfood enable" "dev SIGINT teardown-fail no enable"
+fi
+unset FAKE_TAIL_FOLLOW_BLOCK
+kill "$DEV_INT_FAIL_PID" 2>/dev/null || true
+wait "$DEV_INT_FAIL_PID" 2>/dev/null || true
 
 # dev: an unverifiable teardown stops after the exact receipt-bound attempt.
 reset_state

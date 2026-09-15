@@ -122,8 +122,11 @@ Only meaningful pending or active work is listed.
   offline-proven/live-unproven: client lifetime, exact-three KWin scope, and
   same-unit containment are unproven. Do not add a project-owned client or
   dependency, retry, or cleanup without fresh explicit authorization.
-- P2 | Window-gap configurability | Replace fixed 8px domain gaps with a bounded
-  KCM/native setting and validated KWin `readConfig` binding.
+- P2 | Configurable gaps live acceptance | Native KCM inner/outer gaps and
+  validated startup binding are implemented (defaults 8, bounds 0..64). Script,
+  Rust, native build, and isolated KCM persistence checks pass. User-owned
+  acceptance remains for saved settings and visible gaps after reload/restart.
+  [record](changes/archive/window-gap-configurability.md)
 - P2 | Floor-ratio fallback | Retain it unless qualifying isolated nested proof
   establishes a safe improvement. [change](changes/floor-ratio-feasibility.md)
 - P2 | Integrated Plasma feasibility | Establish a safe structural verdict; the
