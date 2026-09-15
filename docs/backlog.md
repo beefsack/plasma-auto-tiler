@@ -2,14 +2,14 @@
 
 Only meaningful pending or active work is listed.
 
-- P1 | Temporary active-group highlight | Immediate design priority: passive
-  Meta observation is source-feasible through the public native effect signal;
-  host behavior remains unverified. Resolve the narrow C++ input-boundary
-  interpretation, proposed writable effect endpoint, and temporary active-border
-  replacement versus an additional outline. Meta-held visibility is preferred;
-  approximately one second after opening/moving/closing tiling changes is the
-  fallback. Implementation awaits user direction.
-  [brief](changes/active-group-highlight-design.md#material-decision-required)
+- P1 | Temporary active-group highlight | Passive modifier observation is
+  authorized for Meta-held visibility. Keep the active border visible alongside
+  a separate group outline; prefer Rust policy with a minimal native C++ shim.
+  No simple below-window backdrop route was established within current rendering
+  constraints. The bounded writable effect endpoint remains proposed and
+  live-unverified. One-second visibility is an alternative only if Meta-held
+  proves impractical. Implementation awaits user direction.
+  [brief](changes/active-group-highlight-design.md#material-unresolved-choice)
 - P1 | Preserved host residue | Do not search for, enumerate, inspect,
   heuristically identify, modify, or clean unidentified advisory, shadow, or
   nested-test residue. Any recovery needs explicit user authorization and exact

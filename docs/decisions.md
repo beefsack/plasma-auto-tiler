@@ -24,10 +24,14 @@ Historical implementation detail is recoverable in Git history.
 - The outline never clips, reshapes, or changes window textures. Plasma 6.5+
   decoration-driven rounded corners remain the selected corner solution.
 - C++ is limited to platform-required public-API adapters and effects. Manual
-  ownership, threads, custom shaders or GL resources, QPainter, input,
-  clipping, texture changes, and broader scene manipulation are excluded. The
-  sole scene exception is one effect-owned automatic-lifetime
-  `KWin::OutlinedBorderItem`.
+  ownership, threads, custom shaders or GL resources, QPainter, clipping,
+  texture changes, and broader scene manipulation are excluded. Input remains
+  excluded except narrow passive public `EffectsHandler` modifier observation:
+  `I permit the modifier observation.` This authorizes no grabs,
+  interception, filters/spies, private InputRedirection, input consumption, or
+  polling. The scene exception is at most two effect-owned
+  automatic-lifetime `KWin::OutlinedBorderItem`s: one active border plus one
+  temporary group outline.
 
 ## Native Integration Boundary
 
@@ -443,25 +447,58 @@ Historical implementation detail is recoverable in Git history.
 - Grouped/tabbed windows remain deferred pending compositor-owned KWin support
   and a live multi-window Custom Tile stability proof. No tab or stack carrier,
   controls, or bindings are selected.
-- Active-group highlighting is temporary only: it appears for about one second
-  after a relevant tiling opening, moving, or closing change. KWin Script
-  workspace exposes only cursor position (`src/scripting/workspace_wrapper.h:149`
-  / `.cpp:61,148`), so Script alone cannot observe Meta hold; the native public
-  `EffectsHandler::mouseChanged(...)`
-  (`/tmp/opencode/kwin/src/effect/effecthandler.h:914-916`, documented at
-  901-913) can passively observe modifier transitions without any
-  source-observed polling, grab, interception, filter/spy, or input consumption
-  (connections at `/tmp/opencode/kwin/src/effect/effecthandler.cpp:229-236`,
-  snapshot at 207-209; Qt Meta mapping in `/tmp/opencode/kwin/src/xkb.cpp:799-813`;
-  checkout KWin 6.7.3 per `/tmp/opencode/kwin/CMakeLists.txt:5`). Whether the
-  existing Native Active Border exclusion of "input" covers this public passive
-  subscription is explicitly undecided; grabs, interception, and private
-  InputRedirection spy/filter remain excluded. The Meta-held variant is
-  technically feasible only after that narrow governance/boundary choice and is
-  not approved as temporary-only. It does not trigger from focus, resize, or
-  every geometry signal; fullscreen remains suppressed. Detailed membership, rendering,
-  and transport architecture remain proposed in
-  [the implementation brief](changes/active-group-highlight-design.md).
+- Active-group highlighting: Meta-held observation is the user-approved
+  selected lifetime. One-second accepted/applied open/move/close behavior is
+  an alternative fallback only if Meta-held proves unavailable or impractical,
+  never automatic when Meta is not held. `I permit the modifier observation.`
+  This authorizes only passive public `EffectsHandler::mouseChanged(...)`
+  observation (`/tmp/opencode/kwin/src/effect/effecthandler.h:901-916`,
+  emits for modifier-only changes at `.cpp:229-236`; `startMousePolling` is
+  stale documentation and no such API exists; only public `cursorPos` exists,
+  `m_cursor.modifiers` is protected with no public input getter, so no public
+  initial modifiers snapshot is asserted; checkout KWin 6.7.3 per
+  `/tmp/opencode/kwin/CMakeLists.txt:5`, exact commit unverified). It
+  authorizes no grabs, interception, filters/spies, private InputRedirection,
+  input consumption, or polling. KWin Script workspace exposes only cursor position
+  (`src/scripting/workspace_wrapper.h:149` / `.cpp:61,148`), so Script alone
+  cannot observe Meta hold.
+- On a recognized Meta press, show the current valid active immediate group;
+  while held update/clear it on qualifying tiling/focus/domain changes; clear
+  on Meta release. First visibility does not require a tiling mutation. Only
+  if Meta-held proves unavailable or impractical, show about one second after
+  accepted/applied opening, moving, or closing tiling changes only; never
+  automatically when Meta is not held. Focus, resize, and general geometry
+  never start the timer. Qualifying tiling changes during hold update the
+  current visual without starting the timer; focus/domain changes during hold
+  may update or clear valid state but never start a timed flash. Fullscreen
+  hides the group visual while the active border retains its existing
+  fullscreen/state behavior (precedent `activeborderlogic.h:31-37`).
+- Held-before-first-public-signal source limitation / proposed handling (not
+  user-approved): minimal state and no polling. Last modifier state is unknown
+  until the first public `mouseChanged`; do not assume Meta held. The missed
+  held-before-first-signal edge is real and unresolved.
+- Renderer: a separate group outline coexists with the active border via the
+  second `OutlinedBorderItem` above (multiple items technically coexist per
+  `decorationitem.h:110`, `outlinedborderitem.cpp:49-98`). No simple supported
+  backdrop route within selected renderer/C++ restrictions was established;
+  custom scene/rendering would broaden scope, so use the user-permitted
+  second-outline fallback. `Workspacescene`
+  renders background then stacking windows then overlay
+  (`src/scene/workspacescene.cpp:710-763`); `BackgroundEffectItem` is
+  non-rendering (`backgroundeffectitem.h:17-21`); effect overlays are above
+  windows, can cover unrelated windows/panels, and occlusion culls background
+  before it. Below-window custom drawing/scene items needing excluded
+  shader/GL/QPainter/texture or scene-restriction work remain unselected. No
+  broad new scene mechanism is authorized. COSMIC `cosmic-tiling-mod.rs:5459-5535`
+  renders group backdrops through its compositor-owned `BackdropShader`
+  render-element path (checkout/revision unverified; source-content comparison
+  only, no parity claim).
+- Membership, rendering, and transport architecture remain proposed in
+  [the implementation brief](changes/active-group-highlight-design.md). The
+  existing drag oracle proves only a read-only parameterless effect-owned
+  D-Bus endpoint; a bounded writable script-to-effect endpoint with a QString
+  payload remains proposed/live-unverified and unaccepted. Scope is design
+  only: no implementation/live actions; autonomous mode remains off.
 
 ## Nested Placement Affordance
 
