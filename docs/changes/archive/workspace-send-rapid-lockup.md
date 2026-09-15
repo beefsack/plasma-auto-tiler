@@ -70,3 +70,27 @@
   while the first send settles. No live KWin/D-Bus action or current-log reread
   occurred. `3o88jX` still does not identify the original callback cause or
   prove the runtime source version.
+- The current `ZRzA7S` incident is distinct. `w0` planned at lines 64-65, then
+  consumed its mover membership and one geometry fence at 66-70. While its
+  remaining geometry fence was pending, Plan lifecycle dispatched `p5` admit
+  for the moved window at 77-91. The delayed `w0` geometry fence then completed
+  at 85 and failed `stale-revision` at 86; its one `adapter-lost` report is at
+  75-76. The user-observed view on 3 and window on 2 remain the incident fact.
+- The exact-timeout settlement did not run: the flight reached the normal
+  post-write completion path and failed `stale-revision` before its deadline.
+  Its timer was then retired, so there was no pre-ack timeout left to settle.
+- A send now pins its retained source workspace for every post-plan
+  observation, failing closed if that exact desktop disappears. The production
+  entry excludes Plan lifecycle and foreground Plan dispatch while a workspace
+  send is active, and excludes a workspace send while Plan is active. It drops
+  blocked lifecycle work rather than queueing it, then makes one ordinary Plan
+  resync only after a committed send has followed and focused. Terminal send
+  uncertainty remains terminal and never resyncs, replays, or commits.
+- `plan-send-coordination.test.ts` exercises real production entry wiring. On
+  pre-correction source its held-send lifecycle assertion fails with an extra
+  Plan admission. With the correction it holds native echoes, switches live
+  current desktop to the target, proves the accepted ack retains the original
+  source, commits and follows, permits exactly one resync, and completes a
+  subsequent distinct send. It also covers Plan/send busy refusal in both
+  directions, timeout terminal behavior, late callbacks, and same-target
+  refusal. Physical rapid-send and same-target acceptance remain pending.

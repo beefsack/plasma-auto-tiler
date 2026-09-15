@@ -418,6 +418,11 @@ export interface PlanAdapterEnv {
     readonly active: () => object | null;
     readonly subscribe: (kind: PlanSignal, handler: (target?: object) => void) => () => void;
     readonly noteRemoved?: (id: string) => void;
+    // Entry-owned coordination: true while a workspace-send flight is active.
+    // While blocked, lifecycle auto intents are dropped (a single normal
+    // resync after send completes converges) and foreground commands refuse
+    // with the existing busy-refused diagnostic. No queues or coalescing.
+    readonly isSendActive?: () => boolean;
     // Observational active-group refresh after exactly one successful
     // geometry-plan boundary (admit/move/remove/resize `planned-applied`).
     // Synchronous, single call, no retries/polling; must never block
@@ -1022,6 +1027,10 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:focus-refused-invalid-direction`);
             return;
         }
+        if (this.blockedBySend()) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=focus`);
+            return;
+        }
         if (this.inFlight) {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=focus`);
             return;
@@ -1134,6 +1143,10 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:move-refused-invalid-direction`);
             return;
         }
+        if (this.blockedBySend()) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=move`);
+            return;
+        }
         if (this.inFlight) {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=move`);
             return;
@@ -1176,6 +1189,10 @@ export class PlanAdapter {
         }
         if (!isResizeMode(mode)) {
             this.logToken(`${LOG_PREFIX}:resize-refused-invalid-mode`);
+            return;
+        }
+        if (this.blockedBySend()) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=resize`);
             return;
         }
         if (this.inFlight) {
@@ -1224,6 +1241,10 @@ export class PlanAdapter {
     requestFloat(): void {
         if (!this.enabled) {
             this.logToken(`${LOG_PREFIX}:float-refused-disabled`);
+            return;
+        }
+        if (this.blockedBySend()) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-float`);
             return;
         }
         if (this.inFlight) {
@@ -1275,6 +1296,10 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:maximize-refused-disabled`);
             return;
         }
+        if (this.blockedBySend()) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-maximize`);
+            return;
+        }
         if (this.inFlight) {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-maximize`);
             return;
@@ -1319,6 +1344,10 @@ export class PlanAdapter {
     requestSticky(): void {
         if (!this.enabled) {
             this.logToken(`${LOG_PREFIX}:sticky-refused-disabled`);
+            return;
+        }
+        if (this.blockedBySend()) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-sticky`);
             return;
         }
         if (this.inFlight) {
@@ -1415,6 +1444,10 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:pointer-refused-boundary`);
             return false;
         }
+        if (this.blockedBySend()) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=pointer-resize`);
+            return false;
+        }
         const observed = this.freshObserved();
         if (observed === null) {
             this.logToken(`${LOG_PREFIX}:pointer-refused-observe`);
@@ -1497,6 +1530,19 @@ export class PlanAdapter {
         return observed as PlanObserved;
     }
 
+    private blockedBySend(): boolean {
+        try {
+            const fn = this.env.isSendActive;
+            if (typeof fn !== "function") {
+                return false;
+            }
+            return fn() === true;
+        } catch (error) {
+            void error;
+            return true;
+        }
+    }
+
     private onSignal(kind?: PlanSignal, target?: object): void {
         if (!this.enabled) {
             return;
@@ -1551,6 +1597,10 @@ export class PlanAdapter {
 
     private refreshNow(): void {
         if (!this.enabled) {
+            return;
+        }
+        if (this.blockedBySend()) {
+            this.deferredAuto = null;
             return;
         }
         let fresh = this.freshObserved();
@@ -1896,6 +1946,9 @@ export class PlanAdapter {
 
     private dispatch(intent: AutoIntent): void {
         if (!this.enabled || this.inFlight) {
+            return;
+        }
+        if (this.blockedBySend()) {
             return;
         }
         if (intent.workAreaReprojection === true) {

@@ -414,6 +414,7 @@ export function observeSendTarget(
     cache: Map<string, string>,
     targetWorkspace: string,
     floatingIds: ReadonlySet<string>,
+    pinnedSourceWorkspace?: string,
 ): WorkspaceSendObserved | null {
     try {
         if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
@@ -451,29 +452,51 @@ export function observeSendTarget(
             return null;
         }
         const sourceOutput = outputNameRaw as string;
-        const currentFn = readProp(surface, "currentDesktopForScreen");
-        if (typeof currentFn !== "function") {
-            return null;
-        }
-        let sourceDesktop: unknown = undefined;
-        try {
-            sourceDesktop = Reflect.apply(currentFn as (...args: ReadonlyArray<never>) => unknown, surface, [outputRef]);
-        } catch (error) {
-            void error;
-            return null;
-        }
-        if (typeof sourceDesktop !== "object" || sourceDesktop === null) {
-            return null;
-        }
-        const sourceDesktopRef = sourceDesktop as object;
-        const sourceIdRaw = readProp(sourceDesktopRef, "id");
-        if (!isOpaqueId(sourceIdRaw)) {
-            return null;
-        }
-        const sourceWorkspace = sourceIdRaw as string;
         const desktops = decodeList(readProp(surface, "desktops"), MAX_DESKTOPS);
         if (desktops === null || desktops.length === 0) {
             return null;
+        }
+        let sourceDesktopRef: object | null = null;
+        let sourceWorkspace = "";
+        if (pinnedSourceWorkspace !== undefined) {
+            if (!isOpaqueId(pinnedSourceWorkspace)) {
+                return null;
+            }
+            for (const item of desktops) {
+                if (typeof item !== "object" || item === null) {
+                    continue;
+                }
+                const desktop = item as object;
+                if (readProp(desktop, "id") === pinnedSourceWorkspace) {
+                    sourceDesktopRef = desktop;
+                    sourceWorkspace = pinnedSourceWorkspace;
+                    break;
+                }
+            }
+            if (sourceDesktopRef === null) {
+                return null;
+            }
+        } else {
+            const currentFn = readProp(surface, "currentDesktopForScreen");
+            if (typeof currentFn !== "function") {
+                return null;
+            }
+            let sourceDesktop: unknown = undefined;
+            try {
+                sourceDesktop = Reflect.apply(currentFn as (...args: ReadonlyArray<never>) => unknown, surface, [outputRef]);
+            } catch (error) {
+                void error;
+                return null;
+            }
+            if (typeof sourceDesktop !== "object" || sourceDesktop === null) {
+                return null;
+            }
+            sourceDesktopRef = sourceDesktop as object;
+            const sourceIdRaw = readProp(sourceDesktopRef, "id");
+            if (!isOpaqueId(sourceIdRaw)) {
+                return null;
+            }
+            sourceWorkspace = sourceIdRaw as string;
         }
         let targetDesktopRef: object | null = null;
         let targetExists = false;
@@ -486,6 +509,9 @@ export function observeSendTarget(
                 targetDesktopRef = desktop;
                 targetExists = true;
             }
+        }
+        if (sourceDesktopRef === null) {
+            return null;
         }
         const sourceBounds = readWorkAreaFor(surface, outputRef, sourceDesktopRef);
         if (sourceBounds === null) {
@@ -1390,10 +1416,16 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // Entry-owned highlight refresh edge: set once the highlight bridge
     // starts, invoked exactly once per successful geometry-plan boundary.
     let highlightRefresh: (() => void) | null = null;
+    // Entry-owned cross-flight guard: the send adapter is created below, so
+    // the Plan guard reads through this mutable slot. While a send flight is
+    // active, Plan dispatches are blocked and auto intents are dropped; a
+    // single normal resync after send commit converges.
+    let workspaceSendRef: import("./workspace-send-adapter").WorkspaceSendAdapter | null = null;
     const adapter = new PlanAdapter({
         callDbus,
         scheduleOnce,
         log,
+        isSendActive: () => workspaceSendRef !== null && workspaceSendRef.isInFlight,
         onPlannedApplied: () => {
             try {
                 highlightRefresh?.();
@@ -1680,7 +1712,15 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         callDbus,
         scheduleOnce,
         log,
-        observe: (targetWorkspace) => observeSendTarget(liveWorkspace, sendNativeIds, targetWorkspace, floatingIds),
+        observe: (targetWorkspace, pinnedSourceWorkspace?) =>
+            observeSendTarget(liveWorkspace, sendNativeIds, targetWorkspace, floatingIds, pinnedSourceWorkspace),
+        onCommitted: () => {
+            try {
+                adapter.requestResync();
+            } catch (error) {
+                void error;
+            }
+        },
         setGeometry: (target, rect) => {
             try {
                 Reflect.set(target, "frameGeometry", {
@@ -1794,6 +1834,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // Thereafter a terminal disable (pending mismatch, owner loss, refusal,
     // or reset correlation sequence) stays fail-closed. No normal workspace
     // shortcut may restore it.
+    workspaceSendRef = workspaceSend;
     try {
         workspaceSend.enable({ owner: overrides.owner, generation: overrides.generation });
     } catch (error) {
@@ -1818,7 +1859,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 9) {
                 return;
             }
-            if (!workspaceSend.isEnabled || workspaceSend.isInFlight) {
+            if (!workspaceSend.isEnabled || workspaceSend.isInFlight || adapter.isInFlight) {
                 try {
                     log("plasma-auto-tiler:plan:busy-refused kind=workspace-move");
                 } catch (error) {
@@ -1831,7 +1872,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             if (target === null) {
                 return;
             }
-            if (!workspaceSend.isEnabled || workspaceSend.isInFlight) {
+            if (!workspaceSend.isEnabled || workspaceSend.isInFlight || adapter.isInFlight) {
                 try {
                     log("plasma-auto-tiler:plan:busy-refused kind=workspace-move");
                 } catch (error) {

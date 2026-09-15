@@ -224,6 +224,7 @@ function observeNative(
     liveWorkspace: unknown,
     cache: Map<string, string>,
     targetWorkspace: string,
+    pinnedSourceWorkspace?: string,
 ): WorkspaceSendObserved | null {
     try {
         if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
@@ -261,30 +262,54 @@ function observeNative(
             return null;
         }
         const sourceOutput = outputNameRaw as string;
-        const currentFn = readProp(surface, "currentDesktopForScreen");
-        if (typeof currentFn !== "function") {
-            return null;
-        }
-        let sourceDesktop: unknown = undefined;
-        try {
-            sourceDesktop = Reflect.apply(currentFn as (...args: ReadonlyArray<never>) => unknown, surface, [outputRef]);
-        } catch (error) {
-            void error;
-            return null;
-        }
-        if (typeof sourceDesktop !== "object" || sourceDesktop === null) {
-            return null;
-        }
-        const sourceDesktopRef = sourceDesktop as object;
-        const sourceWorkspace = readDesktopId(sourceDesktopRef);
-        if (sourceWorkspace === null) {
-            return null;
-        }
         // All VirtualDesktops (global in KWin): desktop count, target
         // existence, and the target desktop ref are derived from this list.
+        // The retained exact source is resolved from this list when pinned;
+        // otherwise the live current desktop is used for the initial request.
         const desktops = decodeList(readProp(surface, "desktops"), MAX_DESKTOPS);
         if (desktops === null || desktops.length === 0) {
             return null;
+        }
+        let sourceDesktopRef: object | null = null;
+        let sourceWorkspace: string | null = null;
+        if (pinnedSourceWorkspace !== undefined) {
+            if (!isOpaqueId(pinnedSourceWorkspace)) {
+                return null;
+            }
+            for (const item of desktops) {
+                if (typeof item !== "object" || item === null) {
+                    continue;
+                }
+                const desktop = item as object;
+                if (readDesktopId(desktop) === pinnedSourceWorkspace) {
+                    sourceDesktopRef = desktop;
+                    sourceWorkspace = pinnedSourceWorkspace;
+                    break;
+                }
+            }
+            if (sourceDesktopRef === null || sourceWorkspace === null) {
+                return null;
+            }
+        } else {
+            const currentFn = readProp(surface, "currentDesktopForScreen");
+            if (typeof currentFn !== "function") {
+                return null;
+            }
+            let sourceDesktop: unknown = undefined;
+            try {
+                sourceDesktop = Reflect.apply(currentFn as (...args: ReadonlyArray<never>) => unknown, surface, [outputRef]);
+            } catch (error) {
+                void error;
+                return null;
+            }
+            if (typeof sourceDesktop !== "object" || sourceDesktop === null) {
+                return null;
+            }
+            sourceDesktopRef = sourceDesktop as object;
+            sourceWorkspace = readDesktopId(sourceDesktopRef);
+            if (sourceWorkspace === null) {
+                return null;
+            }
         }
         let targetDesktopRef: object | null = null;
         let targetExists = false;
@@ -548,7 +573,8 @@ export function startWorkspaceSendAdapterEntry(
         callDbus,
         scheduleOnce,
         log,
-        observe: (targetWorkspace) => observeNative(liveWorkspace, nativeIds, targetWorkspace),
+        observe: (targetWorkspace, pinnedSourceWorkspace?) =>
+            observeNative(liveWorkspace, nativeIds, targetWorkspace, pinnedSourceWorkspace),
         setGeometry: (target, rect) => {
             try {
                 Reflect.set(target, "frameGeometry", {

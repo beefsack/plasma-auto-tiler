@@ -2,12 +2,13 @@
 
 Only meaningful pending or active work is listed.
 
-- P0 | Rapid workspace-send lockup live gate | Static completion settles a
-  planned pre-ack timeout only after one exact fresh post-observation, then
-  follows the original ack/verify route. User must manually test rapid 3->2->1,
-  then same-target refusal followed by a distinct send; the busy second command
-  may be declined and is not queued or claimed executed. Follow/focus and later
-  usability remain live-unproven; border causation remains unestablished.
+- P0 | Rapid workspace-send physical acceptance | ZRzA7S showed an accepted
+  3->2 send fenced native writes while Plan lifecycle re-admitted its mover,
+  advancing the shared target session before the send completed. The correction
+  pins the send source scope and excludes overlapping Plan/send flights; offline
+  production-entry regression passes. User must verify rapid 3->2->1 and a
+  same-target refusal followed by a distinct send, including follow/focus and
+  later usability.
   [record](changes/archive/workspace-send-rapid-lockup.md)
 - P1 | Remaining workspace-send uncertainty recovery | Proven pre-dispatch and
   well-formed request rejection paths are reusable. Sent request/lost callback,

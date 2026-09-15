@@ -164,7 +164,12 @@ export interface WorkspaceSendAdapterEnv {
     ) => void;
     readonly scheduleOnce: (delayMs: number, callback: () => void) => () => void;
     readonly log: (message: string) => void;
-    readonly observe: (targetWorkspace: string) => WorkspaceSendObserved | null;
+    readonly observe: (targetWorkspace: string, pinnedSourceWorkspace?: string) => WorkspaceSendObserved | null;
+    // Settlement edge for entry-owned coordination: invoked exactly once
+    // after a committed send no longer blocks Plan and after follow/focus
+    // ordering. Never invoked for pre-dispatch clean recovery or uncertain
+    // terminal divergence.
+    readonly onCommitted?: () => void;
     readonly setGeometry: (target: object, rect: WorkspaceSendRect) => boolean;
     readonly setDesktops: (target: object, refs: ReadonlyArray<object>) => boolean;
     readonly switchToTarget?: (desktopRef: object) => boolean;
@@ -858,10 +863,10 @@ export class WorkspaceSendAdapter {
         return this.inFlight;
     }
 
-    private freshObserved(targetWorkspace: string): WorkspaceSendObserved | null {
+    private freshObserved(targetWorkspace: string, pinnedSourceWorkspace?: string): WorkspaceSendObserved | null {
         let observed: WorkspaceSendObserved | null = null;
         try {
-            observed = this.env.observe(targetWorkspace);
+            observed = this.env.observe(targetWorkspace, pinnedSourceWorkspace);
         } catch (error) {
             void error;
             observed = null;
@@ -1411,7 +1416,7 @@ export class WorkspaceSendAdapter {
             this.failFlight(flight, correlation, "stale-scope");
             return;
         }
-        const fresh = this.freshObserved(pending.targetWorkspace);
+        const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
         if (fresh === null) {
             this.failFlight(flight, correlation, "stale-revision");
             return;
@@ -1639,7 +1644,7 @@ export class WorkspaceSendAdapter {
         // memberships, and the source/target domains, bounds, and target ref
         // still matching the captured scope. Any mismatch is terminal without
         // a verify commit.
-        const verified = this.freshObserved(pending.targetWorkspace);
+        const verified = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
         if (verified === null) {
             this.failFlight(flight, correlation, "stale-revision");
             return;
@@ -1908,7 +1913,7 @@ export class WorkspaceSendAdapter {
         // observation and rerun the strict post-observation binding so stale
         // data never reaches a verify. Any mismatch fails closed with one
         // best-effort adapter-lost report.
-        const fresh = this.freshObserved(pending.targetWorkspace);
+        const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
         if (fresh === null || pending.planned === null) {
             this.failFlight(flight, correlation, "stale-revision");
             return;
@@ -1998,6 +2003,11 @@ export class WorkspaceSendAdapter {
         this.activationStep = 0;
         this.activeDeadline = 0;
         this.clearEcho();
+        try {
+            this.env.onCommitted?.();
+        } catch (error) {
+            void error;
+        }
     }
 
     // Legacy follow after a fully committed send: switch to the Rust-planned
@@ -2024,7 +2034,7 @@ export class WorkspaceSendAdapter {
         if (typeof switchToTarget !== "function" || typeof focusWindow !== "function") {
             return;
         }
-        const fresh = this.freshObserved(pending.targetWorkspace);
+        const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
         if (fresh === null) {
             return;
         }
@@ -2160,7 +2170,7 @@ export class WorkspaceSendAdapter {
             isUniqueOwner(this.pinnedOwner)
         ) {
             const planned = pending.planned;
-            const fresh = this.freshObserved(pending.targetWorkspace);
+            const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
             if (fresh !== null && this.verifyPlannedPost(planned, pending, fresh) === "") {
                 this.clearEcho();
                 pending.verifiedObserved = fresh;
