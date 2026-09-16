@@ -2,15 +2,16 @@
 
 Only meaningful pending or active work is listed.
 
-- P0 | Workspace-send visible-follow failure (parked by user) | pJOooO has two
-  completed sends, then w2 fails exact timeout settlement with
-  geometry-rect-mismatch at geometry index 1; that entry also retains its echo
-  fence. The native cause of the unfulfilled geometry remains unknown. Earlier
-  committed/readback-confirmed visible failures remain unresolved too. Resume
-  only when the user returns to this issue; border causation is unconfirmed.
+- P0 | Workspace-send reliability (next dogfooding blocker) | Resume diagnosis
+  with WwQ9G6: 19 committed sends, then w19 reports adapter-lost/diverged before
+  commit, without timeout-settle. Identify its actual failure path rather than
+  assuming the earlier pJOooO geometry-index-1 timeout mismatch. Restore visible
+  follow/focus and continued usability. Earlier committed/readback-confirmed
+  visible failures also remain unresolved; border causation is unconfirmed.
   [timeout record](changes/archive/workspace-send-timeout-observation.md)
   [earlier record](changes/archive/workspace-send-visible-follow-boundary.md)
-- P1 | Remaining workspace-send uncertainty recovery (parked with send issue) |
+- P1 | Remaining workspace-send uncertainty recovery | Diagnose ordinary send
+  defects first; any new recovery semantics remain a separate product decision.
   Proven pre-dispatch and well-formed request rejection paths are reusable. Sent request/lost callback,
   malformed reply, request timeout, owner loss, and other transport ambiguity
   can leave Rust pending; partial native mutation plus ack/verify timeout can
@@ -61,7 +62,7 @@ Only meaningful pending or active work is listed.
   in-memory session from current windows using near-layout fitting with normal
   tiling fallback. Never replay interrupted commands or accept stale replies.
   Implementation and live acceptance remain pending; uncertain-send recovery
-  stays separate and parked.
+  remains a separate, unselected protocol change.
   [investigation](changes/reliability-condition-investigation.md)
 - P1 | All settings live application (launch blocker) | Before launch, every
   user-facing setting must apply live, including tiling, workspace, shortcut,
