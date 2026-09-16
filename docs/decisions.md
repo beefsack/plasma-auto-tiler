@@ -104,11 +104,20 @@ Historical implementation detail is recoverable in Git history.
   so the default has no idle Planner process cost and does not change the
   public `engineAuthorityMode=legacy` default. Set it false to omit both the
   descriptor package and user unit.
-- The unit uses `Restart=no`: Planner name loss remains terminal and cannot
-  form a systemd restart/rebind loop across a pending KWin transaction. A
-  subsequent idle command may request a fresh D-Bus activation. User-manager
-  session teardown stops the service; D-Bus connection/name loss also ends the
-  Planner without durable recovery state.
+- The unit uses `Restart=no`: Planner name loss terminates the old Planner
+  session and any in-flight KWin transaction, and cannot form a systemd
+  restart/rebind loop. A subsequent idle command may request a fresh D-Bus
+  activation. User-manager session teardown stops the service; D-Bus
+  connection/name loss also ends the Planner without durable recovery state.
+- Selected 2026-09-16, not implemented: on CONFIRMED Planner loss, establish
+  one bounded fresh Planner session automatically. This on-demand activation is
+  distinct from a systemd restart loop. It starts from current eligible windows
+  only, with no durable layout snapshot or journal and no inference of the old
+  session's internal history. The old in-flight transaction remains terminal;
+  this does not replay interrupted commands, recover uncertain native mutation,
+  apply stale old-session replies, or resolve parked workspace-send partial
+  recovery. If the Planner survives sleep, retain its current in-memory layouts
+  rather than rebuild them.
 - Selected Rust KWin commands first resolve the Planner name. An absent name
   makes one bounded `StartServiceByName(..., 0)` request, accepts only
   `PrimaryOwner` or `AlreadyOwner`, then resolves and pins one unique owner
@@ -149,11 +158,14 @@ Historical implementation detail is recoverable in Git history.
   uncertain-send recovery, general existing-window adoption, or default
   promotion. At INITIAL adoption, it attempts one straightforward deterministic
   near-layout fit; if no valid supported layout results, it uses the existing
-  normal deterministic seed/reflow. It selects no park/unmanaged fallback or
-  activation lifecycle. Existing floating, sticky, fullscreen, maximize, and
-  configured-gap behavior remains authoritative; preserving it at the current
-  eligibility or pure input boundary is implementation work, not an unselected
-  product behavior.
+  normal deterministic seed/reflow. The same attempt is selected for a
+  post-CONFIRMED-loss fresh session only, from CURRENT eligible windows.
+  Fresh-loss fitting may change grouping and does not reconstruct the old
+  topology. It selects no
+  park/unmanaged fallback or broader activation lifecycle. Existing floating,
+  sticky, fullscreen, maximize, and configured-gap behavior remains
+  authoritative; preserving it at the current eligibility or pure input boundary
+  is implementation work, not an unselected product behavior.
 
 ## Live KWin/Plasma Boundary
 

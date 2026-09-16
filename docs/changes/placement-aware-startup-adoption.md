@@ -14,7 +14,10 @@
 - At INITIAL adoption, attempt one straightforward deterministic near-layout
   fit. If it cannot produce a valid supported layout, use the existing normal
   deterministic seed/reflow. This keeps the existing managed lifecycle; it
-  selects no park/unmanaged fallback or activation lifecycle.
+  selects no park/unmanaged fallback or broader activation lifecycle. The same
+  fit is selected for a post-CONFIRMED-Planner-loss fresh session only, from
+  CURRENT eligible windows; it may change grouping and does not reconstruct the
+  prior topology.
 
 ## Current Behavior And Boundary
 
@@ -30,8 +33,10 @@
   (`src/planner_protocol.rs:808-836`). A good pre-existing layout is therefore
   reprojected.
 - This proposal applies only when there is no usable retained session for the
-  first startup domain. It does not change a pending acknowledgement,
-  post-observation verification, divergence, or transaction-recovery path.
+  first startup domain, or for the selected post-CONFIRMED-Planner-loss fresh
+  session from CURRENT eligible windows. It does not change a pending
+  acknowledgement, post-observation verification, divergence, or
+  transaction-recovery path.
 - Rust owns topology and policy; KWin remains a thin observer/actuator using
   direct geometry (`docs/decisions.md:403-408`). Candidate construction,
   fitting, and selection therefore belong in Rust, with TS sending only the
@@ -100,13 +105,13 @@
 
 ## Implementation Work Still Needed
 
-- Implement the selected INITIAL near-layout fit and use the existing normal
-  deterministic seed/reflow whenever it cannot produce a valid supported
-  layout.
+- Implement the selected INITIAL and post-CONFIRMED-Planner-loss fresh-session
+  near-layout fit, using the existing normal deterministic seed/reflow whenever
+  it cannot produce a valid supported layout.
 - Preserve the existing floating, sticky, fullscreen, maximize, and configured
   gap behavior while connecting the fit to the current eligibility/pure input
   boundary. This does not authorize transaction recovery, retained-tree
-  reconstruction, workspace work, or a new activation lifecycle.
+  reconstruction, workspace work, or a broader activation lifecycle.
 
 ## Backlog Maintenance Finding
 

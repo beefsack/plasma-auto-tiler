@@ -56,8 +56,12 @@ Only meaningful pending or active work is listed.
   existing domain through resolution, scaling, and work-area changes without the
   client-drift park policy. User must run the exact gate, including fullscreen
   isolation and restoration. [investigation](changes/reliability-condition-investigation.md)
-- P1 | Wake transport recovery | Select and gate bounded Planner/KWin recovery
-  across suspend, wake, and Planner-name loss.
+- P1 | Wake transport recovery implementation | Retain layouts if the Planner
+  survives sleep. After confirmed Planner loss, automatically establish a fresh
+  in-memory session from current windows using near-layout fitting with normal
+  tiling fallback. Never replay interrupted commands or accept stale replies.
+  Implementation and live acceptance remain pending; uncertain-send recovery
+  stays separate and parked.
   [investigation](changes/reliability-condition-investigation.md)
 - P1 | All settings live application (launch blocker) | Before launch, every
   user-facing setting must apply live, including tiling, workspace, shortcut,
