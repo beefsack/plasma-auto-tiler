@@ -306,3 +306,52 @@
   perceived failure, retains the existing verbose log through that flight's
   terminal outcome, and traces the workspace-5 mover rather than the
   workspace-4 peer.
+
+## Retained-Window Client Trace Follow-Up
+
+- Evidence: `/run/user/1000/plasma-auto-tiler-dev.UDmtET.log` and
+  `/tmp/opencode/ghostty-wayland-sibFLh.log`, with the user's workspace-2
+  retained-terminal and workspace-4 mover reproduction.
+- The user identifies the authorized isolated Ghostty trace as the retained
+  target terminal, not the mover. That manual process/window attribution is
+  retained. The trace itself has no machine-checkable KWin native-window binding
+  or shared clock with the combined log, so it independently establishes only
+  that retained client's configure, acknowledgement, and buffer-commit progress,
+  not KWin frame placement or the mover state.
+- The combined-log timeout's exact first verifier failure is
+  `geometry-rect-mismatch` at plan geometry index 1, role `mover`: the fresh
+  observation still had the mover's pre-send full-height rectangle instead of
+  its planned half-tile rectangle. Membership predicates were not evaluated:
+  the verifier returns at the first geometry mismatch before its mover and
+  retained membership branches. The earlier dispatch diagnostic saying the mover
+  was outside the target is a frozen pre-write basis, not a post-write failure.
+- `plan-echo consumed` means only that the subscribed mover-desktop signal fired
+  and its one-shot fence was detached. `plan-geometry consumed` for index 0
+  similarly means the retained target's geometry signal fired and its fence was
+  removed. Neither event compares a rectangle or membership. Index 1 remained
+  pending at timeout, so `completePostWrite` never performed the normal fresh
+  exact geometry-and-membership verification before acknowledgement.
+- `desktop-mismatch` is emitted by the separate Plan admission observer, not by
+  the send verifier. It means the window was not on that observer's selected
+  desktop, so it is compatible with the mover leaving the desktop where the user
+  remained; it does not establish a send membership failure. That observer uses
+  desktop-wrapper equality and can fail closed if KWin re-wraps a desktop, but
+  this flight's fresh send observation still contained the mover and failed first
+  on its rectangle, not absence or identity. Native ids are normalized and
+  interned, fresh observations rebuild reference maps, and retained snapshots
+  contain primitive state. No static aliasing, active-desktop filtering,
+  generation, or synchronous-callback defect is established by this record.
+- KWin v6.7.4 source routes `frameGeometry` through `moveResize`; its scripting
+  surface does not promise synchronous or one-per-write geometry signals, an
+  atomic geometry-plus-membership transaction, or a membership-before-geometry
+  ordering. The current geometry, membership, exact observation, acknowledgement,
+  then follow ordering is the current implementation. This source evidence alone
+  does not establish that changing native-write order would fix the mismatch;
+  an extra post-membership write would introduce a retry. The remaining causal
+  fact is why the mover's accepted JavaScript property assignment did not reach
+  the planned KWin frame geometry during
+  this flight: the existing record distinguishes that state from the retained
+  client's progress, but not deferred/coalesced native delivery, a native
+  constraint, or another compositor-side cause. No production correction is
+  supported; exact verification, commit-before-follow, and terminal uncertainty
+  policy remain unchanged.

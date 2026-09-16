@@ -2,14 +2,20 @@
 
 Only meaningful pending or active work is listed.
 
-- P0 | Workspace-send reliability (next dogfooding blocker) | User paused live
-  reproductions. API-alignment corrections are implemented in active production:
+- P0 | Workspace-send reliability (next dogfooding blocker) | UDmtET's timeout
+  first fails on mover geometry at plan index 1: observed pre-send full height
+  instead of the planned half-tile. Membership verification was not reached.
+  User-attributed retained Ghostty trace shows configure/ack/buffer progress;
+  it cannot establish the untraced mover's resize path or timing of the preview.
+  No static identity, observation, or callback defect was demonstrated. Further
+  causal evidence needs the mover's native configure/commit path; no additional
+  live test is selected. API-alignment corrections are implemented in production:
   geometry/desktop assignment results propagate, shared Plan observes
   frameGeometryChanged, and follow confirms focus by native-id readback.
   NameHasOwner supplies an explicit absence check before activation with flags
   0 and fresh unique-owner pinning; no activation policy decision remains.
   Typecheck, 692 offline tests, and bundle build pass, including production-entry
-  contract coverage. Historical native geometry failure and rendered follow remain
+  contract coverage. Native geometry failure and rendered follow remain
   unresolved; no live repair is claimed. qc1FSb rapid-send
   capture has 201 committed/state-confirmed flights and 64 uncorrelated busy
   refusals, with continued same-instance usability and no terminal geometry
