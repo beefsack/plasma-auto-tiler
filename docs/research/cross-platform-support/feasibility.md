@@ -6,12 +6,14 @@ a settings toolkit, package formats, or native implementation work.
 
 ## Scope And Evidence
 
-This review uses the current KWin product boundary in `docs/decisions.md`,
-the product requirements in `VISION.md`, and the portable-core boundary in
-`changes/archive/shared-rust-core-architecture.md`. The baseline is not a
+This review uses the current KWin product boundary in
+[`docs/decisions.md`](../../decisions.md), the product requirements in
+[`VISION.md`](../../../VISION.md), and the portable-core boundary in
+[`shared-rust-core-architecture.md`](../../changes/archive/shared-rust-core-architecture.md).
+The baseline is not a
 claim of complete KWin runtime parity: active-group rendering and several
 live gates remain pending, and all user-facing settings must apply live before
-launch (`docs/backlog.md`).
+launch ([`docs/backlog.md`](../../backlog.md)).
 
 Classifications used below:
 
@@ -32,13 +34,14 @@ range only; a future port must pin exact supported Shell and Mutter releases.
 
 ### Can all features be fully supported?
 
-No. A useful tiler can support normal, user-session desktop windows on all
-three targets, but literal parity with the KWin baseline is not supportable on
-public APIs:
+Not on a native-workspace-only public-API path. A useful tiler can support
+normal, user-session desktop windows on all three targets, but literal parity
+with the KWin baseline is not established by the public native-workspace APIs:
 
-- Windows has event and geometry APIs, but foreground activation is conditional,
-  UIPI blocks lower-integrity control, and public virtual-desktop APIs do not
-  enumerate, create, switch, or delete desktops.
+- Windows has event and geometry APIs, but foreground activation is conditional.
+  UIPI documents lower-integrity message and hook restrictions, while exact
+  behavior for individual geometry/read APIs is operation-specific. Its public
+  virtual-desktop API does not enumerate, create, switch, or delete desktops.
 - macOS Accessibility permits best-effort normal-window control after user
   consent, but public APIs do not enumerate or select Spaces or move arbitrary
   windows between them. Some AX attributes and notifications are application
@@ -48,11 +51,12 @@ public APIs:
   release-coupled, its workspaces are global rather than KWin's per-output
   logical sets, and private Shell overview hooks churn.
 
-Therefore "all features" must mean a declared portable subset plus visible
-per-platform capability differences, not exact geometry, workspace, shortcut,
-overlay, focus, or recovery equivalence. Unsupported operations must refuse
-with a reason rather than emulate authority through private APIs, process
-injection, SIP weakening, or hidden-window tricks.
+Therefore "all features" needs two separately evaluated paths: a reduced
+native-workspace subset, or an adapter-owned managed logical-workspace layer.
+The latter can provide more portable commands with documented normal-window
+operations, but does not establish exact host-shell fidelity. Private APIs,
+process injection, and SIP weakening remain outside the public path; managed
+window placement is a distinct unselected alternative, not such a bypass.
 
 ### Most sensible implementation path
 
@@ -66,9 +70,9 @@ The sensible first scope on each host is the public, normal-window subset:
 
 | Host | First practical scope | Deliberately outside that scope |
 | --- | --- | --- |
-| Windows | Win32 desktop windows on the current native virtual desktop; WinEvent observation, DPI-aware `SetWindowPos` projection, explicit non-`Win` fallback shortcuts, and transparent outline windows. | Elevated/system/protected windows, forced foreground focus, internal virtual-desktop COM, and app-owned workspace hiding. |
+| Windows | Win32 desktop windows on the current native virtual desktop; WinEvent observation, DPI-aware `SetWindowPos` projection, explicit non-`Win` fallback shortcuts, and transparent outline windows. | Elevated/system/protected windows, forced foreground focus, and reverse-engineered `IVirtualDesktopManagerInternal`. Managed logical workspaces require their own prototype and decision. |
 | macOS | One currently visible native Space; Accessibility plus AX notifications, normal-window geometry, permission-aware shortcuts, and self-drawn outline panels. | Private CGS/SkyLight APIs, Dock automation, SIP changes, App Store sandbox delivery for a full tiler, and synthetic cross-Space control. |
-| GNOME | Thin, pinned GNOME Shell extension with `Meta.*` actuation and Shell-actor outlines, paired with a separate Rust engine only after a host contract is proven. Use native global workspaces. | An unprivileged external Wayland tiler, private overview/Alt-Tab replacement, and per-output workspace emulation. |
+| GNOME | Thin, pinned GNOME Shell extension with `Meta.*` actuation and Shell-actor outlines, paired with a separate Rust engine only after a host contract is proven. Start from native global workspaces. | An unprivileged external Wayland tiler and private overview/Alt-Tab replacement. A per-output logical mapping is a separate product/prototype choice. |
 
 This is not a mandate to start with one host or to ship any of these scopes.
 It defines the smallest evidence-bearing path if a later user decision selects
@@ -76,27 +80,53 @@ a host.
 
 ### Is a custom workspace implementation or custom panel/overview required?
 
-No, and these are separate decisions.
+Conditionally. A custom model is not required for basic tiling, native workspace
+switching, or active/group outlines. It is a credible candidate if the approved
+cross-platform experience requires portable numbered workspace switching, send,
+and independent-monitor mappings that native Windows/macOS APIs cannot expose.
+That is a product choice, not a hard public-API impossibility under every
+architecture.
 
-- A custom workspace model is not required for normal tiling, native workspace
-  switching, or an active/group outline. Prefer native workspaces where they
-  can represent the selected semantics because task switching, thumbnails,
-  fullscreen transitions, restoration, and crash recovery remain native.
-- A custom model is only a possible response to an approved semantic gap. On
-  Windows it would need unsafe hide/show emulation because public virtual
-  desktops are too narrow. On macOS it would need hide/show or offscreen
-  emulation because Spaces are not publicly controllable. On GNOME it would be
-  needed only to emulate KWin's per-output modes over GNOME's global list.
-  Those routes risk hidden orphan windows after a crash and divergence from
-  Task View/Mission Control/Overview, task switchers, Dock/taskbar, and
-  fullscreen behavior. They are not sensible default substitutes for native
-  workspaces.
-- A custom panel is not required by a custom workspace model, and a custom
-  overview is not required by either. Native taskbar/Dock/overview surfaces can
-  remain the primary user interface. A small native indicator is optional only
-  if a selected capability needs state the host does not show. A full panel or
-  overview replacement is a separate high-churn product with its own
-  accessibility, ordering, hotplug, and packaging work.
+**Native-first proposal, not selected:** use native workspaces wherever their
+semantics are sufficient. Native task switching, thumbnails, fullscreen,
+restoration, and crash recovery then remain host-owned. This is the smaller
+first port, but it cannot supply the full selected KWin workspace modes on
+Windows or macOS.
+
+**Managed logical-workspace alternative, not selected:** retain the engine's
+logical workspace membership and make an adapter reveal only the active set of
+normal windows. It can provide numbered/named workspace selection, send, an
+independent active logical workspace per monitor, persistent empty logical
+sets, and a panel-to-logical-workspace mapping without native workspace
+creation or switching. It does not require a custom overview.
+
+| Host | Documented primitives and observed precedent | Shell and recovery boundary |
+| --- | --- | --- |
+| Windows | `ShowWindow`/`SetWindowPos` can hide/show or minimize/restore normal windows, and place them at adapter-selected coordinates. `DWMWA_CLOAK` is a documented composition attribute, but cross-process use needs a probe. | Taskbar style documentation defines `WS_EX_APPWINDOW`/`WS_EX_TOOLWINDOW`, not a managed-workspace contract for third-party windows. Task View, Alt-Tab, thumbnails, fullscreen, no-focus bulk switching, and post-crash state are prototype questions. |
+| macOS | AX exposes settable position, size, and minimized attributes. `AXMinimized` is Dock minimization; `NSRunningApplication.hide` is app-wide. AeroSpace at the cited source pin instead parks inactive normal windows at a monitor corner through AX frame writes, retaining a one-pixel remainder. | There is no public API to remove still-mapped third-party windows from Command-Tab, Dock, or Mission Control. Offscreen parking is observable precedent, not invisibility or native-Space equivalence. Restore-on-quit/crash and cross-launch rebinding require adapter-owned ownership and recovery choices. |
+| GNOME | A Shell extension already manages a native ordered workspace list. `workspaces-only-on-primary` is a Mutter policy setting, not a requirement to create a custom model. | A per-output logical mapping is possible research scope, not necessary for the existing native policy. It must prove overview, task switcher, dynamic-workspace, and extension-lifecycle behavior before selection. |
+
+Hide, minimize, and offscreen placement are not interchangeable. Hiding changes
+mapped visibility; minimizing deliberately sends a per-window surface to the
+Dock/taskbar model; offscreen placement leaves it mapped but geometrically
+displaced. None is documented as a general third-party workspace protocol.
+Their task-switcher effects, user recovery after a crash, and behavior for
+fullscreen, dialogs, accessibility tools, and app self-restoration are therefore
+**inference/prototype questions**, not reasons to rule the model out.
+
+A managed-workspace prototype should use owned normal test windows only, one
+native Space/desktop, and one then two monitors. It should verify: no focus or
+visibility steal during switching; numbered switch/send and monitor-local
+mapping; taskbar/Dock/Alt-Tab/Overview observations; minimize/hide/offscreen
+distinctions; hotplug; explicit user quit; forced-process-loss recovery; and
+relaunch behavior with and without persisted membership. It would settle a
+bounded viable model, not exact host-shell fidelity.
+
+A custom panel is not required by either workspace alternative. A small native
+indicator can show adapter-owned logical state if selected. A custom overview
+remains separate: it is needed only if an approved journey cannot use the host
+overview/task switcher, and would carry independent accessibility, ordering,
+hotplug, and packaging work.
 
 The later panel-helper research should treat this document as the cross-host
 constraint: do not make a panel helper the workspace authority or a prerequisite
@@ -119,6 +149,38 @@ launch blocker remains KWin work and is not changed here.
 | macOS | A non-sandboxed, Developer ID-signed, hardened-runtime, notarized `.app` in a DMG or PKG, optionally distributed through Homebrew Cask. The Mac App Store sandbox is not a delivery path for the full Accessibility/event-control scope. | Native AppKit/SwiftUI, a shared toolkit, and a web surface remain alternatives. Native permission status and direct Privacy & Security links are required whichever UI is chosen. |
 | GNOME | A version-matched Shell-extension archive through extensions.gnome.org plus distro packages for the extension and any Rust companion. Flatpak can package a companion but cannot grant it Shell authority, so cannot be the extension delivery mechanism. | `Adw.PreferencesWindow` plus GSettings is the native extension route. A shared schema with thin KCM/Adwaita/desktop frontends is the smallest consistency candidate; no global UI framework is selected. |
 
+### Settings And Keybinding Consistency
+
+The current QWidget KCM is a Plasma effect configuration module, not a portable
+settings application. Reusing it unchanged on Windows or macOS is not a
+practical option. The reusable boundary is a shared setting definition,
+validation, defaults, migration rules, capability state, and live-apply result;
+each host still owns permission prompts and native shortcut registration.
+
+| UI approach | Consistency and accessibility | Delivery and maintenance boundary |
+| --- | --- | --- |
+| Keep KCM plus native host fronts | Same concepts and validation, but KCM, Adwaita, AppKit/SwiftUI, and Windows controls follow their host accessibility and settings conventions. | KCM remains the KWin front; GNOME preferences run separately through `Adw.PreferencesWindow` and GSettings; macOS and Windows package their own settings surface. This duplicates presentation, not settings semantics. |
+| Standalone Qt application using existing controls | Potentially closer visual/layout reuse, but the existing KCM is host-bound; embedding its controls outside Plasma is not established. Qt accessibility and permission UX still need each host's acceptance check. | One cross-platform desktop binary adds Windows installer and macOS sign/notarize work while retaining a separate GNOME extension-pref path. It needs a future extraction decision, not a presumed drop-in reuse. |
+| Shared web UI in a host webview | Strong visual reuse and shared form logic, but native accessibility parity, keyboard behavior, theming, and settings-search integration are unproven. A webview does not bypass TCC, GSettings, or extension review constraints. | The host app/extension still owns signing, notarization, permissions, storage, and IPC. It is not a packaging simplification. |
+
+**Proposal, not selected:** retain the KCM for KWin, define the portable
+settings contract before any new adapter, and use native GNOME/macOS/Windows
+fronts for an initial port. Reconsider a standalone Qt or web UI only if exact
+visual sameness outweighs the additional accessibility and host-integration
+validation. This recommends reusable behavior over a prematurely universal
+dialog, not a new framework.
+
+The same action catalog can remain consistent while literal chords differ. A
+future conflict UI should show the requested chord, current host owner, whether
+registration/override is available, and an explicit apply/revert choice. Example
+unselected defaults are `Alt+H/J/K/L` and `Alt+Shift+H/J/K/L` on Windows when a
+`Win` chord cannot register; AeroSpace's observed `Alt` and `Alt+Shift`
+directional families on macOS rather than Command/Control Space-switcher
+chords; and GNOME `Super+H/J/K/L` only when unclaimed, with `Super+Arrow`
+override/restoration explicitly consented. `MOD_WIN` is reserved by Windows,
+macOS reserves Command-Space, Control-Up, and Command-Tab, and GNOME Shell owns
+many Super bindings. The current KWin US-only shortcut decision is unchanged.
+
 ## Feature Matrix
 
 Legend: **P** = practical for the normal-window subset; **L** = limited or
@@ -131,8 +193,8 @@ passed.
 | Enumerate and observe other apps | In-process KWin adapter. | P for desktop top-level windows via `EnumWindows` and WinEvent; UWP framing and protected/system surfaces are limited. | L via AX plus Quartz lists after Accessibility consent; app-specific AX can refuse. | L only in a Shell extension through `Meta.*`; N for an external Wayland client. |
 | Tiling geometry and reflow | Direct geometry adapter, non-atomic. | P with `SetWindowPos`/`DeferWindowPos`; account for DWM visible bounds and DPI. | L with AX position/size setters; no atomic batch and applications can clamp/refuse. | L with `Meta.Window.move_resize_frame`; WM hints and release churn apply. |
 | Focus and directional navigation | Engine policy plus native activation. | L: `SetForegroundWindow` is deliberately restricted. | L: AX raise/focus is per-window best effort. | L: `activate_with_workspace` is available in extension context; no-steal guard remains necessary. |
-| Elevated, sandboxed, system, protected windows | Native eligibility policy. | L: UIPI blocks lower-integrity control; do not elevate the whole tiler as a workaround. | L: AX setters may be non-settable or reject protected/system windows. | L: Shell has authority but shell, lock, parental-control, and special surfaces must be excluded. |
-| Keyboard focus/move/resize | KGlobalAccel catalog with explicit collision handling. | L: `RegisterHotKey` conflicts and many `Win` chords are reserved; low-level interception is a separate consent/risk choice. | L: reserved Command/Space/mission-control chords and Secure Input prevent exact defaults. | L: `Main.wm.addKeybinding` can require explicit GSettings override and reliable restore; `Super` conflicts with shell bindings. |
+| Elevated, sandboxed, system, protected windows | Native eligibility policy. | L: UIPI documents lower-IL message/hook restrictions; method-specific geometry/read behavior needs a probe. UIAccess has signing, secure-location, privilege, and System-IL limits. | L: AX setters may be non-settable or reject protected/system windows. | L: Shell has authority but shell, lock, parental-control, and special surfaces must be excluded. |
+| Keyboard focus/move/resize | KGlobalAccel catalog with explicit collision handling. | L: `RegisterHotKey` typically fails on conflict; `MOD_WIN` and F12 are documented reserved paths. | L: Command-Space, Control-Up, Command-Tab, and Secure Input prevent exact defaults. | L: `Main.wm.addKeybinding` can require explicit GSettings override and reliable restore; `Super` conflicts with shell bindings. |
 | Localized shortcuts and conflict UX | Initial US-only policy; localization deferred. | L: virtual keys need layout-aware display and registration tests. | L: key equivalents and event taps require per-layout validation. | L: XKB keycode/keysym handling and native binding overrides require a per-layout matrix. |
 | Active-window border | Native KWin effect, currently OpenGL-gated. | P for normal windows with a click-through transparent overlay. | L with a nonactivating transparent `NSPanel`; fullscreen-space ordering is not fully documented. | L with non-reactive Shell actors; version-coupled with Shell scene APIs. |
 | Active split-group outline | Engine resolves immediate split-group bounds; KWin native effect renders a separate outline. | L: draw group-union outline overlays, suppress for restricted/fullscreen/minimized targets. | L: draw self-owned outline panels; no below-window compositor route. | L: Shell actors can render outlines, but there is no native group object and z-order must be tested. |
@@ -140,12 +202,13 @@ passed.
 | Float, sticky, maximize, fullscreen | Explicit engine exceptions and isolation. | L for ordinary window state; fullscreen is an app cover state, not compositor authority. | L: AX state availability differs by app; fullscreen detection/actuation is heuristic. | L through `Meta.Window`; use release-pinned maximize APIs and suppress effects for fullscreen. |
 | Pointer drag/resize, cancellation, final geometry | Native drag oracle supplies cancellation. | L: WinEvent move-size lifecycle plus final DWM readback; cancellation is adapter-inferred. | L: AX notifications plus global mouse observation; final/cancel is inferred. | L: grab begin/end plus final rectangle; Wayland may suppress mid-grab notifications. |
 | Output hotplug and work-area/DPI | Session-local domain relocation policy. | P observation through display messages and monitor APIs; monitor handles become invalid on changes. | P observation through display callbacks and screen parameter changes; AX reflow remains best effort. | L via monitor signals/logical monitors; extension must reproject and retest per release. |
-| Native workspace create/switch/send | KWin backing-desktop mapping implements three selected modes. | L: public API identifies/moves windows but lacks desktop enumeration, switch, and lifecycle. | N for cross-Space control on public APIs; only observe active-Space change. | L for a global dynamic workspace list; N for native per-output-local semantics. |
-| Per-output/global/shared modes | Selected KWin modes. | N on public virtual-desktop APIs. | N on public Spaces APIs. | N natively; only global workspaces, with optional app-owned emulation carrying major UX cost. |
-| Hidden-domain and background reflow without steal | Selected and statically proven on KWin. | L: native hidden virtual desktops cannot be fully enumerated; app hiding is unsafe. | N: public Spaces cannot be enumerated/targeted; single-Space scope only. | L for native global workspaces if extension never activates/raises during reconcile. |
+| Native workspace create/switch/send | KWin backing-desktop mapping implements three selected modes. | L: `MoveWindowToDesktop(HWND, desktopId)` has no documented own-process restriction, but public API lacks desktop enumeration, switch, creation, and deletion. | N for native cross-Space control found in public AppKit; active-Space change is observable. | L for a global dynamic workspace list; `workspaces-only-on-primary` is policy/configuration, not an architectural invariant. |
+| Managed logical workspace mapping | Not needed for selected KWin backing-desktop implementation. | L/Observed: hide, minimize, offscreen, and possibly cloak normal windows can implement numbered sets and sends; shell and recovery effects need proof. | L/Observed: AX offscreen-corner placement has AeroSpace precedent; app hide/minimize have distinct semantics. | L/Inference: native global workspaces can remain primary; a per-output mapping is separately prototypeable. |
+| Per-output/global/shared modes | Selected KWin modes. | N natively; L through a managed model if its recovery and shell behavior pass. | N natively; L through an offscreen-managed model if its constraints pass. | N for exact KWin modes natively; L for an unselected logical mapping. |
+| Hidden-domain and background reflow without steal | Selected and statically proven on KWin. | L: public native-desktop lifecycle is incomplete; managed visibility changes can use no-activate forms but need proof. | N for public native Spaces; L/Observed for an active single-Space managed model. | L for native global workspaces if extension never activates/raises during reconcile. |
 | Taskbar/Dock/Alt-Tab/overview | Plasma Pager/Overview remain native; panel helper is optional. | L for native Task View awareness only; no public taskbar/Alt-Tab replacement control. | L for Dock/Command-Tab/Mission Control coexistence; no public Spaces UI control. | L for native Overview/dash; extension overrides are private and high churn. |
-| Settings and live configuration | QWidget KCM owner; live application remains a launch blocker. | P for a host app, subject to selected package/UI. | P for a signed host app with TCC-aware onboarding. | P/L through separate-process extension preferences and GSettings. |
-| Tray/panel | Rust StatusNotifierItem, optional and not core authority. | P for a notification-area/tray companion where available; not workspace authority. | L: menu-bar status item is native, but no taskbar replacement implication. | P/L: `PanelMenu` indicator is extension-owned; no custom panel required. |
+| Settings and live configuration | QWidget KCM owner; live application remains a launch blocker. | P for a host app, subject to selected package/UI. | P for a signed host app with TCC-aware onboarding. | L through separate-process extension preferences and GSettings. |
+| Tray/panel | Rust StatusNotifierItem, optional and not core authority. | P for a notification-area/tray companion where available; not workspace authority. | L: menu-bar status item is native, but no taskbar replacement implication. | L: `PanelMenu` indicator is extension-owned; no custom panel required. |
 
 ## Platform Evidence And Boundaries
 
@@ -160,13 +223,23 @@ the adapter must model the distinction. Per-monitor DPI and monitor-change
 messages are public surfaces.
 
 **Restricted.** `SetForegroundWindow` has documented foreground-lock conditions;
-a failed focus command is divergence, not a retry candidate. UIPI prevents a
-medium-integrity process from controlling higher-integrity windows. `RegisterHotKey`
-fails on conflicts and documents Windows-key reservations. The public
-`IVirtualDesktopManager` exposes current-desktop membership and a move method,
-not the full workspace lifecycle. Treat reverse-engineered
-`IVirtualDesktopManagerInternal` contracts as unsupported even though tilers
-use them.
+a failed focus command is divergence, not a retry candidate. UIPI documents
+lower-privilege message and hook restrictions to higher-privilege processes;
+the `EnumWindows`, `GetWindowRect`, `SetWindowPos`, `ShowWindow`, and
+`SetWinEventHook` method pages do not each specify an IL result, so that behavior
+must be measured per operation. UIAccess is a documented option for accessibility
+software, but requires `uiAccess=true`, a trusted signature, a secure install
+location, and has privilege/System-IL limits; it is not assumed as this product's
+solution. `RegisterHotKey` typically fails on conflicts and documents `MOD_WIN`
+and F12 reservations.
+
+`IVirtualDesktopManager::MoveWindowToDesktop(HWND topLevelWindow, REFGUID
+desktopId)` documents "the window to move" and does not state an own-process
+restriction. It can therefore be researched for normal third-party top-level
+windows subject to actual integrity/HRESULT behavior. The same public interface
+only exposes Get/Is/Move: it lacks desktop enumeration, create, switch, and
+delete. `IVirtualDesktopManagerInternal` remains reverse-engineered and
+unsupported.
 
 **Overlay and packaging.** A layered, transparent, no-activate tool window can
 draw an outline without screen capture. It must hide for exclusive/fullscreen,
@@ -191,10 +264,11 @@ configuration callbacks and `NSScreen` support output/scale observation.
 
 **Restricted.** Accessibility does not force attributes that an application,
 system UI, or protected surface refuses. Secure Event Input stops global keyboard
-observation. Public AppKit only notifies that the active Space changed; it does
-not expose a supported Space selection, lifecycle, or arbitrary window transfer.
-CGS/SkyLight APIs, Dock Mission Control automation, and yabai's SIP-dependent
-scripting addition are outside the public path.
+observation. As of this access date, public AppKit documentation exposes an
+active-Space-change notification but no Space selection, lifecycle, or arbitrary
+window-transfer API was found. CGS/SkyLight APIs, Dock Mission Control
+automation, and yabai's SIP-dependent scripting addition are observed private
+routes outside the public path.
 
 **Overlay and packaging.** A transparent, mouse-ignoring, nonactivating `NSPanel`
 can render vector outlines and needs no Screen Recording permission because it
@@ -203,13 +277,19 @@ behavior are documented, but guaranteed ordering above every fullscreen Space is
 not. Skip fullscreen/minimized targets until an owned-host proof establishes
 safe behavior. Full functionality needs a non-sandboxed Developer ID app with
 Hardened Runtime and notarization; App Store sandboxing conflicts with arbitrary
-window control and synthetic input constraints.
+window control and synthetic input constraints. Accessibility is needed for AX
+control and global `NSEvent` key monitoring; an interception-capable event tap
+has its own Input Monitoring path. Screen Recording belongs only to an actual
+pixel capture/stream feature. `CGWindowList` title/owner-field privacy behavior
+is undocumented, so no fixed permission is claimed for an identity/title-only
+feature.
 
 **Observed comparison.** Rectangle intentionally does not promise cross-Space
-window movement; Amethyst works within native Spaces; AeroSpace emulates
-workspaces by hiding windows; yabai obtains broader control through a
-SIP-dependent scripting addition. These are evidence of the tradeoff, not
-acceptable bypass routes.
+window movement; Amethyst works within native Spaces; AeroSpace implements its
+logical workspaces by AX offscreen-corner placement, not generic app/window
+hiding; yabai obtains broader control through a SIP-dependent scripting addition.
+These are evidence of alternatives and tradeoffs, not an API guarantee or a
+selection.
 
 ### GNOME
 
@@ -228,9 +308,11 @@ be suppressed, so final geometry must be confirmed at grab end. This makes the
 adapter viable but requires a per-major compatibility and performance matrix.
 
 **Workspaces, overlays, and delivery.** GNOME's native workspaces are a global,
-ordered dynamic list, with `workspaces-only-on-primary` behavior rather than
-KWin's three output modes. Shell actors can draw non-reactive active and group
-outlines, but overview, OSD, and actor ordering need host-specific validation.
+ordered dynamic list rather than KWin's three output modes. The
+`workspaces-only-on-primary` setting is a Mutter workspace-display policy, not a
+requirement to create a custom model. Shell actors can draw non-reactive active
+and group outlines, but overview, OSD, and actor ordering need host-specific
+validation.
 The extension should remain thin because heavy GJS work blocks the Shell main
 loop; extensions.gnome.org and distro packages require strict enable/disable
 cleanup and per-version artifacts. A Flatpak companion is portal-limited and
@@ -246,8 +328,8 @@ work. They are comparison sources only.
 | Alternative | Benefits | Costs and boundary | Research assessment |
 | --- | --- | --- | --- |
 | Native workspaces plus native overview/task switcher | Preserves user expectations, taskbar/Dock/Alt-Tab thumbnails, fullscreen, session restore, accessibility, and crash recovery. | Cannot represent every KWin mode on Windows, macOS, or GNOME. | **Preferred proposal** for first host scopes. |
-| Adapter-owned logical mapping over native workspaces | Can expose a portable numbering model where native movement exists. | Windows public APIs cannot fully manage desktops; macOS cannot control Spaces; GNOME mapping fights global workspace assumptions. | Do not choose before a host-specific proof and explicit product decision. |
-| App-owned hide/show or offscreen workspaces | Can synthesize logical sets without native workspace APIs. | Hidden orphan windows after crash, task-switcher/overview/Dock divergence, focus theft, fullscreen/minimize edge cases, and recovery state. | **Not recommended** as a default or a first implementation. |
+| Adapter-owned logical mapping over native workspaces | Can expose portable numbering, send, independent monitor mappings, and panel state where native lifecycle APIs are absent. | Must own membership, reveal/park policy, focus protection, crash recovery, and possibly durable recovery state. Native shell presentation may diverge. | **Credible unselected alternative**; prototype before a product choice. |
+| Managed hide/minimize/offscreen windows | Synthesizes logical sets without native workspace creation. Public normal-window primitives exist, and AeroSpace supplies an offscreen-placement precedent. | Task-switcher/overview/Dock behavior, focus, fullscreen/minimize, user exit, power loss, and rebind-after-relaunch are host-specific and partly inference. | **Neither selected nor rejected.** Compare it directly with native-first scope. |
 | Custom companion indicator | Can show selected engine state without replacing the host. | Must stay read-only/optional and follow host panel lifecycle. | Potential later enhancement, separate from workspace authority. |
 | Custom taskbar or overview | Can present exact product semantics. | Reimplements high-value native behavior and, on GNOME, depends on private Shell UI. | **Not required**; defer until native UX demonstrably cannot meet an approved requirement. |
 
@@ -279,12 +361,11 @@ This order is a proposal for a future approval, not an approved queue.
 5. Add active and immediate-split-group outlines after normal tiling/focus
    verification. Test z-order, click-through, scale, outputs, minimize,
    fullscreen/game suppression, and cleanup before claiming visual parity.
-6. Add native-workspace send/background behavior only where the host can verify
-   it without visibility or focus steal. Do not add a custom workspace model to
-   fill a missing public API.
+6. Compare native-workspace send/background behavior with the managed logical
+   workspace prototype on the selected host. Select neither until normal-window
+   recovery, shell integration, and no-steal behavior are measured.
 7. Revisit an indicator or custom overview only after an approved semantic gap
-   remains with native surfaces. Package it independently and retain native
-   task switching as fallback.
+   remains. Package it independently and retain native task switching as fallback.
 
 ## Open Decisions And Blockers
 
@@ -301,8 +382,10 @@ This order is a proposal for a future approval, not an approved queue.
 - Which GNOME majors will receive separate extension artifacts, and is the
   ongoing Shell-porting commitment acceptable?
 - Does any approved user journey require exact per-output-local/global-unique/
-  shared workspace semantics off KWin? If yes, public Windows/macOS APIs do not
-  satisfy it, and GNOME needs a separate product decision.
+  shared workspace semantics off KWin? If yes, choose between reduced native
+  semantics and a managed logical-workspace prototype; neither is selected.
+- What managed visibility policy, ownership record, restoration trigger, and
+  persistent recovery behavior are acceptable after crash, logout, or relaunch?
 - Is a full custom overview or panel ever required, rather than an optional
   indicator alongside native host UI? No evidence here selects either.
 
@@ -312,25 +395,28 @@ This order is a proposal for a future approval, not an approved queue.
 
 - Microsoft, [SetWinEventHook](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwineventhook) and [event constants](https://learn.microsoft.com/en-us/windows/win32/winauto/event-constants) - window lifecycle, foreground, and move/resize events.
 - Microsoft, [SetWindowPos](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos), [DeferWindowPos](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-deferwindowpos), and [SetForegroundWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow) - geometry and foreground restrictions.
+- Microsoft, [ShowWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow) - documented hide/show and minimize/restore primitives.
 - Microsoft, [GetWindowRect](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowrect) and [DwmGetWindowAttribute](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmgetwindowattribute) - invisible resize borders and extended frame bounds.
-- Microsoft, [RegisterHotKey](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey) - conflict behavior and Windows-key reservation.
-- Microsoft, [IVirtualDesktopManager](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nn-shobjidl_core-ivirtualdesktopmanager) - narrow public virtual-desktop surface.
-- Microsoft, [User Interface Privilege Isolation](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-securityoverview), [per-monitor DPI](https://learn.microsoft.com/en-us/windows/win32/hidpi/high-dpi-desktop-application-development-on-windows), [MSIX signing](https://learn.microsoft.com/en-us/windows/msix/package/sign-msix-package-guide), and [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/) - permission, scaling, and delivery constraints.
-- Observed comparison: PowerToys [FancyZones design](https://github.com/microsoft/PowerToys/blob/86115a54/doc/devdocs/modules/fancyzones.md) at commit `86115a54`; [komorebi](https://github.com/LGUG2Z/komorebi/tree/e0709f02bfae4e503bf4640f58ee75ecbbfdbb97) at commit `e0709f02bfae4e503bf4640f58ee75ecbbfdbb97`; [FancyWM releases](https://github.com/FancyWM/fancywm/releases). Accessed 2026-09-17.
+- Microsoft, [RegisterHotKey](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey) and [SetWindowsHookEx](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowshookexw) - conflict, reserved-key, global-hook, and Windows 11 journal-hook boundaries.
+- Microsoft, [IVirtualDesktopManager](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nn-shobjidl_core-ivirtualdesktopmanager) and [MoveWindowToDesktop](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ivirtualdesktopmanager-movewindowtodesktop) - the public Get/Is/Move surface and `HWND topLevelWindow` signature.
+- Microsoft, [UIAccess secure-location policy](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/user-account-control-only-elevate-uiaccess-applications-that-are-installed-in-secure-locations) and [ChangeWindowMessageFilterEx](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-changewindowmessagefilterex) - documented UIPI, UIAccess, signature, secure-location, and message-filter boundaries.
+- Microsoft, [extended window styles](https://learn.microsoft.com/en-us/windows/win32/winmsg/extended-window-styles), [taskbar buttons](https://learn.microsoft.com/en-us/windows/win32/shell/taskbar), and [`DWMWINDOWATTRIBUTE`](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute) - taskbar style and cloak facts, not a managed-workspace guarantee.
+- Microsoft, [per-monitor DPI](https://learn.microsoft.com/en-us/windows/win32/hidpi/high-dpi-desktop-application-development-on-windows), [MSIX signing](https://learn.microsoft.com/en-us/windows/msix/package/sign-msix-package-guide), and [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/) - scaling and delivery constraints.
+- Observed comparison: PowerToys [FancyZones design](https://github.com/microsoft/PowerToys/blob/86115a54/doc/devdocs/modules/fancyzones.md) at commit `86115a54`; [komorebi](https://github.com/LGUG2Z/komorebi/tree/e0709f02bfae4e503bf4640f58ee75ecbbfdbb97) at commit `e0709f02bfae4e503bf4640f58ee75ecbbfdbb97`; [FancyWM releases](https://github.com/FancyWM/fancywm/releases), unpinned discovery reference. Accessed 2026-09-17.
 
 ### macOS - documented public APIs
 
-- Apple, [Accessibility trust](https://developer.apple.com/documentation/applicationservices/1460720-axisprocesstrusted), [AXObserver](https://developer.apple.com/documentation/applicationservices/axobserver), and [Accessibility notifications](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/Accessibility/cocoaAXNotifications/cocoaAXnotifications.html) - consent and per-process observation.
-- Apple, [CGWindowListCopyWindowInfo](https://developer.apple.com/documentation/coregraphics/cgwindowlistcopywindowinfo(_:_:)), [global event monitors](https://developer.apple.com/documentation/appkit/nsevent/addglobalmonitorforevents(matching:handler:)), and [Secure Event Input](https://developer.apple.com/library/archive/technotes/tn2150/_index.html) - observation boundaries.
-- Apple, [NSPanel](https://developer.apple.com/documentation/appkit/nspanel), [window collection behavior](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct/canjoinallspaces), and [display reconfiguration](https://developer.apple.com/documentation/coregraphics/cgdisplayregisterreconfigurationcallback(_:_:)) - overlay and output surfaces.
-- Apple, [Developer ID](https://developer.apple.com/developer-id/) and [notarization](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution) - non-App-Store delivery.
-- Observed comparison: [Rectangle FAQ](https://github.com/rxhanson/Rectangle/), [Amethyst](https://github.com/ianyh/Amethyst/), [AeroSpace workspace guide](https://nikitabobko.github.io/AeroSpace/guide) at commit `0431b6b4cfe8ec9afa6cac72f08777b667f00efc`, [yabai](https://github.com/asmvik/yabai/), and [Hammerspoon Spaces source](https://github.com/Hammerspoon/hammerspoon/blob/master/extensions/spaces/spaces.lua). Accessed 2026-09-17. These sources distinguish public-API practice from private/Dock/SIP-dependent routes.
+- Apple, [Accessibility trust](https://developer.apple.com/documentation/applicationservices/1460720-axisprocesstrusted), [AXUIElementIsAttributeSettable](https://developer.apple.com/documentation/applicationservices/1459972-axuielementisattributesettable), [AXUIElementSetAttributeValue](https://developer.apple.com/documentation/applicationservices/1460434-axuielementsetattributevalue), [AXObserver](https://developer.apple.com/documentation/applicationservices/axobserver), and [Accessibility notifications](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/Accessibility/cocoaAXNotifications/cocoaAXnotifications.html) - consent, writable-attribute checks, and per-process observation.
+- Apple, [CGWindowListCopyWindowInfo](https://developer.apple.com/documentation/coregraphics/cgwindowlistcopywindowinfo(_:_:)), [global event monitors](https://developer.apple.com/documentation/appkit/nsevent/addglobalmonitorforevents(matching:handler:)), [Secure Event Input](https://developer.apple.com/library/archive/technotes/tn2150/_index.html), and [active-Space change](https://developer.apple.com/documentation/appkit/nsworkspace/activespacedidchangenotification) - observation boundaries. `CGWindowList` title/owner-key privacy gating is undocumented; request Screen Recording only for an actual pixel-capture feature.
+- Apple, [NSPanel](https://developer.apple.com/documentation/appkit/nspanel), [window collection behavior](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct/canjoinallspaces), [fullscreen auxiliary windows](https://developer.apple.com/library/archive/documentation/General/Conceptual/MOSXAppProgrammingGuide/FullScreenApp/FullScreenApp.html), and [display reconfiguration](https://developer.apple.com/documentation/coregraphics/cgdisplayregisterreconfigurationcallback(_:_:)) - overlay and output surfaces.
+- Apple, [Developer ID](https://developer.apple.com/developer-id/), [notarization](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution), [SwiftUI Settings](https://developer.apple.com/documentation/swiftui/settings), and [system shortcuts](https://support.apple.com/en-us/102650) - non-App-Store delivery, native settings, and literal-chord collision examples.
+- Observed comparison: [Rectangle FAQ](https://github.com/rxhanson/Rectangle/), [Amethyst](https://github.com/ianyh/Amethyst/), [AeroSpace workspace guide](https://nikitabobko.github.io/AeroSpace/guide#emulation-of-virtual-workspaces) accessed 2026-09-17 plus pinned [offscreen implementation](https://raw.githubusercontent.com/nikitabobko/AeroSpace/0431b6b4cfe8ec9afa6cac72f08777b667f00efc/Sources/AppBundle/tree/MacWindow.swift) at `0431b6b4cfe8ec9afa6cac72f08777b667f00efc`, [yabai](https://github.com/asmvik/yabai/), and [Hammerspoon Spaces source](https://github.com/Hammerspoon/hammerspoon/blob/master/extensions/spaces/spaces.lua). These sources distinguish public-API practice from private/Dock/SIP-dependent routes.
 
 ### GNOME - version-coupled extension and public protocol sources
 
 - GNOME, [GJS extension overview](https://gjs.guide/extensions/), [updates and breakage](https://gjs.guide/extensions/overview/updates-and-breakage.html), and [GNOME 49 porting guide](https://gjs.guide/extensions/upgrading/gnome-shell-49.html) - extension lifecycle and major-version API change evidence.
 - GNOME Mutter API, [`Meta.Window`](https://mutter.gnome.org/meta/class.Window.html) and [`Meta.Workspace`](https://mutter.gnome.org/meta/class.Workspace.html) - extension-context window/workspace methods. These are version-coupled documentation, not an external Wayland protocol guarantee.
-- GNOME Help, [workspace behavior](https://help.gnome.org/users/gnome-help/stable/shell-workspaces.html.en) - native dynamic/global workspace user model.
+- GNOME Help, [workspace behavior](https://help.gnome.org/users/gnome-help/stable/shell-workspaces.html.en) and the Mutter [`org.gnome.mutter` schema at tag 51.0](https://github.com/GNOME/mutter/blob/51.0/data/org.gnome.mutter.gschema.xml.in) - native dynamic/global workspace user model and workspace-display policy. Confirm the selected tag's schema before implementation.
 - wayland.app, [foreign toplevel list](https://wayland.app/protocols/ext-foreign-toplevel-list-v1) and [foreign toplevel management](https://wayland.app/protocols/zwlr-foreign-toplevel-management-v1) compositor support tables - Mutter non-implementation as of access date. Confirm against the selected Mutter release before any implementation.
 - GNOME Extensions, [review guidelines](https://gjs.guide/extensions/review-guidelines/review-guidelines.html) and [best practices](https://gjs.guide/extensions/review-guidelines/best-practices.html) - package lifecycle and review boundary.
 - Observed comparison: [Pop Shell](https://github.com/pop-os/shell/tree/7898b65c20735057faf0797f8ed056704ca55f0d) at commit `7898b65c20735057faf0797f8ed056704ca55f0d`, [Forge](https://github.com/forge-ext/forge), [Tiling Assistant](https://github.com/ubuntu/Tiling-Assistant/tree/f9dffa21edc96e0413fc52c9f03d44a04f96c44b) at commit `f9dffa21edc96e0413fc52c9f03d44a04f96c44b`, and [PaperWM](https://github.com/paperwm/PaperWM). Accessed 2026-09-17; do not infer an API guarantee or reuse permission from these projects.
@@ -341,8 +427,9 @@ This order is a proposal for a future approval, not an approved queue.
   semantics. Add host capability declarations rather than assuming each profile
   can use the same modifier, workspace, focus, or drag semantics.
 - **Panel-helper research:** native panel/indicator integration is optional and
-  cannot supply missing workspace authority. Assess status/permission/conflict
-  indication separately from a full workspace overview or taskbar replacement.
+  is not itself workspace authority. Assess status/permission/conflict indication
+  for either native or selected managed workspace state separately from a full
+  workspace overview or taskbar replacement.
 - **Future adapter research:** pin an exact host version and run only the
   proposed bounded prototype for that host. Do not treat the comparison projects
   or undocumented/private routes as a support commitment.
