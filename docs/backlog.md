@@ -2,19 +2,17 @@
 
 Only meaningful pending or active work is listed.
 
-- P0 | Workspace-send reliability (next dogfooding blocker) | LNq6hA confirms
-  a pre-ack timeout: mover and one geometry echo consumed, plan geometry index
-  1 (a retained target-domain window) still pending and mismatched. Follow never
-  ran; the user saw the window
-  move 3->2 while 3 stayed visible with a border for the hidden window. Identify
-  why that geometry did not converge; hidden-window delivery is unproven, and
-  the capture does not time the later manual visit against timeout. A bounded
-  journal check found no matching entry. New redacted per-geometry write,
-  readback, echo, role, delta, and flight-local sequence diagnostics are verified
-  offline; obtain one capture through timeout before manual workspace changes.
-  No behavior fix is established. Keep WwQ9G6 pre-ack loss and earlier committed-but-invisible
-  failures distinct. Restore follow/focus and usability without attributing the
-  initiating loss to user shutdown or assuming border causation.
+- P0 | Workspace-send reliability (next dogfooding blocker) | ARTNue confirms
+  retained destination geometry stayed at height 964 instead of planned 478
+  through timeout; the user waited 15 seconds before visiting the target. No
+  ack/commit/follow occurred. Upstream KWin v6.7.4 source establishes asynchronous
+  xdg configure/ack/buffer-commit geometry, but no current-workspace requirement
+  or demonstrated adapter ordering defect. The corrected Reflect.set boolean
+  contract concerns JS property rejection, not native resize acceptance or a
+  send repair. Next identify a bounded target-client configure/commit observation
+  route; another script-only reproduction is not currently discriminating.
+  A prior bounded journal check found no matching entry. Native cause remains
+  unknown; keep WwQ9G6 loss and committed-but-invisible failures distinct.
   [timeout record](changes/archive/workspace-send-timeout-observation.md)
   [earlier record](changes/archive/workspace-send-visible-follow-boundary.md)
 - P1 | Non-visible workspace tiling implementation | User observes deferred

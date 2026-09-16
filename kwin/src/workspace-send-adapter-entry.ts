@@ -584,13 +584,12 @@ export function startWorkspaceSendAdapterEntry(
             observeNative(liveWorkspace, nativeIds, targetWorkspace, pinnedSourceWorkspace),
         setGeometry: (target, rect) => {
             try {
-                Reflect.set(target, "frameGeometry", {
+                return Reflect.set(target, "frameGeometry", {
                     x: rect.x,
                     y: rect.y,
                     width: rect.w,
                     height: rect.h,
                 });
-                return true;
             } catch (error) {
                 void error;
                 return false;

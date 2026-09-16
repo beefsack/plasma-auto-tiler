@@ -2637,11 +2637,54 @@ describe("cosmic send-to-workspace frameGeometry fence P0", () => {
         assert.equal(mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-verify")), false);
         assert.deepEqual(mocks.switches, []);
         assert.deepEqual(mocks.focuses, []);
+        assert.equal(adapter.requestSend("ws-2"), false, "terminal adapter stays fail-closed");
         for (const line of [targetWrite, moverEcho, timeout]) {
             for (const raw of ["win-a", "win-t", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
                 assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
             }
         }
+    });
+
+    it("propagates a JavaScript frameGeometry property rejection as write-failed", () => {
+        const harness = startEntryForPlannedFlight();
+        assert.ok(harness.handle !== null);
+        const handle = harness.handle;
+        Object.defineProperty(harness.winT, "frameGeometry", {
+            value: harness.winT["frameGeometry"],
+            writable: false,
+            configurable: true,
+            enumerable: true,
+        });
+        assert.equal(handle.requestSend("ws-2"), true);
+        harness.callbacks[0]?.(":1.7");
+        const correlation = parsePayload(harness.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
+        harness.callbacks[1]?.(plannedReply(correlation));
+        const writes = harness.logs.filter(
+            (line) => line.includes("event=geometry-write") && line.includes(`correlation=${correlation}`),
+        );
+        const targetWrite = writes.find((line) => line.includes("geo_role=target-retained"));
+        assert.ok(targetWrite !== undefined, harness.logs.join("\n"));
+        assert.ok(targetWrite.includes("write_return=0"), targetWrite);
+        assert.ok(harness.logs.some((line) => line.includes("outcome=write-failed")), harness.logs.join("\n"));
+        const lost = harness.dbusCalls.filter((call) => call.payload.includes("adapter-lost"));
+        assert.equal(lost.length, 1, JSON.stringify(harness.dbusCalls, null, 2));
+        assert.equal(lost[0]?.service, ":1.7");
+        assert.equal(parsePayload(lost[0]?.payload ?? "{}")["correlation_id"], correlation);
+        assert.equal(
+            harness.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted")),
+            false,
+        );
+        assert.equal(harness.dbusCalls.some((call) => call.payload.includes("send-to-workspace-verify")), false);
+        assert.equal(
+            harness.logs.some((line) => line.includes("event=follow") && line.includes("outcome=state-confirmed")),
+            false,
+        );
+        assert.equal(
+            harness.logs.some((line) => line.includes("event=follow-focused") || line.includes("event=follow-switched")),
+            false,
+        );
+        assert.equal(handle.requestSend("ws-2"), false, "terminal entry stays fail-closed");
+        handle.stop();
     });
 
     it("ignores geometry diagnostic failure while retaining the normal send", () => {

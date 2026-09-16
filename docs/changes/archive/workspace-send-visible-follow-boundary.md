@@ -115,6 +115,32 @@
 
 ## Latest Exact-Log Review
 
+- The exact ARTNue reproduction is a pre-commit geometry failure, not a
+  committed-but-invisible follow. Its target-retained geometry write and mover
+  write are logged at lines 56-57, the mover geometry echo alone is consumed
+  at line 62, and timeout settlement retains the target geometry fence with a
+  height mismatch of `+486` at line 65. The user-established 15-second wait
+  means no later follow was pending; no ack, verify, commit, or follow event
+  exists for the correlation. The active border remains outside this native
+  protocol attribution.
+- ARTNue also exposed that `write_return=1` previously meant only that the
+  entry discarded `Reflect.set(frameGeometry, ...)`'s JavaScript result. The
+  entry now propagates that result, so an engine-level property rejection
+  terminates as `write-failed` before mover membership, ack, verify, or follow.
+  This is not a native geometry-acceptance result: upstream KWin `v6.7.4` tag
+  `8438567` leaves this path unchanged from 6.7.3 (the installed host package
+  revision remains unverified) and binds `frameGeometry` to the `void`
+  `moveResize` setter (`src/window.h:479`; `src/window.cpp:3412-3420`). An xdg
+  size change may await configure acknowledgement and buffer commit before it
+  changes current geometry (`src/xdgshellwindow.cpp:262-289,140-245`). The
+  staged entry test covers a non-writable JavaScript property only, not a
+  native silent refusal, and neither identifies the ARTNue cause nor changes
+  the exact post-commit follow route.
+- The same reference source contains no visibility/current-desktop gate in the
+  traced configure, ack, commit, or `frameGeometryChanged` path. It does not
+  establish that an active workspace visit is required. Deferred hidden-window
+  convergence remains one compatible explanation, alongside client constraints
+  or other native state not exposed by this record.
 - The authorized `/run/user/1000/plasma-auto-tiler-dev.Aoekoz.log` does not
   label which correlations were physically visible successes or failures, so it
   cannot correlate the reported intermittent visible failure to a particular

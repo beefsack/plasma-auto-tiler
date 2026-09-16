@@ -197,6 +197,38 @@
 
 ## Latest Bounded Investigation
 
+- The exact authorized ARTNue occurrence resolves only an entry-contract
+  boundary behind its `write_return=1`: the entry discarded `Reflect.set`'s
+  boolean and reported success whenever the assignment did not throw. ARTNue records the
+  target-retained geometry write before the mover write (lines 56-57), both
+  immediate readbacks unavailable, only the mover geometry echo consumed
+  (line 62), then a target-retained height mismatch of `+486` with its fence
+  still pending (line 65). The established 15-second user wait excludes a
+  merely delayed follow; no accepted acknowledgement, verify, commit, or
+  follow was eligible. The log does not establish whether KWin silently
+  rejected or deferred that setter.
+- The entry now propagates `Reflect.set(target, "frameGeometry", rect)`'s
+  JavaScript property-write result. This makes an engine-level property
+  rejection an immediate `write-failed` terminal path, preserving exact
+  geometry equality, acknowledgement/verify/commit-before-follow, and terminal
+  uncertainty policy. Its entry-level regression covers a non-writable
+  JavaScript property, not a KWin native geometry refusal.
+- Upstream KWin `v6.7.4` tag `8438567` leaves the relevant Window/Xdg files
+  unchanged from 6.7.3 (the installed host package revision remains
+  unverified). It declares `frameGeometry` with `WRITE moveResize`
+  (`src/window.h:479`); `moveResize` returns `void`
+  (`src/window.cpp:3412-3420`). For an xdg resize it schedules a configure,
+  while current frame geometry and `frameGeometryChanged` await a client ack
+  and buffer commit (`src/xdgshellwindow.cpp:262-289,140-245`;
+  `src/waylandwindow.cpp:212-254`). Therefore `Reflect.set(...) === true`
+  proves property-put dispatch, not native resize acceptance, geometry equality,
+  or signal delivery. ARTNue cannot be attributed to a native setter refusal.
+- The same source has no current-desktop or visibility prerequisite in the
+  traced configure, ack, commit, or geometry-signal path. Hidden-desktop
+  deferral remains compatible with client-driven configure/commit timing, but
+  is not a source-supported cause or correction. Existing retained-target
+  mismatch coverage still requires exact equality and refuses a later
+  same-instance send.
 - LNq6hA's full planned geometry makes plan-relative index 1 the retained
   target-domain window. Index 0 was unchanged and excluded from the geometry
   fence; index 2 was the mover. The failed entry is therefore neither a source
