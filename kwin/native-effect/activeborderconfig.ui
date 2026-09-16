@@ -221,7 +221,7 @@
        <item row="5" column="0" colspan="2">
         <widget class="QLabel" name="borderDescription">
          <property name="text">
-              <string>When enabled, the border uses the current theme highlight color when available and the configured color is the fallback. When disabled, the configured color is always used. Border changes apply immediately through the KWin effect reconfigure. Gap settings can reload; other script settings require a session restart.</string>
+              <string>When enabled, the border uses the current theme highlight color when available and the configured color is the fallback. When disabled, the configured color is always used. Border changes apply immediately through the KWin effect reconfigure. Gap settings can reload; startup settings require a session restart; unconsumed settings have no running effect.</string>
         </property>
         <property name="wordWrap">
          <bool>true</bool>
@@ -257,7 +257,7 @@
        <item>
         <widget class="QLabel" name="tilerReloadDescription">
          <property name="text">
-           <string>Gap settings are saved to kwinrc. Session restart is the guaranteed pickup mechanism. Saving gaps marks a reload as required; other script settings require a session restart. Reload sends one typed KWin reconfigure request; the send is unconfirmed and never claims the running tiler applied the settings. This never changes shortcuts.</string>
+            <string>Gap settings are saved to kwinrc. Session restart is the guaranteed pickup mechanism for gaps and startup settings. Saving gaps marks a reload as required; startup settings require a session restart; unconsumed settings have no running effect. Reload sends one typed KWin reconfigure request; the send is unconfirmed and never claims the running tiler applied the settings. This never changes shortcuts.</string>
          </property>
          <property name="wordWrap">
           <bool>true</bool>

@@ -93,15 +93,17 @@ Only meaningful pending or active work is listed.
   offline proof, live gate pending: deliberate gap-only tiler reload after
   saving gap settings, with clear reload/restart UI and existing live border
   updates retained. Saving gaps marks reload-required and enables Reload
-  Tiler; saving only non-gap script settings marks restart-required with
-  reload disabled (note: restart genuinely applies only startup-read
-  `shortcutProfile`/`workspaceMode`; the unconsumed `tilingAlgorithm`,
-  `automaticSplitTarget`, `dropOutlinePreview` are applied by nothing today).
-  Combined saves enable reload for gaps while retaining restart-required for
-  other settings. A no-pending request sends nothing. A deliberate
+  Tiler; saving only startup-consumed `shortcutProfile`/`workspaceMode` marks
+  restart-required with reload disabled; saving only unconsumed
+  `tilingAlgorithm`, `automaticSplitTarget`, `dropOutlinePreview` marks
+  no-running-effect with reload disabled and no restart claim (neither reload
+  nor restart applies them today).
+  Combined saves distinguish each pending category: reload applies gaps only,
+  restart applies startup-consumed settings only, unconsumed settings stay
+  without running effect. A no-pending request sends nothing. A deliberate
   reload sends one typed KWin reconfigure request reported as
   sent-but-unconfirmed or failed, never applied; a queued send never clears
-  restart-required; session restart remains the
+  restart-required or unconsumed state; session restart remains the
   fallback guarantee for gap pickup only where the retained route cannot
   converge. The running controller subscribes to the KWin Options
   `configChanged` signal emitted after that reconfigure reparses kwinrc, then

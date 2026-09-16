@@ -274,22 +274,29 @@
 - KCM Apply no longer auto-queues a script reconfigure on save. Saving gaps
   sets reload-required with the exact status `Tiling gaps saved. Reload
   required: the running tiler still uses startup gap values.` Saving only
-  non-gap script settings sets restart-required with `Startup setting saved.
-  Session restart required: the running tiler still uses startup values.` and
-  leaves Reload Tiler disabled. A combined save enables reload for gaps while
-  retaining restart-required with `Tiling gaps and startup settings saved.
-  Reload applies gaps only; session restart remains required for other
-  settings.` An unchanged save sends nothing and leaves the flags untouched. The Reload Tiler button is
+  startup-consumed `shortcutProfile`/`workspaceMode` sets restart-required with
+  `Startup setting saved. Session restart required: the running tiler still uses
+  startup values.` and leaves Reload Tiler disabled. Saving only unconsumed
+  `tilingAlgorithm`, `automaticSplitTarget`, `dropOutlinePreview` sets
+  no-running-effect state with `Setting saved. No running tiler effect: this
+  setting is unconsumed; neither reload nor restart applies it.` and leaves
+  Reload Tiler disabled with no restart claim. Combined saves distinguish each
+  pending category (gap plus startup, gap plus unconsumed, startup plus
+  unconsumed, all three): reload applies gaps only, restart applies
+  startup-consumed settings only, unconsumed settings stay without running
+  effect. An unchanged save sends nothing and leaves the flags untouched. The Reload Tiler button is
   enabled only while gap reload-required; with no pending reload it refuses without
   sending, so an idle click queues no typed D-Bus traffic and leaves the flags
   and status untouched. The deliberate Reload
   Tiler button sends exactly one typed `org.kde.KWin /KWin org.kde.KWin
   reconfigure` request: gap-only success reports `Reload request sent. Application
   unconfirmed; restart the session to guarantee pickup.` and keeps
-  reload-required; combined success reports gap-unconfirmed while retaining
-  restart-required; failure reports `Reload request failed. Running tiler still
-  uses startup values; retry or restart the session.` and keeps
-  reload-required (plus restart-required when present). No status claims applied. KCM-side running confirmation is
+  reload-required; gap plus startup success reports gap-unconfirmed while retaining
+  restart-required for startup settings; gap plus unconsumed success reports
+  gap-unconfirmed plus no running effect for unconsumed settings; all-categories
+  success reports both residuals; failure reports the gap failure plus any
+  pending startup and/or unconsumed residuals and keeps
+  reload-required (plus restart-required and/or unconsumed state when present). No status claims applied. KCM-side running confirmation is
   not provable: KWin's reconfigure is Q_NOREPLY, so a queued send alone is
   reported as unconfirmed and session restart remains the guarantee for gap
   pickup only where the retained route below cannot converge (for example a
@@ -364,8 +371,9 @@
   so restart genuinely picks them up. `tilingAlgorithm`,
   `automaticSplitTarget`, and `dropOutlinePreview` are persisted by the KCM
   but read by nothing in the running controller, so neither reload nor
-  session restart applies them today; the KCM restart-required status is
-  over-broad for saves that touch only those three keys, and consuming them
+  session restart applies them today; the KCM state machine distinguishes all
+  three categories and their combinations with no restart claim for
+  unconsumed-only saves, and consuming them
   is launch-blocker work, not a restart.
 - Offline verification (2026-09-17, no live KWin, Plasma, D-Bus, or session
   action): `npm run typecheck --prefix kwin` passes; `npm test --prefix kwin`

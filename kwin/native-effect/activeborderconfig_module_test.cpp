@@ -82,6 +82,21 @@ QComboBox *tilingAlgorithmCombo(KWin::ActiveBorderConfigModule &module)
     return module.widget()->findChild<QComboBox *>(QStringLiteral("tilingAlgorithmCombo"));
 }
 
+QComboBox *workspaceModeCombo(KWin::ActiveBorderConfigModule &module)
+{
+    return module.widget()->findChild<QComboBox *>(QStringLiteral("workspaceModeCombo"));
+}
+
+QComboBox *shortcutProfileCombo(KWin::ActiveBorderConfigModule &module)
+{
+    return module.widget()->findChild<QComboBox *>(QStringLiteral("shortcutProfileCombo"));
+}
+
+QComboBox *automaticSplitTargetCombo(KWin::ActiveBorderConfigModule &module)
+{
+    return module.widget()->findChild<QComboBox *>(QStringLiteral("automaticSplitTargetCombo"));
+}
+
 QLabel *tilerReloadStatusLabel(KWin::ActiveBorderConfigModule &module)
 {
     return module.widget()->findChild<QLabel *>(QStringLiteral("tilerReloadStatusLabel"));
@@ -104,6 +119,16 @@ QString storedTilingAlgorithm()
     return scriptGroup().readEntry(QStringLiteral("tilingAlgorithm"), QStringLiteral("dwindle"));
 }
 
+QString storedWorkspaceMode()
+{
+    return scriptGroup().readEntry(QStringLiteral("workspaceMode"), QStringLiteral("per-output-local"));
+}
+
+QString storedShortcutProfile()
+{
+    return scriptGroup().readEntry(QStringLiteral("shortcutProfile"), QStringLiteral("cosmic"));
+}
+
 QString otherTilingAlgorithm(const QString &current)
 {
     const QStringList candidates = {
@@ -118,6 +143,43 @@ QString otherTilingAlgorithm(const QString &current)
         }
     }
     return QStringLiteral("rows");
+}
+
+QString otherWorkspaceMode(const QString &current)
+{
+    const QStringList candidates = {
+        QStringLiteral("per-output-local"),
+        QStringLiteral("global-unique"),
+        QStringLiteral("shared"),
+    };
+    for (const QString &candidate : candidates) {
+        if (candidate != current) {
+            return candidate;
+        }
+    }
+    return QStringLiteral("shared");
+}
+
+QString otherShortcutProfile(const QString &current)
+{
+    const QStringList candidates = {
+        QStringLiteral("cosmic"),
+        QStringLiteral("hyprland"),
+        QStringLiteral("bspwm"),
+    };
+    for (const QString &candidate : candidates) {
+        if (candidate != current) {
+            return candidate;
+        }
+    }
+    return QStringLiteral("hyprland");
+}
+
+bool containsRestartRequirement(const QString &text)
+{
+    return text.contains(QStringLiteral("Session restart required"))
+        || text.contains(QStringLiteral("session restart remains required"))
+        || text.contains(QStringLiteral("Session restart remains required"));
 }
 
 bool containsAppliedClaim(const QString &text)
@@ -741,6 +803,7 @@ void unchangedSaveMarksNoReloadWithoutSend()
     module.load();
     CHECK(!module.isTilerReloadRequired());
     CHECK(!module.isTilerRestartRequired());
+    CHECK(!module.isTilerUnconsumedPending());
     CHECK(tilerReloadStatusLabel(module) != nullptr);
     CHECK(tilerReloadButton(module) != nullptr);
     CHECK(!tilerReloadButtonEnabled(module));
@@ -754,6 +817,7 @@ void unchangedSaveMarksNoReloadWithoutSend()
     module.save();
     CHECK(!module.isTilerReloadRequired());
     CHECK(!module.isTilerRestartRequired());
+    CHECK(!module.isTilerUnconsumedPending());
     CHECK(module.scriptCalls == 0);
     CHECK(module.effectCalls == 0);
     CHECK(!module.needsSave());
@@ -768,6 +832,7 @@ void noPendingReloadSendsNothingAndStaysDisabled()
     module.load();
     CHECK(!module.isTilerReloadRequired());
     CHECK(!module.isTilerRestartRequired());
+    CHECK(!module.isTilerUnconsumedPending());
     CHECK(!tilerReloadButtonEnabled(module));
     int confirms = 0;
     module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
@@ -798,14 +863,15 @@ void nonGapSaveDisablesReloadWithRestartMessage()
 {
     CountingScriptReloadModule module(nullptr, KPluginMetaData());
     module.load();
-    QComboBox *tiling = tilingAlgorithmCombo(module);
-    CHECK(tiling != nullptr);
-    if (!tiling) {
+    QComboBox *mode = workspaceModeCombo(module);
+    CHECK(mode != nullptr);
+    if (!mode) {
         return;
     }
-    const int rows = tiling->findData(QStringLiteral("rows"));
-    CHECK(rows >= 0);
-    tiling->setCurrentIndex(rows);
+    const QString modeTarget = otherWorkspaceMode(storedWorkspaceMode());
+    const int modeIndex = mode->findData(modeTarget);
+    CHECK(modeIndex >= 0);
+    mode->setCurrentIndex(modeIndex);
     CHECK(module.needsSave());
     int confirms = 0;
     module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
@@ -813,11 +879,12 @@ void nonGapSaveDisablesReloadWithRestartMessage()
         return false;
     });
     module.save();
-    CHECK(scriptGroup().readEntry(QStringLiteral("tilingAlgorithm"), QString()) == QStringLiteral("rows"));
+    CHECK(scriptGroup().readEntry(QStringLiteral("workspaceMode"), QString()) == modeTarget);
     CHECK(!module.isTilerReloadRequired());
     CHECK(!tilerReloadButtonEnabled(module));
     CHECK(module.isTilerRestartRequired());
-    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("restart")));
+    CHECK(!module.isTilerUnconsumedPending());
+    CHECK(containsRestartRequirement(module.tilerReloadStatusText()));
     CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
     CHECK(module.scriptCalls == 0);
     CHECK(module.effectCalls == 0);
@@ -831,7 +898,154 @@ void nonGapSaveDisablesReloadWithRestartMessage()
     CHECK(confirms == 0);
 }
 
+void shortcutProfileSaveDisablesReloadWithRestartMessage()
+{
+    CountingScriptReloadModule module(nullptr, KPluginMetaData());
+    module.load();
+    QComboBox *profile = shortcutProfileCombo(module);
+    CHECK(profile != nullptr);
+    if (!profile) {
+        return;
+    }
+    const QString profileTarget = otherShortcutProfile(storedShortcutProfile());
+    const int profileIndex = profile->findData(profileTarget);
+    CHECK(profileIndex >= 0);
+    profile->setCurrentIndex(profileIndex);
+    CHECK(module.needsSave());
+    int confirms = 0;
+    module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
+        ++confirms;
+        return false;
+    });
+    module.save();
+    CHECK(scriptGroup().readEntry(QStringLiteral("shortcutProfile"), QString()) == profileTarget);
+    CHECK(!module.isTilerReloadRequired());
+    CHECK(!tilerReloadButtonEnabled(module));
+    CHECK(module.isTilerRestartRequired());
+    CHECK(!module.isTilerUnconsumedPending());
+    CHECK(containsRestartRequirement(module.tilerReloadStatusText()));
+    CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
+    CHECK(module.scriptCalls == 0);
+    CHECK(module.effectCalls == 0);
+    CHECK(!module.needsSave());
+    CHECK(confirms == 0);
+}
+
+void unconsumedOnlySaveHasNoEffectWithoutRestartOrReload()
+{    CountingScriptReloadModule module(nullptr, KPluginMetaData());
+    module.load();
+    QComboBox *tiling = tilingAlgorithmCombo(module);
+    CHECK(tiling != nullptr);
+    if (!tiling) {
+        return;
+    }
+    const QString tilingTarget = otherTilingAlgorithm(storedTilingAlgorithm());
+    const int tilingIndex = tiling->findData(tilingTarget);
+    CHECK(tilingIndex >= 0);
+    tiling->setCurrentIndex(tilingIndex);
+    CHECK(module.needsSave());
+    int confirms = 0;
+    module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
+        ++confirms;
+        return false;
+    });
+    module.save();
+    CHECK(scriptGroup().readEntry(QStringLiteral("tilingAlgorithm"), QString()) == tilingTarget);
+    CHECK(!module.isTilerReloadRequired());
+    CHECK(!tilerReloadButtonEnabled(module));
+    CHECK(!module.isTilerRestartRequired());
+    CHECK(module.isTilerUnconsumedPending());
+    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("No running tiler effect")));
+    CHECK(!containsRestartRequirement(module.tilerReloadStatusText()));
+    CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
+    CHECK(module.scriptCalls == 0);
+    CHECK(module.effectCalls == 0);
+    CHECK(!module.needsSave());
+    CHECK(confirms == 0);
+    // An unchanged follow-up save must not auto-send and must keep the no-effect flag.
+    module.save();
+    CHECK(!module.isTilerReloadRequired());
+    CHECK(!module.isTilerRestartRequired());
+    CHECK(module.isTilerUnconsumedPending());
+    CHECK(module.scriptCalls == 0);
+    CHECK(confirms == 0);
+}
+
+void unconsumedVariantsShareNoEffectWithoutRestartOrReload()
+{
+    CountingScriptReloadModule module(nullptr, KPluginMetaData());
+    module.load();
+    QComboBox *split = automaticSplitTargetCombo(module);
+    QCheckBox *preview = scriptCheckBox(module);
+    CHECK(split != nullptr);
+    CHECK(preview != nullptr);
+    if (!split || !preview) {
+        return;
+    }
+    const int count = split->count();
+    CHECK(count > 1);
+    split->setCurrentIndex((split->currentIndex() + 1) % count);
+    preview->setChecked(!preview->isChecked());
+    CHECK(module.needsSave());
+    int confirms = 0;
+    module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
+        ++confirms;
+        return false;
+    });
+    module.save();
+    CHECK(!module.isTilerReloadRequired());
+    CHECK(!tilerReloadButtonEnabled(module));
+    CHECK(!module.isTilerRestartRequired());
+    CHECK(module.isTilerUnconsumedPending());
+    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("No running tiler effect")));
+    CHECK(!containsRestartRequirement(module.tilerReloadStatusText()));
+    CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
+    CHECK(module.scriptCalls == 0);
+    CHECK(module.effectCalls == 0);
+    CHECK(!module.needsSave());
+    CHECK(confirms == 0);
+}
+
 void combinedGapAndNonGapSaveEnablesReloadWithResidualRestart()
+{
+    CountingScriptReloadModule module(nullptr, KPluginMetaData());
+    module.load();
+    QComboBox *mode = workspaceModeCombo(module);
+    QSpinBox *inner = innerGapSpinBox(module);
+    CHECK(mode != nullptr);
+    CHECK(inner != nullptr);
+    if (!mode || !inner) {
+        return;
+    }
+    const QString modeTarget = otherWorkspaceMode(storedWorkspaceMode());
+    const int modeIndex = mode->findData(modeTarget);
+    CHECK(modeIndex >= 0);
+    const int gapTarget = (inner->value() == 12) ? 20 : 12;
+    mode->setCurrentIndex(modeIndex);
+    inner->setValue(gapTarget);
+    CHECK(module.needsSave());
+    int confirms = 0;
+    module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
+        ++confirms;
+        return false;
+    });
+    module.save();
+    CHECK(scriptGroup().readEntry(QStringLiteral("workspaceMode"), QString()) == modeTarget);
+    CHECK(scriptGroup().readEntry(QStringLiteral("innerGap"), -1) == gapTarget);
+    CHECK(module.isTilerReloadRequired());
+    CHECK(module.isTilerRestartRequired());
+    CHECK(!module.isTilerUnconsumedPending());
+    CHECK(tilerReloadButtonEnabled(module));
+    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("gaps only")));
+    CHECK(containsRestartRequirement(module.tilerReloadStatusText()));
+    CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
+    CHECK(module.scriptCalls == 0);
+    CHECK(module.effectCalls == 0);
+    CHECK(!module.needsSave());
+    CHECK(confirms == 0);
+}
+
+void gapAndUnconsumedSaveEnablesReloadWithoutRestart()
 {
     CountingScriptReloadModule module(nullptr, KPluginMetaData());
     module.load();
@@ -858,10 +1072,100 @@ void combinedGapAndNonGapSaveEnablesReloadWithResidualRestart()
     CHECK(scriptGroup().readEntry(QStringLiteral("tilingAlgorithm"), QString()) == tilingTarget);
     CHECK(scriptGroup().readEntry(QStringLiteral("innerGap"), -1) == gapTarget);
     CHECK(module.isTilerReloadRequired());
-    CHECK(module.isTilerRestartRequired());
+    CHECK(!module.isTilerRestartRequired());
+    CHECK(module.isTilerUnconsumedPending());
     CHECK(tilerReloadButtonEnabled(module));
     CHECK(module.tilerReloadStatusText().contains(QStringLiteral("gaps only")));
-    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("restart")));
+    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("No running tiler effect")));
+    CHECK(!containsRestartRequirement(module.tilerReloadStatusText()));
+    CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
+    CHECK(module.scriptCalls == 0);
+    CHECK(module.effectCalls == 0);
+    CHECK(!module.needsSave());
+    CHECK(confirms == 0);
+}
+
+void startupAndUnconsumedSaveDisablesReloadWithSplitMessage()
+{
+    CountingScriptReloadModule module(nullptr, KPluginMetaData());
+    module.load();
+    QComboBox *mode = workspaceModeCombo(module);
+    QComboBox *tiling = tilingAlgorithmCombo(module);
+    CHECK(mode != nullptr);
+    CHECK(tiling != nullptr);
+    if (!mode || !tiling) {
+        return;
+    }
+    const QString modeTarget = otherWorkspaceMode(storedWorkspaceMode());
+    const QString tilingTarget = otherTilingAlgorithm(storedTilingAlgorithm());
+    const int modeIndex = mode->findData(modeTarget);
+    const int tilingIndex = tiling->findData(tilingTarget);
+    CHECK(modeIndex >= 0);
+    CHECK(tilingIndex >= 0);
+    mode->setCurrentIndex(modeIndex);
+    tiling->setCurrentIndex(tilingIndex);
+    CHECK(module.needsSave());
+    int confirms = 0;
+    module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
+        ++confirms;
+        return false;
+    });
+    module.save();
+    CHECK(scriptGroup().readEntry(QStringLiteral("workspaceMode"), QString()) == modeTarget);
+    CHECK(scriptGroup().readEntry(QStringLiteral("tilingAlgorithm"), QString()) == tilingTarget);
+    CHECK(!module.isTilerReloadRequired());
+    CHECK(!tilerReloadButtonEnabled(module));
+    CHECK(module.isTilerRestartRequired());
+    CHECK(module.isTilerUnconsumedPending());
+    CHECK(containsRestartRequirement(module.tilerReloadStatusText()));
+    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("No running tiler effect")));
+    CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
+    CHECK(module.scriptCalls == 0);
+    CHECK(module.effectCalls == 0);
+    CHECK(!module.needsSave());
+    CHECK(confirms == 0);
+}
+
+void allCategoriesSaveEnablesReloadWithSplitMessage()
+{
+    CountingScriptReloadModule module(nullptr, KPluginMetaData());
+    module.load();
+    QComboBox *mode = workspaceModeCombo(module);
+    QComboBox *tiling = tilingAlgorithmCombo(module);
+    QSpinBox *inner = innerGapSpinBox(module);
+    CHECK(mode != nullptr);
+    CHECK(tiling != nullptr);
+    CHECK(inner != nullptr);
+    if (!mode || !tiling || !inner) {
+        return;
+    }
+    const QString modeTarget = otherWorkspaceMode(storedWorkspaceMode());
+    const QString tilingTarget = otherTilingAlgorithm(storedTilingAlgorithm());
+    const int modeIndex = mode->findData(modeTarget);
+    const int tilingIndex = tiling->findData(tilingTarget);
+    CHECK(modeIndex >= 0);
+    CHECK(tilingIndex >= 0);
+    const int gapTarget = (inner->value() == 12) ? 20 : 12;
+    mode->setCurrentIndex(modeIndex);
+    tiling->setCurrentIndex(tilingIndex);
+    inner->setValue(gapTarget);
+    CHECK(module.needsSave());
+    int confirms = 0;
+    module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
+        ++confirms;
+        return false;
+    });
+    module.save();
+    CHECK(scriptGroup().readEntry(QStringLiteral("workspaceMode"), QString()) == modeTarget);
+    CHECK(scriptGroup().readEntry(QStringLiteral("tilingAlgorithm"), QString()) == tilingTarget);
+    CHECK(scriptGroup().readEntry(QStringLiteral("innerGap"), -1) == gapTarget);
+    CHECK(module.isTilerReloadRequired());
+    CHECK(module.isTilerRestartRequired());
+    CHECK(module.isTilerUnconsumedPending());
+    CHECK(tilerReloadButtonEnabled(module));
+    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("gaps only")));
+    CHECK(containsRestartRequirement(module.tilerReloadStatusText()));
+    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("No running tiler effect")));
     CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
     CHECK(module.scriptCalls == 0);
     CHECK(module.effectCalls == 0);
@@ -884,6 +1188,7 @@ void borderOnlySaveHotAppliesWithoutReloadRequired()
     CHECK(borderGroup().readEntry(QStringLiteral("BorderWidth"), 0.0) == target);
     CHECK(!module.isTilerReloadRequired());
     CHECK(!module.isTilerRestartRequired());
+    CHECK(!module.isTilerUnconsumedPending());
     CHECK(!tilerReloadButtonEnabled(module));
     CHECK(module.effectCalls == 1);
     CHECK(module.scriptCalls == 0);
@@ -918,6 +1223,7 @@ void borderAndGapSingleSaveHotAppliesBorderOnceKeepsReload()
     CHECK(module.scriptCalls == 0);
     CHECK(module.isTilerReloadRequired());
     CHECK(!module.isTilerRestartRequired());
+    CHECK(!module.isTilerUnconsumedPending());
     CHECK(tilerReloadButtonEnabled(module));
     CHECK(module.tilerReloadStatusText().contains(QStringLiteral("Reload required")));
     CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
@@ -930,18 +1236,18 @@ void borderAndNonGapSingleSaveHotAppliesBorderWithoutReload()
     CountingScriptReloadModule module(nullptr, KPluginMetaData());
     module.load();
     QDoubleSpinBox *width = borderWidthSpinBox(module);
-    QComboBox *tiling = tilingAlgorithmCombo(module);
+    QComboBox *mode = workspaceModeCombo(module);
     CHECK(width != nullptr);
-    CHECK(tiling != nullptr);
-    if (!width || !tiling) {
+    CHECK(mode != nullptr);
+    if (!width || !mode) {
         return;
     }
     const double borderTarget = (width->value() == 7.5) ? 6.5 : 7.5;
-    const QString tilingTarget = otherTilingAlgorithm(storedTilingAlgorithm());
-    const int tilingIndex = tiling->findData(tilingTarget);
-    CHECK(tilingIndex >= 0);
+    const QString modeTarget = otherWorkspaceMode(storedWorkspaceMode());
+    const int modeIndex = mode->findData(modeTarget);
+    CHECK(modeIndex >= 0);
     width->setValue(borderTarget);
-    tiling->setCurrentIndex(tilingIndex);
+    mode->setCurrentIndex(modeIndex);
     CHECK(module.needsSave());
     int confirms = 0;
     module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
@@ -950,13 +1256,14 @@ void borderAndNonGapSingleSaveHotAppliesBorderWithoutReload()
     });
     module.save();
     CHECK(borderGroup().readEntry(QStringLiteral("BorderWidth"), 0.0) == borderTarget);
-    CHECK(scriptGroup().readEntry(QStringLiteral("tilingAlgorithm"), QString()) == tilingTarget);
+    CHECK(scriptGroup().readEntry(QStringLiteral("workspaceMode"), QString()) == modeTarget);
     CHECK(module.effectCalls == 1);
     CHECK(module.scriptCalls == 0);
     CHECK(!module.isTilerReloadRequired());
     CHECK(module.isTilerRestartRequired());
+    CHECK(!module.isTilerUnconsumedPending());
     CHECK(!tilerReloadButtonEnabled(module));
-    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("restart")));
+    CHECK(containsRestartRequirement(module.tilerReloadStatusText()));
     CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
     CHECK(!module.needsSave());
     CHECK(confirms == 0);
@@ -982,6 +1289,8 @@ void gapSaveMarksReloadRequiredWithoutSend()
     module.save();
     CHECK(scriptGroup().readEntry(QStringLiteral("innerGap"), -1) == gapTarget);
     CHECK(module.isTilerReloadRequired());
+    CHECK(!module.isTilerRestartRequired());
+    CHECK(!module.isTilerUnconsumedPending());
     CHECK(tilerReloadButtonEnabled(module));
     CHECK(module.tilerReloadStatusText().contains(QStringLiteral("Reload required")));
     CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
@@ -1005,6 +1314,7 @@ void deliberateReloadSuccessIsUnconfirmedWithoutAppliedClaim()
     module.save();
     CHECK(module.isTilerReloadRequired());
     CHECK(!module.isTilerRestartRequired());
+    CHECK(!module.isTilerUnconsumedPending());
     CHECK(tilerReloadButtonEnabled(module));
     CHECK(module.scriptCalls == 0);
     module.scriptSucceed = true;
@@ -1017,6 +1327,7 @@ void deliberateReloadSuccessIsUnconfirmedWithoutAppliedClaim()
     CHECK(module.scriptCalls == 1);
     CHECK(module.isTilerReloadRequired());
     CHECK(!module.isTilerRestartRequired());
+    CHECK(!module.isTilerUnconsumedPending());
     CHECK(tilerReloadButtonEnabled(module));
     CHECK(module.tilerReloadStatusText().contains(QStringLiteral("unconfirmed")));
     CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
@@ -1039,10 +1350,12 @@ void deliberateReloadFailureKeepsRequiredWithoutAppliedClaim()
     module.save();
     CHECK(module.isTilerReloadRequired());
     CHECK(!module.isTilerRestartRequired());
+    CHECK(!module.isTilerUnconsumedPending());
     module.scriptSucceed = false;
     module.requestTilerReload();
     CHECK(module.scriptCalls == 1);
     CHECK(module.isTilerReloadRequired());
+    CHECK(!module.isTilerUnconsumedPending());
     CHECK(tilerReloadButtonEnabled(module));
     CHECK(module.tilerReloadStatusText().contains(QStringLiteral("failed")));
     CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
@@ -1053,22 +1366,23 @@ void deliberateReloadSuccessKeepsResidualRestart()
 {
     CountingScriptReloadModule module(nullptr, KPluginMetaData());
     module.load();
-    QComboBox *tiling = tilingAlgorithmCombo(module);
+    QComboBox *mode = workspaceModeCombo(module);
     QSpinBox *inner = innerGapSpinBox(module);
-    CHECK(tiling != nullptr);
+    CHECK(mode != nullptr);
     CHECK(inner != nullptr);
-    if (!tiling || !inner) {
+    if (!mode || !inner) {
         return;
     }
-    const QString tilingTarget = otherTilingAlgorithm(storedTilingAlgorithm());
-    const int tilingIndex = tiling->findData(tilingTarget);
-    CHECK(tilingIndex >= 0);
+    const QString modeTarget = otherWorkspaceMode(storedWorkspaceMode());
+    const int modeIndex = mode->findData(modeTarget);
+    CHECK(modeIndex >= 0);
     const int gapTarget = (inner->value() == 12) ? 20 : 12;
-    tiling->setCurrentIndex(tilingIndex);
+    mode->setCurrentIndex(modeIndex);
     inner->setValue(gapTarget);
     module.save();
     CHECK(module.isTilerReloadRequired());
     CHECK(module.isTilerRestartRequired());
+    CHECK(!module.isTilerUnconsumedPending());
     module.scriptSucceed = true;
     int confirms = 0;
     module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
@@ -1080,15 +1394,57 @@ void deliberateReloadSuccessKeepsResidualRestart()
     CHECK(module.effectCalls == 0);
     CHECK(module.isTilerReloadRequired());
     CHECK(module.isTilerRestartRequired());
+    CHECK(!module.isTilerUnconsumedPending());
     CHECK(tilerReloadButtonEnabled(module));
     CHECK(module.tilerReloadStatusText().contains(QStringLiteral("unconfirmed")));
-    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("restart")));
+    CHECK(containsRestartRequirement(module.tilerReloadStatusText()));
     CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
     CHECK(!module.needsSave());
     CHECK(confirms == 0);
 }
 
 void deliberateReloadFailureKeepsResidualRestart()
+{
+    CountingScriptReloadModule module(nullptr, KPluginMetaData());
+    module.load();
+    QComboBox *mode = workspaceModeCombo(module);
+    QSpinBox *inner = innerGapSpinBox(module);
+    CHECK(mode != nullptr);
+    CHECK(inner != nullptr);
+    if (!mode || !inner) {
+        return;
+    }
+    const QString modeTarget = otherWorkspaceMode(storedWorkspaceMode());
+    const int modeIndex = mode->findData(modeTarget);
+    CHECK(modeIndex >= 0);
+    const int gapTarget = (inner->value() == 12) ? 20 : 12;
+    mode->setCurrentIndex(modeIndex);
+    inner->setValue(gapTarget);
+    module.save();
+    CHECK(module.isTilerReloadRequired());
+    CHECK(module.isTilerRestartRequired());
+    CHECK(!module.isTilerUnconsumedPending());
+    module.scriptSucceed = false;
+    int confirms = 0;
+    module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
+        ++confirms;
+        return false;
+    });
+    module.requestTilerReload();
+    CHECK(module.scriptCalls == 1);
+    CHECK(module.effectCalls == 0);
+    CHECK(module.isTilerReloadRequired());
+    CHECK(module.isTilerRestartRequired());
+    CHECK(!module.isTilerUnconsumedPending());
+    CHECK(tilerReloadButtonEnabled(module));
+    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("failed")));
+    CHECK(containsRestartRequirement(module.tilerReloadStatusText()));
+    CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
+    CHECK(!module.needsSave());
+    CHECK(confirms == 0);
+}
+
+void deliberateReloadWithUnconsumedKeepsNoEffectWithoutRestartClaim()
 {
     CountingScriptReloadModule module(nullptr, KPluginMetaData());
     module.load();
@@ -1107,8 +1463,67 @@ void deliberateReloadFailureKeepsResidualRestart()
     inner->setValue(gapTarget);
     module.save();
     CHECK(module.isTilerReloadRequired());
-    CHECK(module.isTilerRestartRequired());
+    CHECK(!module.isTilerRestartRequired());
+    CHECK(module.isTilerUnconsumedPending());
+    module.scriptSucceed = true;
+    int confirms = 0;
+    module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
+        ++confirms;
+        return false;
+    });
+    module.requestTilerReload();
+    CHECK(module.scriptCalls == 1);
+    CHECK(module.effectCalls == 0);
+    CHECK(module.isTilerReloadRequired());
+    CHECK(!module.isTilerRestartRequired());
+    CHECK(module.isTilerUnconsumedPending());
+    CHECK(tilerReloadButtonEnabled(module));
+    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("unconfirmed")));
+    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("No running tiler effect")));
+    CHECK(!containsRestartRequirement(module.tilerReloadStatusText()));
+    CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
+    CHECK(!module.needsSave());
+    CHECK(confirms == 0);
     module.scriptSucceed = false;
+    module.requestTilerReload();
+    CHECK(module.scriptCalls == 2);
+    CHECK(module.isTilerReloadRequired());
+    CHECK(module.isTilerUnconsumedPending());
+    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("failed")));
+    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("No running tiler effect")));
+    CHECK(!containsRestartRequirement(module.tilerReloadStatusText()));
+    CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
+    CHECK(confirms == 0);
+}
+
+void deliberateReloadWithAllCategoriesDistinguishesEffects()
+{
+    CountingScriptReloadModule module(nullptr, KPluginMetaData());
+    module.load();
+    QComboBox *mode = workspaceModeCombo(module);
+    QComboBox *tiling = tilingAlgorithmCombo(module);
+    QSpinBox *inner = innerGapSpinBox(module);
+    CHECK(mode != nullptr);
+    CHECK(tiling != nullptr);
+    CHECK(inner != nullptr);
+    if (!mode || !tiling || !inner) {
+        return;
+    }
+    const QString modeTarget = otherWorkspaceMode(storedWorkspaceMode());
+    const QString tilingTarget = otherTilingAlgorithm(storedTilingAlgorithm());
+    const int modeIndex = mode->findData(modeTarget);
+    const int tilingIndex = tiling->findData(tilingTarget);
+    CHECK(modeIndex >= 0);
+    CHECK(tilingIndex >= 0);
+    const int gapTarget = (inner->value() == 12) ? 20 : 12;
+    mode->setCurrentIndex(modeIndex);
+    tiling->setCurrentIndex(tilingIndex);
+    inner->setValue(gapTarget);
+    module.save();
+    CHECK(module.isTilerReloadRequired());
+    CHECK(module.isTilerRestartRequired());
+    CHECK(module.isTilerUnconsumedPending());
+    module.scriptSucceed = true;
     int confirms = 0;
     module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
         ++confirms;
@@ -1119,9 +1534,11 @@ void deliberateReloadFailureKeepsResidualRestart()
     CHECK(module.effectCalls == 0);
     CHECK(module.isTilerReloadRequired());
     CHECK(module.isTilerRestartRequired());
+    CHECK(module.isTilerUnconsumedPending());
     CHECK(tilerReloadButtonEnabled(module));
-    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("failed")));
-    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("restart")));
+    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("unconfirmed")));
+    CHECK(containsRestartRequirement(module.tilerReloadStatusText()));
+    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("No running tiler effect")));
     CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
     CHECK(!module.needsSave());
     CHECK(confirms == 0);
@@ -1192,7 +1609,13 @@ int main(int argc, char **argv)
         unchangedSaveMarksNoReloadWithoutSend();
         noPendingReloadSendsNothingAndStaysDisabled();
         nonGapSaveDisablesReloadWithRestartMessage();
+        shortcutProfileSaveDisablesReloadWithRestartMessage();
+        unconsumedOnlySaveHasNoEffectWithoutRestartOrReload();
+        unconsumedVariantsShareNoEffectWithoutRestartOrReload();
         combinedGapAndNonGapSaveEnablesReloadWithResidualRestart();
+        gapAndUnconsumedSaveEnablesReloadWithoutRestart();
+        startupAndUnconsumedSaveDisablesReloadWithSplitMessage();
+        allCategoriesSaveEnablesReloadWithSplitMessage();
         borderOnlySaveHotAppliesWithoutReloadRequired();
         borderAndGapSingleSaveHotAppliesBorderOnceKeepsReload();
         borderAndNonGapSingleSaveHotAppliesBorderWithoutReload();
@@ -1201,6 +1624,8 @@ int main(int argc, char **argv)
         deliberateReloadFailureKeepsRequiredWithoutAppliedClaim();
         deliberateReloadSuccessKeepsResidualRestart();
         deliberateReloadFailureKeepsResidualRestart();
+        deliberateReloadWithUnconsumedKeepsNoEffectWithoutRestartClaim();
+        deliberateReloadWithAllCategoriesDistinguishesEffects();
         poisonedBusScriptSendFailsClosed();
     } else {
         std::fprintf(stderr, "unknown scenario: %s\n", argv[1]);

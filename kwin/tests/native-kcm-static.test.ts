@@ -222,7 +222,8 @@ describe("native KCM static contract", () => {
         assert.doesNotMatch(ui, /clears current transient Script ambiguity/);
         assert.doesNotMatch(ui, /engine authority[^.]*apply immediately/i);
         assert.doesNotMatch(ui, /engine authority[^.]*takes effect immediately/i);
-        assert.match(ui, /other script settings require a session restart/i);
+        assert.match(ui, /startup settings require a session restart/i);
+        assert.match(ui, /unconsumed settings have no running effect/i);
         assert.match(ui, /Gap settings can reload/i);
         assert.match(ui, /Saving gaps marks a reload as required/i);
         assert.doesNotMatch(ui, /Other script settings require a script reload or session restart\./);
