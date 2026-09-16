@@ -156,9 +156,8 @@ Historical implementation detail is recoverable in Git history.
   residue for user action.
 - The user grants standing authorization, until revoked, to read and mutate the
   existing KWin session for project-scoped testing. The user has revoked
-  autonomous backlog progression; normal mode applies. Ordinary intended commits
-  and pushes remain authorized; this does not broaden the live/manual boundaries
-  below or select material product,
+  autonomous backlog progression; normal mode applies. This authorization does
+  not broaden the live/manual boundaries below or select material product,
   security, or architecture decisions. Every action remains bounded to exact
   identified project resources with a recorded baseline and exact restoration;
   no broad cleanup, window closure, system path, dotfile, NixOS, Home Manager,
