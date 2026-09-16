@@ -52,12 +52,12 @@ Historical implementation detail is recoverable in Git history.
 - One native QWidget effect-scoped KCM owns tiling, workspace, shortcut,
   outline, and border settings through the Desktop Effects entry. Existing
   script groups, keys, values, and defaults remain unchanged. The approved
-  interim target is a deliberate gap-only tiler reload after save with clear
-  reload/restart UI (startup-read `shortcutProfile`/`workspaceMode` require
-  session restart, which genuinely applies them);
-  existing live border updates remain live. Its
-  implementation is static-complete with retained offline proof and live
-  verification pending: the resync dispatches retained `update-gaps`, accepted
+  interim target remains a deliberate tiler reload after saving tiling settings
+  with clear reload-required UI; existing live border updates remain live.
+  Implementation is partial: only gap reload is static-complete with retained
+  offline proof and live verification pending. Startup-read
+  `shortcutProfile`/`workspaceMode` still require session restart, which applies
+  them. The implemented gap resync dispatches retained `update-gaps`, accepted
   and reprojected by the existing session with topology/share/focus
   preservation for changed inner, outer, or combined gaps. Overall settings
   liveness is PARTIAL, not complete. `tilingAlgorithm`,
@@ -163,10 +163,10 @@ Historical implementation detail is recoverable in Git history.
   and the selected initial first-startup fitting direction below. General
   existing-window adoption and default promotion remain unselected. KCM Apply
   currently persists the selection as a startup-only setting requiring session
-  restart with no enabled generic reload path. The approved interim reload is
-  gap-only (`innerGap`/`outerGap`) via `options.configChanged`,
-  sent/queued-but-unconfirmed because KWin reconfigure is Q_NOREPLY;
-  implementation is static-complete with retained offline proof
+  restart with no enabled generic reload path. Only the gap portion of the
+  approved interim reload is implemented: `innerGap`/`outerGap` via
+  `options.configChanged`, sent/queued-but-unconfirmed because KWin reconfigure
+  is Q_NOREPLY. This portion is static-complete with retained offline proof
   (explicit `update-gaps` reprojection with topology/share/focus preservation)
   and live verification pending. Before launch, this and every other user-facing setting must
   apply live; that is a mandatory launch blocker, and the gap-only reload does

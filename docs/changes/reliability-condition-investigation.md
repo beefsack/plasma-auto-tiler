@@ -239,14 +239,16 @@
    native write reached it, while the sibling's `disposition=written` line
    proves the sibling write. Record the exact failing observation otherwise.
 
-### Underlying Configuration Changes - INTERIM STATIC-COMPLETE, LIVE GATE PENDING
+### Underlying Configuration Changes - INTERIM PARTIAL, GAP LIVE GATE PENDING
 
-- Approved interim, statically implemented, live verification pending: after
-  save, the KCM marks gap reload and/or session restart as required and offers
-  a deliberate gap-only tiler reload with clear reload/restart UI. Existing
-  live border updates remain live. This is an interim target only: before
-  launch, every user-facing setting must apply live, which is a mandatory
-  launch blocker.
+- The approved interim target remains deliberate tiler reload after saving
+  tiling settings. Its implementation is partial: gap reload is statically
+  verified, while broader settings reload remains unfinished. The KCM offers
+  the implemented gap-only reload and distinguishes restart-required settings
+  from settings with no running effect. Existing live border updates remain
+  live. Gap runtime verification is pending. Before launch, every user-facing
+  setting must apply live; this mandatory blocker is not satisfied by the
+  interim work.
 - The active-border effect does handle a KWin reconfigure call: it rereads its
   configuration and updates the outline and border at
   `kwin/native-effect/activewindowborder.cpp:45-50`.

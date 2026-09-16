@@ -89,9 +89,10 @@ Only meaningful pending or active work is listed.
   settings without requiring a tiler reload. The interim reload approach
   does not satisfy this.
   [investigation](changes/reliability-condition-investigation.md)
-- P2 | Interim runtime configuration reload | Static-complete with retained
-  offline proof, live gate pending: deliberate gap-only tiler reload after
-  saving gap settings, with clear reload/restart UI and existing live border
+- P2 | Interim runtime configuration reload | PARTIAL: the gap-only portion is
+  static-complete with retained offline proof and a pending live gate; broader
+  tiling-settings reload remains unfinished. Delivered: deliberate gap-only
+  reload after saving gap settings, with clear reload/restart UI and live border
   updates retained. Saving gaps marks reload-required and enables Reload
   Tiler; saving only startup-consumed `shortcutProfile`/`workspaceMode` marks
   restart-required with reload disabled; saving only unconsumed
