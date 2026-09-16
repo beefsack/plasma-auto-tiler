@@ -10,6 +10,13 @@ none was performed. Every KWin-targeted behaviour is labelled
 `unverified` (community/secondary source, negative inference, or not confirmed
 against a primary source).
 
+For current, release-pinned Hyprland `v0.56.2`, bspwm `0.9.12`, and PaperWM
+`v50.0.1` semantics, default-binding provenance, and the distinct portable
+profile versus native-integration support paths, see
+[profile support research](research/reference-wm-profile-support.md). That
+record supersedes this file's older Hyprland example-config pin for shortcut
+baseline purposes; this comparison's historical findings remain unchanged.
+
 ## Primary source list
 
 | Tag | Source |

@@ -194,7 +194,10 @@ Only meaningful pending or active work is listed.
 - P3 | Stale branches | Twelve stale branches, most at least 140 commits behind
   `main`, require explicit user authorization before deletion.
 - P3 | Other compositor validation | Validate bspwm, Hyprland, and COSMIC at
-  their actual runtimes. [comparison](reference-wm-comparison.md)
+  their actual runtimes. The release-pinned semantics and support-path research
+  does not substitute for runtime validation.
+  [comparison](reference-wm-comparison.md)
+  [profile research](research/reference-wm-profile-support.md)
 - P3 | Cross-platform adapter feasibility | Research establishes a public,
   normal-window subset for Windows, macOS, and GNOME but rejects literal
   cross-platform workspace/shortcut/focus parity. No port, workspace model,
