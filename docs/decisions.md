@@ -351,7 +351,23 @@ Historical implementation detail is recoverable in Git history.
   mapped native-order terminal empty run, retaining its first desktop and at
   least two global desktops. Occupied, current, visible, intermediate, and
   unmapped desktops remain protected. Mapping and output identity are
-  session-local; hotplug/replug recovery remains unselected.
+  session-local. The initial disconnected-output policy preserves its displaced
+  layout in separate workspace(s), rather than merging it into a new top-level
+  split of the remaining visible layout. If the active window was on the
+  disconnected monitor, show its relocated workspace and retain focus on that
+  window. If the active window was on a surviving monitor, preserve its current
+  visible workspace and focus; displaced workspaces remain accessible through
+  normal workspace switching. If there is no active window, preserve the
+  surviving monitor view. On reconnection, displaced workspaces automatically
+  return to their original monitor with their then-current contents and layout,
+  not a saved snapshot: split edits, closed and new windows remain reflected.
+  Workspace relocation is the unit: a window explicitly moved out stays at its
+  destination and is never individually pulled back, while a window moved into
+  a displaced workspace returns with it. User-configurable handling is deferred.
+  Destination among multiple surviving outputs, reconnect visible-workspace and
+  focus handling, identity persistence/edit handling, and special active
+  floating/fullscreen/sticky handling remain unselected; live
+  disconnect/reconnect behavior remains unimplemented and unverified.
 - `Meta+1..9` select an existing 1-based logical workspace without creation.
   `Meta+Shift+1..9` send only the focused tiled window to an existing
   same-output workspace through the Rust `MoveToWorkspace` route. `0` reuses or

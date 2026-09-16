@@ -42,8 +42,13 @@ Only meaningful pending or active work is listed.
   Read-only enumeration found both held, so KGlobalAccel serial dispatch
   shadows them until the user resolves each in System Settings. Verify physical
   delivery after that manual resolution; `Meta+Shift+G` has no observed holder.
-- P1 | Output hotplug domain lifecycle | Select and gate retire, retain, or
-  reseed behavior for `(output, workspace)` state through unplug/replug.
+- P1 | Output hotplug domain lifecycle | Preserve displaced layouts as separate
+  workspaces on a remaining monitor; alternative handling may be configurable
+  later. Visibility follows the active window's location at disconnect; with no
+  active window, preserve the surviving view. Displaced workspaces return on
+  reconnect with current contents/layout; explicitly moved-out windows stay out.
+  Destination among multiple outputs and reconnect visibility/focus remain
+  pending decisions. Implementation and live acceptance remain pending.
   [investigation](changes/reliability-condition-investigation.md)
 - P1 | Work-area change projection live gate | Static code projects one retained
   existing domain through resolution, scaling, and work-area changes without the

@@ -30,6 +30,23 @@
   outcome is an explicit hotplug policy. At the 16-domain cap, first insertion
   of a new key clears every retained domain: `src/session.rs:101` and
   `src/planner_protocol.rs:1377-1384`.
+- Selected initial product direction: preserve a disconnected output's displaced
+  layout in separate workspace(s), not by merging it into a new top-level split
+  of the remaining visible layout. If the active window was on the disconnected
+  monitor, show its relocated workspace and retain focus on that window. If the
+  active window was on a surviving monitor, preserve its current visible
+  workspace and focus; displaced workspaces remain accessible through normal
+  workspace switching. If there is no active window, preserve the surviving
+  monitor view. On reconnection, displaced workspaces automatically return to
+  their original monitor with their then-current contents and layout, not a
+  saved snapshot: split edits, closed and new windows remain reflected.
+  Workspace relocation is the unit: a window explicitly moved out stays at its
+  destination and is never individually pulled back, while a window moved into
+  a displaced workspace returns with it. This behavior is not implemented or
+  verified; user-configurable handling is deferred. Destination among multiple
+  surviving outputs, reconnect visible-workspace and focus handling, identity
+  persistence/edit handling, and special active floating/fullscreen/sticky
+  handling remain unselected.
 
 ### Resolution And Scaling Changes - CODE ADDRESSED, LIVE GATE PENDING
 
@@ -210,11 +227,23 @@
   user-owned fullscreen gate above to prove no fullscreen write through entry,
   idle, unrelated activation, sibling tiling input, fullscreen-target tiling
   input, and restore; capture frame-time and project traffic against idle.
-- P1 | Output hotplug domain lifecycle | Boundary: retire, retain, or reseed
-  `(output, workspace)` state only under an explicit selected policy. Gate:
-  unplug and replug a tiled secondary output while another output remains active;
-  prove selected tree semantics, no writes to absent outputs, and no unrelated
-  domain eviction.
+- P1 | Output hotplug domain lifecycle | Boundary: implement the selected
+  separate-workspace preservation for a disconnected output's displaced layout.
+  If the active window was on the disconnected monitor, show its relocated
+  workspace and retain focus on that window. If the active window was on a
+  surviving monitor, preserve its current visible workspace and focus; displaced
+  workspaces remain accessible through normal workspace switching. If there is
+  no active window, preserve the surviving monitor view. On reconnection,
+  displaced workspaces automatically return to their original monitor with
+  their then-current contents and layout, not a saved snapshot: split edits,
+  closed and new windows remain reflected. Workspace relocation is the unit: a
+  window explicitly moved out stays at its destination and is never individually
+  pulled back, while a window moved into a displaced workspace returns with it.
+  Destination among multiple surviving outputs, reconnect visible-workspace and
+  focus handling, identity persistence/edit handling, and special active
+  floating/fullscreen/sticky handling remain pending. Gate: unplug and replug a
+  tiled secondary output while another output remains active; prove selected
+  tree semantics, no writes to absent outputs, and no unrelated domain eviction.
 - P1 | Work-area change projection live gate | Static implementation now projects
   one retained existing domain through resolution, scaling, and work-area bounds
   changes without client-drift retry/park misuse. Run the exact user-owned gate
