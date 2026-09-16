@@ -8,6 +8,7 @@ import {
     WORKSPACE_SEND_DBUS_INTERFACE,
     WORKSPACE_SEND_DBUS_OBJECT,
     WORKSPACE_SEND_DBUS_SERVICE,
+    WORKSPACE_SEND_HAS_OWNER_METHOD,
     WORKSPACE_SEND_GET_OWNER_METHOD,
     WORKSPACE_SEND_INTERFACE,
     WORKSPACE_SEND_METHOD,
@@ -243,6 +244,10 @@ function mockEnv(refs: { a: object; b: object; t: object; desktop: object }): Mo
     };
     state.env = {
         callDbus: (service, path, iface, method, payload, callback) => {
+            if (method === WORKSPACE_SEND_HAS_OWNER_METHOD) {
+                callback(true);
+                return;
+            }
             state.dbusCalls.push({ service, path, iface, method, payload });
             state.callbacks.push(callback);
         },
@@ -547,6 +552,10 @@ function startEntryForPlannedFlight(): EntryHarness {
     const handle = startWorkspaceSendAdapterEntry({
         workspace: surface,
         callDbus: (service, path, iface, method, payload, callback) => {
+            if (method === WORKSPACE_SEND_HAS_OWNER_METHOD) {
+                callback(true);
+                return;
+            }
             dbusCalls.push({ service, path, iface, method, payload });
             callbacks.push(callback);
         },
@@ -693,6 +702,35 @@ describe("cosmic send-to-workspace adapter lifecycle", () => {
         assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
         assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.isInFlight, false);
+    });
+
+    it("keeps a committed send usable when immediate focus confirmation is refused", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.focusImpl = () => false;
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        runLifecycle(mocks, adapter);
+        assert.ok(mocks.logs.some((line) => line.includes("outcome=committed")), mocks.logs.join("\n"));
+        assert.ok(!mocks.logs.some((line) => line.includes("event=follow") && line.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+        for (const entry of mocks.world.windows) {
+            if (entry.id === "win-a") {
+                entry.workspace = "ws-1";
+                entry.rect = rect(0, 0, 100, 100);
+            } else if (entry.id === "win-b") {
+                entry.workspace = "ws-1";
+                entry.rect = rect(100, 0, 100, 100);
+            } else {
+                entry.workspace = "ws-2";
+                entry.rect = rect(0, 0, 100, 100);
+            }
+        }
+        assert.equal(adapter.requestSend("ws-2"), true, "a later send may begin after unconfirmed focus");
+        assert.equal(adapter.isEnabled, true, "unconfirmed follow never disables a committed adapter");
+        assert.equal(adapter.isInFlight, true);
+        adapter.disable();
     });
 
     it("carries the requested logical ordinal into follow diagnostics without gating", () => {
@@ -1164,11 +1202,17 @@ describe("cosmic send-to-workspace refusal routes", () => {
     it("refuses no-planner when activation never produces an owner", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
+        const adapter = new WorkspaceSendAdapter({
+            ...mocks.env,
+            callDbus: (service, path, iface, method, payload, callback) => {
+                mocks.dbusCalls.push({ service, path, iface, method, payload });
+                mocks.callbacks.push(callback);
+            },
+        });
         adapter.enable({ owner: "owner-1", generation: "gen-1" });
         assert.equal(adapter.requestSend("ws-2"), true);
-        // Absent initial owner: exactly one StartServiceByName phase.
-        mocks.callbacks[0]?.("");
+        // NameHasOwner's normal false reply authorizes exactly one activation.
+        mocks.callbacks[0]?.(false);
         const startCall = mocks.dbusCalls[1];
         assert.equal(startCall?.method, WORKSPACE_SEND_START_METHOD);
         assert.equal(startCall?.service, WORKSPACE_SEND_DBUS_SERVICE);
@@ -1185,12 +1229,13 @@ describe("cosmic send-to-workspace refusal routes", () => {
         // Next distinct send works.
         assert.equal(adapter.requestSend("ws-2"), true);
         const base = mocks.dbusCalls.length - 1;
-        mocks.callbacks[base]?.(":1.7");
-        const requestCall = mocks.dbusCalls[base + 1];
+        mocks.callbacks[base]?.(true);
+        mocks.callbacks[base + 1]?.(":1.7");
+        const requestCall = mocks.dbusCalls[base + 2];
         const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[base + 1]?.(plannedReply(correlation));
-        mocks.callbacks[base + 2]?.(ackReply(correlation));
-        mocks.callbacks[base + 3]?.(committedReply(correlation));
+        mocks.callbacks[base + 2]?.(plannedReply(correlation));
+        mocks.callbacks[base + 3]?.(ackReply(correlation));
+        mocks.callbacks[base + 4]?.(committedReply(correlation));
         assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.isInFlight, false);
     });
@@ -1198,10 +1243,16 @@ describe("cosmic send-to-workspace refusal routes", () => {
     it("refuses no-planner when the post-start owner is missing", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
+        const adapter = new WorkspaceSendAdapter({
+            ...mocks.env,
+            callDbus: (service, path, iface, method, payload, callback) => {
+                mocks.dbusCalls.push({ service, path, iface, method, payload });
+                mocks.callbacks.push(callback);
+            },
+        });
         adapter.enable({ owner: "owner-1", generation: "gen-1" });
         assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.("");
+        mocks.callbacks[0]?.(false);
         assert.equal(mocks.dbusCalls[1]?.method, WORKSPACE_SEND_START_METHOD);
         mocks.callbacks[1]?.(WORKSPACE_SEND_START_PRIMARY);
         // Post-start GetNameOwner yields no unique owner: remote-clean,
@@ -1213,12 +1264,13 @@ describe("cosmic send-to-workspace refusal routes", () => {
         assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
         assert.equal(adapter.requestSend("ws-2"), true);
         const base = mocks.dbusCalls.length - 1;
-        mocks.callbacks[base]?.(":1.7");
-        const requestCall = mocks.dbusCalls[base + 1];
+        mocks.callbacks[base]?.(true);
+        mocks.callbacks[base + 1]?.(":1.7");
+        const requestCall = mocks.dbusCalls[base + 2];
         const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[base + 1]?.(plannedReply(correlation));
-        mocks.callbacks[base + 2]?.(ackReply(correlation));
-        mocks.callbacks[base + 3]?.(committedReply(correlation));
+        mocks.callbacks[base + 2]?.(plannedReply(correlation));
+        mocks.callbacks[base + 3]?.(ackReply(correlation));
+        mocks.callbacks[base + 4]?.(committedReply(correlation));
         assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.isInFlight, false);
     });
@@ -1238,8 +1290,9 @@ describe("cosmic send-to-workspace refusal routes", () => {
         const adapter = new WorkspaceSendAdapter(throwing);
         adapter.enable({ owner: "owner-1", generation: "gen-1" });
         assert.equal(adapter.requestSend("ws-2"), true);
-        // Pin the owner; the request call then throws -> owner-loss.
-        mocks.callbacks[0]?.(":1.7");
+        // Presence then owner resolution pins before the request throws.
+        mocks.callbacks[0]?.(true);
+        mocks.callbacks[1]?.(":1.7");
         assert.equal(adapter.isEnabled, false);
         assert.ok(mocks.logs.some((l) => l.includes("outcome=owner-loss")), mocks.logs.join("\n"));
     });

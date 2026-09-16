@@ -266,3 +266,43 @@
   and post-commit follow are intentional. Diagnose pJOooO's geometry index 1
   nonconvergence and WwQ9G6's pre-ack disable boundary separately; visible
   display and border causation remain unproven.`
+
+## Latest Rapid-Send And Client-Trace Review
+
+- The authorized rapid-send project capture has 201 correlated flights: 100
+  target KWin desktop number 4, 56 target number 5, and 45 other targets.
+  Every flight reaches Planner commit and KWin `follow state-confirmed`; no
+  correlation has a geometry mismatch, timeout settlement, direct disable,
+  adapter loss, or divergence. The 64 separate `busy-refused` entries have no
+  correlation, so they cannot be assigned to individual physical key presses
+  or an active flight by merged log order. They are the code-defined in-flight
+  shortcut, not accepted transactions or completed commands.
+- The log's plan-relative geometry diagnostics show completed moves into the
+  workspace-4 direction with a target-retained peer and completed moves back
+  to the workspace-5 direction with a source-retained peer. Both include the
+  mover and complete their fences. Later ordinal changes mean these labels do
+  not establish stable workspace identity, and neither direction has a logged
+  failure predicate.
+- The same instance remains available throughout the capture: each completed
+  flight through the penultimate one is followed by another dispatch in the
+  same generation, and no disable appears. The final flight also completes,
+  but the file contains no subsequent send. This establishes later logical
+  usability after the observed busy shortcuts, not recovery from a terminal
+  loss.
+- The authorized isolated Ghostty client trace records configure, matching
+  acknowledgement, and continuing buffer-commit progress for the traced
+  workspace-4 terminal. It contains no unacknowledged configure or apparent
+  client refusal. It does not establish the full pasted launch command,
+  workspace placement, mover identity, a planner correlation, KWin frame
+  geometry, rendered visibility, or any workspace-5 mover failure. Content
+  size and buffer size are not KWin decorated frame geometry.
+- The two captures therefore support no ordinary code correction. They leave
+  the reported few back-to-5 visible failures uncorrelated: an intentional
+  busy refusal is observed and plausible for some rapid attempts, while wrong
+  target selection during an unfinished flight and committed-but-invisible
+  follow are neither proven nor excluded for an unlabeled physical attempt.
+  The minimal next discriminating user-owned observation is one labeled rapid
+  sequence that records every physical direction and interval, identifies the
+  perceived failure, retains the existing verbose log through that flight's
+  terminal outcome, and traces the workspace-5 mover rather than the
+  workspace-4 peer.

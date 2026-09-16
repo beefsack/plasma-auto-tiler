@@ -6,8 +6,9 @@
 // native ids, quantized frame extents, active-output work area). Only
 // normal windows are observed; every other window kind is skipped before the
 // snapshot so it can never be sent, and Rust owns all remaining policy. The
-// single D-Bus transport is DescribePlan carrying one JSON string; no other
-// method is invoked. Reply geometries are applied by the adapter in the
+// planner requests are DescribePlan carrying one JSON string. Workspace sends
+// also use the documented bus-daemon presence and activation methods before
+// pinning a unique Planner owner. Reply geometries are applied by the adapter in the
 // shared canonical order. Directional focus/move shortcuts and
 // direction-plus-mode resize shortcuts from the configured profile catalog
 // map to parameterized plan commands. Window and scope signals feed one
@@ -34,6 +35,9 @@ import { PLAN_SOURCE_REV } from "./source-rev";
 import { connectSignal, readSignal } from "./signal-capability";
 import { WorkspaceNativeAdapter, workspaceShortcutCatalog } from "./workspace-native";
 import {
+    WORKSPACE_SEND_DBUS_SERVICE,
+    WORKSPACE_SEND_START_FLAGS,
+    WORKSPACE_SEND_START_METHOD,
     WorkspaceSendAdapter,
     WorkspaceSendObserved,
     workspaceFingerprint as workspaceSendFingerprint,
@@ -1188,6 +1192,10 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             }
             const bound = native as (...args: ReadonlyArray<unknown>) => void;
             callDbus = (service, path, iface, method, payload, callback) => {
+                if (service === WORKSPACE_SEND_DBUS_SERVICE && method === WORKSPACE_SEND_START_METHOD) {
+                    bound(service, path, iface, method, payload, WORKSPACE_SEND_START_FLAGS, callback);
+                    return;
+                }
                 bound(service, path, iface, method, payload, callback);
             };
         } catch (error) {
@@ -1248,17 +1256,27 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 return null;
             }
             const detaches: Array<() => void> = [];
-            for (const item of list) {
-                if (typeof item !== "object" || item === null) {
-                    continue;
+            const seen = new Set<object>();
+            const connectOne = (item: object): void => {
+                if (seen.has(item)) {
+                    return;
                 }
-                const detach = connectSignal(readSignal(item, "moveResizedChanged"), handler);
+                const detach = connectSignal(readSignal(item, "frameGeometryChanged"), handler);
                 if (detach === null) {
-                    continue;
+                    return;
                 }
+                seen.add(item);
                 detaches.push(detach);
+            };
+            for (const item of list) {
+                if (typeof item === "object" && item !== null) {
+                    connectOne(item as object);
+                }
             }
-            const addedDetach = connectSignal(readSignal(surface, "windowAdded"), () => {
+            const addedDetach = connectSignal(readSignal(surface, "windowAdded"), (added) => {
+                if (typeof added === "object" && added !== null) {
+                    connectOne(added as object);
+                }
                 handler();
             });
             if (addedDetach !== null) {
@@ -1610,8 +1628,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                     return "missing";
                 }
                 probe();
-                Reflect.set(target, "onAllDesktops", allDesktops);
-                return "invoked";
+                return Reflect.set(target, "onAllDesktops", allDesktops) ? "invoked" : "threw";
             } catch (error) {
                 void error;
                 return "threw";
@@ -1619,13 +1636,12 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         },
         setGeometry: (target, rect) => {
             try {
-                Reflect.set(target, "frameGeometry", {
+                return Reflect.set(target, "frameGeometry", {
                     x: rect.x,
                     y: rect.y,
                     width: rect.w,
                     height: rect.h,
                 });
-                return true;
             } catch (error) {
                 void error;
                 return false;
@@ -1867,13 +1883,12 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         },
         setGeometry: (target, rect) => {
             try {
-                Reflect.set(target, "frameGeometry", {
+                return Reflect.set(target, "frameGeometry", {
                     x: rect.x,
                     y: rect.y,
                     width: rect.w,
                     height: rect.h,
                 });
-                return true;
             } catch (error) {
                 void error;
                 return false;
@@ -1881,8 +1896,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         },
         setDesktops: (target, refs) => {
             try {
-                Reflect.set(target, "desktops", refs);
-                return true;
+                return Reflect.set(target, "desktops", refs);
             } catch (error) {
                 void error;
                 return false;
@@ -2005,8 +2019,13 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         },
         focusWindow: (windowRef) => {
             try {
+                const targetId = readNativeId(windowRef);
+                if (targetId === null) {
+                    return false;
+                }
                 (liveWorkspace as { activeWindow: unknown }).activeWindow = windowRef;
-                return true;
+                const active = Reflect.get(liveWorkspace as object, "activeWindow");
+                return typeof active === "object" && active !== null && readNativeId(active as object) === targetId;
             } catch (error) {
                 void error;
                 return false;

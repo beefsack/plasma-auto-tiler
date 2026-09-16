@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { describe, it } from "node:test";
 
 import { observeSendTarget, startPlanAdapterEntry } from "../src/plan-adapter-entry";
+import { WORKSPACE_SEND_HAS_OWNER_METHOD } from "../src/workspace-send-adapter";
 import {
     ensureTrailingEmptyDesktop,
     orderedDesktopEntries,
@@ -623,6 +624,10 @@ describe("workspace production entry routing and handoff", () => {
         const handle = startPlanAdapterEntry({
             workspace: world.workspace,
             callDbus: (service, _path, _iface, method, payload, callback): void => {
+                if (method === WORKSPACE_SEND_HAS_OWNER_METHOD) {
+                    callback(true);
+                    return;
+                }
                 mocks.dbusCalls.push({ service, method, payload });
                 mocks.callbacks.push(callback);
             },
@@ -1053,6 +1058,10 @@ describe("workspace production entry routing and handoff", () => {
         const handle = startPlanAdapterEntry({
             workspace: world.workspace,
             callDbus: (service, _path, _iface, method, payload, callback): void => {
+                if (method === WORKSPACE_SEND_HAS_OWNER_METHOD) {
+                    callback(true);
+                    return;
+                }
                 mocks.dbusCalls.push({ service, method, payload });
                 mocks.callbacks.push(callback);
             },
@@ -1231,6 +1240,10 @@ describe("four-desktop terminal-run send with bounded fence", () => {
         const handle = startPlanAdapterEntry({
             workspace: world.workspace,
             callDbus: (service, _path, _iface, method, payload, callback): void => {
+                if (method === WORKSPACE_SEND_HAS_OWNER_METHOD) {
+                    callback(true);
+                    return;
+                }
                 mocks.dbusCalls.push({ service, method, payload });
                 mocks.callbacks.push(callback);
             },

@@ -1630,6 +1630,8 @@ interface FakeWorld {
     readonly winFull: Map<object, FakeSignal>;
     readonly winMax: Map<object, FakeSignal>;
     readonly winDesktops: Map<object, FakeSignal>;
+    readonly winGeometry: Map<object, FakeSignal>;
+    readonly winInteractiveGeometry: Map<object, FakeSignal>;
     readonly maximizeClears: object[];
 }
 
@@ -1644,6 +1646,8 @@ function fakeWorld(): FakeWorld {
     const winFull = new Map<object, FakeSignal>();
     const winMax = new Map<object, FakeSignal>();
     const winDesktops = new Map<object, FakeSignal>();
+    const winGeometry = new Map<object, FakeSignal>();
+    const winInteractiveGeometry = new Map<object, FakeSignal>();
     const world: FakeWorld = {
         output,
         desktop,
@@ -1654,6 +1658,8 @@ function fakeWorld(): FakeWorld {
         winFull,
         winMax,
         winDesktops,
+        winGeometry,
+        winInteractiveGeometry,
         maximizeClears: [],
     };
     const makeWin = (id: string, x: number): Record<string, unknown> => {
@@ -1661,6 +1667,7 @@ function fakeWorld(): FakeWorld {
         const full = fakeSignal();
         const max = fakeSignal();
         const desktopsChanged = fakeSignal();
+        const interactive = fakeSignal();
         const win: Record<string, unknown> = {
             normalWindow: true,
             internalId: id,
@@ -1668,7 +1675,8 @@ function fakeWorld(): FakeWorld {
             output,
             desktops: [desktop],
             frameGeometry: { x, y: 0, width: 600, height: 800 },
-            moveResizedChanged: geo.signal,
+            frameGeometryChanged: geo.signal,
+            moveResizedChanged: interactive.signal,
             fullScreenChanged: full.signal,
             fullScreen: false,
             maximizedChanged: max.signal,
@@ -1689,6 +1697,8 @@ function fakeWorld(): FakeWorld {
         winFull.set(win, full);
         winMax.set(win, max);
         winDesktops.set(win, desktopsChanged);
+        winGeometry.set(win, geo);
+        winInteractiveGeometry.set(win, interactive);
         return win;
     };
     const winA = makeWin("win-a", 0);
@@ -2206,6 +2216,67 @@ describe("plan entry live observation and shortcuts", () => {
         assert.deepEqual(ids, ["win-a", "win-b"]);
         assert.deepEqual(payload["command"], { op: "focus", window: "win-a", direction: "left" });
         handle?.stop();
+    });
+
+    it("propagates a production Plan frameGeometry property rejection", () => {
+        const world = fakeWorld();
+        const rejected = world.wins[1] as Record<string, unknown>;
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        handle?.requestMove("right");
+        const payload = JSON.parse(mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>;
+        Object.defineProperty(rejected, "frameGeometry", {
+            value: rejected["frameGeometry"],
+            writable: false,
+            configurable: true,
+        });
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: payload["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [
+                { window: "win-a", leaf: "leaf-a", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 500, h: 800 } },
+                { window: "win-b", leaf: "leaf-b", output: "out-1", workspace: "ws-1", rect: { x: 500, y: 0, w: 700, h: 800 } },
+            ],
+        }));
+        assert.ok(mocks.logs.some((line) => line.includes("window=win-b") && line.includes("disposition=write-failed")), mocks.logs.join("\n"));
+        assert.ok(mocks.logs.some((line) => line.includes("kind=move") && line.includes("outcome=write-failed")), mocks.logs.join("\n"));
+        assert.ok(!mocks.logs.some((line) => line.includes("kind=move") && line.includes("outcome=planned-applied")), mocks.logs.join("\n"));
+        handle?.stop();
+    });
+
+    it("subscribes shared Plan reflow to frameGeometryChanged, not the interactive signal", () => {
+        const world = fakeWorld();
+        const winA = world.wins[0] as object;
+        const { handle } = startEntry(world);
+        assert.ok(handle !== null);
+        assert.equal(world.winGeometry.get(winA)?.handlers.length, 1, "frameGeometryChanged is the production reflow source");
+        assert.equal(world.winInteractiveGeometry.get(winA)?.handlers.length, 0, "interactive-only signal is never subscribed");
+        const addedGeometry = fakeSignal();
+        const addedInteractive = fakeSignal();
+        const added = {
+            normalWindow: true,
+            internalId: "win-c",
+            resourceClass: "test-app",
+            output: world.output,
+            desktops: [world.desktop],
+            frameGeometry: { x: 0, y: 0, width: 600, height: 800 },
+            frameGeometryChanged: addedGeometry.signal,
+            moveResizedChanged: addedInteractive.signal,
+            fullScreenChanged: fakeSignal().signal,
+            fullScreen: false,
+            maximizedChanged: fakeSignal().signal,
+            maximizeMode: 0,
+        };
+        world.wins.push(added);
+        for (const handler of world.added.handlers) {
+            (handler as unknown as (value: unknown) => void)(added);
+        }
+        assert.equal(addedGeometry.handlers.length, 1, "added windows bind frame geometry changes");
+        assert.equal(addedInteractive.handlers.length, 0, "added interactive signals stay unused");
+        handle?.stop();
+        assert.equal(world.winGeometry.get(winA)?.handlers.length, 0, "stop detaches frame geometry subscription");
+        assert.equal(addedGeometry.handlers.length, 0, "stop detaches added-window frame geometry subscription");
     });
 
     it("subscribes fullScreenChanged per window after enable and for windows added later", () => {

@@ -20,12 +20,12 @@
 // target/object/domain post-observation, signals, and structured route
 // diagnostics.
 //
-// Activation mirrors the movement/focus/resize adapters exactly: one bounded
-// GetNameOwner, an absent owner runs exactly one StartServiceByName(service,0)
-// phase accepting only 1 PrimaryOwner / 2 AlreadyOwner, followed by exactly one
-// post-start GetNameOwner, pinning one unique `:N.M` owner addressed by every
-// planner call. One timer, no retry, no polling. Same-UID authorization stays
-// solely the Planner's existing single check; it is never duplicated here.
+// Activation first uses NameHasOwner's normal boolean reply. A present owner is
+// resolved and pinned; only a confirmed absent name runs one
+// StartServiceByName(service, 0) phase accepting 1 PrimaryOwner / 2
+// AlreadyOwner, followed by one post-start GetNameOwner. Every planner call
+// targets that pinned unique `:N.M` owner. One timer, no retry, no polling.
+// Same-UID authorization stays solely the Planner's existing single check.
 //
 // The planner commits only after an exact accepted acknowledgement and a
 // matching verified post-observation: request proposes and retains one pending
@@ -60,15 +60,16 @@ export const WORKSPACE_SEND_INTERFACE = "org.plasmaautotiler.Planner1";
 export const WORKSPACE_SEND_METHOD = "DescribePlan";
 
 // Session D-Bus activation transport (one-flight, bounded, no poll/retry).
-// Discovery is GetNameOwner on the well-known Planner name, pinned to one
-// exact unique owner (`:N.M`) before any planner call. When absent, exactly
-// one StartServiceByName(service, 0) phase runs, accepting only result codes
-// 1 (PrimaryOwner) / 2 (AlreadyOwner), followed by exactly one more owner
-// resolution and pin. Flags value 0 is fixed; the entry appends it as the
-// second native D-Bus argument.
+// NameHasOwner observes presence without relying on GetNameOwner's error reply,
+// which KWin Script does not deliver to callbacks. A present name is resolved
+// and pinned; an absent name runs exactly one StartServiceByName(service, 0)
+// phase accepting only result codes 1 (PrimaryOwner) / 2 (AlreadyOwner), then
+// resolves and pins one unique owner before any planner call. Flags value 0 is
+// fixed; the entry appends it as the second native D-Bus argument.
 export const WORKSPACE_SEND_DBUS_SERVICE = "org.freedesktop.DBus";
 export const WORKSPACE_SEND_DBUS_OBJECT = "/org/freedesktop/DBus";
 export const WORKSPACE_SEND_DBUS_INTERFACE = "org.freedesktop.DBus";
+export const WORKSPACE_SEND_HAS_OWNER_METHOD = "NameHasOwner";
 export const WORKSPACE_SEND_GET_OWNER_METHOD = "GetNameOwner";
 export const WORKSPACE_SEND_START_METHOD = "StartServiceByName";
 export const WORKSPACE_SEND_START_FLAGS = 0;
@@ -1318,18 +1319,16 @@ export class WorkspaceSendAdapter {
             return;
         }
         this.cancelTimer = cancel;
-        // Phase 1: resolve the well-known Planner name to one exact unique
-        // owner. Absent (any non-`:N.M` reply) falls through to exactly one
-        // StartServiceByName phase; present pins immediately with no service
-        // request. One flight, one bounded timeout, no poll/timer/retry.
+        // Phase 1: distinguish presence through NameHasOwner's normal boolean
+        // reply. KWin does not call back for GetNameOwner's absent-name error.
         try {
             this.env.callDbus(
                 WORKSPACE_SEND_DBUS_SERVICE,
                 WORKSPACE_SEND_DBUS_OBJECT,
                 WORKSPACE_SEND_DBUS_INTERFACE,
-                WORKSPACE_SEND_GET_OWNER_METHOD,
+                WORKSPACE_SEND_HAS_OWNER_METHOD,
                 WORKSPACE_SEND_SERVICE,
-                (reply) => this.onOwnerInitial(reply, flight, correlation),
+                (reply) => this.onNamePresence(reply, flight, correlation),
             );
         } catch (error) {
             void error;
@@ -1342,19 +1341,43 @@ export class WorkspaceSendAdapter {
         }
     }
 
-    private onOwnerInitial(reply: unknown, flight: number, correlation: string): void {
+    private onNamePresence(reply: unknown, flight: number, correlation: string): void {
         if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 1) {
             return;
         }
-        if (isUniqueOwner(reply)) {
-            this.pinnedOwner = reply;
-            this.activationStep = 4;
-            this.diag("request", correlation, 0, "activate", "owner-pinned");
-            this.sendPlannerRequest(flight, correlation);
+        if (reply === true) {
+            this.activationStep = 2;
+            try {
+                this.env.callDbus(
+                    WORKSPACE_SEND_DBUS_SERVICE,
+                    WORKSPACE_SEND_DBUS_OBJECT,
+                    WORKSPACE_SEND_DBUS_INTERFACE,
+                    WORKSPACE_SEND_GET_OWNER_METHOD,
+                    WORKSPACE_SEND_SERVICE,
+                    (ownerReply) => this.onOwnerInitial(ownerReply, flight, correlation),
+                );
+            } catch (error) {
+                void error;
+                this.clearTimer();
+                this.inFlight = false;
+                this.activationStep = 0;
+                this.pending = null;
+                this.diag("request", correlation, 0, "activate", "no-planner");
+                this.activeDeadline = 0;
+            }
+            return;
+        }
+        if (reply !== false) {
+            this.clearTimer();
+            this.inFlight = false;
+            this.activationStep = 0;
+            this.pending = null;
+            this.diag("request", correlation, 0, "activate", "no-planner");
+            this.activeDeadline = 0;
             return;
         }
         // Absent name: exactly one StartServiceByName(service, 0) phase.
-        this.activationStep = 2;
+        this.activationStep = 3;
         this.diag("request", correlation, 0, "activate", "activating");
         try {
             this.env.callDbus(
@@ -1377,8 +1400,27 @@ export class WorkspaceSendAdapter {
         }
     }
 
-    private onStartResult(reply: unknown, flight: number, correlation: string): void {
+    private onOwnerInitial(reply: unknown, flight: number, correlation: string): void {
         if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 2) {
+            return;
+        }
+        if (!isUniqueOwner(reply)) {
+            this.clearTimer();
+            this.inFlight = false;
+            this.activationStep = 0;
+            this.pending = null;
+            this.diag("request", correlation, 0, "activate", "no-planner");
+            this.activeDeadline = 0;
+            return;
+        }
+        this.pinnedOwner = reply;
+        this.activationStep = 5;
+        this.diag("request", correlation, 0, "activate", "owner-pinned");
+        this.sendPlannerRequest(flight, correlation);
+    }
+
+    private onStartResult(reply: unknown, flight: number, correlation: string): void {
+        if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 3) {
             return;
         }
         if (reply !== WORKSPACE_SEND_START_PRIMARY && reply !== WORKSPACE_SEND_START_ALREADY) {
@@ -1393,7 +1435,7 @@ export class WorkspaceSendAdapter {
         }
         // Exactly one bounded post-activation owner resolution, then pin
         // before any planner call. No retry on failure.
-        this.activationStep = 3;
+        this.activationStep = 4;
         try {
             this.env.callDbus(
                 WORKSPACE_SEND_DBUS_SERVICE,
@@ -1416,7 +1458,7 @@ export class WorkspaceSendAdapter {
     }
 
     private onOwnerAfterStart(reply: unknown, flight: number, correlation: string): void {
-        if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 3) {
+        if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 4) {
             return;
         }
         if (!isUniqueOwner(reply)) {
@@ -1430,13 +1472,13 @@ export class WorkspaceSendAdapter {
             return;
         }
         this.pinnedOwner = reply;
-        this.activationStep = 4;
+        this.activationStep = 5;
         this.diag("request", correlation, 0, "activate", "owner-pinned");
         this.sendPlannerRequest(flight, correlation);
     }
 
     private sendPlannerRequest(flight: number, correlation: string): void {
-        if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 4) {
+        if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 5) {
             return;
         }
         const pending = this.pending;
@@ -1471,7 +1513,7 @@ export class WorkspaceSendAdapter {
             return;
         }
         const pending = this.pending;
-        if (pending === null || !isUniqueOwner(this.pinnedOwner) || this.activationStep !== 4) {
+        if (pending === null || !isUniqueOwner(this.pinnedOwner) || this.activationStep !== 5) {
             return;
         }
         // Late duplicate request replies after the plan is bound (including

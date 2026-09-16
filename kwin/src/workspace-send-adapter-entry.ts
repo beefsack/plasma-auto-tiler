@@ -605,8 +605,7 @@ export function startWorkspaceSendAdapterEntry(
         },
         setDesktops: (target, refs) => {
             try {
-                Reflect.set(target, "desktops", refs);
-                return true;
+                return Reflect.set(target, "desktops", refs);
             } catch (error) {
                 void error;
                 return false;

@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 
 import { PLAN_DEBOUNCE_MS } from "../src/plan-adapter";
 import { startPlanAdapterEntry } from "../src/plan-adapter-entry";
-import { WORKSPACE_SEND_TIMEOUT_MS } from "../src/workspace-send-adapter";
+import { WORKSPACE_SEND_HAS_OWNER_METHOD, WORKSPACE_SEND_TIMEOUT_MS } from "../src/workspace-send-adapter";
 
 interface FakeSignal {
     readonly handlers: Array<(payload?: unknown) => void>;
@@ -143,6 +143,10 @@ function startEntry(world: FakeWorld): { handle: ReturnType<typeof startPlanAdap
     const handle = startPlanAdapterEntry({
         workspace: world.workspace,
         callDbus: (service, _path, _iface, method, payload, callback): void => {
+            if (method === WORKSPACE_SEND_HAS_OWNER_METHOD) {
+                callback(true);
+                return;
+            }
             mocks.dbusCalls.push({ service, method, payload });
             mocks.callbacks.push(callback);
         },
@@ -941,6 +945,15 @@ describe("plan/send P0 coordination through production wiring", () => {
         assert.equal(verifyCalls.length, 1);
         // Distinguish follow focus: move focus away before the verified commit.
         world.workspace["activeWindow"] = winB;
+        let activeWrapper: FakeWindow = winB;
+        Object.defineProperty(world.workspace, "activeWindow", {
+            configurable: true,
+            get: (): FakeWindow => activeWrapper,
+            set: (value: unknown): void => {
+                // KWin may return a fresh script wrapper for the same Window.
+                activeWrapper = { ...(value as FakeWindow) };
+            },
+        });
         mocks.callbacks[verifyCalls[0]?.index as number]?.(
             JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", kind: "send-to-workspace", base_revision: 1 }),
         );
@@ -957,7 +970,8 @@ describe("plan/send P0 coordination through production wiring", () => {
             !mocks.logs.some((l) => l.includes(`correlation=${correlation}`) && l.includes("event=follow") && l.includes("outcome=completed")),
             `fresh-wrapper follow must never report completed:\n${mocks.logs.join("\n")}`,
         );
-        assert.equal(world.workspace["activeWindow"], mover, "follow must focus the mover");
+        assert.notEqual(world.workspace["activeWindow"], mover, "focus readback models a fresh wrapper");
+        assert.equal((world.workspace["activeWindow"] as FakeWindow).internalId, mover.internalId, "follow confirms the native id");
 
         handle?.stop();
     });
@@ -1205,5 +1219,113 @@ describe("plan/send P0 coordination through production wiring", () => {
         assert.equal(sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace").length, 1, "no retried send request");
 
         handle?.stop();
+    });
+});
+
+describe("production Planner activation bridge", () => {
+    it("uses NameHasOwner false, StartServiceByName(name, 0), then pins one owner without accepting stale replies", () => {
+        const world = makeWorld();
+        const geometry = fakeSignal();
+        const desktops = fakeSignal();
+        const win: FakeWindow = {
+            normalWindow: true,
+            managed: true,
+            minimized: false,
+            fullScreen: false,
+            maximizeMode: 0,
+            onAllDesktops: false,
+            internalId: "win-a",
+            resourceClass: "test-app",
+            output: world.outputs[0] as FakeOutput,
+            desktops: [world.desktops[0] as FakeDesktop],
+            frameGeometry: { x: 0, y: 0, width: 100, height: 100 },
+        };
+        Object.assign(win, {
+            desktopsChanged: desktops.signal,
+            frameGeometryChanged: geometry.signal,
+            moveResizedChanged: fakeSignal().signal,
+            fullScreenChanged: fakeSignal().signal,
+            maximizedChanged: fakeSignal().signal,
+        });
+        world.wins.push(win);
+        world.workspace["activeWindow"] = win;
+        const global = globalThis as Record<string, unknown>;
+        const original = global["callDBus"];
+        const calls: Array<ReadonlyArray<unknown>> = [];
+        global["callDBus"] = (...args: ReadonlyArray<unknown>): void => {
+            calls.push(args);
+        };
+        try {
+            const handle = startPlanAdapterEntry({
+                workspace: world.workspace,
+                scheduleOnce: () => () => {},
+                log: () => {},
+                owner: "owner-1",
+                generation: "gen-1",
+                registerShortcutFn: () => true,
+                readProfileFn: (): string => "cosmic",
+                readWorkspaceModeFn: (): string => "per-output-local",
+            });
+            assert.ok(handle !== null);
+            handle.requestWorkspaceMove(2);
+            const hasIndex = calls.findIndex((call) => call[3] === "NameHasOwner");
+            assert.ok(hasIndex >= 0, "production send must check documented name presence");
+            assert.equal(calls[hasIndex]?.[4], "org.plasmaautotiler.Planner");
+            const hasOwner = calls[hasIndex]?.[5];
+            assert.equal(typeof hasOwner, "function");
+            (hasOwner as (reply: unknown) => void)(false);
+            assert.equal(calls[hasIndex + 1]?.[3], "StartServiceByName");
+            assert.deepEqual(calls[hasIndex + 1]?.slice(4, 6), ["org.plasmaautotiler.Planner", 0]);
+            const started = calls[hasIndex + 1]?.[6];
+            assert.equal(typeof started, "function");
+            (started as (reply: unknown) => void)(1);
+            assert.equal(calls[hasIndex + 2]?.[3], "GetNameOwner");
+            const owner = calls[hasIndex + 2]?.[5];
+            assert.equal(typeof owner, "function");
+            (owner as (reply: unknown) => void)(":9.4");
+            assert.equal(calls[hasIndex + 3]?.[0], ":9.4");
+            assert.equal(calls[hasIndex + 3]?.[3], "DescribePlan");
+            const request = calls[hasIndex + 3];
+            const requestPayload = JSON.parse(request?.[4] as string) as Record<string, unknown>;
+            Object.defineProperty(win, "desktops", {
+                value: win.desktops,
+                writable: false,
+                configurable: true,
+            });
+            const requestReply = request?.[5];
+            assert.equal(typeof requestReply, "function");
+            (requestReply as (reply: unknown) => void)(JSON.stringify({
+                v: 1,
+                correlation_id: requestPayload["correlation_id"],
+                outcome: "planned",
+                kind: "send-to-workspace",
+                base_revision: 0,
+                desired_geometry: [
+                    { window: "win-a", leaf: "leaf-win-a", output: "out-1", workspace: "ws-2", rect: { x: 0, y: 0, w: 100, h: 100 } },
+                ],
+                desired_focus: { domain_output: "out-1", domain_workspace: "ws-2", leaf: "leaf-win-a" },
+                preconditions: ["window-observed", "desired-topology-valid", "adapter-must-verify-postconditions"],
+                operation: {
+                    op: "move-tiled",
+                    window: "win-a",
+                    leaf: "leaf-win-a",
+                    source_output: "out-1",
+                    source_workspace: "ws-1",
+                    target_output: "out-1",
+                    target_workspace: "ws-2",
+                },
+            }));
+            assert.equal(calls[hasIndex + 4]?.[0], ":9.4", "partial native state reports only to the pinned owner");
+            assert.ok(String(calls[hasIndex + 4]?.[4]).includes("adapter-lost"), "false membership write must not be acknowledged");
+            (hasOwner as (reply: unknown) => void)(true);
+            assert.equal(calls.length, hasIndex + 5, "late presence reply never rebinds or starts another request");
+            handle.stop();
+        } finally {
+            if (original === undefined) {
+                delete global["callDBus"];
+            } else {
+                global["callDBus"] = original;
+            }
+        }
     });
 });

@@ -22,6 +22,7 @@ import {
 } from "../src/pointer-resize-adapter";
 import {
     WorkspaceSendAdapter,
+    WORKSPACE_SEND_HAS_OWNER_METHOD,
     type WorkspaceSendAdapterEnv,
     type WorkspaceSendObserved,
 } from "../src/workspace-send-adapter";
@@ -428,6 +429,10 @@ describe("production entries carry configured gaps", () => {
         const callbacks: Array<(reply: unknown) => void> = [];
         const env: WorkspaceSendAdapterEnv = {
             callDbus: (_s, _p, _i, method, payload, cb): void => {
+                if (method === WORKSPACE_SEND_HAS_OWNER_METHOD) {
+                    cb(true);
+                    return;
+                }
                 dbusCalls.push({ method, payload });
                 callbacks.push(cb);
             },
@@ -488,6 +493,10 @@ describe("production entries carry configured gaps", () => {
             const callbacks: Array<(reply: unknown) => void> = [];
             const env: WorkspaceSendAdapterEnv = {
                 callDbus: (_s, _p, _i, method, payload, cb): void => {
+                    if (method === WORKSPACE_SEND_HAS_OWNER_METHOD) {
+                        cb(true);
+                        return;
+                    }
                     dbusCalls.push({ method, payload });
                     callbacks.push(cb);
                 },

@@ -2,19 +2,28 @@
 
 Only meaningful pending or active work is listed.
 
-- P0 | Workspace-send reliability (next dogfooding blocker) | ARTNue confirms
-  retained destination geometry stayed at height 964 instead of planned 478
-  through timeout; the user waited 15 seconds before visiting the target. No
-  ack/commit/follow occurred. Upstream KWin v6.7.4 source establishes asynchronous
-  xdg configure/ack/buffer-commit geometry, but no current-workspace requirement
-  or demonstrated adapter ordering defect. The corrected Reflect.set boolean
-  contract concerns JS property rejection, not native resize acceptance or a
-  send repair. Next identify a bounded target-client configure/commit observation
-  route; another script-only reproduction is not currently discriminating.
-  A prior bounded journal check found no matching entry. Native cause remains
-  unknown; keep WwQ9G6 loss and committed-but-invisible failures distinct.
+- P0 | Workspace-send reliability (next dogfooding blocker) | User paused live
+  reproductions. API-alignment corrections are implemented in active production:
+  geometry/desktop assignment results propagate, shared Plan observes
+  frameGeometryChanged, and follow confirms focus by native-id readback.
+  NameHasOwner supplies an explicit absence check before activation with flags
+  0 and fresh unique-owner pinning; no activation policy decision remains.
+  Typecheck, 692 offline tests, and bundle build pass, including production-entry
+  contract coverage. Historical native geometry failure and rendered follow remain
+  unresolved; no live repair is claimed. qc1FSb rapid-send
+  capture has 201 committed/state-confirmed flights and 64 uncorrelated busy
+  refusals, with continued same-instance usability and no terminal geometry
+  failure. Workspace-4 Ghostty trace shows configure acknowledgements and
+  commits; the mover was untraced. User-observed misses returning to 5 cannot
+  yet be assigned to a refused press or a committed-but-invisible follow.
+  ARTNue remains a separate unresolved
+  retained-target geometry timeout (964 instead of planned 478); this successful
+  trace does not explain it. The Reflect.set correction is only a JS assignment
+  contract fix, not a native acceptance or send repair. Keep WwQ9G6 loss and
+  earlier committed-but-invisible failures distinct.
   [timeout record](changes/archive/workspace-send-timeout-observation.md)
   [earlier record](changes/archive/workspace-send-visible-follow-boundary.md)
+  [API audit](changes/kwin-script-api-contract-audit.md)
 - P1 | Non-visible workspace tiling implementation | User observes deferred
   retiling until visiting a workspace, leaving stale panel previews. Source
   confirms normal observation/reconciliation covers the active output's current
