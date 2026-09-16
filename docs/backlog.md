@@ -90,7 +90,11 @@ Only meaningful pending or active work is listed.
   while reload-required and a no-pending request sends nothing. A deliberate
   reload sends one typed KWin reconfigure request reported as
   sent-but-unconfirmed or failed, never applied; session restart remains the
-  guarantee. Reload-required is dialog-scoped in-memory state: dialog
+  guarantee. The running controller subscribes to the KWin Options
+  `configChanged` signal emitted after that reconfigure reparses kwinrc, then
+  re-reads validated gap configuration and requests one debounced resync;
+  unchanged signals resync nothing and shortcuts are never re-registered.
+  Reload-required is dialog-scoped in-memory state: dialog
   load/reopen resets it and truthful cross-reload preservation is blocked
   (no authorized persistent key, no supported runtime observation). No live
   result is claimed and the all-settings live-application launch blocker is

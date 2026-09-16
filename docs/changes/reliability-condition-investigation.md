@@ -250,9 +250,22 @@
   configuration and updates the outline and border at
   `kwin/native-effect/activewindowborder.cpp:45-50`.
 - The KCM writes seven script settings to `kwinrc`, including bounded
-  `innerGap` and `outerGap` values. Production reads `shortcutProfile`,
-  `workspaceMode`, and the gap pair once during startup; no production script
-  source subscribes to a configuration-change or reconfigure signal.
+  `innerGap` and `outerGap` values. Production reads `shortcutProfile` and
+  `workspaceMode` at startup; the gap pair resolves at startup and re-resolves
+  only on the deliberate Options `configChanged` reload owned by
+  `kwin/src/plan-adapter-entry.ts`. KWin source evidence (6.7.4 tarball):
+  `src/scripting/scripting.cpp:224-227` exposes the Options singleton as the
+  script global `options`; `src/options.h` declares `void configChanged()`;
+  `src/options.cpp:657-662` emits it from `updateSettings()`; `src/workspace.cpp:998-1017`
+  invokes that from `slotReconfigure()` after reparsing configuration for the
+  `org.kde.KWin /KWin reconfigure` call (`src/dbusinterface.cpp:64-67`,
+  `Q_NOREPLY`). The running script is never restarted by that call (the
+  Scripting load path returns -1 when already loaded, `Script::run` returns
+  early when running), so the entry subscription is the pickup route: it
+  re-reads validated gaps, logs one bounded `config-reloaded` line, and
+  requests one debounced resync through the existing single-flight guards.
+  Unchanged signals resync nothing; shortcuts are never re-registered and no
+  script/plugin lifecycle runs.
 - KCM Apply no longer auto-queues a script reconfigure on save. Saving tiling
   settings sets reload-required with the exact status `Tiling settings saved.
   Reload required: the running tiler still uses startup values.` An unchanged
@@ -265,18 +278,21 @@
   unconfirmed; restart the session to guarantee pickup.` and keeps
   reload-required; failure reports `Reload request failed. Running tiler still
   uses startup values; retry or restart the session.` and keeps
-  reload-required. No status claims applied. Running confirmation is not
-  provable in current source: the controller has no config-change
-  subscription and KWin's reconfigure is Q_NOREPLY, so a queued send alone is
+  reload-required. No status claims applied. KCM-side running confirmation is
+  not provable: KWin's reconfigure is Q_NOREPLY, so a queued send alone is
   reported as unconfirmed and session restart remains the guarantee. The
+  intended route is proven in source and offline behavior instead: the entry
+  `options.configChanged` subscription re-reads validated gaps and the
+  behavioral tests prove an altered gap reaches the reconfigured controller's
+  next DescribePlan domain payload on deliberate signal. The
   button never touches shortcuts and never unloads scripts or plugins.
 - Reload-required is dialog-scoped in-memory KCM state, not persisted runtime
   truth: `load()` resets it to `No pending tiler reload in this dialog.` So a
   save-then-load/reopen cycle clears the pending flag even though the running
   tiler is still stale. It cannot truthfully be preserved across dialog reload:
   persisting it would need a new `kwinrc` key outside the known script/effect
-  groups and defaults, and observing real pickup is unsupported (startup-bound
-  reads, no config-change subscription, Q_NOREPLY send). Session restart is the
+  groups and defaults, and KCM-side observation of real pickup is unsupported
+  (Q_NOREPLY send; the KCM cannot distinguish restart from reopen). Session restart is the
   guaranteed pickup, but the KCM cannot observe restart versus reopen, so both
   preserving (risking a false pending) and clearing (risking a false clean)
   misstate unobservable runtime state; the implementation keeps the explicit
@@ -286,17 +302,20 @@
   recorded-postimage drift when opened: `kwin/native-effect/activeborderconfig_module.cpp:448-457`.
   No running-script watcher reconciles externally changed shortcuts or `kwinrc`.
 - Expected residual: hand-edited `kwinrc`, externally changed script settings, or
-  a KCM change can leave the already running script using its startup values,
-  including its gap pair and existing shortcut registrations. The deliberate
-  reload request is unacknowledged, so only a session restart guarantees
-  pickup. Border settings are the only confirmed live configuration path. The
+  a KCM change can leave the already running script using its startup values
+  for everything except the gap pair picked up by the deliberate reload,
+  including existing shortcut registrations. The deliberate
+  reload request is unacknowledged at the KCM transport, so only a session
+  restart guarantees pickup. Border settings are the only confirmed live
+  configuration path. The
   all-settings live-application launch blocker is unchanged.
-- Offline verification (2026-09-16, no live KWin, Plasma, D-Bus, or session
+- Offline verification (2026-09-17, no live KWin, Plasma, D-Bus, or session
   action): `npm run typecheck --prefix kwin` passes; `npm test --prefix kwin`
-  passes 761 tests across 106 suites with 0 failures (including 8
-  `tiler-reload-interim` static contract tests covering the typed
-  fire-and-forget send, the no-pending no-send guard with button gating, and
-  the guaranteed-pickup UI wording); `npm run build --prefix kwin`
+  passes 764 tests across 107 suites with 0 failures (including the
+  `tiler-reload-interim` contract plus 3 `deliberate tiler reload behavior`
+  tests proving an altered gap pair reaches the reconfigured controller's
+  next DescribePlan payload on `configChanged`, an unchanged signal resyncs
+  nothing, and startup without an options surface stays stable); `npm run build --prefix kwin`
   emits the `kwin/contents/code/main.js` bundle; native `ctest` passes 27 of 27
   including the `native-effect-kcm-tiler-reload` scenario (KCM
   persistence, live border vs reload-required, deliberate reload

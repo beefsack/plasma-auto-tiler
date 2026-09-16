@@ -47,6 +47,16 @@ declare function callDBus(
     ...args: readonly unknown[]
 ): void;
 
+// src/scripting/scripting.cpp:224-227 installs the KWin Options singleton as
+// the script global `options` (CppOwnership). src/options.h declares the
+// `void configChanged()` notify signal; src/options.cpp:657-662 emits it from
+// updateSettings(), which src/workspace.cpp slotReconfigure() invokes after
+// reparsing configuration for `org.kde.KWin /KWin reconfigure`
+// (src/dbusinterface.cpp:64-67, src/workspace.cpp:998-1017). Declared unknown
+// here: the controller only reads its `configChanged` signal surface through
+// the feature-detecting capability seam, never option values.
+declare const options: unknown;
+
 // src/scripting/scripting.cpp installs QJSEngine::ConsoleExtension before
 // evaluating the generated script.
 interface Console {

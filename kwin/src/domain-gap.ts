@@ -3,8 +3,9 @@
 // KCM/native settings `innerGap` and `outerGap` default to 8 each, bounded
 // inclusively 0..64. Rust owns projection; KWin only carries these values.
 // Absent/invalid/out-of-range values fall back to 8, preserving the default
-// effective (inner, outer) = (8, 8). No config-change handling, hot reload,
-// or in-flight mutation: entries resolve once at startup and reuse.
+// effective (inner, outer) = (8, 8). Entries resolve at startup and re-resolve
+// only on the deliberate Options `configChanged` reload owned by
+// plan-adapter-entry; there is no polling, reseed, or in-flight mutation.
 
 export const DOMAIN_GAP_DEFAULT = 8;
 export const DOMAIN_GAP_MIN = 0;

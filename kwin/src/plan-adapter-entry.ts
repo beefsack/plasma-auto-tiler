@@ -89,6 +89,7 @@ export interface PlanEntryOverrides {
     readonly readWorkspaceModeFn?: () => unknown;
     readonly readInnerGapFn?: () => unknown;
     readonly readOuterGapFn?: () => unknown;
+    readonly options?: unknown;
 }
 
 export interface PlanEntryHandle {
@@ -177,6 +178,18 @@ function decodeList(value: unknown, maxLength: number): ReadonlyArray<unknown> |
 function resolveLexicalWorkspace(): unknown {
     try {
         const candidate: unknown = workspace;
+        if (typeof candidate === "object" && candidate !== null) {
+            return candidate;
+        }
+    } catch (error) {
+        void error;
+    }
+    return null;
+}
+
+function resolveLexicalOptions(): unknown {
+    try {
+        const candidate: unknown = options;
         if (typeof candidate === "object" && candidate !== null) {
             return candidate;
         }
@@ -2025,9 +2038,18 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // Eviction is explicit when the adapter identifies a removed string id.
     const nativeIds = new Map<string, string>();
     const floatingIds = new Set<string>();
-    // Startup-bound validated gap configuration: resolved once, reused for
-    // every observation. No reload, reseed, or in-flight mutation.
-    const domainGaps: DomainGaps = readDomainGaps({
+    // Deliberate tiler reload gap configuration: resolved at startup, then
+    // re-read only on the KWin Options `configChanged` signal. That signal is
+    // emitted after `org.kde.KWin /KWin reconfigure` reparses kwinrc
+    // (dbusinterface.cpp delegates to Workspace::reconfigure; workspace.cpp
+    // slotReconfigure reparses and calls Options::updateSettings which emits
+    // configChanged; scripting.cpp exposes that Options singleton as the
+    // script global `options`). The running script is never restarted by that
+    // call (the Scripting load path returns -1 when already loaded, Script::run
+    // returns early when running), so this subscription is the pickup route. Ordinary
+    // reads and unchanged saves send nothing and never fire it. No shortcut
+    // re-registration, no script/plugin lifecycle, no in-flight reset.
+    let domainGaps: DomainGaps = readDomainGaps({
         readInnerGapFn: overrides.readInnerGapFn,
         readOuterGapFn: overrides.readOuterGapFn,
     });
@@ -3233,6 +3255,47 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     } catch (error) {
         void error;
     }
+    let optionsConfigDetach: (() => void) | null = null;
+    try {
+        const optionsGlobal: unknown =
+            overrides.options !== undefined ? overrides.options : resolveLexicalOptions();
+        if (typeof optionsGlobal === "object" && optionsGlobal !== null) {
+            optionsConfigDetach = connectSignal(
+                readSignal(optionsGlobal as object, "configChanged"),
+                () => {
+                    let next: DomainGaps;
+                    try {
+                        next = readDomainGaps({
+                            readInnerGapFn: overrides.readInnerGapFn,
+                            readOuterGapFn: overrides.readOuterGapFn,
+                        });
+                    } catch (error) {
+                        void error;
+                        return;
+                    }
+                    if (next.innerGap === domainGaps.innerGap && next.outerGap === domainGaps.outerGap) {
+                        return;
+                    }
+                    domainGaps = next;
+                    try {
+                        log(
+                            `plasma-auto-tiler:plan:config-reloaded innerGap=${String(next.innerGap)} outerGap=${String(next.outerGap)}`,
+                        );
+                    } catch (error) {
+                        void error;
+                    }
+                    try {
+                        adapter.requestResync();
+                    } catch (error) {
+                        void error;
+                    }
+                },
+            );
+        }
+    } catch (error) {
+        void error;
+        optionsConfigDetach = null;
+    }
     return {
         stop: () => {
             try {
@@ -3262,6 +3325,9 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             }
             if (highlightStop !== null) {
                 try { highlightStop(); } catch (error) { void error; }
+            }
+            if (optionsConfigDetach !== null) {
+                try { optionsConfigDetach(); } catch (error) { void error; }
             }
         },
         requestFocus: (direction) => {

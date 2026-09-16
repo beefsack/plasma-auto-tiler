@@ -54,7 +54,7 @@ Historical implementation detail is recoverable in Git history.
   script groups, keys, values, and defaults remain unchanged. The approved
   interim target is a deliberate tiler reload after save with clear
   reload-required UI; existing live border updates remain live. Its
-  implementation and live verification are pending. Before launch, every
+  implementation is static-complete with live verification pending. Before launch, every
   user-facing setting must apply live. That requirement is a mandatory launch
   blocker, and the interim reload does not satisfy it.
 - The core distribution remains the script KPackage for KDE Store and an
@@ -152,8 +152,8 @@ Historical implementation detail is recoverable in Git history.
   existing-window adoption and default promotion remain unselected. KCM Apply
   currently persists the selection and queues an unacknowledged KWin
   reconfigure request. The approved interim target is a deliberate tiler reload
-  after save with clear reload-required UI; implementation and live verification
-  remain pending. Before launch, this and every other user-facing setting must
+  after save with clear reload-required UI; implementation is static-complete
+  with live verification pending. Before launch, this and every other user-facing setting must
   apply live; that is a mandatory launch blocker.
 - Approved 2026-09-16: when the first startup domain has no usable retained
   session, Rust may use a versioned, best-effort near-layout fitting heuristic
