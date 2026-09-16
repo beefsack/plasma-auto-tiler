@@ -51,8 +51,12 @@ Historical implementation detail is recoverable in Git history.
 
 - One native QWidget effect-scoped KCM owns tiling, workspace, shortcut,
   outline, and border settings through the Desktop Effects entry. Existing
-  script groups, keys, values, and defaults remain unchanged. The KCM's
-  hot-apply and any script reload or session-restart result remain live gates.
+  script groups, keys, values, and defaults remain unchanged. The approved
+  interim target is a deliberate tiler reload after save with clear
+  reload-required UI; existing live border updates remain live. Its
+  implementation and live verification are pending. Before launch, every
+  user-facing setting must apply live. That requirement is a mandatory launch
+  blocker, and the interim reload does not satisfy it.
 - The core distribution remains the script KPackage for KDE Store and an
   identical GitHub Release artifact. Platform-native packages for the native
   effect and KCM are permitted; their formats and publication are unselected.
@@ -130,8 +134,11 @@ Historical implementation detail is recoverable in Git history.
   restored backing-desktop/numbered workspace routes, bounded reconciliation,
   and the selected initial first-startup fitting direction below. General
   existing-window adoption and default promotion remain unselected. KCM Apply
-  persists the selection and queues an unacknowledged KWin reconfigure request,
-  so a user session restart is required before relying on an authority change.
+  currently persists the selection and queues an unacknowledged KWin
+  reconfigure request. The approved interim target is a deliberate tiler reload
+  after save with clear reload-required UI; implementation and live verification
+  remain pending. Before launch, this and every other user-facing setting must
+  apply live; that is a mandatory launch blocker.
 - Approved 2026-09-16: when the first startup domain has no usable retained
   session, Rust may use a versioned, best-effort near-layout fitting heuristic
   to minimize unnecessary initial window movement. It must be simple,

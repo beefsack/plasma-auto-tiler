@@ -211,6 +211,11 @@
 
 ### Underlying Configuration Changes - NOT HANDLED
 
+- Approved direction, implementation and live verification pending: after save,
+  perform a deliberate tiler reload and show clear reload-required UI. Existing
+  live border updates remain live. This is an interim target only: before
+  launch, every user-facing setting must apply live, which is a mandatory launch
+  blocker.
 - The active-border effect does handle a KWin reconfigure call: it rereads its
   configuration and updates the outline and border at
   `kwin/native-effect/activewindowborder.cpp:45-50`.
@@ -220,9 +225,8 @@
   source subscribes to a configuration-change or reconfigure signal.
 - KCM Apply queues an unacknowledged KWin `reconfigure` call:
   `kwin/native-effect/activeborderconfig_module.cpp:128-136,514-523`.
-  This matches `docs/decisions.md:123-128`: a session restart is required before
-  relying on an authority change. It does not establish that a running script
-  rereads configuration.
+  It does not establish that a running script rereads configuration or that the
+  approved interim reload target is implemented.
 - Shortcut Apply and Revert are explicit KCM operations:
   `kwin/native-effect/activeborderconfig_module.cpp:183-252`. The KCM can detect
   recorded-postimage drift when opened: `kwin/native-effect/activeborderconfig_module.cpp:376-414`.
@@ -231,7 +235,9 @@
   a KCM change can leave the already running script using its startup values,
   including its gap pair and existing shortcut registrations. KCM's queued
   reconfigure provides no acknowledged script reload. Border settings are the
-  only confirmed reconfigure-aware configuration path.
+  only confirmed live configuration path. The interim reload and its required
+  UI must prevent silent stale state until the all-settings live-application
+  launch blocker is satisfied.
 
 ## Proposed Slices
 
@@ -281,10 +287,13 @@
   subsequent KWin adapter recovery. Gate: the sleep/wake experiment above proves
   the selected automatic recovery semantics, bounded failure behavior, and the
   first post-wake plan result.
-- P2 | Runtime configuration coherence | Boundary: script settings, KCM Apply,
-  external `kwinrc`, shortcut drift, and effect reconfigure. Gate: change each
-  supported setting through KCM and its underlying store; prove the selected
-  live/restart behavior, shortcut registration state, and no silent stale state.
+- P1 | All user-facing settings live application (launch blocker) | Boundary:
+  script settings, KCM Apply, external `kwinrc`, shortcut drift, and effect
+  reconfigure. Until it is complete, implement and verify the approved interim:
+  deliberate tiler reload after save, clear reload-required UI, retained live
+  border updates, and no silent stale state. Before launch, change each
+  user-facing setting through KCM and its underlying store and prove live
+  application, including shortcut registration state.
 
 ## Decision Contradiction
 

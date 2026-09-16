@@ -59,8 +59,14 @@ Only meaningful pending or active work is listed.
 - P1 | Wake transport recovery | Select and gate bounded Planner/KWin recovery
   across suspend, wake, and Planner-name loss.
   [investigation](changes/reliability-condition-investigation.md)
-- P2 | Runtime configuration coherence | Select and gate script, KCM, `kwinrc`,
-  shortcut, and effect configuration behavior for a running session.
+- P1 | All settings live application (launch blocker) | Before launch, every
+  user-facing setting must apply live, including tiling, workspace, shortcut,
+  and effect settings. Verify running behavior reflects saved settings without
+  requiring a tiler reload. The interim reload approach does not satisfy this.
+  [investigation](changes/reliability-condition-investigation.md)
+- P2 | Interim runtime configuration reload | Implement and verify deliberate
+  tiler reload after saving tiling settings, with clear reload-required UI and
+  existing live border updates retained. Prevent silent stale configuration.
   [investigation](changes/reliability-condition-investigation.md)
 - P1 | Rust-engine/direct-geometry migration live gate | Rust-mode exact-three
   focus, movement, keyboard resize, and pointer resize are static-complete behind
