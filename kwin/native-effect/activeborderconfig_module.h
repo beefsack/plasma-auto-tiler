@@ -36,6 +36,7 @@ public:
     virtual bool requestScriptReconfigure();
     QString tilerReloadStatusText() const;
     bool isTilerReloadRequired() const;
+    bool isTilerRestartRequired() const;
 
     void setShortcutStores(ShortcutStore *store, JournalStore *journal);
     void setShortcutConfirmHandler(std::function<bool(const QString &, const QString &)> handler);
@@ -71,6 +72,7 @@ private:
     bool m_loadedOuterGapRawValid = true;
     bool m_effectReconfigurePending = false;
     bool m_tilerReloadRequired = false;
+    bool m_tilerRestartRequired = false;
     QString m_tilerReloadStatus;
     ShortcutStore *m_shortcutStore = nullptr;
     JournalStore *m_shortcutJournal = nullptr;

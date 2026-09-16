@@ -242,16 +242,19 @@
 ### Underlying Configuration Changes - INTERIM STATIC-COMPLETE, LIVE GATE PENDING
 
 - Approved interim, statically implemented, live verification pending: after
-  save, the KCM marks a reload as required and offers a deliberate tiler
-  reload with clear reload-required UI. Existing live border updates remain
-  live. This is an interim target only: before launch, every user-facing
-  setting must apply live, which is a mandatory launch blocker.
+  save, the KCM marks gap reload and/or session restart as required and offers
+  a deliberate gap-only tiler reload with clear reload/restart UI. Existing
+  live border updates remain live. This is an interim target only: before
+  launch, every user-facing setting must apply live, which is a mandatory
+  launch blocker.
 - The active-border effect does handle a KWin reconfigure call: it rereads its
   configuration and updates the outline and border at
   `kwin/native-effect/activewindowborder.cpp:45-50`.
 - The KCM writes seven script settings to `kwinrc`, including bounded
   `innerGap` and `outerGap` values. Production reads `shortcutProfile` and
-  `workspaceMode` at startup; the gap pair resolves at startup and re-resolves
+  `workspaceMode` at startup; `tilingAlgorithm`, `automaticSplitTarget`, and
+  `dropOutlinePreview` are persisted but not consumed by the running
+  controller; the gap pair resolves at startup and re-resolves
   only on the deliberate Options `configChanged` reload owned by
   `kwin/src/plan-adapter-entry.ts`. KWin source evidence (6.7.4 tarball):
   `src/scripting/scripting.cpp:224-227` exposes the Options singleton as the
@@ -266,19 +269,25 @@
   requests one debounced resync through the existing single-flight guards.
   Unchanged signals resync nothing; shortcuts are never re-registered and no
   script/plugin lifecycle runs.
-- KCM Apply no longer auto-queues a script reconfigure on save. Saving tiling
-  settings sets reload-required with the exact status `Tiling settings saved.
-  Reload required: the running tiler still uses startup values.` An unchanged
-  save sends nothing and leaves the flag untouched. The Reload Tiler button is
-  enabled only while reload-required; with no pending reload it refuses without
-  sending, so an idle click queues no typed D-Bus traffic and leaves the flag
+- KCM Apply no longer auto-queues a script reconfigure on save. Saving gaps
+  sets reload-required with the exact status `Tiling gaps saved. Reload
+  required: the running tiler still uses startup gap values.` Saving only
+  non-gap startup settings sets restart-required with `Startup setting saved.
+  Session restart required: the running tiler still uses startup values.` and
+  leaves Reload Tiler disabled. A combined save enables reload for gaps while
+  retaining restart-required with `Tiling gaps and startup settings saved.
+  Reload applies gaps only; session restart remains required for other
+  settings.` An unchanged save sends nothing and leaves the flags untouched. The Reload Tiler button is
+  enabled only while gap reload-required; with no pending reload it refuses without
+  sending, so an idle click queues no typed D-Bus traffic and leaves the flags
   and status untouched. The deliberate Reload
   Tiler button sends exactly one typed `org.kde.KWin /KWin org.kde.KWin
-  reconfigure` request: success reports `Reload request sent. Application
+  reconfigure` request: gap-only success reports `Reload request sent. Application
   unconfirmed; restart the session to guarantee pickup.` and keeps
-  reload-required; failure reports `Reload request failed. Running tiler still
+  reload-required; combined success reports gap-unconfirmed while retaining
+  restart-required; failure reports `Reload request failed. Running tiler still
   uses startup values; retry or restart the session.` and keeps
-  reload-required. No status claims applied. KCM-side running confirmation is
+  reload-required (plus restart-required when present). No status claims applied. KCM-side running confirmation is
   not provable: KWin's reconfigure is Q_NOREPLY, so a queued send alone is
   reported as unconfirmed and session restart remains the guarantee. The
   intended route is proven in source and offline behavior instead: the entry
@@ -286,8 +295,8 @@
   behavioral tests prove an altered gap reaches the reconfigured controller's
   next DescribePlan domain payload on deliberate signal. The
   button never touches shortcuts and never unloads scripts or plugins.
-- Reload-required is dialog-scoped in-memory KCM state, not persisted runtime
-  truth: `load()` resets it to `No pending tiler reload in this dialog.` So a
+- Reload/restart-required is dialog-scoped in-memory KCM state, not persisted runtime
+  truth: `load()` resets both to `No pending tiler reload in this dialog.` So a
   save-then-load/reopen cycle clears the pending flag even though the running
   tiler is still stale. It cannot truthfully be preserved across dialog reload:
   persisting it would need a new `kwinrc` key outside the known script/effect

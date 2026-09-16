@@ -52,8 +52,9 @@ Historical implementation detail is recoverable in Git history.
 - One native QWidget effect-scoped KCM owns tiling, workspace, shortcut,
   outline, and border settings through the Desktop Effects entry. Existing
   script groups, keys, values, and defaults remain unchanged. The approved
-  interim target is a deliberate tiler reload after save with clear
-  reload-required UI; existing live border updates remain live. Its
+  interim target is a deliberate gap-only tiler reload after save with clear
+  reload/restart UI (non-gap startup settings require session restart);
+  existing live border updates remain live. Its
   implementation is static-complete with live verification pending. Before launch, every
   user-facing setting must apply live. That requirement is a mandatory launch
   blocker, and the interim reload does not satisfy it.

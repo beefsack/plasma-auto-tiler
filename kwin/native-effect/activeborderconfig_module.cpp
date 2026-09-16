@@ -91,6 +91,7 @@ ActiveBorderConfigModule::ActiveBorderConfigModule(QObject *parent, const KPlugi
     connect(m_ui.tilerReloadButton, &QPushButton::clicked, this, &ActiveBorderConfigModule::requestTilerReload);
     refreshShortcutState();
     m_tilerReloadRequired = false;
+    m_tilerRestartRequired = false;
     m_tilerReloadStatus = QStringLiteral("No pending tiler reload in this dialog.");
     updateTilerReloadPresentation();
 }
@@ -217,26 +218,45 @@ bool ActiveBorderConfigModule::isTilerReloadRequired() const
     return m_tilerReloadRequired;
 }
 
+bool ActiveBorderConfigModule::isTilerRestartRequired() const
+{
+    return m_tilerRestartRequired;
+}
+
 void ActiveBorderConfigModule::requestTilerReload()
 {
-    // Deliberate controller reload only: one typed KWin reconfigure send.
-    // KWin's reconfigure is Q_NOREPLY, so a queued send never proves the
-    // running script reread kwinrc. Success keeps reload-required and reports
+    // Deliberate gap-only reload: one typed KWin reconfigure send whose pickup
+    // is the running controller's Options configChanged gap re-read. KWin's
+    // reconfigure is Q_NOREPLY, so a queued send never proves the running
+    // script reread kwinrc. Success keeps reload-required and reports
     // sent-but-unconfirmed; failure keeps reload-required and reports failed.
-    // This never claims applied, never touches shortcuts, and never unloads
-    // scripts or plugins. With no pending reload the request is refused
-    // without sending so an idle click can neither queue D-Bus traffic nor
-    // mark the dialog reload-required.
+    // A queued send never clears a pending session-restart requirement for
+    // non-gap startup settings and never claims all settings applied. This
+    // never touches shortcuts and never unloads scripts or plugins. With no
+    // pending gap reload the request is refused without sending so an idle
+    // click can neither queue D-Bus traffic nor mark the dialog reload-required.
     if (!m_tilerReloadRequired) {
         return;
     }
     if (requestScriptReconfigure()) {
-        m_tilerReloadStatus = QStringLiteral(
-            "Reload request sent. Application unconfirmed; restart the session to guarantee pickup.");
+        if (m_tilerRestartRequired) {
+            m_tilerReloadStatus = QStringLiteral(
+                "Reload request sent. Gap application unconfirmed; session restart remains required for other "
+                "settings. Restart the session to guarantee pickup.");
+        } else {
+            m_tilerReloadStatus = QStringLiteral(
+                "Reload request sent. Application unconfirmed; restart the session to guarantee pickup.");
+        }
     } else {
-        m_tilerReloadRequired = true;
-        m_tilerReloadStatus = QStringLiteral(
-            "Reload request failed. Running tiler still uses startup values; retry or restart the session.");
+        if (m_tilerRestartRequired) {
+            m_tilerReloadStatus = QStringLiteral(
+                "Reload request failed. Running tiler still uses startup values; retry or restart the session. "
+                "Session restart remains required for other settings.");
+        } else {
+            m_tilerReloadRequired = true;
+            m_tilerReloadStatus = QStringLiteral(
+                "Reload request failed. Running tiler still uses startup values; retry or restart the session.");
+        }
     }
     updateTilerReloadPresentation();
 }
@@ -562,6 +582,7 @@ void ActiveBorderConfigModule::load()
     updateScriptState();
     refreshShortcutState();
     m_tilerReloadRequired = false;
+    m_tilerRestartRequired = false;
     m_tilerReloadStatus = QStringLiteral("No pending tiler reload in this dialog.");
     updateTilerReloadPresentation();
 }
@@ -573,6 +594,15 @@ void ActiveBorderConfigModule::save()
 
     const QVariantMap current = currentScriptValues();
     if (!m_loadedDropOutlinePreviewRawValid || !m_loadedInnerGapRawValid || !m_loadedOuterGapRawValid || current != m_loadedScriptValues) {
+        const bool gapChanged = !m_loadedInnerGapRawValid || !m_loadedOuterGapRawValid
+            || current.value(QStringLiteral("innerGap")) != m_loadedScriptValues.value(QStringLiteral("innerGap"))
+            || current.value(QStringLiteral("outerGap")) != m_loadedScriptValues.value(QStringLiteral("outerGap"));
+        const bool startupSettingChanged = !m_loadedDropOutlinePreviewRawValid
+            || current.value(QStringLiteral("tilingAlgorithm")) != m_loadedScriptValues.value(QStringLiteral("tilingAlgorithm"))
+            || current.value(QStringLiteral("automaticSplitTarget")) != m_loadedScriptValues.value(QStringLiteral("automaticSplitTarget"))
+            || current.value(QStringLiteral("workspaceMode")) != m_loadedScriptValues.value(QStringLiteral("workspaceMode"))
+            || current.value(QStringLiteral("shortcutProfile")) != m_loadedScriptValues.value(QStringLiteral("shortcutProfile"))
+            || current.value(QStringLiteral("dropOutlinePreview")) != m_loadedScriptValues.value(QStringLiteral("dropOutlinePreview"));
         KConfigGroup group(KSharedConfig::openConfig(QStringLiteral("kwinrc")), QStringLiteral("Script-plasma-auto-tiler-kwin"));
         if (current.value(QStringLiteral("tilingAlgorithm")) != m_loadedScriptValues.value(QStringLiteral("tilingAlgorithm"))) {
             group.writeEntry(QStringLiteral("tilingAlgorithm"), current.value(QStringLiteral("tilingAlgorithm")).toString());
@@ -600,9 +630,23 @@ void ActiveBorderConfigModule::save()
         m_loadedDropOutlinePreviewRawValid = true;
         m_loadedInnerGapRawValid = true;
         m_loadedOuterGapRawValid = true;
-        m_tilerReloadRequired = true;
-        m_tilerReloadStatus = QStringLiteral(
-            "Tiling settings saved. Reload required: the running tiler still uses startup values.");
+        if (gapChanged) {
+            m_tilerReloadRequired = true;
+        }
+        if (startupSettingChanged) {
+            m_tilerRestartRequired = true;
+        }
+        if (m_tilerReloadRequired && m_tilerRestartRequired) {
+            m_tilerReloadStatus = QStringLiteral(
+                "Tiling gaps and startup settings saved. Reload applies gaps only; session restart remains required "
+                "for other settings.");
+        } else if (m_tilerReloadRequired) {
+            m_tilerReloadStatus = QStringLiteral(
+                "Tiling gaps saved. Reload required: the running tiler still uses startup gap values.");
+        } else if (m_tilerRestartRequired) {
+            m_tilerReloadStatus = QStringLiteral(
+                "Startup setting saved. Session restart required: the running tiler still uses startup values.");
+        }
     }
     updateScriptState();
     updateTilerReloadPresentation();
@@ -618,11 +662,14 @@ void ActiveBorderConfigModule::save()
         }
     }
     // Border hot-apply stays live through the native effect reconfigure. The
-    // script controller reads kwinrc once at startup with no config-change
-    // subscription, and KWin's reconfigure is Q_NOREPLY, so save() never
-    // auto-sends a tiler reload and never claims the running tiler applied
-    // saved values. The deliberate Reload Tiler button sends one typed
-    // reconfigure request and reports sent-but-unconfirmed or failed.
+    // running controller re-reads only validated gaps on the KWin Options
+    // configChanged signal emitted by the deliberate reconfigure; non-gap
+    // startup settings (tilingAlgorithm, automaticSplitTarget, workspaceMode,
+    // shortcutProfile, dropOutlinePreview) remain startup-only, and KWin's
+    // reconfigure is Q_NOREPLY, so save() never auto-sends a tiler reload and
+    // never claims the running tiler applied saved values. The deliberate
+    // Reload Tiler button sends one typed reconfigure request for gaps and
+    // reports sent-but-unconfirmed or failed.
 }
 
 void ActiveBorderConfigModule::defaults()

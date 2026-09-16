@@ -163,22 +163,29 @@ describe("interim tiler reload contract", () => {
         assert.doesNotMatch(saveBody, /requestScriptReconfigure\(\)/);
     });
 
-    it("marks reload-required only on saved tiling changes and keeps border hot-apply live", () => {
+    it("marks gap reload-required and non-gap restart-required without auto-send", () => {
         assert.match(module, /m_tilerReloadRequired = true/);
-        assert.match(module, /Reload required: the running tiler still uses startup values/);
+        assert.match(module, /m_tilerRestartRequired = true/);
+        assert.match(module, /gapChanged/);
+        assert.match(module, /startupSettingChanged/);
+        assert.match(module, /Reload applies gaps only/);
+        assert.match(module, /Session restart required/);
+        assert.match(module, /startup gap values/);
         assert.match(module, /requestEffectReconfigure\(\)/);
         assert.match(module, /reconfigureEffect/);
         const saveBody = functionBody(module, "void ActiveBorderConfigModule::save()");
         assert.match(saveBody, /m_tilerReloadRequired = true/);
-        assert.match(saveBody, /Reload required: the running tiler still uses startup values/);
+        assert.match(saveBody, /m_tilerRestartRequired = true/);
         assert.doesNotMatch(saveBody, /requestScriptReconfigure\(\)/);
         assert.match(gaps, /re-resolve/);
     });
 
-    it("reports sent-but-unconfirmed and failed states without an applied claim", () => {
+    it("reports sent-but-unconfirmed and failed states without an applied claim and keeps restart residual", () => {
         assert.match(module, /Reload request sent\. Application unconfirmed/);
+        assert.match(module, /Gap application unconfirmed/);
         assert.match(module, /Reload request failed\. Running tiler still uses startup values/);
         assert.match(module, /restart the session to guarantee pickup/);
+        assert.match(module, /session restart remains required for other settings/i);
         const reloadBody = functionBody(module, "void ActiveBorderConfigModule::requestTilerReload()");
         const reloadStrings = reloadBody
             .split("\n")
@@ -213,7 +220,7 @@ describe("interim tiler reload contract", () => {
         assert.match(module, /runShortcutRevert/);
     });
 
-    it("exposes reload-required UI without touching the live border explanation", () => {
+    it("exposes gap reload UI with restart residual without touching the live border explanation", () => {
         assert.match(ui, /name="tilerReloadStatusLabel"/);
         assert.match(ui, /name="tilerReloadButton"/);
         assert.match(ui, /Reload Tiler/);
@@ -221,8 +228,11 @@ describe("interim tiler reload contract", () => {
         assert.match(ui, /Session restart is the guaranteed pickup mechanism\./);
         assert.match(ui, /never claims the running tiler applied the settings/);
         assert.match(ui, /This never changes shortcuts\./);
-        assert.match(ui, /Other script settings require a script reload or session restart\./);
+        assert.match(ui, /Gap settings are saved to kwinrc\./);
+        assert.match(ui, /Saving gaps marks a reload as required/);
+        assert.match(ui, /other script settings require a session restart/i);
         assert.match(ui, /Border changes apply immediately through the KWin effect reconfigure\./);
+        assert.match(ui, /Gap settings can reload/);
     });
 });
 

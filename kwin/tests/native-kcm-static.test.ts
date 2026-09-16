@@ -213,7 +213,7 @@ describe("native KCM static contract", () => {
         assert.doesNotMatch(ui, /kcfg_BorderColor[\s\S]{0,400}?enabled[\s\S]{0,20}?false/);
     });
 
-    it("explains script reload or session restart and retires the generic metadata KCM only after native discovery exists", () => {
+    it("explains gap reload versus session restart and retires the generic metadata KCM only after native discovery exists", () => {
         assert.equal(scriptMetadata["X-KDE-ConfigModule"], undefined);
         assert.doesNotMatch(read("metadata.json"), /kcm_kwin4_genericscripted/);
         assert.ok(nativeMetadata["X-KDE-ConfigModule"]);
@@ -222,7 +222,10 @@ describe("native KCM static contract", () => {
         assert.doesNotMatch(ui, /clears current transient Script ambiguity/);
         assert.doesNotMatch(ui, /engine authority[^.]*apply immediately/i);
         assert.doesNotMatch(ui, /engine authority[^.]*takes effect immediately/i);
-        assert.match(ui, /Other script settings require a script reload or session restart\./);
+        assert.match(ui, /other script settings require a session restart/i);
+        assert.match(ui, /Gap settings can reload/i);
+        assert.match(ui, /Saving gaps marks a reload as required/i);
+        assert.doesNotMatch(ui, /Other script settings require a script reload or session restart\./);
         assert.doesNotMatch(ui, /Script settings do not hot-apply; reload the script or restart the session\./);
     });
 });

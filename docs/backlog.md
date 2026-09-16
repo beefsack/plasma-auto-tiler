@@ -84,17 +84,19 @@ Only meaningful pending or active work is listed.
   requiring a tiler reload. The interim reload approach does not satisfy this.
   [investigation](changes/reliability-condition-investigation.md)
 - P2 | Interim runtime configuration reload | Static-complete, live gate
-  pending: deliberate tiler reload after saving tiling settings, with clear
-  reload-required UI and existing live border updates retained. Saving tiling
-  settings marks reload-required; the Reload Tiler button is enabled only
-  while reload-required and a no-pending request sends nothing. A deliberate
+  pending: deliberate gap-only tiler reload after saving gap settings, with clear
+  reload/restart UI and existing live border updates retained. Saving gaps
+  marks reload-required and enables Reload Tiler; saving only non-gap startup
+  settings marks restart-required with reload disabled; combined saves enable
+  reload for gaps while retaining restart-required for other settings. A no-pending request sends nothing. A deliberate
   reload sends one typed KWin reconfigure request reported as
-  sent-but-unconfirmed or failed, never applied; session restart remains the
+  sent-but-unconfirmed or failed, never applied; a queued send never clears
+  restart-required; session restart remains the
   guarantee. The running controller subscribes to the KWin Options
   `configChanged` signal emitted after that reconfigure reparses kwinrc, then
   re-reads validated gap configuration and requests one debounced resync;
   unchanged signals resync nothing and shortcuts are never re-registered.
-  Reload-required is dialog-scoped in-memory state: dialog
+  Non-gap startup settings stay startup-only. Reload/restart-required is dialog-scoped in-memory state: dialog
   load/reopen resets it and truthful cross-reload preservation is blocked
   (no authorized persistent key, no supported runtime observation). No live
   result is claimed and the all-settings live-application launch blocker is
