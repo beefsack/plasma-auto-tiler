@@ -47,8 +47,9 @@ Only meaningful pending or active work is listed.
   later. Visibility follows the active window's location at disconnect; with no
   active window, preserve the surviving view. Displaced workspaces return on
   reconnect with current contents/layout; explicitly moved-out windows stay out.
-  Destination among multiple outputs and reconnect visibility/focus remain
-  pending decisions. Implementation and live acceptance remain pending.
+  Choose nearest from already-available geometry without added history tracking,
+  otherwise use the surviving primary. Reconnect visibility/focus remains a
+  pending decision. Implementation and live acceptance remain pending.
   [investigation](changes/reliability-condition-investigation.md)
 - P1 | Work-area change projection live gate | Static code projects one retained
   existing domain through resolution, scaling, and work-area changes without the

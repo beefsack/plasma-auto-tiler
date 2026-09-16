@@ -364,9 +364,17 @@ Historical implementation detail is recoverable in Git history.
   Workspace relocation is the unit: a window explicitly moved out stays at its
   destination and is never individually pulled back, while a window moved into
   a displaced workspace returns with it. User-configurable handling is deferred.
-  Destination among multiple surviving outputs, reconnect visible-workspace and
-  focus handling, identity persistence/edit handling, and special active
-  floating/fullscreen/sticky handling remain unselected; live
+  Destination among multiple surviving outputs uses the nearest surviving
+  monitor from geometry already available while handling disconnect, with no
+  added historical state. If that would require old output geometry/history or
+  an extra tracking mechanism, use the current primary surviving monitor; if
+  that is not identifiable, use existing available output ordering as the
+  deterministic fallback. Availability and lifetime of removed-output geometry
+  are implementation source-check details, not a claim that nearest is always
+  feasible. This destination choice is distinct from the selected displacement
+  association required for automatic workspace return. Reconnect
+  visible-workspace and focus handling, identity persistence/edit handling, and
+  special active floating/fullscreen/sticky handling remain unselected; live
   disconnect/reconnect behavior remains unimplemented and unverified.
 - `Meta+1..9` select an existing 1-based logical workspace without creation.
   `Meta+Shift+1..9` send only the focused tiled window to an existing

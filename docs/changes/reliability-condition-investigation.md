@@ -44,7 +44,15 @@
   destination and is never individually pulled back, while a window moved into
   a displaced workspace returns with it. This behavior is not implemented or
   verified; user-configurable handling is deferred. Destination among multiple
-  surviving outputs, reconnect visible-workspace and focus handling, identity
+  surviving outputs uses the nearest surviving monitor from geometry already
+  available while handling disconnect, with no added historical state. If that
+  would require old output geometry/history or an extra tracking mechanism, use
+  the current primary surviving monitor; if that is not identifiable, use
+  existing available output ordering as the deterministic fallback. Availability
+  and lifetime of removed-output geometry are implementation source-check
+  details, not a claim that nearest is always feasible. This destination choice
+  is distinct from the selected displacement association required for automatic
+  workspace return. Reconnect visible-workspace and focus handling, identity
   persistence/edit handling, and special active floating/fullscreen/sticky
   handling remain unselected.
 
@@ -239,11 +247,20 @@
   closed and new windows remain reflected. Workspace relocation is the unit: a
   window explicitly moved out stays at its destination and is never individually
   pulled back, while a window moved into a displaced workspace returns with it.
-  Destination among multiple surviving outputs, reconnect visible-workspace and
-  focus handling, identity persistence/edit handling, and special active
-  floating/fullscreen/sticky handling remain pending. Gate: unplug and replug a
-  tiled secondary output while another output remains active; prove selected
-  tree semantics, no writes to absent outputs, and no unrelated domain eviction.
+  Destination among multiple surviving outputs uses the nearest surviving
+  monitor from geometry already available while handling disconnect, with no
+  added historical state. If that would require old output geometry/history or
+  an extra tracking mechanism, use the current primary surviving monitor; if
+  that is not identifiable, use existing available output ordering as the
+  deterministic fallback. Availability and lifetime of removed-output geometry
+  are implementation source-check details, not a claim that nearest is always
+  feasible. This destination choice is distinct from the selected displacement
+  association required for automatic workspace return. Reconnect
+  visible-workspace and focus handling, identity persistence/edit handling, and
+  special active floating/fullscreen/sticky handling remain pending. Gate:
+  unplug and replug a tiled secondary output while another output remains
+  active; prove selected tree semantics, no writes to absent outputs, and no
+  unrelated domain eviction.
 - P1 | Work-area change projection live gate | Static implementation now projects
   one retained existing domain through resolution, scaling, and work-area bounds
   changes without client-drift retry/park misuse. Run the exact user-owned gate
