@@ -52,9 +52,14 @@
   and lifetime of removed-output geometry are implementation source-check
   details, not a claim that nearest is always feasible. This destination choice
   is distinct from the selected displacement association required for automatic
-  workspace return. Reconnect visible-workspace and focus handling, identity
-  persistence/edit handling, and special active floating/fullscreen/sticky
-  handling remain unselected.
+  workspace return. On original-output reconnect, if the active window is in a
+  returning workspace, show that workspace on the reconnected monitor and
+  retain focus on that window. If the active window remains on a surviving
+  output, preserve its view and focus with no focus stealing. Other workspace
+  selection follows ordinary behavior, with no prior-view tracking or new
+  state/history. The initial scope is session-local with no restart-persistent
+  mapping or return guarantee. All initial hotplug product choices are
+  resolved; implementation and live verification remain pending.
 
 ### Resolution And Scaling Changes - CODE ADDRESSED, LIVE GATE PENDING
 
@@ -255,9 +260,15 @@
   deterministic fallback. Availability and lifetime of removed-output geometry
   are implementation source-check details, not a claim that nearest is always
   feasible. This destination choice is distinct from the selected displacement
-  association required for automatic workspace return. Reconnect
-  visible-workspace and focus handling, identity persistence/edit handling, and
-  special active floating/fullscreen/sticky handling remain pending. Gate:
+  association required for automatic workspace return. On original-output
+  reconnect, if the active window is in a returning workspace, show that
+  workspace on the reconnected monitor and retain focus on that window. If the
+  active window remains on a surviving output, preserve its view and focus with
+  no focus stealing. Other workspace selection follows ordinary behavior, with
+  no prior-view tracking or new state/history. The initial scope is
+  session-local with no restart-persistent mapping or return guarantee. All
+  initial hotplug product choices are resolved; implementation and live
+  verification remain pending. Gate:
   unplug and replug a tiled secondary output while another output remains
   active; prove selected tree semantics, no writes to absent outputs, and no
   unrelated domain eviction.

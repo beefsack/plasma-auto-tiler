@@ -372,10 +372,15 @@ Historical implementation detail is recoverable in Git history.
   deterministic fallback. Availability and lifetime of removed-output geometry
   are implementation source-check details, not a claim that nearest is always
   feasible. This destination choice is distinct from the selected displacement
-  association required for automatic workspace return. Reconnect
-  visible-workspace and focus handling, identity persistence/edit handling, and
-  special active floating/fullscreen/sticky handling remain unselected; live
-  disconnect/reconnect behavior remains unimplemented and unverified.
+  association required for automatic workspace return. On original-output
+  reconnect, if the active window is in a returning workspace, show that
+  workspace on the reconnected monitor and retain focus on that window. If the
+  active window remains on a surviving output, preserve its view and focus with
+  no focus stealing. Other workspace selection follows ordinary behavior, with
+  no prior-view tracking or new state/history. The initial scope is
+  session-local with no restart-persistent mapping or return guarantee. All
+  initial hotplug product choices are resolved; implementation and live
+  disconnect/reconnect verification remain pending.
 - `Meta+1..9` select an existing 1-based logical workspace without creation.
   `Meta+Shift+1..9` send only the focused tiled window to an existing
   same-output workspace through the Rust `MoveToWorkspace` route. `0` reuses or
