@@ -24,6 +24,7 @@ public:
 
     void applyGroupHighlight(const QString &payload);
     void clearGroupHighlight();
+    QString groupHighlightStatus() const;
 
 private:
     void reconfigure(ReconfigureFlags flags) override;

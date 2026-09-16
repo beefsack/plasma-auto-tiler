@@ -19,7 +19,8 @@
 
 // The effect holds Rust policy state by value: lock the shared POD layout
 // at compile time so ABI drift fails here, not at runtime.
-static_assert(sizeof(GroupHighlightState) == 512, "GroupHighlightState layout drift");
+static_assert(sizeof(GroupHighlightState) == 560, "GroupHighlightState layout drift");
+static_assert(sizeof(GroupHighlightStatus) == 56, "GroupHighlightStatus layout drift");
 static_assert(offsetof(GroupHighlightState, last_revision) == 8, "GroupHighlightState layout drift");
 static_assert(offsetof(GroupHighlightState, owner) == 24, "GroupHighlightState layout drift");
 static_assert(offsetof(GroupHighlightState, generation) == 160, "GroupHighlightState layout drift");
@@ -178,10 +179,42 @@ void focusBindingMatchesLiveActiveOnly()
     CHECK(group_highlight_focus_matches(reinterpret_cast<const uint8_t *>("win-2"), 5, nullptr, 0) == 0);
     GroupHighlightState state{};
     CHECK(group_highlight_state_init(&state) == 0);
-    CHECK(applyStr(&state, validPayload("gen-1-g1", 3), "win-9") == 0);
+    CHECK(applyStr(&state, validPayload("gen-1-g1", 3), "win-9") == 3);
     CHECK(state.has_group == 0);
     // Focus mismatch preserves order without advancing it.
     CHECK(applyStr(&state, validPayload("gen-1-g2", 3), "win-2") == 1);
+}
+
+void statusClassifiesReceiptsWithoutMutation()
+{
+    GroupHighlightState state{};
+    CHECK(group_highlight_state_init(&state) == 0);
+    CHECK(applyStr(&state, validPayload("gen-1-g0", 1), "win-2") == 1);
+    CHECK(applyStr(&state, "bad", "win-2") == 0);
+    CHECK(applyStr(&state, validPayload("gen-1-g1", 2), "win-9") == 3);
+    CHECK(applyStr(&state, validPayload("gen-1-g0", 1), "win-2") == 2);
+    CHECK(group_highlight_clear(&state) == 0);
+    GroupHighlightStatus first{};
+    GroupHighlightStatus second{};
+    CHECK(group_highlight_status(&state, &first) == 0);
+    CHECK(group_highlight_status(&state, &second) == 0);
+    CHECK(first.receipts == 4);
+    CHECK(first.accepted == 1);
+    CHECK(first.parse_rejected == 1);
+    CHECK(first.focus_mismatch == 1);
+    CHECK(first.stale_ignored == 1);
+    CHECK(first.clear_requests == 1);
+    CHECK(first.receipts == first.accepted + first.parse_rejected + first.focus_mismatch + first.stale_ignored);
+    CHECK(first.has_group == 0);
+    CHECK(first.order_initialized != 0);
+    CHECK(second.receipts == first.receipts);
+    CHECK(second.accepted == first.accepted);
+    CHECK(second.parse_rejected == first.parse_rejected);
+    CHECK(second.focus_mismatch == first.focus_mismatch);
+    CHECK(second.stale_ignored == first.stale_ignored);
+    CHECK(second.clear_requests == first.clear_requests);
+    CHECK(second.has_group == first.has_group);
+    CHECK(second.order_initialized == first.order_initialized);
 }
 
 void suppressedFocusStates()
@@ -237,6 +270,7 @@ int main(int argc, char **argv)
     focusBindingMatchesLiveActiveOnly();
     suppressedFocusStates();
     modifierVisibilityRequiresFirstSignalAndMetaAndEligibility();
+    statusClassifiesReceiptsWithoutMutation();
     nullStateIsUsageError();
 
     if (failures != 0) {

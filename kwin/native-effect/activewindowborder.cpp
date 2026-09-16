@@ -48,6 +48,10 @@ public Q_SLOTS:
             m_effect->clearGroupHighlight();
         }
     }
+    Q_SCRIPTABLE QString GetGroupHighlightStatus()
+    {
+        return m_effect ? m_effect->groupHighlightStatus() : QStringLiteral("v=1;rx=0;ok=0;parse_rej=0;focus_mm=0;stale=0;clr=0;has=0;ord=0;first=0;meta=0;foc=0;ep=0;gl=0;vis=0");
+    }
 
 private:
     ActiveWindowBorderEffect *m_effect = nullptr;
@@ -249,6 +253,30 @@ void ActiveWindowBorderEffect::clearGroupHighlight()
     if (hadGroup == 1 && m_isOpenGL) {
         effects->addRepaintFull();
     }
+}
+
+QString ActiveWindowBorderEffect::groupHighlightStatus() const
+{
+    GroupHighlightStatus status{};
+    if (group_highlight_status(&m_groupState, &status) != 0) {
+        status = GroupHighlightStatus{};
+    }
+    const bool focusEligible = isGroupFocusEligible();
+    return QStringLiteral("v=1;rx=%1;ok=%2;parse_rej=%3;focus_mm=%4;stale=%5;clr=%6;has=%7;ord=%8;first=%9;meta=%10;foc=%11;ep=%12;gl=%13;vis=%14")
+        .arg(QString::number(status.receipts))
+        .arg(QString::number(status.accepted))
+        .arg(QString::number(status.parse_rejected))
+        .arg(QString::number(status.focus_mismatch))
+        .arg(QString::number(status.stale_ignored))
+        .arg(QString::number(status.clear_requests))
+        .arg(status.has_group != 0 ? 1 : 0)
+        .arg(status.order_initialized != 0 ? 1 : 0)
+        .arg(m_firstMouseSeen ? 1 : 0)
+        .arg(m_metaHeld ? 1 : 0)
+        .arg(focusEligible ? 1 : 0)
+        .arg(m_groupDbusAvailable ? 1 : 0)
+        .arg(m_isOpenGL ? 1 : 0)
+        .arg(m_groupVisible ? 1 : 0);
 }
 
 bool ActiveWindowBorderEffect::isGroupFocusEligible() const

@@ -84,6 +84,25 @@ pub struct GroupHighlightState {
     pub rect: GroupHighlightRect,
     pub focused_len: usize,
     pub focused: [u8; GROUP_HIGHLIGHT_MAX_ID_LEN],
+    pub receipts: u64,
+    pub accepted: u64,
+    pub parse_rejected: u64,
+    pub focus_mismatch: u64,
+    pub stale_ignored: u64,
+    pub clear_requests: u64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GroupHighlightStatus {
+    pub receipts: u64,
+    pub accepted: u64,
+    pub parse_rejected: u64,
+    pub focus_mismatch: u64,
+    pub stale_ignored: u64,
+    pub clear_requests: u64,
+    pub has_group: u8,
+    pub order_initialized: u8,
 }
 
 impl GroupHighlightState {
@@ -101,6 +120,12 @@ impl GroupHighlightState {
             rect: GroupHighlightRect { x: 0, y: 0, w: 0, h: 0 },
             focused_len: 0,
             focused: [0u8; GROUP_HIGHLIGHT_MAX_ID_LEN],
+            receipts: 0,
+            accepted: 0,
+            parse_rejected: 0,
+            focus_mismatch: 0,
+            stale_ignored: 0,
+            clear_requests: 0,
         }
     }
 
@@ -797,6 +822,7 @@ fn slice_of(ptr: *const u8, len: usize) -> Option<&'static [u8]> {
 }
 
 fn apply_inner(state: &mut GroupHighlightState, payload: &[u8], active: &[u8]) -> i32 {
+    state.receipts = state.receipts.saturating_add(1);
     let mut correlation = [0u8; GROUP_HIGHLIGHT_MAX_ID_LEN];
     let mut owner = [0u8; GROUP_HIGHLIGHT_MAX_ID_LEN];
     let mut generation = [0u8; GROUP_HIGHLIGHT_MAX_GENERATION_LEN];
@@ -805,20 +831,24 @@ fn apply_inner(state: &mut GroupHighlightState, payload: &[u8], active: &[u8]) -
     let parsed = match parse_payload(payload, &mut correlation, &mut owner, &mut generation, &mut group, &mut focused) {
         Some(parsed) => parsed,
         None => {
+            state.parse_rejected = state.parse_rejected.saturating_add(1);
             state.clear_display();
             return 0;
         }
     };
     if !order_allows(state, &parsed) {
+        state.stale_ignored = state.stale_ignored.saturating_add(1);
         return 2;
     }
     if !focus_matches(parsed.focused, active) {
         // Focus mismatch clears the display but preserves the order: a
         // payload that never displayed must not advance the high-water mark
         // within the stream.
+        state.focus_mismatch = state.focus_mismatch.saturating_add(1);
         state.clear_display();
-        return 0;
+        return 3;
     }
+    state.accepted = state.accepted.saturating_add(1);
     store_stream(state, &parsed);
     state.has_group = 1;
     state.rect = parsed.rect;
@@ -843,8 +873,8 @@ pub fn should_show(has_group: bool, meta_held: bool, first_signal_seen: bool, fo
 }
 
 // Apply codes: 1 accepted (display updated), 2 ignored stale/out-of-order
-// (display preserved), 0 cleared on parse/focus failure (display cleared,
-// order preserved), -1 usage error (null state).
+// (display preserved), 0 parse-rejected (display cleared), 3 focus-mismatched
+// (display cleared), -1 usage error (null state).
 #[no_mangle]
 pub extern "C" fn group_highlight_state_init(state: *mut GroupHighlightState) -> i32 {
     match std::panic::catch_unwind(|| {
@@ -879,6 +909,8 @@ pub extern "C" fn group_highlight_apply(
         let payload = match slice_of(payload_ptr, payload_len) {
             Some(payload) => payload,
             None => {
+                state.receipts = state.receipts.saturating_add(1);
+                state.parse_rejected = state.parse_rejected.saturating_add(1);
                 state.clear_display();
                 return 0;
             }
@@ -917,6 +949,7 @@ pub extern "C" fn group_highlight_clear(state: *mut GroupHighlightState) -> i32 
         }
         // SAFETY: non-null `state` borrows a live caller struct for this call.
         let state: &mut GroupHighlightState = unsafe { &mut *state };
+        state.clear_requests = state.clear_requests.saturating_add(1);
         let had = if state.has_group != 0 { 1 } else { 0 };
         state.clear_display();
         had
@@ -1015,6 +1048,33 @@ pub extern "C" fn group_highlight_rect(state: *const GroupHighlightState, out: *
     }) {
         Ok(code) => code,
         Err(_) => 0,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn group_highlight_status(state: *const GroupHighlightState, out: *mut GroupHighlightStatus) -> i32 {
+    match std::panic::catch_unwind(|| {
+        if state.is_null() || out.is_null() {
+            return -1;
+        }
+        // SAFETY: non-null pointers borrow live caller structs for this call.
+        let state: &GroupHighlightState = unsafe { &*state };
+        unsafe {
+            *out = GroupHighlightStatus {
+                receipts: state.receipts,
+                accepted: state.accepted,
+                parse_rejected: state.parse_rejected,
+                focus_mismatch: state.focus_mismatch,
+                stale_ignored: state.stale_ignored,
+                clear_requests: state.clear_requests,
+                has_group: state.has_group,
+                order_initialized: state.order_initialized,
+            };
+        }
+        0
+    }) {
+        Ok(code) => code,
+        Err(_) => -1,
     }
 }
 
@@ -1208,7 +1268,7 @@ mod tests {
         let mut state = GroupHighlightState::zero();
         assert_eq!(apply(&mut state, "gen-1-g1", 3), 1);
         let bytes = payload("gen-1-g2", 3);
-        assert_eq!(apply_inner(&mut state, &bytes, b"win-9"), 0);
+        assert_eq!(apply_inner(&mut state, &bytes, b"win-9"), 3);
         assert_eq!(state.has_group, 0);
         assert_eq!(state.correlation_bytes(), b"gen-1-g1");
         assert!(focus_matches(b"win-2", b"win-2"));
@@ -1253,6 +1313,7 @@ mod tests {
             ),
             -1
         );
+        assert_eq!(group_highlight_status(std::ptr::null(), std::ptr::null_mut()), -1);
     }
 
     #[test]
@@ -1287,10 +1348,70 @@ mod tests {
     }
 
     #[test]
+    fn status_classifies_receipts_without_mutating_state() {
+        let mut state = GroupHighlightState::zero();
+        assert_eq!(apply(&mut state, "gen-1-g0", 1), 1);
+        assert_eq!(apply_inner(&mut state, b"bad", b"win-2"), 0);
+        let mismatch = payload("gen-1-g1", 2);
+        assert_eq!(apply_inner(&mut state, &mismatch, b"win-9"), 3);
+        assert_eq!(apply(&mut state, "gen-1-g0", 1), 2);
+        assert_eq!(group_highlight_clear(&mut state as *mut GroupHighlightState), 0);
+
+        let mut first = GroupHighlightStatus {
+            receipts: 0,
+            accepted: 0,
+            parse_rejected: 0,
+            focus_mismatch: 0,
+            stale_ignored: 0,
+            clear_requests: 0,
+            has_group: 0,
+            order_initialized: 0,
+        };
+        assert_eq!(group_highlight_status(&state, &mut first), 0);
+        let mut second = first;
+        assert_eq!(group_highlight_status(&state, &mut second), 0);
+        assert_eq!(first, second);
+        assert_eq!(first.receipts, 4);
+        assert_eq!(first.accepted, 1);
+        assert_eq!(first.parse_rejected, 1);
+        assert_eq!(first.focus_mismatch, 1);
+        assert_eq!(first.stale_ignored, 1);
+        assert_eq!(first.clear_requests, 1);
+        assert_eq!(first.receipts, first.accepted + first.parse_rejected + first.focus_mismatch + first.stale_ignored);
+        assert_eq!(first.has_group, 0);
+        assert_eq!(first.order_initialized, 1);
+    }
+
+    #[test]
+    fn status_counters_saturate() {
+        let mut state = GroupHighlightState::zero();
+        state.receipts = u64::MAX;
+        state.parse_rejected = u64::MAX;
+        state.clear_requests = u64::MAX;
+        assert_eq!(apply_inner(&mut state, b"bad", b"win-2"), 0);
+        assert_eq!(group_highlight_clear(&mut state as *mut GroupHighlightState), 0);
+        let mut status = GroupHighlightStatus {
+            receipts: 0,
+            accepted: 0,
+            parse_rejected: 0,
+            focus_mismatch: 0,
+            stale_ignored: 0,
+            clear_requests: 0,
+            has_group: 0,
+            order_initialized: 0,
+        };
+        assert_eq!(group_highlight_status(&state, &mut status), 0);
+        assert_eq!(status.receipts, u64::MAX);
+        assert_eq!(status.parse_rejected, u64::MAX);
+        assert_eq!(status.clear_requests, u64::MAX);
+    }
+
+    #[test]
     fn pod_state_layout_matches_ffi_header() {
         // Locked with the C++ static_asserts in activebordergroup_test.cpp:
         // the effect holds this state by value across FFI.
-        assert_eq!(std::mem::size_of::<GroupHighlightState>(), 512);
+        assert_eq!(std::mem::size_of::<GroupHighlightState>(), 560);
         assert_eq!(std::mem::size_of::<GroupHighlightRect>(), 16);
+        assert_eq!(std::mem::size_of::<GroupHighlightStatus>(), 56);
     }
 }

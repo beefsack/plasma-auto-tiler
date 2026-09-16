@@ -25,6 +25,22 @@ struct GroupHighlightState {
     GroupHighlightRect rect;
     size_t focused_len = 0;
     uint8_t focused[128] = {};
+    uint64_t receipts = 0;
+    uint64_t accepted = 0;
+    uint64_t parse_rejected = 0;
+    uint64_t focus_mismatch = 0;
+    uint64_t stale_ignored = 0;
+    uint64_t clear_requests = 0;
+};
+struct GroupHighlightStatus {
+    uint64_t receipts = 0;
+    uint64_t accepted = 0;
+    uint64_t parse_rejected = 0;
+    uint64_t focus_mismatch = 0;
+    uint64_t stale_ignored = 0;
+    uint64_t clear_requests = 0;
+    uint8_t has_group = 0;
+    uint8_t order_initialized = 0;
 };
 extern "C" {
 // Zero-initializes the state. Returns 0 on success, -1 on null state.
@@ -32,8 +48,8 @@ int32_t group_highlight_state_init(GroupHighlightState *state);
 // Applies one effect payload (already converted to UTF-8 bytes at the
 // scripting boundary) plus the active-window identity bytes
 // (empty range when there is no active window). Returns 1 accepted (display
-// updated), 2 ignored stale/out-of-order (display preserved), 0 cleared on
-// parse/focus failure (display cleared, order preserved), -1 on null state.
+// updated), 2 ignored stale/out-of-order (display preserved), 0 parse-rejected
+// (display cleared), 3 focus-mismatched (display cleared), -1 on null state.
 int32_t group_highlight_apply(GroupHighlightState *state, const uint8_t *payload, size_t payloadLen,
     const uint8_t *activeIdentity, size_t activeIdentityLen);
 // Clears the display while preserving the order within the stream. Returns
@@ -52,4 +68,7 @@ int32_t group_highlight_is_visible(const GroupHighlightState *state, uint8_t met
 // Copies the displayed rect. Returns 1 with *out written, 0 when clear,
 // -1 on null pointers.
 int32_t group_highlight_rect(const GroupHighlightState *state, GroupHighlightRect *out);
+// Copies redacted receipt classification counters and display/order flags.
+// Returns 0 with *out written, -1 on null pointers. Never mutates state.
+int32_t group_highlight_status(const GroupHighlightState *state, GroupHighlightStatus *out);
 } // extern "C"

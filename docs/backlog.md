@@ -27,11 +27,14 @@ Only meaningful pending or active work is listed.
   reconstruction is selected.
 - P1 | Temporary active-group highlight live gate | Named-log diagnosis found
   retained-focus lookup and missing completed-geometry refresh defects; both are
-  corrected and statically verified. Restart the foreground dev session and
-  recheck the separate group outline while holding Meta. Setter submission does
-  not prove effect receipt or rendering. User-owned evidence remains for native
-  transport, modifier delivery, fullscreen suppression, rendering, and cost.
-  [record](changes/archive/active-group-highlight-held-refresh.md)
+  corrected and statically verified. A read-only native status diagnostic now
+  separates policy receipt, parse/focus/order outcome, Meta/focus/OpenGL gates,
+  and selected outline visibility without proving composited output. Rebuild,
+  stage, and start a new Plasma session before rechecking the separate outline
+  while holding Meta. The user reports no visible group border. User-owned
+  evidence remains for native transport, modifier delivery, fullscreen
+  suppression, rendering, and cost.
+  [record](changes/archive/active-group-highlight-design.md)
 - P1 | Preserved host residue | Do not search for, enumerate, inspect,
   heuristically identify, modify, or clean unidentified advisory, shadow, or
   nested-test residue. Any recovery needs explicit user authorization and exact

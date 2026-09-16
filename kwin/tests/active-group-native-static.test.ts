@@ -18,10 +18,12 @@ function countMatches(body: string, pattern: RegExp): number {
 }
 
 describe("active-group native static contract", () => {
-    it("exposes exactly one writable setter plus clear through the effect-owned endpoint", () => {
-        assert.equal(countMatches(effectImpl, /Q_SCRIPTABLE/g), 2);
+    it("exposes setter, clear, and a read-only status query through the effect-owned endpoint", () => {
+        assert.equal(countMatches(effectImpl, /Q_SCRIPTABLE/g), 3);
         assert.match(effectImpl, /SetGroupHighlight/);
         assert.match(effectImpl, /ClearGroupHighlight/);
+        assert.match(effectImpl, /GetGroupHighlightStatus/);
+        assert.match(effectHeader, /groupHighlightStatus\(\) const/);
         assert.match(effectImpl, /Q_CLASSINFO\("D-Bus Interface", "org\.plasmaautotiler\.ActiveBorder1"\)/);
         assert.match(effectImpl, /QDBusConnection::sessionBus/);
         assert.match(effectImpl, /registerService\(QStringLiteral\("org\.plasmaautotiler\.ActiveBorder"\)\)/);
@@ -84,8 +86,11 @@ describe("active-group native static contract", () => {
         assert.match(effectImpl, /toUtf8/);
         assert.match(effectImpl, /group_highlight_apply/);
         assert.match(effectImpl, /group_highlight_rect/);
+        assert.match(effectImpl, /group_highlight_status/);
         assert.match(ffi, /GroupHighlightState/);
         assert.match(ffi, /group_highlight_apply/);
+        assert.match(ffi, /GroupHighlightStatus/);
+        assert.match(ffi, /group_highlight_status/);
         assert.match(rust, /fn parse_payload/);
         assert.match(rust, /fn correlation_is_newer/);
         assert.match(rust, /-16384/);
