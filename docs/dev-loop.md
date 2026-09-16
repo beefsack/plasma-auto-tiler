@@ -7,7 +7,7 @@ These recipes never stop or mask units, never resolve the Planner through
 ```sh
 just dev         # foreground: refuse unless DOWN, dev-on, tail labeled logs, Ctrl-C tears down via dev-off
 just dev verbose # same bounded operational diagnostics, named explicitly for troubleshooting
-just dev trace   # additionally build KWin trace detail and log Planner request/reply payloads
+just dev trace   # additionally build KWin trace detail and log bounded structural Planner request/reply JSON
 just dev-on      # disable packaged script, start worktree Planner + KWin bundle
 just dev-status  # read-only: name owner, isScriptLoaded, receipt, unit state
 just reload      # rebuild and swap only the recorded worktree Planner
