@@ -26,6 +26,9 @@ function makeEnv(
 ): PlanAdapterEnv {
     return {
         callDbus: (_s, _p, _i, _m, payload, callback): void => {
+            if (_m === "NameHasOwner") { callback(true); return; }
+            if (_m === "GetNameOwner") { callback(":1.7"); return; }
+            if (_m === "StartServiceByName") { callback(1); return; }
             calls.push({ payload });
             callbacks.push(callback);
         },

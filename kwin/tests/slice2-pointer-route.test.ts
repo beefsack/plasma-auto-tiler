@@ -74,6 +74,9 @@ function mockEnv(refs: { a: object; b: object }): Mocks {
     } as unknown as Mocks;
     const env: PlanAdapterEnv = {
         callDbus: (_s, _p, _i, _m, payload, callback): void => {
+            if (_m === "NameHasOwner") { callback(true); return; }
+            if (_m === "GetNameOwner") { callback(":1.7"); return; }
+            if (_m === "StartServiceByName") { callback(1); return; }
             state.dbusCalls.push({ payload });
             state.callbacks.push(callback);
         },
@@ -441,6 +444,9 @@ function startOracleEntry(world: OracleWorld): { stop: () => void; mocks: Oracle
     const handle = startPlanAdapterEntry({
         workspace: world.workspace,
         callDbus: (_s, _p, _i, method, payload, _callback): void => {
+            if (method === "NameHasOwner") { _callback(true); return; }
+            if (method === "GetNameOwner") { _callback(":1.7"); return; }
+            if (method === "StartServiceByName") { _callback(1); return; }
             mocks.planCalls.push({ method, payload });
         },
         oracleCallDbus: (_s, _p, _i, _m, callback): void => {
@@ -706,6 +712,9 @@ function echoMockEnv(refs: { a: object; b: object }): EchoMocks {
     } as unknown as EchoMocks;
     const env: PlanAdapterEnv = {
         callDbus: (_s, _p, _i, _m, payload, callback): void => {
+            if (_m === "NameHasOwner") { callback(true); return; }
+            if (_m === "GetNameOwner") { callback(":1.7"); return; }
+            if (_m === "StartServiceByName") { callback(1); return; }
             state.dbusCalls.push({ payload });
             state.callbacks.push(callback);
         },

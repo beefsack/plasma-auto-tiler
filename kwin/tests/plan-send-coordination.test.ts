@@ -136,10 +136,11 @@ interface Mocks {
     readonly timers: Array<{ delayMs: number; callback: () => void; cancelled: boolean }>;
     readonly logs: string[];
     readonly shortcuts: Array<{ action: string; callback: () => void }>;
+    readonly answeredOwners: Set<number>;
 }
 
 function startEntry(world: FakeWorld): { handle: ReturnType<typeof startPlanAdapterEntry>; mocks: Mocks } {
-    const mocks: Mocks = { dbusCalls: [], callbacks: [], timers: [], logs: [], shortcuts: [] };
+    const mocks: Mocks = { dbusCalls: [], callbacks: [], timers: [], logs: [], shortcuts: [], answeredOwners: new Set<number>() };
     const handle = startPlanAdapterEntry({
         workspace: world.workspace,
         callDbus: (service, _path, _iface, method, payload, callback): void => {
@@ -185,6 +186,7 @@ function runDebounce(mocks: Mocks): void {
             mocks.timers.push(timer);
         }
     }
+    drainOwners(mocks);
 }
 
 function parsePayload(payload: string): Record<string, unknown> {
@@ -261,6 +263,23 @@ function fireSendTimeout(mocks: Mocks): void {
     assert.ok(fired, "send timeout timer expected");
 }
 
+// Owner-pinned transport: answer every pending GetNameOwner once so Plan
+// activation (foreground plus hidden) and Send activation both pin without
+// recording extra DescribePlan flights. NameHasOwner is already hidden by
+// the mock above.
+function drainOwners(mocks: Mocks): void {
+    for (let index = 0; index < mocks.dbusCalls.length; index += 1) {
+        if (mocks.dbusCalls[index]?.method !== "GetNameOwner") {
+            continue;
+        }
+        if (mocks.answeredOwners.has(index)) {
+            continue;
+        }
+        mocks.answeredOwners.add(index);
+        mocks.callbacks[index]?.(":1.7");
+    }
+}
+
 // Background-tiling drain: answer every pending Plan lifecycle flight with an
 // echo covering exactly its wanted set (no focus), looping until the shared
 // single-flight chain goes quiet. Stale callbacks are ignored by the
@@ -268,6 +287,7 @@ function fireSendTimeout(mocks: Mocks): void {
 // ops are never touched.
 function settleBackgroundPlans(mocks: Mocks): void {
     for (let round = 0; round < 8; round += 1) {
+        drainOwners(mocks);
         const before = planCalls(mocks).length;
         for (const call of planCalls(mocks)) {
             const payload = call.payload;
@@ -341,6 +361,7 @@ describe("plan/send P0 coordination through production wiring", () => {
 
         // Settle the initial Plan admission so send starts from idle.
         runDebounce(mocks);
+        drainOwners(mocks);
         const initialPlan = planCalls(mocks);
         assert.equal(initialPlan.length, 1, `initial Plan admit expected, got ${JSON.stringify(planCalls(mocks).map((c) => (c.payload["command"] as Record<string, unknown>)["op"]))}`);
         const initialCorrelation = (initialPlan[0]?.payload as Record<string, unknown>)["correlation_id"] as string;
@@ -380,9 +401,10 @@ describe("plan/send P0 coordination through production wiring", () => {
 
         // Start the first distinct send to ws-2 through production routing.
         handle?.requestWorkspaceMove(2);
-        const ownerIndex = mocks.dbusCalls.findIndex((call) => call.method === "GetNameOwner");
+        drainOwners(mocks);
+        let ownerIndex = -1;
+        for (let i = mocks.dbusCalls.length - 1; i >= 0; i -= 1) { if (mocks.dbusCalls[i]?.method === "GetNameOwner") { ownerIndex = i; break; } }
         assert.ok(ownerIndex >= 0, "send activation must resolve owner");
-        mocks.callbacks[ownerIndex]?.(":1.7");
         const requests = sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace");
         assert.equal(requests.length, 1, "exactly one send request");
         const sendPayload = requests[0]?.payload as Record<string, unknown>;
@@ -724,9 +746,10 @@ describe("plan/send P0 coordination through production wiring", () => {
 
         // Send 3->2 equivalent: new desktop ws-2 back to boot desktop ws-1.
         handle?.requestWorkspaceMove(1);
-        const ownerIndex = mocks.dbusCalls.findIndex((call) => call.method === "GetNameOwner");
+        drainOwners(mocks);
+        let ownerIndex = -1;
+        for (let i = mocks.dbusCalls.length - 1; i >= 0; i -= 1) { if (mocks.dbusCalls[i]?.method === "GetNameOwner") { ownerIndex = i; break; } }
         assert.ok(ownerIndex >= 0, "send activation must resolve owner");
-        mocks.callbacks[ownerIndex]?.(":1.7");
         const requests = sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace");
         assert.equal(requests.length, 1, "exactly one send request");
         const sendPayload = requests[0]?.payload as Record<string, unknown>;
@@ -994,9 +1017,10 @@ describe("plan/send P0 coordination through production wiring", () => {
         settleBackgroundPlans(mocks);
 
         handle?.requestWorkspaceMove(2);
-        const ownerIndex = mocks.dbusCalls.findIndex((call) => call.method === "GetNameOwner");
+        drainOwners(mocks);
+        let ownerIndex = -1;
+        for (let i = mocks.dbusCalls.length - 1; i >= 0; i -= 1) { if (mocks.dbusCalls[i]?.method === "GetNameOwner") { ownerIndex = i; break; } }
         assert.ok(ownerIndex >= 0);
-        mocks.callbacks[ownerIndex]?.(":1.7");
         const requests = sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace");
         assert.equal(requests.length, 1);
         const correlation = (requests[0]?.payload as Record<string, unknown>)["correlation_id"] as string;
@@ -1128,6 +1152,7 @@ describe("plan/send P0 coordination through production wiring", () => {
 
         // Real Plan entry flight: foreground move dispatches and stays in flight.
         handle?.requestMove("left");
+        drainOwners(mocks);
         assert.equal(planCalls(mocks).length, planAfterSettle + 1, "plan move must dispatch a real flight");
         const moverBefore = world.wins.find((w) => w.internalId === "win-a") as FakeWindow;
         const desktopsBefore = JSON.stringify((moverBefore.desktops as FakeDesktop[]).map((d) => d.id));
@@ -1226,9 +1251,10 @@ describe("plan/send P0 coordination through production wiring", () => {
 
         const dbusBeforeSend = mocks.dbusCalls.length;
         handle?.requestWorkspaceMove(2);
+        drainOwners(mocks);
+        drainOwners(mocks);
         const ownerIndex = findOwnerCall(mocks, dbusBeforeSend);
         assert.ok(ownerIndex >= 0, "send activation must resolve owner");
-        mocks.callbacks[ownerIndex]?.(":1.7");
         const requests = sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace");
         assert.equal(requests.length, 1);
         const correlation = (requests[0]?.payload as Record<string, unknown>)["correlation_id"] as string;

@@ -103,6 +103,9 @@ describe("fractional QRectF quantization at observation boundary", () => {
         const handle = startMovementAdapterEntry({
             workspace: surface,
             callDbus: (_s, _p, _i, method, payload, cb): void => {
+            if (method === "NameHasOwner") { cb(true); return; }
+            if (method === "GetNameOwner") { cb(":1.7"); return; }
+            if (method === "StartServiceByName") { cb(1); return; }
                 dbusCalls.push({ method, payload });
                 callbacks.push(cb);
             },

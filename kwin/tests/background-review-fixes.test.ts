@@ -198,6 +198,9 @@ function startEntry(world: FakeWorld): { handle: ReturnType<typeof startPlanAdap
     const handle = startPlanAdapterEntry({
         workspace: world.workspace,
         callDbus: (service, _path, _iface, method, payload, callback): void => {
+            if (method === "NameHasOwner") { callback(true); return; }
+            if (method === "GetNameOwner") { callback(":1.7"); return; }
+            if (method === "StartServiceByName") { callback(1); return; }
             mocks.dbusCalls.push({ service, method, payload });
             mocks.callbacks.push(callback);
         },
@@ -607,6 +610,9 @@ describe("background review fixes", () => {
         state.observeHiddenImpl = () => [...hiddenHidden];
         const env: PlanAdapterEnv = {
             callDbus: (_service, _path, _iface, _method, payload, callback): void => {
+            if (_method === "NameHasOwner") { callback(true); return; }
+            if (_method === "GetNameOwner") { callback(":1.7"); return; }
+            if (_method === "StartServiceByName") { callback(1); return; }
                 dbusCalls.push({ payload });
                 callbacks.push(callback);
             },

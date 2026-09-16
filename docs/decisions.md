@@ -109,15 +109,22 @@ Historical implementation detail is recoverable in Git history.
   restart/rebind loop. A subsequent idle command may request a fresh D-Bus
   activation. User-manager session teardown stops the service; D-Bus
   connection/name loss also ends the Planner without durable recovery state.
-- Selected 2026-09-16, not implemented: on CONFIRMED Planner loss, establish
-  one bounded fresh Planner session automatically. This on-demand activation is
-  distinct from a systemd restart loop. It starts from current eligible windows
-  only, with no durable layout snapshot or journal and no inference of the old
-  session's internal history. The old in-flight transaction remains terminal;
-  this does not replay interrupted commands, recover uncertain native mutation,
-  apply stale old-session replies, or resolve parked workspace-send partial
-  recovery. If the Planner survives sleep, retain its current in-memory layouts
-  rather than rebuild them.
+- Selected 2026-09-16, static-complete, live gate pending: on CONFIRMED Planner
+  loss, establish one bounded fresh Planner session automatically. This
+  on-demand activation is distinct from a systemd restart loop. It starts from
+  current eligible windows only, with no durable layout snapshot or journal
+  and no inference of the old session's internal history. The old in-flight
+  transaction remains terminal with old-generation replies rejected; this does
+  not replay interrupted commands, recover uncertain native mutation, apply
+  stale old-session replies, or resolve parked workspace-send partial recovery,
+  and stays unavailable while a workspace send blocks Plan. Normal Plan
+  transport pins a unique owner via strict `NameHasOwner` plus one bounded
+  `StartServiceByName(..., 0)` accepting only `PrimaryOwner`/`AlreadyOwner`
+  then `GetNameOwner`; ambiguous terminals may run one bounded identity probe
+  and only absence or a changed owner recovers. A failed recovery stays
+  bounded without loops. Offline coverage only; no live result is claimed. If
+  the Planner survives sleep, retain its current in-memory layouts rather
+  than rebuild them.
 - Selected Rust KWin commands first resolve the Planner name. An absent name
   makes one bounded `StartServiceByName(..., 0)` request, accepts only
   `PrimaryOwner` or `AlreadyOwner`, then resolves and pins one unique owner

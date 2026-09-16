@@ -114,7 +114,7 @@
    fullscreen member's `disposition=skip-fullscreen` write line in the live log.
    Record the exact failing observation otherwise.
 
-### Sleep And Wake - SELECTED RECOVERY, IMPLEMENTATION AND LIVE GATE PENDING
+### Sleep And Wake - SELECTED RECOVERY, STATIC-COMPLETE, LIVE GATE PENDING
 
 - No committed KWin, Planner, or transport source subscribes to a sleep, resume,
   or power-state event. The production adapter has only window, geometry, scope,
@@ -125,23 +125,29 @@
   or Planner-name loss: `src/planner_service.rs:346-415`. Its D-Bus user unit
   specifies `Restart=no`: `home-manager-module.nix:50-61`.
 - In current source, if wake drops the Planner name, the process exits and its
-  retained topology is lost. The adapter does not disable itself, but a direct
-  `DescribePlan` failure only ends that flight:
-  `kwin/src/plan-adapter.ts:1218-1262`. A later scope/window signal or user
-  shortcut is the only source-level route to another direct service-name call.
-  Whether that call activates a replacement service after wake, and which KWin
-  signals wake emits, is session-bus and KWin runtime behavior not established
-  by this repository.
-- Selected, not implemented: after CONFIRMED Planner loss, make one bounded
-  on-demand fresh-session activation and fit CURRENT eligible windows with the
-  approved simple near-layout heuristic, falling back to normal tiling when it
+  retained topology is lost. The adapter keeps the old flight terminal and
+  never replays it; normal Plan transport pins a unique owner via strict
+  `NameHasOwner` plus one bounded `StartServiceByName(..., 0)` accepting only
+  `PrimaryOwner`/`AlreadyOwner` then `GetNameOwner`, with no Legacy path.
+  Ambiguous timeout, malformed, service-fault, missing-callback, and
+  correlation-mismatch terminals alone never recover but may run one bounded
+  identity probe; only absence or a changed unique owner triggers recovery.
+  A later scope/window signal or user shortcut is the remaining route to
+  another owner-pinned call. Which KWin signals wake emits remains session
+  runtime behavior not established by this repository.
+- Selected, static-complete, live gate pending: after CONFIRMED Planner loss,
+  one bounded on-demand fresh-session activation fits CURRENT eligible windows
+  with the approved simple near-layout heuristic, using normal tiling when it
   cannot produce a supported layout. This is in-memory only: it retains no
-  durable layout snapshot or journal, does not infer prior internal history, and
-  may change grouping. If the Planner survives sleep, retain its in-memory
-  layouts. This is not a polling, retry, or systemd restart loop, and does not
-  make an old in-flight transaction non-terminal, replay commands, recover
-  uncertain native mutation, apply stale replies across sessions, or settle
-  parked workspace-send partial recovery.
+  durable layout snapshot or journal, does not infer prior internal history,
+  and may change grouping. If the Planner survives sleep, every baseline is
+  retained with no rebuild. This adds no polling, retry, or systemd restart
+  loop, keeps every old in-flight transaction terminal with old-generation
+  replies rejected, replays no commands, recovers no uncertain native
+  mutation, applies no stale replies across sessions, settles no parked
+  workspace-send partial recovery, and stays unavailable while a workspace
+  send blocks Plan. Offline TypeScript and Rust coverage only; no live KWin,
+  Plasma, D-Bus, or suspend action occurred.
 
 #### Live Experiment
 
@@ -299,15 +305,16 @@
   changes without client-drift retry/park misuse. Run the exact user-owned gate
   above; output addition, removal, retirement, and all-domain reconciliation
   remain the separate output-hotplug slice.
-- P1 | Wake transport recovery | Selected, implementation and gate pending:
+- P1 | Wake transport recovery | Selected, static-complete, live gate pending:
   after CONFIRMED Planner name or connection loss, one bounded on-demand fresh
   session fits CURRENT eligible windows with simple near-layout fitting or normal
-  tiling fallback; surviving Planners retain their layouts. Boundary: in-memory
-  fresh recovery only, not durable snapshots/journals, old-flight reset or
-  replay, stale cross-session replies, uncertain native mutation, or parked
-  workspace-send partial recovery. Gate: the sleep/wake experiment above proves
-  the selected automatic recovery semantics, bounded failure behavior, and the
-  first post-wake plan result.
+  tiling when no fit applies; surviving Planners retain their layouts with no
+  rebuild. Boundary: in-memory fresh recovery only, not durable
+  snapshots/journals, old-flight reset or replay, stale cross-session replies,
+  uncertain native mutation, or parked workspace-send partial recovery. Gate:
+  the sleep/wake experiment above proves the selected automatic recovery
+  semantics, bounded failure behavior, and the first post-wake plan result. No
+  live result is claimed.
 - P1 | All user-facing settings live application (launch blocker) | Boundary:
   script settings, KCM Apply, external `kwinrc`, shortcut drift, and effect
   reconfigure. Until it is complete, implement and verify the approved interim:

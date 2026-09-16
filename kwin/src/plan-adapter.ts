@@ -24,6 +24,23 @@ export const PLAN_OBJECT = "/org/plasmaautotiler/Planner";
 export const PLAN_INTERFACE = "org.plasmaautotiler.Planner1";
 export const PLAN_METHOD = "DescribePlan";
 
+// Session D-Bus activation transport (one-flight, bounded, no poll/retry).
+// Mirrors the workspace-send activation design minimally: NameHasOwner's
+// strict boolean reply distinguishes presence; a present name is resolved via
+// GetNameOwner and pinned; only a strictly absent name runs one
+// StartServiceByName(service, 0) accepting 1 PrimaryOwner / 2 AlreadyOwner,
+// then one post-start GetNameOwner before any planner method. Every planner
+// call targets the pinned unique `:N.M` owner. No Legacy path.
+export const PLAN_DBUS_SERVICE = "org.freedesktop.DBus";
+export const PLAN_DBUS_OBJECT = "/org/freedesktop/DBus";
+export const PLAN_DBUS_INTERFACE = "org.freedesktop.DBus";
+export const PLAN_HAS_OWNER_METHOD = "NameHasOwner";
+export const PLAN_GET_OWNER_METHOD = "GetNameOwner";
+export const PLAN_START_METHOD = "StartServiceByName";
+export const PLAN_START_FLAGS = 0;
+export const PLAN_START_PRIMARY = 1;
+export const PLAN_START_ALREADY = 2;
+
 export const PLAN_CONTRACT_VERSION = 1;
 export const PLAN_MAX_REQUEST_BYTES = 64 * 1024;
 export const PLAN_MAX_REPLY_BYTES = 64 * 1024;
@@ -498,6 +515,11 @@ function isOwnerId(value: unknown): value is string {
     );
 }
 
+// Exact D-Bus unique-owner shape (`:N.M`) for the pinned planner endpoint.
+function isUniqueOwner(value: unknown): value is string {
+    return typeof value === "string" && /^:[0-9]+\.[0-9]+$/.test(value);
+}
+
 function isGeneration(value: unknown): value is string {
     if (typeof value !== "string" || value.length === 0 || value.length > PLAN_MAX_GENERATION_LEN) {
         return false;
@@ -820,6 +842,7 @@ interface PendingFlight {
     readonly correlation: string;
     readonly op: PlanOp;
     readonly epoch: number;
+    readonly plannerSession: number;
     readonly snapshot: PlanSnapshot;
     readonly removed: string | null;
     readonly windowCount: number;
@@ -832,6 +855,12 @@ interface PendingFlight {
     // focus or interactive commands. Serialized through the same
     // single-flight and send-blocking as foreground.
     readonly background: boolean;
+    // Pinned-owner transport payload retained across activation steps.
+    readonly requestPayload: string;
+    // True when dispatched from confirmed-loss recovery: a terminal failure
+    // stays bounded without a second identity probe, so a failed recovery
+    // never loops.
+    readonly isRecovery: boolean;
 }
 
 interface AutoIntent {
@@ -939,6 +968,19 @@ export class PlanAdapter {
     private stickyPreviousFloating = new Map<string, boolean>();
     private maximizeToggleAttempts = new Map<object, boolean>();
     private stickyAttempts = new Map<object, boolean>();
+    // Owner-pinned Planner transport plus confirmed-loss recovery. The
+    // in-memory Planner survives sleep: same-owner failures retain every
+    // baseline and never rebuild. Only actual absence/identity evidence
+    // (strict NameHasOwner false or a changed unique owner, via normal
+    // activation or one bounded post-terminal probe) triggers a fresh
+    // session. No polling, retry, or Legacy path.
+    private pinnedOwner: string | null = null;
+    private activationStep = 0;
+    private plannerSession = 0;
+    private knownOwner: string | null = null;
+    private nextIsRecovery = false;
+    private probeToken = 0;
+    private activeProbe = 0;
 
     constructor(private readonly env: PlanAdapterEnv) {}
 
@@ -1003,6 +1045,12 @@ export class PlanAdapter {
         this.stickyPreviousFloating.clear();
         this.maximizeToggleAttempts.clear();
         this.stickyAttempts.clear();
+        this.pinnedOwner = null;
+        this.activationStep = 0;
+        this.plannerSession = 0;
+        this.knownOwner = null;
+        this.nextIsRecovery = false;
+        this.activeProbe = 0;
         this.clearRepeat();
         return true;
     }
@@ -1028,6 +1076,11 @@ export class PlanAdapter {
         this.stickyPreviousFloating.clear();
         this.maximizeToggleAttempts.clear();
         this.stickyAttempts.clear();
+        this.pinnedOwner = null;
+        this.activationStep = 0;
+        this.knownOwner = null;
+        this.nextIsRecovery = false;
+        this.activeProbe = 0;
         this.clearRepeat();
         this.clearTimer();
         this.clearDebounce();
@@ -2315,6 +2368,9 @@ export class PlanAdapter {
         if (!this.enabled || this.inFlight) {
             return;
         }
+        // A new lifecycle command supersedes an unanswered terminal probe. Its
+        // callback must not make a later recovery decision for an older flight.
+        this.activeProbe = 0;
         if (this.blockedBySend()) {
             return;
         }
@@ -2384,11 +2440,14 @@ export class PlanAdapter {
         if (payload.length > PLAN_MAX_REQUEST_BYTES) {
             return;
         }
+        const isRecovery = this.nextIsRecovery;
+        this.nextIsRecovery = false;
         this.inFlight = true;
         this.pending = {
             correlation,
             op: intent.op,
             epoch: this.epoch,
+            plannerSession: this.plannerSession,
             snapshot,
             removed: intent.removed,
             windowCount: sortedIds.length,
@@ -2398,6 +2457,8 @@ export class PlanAdapter {
             floatTarget: intent.floatTarget ?? null,
             stickyTarget: intent.stickyTarget ?? null,
             background: intent.background === true,
+            requestPayload: payload,
+            isRecovery,
         };
         // Bounded route entry: every dispatched flight opens with the same
         // cmd line shape and `outcome=dispatch`, then closes with its terminal
@@ -2408,13 +2469,17 @@ export class PlanAdapter {
         this.token += 1;
         const flight = this.token;
         this.activeToken = flight;
+        const session = this.plannerSession;
+        this.pinnedOwner = null;
+        this.activationStep = 1;
         try {
-            const cancel = this.env.scheduleOnce(PLAN_TIMEOUT_MS, () => this.onTimeout(flight));
+            const cancel = this.env.scheduleOnce(PLAN_TIMEOUT_MS, () => this.onTimeout(flight, session));
             this.cancelTimer = cancel;
         } catch (error) {
             void error;
             this.inFlight = false;
             this.pending = null;
+            this.activationStep = 0;
             this.diag(intent.op, correlation, sortedIds.length, "timer-failed");
             if (intent.background === true) {
                 this.noteBackgroundTerminal(intent.snapshot);
@@ -2424,20 +2489,25 @@ export class PlanAdapter {
             this.finishFlight();
             return;
         }
+        // Phase 1: strict NameHasOwner presence. KWin does not deliver
+        // GetNameOwner's absent-name error to callbacks, so presence must be
+        // distinguished first. Strict boolean only; anything else is terminal
+        // no-planner with no recovery and no retry.
         try {
             this.env.callDbus(
+                PLAN_DBUS_SERVICE,
+                PLAN_DBUS_OBJECT,
+                PLAN_DBUS_INTERFACE,
+                PLAN_HAS_OWNER_METHOD,
                 PLAN_SERVICE,
-                PLAN_OBJECT,
-                PLAN_INTERFACE,
-                PLAN_METHOD,
-                payload,
-                (reply) => this.onRequestReply(reply, flight),
+                (reply) => this.onNamePresence(reply, flight, session),
             );
         } catch (error) {
             void error;
             this.clearTimer();
             this.inFlight = false;
             this.pending = null;
+            this.activationStep = 0;
             this.diag(intent.op, correlation, sortedIds.length, "dbus-failed");
             if (intent.background === true) {
                 this.noteBackgroundTerminal(intent.snapshot);
@@ -2448,14 +2518,353 @@ export class PlanAdapter {
         }
     }
 
-    private onTimeout(flight: number): void {
-        if (!this.inFlight || flight !== this.activeToken) {
+    private onNamePresence(reply: unknown, flight: number, session: number): void {
+        if (!this.inFlight || flight !== this.activeToken || session !== this.plannerSession || this.activationStep !== 1) {
+            return;
+        }
+        const flightState = this.pending;
+        if (flightState === null || flightState.plannerSession !== session) {
+            return;
+        }
+        if (reply === true) {
+            this.activationStep = 2;
+            try {
+                this.env.callDbus(
+                    PLAN_DBUS_SERVICE,
+                    PLAN_DBUS_OBJECT,
+                    PLAN_DBUS_INTERFACE,
+                    PLAN_GET_OWNER_METHOD,
+                    PLAN_SERVICE,
+                    (ownerReply) => this.onOwnerInitial(ownerReply, flight, session),
+                );
+            } catch (error) {
+                void error;
+                this.failActivation(flightState, "no-planner");
+            }
+            return;
+        }
+        if (reply !== false) {
+            this.failActivation(flightState, "no-planner");
+            return;
+        }
+        // Strictly absent name. With a previously pinned owner this is
+        // confirmed absence: the old flight is terminal and a fresh session
+        // recovery replaces it; the old command is never replayed. Without a
+        // prior owner this is initial activation: proceed to one bounded start.
+        if (this.knownOwner !== null) {
+            const lost = flightState;
+            this.clearTimer();
+            this.inFlight = false;
+            this.pending = null;
+            this.pinnedOwner = null;
+            this.activationStep = 0;
+            this.diag(lost.op, lost.correlation, lost.windowCount, "owner-absent");
+            this.noteTerminalFor(lost);
+            this.triggerRecovery("absent");
+            return;
+        }
+        this.activationStep = 3;
+        try {
+            this.env.callDbus(
+                PLAN_DBUS_SERVICE,
+                PLAN_DBUS_OBJECT,
+                PLAN_DBUS_INTERFACE,
+                PLAN_START_METHOD,
+                PLAN_SERVICE,
+                (startReply) => this.onStartResult(startReply, flight, session),
+            );
+        } catch (error) {
+            void error;
+            this.failActivation(flightState, "no-planner");
+        }
+    }
+
+    private onOwnerInitial(reply: unknown, flight: number, session: number): void {
+        if (!this.inFlight || flight !== this.activeToken || session !== this.plannerSession || this.activationStep !== 2) {
+            return;
+        }
+        const flightState = this.pending;
+        if (flightState === null || flightState.plannerSession !== session) {
+            return;
+        }
+        if (!isUniqueOwner(reply)) {
+            this.failActivation(flightState, "no-planner");
+            return;
+        }
+        // A changed unique owner after a previously pinned Planner is
+        // confirmed identity evidence: terminal old flight plus fresh-session
+        // recovery, never replaying the old command.
+        if (this.knownOwner !== null && reply !== this.knownOwner) {
+            const lost = flightState;
+            this.clearTimer();
+            this.inFlight = false;
+            this.pending = null;
+            this.pinnedOwner = null;
+            this.activationStep = 0;
+            this.diag(lost.op, lost.correlation, lost.windowCount, "owner-changed");
+            this.noteTerminalFor(lost);
+            this.triggerRecovery("changed");
+            return;
+        }
+        this.pinnedOwner = reply;
+        this.knownOwner = reply;
+        this.activationStep = 5;
+        this.sendPlannerRequest(flight, session);
+    }
+
+    private onStartResult(reply: unknown, flight: number, session: number): void {
+        if (!this.inFlight || flight !== this.activeToken || session !== this.plannerSession || this.activationStep !== 3) {
+            return;
+        }
+        const flightState = this.pending;
+        if (flightState === null || flightState.plannerSession !== session) {
+            return;
+        }
+        if (reply !== PLAN_START_PRIMARY && reply !== PLAN_START_ALREADY) {
+            this.failActivation(flightState, "no-planner");
+            return;
+        }
+        this.activationStep = 4;
+        try {
+            this.env.callDbus(
+                PLAN_DBUS_SERVICE,
+                PLAN_DBUS_OBJECT,
+                PLAN_DBUS_INTERFACE,
+                PLAN_GET_OWNER_METHOD,
+                PLAN_SERVICE,
+                (ownerReply) => this.onOwnerAfterStart(ownerReply, flight, session),
+            );
+        } catch (error) {
+            void error;
+            this.failActivation(flightState, "no-planner");
+        }
+    }
+
+    private onOwnerAfterStart(reply: unknown, flight: number, session: number): void {
+        if (!this.inFlight || flight !== this.activeToken || session !== this.plannerSession || this.activationStep !== 4) {
+            return;
+        }
+        const flightState = this.pending;
+        if (flightState === null || flightState.plannerSession !== session) {
+            return;
+        }
+        if (!isUniqueOwner(reply)) {
+            this.failActivation(flightState, "no-planner");
+            return;
+        }
+        this.pinnedOwner = reply;
+        if (this.knownOwner === null) {
+            this.knownOwner = reply;
+        }
+        this.activationStep = 5;
+        this.sendPlannerRequest(flight, session);
+    }
+
+    private sendPlannerRequest(flight: number, session: number): void {
+        if (!this.inFlight || flight !== this.activeToken || session !== this.plannerSession || this.activationStep !== 5) {
+            return;
+        }
+        const flightState = this.pending;
+        if (flightState === null || flightState.plannerSession !== session || !isUniqueOwner(this.pinnedOwner)) {
+            return;
+        }
+        this.callbackSeen = false;
+        try {
+            const target = this.pinnedOwner as string;
+            this.env.callDbus(
+                target,
+                PLAN_OBJECT,
+                PLAN_INTERFACE,
+                PLAN_METHOD,
+                flightState.requestPayload,
+                (reply) => this.onRequestReply(reply, flight, session),
+            );
+        } catch (error) {
+            void error;
+            this.failFlight(flightState, "owner-loss");
+        }
+    }
+
+    private failActivation(flightState: PendingFlight, outcome: string): void {
+        if (flightState.plannerSession !== this.plannerSession) {
+            return;
+        }
+        this.clearTimer();
+        this.inFlight = false;
+        this.pending = null;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
+        this.diag(flightState.op, flightState.correlation, flightState.windowCount, outcome);
+        this.noteTerminalFor(flightState);
+        this.finishFlight();
+    }
+
+    private noteTerminalFor(flightState: PendingFlight): void {
+        if (flightState.background === true) {
+            this.noteBackgroundTerminal(flightState.snapshot);
+        } else {
+            this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
+        }
+    }
+
+    private maybeProbeAfterTerminal(lost: PendingFlight): void {
+        if (!this.enabled) {
+            return;
+        }
+        if (lost.isRecovery) {
+            return;
+        }
+        if (lost.plannerSession !== this.plannerSession) {
+            return;
+        }
+        if (this.inFlight) {
+            return;
+        }
+        if (this.blockedBySend()) {
+            return;
+        }
+        if (this.knownOwner === null) {
+            return;
+        }
+        // One bounded identity probe only when the flight is otherwise
+        // terminal. Timeout, malformed, service fault, missing callback, and
+        // correlation mismatch alone never recover; only a probe result
+        // proving absence (strict false) or a changed unique owner triggers
+        // recovery. No retry, polling, or systemd behavior.
+        this.probeToken += 1;
+        const probe = this.probeToken;
+        this.activeProbe = probe;
+        const session = this.plannerSession;
+        const expectedOwner = this.knownOwner;
+        try {
+            this.env.callDbus(
+                PLAN_DBUS_SERVICE,
+                PLAN_DBUS_OBJECT,
+                PLAN_DBUS_INTERFACE,
+                PLAN_HAS_OWNER_METHOD,
+                PLAN_SERVICE,
+                (reply) => this.onProbePresence(reply, probe, session, expectedOwner),
+            );
+        } catch (error) {
+            void error;
+            this.activeProbe = 0;
+        }
+    }
+
+    private onProbePresence(reply: unknown, probe: number, session: number, expectedOwner: string | null): void {
+        if (probe !== this.activeProbe || session !== this.plannerSession) {
+            return;
+        }
+        if (this.inFlight || this.blockedBySend()) {
+            this.activeProbe = 0;
+            this.finishFlight();
+            return;
+        }
+        if (reply === false) {
+            this.triggerRecovery("absent");
+            return;
+        }
+        if (reply !== true) {
+            this.activeProbe = 0;
+            this.finishFlight();
+            return;
+        }
+        try {
+            this.env.callDbus(
+                PLAN_DBUS_SERVICE,
+                PLAN_DBUS_OBJECT,
+                PLAN_DBUS_INTERFACE,
+                PLAN_GET_OWNER_METHOD,
+                PLAN_SERVICE,
+                (ownerReply) => this.onProbeOwner(ownerReply, probe, session, expectedOwner),
+            );
+        } catch (error) {
+            void error;
+            this.activeProbe = 0;
+            this.finishFlight();
+        }
+    }
+
+    private onProbeOwner(reply: unknown, probe: number, session: number, expectedOwner: string | null): void {
+        if (probe !== this.activeProbe || session !== this.plannerSession) {
+            return;
+        }
+        if (this.inFlight || this.blockedBySend()) {
+            this.activeProbe = 0;
+            this.finishFlight();
+            return;
+        }
+        if (!isUniqueOwner(reply)) {
+            this.activeProbe = 0;
+            this.finishFlight();
+            return;
+        }
+        if (expectedOwner === null) {
+            this.activeProbe = 0;
+            this.finishFlight();
+            return;
+        }
+        if (reply !== expectedOwner) {
+            this.triggerRecovery("changed");
+            return;
+        }
+        this.activeProbe = 0;
+        this.finishFlight();
+    }
+
+    private triggerRecovery(reason: string): void {
+        if (!this.enabled || this.inFlight) {
+            return;
+        }
+        if (this.blockedBySend()) {
+            return;
+        }
+        // Old flight is already terminal here; late old-generation callbacks
+        // are fenced by the session bump below. Clear the KWin lifecycle
+        // baseline so CURRENT eligible windows form a fresh session through
+        // the existing fresh-admit route (Rust near-strip fitting with normal
+        // tiling when no fit applies). Never replay the old command. While a workspace send is
+        // active, uncertain (plan-blocked), or otherwise blocking Plan, this
+        // edge stays unavailable. A failed fresh activation stays
+        // bounded/terminal without loops via the isRecovery fence.
+        this.plannerSession += 1;
+        this.epoch += 1;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
+        this.pending = null;
+        this.knownOwner = null;
+        this.activeProbe = 0;
+        this.lastGoodByDomain.clear();
+        this.reconcileAttempts = 0;
+        this.parked = false;
+        this.backgroundAttempts.clear();
+        this.backgroundParked.clear();
+        this.pointerEcho = null;
+        this.deferredAuto = null;
+        this.logToken(`${LOG_PREFIX}:recovery reason=${reason} outcome=confirmed-loss`);
+        this.nextIsRecovery = true;
+        try {
+            this.refreshNow();
+        } catch (error) {
+            void error;
+            this.nextIsRecovery = false;
+        }
+        if (!this.inFlight) {
+            this.nextIsRecovery = false;
+            this.logToken(`${LOG_PREFIX}:recovery reason=${reason} outcome=no-fresh-observation`);
+        }
+    }
+
+    private onTimeout(flight: number, session: number): void {
+        if (!this.inFlight || flight !== this.activeToken || session !== this.plannerSession) {
             return;
         }
         const lost = this.pending;
         this.clearTimer();
         this.inFlight = false;
         this.pending = null;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
         if (lost !== null) {
             this.diag(lost.op, lost.correlation, lost.windowCount, "timeout");
             if (lost.background === true) {
@@ -2463,16 +2872,19 @@ export class PlanAdapter {
             } else {
                 this.noteReconcileTerminal(lost.op, lost.workAreaReprojection);
             }
+            this.maybeProbeAfterTerminal(lost);
+            this.finishFlight();
+            return;
         }
         this.finishFlight();
     }
 
-    private onRequestReply(reply: unknown, flight: number): void {
-        if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
+    private onRequestReply(reply: unknown, flight: number, session: number): void {
+        if (!this.inFlight || flight !== this.activeToken || session !== this.plannerSession || this.callbackSeen) {
             return;
         }
         const flightState = this.pending;
-        if (flightState === null) {
+        if (flightState === null || flightState.plannerSession !== session || this.activationStep !== 5) {
             return;
         }
         this.callbackSeen = true;
@@ -2505,8 +2917,13 @@ export class PlanAdapter {
         if (outcome === "rejected") {
             const kind = sanitizeKind(parsed["kind"]);
             const detail = sanitizeDetail(parsed["detail"]);
+            if (isUniqueOwner(this.pinnedOwner) && this.knownOwner === null) {
+                this.knownOwner = this.pinnedOwner;
+            }
             this.inFlight = false;
             this.pending = null;
+            this.pinnedOwner = null;
+            this.activationStep = 0;
             this.diag(flightState.op, flightState.correlation, flightState.windowCount, "rejected");
             this.rejectKind(kind, detail, flightState.snapshot);
             if (flightState.background === true) {
@@ -2523,8 +2940,13 @@ export class PlanAdapter {
         }
         // Fence stale replies: a newer observation arrived after dispatch.
         if (flightState.epoch !== this.epoch) {
+            if (isUniqueOwner(this.pinnedOwner) && this.knownOwner === null) {
+                this.knownOwner = this.pinnedOwner;
+            }
             this.inFlight = false;
             this.pending = null;
+            this.pinnedOwner = null;
+            this.activationStep = 0;
             this.diag(flightState.op, flightState.correlation, flightState.windowCount, "stale-dropped");
             if (flightState.background === true) {
                 this.noteBackgroundTerminal(flightState.snapshot);
@@ -2862,8 +3284,13 @@ export class PlanAdapter {
             this.reconcileAttempts = 0;
             this.parked = false;
         }
+        if (isUniqueOwner(this.pinnedOwner)) {
+            this.knownOwner = this.pinnedOwner;
+        }
         this.inFlight = false;
         this.pending = null;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
         this.diag(flightState.op, flightState.correlation, flightState.windowCount, "planned-applied");
         // Exactly one observational active-group refresh after an actual
         // successful geometry-plan boundary, even when focus is unchanged.
@@ -2892,14 +3319,25 @@ export class PlanAdapter {
     }
 
     private failFlight(flightState: PendingFlight, outcome: string): void {
+        if (flightState.plannerSession !== this.plannerSession) {
+            return;
+        }
+        this.clearTimer();
         this.inFlight = false;
         this.pending = null;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
         this.diag(flightState.op, flightState.correlation, flightState.windowCount, outcome);
         if (flightState.background === true) {
             this.noteBackgroundTerminal(flightState.snapshot);
         } else {
             this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
         }
+        // Ambiguous terminal failures (timeout already probed via onTimeout;
+        // service-fault, correlation mismatch, precondition mismatch, stale
+        // scope, write failure, owner loss) may lead to one bounded identity
+        // probe. Only absence or changed owner recovers; same owner retains.
+        this.maybeProbeAfterTerminal(flightState);
         this.finishFlight();
     }
 
@@ -2909,6 +3347,11 @@ export class PlanAdapter {
     // converge across successive flights without polling or new timers.
     private finishFlight(): void {
         if (!this.enabled) {
+            return;
+        }
+        // Do not let a deferred foreground or hidden-domain command race the
+        // one bounded identity check for a terminal Planner transport fault.
+        if (this.activeProbe !== 0) {
             return;
         }
         const next = this.deferredAuto;

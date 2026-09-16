@@ -149,6 +149,22 @@ function mockEnv(refs: { a: object; b: object; c: object }): Mocks {
     };
     const env: PlanAdapterEnv = {
         callDbus: (service, path, iface, method, payload, callback): void => {
+            // Owner-pinned transport: answer bus-daemon activation
+            // synchronously without recording so legacy DescribePlan
+            // assertions keep their indices; new recovery tests cover the
+            // activation steps explicitly.
+            if (method === "NameHasOwner") {
+                callback(true);
+                return;
+            }
+            if (method === "GetNameOwner") {
+                callback(":1.7");
+                return;
+            }
+            if (method === "StartServiceByName") {
+                callback(1);
+                return;
+            }
             state.dbusCalls.push({ service, path, iface, method, payload });
             state.callbacks.push(callback);
         },
@@ -281,7 +297,9 @@ describe("plan adapter route identity and request shape", () => {
         adapter.requestFocus("left");
         assert.equal(mocks.dbusCalls.length, 1);
         const call = mocks.dbusCalls[0] as { service: string; path: string; iface: string; method: string };
-        assert.equal(call.service, PLAN_SERVICE);
+        // Owner-pinned transport: the planner method targets the pinned
+        // unique owner, never the well-known name.
+        assert.match(call.service, /^:[0-9]+\.[0-9]+$/);
         assert.equal(call.path, PLAN_OBJECT);
         assert.equal(call.iface, PLAN_INTERFACE);
         assert.equal(call.method, PLAN_METHOD);
@@ -1766,6 +1784,18 @@ function startEntry(
     const handle = startPlanAdapterEntry({
         workspace: world.workspace,
         callDbus: (_service, _path, _iface, method, payload, callback): void => {
+            if (method === "NameHasOwner") {
+                callback(true);
+                return;
+            }
+            if (method === "GetNameOwner") {
+                callback(":1.7");
+                return;
+            }
+            if (method === "StartServiceByName") {
+                callback(1);
+                return;
+            }
             mocks.dbusCalls.push({ method, payload });
             mocks.callbacks.push(callback);
         },

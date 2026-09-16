@@ -71,8 +71,9 @@ Only meaningful pending or active work is listed.
   survives sleep. After confirmed Planner loss, automatically establish a fresh
   in-memory session from current windows using near-layout fitting with normal
   tiling fallback. Never replay interrupted commands or accept stale replies.
-  Implementation and live acceptance remain pending; uncertain-send recovery
-  remains a separate, unselected protocol change.
+  Static implementation is complete with offline TypeScript and Rust coverage;
+  live acceptance remains pending and no live result is claimed;
+  uncertain-send recovery remains a separate, unselected protocol change.
   [investigation](changes/reliability-condition-investigation.md)
 - P1 | All settings live application (launch blocker) | Before launch, every
   user-facing setting must apply live, including tiling, workspace, shortcut,

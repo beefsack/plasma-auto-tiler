@@ -36,7 +36,7 @@ import {
     GROUP_HIGHLIGHT_SET_METHOD,
     startActiveGroupHighlight,
 } from "./active-group-highlight";
-import { PLAN_INTERFACE, PLAN_METHOD, PLAN_OBJECT, PLAN_SERVICE, PlanAdapter, PlanDirection, PlanObserved, PlanResizeMode, planFingerprint } from "./plan-adapter";
+import { PLAN_DBUS_SERVICE, PLAN_INTERFACE, PLAN_METHOD, PLAN_OBJECT, PLAN_SERVICE, PLAN_START_FLAGS, PLAN_START_METHOD, PlanAdapter, PlanDirection, PlanObserved, PlanResizeMode, planFingerprint } from "./plan-adapter";
 import { PLAN_SOURCE_REV } from "./source-rev";
 import { connectSignal, readSignal } from "./signal-capability";
 import { KWIN_TRACE_ENABLED } from "./trace";
@@ -1674,6 +1674,10 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             callDbus = (service, path, iface, method, payload, callback) => {
                 if (service === WORKSPACE_SEND_DBUS_SERVICE && method === WORKSPACE_SEND_START_METHOD) {
                     bound(service, path, iface, method, payload, WORKSPACE_SEND_START_FLAGS, callback);
+                    return;
+                }
+                if (service === PLAN_DBUS_SERVICE && method === PLAN_START_METHOD) {
+                    bound(service, path, iface, method, payload, PLAN_START_FLAGS, callback);
                     return;
                 }
                 bound(service, path, iface, method, payload, callback);

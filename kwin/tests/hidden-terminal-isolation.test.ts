@@ -51,6 +51,9 @@ function mockEnv(): Mocks {
     };
     const env: PlanAdapterEnv = {
         callDbus: (_service, _path, _iface, _method, payload, callback): void => {
+            if (_method === "NameHasOwner") { callback(true); return; }
+            if (_method === "GetNameOwner") { callback(":1.7"); return; }
+            if (_method === "StartServiceByName") { callback(1); return; }
             state.callDbusImpl(payload, callback);
         },
         scheduleOnce: (delayMs, callback): (() => void) => {

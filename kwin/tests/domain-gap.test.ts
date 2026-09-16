@@ -167,6 +167,9 @@ describe("production entries carry configured gaps", () => {
         const handle = startPlanAdapterEntry({
             workspace: world["workspace"],
             callDbus: (_s, _p, _i, method, payload, _cb): void => {
+            if (method === "NameHasOwner") { _cb(true); return; }
+            if (method === "GetNameOwner") { _cb(":1.7"); return; }
+            if (method === "StartServiceByName") { _cb(1); return; }
                 dbusCalls.push({ method, payload });
                 callbacks.push(_cb);
             },
@@ -195,6 +198,9 @@ describe("production entries carry configured gaps", () => {
         const handle = startPlanAdapterEntry({
             workspace: world["workspace"],
             callDbus: (_s, _p, _i, method, payload, _cb): void => {
+            if (method === "NameHasOwner") { _cb(true); return; }
+            if (method === "GetNameOwner") { _cb(":1.7"); return; }
+            if (method === "StartServiceByName") { _cb(1); return; }
                 dbusCalls.push({ method, payload });
                 void _cb;
             },

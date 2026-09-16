@@ -185,6 +185,9 @@ function startEntry(world: FakeWorld): { handle: ReturnType<typeof startPlanAdap
     const handle = startPlanAdapterEntry({
         workspace: world.workspace,
         callDbus: (service, _path, _iface, method, payload, callback): void => {
+            if (method === "NameHasOwner") { callback(true); return; }
+            if (method === "GetNameOwner") { callback(":1.7"); return; }
+            if (method === "StartServiceByName") { callback(1); return; }
             mocks.dbusCalls.push({ service, method, payload });
             mocks.callbacks.push(callback);
         },

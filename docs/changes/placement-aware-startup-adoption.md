@@ -125,8 +125,11 @@
 - The native adapter marks any floating, sticky, fullscreen, or maximized
   member as fit-excluded. That declines fitting and preserves the existing
   normal seed/reflow exception behavior; configured gaps remain adapter inputs
-  and Rust projection policy. Planner-loss fresh-session integration is still
-  pending and will reuse this helper without changing recovery semantics.
+  and Rust projection policy. Planner-loss fresh-session integration is now
+  static-complete: KWin confirmed-loss recovery clears its lifecycle baseline
+  and dispatches one current observation through this same fresh-admit helper
+  without replaying the old command; offline TypeScript coverage only, live
+  acceptance pending with no live claim.
 - Offline Rust and TypeScript coverage establishes deterministic near-strip
   results, canonical configured-gap projection, exceptions and
   unsupported-input fallback, lifecycle base revision, retained follow-up
