@@ -509,6 +509,15 @@ Historical implementation detail is recoverable in Git history.
   capability fails closed. Future Hyprland and other behavior belongs in a
   separate versioned policy mode sharing the portable engine, not in an
   unnamed generic fallback or a platform adapter.
+- Future tiling profiles are required after MVP when adding a new tiling type,
+  such as Hyprland. A selectable profile/type covers both its tiling
+  behavior/algorithm and matching shortcuts; it is not an optional cosmetic
+  shortcut preset. COSMIC remains current, while future behavior uses its own
+  versioned policy mode sharing the portable engine. This selects no immediate
+  Hyprland implementation, native compositor backend, exact parity/mode/
+  version/config switching details, coupled-only versus independently
+  overridable shortcut UI, or hot-switch semantics. Keyboard-layout
+  localization remains separate and initial US-keyboard support is unchanged.
 - COSMIC geometry parity, established 2026-09-13, closed 2026-09-16: the raw default theme gaps
   are `(outer, inner) = (0, 8)`, but source leaf-edge insets make the rendered
   work-area edge margin 8px. Native KCM-owned `innerGap` and `outerGap` default

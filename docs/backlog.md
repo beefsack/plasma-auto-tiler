@@ -145,5 +145,7 @@ Only meaningful pending or active work is listed.
 - P3 | Artifact publication | Publish reproducible KPackage artifacts to KDE
   Store and GitHub Release after MVP delivery dependencies complete.
   [foundations](changes/archive/delivered-foundations.md)
-- P3 | Keybind profiles | Add selectable COSMIC/Hyprland-style profiles only if
-  still desired. [change](changes/shortcuts.md)
+- P3 | Post-MVP tiling profiles | Required when adding other tiling types such
+  as Hyprland: selectable profiles must cover both the tiling behavior/algorithm
+  and matching shortcuts. Deferred beyond MVP, not an optional shortcut-only
+  preset feature. [change](changes/shortcuts.md)
