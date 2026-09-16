@@ -718,6 +718,30 @@ describe("plan/send P0 coordination through production wiring", () => {
             !mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")),
             `failed switch must never report follow state-confirmed:\n${mocks.logs.join("\n")}`,
         );
+        const switchBefore = mocks.logs.find((line) => line.includes(`correlation=${correlation}`) && line.includes("event=native-switch-before")) ?? "";
+        const switchCall = mocks.logs.find((line) => line.includes(`correlation=${correlation}`) && line.includes("event=native-switch-call") && line.includes("outcome=returned-void")) ?? "";
+        const switchReadback = mocks.logs.find((line) => line.includes(`correlation=${correlation}`) && line.includes("event=native-switch-readback")) ?? "";
+        assert.ok(switchBefore.includes("api=available") && switchBefore.includes("return_kind=void"), switchBefore);
+        assert.ok(switchCall.includes("call_ord=0") && switchCall.includes("call_total=1"), switchCall);
+        assert.ok(switchReadback.includes("outcome=mismatch") && switchReadback.includes("cur_id_eq=0"), switchReadback);
+        assert.ok(
+            mocks.logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=follow") && line.includes("outcome=switch-unconfirmed")),
+            mocks.logs.join("\n"),
+        );
+        assert.ok(
+            !mocks.logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("follow=not-reached")),
+            mocks.logs.join("\n"),
+        );
+        for (const line of [switchBefore, switchCall, switchReadback]) {
+            for (const raw of ["win-t", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
+                assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
+            }
+        }
+        const orderedFollow = mocks.logs
+            .filter((line) => line.includes(`correlation=${correlation}`) && / event=(follow-pre|native-switch-|follow-switched)/.test(line))
+            .map((line) => Number((/ diag_seq=([0-9]+)/.exec(line) ?? ["", "-1"])[1]));
+        assert.ok(orderedFollow.length >= 5, mocks.logs.join("\n"));
+        assert.ok(orderedFollow.every((sequence, index) => index === 0 || sequence > orderedFollow[index - 1]!), orderedFollow.join(","));
 
         // Commit is preserved and the instance stays usable: consume any
         // onCommitted resync, restore the native switch, move to where the
@@ -1042,6 +1066,10 @@ describe("plan/send P0 coordination through production wiring", () => {
             mocks.logs.slice(logsBefore).some((l) => l.includes("busy-refused kind=workspace-move")),
             mocks.logs.slice(logsBefore).join("\n"),
         );
+        assert.ok(
+            mocks.logs.slice(logsBefore).some((line) => line.includes("stage=entry") && line.includes("event=workspace-move") && line.includes("outcome=busy-plan") && line.includes("follow=not-reached gate=pre-commit phase=entry reason=busy-plan") && line.includes("inflight_stage=idle")),
+            mocks.logs.slice(logsBefore).join("\n"),
+        );
         assert.equal(mocks.dbusCalls.length, dbusBefore, "blocked send must not touch D-Bus");
         assert.equal(sendCalls(mocks).length, sendAfterSettle, "no send request while Plan in flight");
         const moverAfter = world.wins.find((w) => w.internalId === "win-a") as FakeWindow;
@@ -1185,6 +1213,14 @@ describe("plan/send P0 coordination through production wiring", () => {
         assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
         assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
         assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
+        assert.ok(
+            !mocks.logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=native-switch-")),
+            mocks.logs.join("\n"),
+        );
+        assert.ok(
+            mocks.logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=timeout-request") && line.includes("follow=not-reached gate=pre-commit phase=timeout reason=timeout-request")),
+            mocks.logs.join("\n"),
+        );
         assert.equal(world.currentByOutput.get(world.outputs[0] as FakeOutput), currentBefore, "no false follow");
         assert.equal(world.workspace["activeWindow"], activeBefore, "no false focus");
 
@@ -1213,6 +1249,10 @@ describe("plan/send P0 coordination through production wiring", () => {
         handle?.requestWorkspaceMove(2);
         assert.ok(
             mocks.logs.slice(logsBeforeRetry).some((l) => l.includes("busy-refused kind=workspace-move")),
+            mocks.logs.slice(logsBeforeRetry).join("\n"),
+        );
+        assert.ok(
+            mocks.logs.slice(logsBeforeRetry).some((line) => line.includes("stage=entry") && line.includes("event=workspace-move") && line.includes("outcome=disabled") && line.includes("follow=not-reached gate=pre-commit phase=entry reason=disabled")),
             mocks.logs.slice(logsBeforeRetry).join("\n"),
         );
         assert.equal(mocks.dbusCalls.length, dbusBeforeRetry, "disabled send must not touch D-Bus");

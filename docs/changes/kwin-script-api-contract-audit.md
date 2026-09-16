@@ -75,5 +75,21 @@
 
 ## Check
 
-- `npm run typecheck`, the 692-test offline suite, IIFE bundle build, and staged/unstaged whitespace checks passed.
-- Offline implementation coverage includes production `startPlanAdapterEntry` tests for JavaScript property rejection, frame-geometry subscription, fresh focus wrappers, `NameHasOwner` absence activation with flags `0`, unique-owner pinning, stale reply rejection, and no accepted acknowledgement after a rejected membership write. Adapter tests cover the activation and existing signal-fence reentrant/no-op paths. No live KWin, D-Bus, or rendered-state claim was made.
+- Follow diagnostics now use a correlation-qualified, per-flight `diag_seq` to
+  order adapter events with the active production entry's synchronous native
+  call/readback records. `-1` marks an entry refusal before a flight exists.
+  `native-switch-*` records API availability, selected-output source, declared
+  `void` setter boundary, call ordinal, and immediate current-map equality;
+  `native-focus-*` records direct-assignment submission and active-window
+  native-id equality. `state-confirmed` remains immediate map-plus-focus state,
+  never rendered completion. Every terminal pre-commit entry refusal, adapter
+  refusal/activation/result/timeout, and direct disable record now explicitly
+  carries `follow=not-reached gate=pre-commit phase=<...> reason=<...>`.
+  Timeout and disable verifier short-circuits carry `verify_gates=untested`,
+  rather than implying a later membership check ran.
+- All values remain redacted session-local ordinals, counts, equality flags, and
+  fixed tokens. Missing/unreadable reads are `-1` or `unreadable`; caught native
+  exceptions use the fixed `caught` label. Diagnostic failures are ignored and
+  do not alter the existing write, fence, commit, resync, or callback order.
+- Offline checks cover `npm run typecheck`, the focused 105-test adapter/production-entry subset, the full 692-test offline suite, explicit IIFE bundle build, and staged/unstaged whitespace checks. No live KWin, D-Bus, or rendered-state claim was made.
+- Offline implementation coverage includes production `startPlanAdapterEntry` tests for JavaScript property rejection, frame-geometry subscription, fresh focus wrappers, `NameHasOwner` absence activation with flags `0`, unique-owner pinning, stale reply rejection, and no accepted acknowledgement after a rejected membership write. Adapter tests cover the activation and existing signal-fence reentrant/no-op paths.

@@ -659,13 +659,17 @@ describe("cosmic send-to-workspace adapter lifecycle", () => {
         assert.ok(mocks.logs.some((l) => l.includes("outcome=owner-pinned")), mocks.logs.join("\n"));
         assert.ok(mocks.logs.some((l) => l.includes("outcome=acknowledged")), mocks.logs.join("\n"));
         assert.ok(mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
+        assert.ok(!mocks.logs.some((l) => l.includes("follow=not-reached")), mocks.logs.join("\n"));
         for (const line of mocks.logs) {
             assert.ok(line.startsWith("plasma-auto-tiler:route-diag component=cosmic-send "), line);
             assert.ok(line.includes(" stage=") && line.includes(" correlation=") && line.includes(" generation=gen-1"), line);
             assert.ok(line.includes(" event=") && line.includes(" outcome="), line);
+            assert.ok(line.includes(" diag_seq="), line);
             assert.ok(!line.includes("win-a"), line);
             assert.ok(!line.includes(":1.7"), line);
         }
+        const sequences = mocks.logs.map((line) => Number((/ diag_seq=([0-9]+)/.exec(line) ?? ["", "-1"])[1]));
+        assert.ok(sequences.every((sequence, index) => index === 0 || sequence > sequences[index - 1]!), sequences.join(","));
         assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.isInFlight, false);
     });
@@ -713,6 +717,11 @@ describe("cosmic send-to-workspace adapter lifecycle", () => {
         runLifecycle(mocks, adapter);
         assert.ok(mocks.logs.some((line) => line.includes("outcome=committed")), mocks.logs.join("\n"));
         assert.ok(!mocks.logs.some((line) => line.includes("event=follow") && line.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
+        assert.ok(
+            mocks.logs.some((line) => line.includes("stage=follow") && line.includes("event=follow") && line.includes("outcome=focus-unconfirmed")),
+            mocks.logs.join("\n"),
+        );
+        assert.ok(!mocks.logs.some((line) => line.includes("follow=not-reached")), mocks.logs.join("\n"));
         assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.isInFlight, false);
         for (const entry of mocks.world.windows) {
@@ -1012,6 +1021,10 @@ describe("cosmic send-to-workspace adapter lifecycle", () => {
         assert.equal(settled.length, 1, mocks.logs.join("\n"));
         assert.ok(settled[0]?.includes("outcome=observed"), settled.join("\n"));
         assert.ok(settled[0]?.includes("mover_in_target=0"), settled.join("\n"));
+        assert.ok(
+            mocks.logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=follow") && line.includes("outcome=skipped-post-observation-mismatch")),
+            mocks.logs.join("\n"),
+        );
     });
 
     it("ignores a duplicate committed reply without a second follow", () => {
@@ -1051,7 +1064,8 @@ describe("cosmic send-to-workspace refusal routes", () => {
         );
         const line = mocks.logs[mocks.logs.length - 1] ?? "";
         assert.ok(line.includes("event=refuse"), line);
-        return line.split("outcome=")[1] ?? "";
+        assert.ok(line.includes("follow=not-reached gate=pre-commit phase=request"), line);
+        return (line.split("outcome=")[1] ?? "").split(" ")[0] ?? "";
     }
 
     it("refuses last-desktop when no distinct target can exist", () => {
@@ -1459,6 +1473,10 @@ describe("cosmic send-to-workspace refusal routes", () => {
         timer.callback();
         assert.equal(adapter.isEnabled, false);
         assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")), mocks.logs.join("\n"));
+        assert.ok(
+            mocks.logs.some((line) => line.includes("event=timeout-request") && line.includes("follow=not-reached gate=pre-commit phase=timeout reason=timeout-request")),
+            mocks.logs.join("\n"),
+        );
         assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
     });
 });
@@ -1491,6 +1509,10 @@ describe("cosmic send-to-workspace disable and stop divergence", () => {
         const lostCommand = lostPayload["command"] as Record<string, unknown>;
         assert.equal(lostCommand["op"], "send-to-workspace-ack");
         assert.equal(lostCommand["ack_outcome"], "adapter-lost");
+        assert.ok(
+            mocks.logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=disable-terminal") && line.includes("follow=not-reached gate=pre-commit phase=disable reason=disable-teardown")),
+            mocks.logs.join("\n"),
+        );
         // No verify was sent on the torn-down flight (the accepted ack was
         // legitimately sent while applying the plan before the disable).
         assert.equal(
@@ -1698,6 +1720,7 @@ describe("cosmic send-to-workspace disable and stop divergence", () => {
         assert.ok(line.includes("mover_seen=1"), line);
         assert.ok(line.includes("fence_idx=0,3"), line);
         assert.ok(line.includes("verify_reason=geometry-rect-mismatch"), line);
+        assert.ok(line.includes("verify_gates=untested"), line);
         assert.ok(line.includes("verify_geo_idx=0"), line);
         assert.ok(line.startsWith("plasma-auto-tiler:route-diag component=cosmic-send "), line);
         assert.ok(line.includes(" stage=request ") && line.includes(" generation=gen-1"), line);
@@ -2676,7 +2699,9 @@ describe("cosmic send-to-workspace frameGeometry fence P0", () => {
         assert.equal(adapter.isInFlight, false);
         const timeout = mocks.logs.find((line) => line.includes("event=timeout-settle") && line.includes(`correlation=${correlation}`));
         assert.ok(timeout !== undefined, mocks.logs.join("\n"));
-        assert.ok(timeout.includes("verify_reason=geometry-rect-mismatch verify_geo_idx=1 verify_role=target-retained"), timeout);
+        assert.ok(timeout.includes("verify_reason=geometry-rect-mismatch"), timeout);
+        assert.ok(timeout.includes("verify_geo_idx=1 verify_role=target-retained"), timeout);
+        assert.ok(timeout.includes("verify_gates=untested"), timeout);
         assert.ok(timeout.includes("verify_dx=2 verify_dy=0 verify_dw=0 verify_dh=0"), timeout);
         assert.ok(timeout.includes("fence_pending=1") && timeout.includes("fence_idx=1"), timeout);
         const geoSeq = mocks.logs
@@ -3002,6 +3027,10 @@ describe("cosmic send-to-workspace pre-ack timeout settlement", () => {
         assert.equal(adapter.isEnabled, false);
         assert.equal(adapter.isInFlight, false);
         assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")), mocks.logs.join("\n"));
+        assert.ok(
+            mocks.logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=timeout-request") && line.includes("follow=not-reached gate=pre-commit phase=timeout reason=timeout-request")),
+            mocks.logs.join("\n"),
+        );
         assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
         assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
         assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));

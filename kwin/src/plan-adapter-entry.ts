@@ -39,6 +39,7 @@ import {
     WORKSPACE_SEND_START_FLAGS,
     WORKSPACE_SEND_START_METHOD,
     WorkspaceSendAdapter,
+    WorkspaceFollowNativeDiagnostic,
     WorkspaceSendObserved,
     workspaceFingerprint as workspaceSendFingerprint,
 } from "./workspace-send-adapter";
@@ -1867,6 +1868,45 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     });
     workspaceNative.enable();
     const sendNativeIds = new Map<string, string>();
+    const emitNativeFollow = (
+        diagnostic: WorkspaceFollowNativeDiagnostic,
+        event: string,
+        outcome: string,
+        detail: {
+            readonly api: string;
+            readonly returnKind: string;
+            readonly callOrdinal: number;
+            readonly callTotal: number;
+            readonly selection: string;
+            readonly mode: string;
+            readonly outputs: number;
+            readonly targetOrdinal: number;
+            readonly currentIdEq: number;
+            readonly activeIdEq: number;
+            readonly exception: string;
+        },
+    ): void => {
+        try {
+            log(
+                `plasma-auto-tiler:route-diag component=cosmic-send stage=follow correlation=${diagnostic.correlation} generation=${String(overrides.generation)} revision=${String(diagnostic.revision)} event=${event} outcome=${outcome} diag_seq=${String(diagnostic.nextSequence())} api=${detail.api} return_kind=${detail.returnKind} call_ord=${String(detail.callOrdinal)} call_total=${String(detail.callTotal)} selection=${detail.selection} mode=${detail.mode} outputs=${String(detail.outputs)} tgt_ord=${String(detail.targetOrdinal)} cur_id_eq=${String(detail.currentIdEq)} active_id_eq=${String(detail.activeIdEq)} exception=${detail.exception}`,
+            );
+        } catch (error) {
+            void error;
+        }
+    };
+    const nativeDetail = (
+        api: string,
+        returnKind: string,
+        callOrdinal: number,
+        callTotal: number,
+        selection: string,
+        mode: string,
+        outputs: number,
+        targetOrdinal: number,
+        currentIdEq: number,
+        activeIdEq: number,
+        exception: string,
+    ) => ({ api, returnKind, callOrdinal, callTotal, selection, mode, outputs, targetOrdinal, currentIdEq, activeIdEq, exception });
     const workspaceSend = new WorkspaceSendAdapter(
         {
         callDbus,
@@ -1918,14 +1958,16 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 return null;
             }
         },
-        switchToTarget: (desktopRef) => {
+        switchToTarget: (desktopRef, diagnostic) => {
             try {
                 const surface = liveWorkspace as Record<string, unknown>;
                 const screens = decodeList(readProp(surface, "screens"), MAX_LIST);
                 if (screens === null || screens.length === 0) {
+                    emitNativeFollow(diagnostic, "native-switch-before", "unavailable", nativeDetail("unknown", "void", -1, -1, "unknown", "unknown", -1, -1, -1, -1, "none"));
                     return false;
                 }
                 let activeOutput: object | null = null;
+                let selection = "active-window";
                 try {
                     const active = Reflect.get(surface, "activeWindow");
                     if (typeof active === "object" && active !== null) {
@@ -1938,6 +1980,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                     void error;
                 }
                 if (activeOutput === null) {
+                    selection = "active-screen";
                     try {
                         const screen = Reflect.get(surface, "activeScreen");
                         if (typeof screen === "object" && screen !== null) {
@@ -1948,14 +1991,17 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                     }
                 }
                 if (activeOutput === null) {
+                    selection = "first-screen";
                     const first = screens[0];
                     if (typeof first !== "object" || first === null) {
+                        emitNativeFollow(diagnostic, "native-switch-before", "unavailable", nativeDetail("unknown", "void", -1, -1, selection, "unknown", screens.length, -1, -1, -1, "none"));
                         return false;
                     }
                     activeOutput = first as object;
                 }
                 const setter = readProp(surface, "setCurrentDesktopForScreen");
                 if (typeof setter !== "function") {
+                    emitNativeFollow(diagnostic, "native-switch-before", "api-missing", nativeDetail("missing", "void", -1, -1, selection, "unknown", screens.length, -1, -1, -1, "none"));
                     return false;
                 }
                 // Shared mode shows one desktop everywhere, so follow every
@@ -1970,13 +2016,20 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 // preserved.
                 const targetIdRaw = readProp(desktopRef, "id");
                 if (!isOpaqueId(targetIdRaw)) {
+                    emitNativeFollow(diagnostic, "native-switch-before", "target-unreadable", nativeDetail("available", "void", -1, -1, selection, "unknown", screens.length, -1, -1, -1, "none"));
                     return false;
                 }
                 const targetId = targetIdRaw as string;
-                const confirmCurrent = (output: object): boolean => {
+                const desktops = decodeList(readProp(surface, "desktops"), MAX_DESKTOPS);
+                const targetOrdinal = desktops === null ? -1 : desktops.indexOf(desktopRef);
+                const mode = workspaceNative.getMode() === "shared" ? "shared" : "single";
+                const selected = mode === "shared" ? screens : [activeOutput];
+                emitNativeFollow(diagnostic, "native-switch-before", "ready", nativeDetail("available", "void", -1, selected.length, selection, mode, screens.length, targetOrdinal, -1, -1, "none"));
+                const confirmCurrent = (output: object, callOrdinal: number): boolean => {
                     try {
                         const getter = readProp(surface, "currentDesktopForScreen");
                         if (typeof getter !== "function") {
+                            emitNativeFollow(diagnostic, "native-switch-readback", "api-missing", nativeDetail("missing", "void", callOrdinal, selected.length, selection, mode, screens.length, targetOrdinal, -1, -1, "none"));
                             return false;
                         }
                         const current = Reflect.apply(
@@ -1985,49 +2038,70 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                             [output],
                         );
                         if (typeof current !== "object" || current === null) {
+                            emitNativeFollow(diagnostic, "native-switch-readback", "unreadable", nativeDetail("available", "void", callOrdinal, selected.length, selection, mode, screens.length, targetOrdinal, -1, -1, "none"));
                             return false;
                         }
-                        return readProp(current as object, "id") === targetId;
+                        const currentEq = readProp(current as object, "id") === targetId ? 1 : 0;
+                        emitNativeFollow(diagnostic, "native-switch-readback", currentEq === 1 ? "observed" : "mismatch", nativeDetail("available", "void", callOrdinal, selected.length, selection, mode, screens.length, targetOrdinal, currentEq, -1, "none"));
+                        return currentEq === 1;
                     } catch (error) {
                         void error;
+                        emitNativeFollow(diagnostic, "native-switch-readback", "exception", nativeDetail("available", "void", callOrdinal, selected.length, selection, mode, screens.length, targetOrdinal, -1, -1, "caught"));
                         return false;
                     }
                 };
-                if (workspaceNative.getMode() === "shared") {
-                    for (const output of screens) {
+                if (mode === "shared") {
+                    for (let index = 0; index < screens.length; index += 1) {
+                        const output = screens[index];
                         if (typeof output !== "object" || output === null) {
+                            emitNativeFollow(diagnostic, "native-switch-call", "skipped-non-object-output", nativeDetail("available", "void", index, selected.length, selection, mode, screens.length, targetOrdinal, -1, -1, "none"));
                             return false;
                         }
+                        emitNativeFollow(diagnostic, "native-switch-call", "attempted", nativeDetail("available", "void", index, selected.length, selection, mode, screens.length, targetOrdinal, -1, -1, "none"));
                         Reflect.apply(setter as (...args: ReadonlyArray<unknown>) => unknown, surface, [desktopRef, output]);
+                        emitNativeFollow(diagnostic, "native-switch-call", "returned-void", nativeDetail("available", "void", index, selected.length, selection, mode, screens.length, targetOrdinal, -1, -1, "none"));
                     }
-                    for (const output of screens) {
+                    for (let index = 0; index < screens.length; index += 1) {
+                        const output = screens[index];
                         if (typeof output !== "object" || output === null) {
+                            emitNativeFollow(diagnostic, "native-switch-readback", "skipped-non-object-output", nativeDetail("available", "void", index, selected.length, selection, mode, screens.length, targetOrdinal, -1, -1, "none"));
                             return false;
                         }
-                        if (!confirmCurrent(output as object)) {
+                        if (!confirmCurrent(output as object, index)) {
                             return false;
                         }
                     }
                     return true;
                 }
+                emitNativeFollow(diagnostic, "native-switch-call", "attempted", nativeDetail("available", "void", 0, 1, selection, mode, screens.length, targetOrdinal, -1, -1, "none"));
                 Reflect.apply(setter as (...args: ReadonlyArray<unknown>) => unknown, surface, [desktopRef, activeOutput]);
-                return confirmCurrent(activeOutput);
+                emitNativeFollow(diagnostic, "native-switch-call", "returned-void", nativeDetail("available", "void", 0, 1, selection, mode, screens.length, targetOrdinal, -1, -1, "none"));
+                return confirmCurrent(activeOutput, 0);
             } catch (error) {
                 void error;
+                emitNativeFollow(diagnostic, "native-switch-after", "exception", nativeDetail("unknown", "void", -1, -1, "unknown", "unknown", -1, -1, -1, -1, "caught"));
                 return false;
             }
         },
-        focusWindow: (windowRef) => {
+        focusWindow: (windowRef, diagnostic) => {
             try {
                 const targetId = readNativeId(windowRef);
                 if (targetId === null) {
+                    emitNativeFollow(diagnostic, "native-focus-before", "target-unreadable", nativeDetail("property", "direct-assignment", -1, 1, "mover", "single", -1, -1, -1, -1, "none"));
                     return false;
                 }
+                emitNativeFollow(diagnostic, "native-focus-before", "ready", nativeDetail("property", "direct-assignment", -1, 1, "mover", "single", -1, -1, -1, -1, "none"));
+                emitNativeFollow(diagnostic, "native-focus-call", "attempted", nativeDetail("property", "direct-assignment", 0, 1, "mover", "single", -1, -1, -1, -1, "none"));
                 (liveWorkspace as { activeWindow: unknown }).activeWindow = windowRef;
+                emitNativeFollow(diagnostic, "native-focus-call", "returned-no-api-result", nativeDetail("property", "direct-assignment", 0, 1, "mover", "single", -1, -1, -1, -1, "none"));
                 const active = Reflect.get(liveWorkspace as object, "activeWindow");
-                return typeof active === "object" && active !== null && readNativeId(active as object) === targetId;
+                const activeId = typeof active === "object" && active !== null ? readNativeId(active as object) : null;
+                const activeEq = activeId === null ? -1 : activeId === targetId ? 1 : 0;
+                emitNativeFollow(diagnostic, "native-focus-after", activeEq === -1 ? "unreadable" : activeEq === 1 ? "observed" : "mismatch", nativeDetail("property", "direct-assignment", 0, 1, "mover", "single", -1, -1, -1, activeEq, "none"));
+                return activeEq === 1;
             } catch (error) {
                 void error;
+                emitNativeFollow(diagnostic, "native-focus-after", "exception", nativeDetail("property", "direct-assignment", -1, 1, "mover", "single", -1, -1, -1, -1, "caught"));
                 return false;
             }
         },
@@ -2061,10 +2135,29 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     const requestWorkspaceMove = (index: unknown): void => {
         try {
             if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 9) {
+                try {
+                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=invalid-logical-target follow=not-reached gate=pre-commit phase=entry reason=invalid-logical-target req_ord=-1 inflight_stage=idle`);
+                } catch (error) {
+                    void error;
+                }
                 return;
             }
             if (!workspaceSend.isEnabled || workspaceSend.isInFlight || adapter.isInFlight) {
+                const outcome = !workspaceSend.isEnabled
+                    ? "disabled"
+                    : workspaceSend.isInFlight
+                      ? "busy-send"
+                      : "busy-plan";
                 try {
+                    let correlation = "";
+                    let inflightStage = "idle";
+                    try {
+                        correlation = workspaceSend.activeCorrelation;
+                        inflightStage = workspaceSend.activeStage;
+                    } catch (error) {
+                        void error;
+                    }
+                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation=${correlation} generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=${String(index)} inflight_stage=${inflightStage}`);
                     log("plasma-auto-tiler:plan:busy-refused kind=workspace-move");
                 } catch (error) {
                     void error;
@@ -2074,10 +2167,29 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             const target =
                 index === 0 ? workspaceNative.resolveOrAppendMoveTarget() : workspaceNative.resolveMoveTarget(index);
             if (target === null) {
+                try {
+                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=target-unresolved follow=not-reached gate=pre-commit phase=entry reason=target-unresolved req_ord=${String(index)} inflight_stage=idle`);
+                } catch (error) {
+                    void error;
+                }
                 return;
             }
             if (!workspaceSend.isEnabled || workspaceSend.isInFlight || adapter.isInFlight) {
+                const outcome = !workspaceSend.isEnabled
+                    ? "disabled"
+                    : workspaceSend.isInFlight
+                      ? "busy-send"
+                      : "busy-plan";
                 try {
+                    let correlation = "";
+                    let inflightStage = "idle";
+                    try {
+                        correlation = workspaceSend.activeCorrelation;
+                        inflightStage = workspaceSend.activeStage;
+                    } catch (error) {
+                        void error;
+                    }
+                    log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation=${correlation} generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=${outcome} follow=not-reached gate=pre-commit phase=entry reason=${outcome} req_ord=${String(index)} inflight_stage=${inflightStage}`);
                     log("plasma-auto-tiler:plan:busy-refused kind=workspace-move");
                 } catch (error) {
                     void error;

@@ -8,7 +8,11 @@ Only meaningful pending or active work is listed.
   User-attributed retained Ghostty trace shows configure/ack/buffer progress;
   it cannot establish the untraced mover's resize path or timing of the preview.
   No static identity, observation, or callback defect was demonstrated. Further
-  causal evidence needs the mover's native configure/commit path; no additional
+  causal evidence needs the mover's native configure/commit path. Requested
+  verbose diagnostics now cover correlated native switch/focus calls, immediate
+  readbacks, safe errors, per-flight ordering, and explicit follow=not-reached
+  terminal/refusal markers with the stopping gate/phase/reason. Unchecked verifier
+  gates are labelled untested. Offline production coverage passes; no additional
   live test is selected. API-alignment corrections are implemented in production:
   geometry/desktop assignment results propagate, shared Plan observes
   frameGeometryChanged, and follow confirms focus by native-id readback.

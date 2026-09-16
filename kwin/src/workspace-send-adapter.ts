@@ -192,8 +192,8 @@ export interface WorkspaceSendAdapterEnv {
     readonly setGeometry: (target: object, rect: WorkspaceSendRect) => boolean;
     readonly readGeometry?: (target: object) => WorkspaceSendRect | null;
     readonly setDesktops: (target: object, refs: ReadonlyArray<object>) => boolean;
-    readonly switchToTarget?: (desktopRef: object) => boolean;
-    readonly focusWindow?: (windowRef: object) => boolean;
+    readonly switchToTarget?: (desktopRef: object, diagnostic: WorkspaceFollowNativeDiagnostic) => boolean;
+    readonly focusWindow?: (windowRef: object, diagnostic: WorkspaceFollowNativeDiagnostic) => boolean;
     // Narrow mover desktop-change subscription seam for the bounded signal
     // fence. Production entries bind this to the mover Window.desktopsChanged
     // public signal via the shared signal-capability helpers. One-shot: the
@@ -207,6 +207,14 @@ export interface WorkspaceSendAdapterEnv {
     // window: detached after its echo and on every terminal path. Absent only
     // in legacy isolated tests, which retain the mover-only fence.
     readonly subscribeWindowGeometry?: (windowRef: object, handler: () => void) => (() => void) | null;
+}
+
+// Bounded per-flight sequencing is diagnostic-only. Production native hooks use
+// it to place their synchronous call/readback records among adapter records.
+export interface WorkspaceFollowNativeDiagnostic {
+    readonly correlation: string;
+    readonly revision: number;
+    readonly nextSequence: () => number;
 }
 
 export interface WorkspaceSendEnableAuth {
@@ -877,6 +885,7 @@ export class WorkspaceSendAdapter {
     private geoPending = new Set<string>();
     private geoRefs = new Map<string, object>();
     private geoDiagSeq = 0;
+    private diagSeq = 0;
 
     constructor(
         private readonly env: WorkspaceSendAdapterEnv,
@@ -910,6 +919,29 @@ export class WorkspaceSendAdapter {
         return this.inFlight;
     }
 
+    // Derived from the existing retained flight only. Entry diagnostics use
+    // this to label a refused shortcut without retaining another history.
+    get activeCorrelation(): string {
+        return this.pending?.correlation ?? "";
+    }
+
+    get activeStage(): string {
+        const pending = this.pending;
+        if (!this.inFlight || pending === null) {
+            return "idle";
+        }
+        if (this.activationStep !== 5) {
+            return "activation";
+        }
+        if (pending.planned === null) {
+            return "request";
+        }
+        if (pending.verifiedObserved === null) {
+            return "fence";
+        }
+        return pending.acked ? "verify" : "ack";
+    }
+
     enable(auth: WorkspaceSendEnableAuth): boolean {
         if (this.enabled || this.startupEnabled) {
             return false;
@@ -935,6 +967,7 @@ export class WorkspaceSendAdapter {
         this.geoPending = new Set<string>();
         this.geoRefs = new Map<string, object>();
         this.geoDiagSeq = 0;
+        this.diagSeq = 0;
         return true;
     }
 
@@ -948,7 +981,7 @@ export class WorkspaceSendAdapter {
         // owner before clearing. Never fires before a valid plan, never the
         // well-known name, never a retry; logger/DBus failure is ignored and
         // never changes the disable outcome.
-        // Silent pre-ack teardown emits one best-effort redacted terminal
+        // Silent pre-commit teardown emits one best-effort redacted terminal
         // diagnostic before the loss report so a future exact occurrence can
         // distinguish an incomplete mover/geometry fence, a
         // `stale-revision` versus `post-observation-mismatch` verifier
@@ -967,13 +1000,20 @@ export class WorkspaceSendAdapter {
     }
 
     requestSend(targetWorkspace: unknown, requestedOrdinal?: unknown): boolean {
-        if (!this.enabled || this.inFlight) {
+        if (!this.enabled) {
+            this.refuse("disabled");
+            return false;
+        }
+        if (this.inFlight) {
+            this.diag("request", this.activeCorrelation, this.pending?.baseRevision ?? 0, "refuse", "in-flight");
             return false;
         }
         if (!isOpaqueId(targetWorkspace)) {
+            this.refuse("target-invalid");
             return false;
         }
         if (this.seq < 0 || this.seq > WORKSPACE_SEND_MAX_SEQ) {
+            this.refuse("sequence-invalid");
             return false;
         }
         const observed = this.freshObserved(targetWorkspace);
@@ -1013,11 +1053,13 @@ export class WorkspaceSendAdapter {
         const correlation = `${this.generation}-w${String(this.seq)}`;
         this.seq += 1;
         if (!isCorrelationId(correlation)) {
+            this.refuse("correlation-invalid");
             return false;
         }
         const snapshot = snapshotOf(observed);
         const payload = this.buildRequestPayload(observed, correlation);
         if (payload === null || payload.length > WORKSPACE_SEND_MAX_REQUEST_BYTES) {
+            this.refuse("payload-invalid");
             return false;
         }
         // Diagnostic-only handoff: an invalid ordinal sanitizes to -1 in logs
@@ -1259,6 +1301,7 @@ export class WorkspaceSendAdapter {
         this.callbackSeen = false;
         this.clearEcho();
         this.geoDiagSeq = 0;
+        this.diagSeq = 0;
         const flags = snapshotMoverFlags(snapshot, moverId);
         this.pending = {
             correlation,
@@ -2336,16 +2379,21 @@ export class WorkspaceSendAdapter {
         const switchToTarget = this.env.switchToTarget;
         const focusWindow = this.env.focusWindow;
         if (typeof switchToTarget !== "function" || typeof focusWindow !== "function") {
+            this.diag("follow", correlation, revision, "follow", "skipped-hooks-unavailable");
             return;
         }
         const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
         if (fresh === null) {
+            this.diag("follow", correlation, revision, "follow", "skipped-observation-unavailable");
             return;
         }
-        if (this.verifyPlannedPost(planned, pending, fresh) !== "") {
+        const mismatch = this.verifyPlannedPost(planned, pending, fresh);
+        if (mismatch !== "") {
+            this.diag("follow", correlation, revision, "follow", `skipped-${sanitizeKind(mismatch)}`);
             return;
         }
         if (fresh.targetDesktopRef === null || fresh.targetDesktopRef !== pending.targetDesktopRef) {
+            this.diag("follow", correlation, revision, "follow", "skipped-target-ref");
             return;
         }
         let moverRef: object | null = null;
@@ -2356,6 +2404,7 @@ export class WorkspaceSendAdapter {
             }
         }
         if (moverRef === null) {
+            this.diag("follow", correlation, revision, "follow", "skipped-mover-missing");
             return;
         }
         // Flight-pinned diagnostic basis. The gates above stay the only
@@ -2367,7 +2416,11 @@ export class WorkspaceSendAdapter {
         this.emitFollowDiag(correlation, revision, "follow-pre", fresh, basis, -1, -1);
         let switched = false;
         try {
-            switched = switchToTarget(fresh.targetDesktopRef) === true;
+            switched = switchToTarget(fresh.targetDesktopRef, {
+                correlation,
+                revision,
+                nextSequence: () => this.nextDiagSeq(),
+            }) === true;
         } catch (error) {
             void error;
             switched = false;
@@ -2392,11 +2445,16 @@ export class WorkspaceSendAdapter {
             -1,
         );
         if (!switched) {
+            this.diag("follow", correlation, revision, "follow", "switch-unconfirmed");
             return;
         }
         let focused = false;
         try {
-            focused = focusWindow(moverRef) === true;
+            focused = focusWindow(moverRef, {
+                correlation,
+                revision,
+                nextSequence: () => this.nextDiagSeq(),
+            }) === true;
         } catch (error) {
             void error;
             focused = false;
@@ -2420,6 +2478,7 @@ export class WorkspaceSendAdapter {
             focused ? 1 : 0,
         );
         if (!focused) {
+            this.diag("follow", correlation, revision, "follow", "focus-unconfirmed");
             return;
         }
         // Truthful telemetry only: WorkspaceWrapper setCurrentDesktopForScreen
@@ -2556,7 +2615,7 @@ export class WorkspaceSendAdapter {
                 srcInTgt = -1;
             }
             this.env.log(
-                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=follow correlation=${correlation} generation=${this.generation} revision=${String(revision)} event=${event} outcome=${outcome} req_ord=${String(reqOrd)} tgt_ord=${String(tgtOrd)} tgt_num=${String(tgtNum)} cur_ord=${String(curOrd)} cur_num=${String(curNum)} cur_id_eq=${String(curIdEq)} cur_ref_eq=${String(curRefEq)} out_ord=${String(outOrd)} out_eq=${String(outEq)} desktops=${String(desktops)} mover_in_target=${String(moverInTarget)} active_is_mover=${String(activeIsMover)} src_in_src=${String(srcInSrc)} src_in_tgt=${String(srcInTgt)} switched=${String(switchedFlag)} focused=${String(focusedFlag)}`,
+                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=follow correlation=${correlation} generation=${this.generation} revision=${String(revision)} diag_seq=${String(this.nextDiagSeq())} event=${event} outcome=${outcome} req_ord=${String(reqOrd)} tgt_ord=${String(tgtOrd)} tgt_num=${String(tgtNum)} cur_ord=${String(curOrd)} cur_num=${String(curNum)} cur_id_eq=${String(curIdEq)} cur_ref_eq=${String(curRefEq)} out_ord=${String(outOrd)} out_eq=${String(outEq)} desktops=${String(desktops)} mover_in_target=${String(moverInTarget)} active_is_mover=${String(activeIsMover)} src_in_src=${String(srcInSrc)} src_in_tgt=${String(srcInTgt)} switched=${String(switchedFlag)} focused=${String(focusedFlag)}`,
             );
         } catch (error) {
             void error;
@@ -2874,8 +2933,18 @@ export class WorkspaceSendAdapter {
 
     private diag(stage: string, correlation: string, revision: number, event: string, outcome: string): void {
         try {
+            const followGate =
+                event === "refuse"
+                    ? ` follow=not-reached gate=pre-commit phase=request reason=${outcome}`
+                    : event === "result"
+                      ? ` follow=not-reached gate=pre-commit phase=result reason=${outcome}`
+                      : event === "activate" && outcome === "no-planner"
+                        ? " follow=not-reached gate=pre-commit phase=activation reason=no-planner"
+                        : event.startsWith("timeout-") && outcome === "timeout"
+                          ? ` follow=not-reached gate=pre-commit phase=timeout reason=${event}`
+                          : "";
             this.env.log(
-                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=${stage} correlation=${correlation} generation=${this.generation} revision=${String(revision)} event=${event} outcome=${outcome}`,
+                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=${stage} correlation=${correlation} generation=${this.generation} revision=${String(revision)} diag_seq=${String(this.nextDiagSeq())} event=${event} outcome=${outcome}${followGate}`,
             );
         } catch (error) {
             void error;
@@ -2899,7 +2968,7 @@ export class WorkspaceSendAdapter {
     }): void {
         try {
             this.env.log(
-                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=timeout correlation=${detail.correlation} generation=${this.generation} revision=${String(toDiagInt(detail.revision, -1, WORKSPACE_SEND_MAX_REVISION))} event=timeout-settle outcome=${sanitizeKind(detail.outcome)} verify_reason=${sanitizeKind(detail.verify.reason)} verify_geo_idx=${String(toDiagInt(detail.verify.geoIdx, -1, WORKSPACE_SEND_MAX_GEOMETRY))} verify_role=${sanitizeKind(detail.verify.role)} verify_dx=${String(toDiagInt(detail.verify.dx, -32768, 32768))} verify_dy=${String(toDiagInt(detail.verify.dy, -32768, 32768))} verify_dw=${String(toDiagInt(detail.verify.dw, -32768, 32768))} verify_dh=${String(toDiagInt(detail.verify.dh, -32768, 32768))} geo_seq=${String(this.nextGeometryDiagSeq())} fence_pending=${String(toDiagInt(detail.fence.pending, -1, WORKSPACE_SEND_MAX_GEOMETRY))} fence_total=${String(toDiagInt(detail.fence.total, -1, WORKSPACE_SEND_MAX_GEOMETRY))} mover_seen=${String(toDiagInt(detail.fence.moverSeen, -1, 1))} fence_idx=${detail.fence.idx}`,
+                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=timeout correlation=${detail.correlation} generation=${this.generation} revision=${String(toDiagInt(detail.revision, -1, WORKSPACE_SEND_MAX_REVISION))} diag_seq=${String(this.nextDiagSeq())} event=timeout-settle outcome=${sanitizeKind(detail.outcome)} verify_reason=${sanitizeKind(detail.verify.reason)} verify_gates=${detail.verify.reason === "ok" ? "complete" : "untested"} verify_geo_idx=${String(toDiagInt(detail.verify.geoIdx, -1, WORKSPACE_SEND_MAX_GEOMETRY))} verify_role=${sanitizeKind(detail.verify.role)} verify_dx=${String(toDiagInt(detail.verify.dx, -32768, 32768))} verify_dy=${String(toDiagInt(detail.verify.dy, -32768, 32768))} verify_dw=${String(toDiagInt(detail.verify.dw, -32768, 32768))} verify_dh=${String(toDiagInt(detail.verify.dh, -32768, 32768))} geo_seq=${String(this.nextGeometryDiagSeq())} fence_pending=${String(toDiagInt(detail.fence.pending, -1, WORKSPACE_SEND_MAX_GEOMETRY))} fence_total=${String(toDiagInt(detail.fence.total, -1, WORKSPACE_SEND_MAX_GEOMETRY))} mover_seen=${String(toDiagInt(detail.fence.moverSeen, -1, 1))} fence_idx=${detail.fence.idx}`,
             );
         } catch (error) {
             void error;
@@ -2907,7 +2976,7 @@ export class WorkspaceSendAdapter {
     }
 
     // Best-effort redacted terminal diagnostic for the otherwise silent
-    // pre-ack `disable()` teardown of a valid planned flight. Emits exactly
+    // pre-commit `disable()` teardown of a valid planned flight. Emits exactly
     // one `event=disable-terminal` line before the bounded `adapter-lost`
     // report so a future exact occurrence distinguishes an incomplete
     // mover/geometry fence (`fence_pending`/`fence_total`/`fence_idx` plus
@@ -2920,7 +2989,7 @@ export class WorkspaceSendAdapter {
     // path ran). Reuses the redacted `timeoutFenceDetail` /
     // `timeoutVerifyDetail` shapes; counts and plan-relative indices only,
     // never raw ids, geometry values, payloads, captions, focus data, owner,
-    // or native refs. Fires only for the first reporter of a planned pre-ack
+    // or native refs. Fires only for the first reporter of a planned pre-commit
     // flight, so `failFlight`/`onTimeout` follow-ups (which already emit
     // `result`/`timeout-settle`) never double-emit. Any diagnostic failure is
     // ignored and never changes the disable outcome, timer, fence, or
@@ -2934,8 +3003,6 @@ export class WorkspaceSendAdapter {
                 planned === null ||
                 pending.operation === null ||
                 pending.preconditions === null ||
-                pending.verifiedObserved !== null ||
-                pending.acked ||
                 this.lossReported ||
                 !isUniqueOwner(this.pinnedOwner)
             ) {
@@ -2954,7 +3021,7 @@ export class WorkspaceSendAdapter {
             }
             try {
                 this.env.log(
-                    `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=request correlation=${pending.correlation} generation=${this.generation} revision=${String(toDiagInt(pending.baseRevision, -1, WORKSPACE_SEND_MAX_REVISION))} event=disable-terminal outcome=disable-teardown verify_reason=${sanitizeKind(verify.reason)} verify_geo_idx=${String(toDiagInt(verify.geoIdx, -1, WORKSPACE_SEND_MAX_GEOMETRY))} verify_role=${sanitizeKind(verify.role)} verify_dx=${String(toDiagInt(verify.dx, -32768, 32768))} verify_dy=${String(toDiagInt(verify.dy, -32768, 32768))} verify_dw=${String(toDiagInt(verify.dw, -32768, 32768))} verify_dh=${String(toDiagInt(verify.dh, -32768, 32768))} geo_seq=${String(this.nextGeometryDiagSeq())} fence_pending=${String(toDiagInt(fence.pending, -1, WORKSPACE_SEND_MAX_GEOMETRY))} fence_total=${String(toDiagInt(fence.total, -1, WORKSPACE_SEND_MAX_GEOMETRY))} mover_seen=${String(toDiagInt(fence.moverSeen, -1, 1))} fence_idx=${fence.idx}`,
+                    `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=request correlation=${pending.correlation} generation=${this.generation} revision=${String(toDiagInt(pending.baseRevision, -1, WORKSPACE_SEND_MAX_REVISION))} diag_seq=${String(this.nextDiagSeq())} event=disable-terminal outcome=disable-teardown follow=not-reached gate=pre-commit phase=disable reason=disable-teardown verify_reason=${sanitizeKind(verify.reason)} verify_gates=${verify.reason === "ok" ? "complete" : "untested"} verify_geo_idx=${String(toDiagInt(verify.geoIdx, -1, WORKSPACE_SEND_MAX_GEOMETRY))} verify_role=${sanitizeKind(verify.role)} verify_dx=${String(toDiagInt(verify.dx, -32768, 32768))} verify_dy=${String(toDiagInt(verify.dy, -32768, 32768))} verify_dw=${String(toDiagInt(verify.dw, -32768, 32768))} verify_dh=${String(toDiagInt(verify.dh, -32768, 32768))} geo_seq=${String(this.nextGeometryDiagSeq())} fence_pending=${String(toDiagInt(fence.pending, -1, WORKSPACE_SEND_MAX_GEOMETRY))} fence_total=${String(toDiagInt(fence.total, -1, WORKSPACE_SEND_MAX_GEOMETRY))} mover_seen=${String(toDiagInt(fence.moverSeen, -1, 1))} fence_idx=${fence.idx}`,
                 );
             } catch (error) {
                 void error;
@@ -3004,6 +3071,11 @@ export class WorkspaceSendAdapter {
     private nextGeometryDiagSeq(): number {
         this.geoDiagSeq += 1;
         return this.geoDiagSeq;
+    }
+
+    private nextDiagSeq(): number {
+        this.diagSeq += 1;
+        return this.diagSeq;
     }
 
     private geometryEntry(planned: WorkspacePlanned, windowId: string): WorkspaceGeometryEntry | null {
@@ -3088,7 +3160,7 @@ export class WorkspaceSendAdapter {
         try {
             const geoIdx = detail.entry === null ? -1 : detail.planned.geometry.indexOf(detail.entry);
             this.env.log(
-                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=request correlation=${detail.correlation} generation=${this.generation} revision=${String(toDiagInt(detail.revision, -1, WORKSPACE_SEND_MAX_REVISION))} event=${sanitizeKind(detail.event)} outcome=${sanitizeKind(detail.outcome)} geo_idx=${String(toDiagInt(geoIdx, -1, WORKSPACE_SEND_MAX_GEOMETRY))} geo_role=${sanitizeKind(this.geometryRole(detail.pending, detail.entry))} write_ord=${String(toDiagInt(detail.writeOrdinal, -1, WORKSPACE_SEND_MAX_GEOMETRY))} write_total=${String(toDiagInt(detail.writeTotal, -1, WORKSPACE_SEND_MAX_GEOMETRY))} write_return=${String(toDiagInt(detail.writeReturned, -1, 1))} readback=${sanitizeKind(detail.readback.outcome)} dx=${String(toDiagInt(detail.readback.dx, -32768, 32768))} dy=${String(toDiagInt(detail.readback.dy, -32768, 32768))} dw=${String(toDiagInt(detail.readback.dw, -32768, 32768))} dh=${String(toDiagInt(detail.readback.dh, -32768, 32768))} geo_seq=${String(this.nextGeometryDiagSeq())}`,
+                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=request correlation=${detail.correlation} generation=${this.generation} revision=${String(toDiagInt(detail.revision, -1, WORKSPACE_SEND_MAX_REVISION))} diag_seq=${String(this.nextDiagSeq())} event=${sanitizeKind(detail.event)} outcome=${sanitizeKind(detail.outcome)} geo_idx=${String(toDiagInt(geoIdx, -1, WORKSPACE_SEND_MAX_GEOMETRY))} geo_role=${sanitizeKind(this.geometryRole(detail.pending, detail.entry))} write_ord=${String(toDiagInt(detail.writeOrdinal, -1, WORKSPACE_SEND_MAX_GEOMETRY))} write_total=${String(toDiagInt(detail.writeTotal, -1, WORKSPACE_SEND_MAX_GEOMETRY))} write_return=${String(toDiagInt(detail.writeReturned, -1, 1))} readback=${sanitizeKind(detail.readback.outcome)} dx=${String(toDiagInt(detail.readback.dx, -32768, 32768))} dy=${String(toDiagInt(detail.readback.dy, -32768, 32768))} dw=${String(toDiagInt(detail.readback.dw, -32768, 32768))} dh=${String(toDiagInt(detail.readback.dh, -32768, 32768))} geo_seq=${String(this.nextGeometryDiagSeq())}`,
             );
         } catch (error) {
             void error;
