@@ -224,7 +224,12 @@ void ActiveBorderConfigModule::requestTilerReload()
     // running script reread kwinrc. Success keeps reload-required and reports
     // sent-but-unconfirmed; failure keeps reload-required and reports failed.
     // This never claims applied, never touches shortcuts, and never unloads
-    // scripts or plugins.
+    // scripts or plugins. With no pending reload the request is refused
+    // without sending so an idle click can neither queue D-Bus traffic nor
+    // mark the dialog reload-required.
+    if (!m_tilerReloadRequired) {
+        return;
+    }
     if (requestScriptReconfigure()) {
         m_tilerReloadStatus = QStringLiteral(
             "Reload request sent. Application unconfirmed; restart the session to guarantee pickup.");
@@ -240,6 +245,9 @@ void ActiveBorderConfigModule::updateTilerReloadPresentation()
 {
     if (m_ui.tilerReloadStatusLabel != nullptr) {
         m_ui.tilerReloadStatusLabel->setText(m_tilerReloadStatus);
+    }
+    if (m_ui.tilerReloadButton != nullptr) {
+        m_ui.tilerReloadButton->setEnabled(m_tilerReloadRequired);
     }
 }
 

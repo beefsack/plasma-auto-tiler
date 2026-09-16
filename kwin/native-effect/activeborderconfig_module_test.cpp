@@ -92,6 +92,34 @@ QPushButton *tilerReloadButton(KWin::ActiveBorderConfigModule &module)
     return module.widget()->findChild<QPushButton *>(QStringLiteral("tilerReloadButton"));
 }
 
+bool tilerReloadButtonEnabled(KWin::ActiveBorderConfigModule &module)
+{
+    QPushButton *button = tilerReloadButton(module);
+    CHECK(button != nullptr);
+    return button != nullptr && button->isEnabled();
+}
+
+QString storedTilingAlgorithm()
+{
+    return scriptGroup().readEntry(QStringLiteral("tilingAlgorithm"), QStringLiteral("dwindle"));
+}
+
+QString otherTilingAlgorithm(const QString &current)
+{
+    const QStringList candidates = {
+        QStringLiteral("columns"),
+        QStringLiteral("rows"),
+        QStringLiteral("balanced-grid"),
+        QStringLiteral("dwindle"),
+    };
+    for (const QString &candidate : candidates) {
+        if (candidate != current) {
+            return candidate;
+        }
+    }
+    return QStringLiteral("rows");
+}
+
 bool containsAppliedClaim(const QString &text)
 {
     return text.toLower().contains(QStringLiteral("applied"));
@@ -714,6 +742,7 @@ void unchangedSaveMarksNoReloadWithoutSend()
     CHECK(!module.isTilerReloadRequired());
     CHECK(tilerReloadStatusLabel(module) != nullptr);
     CHECK(tilerReloadButton(module) != nullptr);
+    CHECK(!tilerReloadButtonEnabled(module));
     CHECK(module.tilerReloadStatusText().contains(QStringLiteral("No pending")));
     CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
     int confirms = 0;
@@ -727,7 +756,39 @@ void unchangedSaveMarksNoReloadWithoutSend()
     CHECK(module.effectCalls == 0);
     CHECK(!module.needsSave());
     CHECK(confirms == 0);
+    CHECK(!tilerReloadButtonEnabled(module));
     CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
+}
+
+void noPendingReloadSendsNothingAndStaysDisabled()
+{
+    CountingScriptReloadModule module(nullptr, KPluginMetaData());
+    module.load();
+    CHECK(!module.isTilerReloadRequired());
+    CHECK(!tilerReloadButtonEnabled(module));
+    int confirms = 0;
+    module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
+        ++confirms;
+        return false;
+    });
+    const QString before = module.tilerReloadStatusText();
+    module.scriptSucceed = true;
+    module.requestTilerReload();
+    CHECK(module.scriptCalls == 0);
+    CHECK(module.effectCalls == 0);
+    CHECK(!module.isTilerReloadRequired());
+    CHECK(module.tilerReloadStatusText() == before);
+    CHECK(!tilerReloadButtonEnabled(module));
+    CHECK(!module.needsSave());
+    CHECK(confirms == 0);
+    CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
+    // A failing transport must not conjure reload-required from an idle click.
+    module.scriptSucceed = false;
+    module.requestTilerReload();
+    CHECK(module.scriptCalls == 0);
+    CHECK(!module.isTilerReloadRequired());
+    CHECK(module.tilerReloadStatusText() == before);
+    CHECK(!tilerReloadButtonEnabled(module));
 }
 
 void tilingSaveMarksReloadRequiredWithoutAutoSend()
@@ -751,6 +812,7 @@ void tilingSaveMarksReloadRequiredWithoutAutoSend()
     module.save();
     CHECK(scriptGroup().readEntry(QStringLiteral("tilingAlgorithm"), QString()) == QStringLiteral("rows"));
     CHECK(module.isTilerReloadRequired());
+    CHECK(tilerReloadButtonEnabled(module));
     CHECK(module.tilerReloadStatusText().contains(QStringLiteral("Reload required")));
     CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
     CHECK(module.scriptCalls == 0);
@@ -783,6 +845,71 @@ void borderOnlySaveHotAppliesWithoutReloadRequired()
     CHECK(!module.needsSave());
 }
 
+void borderAndTilingSingleSaveHotAppliesBorderOnceKeepsReload()
+{
+    CountingScriptReloadModule module(nullptr, KPluginMetaData());
+    module.load();
+    QDoubleSpinBox *width = borderWidthSpinBox(module);
+    QComboBox *tiling = tilingAlgorithmCombo(module);
+    CHECK(width != nullptr);
+    CHECK(tiling != nullptr);
+    if (!width || !tiling) {
+        return;
+    }
+    const double borderTarget = (width->value() == 7.5) ? 6.5 : 7.5;
+    const QString tilingTarget = otherTilingAlgorithm(storedTilingAlgorithm());
+    const int tilingIndex = tiling->findData(tilingTarget);
+    CHECK(tilingIndex >= 0);
+    width->setValue(borderTarget);
+    tiling->setCurrentIndex(tilingIndex);
+    CHECK(module.needsSave());
+    int confirms = 0;
+    module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
+        ++confirms;
+        return false;
+    });
+    module.save();
+    CHECK(borderGroup().readEntry(QStringLiteral("BorderWidth"), 0.0) == borderTarget);
+    CHECK(scriptGroup().readEntry(QStringLiteral("tilingAlgorithm"), QString()) == tilingTarget);
+    CHECK(module.effectCalls == 1);
+    CHECK(module.scriptCalls == 0);
+    CHECK(module.isTilerReloadRequired());
+    CHECK(tilerReloadButtonEnabled(module));
+    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("Reload required")));
+    CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
+    CHECK(!module.needsSave());
+    CHECK(confirms == 0);
+}
+
+void gapSaveMarksReloadRequiredWithoutSend()
+{
+    CountingScriptReloadModule module(nullptr, KPluginMetaData());
+    module.load();
+    QSpinBox *inner = innerGapSpinBox(module);
+    CHECK(inner != nullptr);
+    if (!inner) {
+        return;
+    }
+    const int gapTarget = (inner->value() == 12) ? 20 : 12;
+    inner->setValue(gapTarget);
+    CHECK(module.needsSave());
+    int confirms = 0;
+    module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
+        ++confirms;
+        return false;
+    });
+    module.save();
+    CHECK(scriptGroup().readEntry(QStringLiteral("innerGap"), -1) == gapTarget);
+    CHECK(module.isTilerReloadRequired());
+    CHECK(tilerReloadButtonEnabled(module));
+    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("Reload required")));
+    CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
+    CHECK(module.scriptCalls == 0);
+    CHECK(module.effectCalls == 0);
+    CHECK(!module.needsSave());
+    CHECK(confirms == 0);
+}
+
 void deliberateReloadSuccessIsUnconfirmedWithoutAppliedClaim()
 {
     CountingScriptReloadModule module(nullptr, KPluginMetaData());
@@ -792,9 +919,13 @@ void deliberateReloadSuccessIsUnconfirmedWithoutAppliedClaim()
     if (!tiling) {
         return;
     }
-    tiling->setCurrentIndex(tiling->findData(QStringLiteral("balanced-grid")));
+    const QString tilingTarget = otherTilingAlgorithm(storedTilingAlgorithm());
+    const int tilingIndex = tiling->findData(tilingTarget);
+    CHECK(tilingIndex >= 0);
+    tiling->setCurrentIndex(tilingIndex);
     module.save();
     CHECK(module.isTilerReloadRequired());
+    CHECK(tilerReloadButtonEnabled(module));
     CHECK(module.scriptCalls == 0);
     module.scriptSucceed = true;
     int confirms = 0;
@@ -805,11 +936,12 @@ void deliberateReloadSuccessIsUnconfirmedWithoutAppliedClaim()
     module.requestTilerReload();
     CHECK(module.scriptCalls == 1);
     CHECK(module.isTilerReloadRequired());
+    CHECK(tilerReloadButtonEnabled(module));
     CHECK(module.tilerReloadStatusText().contains(QStringLiteral("unconfirmed")));
     CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
     CHECK(!module.needsSave());
     CHECK(confirms == 0);
-    CHECK(scriptGroup().readEntry(QStringLiteral("tilingAlgorithm"), QString()) == QStringLiteral("balanced-grid"));
+    CHECK(scriptGroup().readEntry(QStringLiteral("tilingAlgorithm"), QString()) == tilingTarget);
 }
 
 void deliberateReloadFailureKeepsRequiredWithoutAppliedClaim()
@@ -833,6 +965,7 @@ void deliberateReloadFailureKeepsRequiredWithoutAppliedClaim()
     module.requestTilerReload();
     CHECK(module.scriptCalls == 1);
     CHECK(module.isTilerReloadRequired());
+    CHECK(tilerReloadButtonEnabled(module));
     CHECK(module.tilerReloadStatusText().contains(QStringLiteral("failed")));
     CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
     CHECK(!module.needsSave());
@@ -901,8 +1034,11 @@ int main(int argc, char **argv)
     } else if (scenario == QStringLiteral("reload")) {
         scriptReconfigureTargetIsExact();
         unchangedSaveMarksNoReloadWithoutSend();
+        noPendingReloadSendsNothingAndStaysDisabled();
         tilingSaveMarksReloadRequiredWithoutAutoSend();
         borderOnlySaveHotAppliesWithoutReloadRequired();
+        borderAndTilingSingleSaveHotAppliesBorderOnceKeepsReload();
+        gapSaveMarksReloadRequiredWithoutSend();
         deliberateReloadSuccessIsUnconfirmedWithoutAppliedClaim();
         deliberateReloadFailureKeepsRequiredWithoutAppliedClaim();
         poisonedBusScriptSendFailsClosed();

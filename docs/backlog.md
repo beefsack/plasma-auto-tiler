@@ -86,10 +86,15 @@ Only meaningful pending or active work is listed.
 - P2 | Interim runtime configuration reload | Static-complete, live gate
   pending: deliberate tiler reload after saving tiling settings, with clear
   reload-required UI and existing live border updates retained. Saving tiling
-  settings marks reload-required; the deliberate Reload Tiler button sends one
-  typed KWin reconfigure request reported as sent-but-unconfirmed or failed,
-  never applied; session restart remains the guarantee. No live result is
-  claimed and the all-settings live-application launch blocker is unchanged.
+  settings marks reload-required; the Reload Tiler button is enabled only
+  while reload-required and a no-pending request sends nothing. A deliberate
+  reload sends one typed KWin reconfigure request reported as
+  sent-but-unconfirmed or failed, never applied; session restart remains the
+  guarantee. Reload-required is dialog-scoped in-memory state: dialog
+  load/reopen resets it and truthful cross-reload preservation is blocked
+  (no authorized persistent key, no supported runtime observation). No live
+  result is claimed and the all-settings live-application launch blocker is
+  unchanged.
   [investigation](changes/reliability-condition-investigation.md)
 - P1 | Rust-engine/direct-geometry migration live gate | Rust-mode exact-three
   focus, movement, keyboard resize, and pointer resize are static-complete behind

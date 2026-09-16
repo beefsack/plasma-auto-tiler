@@ -64,6 +64,19 @@ describe("interim tiler reload contract", () => {
         assert.match(header, /isTilerReloadRequired/);
         assert.match(header, /tilerReloadStatusText/);
         assert.doesNotMatch(module, /m_scriptReconfigurePending/);
+        // Fire-and-forget client contract: the typed send uses
+        // QDBusConnection::send, never a blocking interface call with a reply.
+        const reconfigureBody = functionBody(module, "bool ActiveBorderConfigModule::requestScriptReconfigure()");
+        assert.match(reconfigureBody, /\.send\(/);
+        assert.doesNotMatch(reconfigureBody, /\.call\(/);
+    });
+
+    it("refuses a no-pending reload without sending and gates the button on reload-required", () => {
+        const reloadBody = functionBody(module, "void ActiveBorderConfigModule::requestTilerReload()");
+        assert.match(reloadBody, /!m_tilerReloadRequired/);
+        assert.match(module, /setEnabled\(m_tilerReloadRequired\)/);
+        const saveBody = functionBody(module, "void ActiveBorderConfigModule::save()");
+        assert.doesNotMatch(saveBody, /requestScriptReconfigure\(\)/);
     });
 
     it("marks reload-required only on saved tiling changes and keeps border hot-apply live", () => {
@@ -120,6 +133,7 @@ describe("interim tiler reload contract", () => {
         assert.match(ui, /name="tilerReloadButton"/);
         assert.match(ui, /Reload Tiler/);
         assert.match(ui, /No pending tiler reload in this dialog\./);
+        assert.match(ui, /Session restart is the guaranteed pickup mechanism\./);
         assert.match(ui, /never claims the running tiler applied the settings/);
         assert.match(ui, /This never changes shortcuts\./);
         assert.match(ui, /Other script settings require a script reload or session restart\./);

@@ -256,7 +256,10 @@
 - KCM Apply no longer auto-queues a script reconfigure on save. Saving tiling
   settings sets reload-required with the exact status `Tiling settings saved.
   Reload required: the running tiler still uses startup values.` An unchanged
-  save sends nothing and leaves the flag untouched. The deliberate Reload
+  save sends nothing and leaves the flag untouched. The Reload Tiler button is
+  enabled only while reload-required; with no pending reload it refuses without
+  sending, so an idle click queues no typed D-Bus traffic and leaves the flag
+  and status untouched. The deliberate Reload
   Tiler button sends exactly one typed `org.kde.KWin /KWin org.kde.KWin
   reconfigure` request: success reports `Reload request sent. Application
   unconfirmed; restart the session to guarantee pickup.` and keeps
@@ -267,9 +270,20 @@
   subscription and KWin's reconfigure is Q_NOREPLY, so a queued send alone is
   reported as unconfirmed and session restart remains the guarantee. The
   button never touches shortcuts and never unloads scripts or plugins.
+- Reload-required is dialog-scoped in-memory KCM state, not persisted runtime
+  truth: `load()` resets it to `No pending tiler reload in this dialog.` So a
+  save-then-load/reopen cycle clears the pending flag even though the running
+  tiler is still stale. It cannot truthfully be preserved across dialog reload:
+  persisting it would need a new `kwinrc` key outside the known script/effect
+  groups and defaults, and observing real pickup is unsupported (startup-bound
+  reads, no config-change subscription, Q_NOREPLY send). Session restart is the
+  guaranteed pickup, but the KCM cannot observe restart versus reopen, so both
+  preserving (risking a false pending) and clearing (risking a false clean)
+  misstate unobservable runtime state; the implementation keeps the explicit
+  dialog-scoped reset and claims no runtime application.
 - Shortcut Apply and Revert are explicit KCM operations:
-  `kwin/native-effect/activeborderconfig_module.cpp:183-252`. The KCM can detect
-  recorded-postimage drift when opened: `kwin/native-effect/activeborderconfig_module.cpp:376-414`.
+  `kwin/native-effect/activeborderconfig_module.cpp:254-323`. The KCM can detect
+  recorded-postimage drift when opened: `kwin/native-effect/activeborderconfig_module.cpp:448-457`.
   No running-script watcher reconciles externally changed shortcuts or `kwinrc`.
 - Expected residual: hand-edited `kwinrc`, externally changed script settings, or
   a KCM change can leave the already running script using its startup values,
@@ -279,12 +293,16 @@
   all-settings live-application launch blocker is unchanged.
 - Offline verification (2026-09-16, no live KWin, Plasma, D-Bus, or session
   action): `npm run typecheck --prefix kwin` passes; `npm test --prefix kwin`
-  passes 760 tests across 106 suites with 0 failures (including 7 new
-  `tiler-reload-interim` static contract tests); `npm run build --prefix kwin`
-  emits the `contents/code/main.js` bundle; native `ctest` passes 22 of 22
-  including the new `native-effect-kcm-tiler-reload` scenario (KCM
+  passes 761 tests across 106 suites with 0 failures (including 8
+  `tiler-reload-interim` static contract tests covering the typed
+  fire-and-forget send, the no-pending no-send guard with button gating, and
+  the guaranteed-pickup UI wording); `npm run build --prefix kwin`
+  emits the `kwin/contents/code/main.js` bundle; native `ctest` passes 27 of 27
+  including the `native-effect-kcm-tiler-reload` scenario (KCM
   persistence, live border vs reload-required, deliberate reload
-  success/failure, typed DBus contract, no reload on unchanged save, no
+  success/failure, typed DBus contract, no reload on unchanged save, no-pending
+  reload no-send with the button disabled, button enablement transitions,
+  border+tiling one-save behavior, gap-setting reload-required, no
   shortcut mutation, no applied claim, poisoned-bus failure); `cargo test`
   passes 523 tests with 0 failures and `cargo build` succeeds. No runtime
   claim is made.
