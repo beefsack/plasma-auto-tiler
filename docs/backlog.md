@@ -99,12 +99,6 @@ Only meaningful pending or active work is listed.
   Preserve existing exception behavior and avoid exhaustive search or
   special-case complexity. Implementation is pending.
   [proposal](changes/placement-aware-startup-adoption.md)
-- P2 | Pixel/share parity decision | Exact-source ternary append allocates
-  [3,3,2] from an 8px binary group; the current equal-share projector gives
-  [2,2,4]. Both conserve width and return to [4,4] after removal. No visual
-  consequence or resize-cycle drift is established. Retain `Vec<u64>` shares;
-  source-exact mutation-time pixel authority remains an unselected migration.
-  [evidence](changes/archive/cosmic-workspace-and-geometry-investigation.md)
 - P2 | KWin controller silent unload | Attribute a manual controller unload only
   with before/after `isScriptLoaded`, exact `Script<ID>` introspection, and KWin
   PID/start evidence.
@@ -112,10 +106,6 @@ Only meaningful pending or active work is listed.
   D-Bus abort is formally open: its unrelated triage has twice been falsified.
   Do not attribute it to the native effect or script without sender, method, and
   fault-stack evidence. [record](changes/archive/kwin-qkeysequence-dbus-abort.md)
-- P2 | Active-border Rust port decision | Unstarted: decide whether to move
-  portable active-border calculations to Rust behind a narrow C ABI while C++
-  retains KWin objects, factory, moc, signals, and rendering. The drag oracle
-  proves this Rust-in-effect boundary. [investigation](changes/native-effect-rust-and-group-highlighting.md)
 - P2 | Nested disposable actuation limits | The nested POC3 route is
   offline-proven/live-unproven: client lifetime, exact-three KWin scope, and
   same-unit containment are unproven. Do not add a project-owned client or

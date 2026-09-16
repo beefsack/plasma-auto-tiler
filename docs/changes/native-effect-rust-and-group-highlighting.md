@@ -61,12 +61,13 @@
   KWin effect wholly Rust. This honors the boundary: KWin/Qt interaction and
   rendering are native; engine policy is portable Rust for later Windows and
   macOS adapters.
-- Migration is incremental. First, port the isolated `activeBorderColor`,
-  `activeBorderInnerRect`, and `activeBorderState` calculations from
-  `activeborderlogic.h` to Rust, expose `#[repr(C)]` value structs/functions,
-  and leave the current C++ effect as their forwarder. Preserve the C++/Rust
-  behavior tests. Later portable calculations can cross the same narrow
-  boundary; do not move KWin objects, factory code, or signal handling.
+- Do not port `activeBorderColor`, `activeBorderInnerRect`, or
+  `activeBorderState` from `activeborderlogic.h`. Although their expressions
+  are pure, they only consume KDE/KWin-derived values and are not a meaningful
+  reusable portable unit. Keep their theme/color, frame/gap, and window-state
+  semantics in the KWin implementation; do not add a shared abstraction for
+  this trivial arithmetic. Reconsider only if independently meaningful
+  OS/DE-agnostic logic arises.
 - The recommended C-ABI path needs no new system dependency: Cargo and the
   current CMake/Qt/KF/KWin development environment suffice. Rust dependencies
   belong in `Cargo.toml`, if the migration is approved. `cxx-qt` would add

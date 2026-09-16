@@ -490,13 +490,18 @@ Historical implementation detail is recoverable in Git history.
   capability fails closed. Future Hyprland and other behavior belongs in a
   separate versioned policy mode sharing the portable engine, not in an
   unnamed generic fallback or a platform adapter.
-- COSMIC geometry parity, established 2026-09-13: the raw default theme gaps
+- COSMIC geometry parity, established 2026-09-13, closed 2026-09-16: the raw default theme gaps
   are `(outer, inner) = (0, 8)`, but source leaf-edge insets make the rendered
   work-area edge margin 8px. Native KCM-owned `innerGap` and `outerGap` default
   to `(8, 8)` for that effective edge margin and sibling spacing;
   `outerGap` is not the raw COSMIC theme outer value. Source N-ary pixel-size
-  rounding remains an explicit open portability gap, not a claimed COSMIC parity
-  behavior.
+  rounding differs: over 8px, COSMIC allocates `[3,3,2]` while the portable
+  share projector allocates `[2,2,4]`. Both conserve width and return `[4,4]`
+  after removal; no visual consequence or cumulative resize drift is
+  established. Retain shares without claiming exact COSMIC parity. Revisit only
+  for a reproduced N-ary/deep-layout visual discrepancy or a required
+  source-exact fixture that fails under shares. No pixel-authority migration,
+  projector correction, numerical-policy change, or code/test work is selected.
 - COSMIC send-to-workspace is a portable same-output, distinct-workspace
   lifecycle operation. It moves only the focused tiled window, recursively
   collapses its source tree, and focuses it in the target. A validated
