@@ -2,12 +2,16 @@
 
 Only meaningful pending or active work is listed.
 
-- P0 | Workspace-send reliability (next dogfooding blocker) | Resume diagnosis
-  with WwQ9G6: 19 committed sends, then w19 reports adapter-lost/diverged before
-  commit, without timeout-settle. Identify its actual failure path rather than
-  assuming the earlier pJOooO geometry-index-1 timeout mismatch. Restore visible
-  follow/focus and continued usability. Earlier committed/readback-confirmed
-  visible failures also remain unresolved; border causation is unconfirmed.
+- P0 | Workspace-send reliability (next dogfooding blocker) | Comparison with
+  the user-confirmed working pre-removal legacy route found the same native
+  membership/switch primitives and no supported parity fix. Rust additionally
+  gates follow on direct-geometry confirmation and exact ack/verify/commit.
+  WwQ9G6 has 19 committed sends, then w19 loses the adapter before ack/commit;
+  its cause remains unresolved. Direct pre-ack disable now has a statically
+  verified terminal diagnostic, not a behavior fix. Next obtain one labeled
+  failure with that diagnostic. Keep the earlier pJOooO geometry-index-1 timeout
+  mismatch and committed/readback-confirmed visible failures distinct. Restore
+  visible follow/focus and continued usability; border causation is unconfirmed.
   [timeout record](changes/archive/workspace-send-timeout-observation.md)
   [earlier record](changes/archive/workspace-send-visible-follow-boundary.md)
 - P1 | Remaining workspace-send uncertainty recovery | Diagnose ordinary send

@@ -101,15 +101,63 @@
   send, `plan-1-w19`, is planned at lines 720-721, has only intervening
   `busy-refused` entries at lines 728-735, then reports pre-commit
   `adapter-lost`/diverged at lines 738-739. It emits no `timeout-settle`
-  diagnostic. This is an ack-stage loss category, not the pJOooO
+  diagnostic. This is a pre-ack loss category, not the pJOooO
   timeout-settlement `geometry-rect-mismatch`; it does not identify a native
   cause, establish a reliability improvement, or attribute the user's visible
   successes to any protocol change. The capture reports the default configured
   gaps, `gap=8` and `outer_gap=8`, throughout.
+- w19 KWin emits dispatched (718), owner-pinned (719), pre-mover (722), and
+  fence events (723-727), then no post-mover/plan/ack/verify/follow/
+  timeout-settle/result; Rust reports planned (720-721) then `adapter-lost`
+  (738)/diverged (739). Source admits `adapter-lost` after a valid plan via
+  `pending.operation`, while `failFlight` always logs `event=result`; only
+  direct pre-ack `disable()` reports loss with no result. The log/source pair
+  therefore does not identify a product-native cause, an accepted ack, or a
+  timeout predicate. w18 completes normally. pJOooO rect mismatch and
+  committed-but-invisible follow remain distinct.
+- Narrow diagnostic-only correction: silent pre-ack `disable()` now emits one
+  best-effort redacted `event=disable-terminal` line before the bounded loss
+  report, reusing the `timeoutFenceDetail`/`timeoutVerifyDetail` shapes
+  (`fence_pending`/`fence_total`/`mover_seen`/`fence_idx` plus `verify_reason`/
+  `verify_geo_idx`: `scope-*` for the `stale-revision` branch versus
+  geometry/membership reasons for `post-observation-mismatch`, `none` when no
+  fresh observation exists, `ok` when converged but echoes withheld). Presence
+  of the line proves direct disable teardown versus unknown log delivery.
+  Diagnostic failure is ignored and never changes teardown, timer, fence, or
+  enablement. It does not reconstruct the historical w19 path and claims no
+  source binding for it.
+
+## Legacy Route Comparison
+
+- The regression reference is `4605c61b7df9f738292037c46c32f000785e821c`
+  (`be8e898^`), immediately before `be8e898` removed the legacy runtime. Its
+  tiled route wrote only the mover's `[target]` desktop membership, scheduled
+  deferred Custom Tile adoption, then switched that mover's output to the
+  target desktop. It did not write `activeWindow` directly.
+- The current Rust route likewise writes only the mover's `[target]` desktop
+  membership. Its full two-domain direct geometry writes, pre-write
+  `desktopsChanged`/`frameGeometryChanged` fence, exact post-write observation,
+  accepted ack, verify commit, then switch-and-focus order are required by the
+  Rust transaction. They are not evidence that replacing the legacy group route
+  itself caused either captured failure.
+- Current production follows through `setCurrentDesktopForScreen` with stable
+  desktop-id readback and then focuses the mover after commit. This preserves
+  the legacy switch-before-focus observable order while avoiding the already
+  corrected wrapper-identity mistake. The one committed resync replaces legacy
+  inline cleanup/deferred adoption; no missing resync gate is evidenced.
+- Legacy always selected the mover's output. Current follow can fall back to
+  `activeScreen` and then the first screen when active-window output is absent.
+  That is a possible multi-output parity difference, but the relevant captures
+  provide no multi-output attribution and dispatch refuses absent/non-tiled
+  focus. Pinning another output through the transaction would add state without
+  a demonstrated defect.
+- No supported behavior correction follows from this comparison. `w19` remains
+  an unresolved pre-ack direct-disable/log-delivery boundary, while pJOooO
+  remains a separately proven exact geometry mismatch.
 
 ## Product Decision
 
-- None. The known terminal policy is retained without a governance change.
+- Diagnostic only. The known terminal policy is retained without a governance change.
 - The unresolved work is to identify why planned geometry entry 1 did not
   converge to its exact rectangle and did not produce its confirmation. No
   recovery or terminal-policy redesign is selected.
@@ -117,9 +165,8 @@
 ## Backlog Recommendation
 
 - Proposed factual update for the parent-owned backlog:
-  `P0 | Workspace-send pre-ack timeout diagnosis | The pJOooO capture proves
-  timeout settlement rejected plan geometry index 1 on exact rect mismatch
-  while that same index remained the sole armed fence; mover was seen. Determine
-  why that native geometry write neither converged nor confirmed before changing
-  exact terminal policy. Visible display and border causation remain unproven.`
-  Retain the existing record link and leave P1 unchanged.
+  `P0 | Workspace-send reliability | Legacy comparison found no supported
+  parity correction: Rust direct geometry, echo fencing, exact commit gating,
+  and post-commit follow are intentional. Diagnose pJOooO's geometry index 1
+  nonconvergence and WwQ9G6's pre-ack disable boundary separately; visible
+  display and border causation remain unproven.`

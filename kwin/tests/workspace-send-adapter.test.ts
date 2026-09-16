@@ -1531,6 +1531,194 @@ describe("cosmic send-to-workspace disable and stop divergence", () => {
         assert.equal(lost[0]?.service, ":1.7");
         assert.equal(parsePayload(lost[0]?.payload ?? "{}")["correlation_id"], correlation);
     });
+
+    it("emits a redacted disable-terminal discriminator for a pre-ack fence-incomplete teardown", () => {
+        // Product-shaped w19 analogue: a valid planned 4-geometry/mover send
+        // with a partial geometry fence, a concurrent busy refusal that must
+        // not be marked causal, then the exact silent pre-ack `disable()`
+        // terminal branch. Fails pre-fix for the missing discriminator.
+        const refs = makeRefs();
+        const refU = {};
+        const fourWindowObserved = (): WorkspaceSendObserved =>
+            makeObserved(refs, {
+                sourceWindows: Object.freeze([
+                    Object.freeze({ id: "win-a", ref: refs.a, rect: Object.freeze(rect(0, 0, 100, 100)) }),
+                    Object.freeze({ id: "win-b", ref: refs.b, rect: Object.freeze(rect(100, 0, 100, 100)) }),
+                ]),
+                targetWindows: Object.freeze([
+                    Object.freeze({ id: "win-t", ref: refs.t, rect: Object.freeze(rect(0, 0, 100, 100)) }),
+                    Object.freeze({ id: "win-u", ref: refU, rect: Object.freeze(rect(200, 0, 100, 100)) }),
+                ]),
+            });
+        const plannedReply4 = (correlation: string): string =>
+            JSON.stringify({
+                v: WORKSPACE_SEND_CONTRACT_VERSION,
+                correlation_id: correlation,
+                outcome: "planned",
+                kind: "send-to-workspace",
+                base_revision: 0,
+                detail: { kind: "send-to-workspace", policy_version: 1, capability: "move-tiled" },
+                desired_geometry: [
+                    { window: "win-a", leaf: "leaf-win-a", output: "out-1", workspace: "ws-2", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", leaf: "leaf-win-b", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 1200, h: 800 } },
+                    { window: "win-t", leaf: "leaf-win-t", output: "out-1", workspace: "ws-2", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                    { window: "win-u", leaf: "leaf-win-u", output: "out-1", workspace: "ws-2", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                ],
+                desired_focus: { domain_output: "out-1", domain_workspace: "ws-2", leaf: "leaf-win-a" },
+                preconditions: KNOWN_PRECONDITIONS,
+                operation: {
+                    op: "move-tiled",
+                    window: "win-a",
+                    leaf: "leaf-win-a",
+                    source_output: "out-1",
+                    source_workspace: "ws-1",
+                    target_output: "out-1",
+                    target_workspace: "ws-2",
+                },
+            });
+        const mocks = mockEnv(refs);
+        mocks.observeImpl = fourWindowObserved;
+        const seam = addEchoSeam(mocks);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const requestCall = mocks.dbusCalls[1];
+        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
+        mocks.callbacks[1]?.(plannedReply4(correlation));
+        assert.equal(adapter.isInFlight, true);
+        assert.ok(mocks.logs.some((l) => l.includes("event=plan-echo") && l.includes("outcome=waiting")), mocks.logs.join("\n"));
+        // Concurrent second send is busy-refused while the fence is armed; it
+        // must not disturb the flight, mark causality, or emit a plan.
+        const callsBeforeBusy = mocks.dbusCalls.length;
+        assert.equal(adapter.requestSend("ws-2"), false, "in-flight fence refuses the concurrent send");
+        assert.equal(adapter.isInFlight, true);
+        assert.equal(mocks.dbusCalls.length, callsBeforeBusy, "busy refusal must not emit a new request");
+        // Partial fence progress: mover plus two geometries consumed, leaving
+        // the mover-seen flag set with two plan-relative indices still armed.
+        seam.fire();
+        for (const ref of [refs.b, refs.t]) {
+            for (const handler of [...(seam.geoHandlers.get(ref) ?? [])]) {
+                handler();
+            }
+        }
+        assert.equal(adapter.isInFlight, true);
+        assert.ok(mocks.logs.some((l) => l.includes("event=plan-echo") && l.includes("outcome=consumed")), mocks.logs.join("\n"));
+        assert.equal(
+            mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
+            false,
+            "partial fence must not ack",
+        );
+        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
+        // Exact terminal branch: direct lifecycle teardown before ack.
+        adapter.disable();
+        assert.equal(adapter.isEnabled, false);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.timers[0]?.cancelled, true);
+        const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
+        assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        assert.equal(lost[0]?.service, ":1.7");
+        assert.equal(parsePayload(lost[0]?.payload ?? "{}")["correlation_id"], correlation);
+        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
+        assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
+        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
+        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+        // The new discriminator: one redacted disable-terminal line carrying
+        // the incomplete fence, the mismatch verifier category, and proof the
+        // disable path ran (versus unknown log delivery).
+        const terminal = mocks.logs.filter((l) => l.includes("event=disable-terminal") && l.includes(`correlation=${correlation}`));
+        assert.equal(terminal.length, 1, `expected one disable-terminal:\n${mocks.logs.join("\n")}`);
+        const line = terminal[0] ?? "";
+        assert.ok(line.includes("outcome=disable-teardown"), line);
+        assert.ok(line.includes("fence_total=4"), line);
+        assert.ok(line.includes("fence_pending=2"), line);
+        assert.ok(line.includes("mover_seen=1"), line);
+        assert.ok(line.includes("fence_idx=0,3"), line);
+        assert.ok(line.includes("verify_reason=geometry-rect-mismatch"), line);
+        assert.ok(line.includes("verify_geo_idx=0"), line);
+        assert.ok(line.startsWith("plasma-auto-tiler:route-diag component=cosmic-send "), line);
+        assert.ok(line.includes(" stage=request ") && line.includes(" generation=gen-1"), line);
+        for (const raw of ["win-a", "win-b", "win-t", "win-u", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
+            assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
+        }
+        // Second disable stays silent: exactly one report and one terminal line.
+        adapter.disable();
+        assert.equal(mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost")).length, 1);
+        assert.equal(
+            mocks.logs.filter((l) => l.includes("event=disable-terminal") && l.includes(`correlation=${correlation}`)).length,
+            1,
+        );
+        // Direct disable is intentionally terminal and fail-closed: no later
+        // same-instance send may proceed, so no later-send-usable assertion
+        // applies here (unlike the ordinary clean `recoverClean` path, whose
+        // reusability stays covered by the existing no-pending suites).
+        assert.equal(adapter.requestSend("ws-2"), false, "disabled adapter stays fail-closed");
+    });
+
+    it("distinguishes stale scope in the disable-terminal discriminator without changing behavior", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const seam = addEchoSeam(mocks);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const requestCall = mocks.dbusCalls[1];
+        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        assert.equal(adapter.isInFlight, true);
+        // Disable-time fresh observation drifts scope: the verifier branch is
+        // `stale-revision` (`scope-source-output`), distinct from the
+        // geometry-mismatch branch above.
+        mocks.observeImpl = () => makeObserved(refs, { sourceOutput: "out-9" });
+        adapter.disable();
+        assert.equal(adapter.isEnabled, false);
+        assert.equal(adapter.isInFlight, false);
+        const terminal = mocks.logs.filter((l) => l.includes("event=disable-terminal") && l.includes(`correlation=${correlation}`));
+        assert.equal(terminal.length, 1, mocks.logs.join("\n"));
+        const line = terminal[0] ?? "";
+        assert.ok(line.includes("verify_reason=scope-source-output"), line);
+        assert.ok(line.includes("verify_geo_idx=-1"), line);
+        assert.ok(line.includes("mover_seen=0"), line);
+        for (const raw of ["win-a", "out-9", ":1.7", "owner-1"]) {
+            assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
+        }
+        const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
+        assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
+        assert.deepEqual(mocks.switches, []);
+        void seam;
+    });
+
+    it("keeps disable teardown exact when the disable-terminal diagnostic throws", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const seam = addEchoSeam(mocks);
+        const adapter = new WorkspaceSendAdapter({
+            ...mocks.env,
+            log: (message: string) => {
+                if (message.includes("event=disable-terminal")) {
+                    throw new Error("diagnostic lost");
+                }
+                mocks.logs.push(message);
+            },
+        });
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        adapter.disable();
+        assert.equal(adapter.isEnabled, false);
+        assert.equal(adapter.isInFlight, false);
+        const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
+        assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        assert.equal(parsePayload(lost[0]?.payload ?? "{}")["correlation_id"], correlation);
+        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
+        void seam;
+    });
 });
 
 describe("cosmic send-to-workspace wire contract", () => {

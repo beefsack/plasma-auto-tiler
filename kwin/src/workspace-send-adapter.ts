@@ -924,6 +924,13 @@ export class WorkspaceSendAdapter {
         // owner before clearing. Never fires before a valid plan, never the
         // well-known name, never a retry; logger/DBus failure is ignored and
         // never changes the disable outcome.
+        // Silent pre-ack teardown emits one best-effort redacted terminal
+        // diagnostic before the loss report so a future exact occurrence can
+        // distinguish an incomplete mover/geometry fence, a
+        // `stale-revision` versus `post-observation-mismatch` verifier
+        // outcome, and direct disable teardown versus unknown log delivery.
+        // Diagnostic-only: never gates, retries, writes, or re-enables.
+        this.logDisableTerminal();
         this.reportAdapterLost();
         this.enabled = false;
         this.inFlight = false;
@@ -2802,6 +2809,68 @@ export class WorkspaceSendAdapter {
             this.env.log(
                 `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=timeout correlation=${detail.correlation} generation=${this.generation} revision=${String(toDiagInt(detail.revision, -1, WORKSPACE_SEND_MAX_REVISION))} event=timeout-settle outcome=${sanitizeKind(detail.outcome)} verify_reason=${sanitizeKind(detail.verifyReason)} verify_geo_idx=${String(toDiagInt(detail.verifyGeoIdx, -1, WORKSPACE_SEND_MAX_GEOMETRY))} fence_pending=${String(toDiagInt(detail.fence.pending, -1, WORKSPACE_SEND_MAX_GEOMETRY))} fence_total=${String(toDiagInt(detail.fence.total, -1, WORKSPACE_SEND_MAX_GEOMETRY))} mover_seen=${String(toDiagInt(detail.fence.moverSeen, -1, 1))} fence_idx=${detail.fence.idx}`,
             );
+        } catch (error) {
+            void error;
+        }
+    }
+
+    // Best-effort redacted terminal diagnostic for the otherwise silent
+    // pre-ack `disable()` teardown of a valid planned flight. Emits exactly
+    // one `event=disable-terminal` line before the bounded `adapter-lost`
+    // report so a future exact occurrence distinguishes an incomplete
+    // mover/geometry fence (`fence_pending`/`fence_total`/`fence_idx` plus
+    // `mover_seen`), the exact verifier category (`verify_reason` with
+    // plan-relative `verify_geo_idx`: `scope-*` for the `stale-revision`
+    // branch versus geometry/membership reasons for
+    // `post-observation-mismatch`, `none` when no fresh observation exists,
+    // `ok` when converged but echoes withheld), and direct disable teardown
+    // versus unknown log delivery (presence of this line proves the disable
+    // path ran). Reuses the redacted `timeoutFenceDetail` /
+    // `timeoutVerifyDetail` shapes; counts and plan-relative indices only,
+    // never raw ids, geometry values, payloads, captions, focus data, owner,
+    // or native refs. Fires only for the first reporter of a planned pre-ack
+    // flight, so `failFlight`/`onTimeout` follow-ups (which already emit
+    // `result`/`timeout-settle`) never double-emit. Any diagnostic failure is
+    // ignored and never changes the disable outcome, timer, fence, or
+    // enablement. Does not reconstruct any historical path.
+    private logDisableTerminal(): void {
+        try {
+            const pending = this.pending;
+            const planned = pending?.planned ?? null;
+            if (
+                pending === null ||
+                planned === null ||
+                pending.operation === null ||
+                pending.preconditions === null ||
+                pending.verifiedObserved !== null ||
+                pending.acked ||
+                this.lossReported ||
+                !isUniqueOwner(this.pinnedOwner)
+            ) {
+                return;
+            }
+            const fence = this.timeoutFenceDetail(planned, pending.fenceTotal);
+            let verifyReason = "none";
+            let verifyGeoIdx = -1;
+            try {
+                const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+                if (fresh !== null) {
+                    const detail = this.timeoutVerifyDetail(planned, pending, fresh);
+                    verifyReason = detail.reason;
+                    verifyGeoIdx = detail.geoIdx;
+                }
+            } catch (error) {
+                void error;
+                verifyReason = "unknown";
+                verifyGeoIdx = -1;
+            }
+            try {
+                this.env.log(
+                    `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=request correlation=${pending.correlation} generation=${this.generation} revision=${String(toDiagInt(pending.baseRevision, -1, WORKSPACE_SEND_MAX_REVISION))} event=disable-terminal outcome=disable-teardown verify_reason=${sanitizeKind(verifyReason)} verify_geo_idx=${String(toDiagInt(verifyGeoIdx, -1, WORKSPACE_SEND_MAX_GEOMETRY))} fence_pending=${String(toDiagInt(fence.pending, -1, WORKSPACE_SEND_MAX_GEOMETRY))} fence_total=${String(toDiagInt(fence.total, -1, WORKSPACE_SEND_MAX_GEOMETRY))} mover_seen=${String(toDiagInt(fence.moverSeen, -1, 1))} fence_idx=${fence.idx}`,
+                );
+            } catch (error) {
+                void error;
+            }
         } catch (error) {
             void error;
         }
