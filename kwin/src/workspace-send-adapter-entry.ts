@@ -596,6 +596,14 @@ export function startWorkspaceSendAdapterEntry(
                 return false;
             }
         },
+        readGeometry: (target) => {
+            try {
+                return readFrameRect(target);
+            } catch (error) {
+                void error;
+                return null;
+            }
+        },
         setDesktops: (target, refs) => {
             try {
                 Reflect.set(target, "desktops", refs);

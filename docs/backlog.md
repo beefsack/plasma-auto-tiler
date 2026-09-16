@@ -4,22 +4,27 @@ Only meaningful pending or active work is listed.
 
 - P0 | Workspace-send reliability (next dogfooding blocker) | LNq6hA confirms
   a pre-ack timeout: mover and one geometry echo consumed, plan geometry index
-  1 still pending and mismatched. Follow never ran; the user saw the window
+  1 (a retained target-domain window) still pending and mismatched. Follow never
+  ran; the user saw the window
   move 3->2 while 3 stayed visible with a border for the hidden window. Identify
   why that geometry did not converge; hidden-window delivery is unproven, and
-  the capture does not time the later manual visit against timeout. No behavior
-  fix is established. Keep WwQ9G6 pre-ack loss and earlier committed-but-invisible
+  the capture does not time the later manual visit against timeout. A bounded
+  journal check found no matching entry. New redacted per-geometry write,
+  readback, echo, role, delta, and flight-local sequence diagnostics are verified
+  offline; obtain one capture through timeout before manual workspace changes.
+  No behavior fix is established. Keep WwQ9G6 pre-ack loss and earlier committed-but-invisible
   failures distinct. Restore follow/focus and usability without attributing the
   initiating loss to user shutdown or assuming border causation.
   [timeout record](changes/archive/workspace-send-timeout-observation.md)
   [earlier record](changes/archive/workspace-send-visible-follow-boundary.md)
-- P1 | Non-visible workspace tiling investigation | User observes deferred
+- P1 | Non-visible workspace tiling implementation | User observes deferred
   retiling until visiting a workspace, leaving stale panel previews. Source
   confirms normal observation/reconciliation covers the active output's current
   desktop; the separate send transaction does write hidden-target geometry.
-  Select startup and window-open/move hidden-domain adoption/reconciliation
-  without changing visibility or focus before implementing broader activation.
-  Its causal connection to the send blocker remains unproven.
+  Background tiling is now approved: adopt/reconcile hidden domains at startup
+  and on window open/move without changing visibility or focus. Implementation
+  follows the P0 send reliability work. Its causal connection to the send blocker
+  remains unproven.
 - P1 | Remaining workspace-send uncertainty recovery | Diagnose ordinary send
   defects first; any new recovery semantics remain a separate product decision.
   Proven pre-dispatch and well-formed request rejection paths are reusable. Sent request/lost callback,

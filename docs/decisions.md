@@ -268,6 +268,12 @@ Historical implementation detail is recoverable in Git history.
 
 ## Window And Workspace Behavior
 
+- Approved 2026-09-16: background tiling is supported at startup and on window
+  open or move for non-visible workspaces, without switching visibility or
+  stealing focus. Implementation is deferred behind the P0 workspace-send
+  reliability blocker. Existing floating, sticky, fullscreen, maximize, and
+  configured-gap rules remain authoritative, with Rust retaining structural
+  ownership and the native adapter retaining observation and actuation.
 - Pointer resize adjusts shared split boundaries or ratios and reflows
   neighbouring tiles.
 - Intentional floating is a session-local per-window state carried by the Rust

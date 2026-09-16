@@ -191,9 +191,40 @@
 - The unresolved work is to identify why planned geometry entry 1 did not
   converge to its exact rectangle and did not produce its confirmation. No
   recovery or terminal-policy redesign is selected.
-- Keep non-visible workspace tiling as a separate product decision. Recommendation:
-  do not activate or generally reconcile hidden domains until its intended
-  adoption, geometry, focus, and lifecycle behavior is selected and tested.
+- Background tiling for non-visible workspaces is now selected separately for
+  startup and window open/move without visibility or focus changes. Its
+  implementation remains deferred behind this P0 send blocker.
+
+## Latest Bounded Investigation
+
+- LNq6hA's full planned geometry makes plan-relative index 1 the retained
+  target-domain window. Index 0 was unchanged and excluded from the geometry
+  fence; index 2 was the mover. The failed entry is therefore neither a source
+  survivor nor the mover.
+- The production path writes each changed `frameGeometry` through `Reflect.set`,
+  then writes only the mover desktop membership. Its current boolean reports an
+  exception-free adapter call, while the new immediate public `frameGeometry`
+  readback distinguishes exact, mismatched, and unavailable state without
+  changing that behavior. The fence still consumes one signal per changed
+  window and the verifier remains the only acceptance gate.
+- The exact file has no event timestamp or KWin PID; filesystem mtime is only
+  a terminal boundary. Narrow `journalctl --user -u plasma-kwin_wayland.service`
+  queries ending at that mtime, restricted to project/scripting/geometry/
+  configure/move-resize messages, returned no matching entry. This neither
+  confirms nor excludes a KWin race, and journal proximity cannot establish
+  cause.
+- Diagnostic-only geometry records now carry a flight-local monotonic order,
+  plan-relative index, derived mover/source-retained/target-retained role,
+  write order and adapter return, immediate readback or echo classification,
+  and bounded signed delta fields. Timeout and direct-disable verifier records
+  carry the same role and deltas. No raw identifiers, rectangles, payloads,
+  captions, or native references are emitted. No fence, timeout, transaction,
+  follow, or focus behavior changed.
+- The source mirror confirms `frameGeometry` routes to `moveResize`; its xdg
+  implementation can defer a size change through configure handling and has
+  min/max constraints. The mirror revision is unverified against the host, and
+  public Script declarations expose no min/max values for this record. It is
+  compatible background, not a cause attribution.
 
 ## Backlog Recommendation
 

@@ -269,6 +269,14 @@ function mockEnv(refs: { a: object; b: object; t: object; desktop: object }): Mo
             }
             return ok;
         },
+        readGeometry: (target) => {
+            for (const entry of state.world.windows) {
+                if (entry.ref === target) {
+                    return { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h };
+                }
+            }
+            return null;
+        },
         setDesktops: (target, refs) => {
             state.desktops.push({ target, refs });
             const ok = state.desktopsImpl(target, refs);
@@ -2578,6 +2586,82 @@ describe("cosmic send-to-workspace frameGeometry fence P0", () => {
         assert.equal(seam.geoDetachCount, geoDetaches);
         assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.isInFlight, false);
+    });
+
+    it("distinguishes a retained-target geometry mismatch without changing the timeout fence", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const seam = addEchoSeam(mocks);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        setWorldWindows(mocks, refs, 2);
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
+        mocks.callbacks[1]?.(plannedReplyTwo(correlation));
+        const writes = mocks.logs.filter((line) => line.includes("event=geometry-write") && line.includes(`correlation=${correlation}`));
+        assert.equal(writes.length, 2, mocks.logs.join("\n"));
+        const targetWrite = writes.find((line) => line.includes("geo_idx=1"));
+        assert.ok(targetWrite !== undefined, mocks.logs.join("\n"));
+        assert.ok(targetWrite.includes("geo_role=target-retained"), targetWrite);
+        assert.ok(targetWrite.includes("write_return=1"), targetWrite);
+        assert.ok(targetWrite.includes("readback=exact dx=0 dy=0 dw=0 dh=0"), targetWrite);
+        seam.fire();
+        for (const handler of [...(seam.geoHandlers.get(refs.a) ?? [])]) {
+            handler();
+        }
+        const moverEcho = mocks.logs.find(
+            (line) => line.includes("event=plan-geometry") && line.includes(`correlation=${correlation}`) && line.includes("geo_idx=0"),
+        );
+        assert.ok(moverEcho !== undefined, mocks.logs.join("\n"));
+        assert.ok(moverEcho.includes("geo_role=mover") && moverEcho.includes("readback=exact"), moverEcho);
+        const target = mocks.world.windows.find((window) => window.id === "win-t");
+        assert.ok(target !== undefined);
+        target.rect = rect(602, 0, 600, 800);
+        mocks.timers[0]?.callback();
+        assert.equal(adapter.isEnabled, false);
+        assert.equal(adapter.isInFlight, false);
+        const timeout = mocks.logs.find((line) => line.includes("event=timeout-settle") && line.includes(`correlation=${correlation}`));
+        assert.ok(timeout !== undefined, mocks.logs.join("\n"));
+        assert.ok(timeout.includes("verify_reason=geometry-rect-mismatch verify_geo_idx=1 verify_role=target-retained"), timeout);
+        assert.ok(timeout.includes("verify_dx=2 verify_dy=0 verify_dw=0 verify_dh=0"), timeout);
+        assert.ok(timeout.includes("fence_pending=1") && timeout.includes("fence_idx=1"), timeout);
+        const geoSeq = mocks.logs
+            .filter((line) => line.includes(`correlation=${correlation}`) && line.includes(" geo_seq="))
+            .map((line) => Number((line.match(/ geo_seq=([0-9]+)/) ?? ["", "-1"])[1]));
+        assert.deepEqual(geoSeq, [...geoSeq].sort((a, b) => a - b));
+        assert.equal(
+            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted")),
+            false,
+        );
+        assert.equal(mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-verify")), false);
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+        for (const line of [targetWrite, moverEcho, timeout]) {
+            for (const raw of ["win-a", "win-t", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
+                assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
+            }
+        }
+    });
+
+    it("ignores geometry diagnostic failure while retaining the normal send", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter({
+            ...mocks.env,
+            log: (line: string) => {
+                if (line.includes("event=geometry-write")) {
+                    throw new Error("diagnostic lost");
+                }
+                mocks.logs.push(line);
+            },
+        });
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        runLifecycle(mocks, adapter);
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
     });
 });
 

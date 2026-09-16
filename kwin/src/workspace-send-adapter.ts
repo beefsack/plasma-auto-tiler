@@ -189,6 +189,7 @@ export interface WorkspaceSendAdapterEnv {
     // terminal divergence.
     readonly onCommitted?: () => void;
     readonly setGeometry: (target: object, rect: WorkspaceSendRect) => boolean;
+    readonly readGeometry?: (target: object) => WorkspaceSendRect | null;
     readonly setDesktops: (target: object, refs: ReadonlyArray<object>) => boolean;
     readonly switchToTarget?: (desktopRef: object) => boolean;
     readonly focusWindow?: (windowRef: object) => boolean;
@@ -808,6 +809,24 @@ interface WorkspacePendingFlight {
     fenceTotal: number;
 }
 
+interface GeometryReadbackDetail {
+    readonly outcome: string;
+    readonly dx: number;
+    readonly dy: number;
+    readonly dw: number;
+    readonly dh: number;
+}
+
+interface GeometryVerifyDetail {
+    readonly reason: string;
+    readonly geoIdx: number;
+    readonly role: string;
+    readonly dx: number;
+    readonly dy: number;
+    readonly dw: number;
+    readonly dh: number;
+}
+
 // Source-grounded request-phase recovery rule: Planner::
 // evaluate_workspace_request (src/planner_protocol.rs) stores
 // `workspace_pending` only on the Ok(plan) path, and its only
@@ -855,6 +874,8 @@ export class WorkspaceSendAdapter {
     private moverSeen = false;
     private geoDetaches = new Map<string, () => void>();
     private geoPending = new Set<string>();
+    private geoRefs = new Map<string, object>();
+    private geoDiagSeq = 0;
 
     constructor(
         private readonly env: WorkspaceSendAdapterEnv,
@@ -911,6 +932,8 @@ export class WorkspaceSendAdapter {
         this.moverSeen = false;
         this.geoDetaches = new Map<string, () => void>();
         this.geoPending = new Set<string>();
+        this.geoRefs = new Map<string, object>();
+        this.geoDiagSeq = 0;
         return true;
     }
 
@@ -1234,6 +1257,7 @@ export class WorkspaceSendAdapter {
         this.inFlight = true;
         this.callbackSeen = false;
         this.clearEcho();
+        this.geoDiagSeq = 0;
         const flags = snapshotMoverFlags(snapshot, moverId);
         this.pending = {
             correlation,
@@ -1683,6 +1707,7 @@ export class WorkspaceSendAdapter {
                 }
                 this.geoDetaches.set(windowId, geoDetach);
                 this.geoPending.add(windowId);
+                this.geoRefs.set(windowId, ref);
             }
         }
         pending.fenceTotal = this.geoPending.size;
@@ -1781,6 +1806,20 @@ export class WorkspaceSendAdapter {
             return;
         }
         const detach = this.geoDetaches.get(windowId);
+        const entry = this.geometryEntry(planned, windowId);
+        this.logGeometryDiag({
+            correlation,
+            revision: planned.baseRevision,
+            event: "plan-geometry",
+            outcome: "consumed",
+            planned,
+            pending,
+            entry,
+            writeOrdinal: -1,
+            writeTotal: -1,
+            writeReturned: -1,
+            readback: this.readGeometryDetail(this.geoRefs.get(windowId), entry?.rect),
+        });
         if (detach !== undefined) {
             this.geoDetaches.delete(windowId);
             try {
@@ -1790,7 +1829,7 @@ export class WorkspaceSendAdapter {
             }
         }
         this.geoPending.delete(windowId);
-        this.diag("request", correlation, planned.baseRevision, "plan-geometry", "consumed");
+        this.geoRefs.delete(windowId);
         this.tryMaybeComplete(flight, correlation);
     }
 
@@ -1867,11 +1906,12 @@ export class WorkspaceSendAdapter {
         }
         this.geoDetaches = new Map<string, () => void>();
         this.geoPending = new Set<string>();
+        this.geoRefs = new Map<string, object>();
     }
 
     private writeGeometries(
         planned: WorkspacePlanned,
-        _flightState: WorkspacePendingFlight,
+        flightState: WorkspacePendingFlight,
         current: WorkspaceSendObserved,
     ): boolean {
         const byRef = new Map<string, object>();
@@ -1885,7 +1925,11 @@ export class WorkspaceSendAdapter {
             oldById.set(entry.id, { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h });
         }
         const ordered = orderGeometryWrites(oldById, planned.geometry);
-        for (const entry of ordered) {
+        for (let writeOrdinal = 0; writeOrdinal < ordered.length; writeOrdinal += 1) {
+            const entry = ordered[writeOrdinal];
+            if (entry === undefined) {
+                return false;
+            }
             const target = byRef.get(entry.window);
             if (target === undefined) {
                 return false;
@@ -1897,6 +1941,19 @@ export class WorkspaceSendAdapter {
                 void error;
                 written = false;
             }
+            this.logGeometryDiag({
+                correlation: planned.correlationId,
+                revision: planned.baseRevision,
+                event: "geometry-write",
+                outcome: "returned",
+                planned,
+                pending: flightState,
+                entry,
+                writeOrdinal,
+                writeTotal: ordered.length,
+                writeReturned: written ? 1 : 0,
+                readback: this.readGeometryDetail(target, entry.rect),
+            });
             if (!written) {
                 return false;
             }
@@ -2564,8 +2621,7 @@ export class WorkspaceSendAdapter {
                     correlation,
                     revision,
                     outcome: "fresh-unavailable",
-                    verifyReason: "none",
-                    verifyGeoIdx: -1,
+                    verify: this.geometryVerifyDetail("none", -1, "unknown"),
                     fence: this.timeoutFenceDetail(planned, armedTotal),
                 });
             } else if (this.verifyPlannedPost(planned, pending, fresh) !== "") {
@@ -2574,8 +2630,7 @@ export class WorkspaceSendAdapter {
                     correlation,
                     revision,
                     outcome: "verify-failed",
-                    verifyReason: detail.reason,
-                    verifyGeoIdx: detail.geoIdx,
+                    verify: detail,
                     fence: this.timeoutFenceDetail(planned, armedTotal),
                 });
             } else {
@@ -2588,8 +2643,7 @@ export class WorkspaceSendAdapter {
                         correlation,
                         revision,
                         outcome: "payload-invalid",
-                        verifyReason: "ok",
-                        verifyGeoIdx: -1,
+                        verify: this.geometryVerifyDetail("ok", -1, "unknown"),
                         fence: fencePre,
                     });
                 } else {
@@ -2611,8 +2665,7 @@ export class WorkspaceSendAdapter {
                             correlation,
                             revision,
                             outcome: "settled",
-                            verifyReason: "ok",
-                            verifyGeoIdx: -1,
+                            verify: this.geometryVerifyDetail("ok", -1, "unknown"),
                             fence: fencePre,
                         });
                         this.cancelTimer = cancel;
@@ -2624,8 +2677,7 @@ export class WorkspaceSendAdapter {
                         correlation,
                         revision,
                         outcome: cancel === null ? "schedule-unavailable" : "owner-invalid",
-                        verifyReason: "ok",
-                        verifyGeoIdx: -1,
+                        verify: this.geometryVerifyDetail("ok", -1, "unknown"),
                         fence: fencePre,
                     });
                     // Settlement arming failed: retire the fresh deadline so the
@@ -2646,8 +2698,7 @@ export class WorkspaceSendAdapter {
                 correlation,
                 revision,
                 outcome: "owner-invalid",
-                verifyReason: "none",
-                verifyGeoIdx: -1,
+                verify: this.geometryVerifyDetail("none", -1, "unknown"),
                 fence: this.timeoutFenceDetail(pending.planned, pending.fenceTotal),
             });
         }
@@ -2801,13 +2852,12 @@ export class WorkspaceSendAdapter {
         readonly correlation: string;
         readonly revision: number;
         readonly outcome: string;
-        readonly verifyReason: string;
-        readonly verifyGeoIdx: number;
+        readonly verify: GeometryVerifyDetail;
         readonly fence: { readonly pending: number; readonly total: number; readonly moverSeen: number; readonly idx: string };
     }): void {
         try {
             this.env.log(
-                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=timeout correlation=${detail.correlation} generation=${this.generation} revision=${String(toDiagInt(detail.revision, -1, WORKSPACE_SEND_MAX_REVISION))} event=timeout-settle outcome=${sanitizeKind(detail.outcome)} verify_reason=${sanitizeKind(detail.verifyReason)} verify_geo_idx=${String(toDiagInt(detail.verifyGeoIdx, -1, WORKSPACE_SEND_MAX_GEOMETRY))} fence_pending=${String(toDiagInt(detail.fence.pending, -1, WORKSPACE_SEND_MAX_GEOMETRY))} fence_total=${String(toDiagInt(detail.fence.total, -1, WORKSPACE_SEND_MAX_GEOMETRY))} mover_seen=${String(toDiagInt(detail.fence.moverSeen, -1, 1))} fence_idx=${detail.fence.idx}`,
+                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=timeout correlation=${detail.correlation} generation=${this.generation} revision=${String(toDiagInt(detail.revision, -1, WORKSPACE_SEND_MAX_REVISION))} event=timeout-settle outcome=${sanitizeKind(detail.outcome)} verify_reason=${sanitizeKind(detail.verify.reason)} verify_geo_idx=${String(toDiagInt(detail.verify.geoIdx, -1, WORKSPACE_SEND_MAX_GEOMETRY))} verify_role=${sanitizeKind(detail.verify.role)} verify_dx=${String(toDiagInt(detail.verify.dx, -32768, 32768))} verify_dy=${String(toDiagInt(detail.verify.dy, -32768, 32768))} verify_dw=${String(toDiagInt(detail.verify.dw, -32768, 32768))} verify_dh=${String(toDiagInt(detail.verify.dh, -32768, 32768))} geo_seq=${String(this.nextGeometryDiagSeq())} fence_pending=${String(toDiagInt(detail.fence.pending, -1, WORKSPACE_SEND_MAX_GEOMETRY))} fence_total=${String(toDiagInt(detail.fence.total, -1, WORKSPACE_SEND_MAX_GEOMETRY))} mover_seen=${String(toDiagInt(detail.fence.moverSeen, -1, 1))} fence_idx=${detail.fence.idx}`,
             );
         } catch (error) {
             void error;
@@ -2850,23 +2900,19 @@ export class WorkspaceSendAdapter {
                 return;
             }
             const fence = this.timeoutFenceDetail(planned, pending.fenceTotal);
-            let verifyReason = "none";
-            let verifyGeoIdx = -1;
+            let verify: GeometryVerifyDetail = this.geometryVerifyDetail("none", -1, "unknown");
             try {
                 const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
                 if (fresh !== null) {
-                    const detail = this.timeoutVerifyDetail(planned, pending, fresh);
-                    verifyReason = detail.reason;
-                    verifyGeoIdx = detail.geoIdx;
+                    verify = this.timeoutVerifyDetail(planned, pending, fresh);
                 }
             } catch (error) {
                 void error;
-                verifyReason = "unknown";
-                verifyGeoIdx = -1;
+                verify = this.geometryVerifyDetail("unknown", -1, "unknown");
             }
             try {
                 this.env.log(
-                    `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=request correlation=${pending.correlation} generation=${this.generation} revision=${String(toDiagInt(pending.baseRevision, -1, WORKSPACE_SEND_MAX_REVISION))} event=disable-terminal outcome=disable-teardown verify_reason=${sanitizeKind(verifyReason)} verify_geo_idx=${String(toDiagInt(verifyGeoIdx, -1, WORKSPACE_SEND_MAX_GEOMETRY))} fence_pending=${String(toDiagInt(fence.pending, -1, WORKSPACE_SEND_MAX_GEOMETRY))} fence_total=${String(toDiagInt(fence.total, -1, WORKSPACE_SEND_MAX_GEOMETRY))} mover_seen=${String(toDiagInt(fence.moverSeen, -1, 1))} fence_idx=${fence.idx}`,
+                    `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=request correlation=${pending.correlation} generation=${this.generation} revision=${String(toDiagInt(pending.baseRevision, -1, WORKSPACE_SEND_MAX_REVISION))} event=disable-terminal outcome=disable-teardown verify_reason=${sanitizeKind(verify.reason)} verify_geo_idx=${String(toDiagInt(verify.geoIdx, -1, WORKSPACE_SEND_MAX_GEOMETRY))} verify_role=${sanitizeKind(verify.role)} verify_dx=${String(toDiagInt(verify.dx, -32768, 32768))} verify_dy=${String(toDiagInt(verify.dy, -32768, 32768))} verify_dw=${String(toDiagInt(verify.dw, -32768, 32768))} verify_dh=${String(toDiagInt(verify.dh, -32768, 32768))} geo_seq=${String(this.nextGeometryDiagSeq())} fence_pending=${String(toDiagInt(fence.pending, -1, WORKSPACE_SEND_MAX_GEOMETRY))} fence_total=${String(toDiagInt(fence.total, -1, WORKSPACE_SEND_MAX_GEOMETRY))} mover_seen=${String(toDiagInt(fence.moverSeen, -1, 1))} fence_idx=${fence.idx}`,
                 );
             } catch (error) {
                 void error;
@@ -2913,6 +2959,100 @@ export class WorkspaceSendAdapter {
         };
     }
 
+    private nextGeometryDiagSeq(): number {
+        this.geoDiagSeq += 1;
+        return this.geoDiagSeq;
+    }
+
+    private geometryEntry(planned: WorkspacePlanned, windowId: string): WorkspaceGeometryEntry | null {
+        for (const entry of planned.geometry) {
+            if (entry.window === windowId) {
+                return entry;
+            }
+        }
+        return null;
+    }
+
+    private geometryRole(pending: WorkspacePendingFlight, entry: WorkspaceGeometryEntry | null): string {
+        if (entry === null) {
+            return "unknown";
+        }
+        if (entry.window === pending.moverId) {
+            return "mover";
+        }
+        if (pending.snapshot.sourceWindows.some((window) => window.id === entry.window)) {
+            return "source-retained";
+        }
+        if (pending.snapshot.targetWindows.some((window) => window.id === entry.window)) {
+            return "target-retained";
+        }
+        return "unknown";
+    }
+
+    private readGeometryDetail(target: object | undefined, expected: WorkspaceSendRect | undefined): GeometryReadbackDetail {
+        if (target === undefined || expected === undefined || typeof this.env.readGeometry !== "function") {
+            return { outcome: "unavailable", dx: -1, dy: -1, dw: -1, dh: -1 };
+        }
+        try {
+            const actual = this.env.readGeometry(target);
+            if (actual === null || !isTargetRect(actual)) {
+                return { outcome: "unavailable", dx: -1, dy: -1, dw: -1, dh: -1 };
+            }
+            const dx = actual.x - expected.x;
+            const dy = actual.y - expected.y;
+            const dw = actual.w - expected.w;
+            const dh = actual.h - expected.h;
+            return { outcome: dx === 0 && dy === 0 && dw === 0 && dh === 0 ? "exact" : "mismatch", dx, dy, dw, dh };
+        } catch (error) {
+            void error;
+            return { outcome: "unavailable", dx: -1, dy: -1, dw: -1, dh: -1 };
+        }
+    }
+
+    private geometryVerifyDetail(
+        reason: string,
+        geoIdx: number,
+        role: string,
+        expected?: WorkspaceSendRect,
+        actual?: WorkspaceSendRect,
+    ): GeometryVerifyDetail {
+        if (expected === undefined || actual === undefined) {
+            return { reason, geoIdx, role, dx: -1, dy: -1, dw: -1, dh: -1 };
+        }
+        return {
+            reason,
+            geoIdx,
+            role,
+            dx: actual.x - expected.x,
+            dy: actual.y - expected.y,
+            dw: actual.w - expected.w,
+            dh: actual.h - expected.h,
+        };
+    }
+
+    private logGeometryDiag(detail: {
+        readonly correlation: string;
+        readonly revision: number;
+        readonly event: string;
+        readonly outcome: string;
+        readonly planned: WorkspacePlanned;
+        readonly pending: WorkspacePendingFlight;
+        readonly entry: WorkspaceGeometryEntry | null;
+        readonly writeOrdinal: number;
+        readonly writeTotal: number;
+        readonly writeReturned: number;
+        readonly readback: GeometryReadbackDetail;
+    }): void {
+        try {
+            const geoIdx = detail.entry === null ? -1 : detail.planned.geometry.indexOf(detail.entry);
+            this.env.log(
+                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=request correlation=${detail.correlation} generation=${this.generation} revision=${String(toDiagInt(detail.revision, -1, WORKSPACE_SEND_MAX_REVISION))} event=${sanitizeKind(detail.event)} outcome=${sanitizeKind(detail.outcome)} geo_idx=${String(toDiagInt(geoIdx, -1, WORKSPACE_SEND_MAX_GEOMETRY))} geo_role=${sanitizeKind(this.geometryRole(detail.pending, detail.entry))} write_ord=${String(toDiagInt(detail.writeOrdinal, -1, WORKSPACE_SEND_MAX_GEOMETRY))} write_total=${String(toDiagInt(detail.writeTotal, -1, WORKSPACE_SEND_MAX_GEOMETRY))} write_return=${String(toDiagInt(detail.writeReturned, -1, 1))} readback=${sanitizeKind(detail.readback.outcome)} dx=${String(toDiagInt(detail.readback.dx, -32768, 32768))} dy=${String(toDiagInt(detail.readback.dy, -32768, 32768))} dw=${String(toDiagInt(detail.readback.dw, -32768, 32768))} dh=${String(toDiagInt(detail.readback.dh, -32768, 32768))} geo_seq=${String(this.nextGeometryDiagSeq())}`,
+            );
+        } catch (error) {
+            void error;
+        }
+    }
+
     // Diagnostic-only mirror of verifyPlannedPost categories. The verifier
     // itself stays the single behavior gate; this only names the branch for
     // the eligible-path log. First mismatch wins, same order as the verifier.
@@ -2920,12 +3060,12 @@ export class WorkspaceSendAdapter {
         planned: WorkspacePlanned,
         pending: WorkspacePendingFlight,
         verified: WorkspaceSendObserved,
-    ): { readonly reason: string; readonly geoIdx: number } {
+    ): GeometryVerifyDetail {
         try {
             return this.timeoutVerifyDetailUnchecked(planned, pending, verified);
         } catch (error) {
             void error;
-            return { reason: "unknown", geoIdx: -1 };
+            return this.geometryVerifyDetail("unknown", -1, "unknown");
         }
     }
 
@@ -2933,19 +3073,19 @@ export class WorkspaceSendAdapter {
         planned: WorkspacePlanned,
         pending: WorkspacePendingFlight,
         verified: WorkspaceSendObserved,
-    ): { readonly reason: string; readonly geoIdx: number } {
+    ): GeometryVerifyDetail {
         const snapshot = pending.snapshot;
         if (verified.sourceOutput !== snapshot.sourceOutput) {
-            return { reason: "scope-source-output", geoIdx: -1 };
+            return this.geometryVerifyDetail("scope-source-output", -1, "unknown");
         }
         if (verified.sourceWorkspace !== snapshot.sourceWorkspace) {
-            return { reason: "scope-source-workspace", geoIdx: -1 };
+            return this.geometryVerifyDetail("scope-source-workspace", -1, "unknown");
         }
         if (verified.targetOutput !== snapshot.targetOutput) {
-            return { reason: "scope-target-output", geoIdx: -1 };
+            return this.geometryVerifyDetail("scope-target-output", -1, "unknown");
         }
         if (verified.targetWorkspace !== snapshot.targetWorkspace) {
-            return { reason: "scope-target-workspace", geoIdx: -1 };
+            return this.geometryVerifyDetail("scope-target-workspace", -1, "unknown");
         }
         if (
             verified.sourceBounds.x !== snapshot.sourceBounds.x ||
@@ -2953,7 +3093,7 @@ export class WorkspaceSendAdapter {
             verified.sourceBounds.w !== snapshot.sourceBounds.w ||
             verified.sourceBounds.h !== snapshot.sourceBounds.h
         ) {
-            return { reason: "scope-source-bounds", geoIdx: -1 };
+            return this.geometryVerifyDetail("scope-source-bounds", -1, "unknown");
         }
         if (
             verified.targetBounds.x !== snapshot.targetBounds.x ||
@@ -2961,13 +3101,13 @@ export class WorkspaceSendAdapter {
             verified.targetBounds.w !== snapshot.targetBounds.w ||
             verified.targetBounds.h !== snapshot.targetBounds.h
         ) {
-            return { reason: "scope-target-bounds", geoIdx: -1 };
+            return this.geometryVerifyDetail("scope-target-bounds", -1, "unknown");
         }
         if (verified.targetDesktopRef !== pending.targetDesktopRef) {
-            return { reason: "scope-target-ref", geoIdx: -1 };
+            return this.geometryVerifyDetail("scope-target-ref", -1, "unknown");
         }
         if (verified.targetExists !== true) {
-            return { reason: "scope-target-exists", geoIdx: -1 };
+            return this.geometryVerifyDetail("scope-target-exists", -1, "unknown");
         }
         const byId = new Map<string, { rect: WorkspaceSendRect; inSource: boolean; inTarget: boolean }>();
         for (const entry of verified.sourceWindows) {
@@ -2991,12 +3131,12 @@ export class WorkspaceSendAdapter {
                 continue;
             }
             if (seen.has(entry.window)) {
-                return { reason: "geometry-duplicate", geoIdx: index };
+                return this.geometryVerifyDetail("geometry-duplicate", index, this.geometryRole(pending, entry));
             }
             seen.add(entry.window);
             const found = byId.get(entry.window);
             if (found === undefined) {
-                return { reason: "geometry-missing", geoIdx: index };
+                return this.geometryVerifyDetail("geometry-missing", index, this.geometryRole(pending, entry));
             }
             if (
                 found.rect.x !== entry.rect.x ||
@@ -3004,22 +3144,22 @@ export class WorkspaceSendAdapter {
                 found.rect.w !== entry.rect.w ||
                 found.rect.h !== entry.rect.h
             ) {
-                return { reason: "geometry-rect-mismatch", geoIdx: index };
+                return this.geometryVerifyDetail("geometry-rect-mismatch", index, this.geometryRole(pending, entry), entry.rect, found.rect);
             }
         }
         if (seen.size !== byId.size) {
-            return { reason: "observed-count-mismatch", geoIdx: -1 };
+            return this.geometryVerifyDetail("observed-count-mismatch", -1, "unknown");
         }
         const mover = byId.get(pending.moverId);
         const moverIdx = planIndexOf(pending.moverId);
         if (mover === undefined) {
-            return { reason: "mover-missing", geoIdx: moverIdx };
+            return this.geometryVerifyDetail("mover-missing", moverIdx, "mover");
         }
         if (mover.inSource) {
-            return { reason: "mover-in-source", geoIdx: moverIdx };
+            return this.geometryVerifyDetail("mover-in-source", moverIdx, "mover");
         }
         if (!mover.inTarget) {
-            return { reason: "mover-not-in-target", geoIdx: moverIdx };
+            return this.geometryVerifyDetail("mover-not-in-target", moverIdx, "mover");
         }
         for (const entry of snapshot.sourceWindows) {
             if (entry.id === pending.moverId) {
@@ -3027,7 +3167,7 @@ export class WorkspaceSendAdapter {
             }
             const found = byId.get(entry.id);
             if (found === undefined || !found.inSource || found.inTarget) {
-                return { reason: "retained-source-membership", geoIdx: planIndexOf(entry.id) };
+                return this.geometryVerifyDetail("retained-source-membership", planIndexOf(entry.id), "source-retained");
             }
         }
         for (const entry of snapshot.targetWindows) {
@@ -3036,9 +3176,9 @@ export class WorkspaceSendAdapter {
             }
             const found = byId.get(entry.id);
             if (found === undefined || found.inSource || !found.inTarget) {
-                return { reason: "retained-target-membership", geoIdx: planIndexOf(entry.id) };
+                return this.geometryVerifyDetail("retained-target-membership", planIndexOf(entry.id), "target-retained");
             }
         }
-        return { reason: "ok", geoIdx: -1 };
+        return this.geometryVerifyDetail("ok", -1, "unknown");
     }
 }
