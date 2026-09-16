@@ -204,6 +204,13 @@ Only meaningful pending or active work is listed.
   panel, settings toolkit, or package format is approved. Any future work must
   select a host/version and pass its bounded capability prototype first.
   [research](research/cross-platform-support/feasibility.md)
+- P3 | Panel and workspace-overview helper | Research recommends a narrow,
+  additive Plasma native-desktop Pager setup helper as the smallest useful
+  interpretation, while documenting that it cannot represent the project's
+  per-output logical mappings. No workspace authority, panel command route,
+  custom plasmoid, overview replacement, settings owner, package, or
+  implementation is approved. Tray live/release acceptance remains separate.
+  [research](research/panel-workspace-overview-helper.md)
 - P3 | Artifact publication | Publish reproducible KPackage artifacts to KDE
   Store and GitHub Release after MVP delivery dependencies complete.
   [foundations](changes/archive/delivered-foundations.md)
