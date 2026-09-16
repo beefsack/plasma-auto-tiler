@@ -2,48 +2,23 @@
 
 Only meaningful pending or active work is listed.
 
-- P0 | Workspace-send reliability (next dogfooding blocker) | UDmtET's timeout
-  first fails on mover geometry at plan index 1: observed pre-send full height
-  instead of the planned half-tile. Membership verification was not reached.
-  User-attributed retained Ghostty trace shows configure/ack/buffer progress;
-  it cannot establish the untraced mover's resize path or timing of the preview.
-  No static identity, observation, or callback defect was demonstrated. Further
-  causal evidence needs the mover's native configure/commit path. Requested
-  verbose diagnostics now cover correlated native switch/focus calls, immediate
-  readbacks, safe errors, per-flight ordering, and explicit follow=not-reached
-  terminal/refusal markers with the stopping gate/phase/reason. Unchecked verifier
-  gates are labelled untested. Offline production coverage passes; no additional
-  live test is selected. API-alignment corrections are implemented in production:
-  geometry/desktop assignment results propagate, shared Plan observes
-  frameGeometryChanged, and follow confirms focus by native-id readback.
-  NameHasOwner supplies an explicit absence check before activation with flags
-  0 and fresh unique-owner pinning; no activation policy decision remains.
-  Typecheck, 692 offline tests, and bundle build pass, including production-entry
-  contract coverage. Native geometry failure and rendered follow remain
-  unresolved; no live repair is claimed. qc1FSb rapid-send
-  capture has 201 committed/state-confirmed flights and 64 uncorrelated busy
-  refusals, with continued same-instance usability and no terminal geometry
-  failure. Workspace-4 Ghostty trace shows configure acknowledgements and
-  commits; the mover was untraced. User-observed misses returning to 5 cannot
-  yet be assigned to a refused press or a committed-but-invisible follow.
-  ARTNue remains a separate unresolved
-  retained-target geometry timeout (964 instead of planned 478); this successful
-  trace does not explain it. The Reflect.set correction is only a JS assignment
-  contract fix, not a native acceptance or send repair. Keep WwQ9G6 loss and
-  earlier committed-but-invisible failures distinct.
-  [timeout record](changes/archive/workspace-send-timeout-observation.md)
-  [earlier record](changes/archive/workspace-send-visible-follow-boundary.md)
-  [API audit](changes/kwin-script-api-contract-audit.md)
 - P1 | Non-visible workspace tiling implementation | User observes deferred
   retiling until visiting a workspace, leaving stale panel previews. Source
   confirms normal observation/reconciliation covers the active output's current
   desktop; the separate send transaction does write hidden-target geometry.
   Background tiling is now approved: adopt/reconcile hidden domains at startup
   and on window open/move without changing visibility or focus. Implementation
-  follows the P0 send reliability work. Its causal connection to the send blocker
-  remains unproven.
-- P1 | Remaining workspace-send uncertainty recovery | Diagnose ordinary send
-  defects first; any new recovery semantics remain a separate product decision.
+  remains pending; graceful move-follow has separate user manual acceptance.
+- P1 | Remaining workspace-send uncertainty recovery | Graceful move-follow is
+  implemented and manually accepted after rapid sends across many workspaces.
+  USER VISUAL/MANUAL: "The issue appears to be fixed, I spam moved a window between many workspaces and it never failed. ... reinforces ... graceful handling ... actually feel really good even when spamming." The supplied
+  `/run/user/1000/plasma-auto-tiler-dev.E2E0QJ.log` is NOT ANALYZED; this is not
+  machine protocol, rendered-visibility, latency, recovery, or native-cause
+  evidence. Graceful, unsurprising confirmed partial success and responsiveness
+  during rapid use are the durable product preference, not permission to ignore
+  errors, retry, reset a queue, or change architecture.
+  Recovery from genuinely uncertain layout transactions remains a separate
+  product decision; the accepted run does not select new recovery semantics.
   Proven pre-dispatch and well-formed request rejection paths are reusable. Sent request/lost callback,
   malformed reply, request timeout, owner loss, and other transport ambiguity
   can leave Rust pending; partial native mutation plus ack/verify timeout can

@@ -187,13 +187,22 @@
 
 ## Product Decision
 
-- Diagnostic only. The known terminal policy is retained without a governance change.
-- The unresolved work is to identify why planned geometry entry 1 did not
-  converge to its exact rectangle and did not produce its confirmation. No
-  recovery or terminal-policy redesign is selected.
+- Historical at the time: diagnostic only, with follow withheld until the full
+  exact transaction. This is superseded by the authorized graceful native-move
+  follow decision in `docs/decisions.md`: one fresh exact mover-membership
+  observation may switch/focus before unrelated geometry convergence, while the
+  original full acknowledgement/verification/commit gate remains unchanged.
+- The unresolved work is still to identify why planned geometry entry 1 did not
+  converge to its exact rectangle and did not produce its confirmation. This
+  correction does not attribute or repair that native geometry cause, select
+  recovery, or claim rendered success.
+- Subsequent USER VISUAL/MANUAL acceptance is: "The issue appears to be fixed, I spam moved a window between many workspaces and it never failed. ... reinforces ... graceful handling ... actually feel really good even when spamming." The supplied
+  `/run/user/1000/plasma-auto-tiler-dev.E2E0QJ.log` is NOT ANALYZED. This accepts
+  move/follow usability only, not a machine protocol, native-cause, layout
+  commit, rendered-visibility, or recovery claim.
 - Background tiling for non-visible workspaces is now selected separately for
   startup and window open/move without visibility or focus changes. Its
-  implementation remains deferred behind this P0 send blocker.
+  implementation remains pending.
 
 ## Latest Bounded Investigation
 
@@ -266,6 +275,42 @@
   and post-commit follow are intentional. Diagnose pJOooO's geometry index 1
   nonconvergence and WwQ9G6's pre-ack disable boundary separately; visible
   display and border causation remain unproven.`
+
+## Latest First-Move Capture
+
+- The exact authorized `KRpByw` first-move capture has one dispatched planned
+  flight, `plan-1-w0`, zero accepted acknowledgements, and no correlated
+  request refusal. KWin diagnostics order the route as `send-dispatched` (seq
+  1), owner pin (2), retained-target and mover geometry writes (3-4),
+  `send-pre-mover` (5), mover echo consumed (6), geometry fence
+  waiting/consumed for plan index 0 mover (7-9), then timeout settlement (10)
+  and terminal timeout (11). The Planner independently emits `planned`, then
+  the adapter-loss acknowledgement and `diverged`; it emits no accepted
+  acknowledgement or commit for this correlation.
+- This is not a called or refused follow. Seq 11 explicitly reports
+  `follow=not-reached gate=pre-commit phase=timeout reason=timeout-request`.
+  There is no ack, verify, committed, `follow-pre`, native-switch, native-focus,
+  or post-resync follow record. The earlier `stage=follow` records are dispatch
+  and pre-mover observations, not `followAfterCommit` invocation.
+- Seq 10's first exact settlement failure is
+  `geometry-rect-mismatch` at plan index 1, role `target-retained`, with only
+  its height delta nonzero. The mover was seen, while one of two geometry fences
+  remained pending at index 1. `verifyPlannedPost` checks captured scope, then
+  planned geometry, then observed count and mover/retained memberships
+  (`kwin/src/workspace-send-adapter.ts:2085-2164`); this failure proves neither
+  a post-write membership failure nor that consumed event records verified a
+  rectangle or membership.
+- The prior `verify_gates=untested` wording was misleading because this path
+  had already evaluated scope and reached geometry before short-circuiting.
+  It now reports `verify_gates=incomplete` for any non-`ok` mirror result;
+  `complete` remains the exact-success value. This diagnostic-only correction
+  changes no write, fence, acknowledgement, commit, follow, focus, timeout, or
+  enablement behavior.
+- KWin v6.7.4 source material remains compatible with deferred or constrained
+  Wayland frame-geometry convergence, but does not attribute this retained
+  target mismatch to a native setter refusal, hidden workspace, client, or
+  write order. The host revision is unverified. The current geometry-before-
+  membership ordering therefore has no supported correction from this capture.
 
 ## Latest Rapid-Send And Client-Trace Review
 
@@ -352,6 +397,7 @@
   the planned KWin frame geometry during
   this flight: the existing record distinguishes that state from the retained
   client's progress, but not deferred/coalesced native delivery, a native
-  constraint, or another compositor-side cause. No production correction is
-  supported; exact verification, commit-before-follow, and terminal uncertainty
-  policy remain unchanged.
+  constraint, or another compositor-side cause. At the time no production
+  correction was supported. The subsequent authorized native-move follow
+  correction preserves exact verification and terminal uncertainty for layout
+  while no longer withholding a confirmed mover transfer for unrelated geometry.

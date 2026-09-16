@@ -804,10 +804,8 @@ describe("cosmic send-to-workspace adapter lifecycle", () => {
         mocks.observeImpl = () => {
             calls += 1;
             const live = makeWorldObserved(mocks.world, refs);
-            // Calls 1-5 cover request through the pre-switch gate while live
-            // current stays on the source; the immediate after-setter read and
-            // later reads see live current on the target.
-            if (calls >= 6) {
+            // Early native-move follow reaches its post-switch read on call 4.
+            if (calls >= 4) {
                 return {
                     ...live,
                     targetOrdinal: 1,
@@ -871,10 +869,10 @@ describe("cosmic send-to-workspace adapter lifecycle", () => {
                 targetNumber: 2,
                 outputOrdinal: 0,
             };
-            // Calls 1-6 cover request through the after-setter read with live
+            // Calls 1-4 cover request through the after-setter read with live
             // current on the target and the mover active.
-            if (calls <= 6) {
-                const current = calls >= 6
+            if (calls <= 4) {
+                const current = calls >= 4
                     ? { currentOrdinal: 1, currentNumber: 2, currentIdEq: 1, currentRefEq: 1 }
                     : { currentOrdinal: 0, currentNumber: 1, currentIdEq: 0, currentRefEq: 0 };
                 return { ...base, ...current };
@@ -919,9 +917,9 @@ describe("cosmic send-to-workspace adapter lifecycle", () => {
         const liveObserve = mocks.observeImpl;
         mocks.observeImpl = () => {
             calls += 1;
-            // Post-switch and post-focus re-reads fail; pre-switch, gates,
-            // and the settled boundary still observe.
-            if (calls === 6 || calls === 7) {
+            // Early post-switch and post-focus re-reads fail; the later exact
+            // acknowledgement observation still succeeds.
+            if (calls === 4 || calls === 5) {
                 return null;
             }
             return liveObserve();
@@ -981,7 +979,7 @@ describe("cosmic send-to-workspace adapter lifecycle", () => {
         assert.equal(mocks.desktops.length, 0);
     });
 
-    it("does not follow when the post-commit observation drifts from the plan", () => {
+    it("does not follow twice when later commit observation drifts from the plan", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = new WorkspaceSendAdapter(mocks.env);
@@ -1004,27 +1002,19 @@ describe("cosmic send-to-workspace adapter lifecycle", () => {
         mocks.callbacks[3]?.(committedReply(correlation));
         assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.isInFlight, false);
-        assert.deepEqual(mocks.switches, []);
-        assert.deepEqual(mocks.focuses, []);
-        // No success telemetry, but the correlated later-boundary observation
-        // still reports the drifted state instead of claiming a follow.
-        assert.ok(
-            !mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")),
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
+        assert.equal(
+            mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")).length,
+            1,
             mocks.logs.join("\n"),
         );
-        for (const event of ["event=follow-pre", "event=follow-switched", "event=follow-focused"]) {
-            assert.ok(!mocks.logs.some((l) => l.includes(event)), `${event} must not emit on drift:\n${mocks.logs.join("\n")}`);
-        }
         const settled = mocks.logs.filter(
             (l) => l.includes("stage=follow") && l.includes("event=follow-settled") && l.includes(`correlation=${correlation}`),
         );
         assert.equal(settled.length, 1, mocks.logs.join("\n"));
         assert.ok(settled[0]?.includes("outcome=observed"), settled.join("\n"));
         assert.ok(settled[0]?.includes("mover_in_target=0"), settled.join("\n"));
-        assert.ok(
-            mocks.logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=follow") && line.includes("outcome=skipped-post-observation-mismatch")),
-            mocks.logs.join("\n"),
-        );
     });
 
     it("ignores a duplicate committed reply without a second follow", () => {
@@ -1510,7 +1500,7 @@ describe("cosmic send-to-workspace disable and stop divergence", () => {
         assert.equal(lostCommand["op"], "send-to-workspace-ack");
         assert.equal(lostCommand["ack_outcome"], "adapter-lost");
         assert.ok(
-            mocks.logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=disable-terminal") && line.includes("follow=not-reached gate=pre-commit phase=disable reason=disable-teardown")),
+            mocks.logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=disable-terminal") && line.includes("follow=state-confirmed gate=native-move phase=disable reason=disable-teardown")),
             mocks.logs.join("\n"),
         );
         // No verify was sent on the torn-down flight (the accepted ack was
@@ -1720,7 +1710,7 @@ describe("cosmic send-to-workspace disable and stop divergence", () => {
         assert.ok(line.includes("mover_seen=1"), line);
         assert.ok(line.includes("fence_idx=0,3"), line);
         assert.ok(line.includes("verify_reason=geometry-rect-mismatch"), line);
-        assert.ok(line.includes("verify_gates=untested"), line);
+        assert.ok(line.includes("verify_gates=incomplete"), line);
         assert.ok(line.includes("verify_geo_idx=0"), line);
         assert.ok(line.startsWith("plasma-auto-tiler:route-diag component=cosmic-send "), line);
         assert.ok(line.includes(" stage=request ") && line.includes(" generation=gen-1"), line);
@@ -1772,7 +1762,7 @@ describe("cosmic send-to-workspace disable and stop divergence", () => {
         const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
         assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
         assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
-        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.switches, [refs.desktop]);
         void seam;
     });
 
@@ -2021,7 +2011,7 @@ describe("cosmic send-to-workspace review follow-ups", () => {
         assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 0);
     });
 
-    it("causes no desktop switch or focus when the ack reply is rejected", () => {
+    it("preserves one confirmed native follow when the ack reply is rejected", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = new WorkspaceSendAdapter(mocks.env);
@@ -2042,13 +2032,13 @@ describe("cosmic send-to-workspace review follow-ups", () => {
         );
         assert.equal(adapter.isEnabled, false);
         assert.equal(adapter.isInFlight, false);
-        assert.deepEqual(mocks.switches, []);
-        assert.deepEqual(mocks.focuses, []);
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
         assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
-        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
+        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
     });
 
-    it("causes no desktop switch or focus when the verify reply diverges", () => {
+    it("preserves one confirmed native follow when the verify reply diverges", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = new WorkspaceSendAdapter(mocks.env);
@@ -2071,10 +2061,10 @@ describe("cosmic send-to-workspace review follow-ups", () => {
         );
         assert.equal(adapter.isEnabled, false);
         assert.equal(adapter.isInFlight, false);
-        assert.deepEqual(mocks.switches, []);
-        assert.deepEqual(mocks.focuses, []);
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
         assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
-        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
+        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
     });
 });
 
@@ -2701,7 +2691,7 @@ describe("cosmic send-to-workspace frameGeometry fence P0", () => {
         assert.ok(timeout !== undefined, mocks.logs.join("\n"));
         assert.ok(timeout.includes("verify_reason=geometry-rect-mismatch"), timeout);
         assert.ok(timeout.includes("verify_geo_idx=1 verify_role=target-retained"), timeout);
-        assert.ok(timeout.includes("verify_gates=untested"), timeout);
+        assert.ok(timeout.includes("verify_gates=incomplete"), timeout);
         assert.ok(timeout.includes("verify_dx=2 verify_dy=0 verify_dw=0 verify_dh=0"), timeout);
         assert.ok(timeout.includes("fence_pending=1") && timeout.includes("fence_idx=1"), timeout);
         const geoSeq = mocks.logs
@@ -2713,8 +2703,8 @@ describe("cosmic send-to-workspace frameGeometry fence P0", () => {
             false,
         );
         assert.equal(mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-verify")), false);
-        assert.deepEqual(mocks.switches, []);
-        assert.deepEqual(mocks.focuses, []);
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
         assert.equal(adapter.requestSend("ws-2"), false, "terminal adapter stays fail-closed");
         for (const line of [targetWrite, moverEcho, timeout]) {
             for (const raw of ["win-a", "win-t", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
@@ -2833,7 +2823,16 @@ describe("cosmic send-to-workspace w3 synchronous fence", () => {
                         handler();
                     }
                 }
+                order.push("write-desktops-returned");
                 return ok;
+            },
+            switchToTarget: (desktopRef, diagnostic) => {
+                order.push("switch-target");
+                return base.switchToTarget?.(desktopRef, diagnostic) === true;
+            },
+            focusWindow: (windowRef, diagnostic) => {
+                order.push("focus-mover");
+                return base.focusWindow?.(windowRef, diagnostic) === true;
             },
         };
         (mocks as { env: WorkspaceSendAdapterEnv }).env = syncEnv;
@@ -2880,6 +2879,10 @@ describe("cosmic send-to-workspace w3 synchronous fence", () => {
         const lastFrame = order.lastIndexOf("frameGeometryChanged");
         const desktopEcho = order.indexOf("desktopsChanged");
         assert.ok(lastFrame >= 0 && desktopEcho >= 0 && lastFrame < desktopEcho, `geometry events before desktopsChanged: ${order.join(",")}`);
+        assert.ok(
+            order.indexOf("write-desktops-returned") < order.indexOf("switch-target"),
+            `follow must not reenter the membership setter: ${order.join(",")}`,
+        );
         const ackCall = mocks.dbusCalls[2];
         assert.equal(ackCall?.method, WORKSPACE_SEND_METHOD);
         const ackPayload = parsePayload(ackCall?.payload ?? "{}");
@@ -3028,16 +3031,16 @@ describe("cosmic send-to-workspace pre-ack timeout settlement", () => {
         assert.equal(adapter.isInFlight, false);
         assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")), mocks.logs.join("\n"));
         assert.ok(
-            mocks.logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=timeout-request") && line.includes("follow=not-reached gate=pre-commit phase=timeout reason=timeout-request")),
+            mocks.logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=timeout-request") && line.includes("follow=state-confirmed gate=native-move")),
             mocks.logs.join("\n"),
         );
         assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
         assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
-        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
+        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
         const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
         assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.deepEqual(mocks.switches, []);
-        assert.deepEqual(mocks.focuses, []);
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
         void seam;
     });
 
@@ -3066,7 +3069,7 @@ describe("cosmic send-to-workspace pre-ack timeout settlement", () => {
         assert.equal(adapter.isEnabled, false);
         assert.equal(adapter.isInFlight, false);
         assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.switches, [refs.desktop]);
     });
 
     it("late duplicates after timeout settlement are harmless and never touch future flight", () => {
@@ -3136,13 +3139,13 @@ describe("cosmic send-to-workspace pre-ack timeout settlement", () => {
         assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
         mocks.callbacks[2]?.(ackReply(correlation));
         assert.equal(mocks.dbusCalls.filter((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")).length, 1);
-        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.switches, [refs.desktop]);
         mocks.callbacks[2]?.(
             JSON.stringify({ v: WORKSPACE_SEND_CONTRACT_VERSION, correlation_id: correlation, outcome: "rejected", kind: "no-pending" }),
         );
         assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-        assert.deepEqual(mocks.switches, []);
-        assert.deepEqual(mocks.focuses, []);
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
     });
 
     it("verify timeout never replays", () => {
@@ -3164,8 +3167,8 @@ describe("cosmic send-to-workspace pre-ack timeout settlement", () => {
         assert.equal(adapter.isInFlight, false);
         mocks.callbacks[3]?.(committedReply(correlation));
         assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-        assert.deepEqual(mocks.switches, []);
-        assert.deepEqual(mocks.focuses, []);
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
     });
 
     it("missing/malformed/lost replies, timeout, and owner loss are never no-pending", () => {
@@ -3633,10 +3636,11 @@ describe("cosmic send-to-workspace dispatch membership diagnostics", () => {
         assert.equal(flagOf(postMover, "src_in_tgt"), "0");
         // Frozen dispatch source survives later dynamic reads.
         assert.equal(flagOf(preMover, "src_in_src"), flagOf(postMover, "src_in_src"));
-        // Ordered: dispatch < pre-mover < post-mover < follow.
+        // Early follow starts from the confirmed mover observation, before the
+        // later complete post-write observation used for acknowledgement.
         assert.ok(indexFor(mocks.logs, correlation, "send-dispatched") < indexFor(mocks.logs, correlation, "send-pre-mover"));
-        assert.ok(indexFor(mocks.logs, correlation, "send-pre-mover") < indexFor(mocks.logs, correlation, "send-post-mover"));
-        assert.ok(indexFor(mocks.logs, correlation, "send-post-mover") < indexFor(mocks.logs, correlation, "follow-pre"));
+        assert.ok(indexFor(mocks.logs, correlation, "send-pre-mover") < indexFor(mocks.logs, correlation, "follow-pre"));
+        assert.ok(indexFor(mocks.logs, correlation, "follow-pre") < indexFor(mocks.logs, correlation, "send-post-mover"));
         // No extra echo observations.
         assert.ok(!mocks.logs.some((l) => l.includes(`correlation=${correlation}`) && l.includes("send-mover-echo")));
         assert.ok(!mocks.logs.some((l) => l.includes(`correlation=${correlation}`) && l.includes("send-geometry-echo")));
@@ -3661,7 +3665,7 @@ describe("cosmic send-to-workspace dispatch membership diagnostics", () => {
             // sees live current on the target. Runtime may already be target;
             // this covers the transitioning case only.
             const current =
-                calls >= 6
+                calls >= 4
                     ? { currentOrdinal: 1, currentNumber: 2, currentIdEq: 1, currentRefEq: 1 }
                     : { currentOrdinal: 0, currentNumber: 1, currentIdEq: 0, currentRefEq: 0 };
             return {
@@ -3684,21 +3688,22 @@ describe("cosmic send-to-workspace dispatch membership diagnostics", () => {
         const pre = lineFor(mocks.logs, correlation, "follow-pre");
         const switched = lineFor(mocks.logs, correlation, "follow-switched");
         const focused = lineFor(mocks.logs, correlation, "follow-focused");
-        // Early lines carry native current/output fields while current is source.
-        for (const line of [dispatched, preMover, postMover, pre]) {
+        // Dispatch and pre-mover lines retain the source current map.
+        for (const line of [dispatched, preMover, pre]) {
             assert.equal(flagOf(line, "cur_id_eq"), "0", line);
             assert.ok(line.includes("cur_ord=0") && line.includes("cur_num=1"), line);
             assert.ok(line.includes("tgt_ord=1") && line.includes("tgt_num=2"), line);
             assert.ok(line.includes("out_ord=0"), line);
         }
-        // Membership moves before current does.
+        // Membership moves before current does; the later complete observation
+        // records the target map established by the early follow.
         assert.equal(flagOf(postMover, "mover_in_target"), "1");
         assert.equal(flagOf(pre, "mover_in_target"), "1");
         // First target-current observation is the post-switch line.
         assert.equal(flagOf(switched, "cur_id_eq"), "1");
         assert.ok(switched.includes("cur_ord=1") && switched.includes("cur_num=2"), switched);
         assert.equal(flagOf(focused, "cur_id_eq"), "1");
-        const order = ["send-dispatched", "send-pre-mover", "send-post-mover", "follow-pre", "follow-switched", "follow-focused", "follow-settled"].map(
+        const order = ["send-dispatched", "send-pre-mover", "follow-pre", "follow-switched", "follow-focused", "send-post-mover", "follow-settled"].map(
             (event) => indexFor(mocks.logs, correlation, event),
         );
         for (let i = 1; i < order.length; i += 1) {
@@ -3719,7 +3724,7 @@ describe("cosmic send-to-workspace dispatch membership diagnostics", () => {
             calls += 1;
             // Post-switch and post-focus re-reads fail; dispatch, pre-write,
             // verified, ack-verify, pre-switch, and settled reads still observe.
-            if (calls === 6 || calls === 7) {
+            if (calls === 4 || calls === 5) {
                 return null;
             }
             return liveObserve();
@@ -3867,8 +3872,8 @@ describe("cosmic send-to-workspace timeout settlement diagnostics", () => {
         const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
         assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
         assert.equal(parsePayload(lost[0]?.payload ?? "{}")["correlation_id"], correlation);
-        assert.deepEqual(mocks.switches, []);
-        assert.deepEqual(mocks.focuses, []);
+        assert.deepEqual(mocks.switches, [mocks.desktops[0]?.refs[0]]);
+        assert.deepEqual(mocks.focuses, [mocks.desktops[0]?.target]);
     }
 
     it("logs fresh-unavailable and stays terminal without commit", () => {

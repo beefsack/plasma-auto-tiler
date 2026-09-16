@@ -14,10 +14,10 @@
 // policy. This module owns KWin observation of the focused output's source and
 // target desktops, owner activation/pinning, the request/ack/verify phases,
 // exact source+target re-validation, sequential native frameGeometry writes
-// plus the mover's Window.desktops membership write, then the legacy follow
-// (switch to the target desktop and focus the moved window) only after an
-// exact validated accepted/applied send and a verified correct
-// target/object/domain post-observation, signals, and structured route
+// plus the mover's Window.desktops membership write. A fresh exact native
+// membership observation may then switch to the target desktop and focus the
+// mover before unrelated geometry convergence; Rust acknowledgement and commit
+// still require the complete exact post-observation and structured route
 // diagnostics.
 //
 // Activation first uses NameHasOwner's normal boolean reply. A present owner is
@@ -813,6 +813,10 @@ interface WorkspacePendingFlight {
     planned: WorkspacePlanned | null;
     verifiedObserved: WorkspaceSendObserved | null;
     acked: boolean;
+    // Native move/follow is a distinct, at-most-once partial-success result.
+    // It never advances the Rust acknowledgement or layout commit phases.
+    followStarted: boolean;
+    followOutcome: string;
     // Armed geometry-fence size recorded after subscriptions succeed.
     // Diagnostic only: never gates behavior.
     fenceTotal: number;
@@ -866,6 +870,9 @@ export class WorkspaceSendAdapter {
     private readonly innerGap: number;
     private readonly outerGap: number;
     private inFlight = false;
+    // A post-plan terminal result can leave native membership ahead of Rust's
+    // committed domain. Keep Plan from adopting that uncommitted visible state.
+    private planBlocked = false;
     private token = 0;
     private activeToken = 0;
     private deadlineToken = 0;
@@ -886,6 +893,10 @@ export class WorkspaceSendAdapter {
     private geoRefs = new Map<string, object>();
     private geoDiagSeq = 0;
     private diagSeq = 0;
+    // KWin signals may be delivered synchronously from a setter. Do not let
+    // them complete a flight or switch desktops while the write stack is live.
+    private nativeWriteDepth = 0;
+    private nativeFollowDepth = 0;
 
     constructor(
         private readonly env: WorkspaceSendAdapterEnv,
@@ -917,6 +928,10 @@ export class WorkspaceSendAdapter {
 
     get isInFlight(): boolean {
         return this.inFlight;
+    }
+
+    get blocksPlan(): boolean {
+        return this.inFlight || this.planBlocked;
     }
 
     // Derived from the existing retained flight only. Entry diagnostics use
@@ -1320,6 +1335,8 @@ export class WorkspaceSendAdapter {
             planned: null,
             verifiedObserved: null,
             acked: false,
+            followStarted: false,
+            followOutcome: "not-reached",
             fenceTotal: 0,
         };
         // True command-dispatch observation at the request boundary, using the
@@ -1717,19 +1734,22 @@ export class WorkspaceSendAdapter {
         pending.planned = planned;
         const subscribe = this.env.subscribeMoverDesktops;
         if (typeof subscribe !== "function") {
-            // Native writes: direct geometry in the shared grow-before-shrink
-            // order, then only the mover's desktop membership. Desktop follow and
-            // mover focus happen only after the verify commit (see onVerifyReply).
-            if (!this.writeGeometries(planned, pending, fresh)) {
+            this.nativeWriteDepth += 1;
+            const geometryWritten = this.writeGeometries(planned, pending, fresh);
+            if (!geometryWritten) {
+                this.nativeWriteDepth -= 1;
                 this.failFlight(flight, correlation, "write-failed");
                 return;
             }
             // Pre-write observation immediately before mover membership write.
             this.emitFollowDiag(correlation, planned.baseRevision, "send-pre-mover", fresh, this.diagBasisOf(pending), -1, -1);
-            if (!this.writeMoverDesktops(pending, fresh)) {
+            const moverWritten = this.writeMoverDesktops(pending, fresh);
+            this.nativeWriteDepth -= 1;
+            if (!moverWritten) {
                 this.failFlight(flight, correlation, "write-failed");
                 return;
             }
+            this.followAfterNativeMove(flight, correlation);
             this.completePostWrite(planned, flight, correlation);
             return;
         }
@@ -1796,19 +1816,29 @@ export class WorkspaceSendAdapter {
             }
         }
         pending.fenceTotal = this.geoPending.size;
-        // Native writes: direct geometry in the shared grow-before-shrink
-        // order, then only the mover's desktop membership. Desktop follow and
-        // mover focus happen only after the verify commit (see onVerifyReply).
-        if (!this.writeGeometries(planned, pending, fresh)) {
+        this.nativeWriteDepth += 1;
+        const geometryWritten = this.writeGeometries(planned, pending, fresh);
+        if (!geometryWritten) {
+            this.nativeWriteDepth -= 1;
             this.clearEcho();
             this.failFlight(flight, correlation, "write-failed");
             return;
         }
         // Pre-write observation immediately before mover membership write.
         this.emitFollowDiag(correlation, planned.baseRevision, "send-pre-mover", fresh, this.diagBasisOf(pending), -1, -1);
-        if (!this.writeMoverDesktops(pending, fresh)) {
+        const moverWritten = this.writeMoverDesktops(pending, fresh);
+        this.nativeWriteDepth -= 1;
+        if (!moverWritten) {
             this.clearEcho();
             this.failFlight(flight, correlation, "write-failed");
+            return;
+        }
+        this.followAfterNativeMove(flight, correlation);
+        // Synchronous fence callbacks may have consumed every echo while the
+        // native writes were guarded. Resume completion only after follow has
+        // returned from its switch/focus setter stack.
+        this.tryMaybeComplete(flight, correlation);
+        if (!this.inFlight || flight !== this.activeToken) {
             return;
         }
         this.diag("request", correlation, planned.baseRevision, "plan-echo", "waiting");
@@ -1919,7 +1949,7 @@ export class WorkspaceSendAdapter {
     }
 
     private tryMaybeComplete(flight: number, correlation: string): void {
-        if (!this.inFlight || flight !== this.activeToken) {
+        if (!this.inFlight || flight !== this.activeToken || this.nativeWriteDepth > 0 || this.nativeFollowDepth > 0) {
             return;
         }
         if (!this.moverSeen || this.geoPending.size > 0) {
@@ -1934,6 +1964,9 @@ export class WorkspaceSendAdapter {
     }
 
     private completePostWrite(planned: WorkspacePlanned, flight: number, correlation: string): void {
+        if (this.nativeWriteDepth > 0 || this.nativeFollowDepth > 0) {
+            return;
+        }
         const pending = this.pending;
         if (pending === null) {
             this.failFlight(flight, correlation, "stale-scope");
@@ -1945,7 +1978,7 @@ export class WorkspaceSendAdapter {
         // once with the planned rectangle, the mover absent from source and
         // present in target, all other windows retaining their planned
         // memberships, and the source/target domains, bounds, and target ref
-        // still matching the captured scope. Any mismatch is terminal without
+        // still matching the captured stable scope. Any mismatch is terminal without
         // a verify commit.
         const verified = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
         if (verified === null) {
@@ -1958,6 +1991,9 @@ export class WorkspaceSendAdapter {
             return;
         }
         pending.verifiedObserved = verified;
+        // The complete observation is also a valid membership proof when no
+        // earlier native read observed the mover transfer.
+        this.followAfterNativeMove(flight, correlation, verified);
         // Post-write observation: verified read shows the mover in target
         // while the basis keeps the frozen dispatch source. Best-effort only.
         this.emitFollowDiag(correlation, planned.baseRevision, "send-post-mover", verified, this.diagBasisOf(pending), -1, -1);
@@ -2103,7 +2139,7 @@ export class WorkspaceSendAdapter {
             verified.targetBounds.y !== snapshot.targetBounds.y ||
             verified.targetBounds.w !== snapshot.targetBounds.w ||
             verified.targetBounds.h !== snapshot.targetBounds.h ||
-            verified.targetDesktopRef !== pending.targetDesktopRef ||
+            verified.targetDesktopRef === null ||
             verified.targetExists !== true
         ) {
             return "stale-revision";
@@ -2162,6 +2198,46 @@ export class WorkspaceSendAdapter {
             }
         }
         return "";
+    }
+
+    // Native move-follow deliberately verifies only the transferred mover and
+    // immutable flight scope. Retained geometry remains an acknowledgement and
+    // commit gate in verifyPlannedPost, never a visibility/focus prerequisite.
+    private verifyNativeMove(
+        planned: WorkspacePlanned,
+        pending: WorkspacePendingFlight,
+        observed: WorkspaceSendObserved,
+    ): object | null {
+        const snapshot = pending.snapshot;
+        if (
+            pending.planned !== planned ||
+            !this.operationMatchesSnapshot(planned, pending) ||
+            observed.sourceOutput !== snapshot.sourceOutput ||
+            observed.sourceWorkspace !== snapshot.sourceWorkspace ||
+            observed.targetOutput !== snapshot.targetOutput ||
+            observed.targetWorkspace !== snapshot.targetWorkspace ||
+            observed.sourceBounds.x !== snapshot.sourceBounds.x ||
+            observed.sourceBounds.y !== snapshot.sourceBounds.y ||
+            observed.sourceBounds.w !== snapshot.sourceBounds.w ||
+            observed.sourceBounds.h !== snapshot.sourceBounds.h ||
+            observed.targetBounds.x !== snapshot.targetBounds.x ||
+            observed.targetBounds.y !== snapshot.targetBounds.y ||
+            observed.targetBounds.w !== snapshot.targetBounds.w ||
+            observed.targetBounds.h !== snapshot.targetBounds.h ||
+            observed.targetExists !== true ||
+            observed.targetDesktopRef === null
+        ) {
+            return null;
+        }
+        if (observed.sourceWindows.some((entry) => entry.id === pending.moverId)) {
+            return null;
+        }
+        for (const entry of observed.targetWindows) {
+            if (entry.id === pending.moverId) {
+                return entry.ref;
+            }
+        }
+        return null;
     }
 
     private sendAck(flight: number, correlation: string, payload: string): void {
@@ -2321,7 +2397,9 @@ export class WorkspaceSendAdapter {
             return;
         }
         this.diag("verify", correlation, revision as number, "verify", "committed");
-        this.followAfterCommit(flight, correlation, revision as number);
+        // The committed exact observation remains a final one-shot follow
+        // proof if an earlier native membership read was unavailable.
+        this.followAfterNativeMove(flight, correlation);
         this.inFlight = false;
         // Settled-observation basis for the later follow-settled line below.
         // Captured before teardown so the existing settlement edge stays
@@ -2357,54 +2435,44 @@ export class WorkspaceSendAdapter {
         this.emitFollowDiag(correlation, revision as number, "follow-settled", settled, settledBasis, -1, -1);
     }
 
-    // Legacy follow after a fully committed send: switch to the Rust-planned
-    // target desktop and focus the moved window. Runs only for the current
-    // fenced flight after an exact validated accepted/applied send plus a
-    // verified correct target/object/domain post-observation. Rejected, stale,
-    // mismatched, or duplicate echoes never reach here (they fail or ignore
-    // the flight before commit). A fresh post-commit observation re-runs the
-    // strict planned-post binding; any drift skips follow silently without a
-    // second admit/remove, without adapter-lost (Rust already committed and
-    // holds no pending), and without retry. Missing follow hooks also skip
-    // silently so unit harnesses without a desktop surface still commit.
-    private followAfterCommit(flight: number, correlation: string, revision: number): void {
-        if (!this.inFlight || flight !== this.activeToken) {
+    // Follow a confirmed native mover transfer once. The caller may supply a
+    // just-verified complete observation; otherwise this takes one fresh read.
+    // It intentionally does not acknowledge, commit, retire fences, or resync.
+    private followAfterNativeMove(
+        flight: number,
+        correlation: string,
+        observed?: WorkspaceSendObserved,
+    ): void {
+        if (
+            !this.inFlight ||
+            flight !== this.activeToken ||
+            this.activationStep !== 5 ||
+            this.nativeWriteDepth > 0 ||
+            this.nativeFollowDepth > 0 ||
+            !isUniqueOwner(this.pinnedOwner)
+        ) {
             return;
         }
         const pending = this.pending;
         const planned = pending?.planned ?? null;
-        if (pending === null || planned === null) {
+        if (pending === null || planned === null || pending.followStarted || pending.correlation !== correlation) {
             return;
         }
         const switchToTarget = this.env.switchToTarget;
         const focusWindow = this.env.focusWindow;
         if (typeof switchToTarget !== "function" || typeof focusWindow !== "function") {
-            this.diag("follow", correlation, revision, "follow", "skipped-hooks-unavailable");
+            pending.followStarted = true;
+            pending.followOutcome = "hooks-unavailable";
+            this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
             return;
         }
-        const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+        const fresh = observed ?? this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
         if (fresh === null) {
-            this.diag("follow", correlation, revision, "follow", "skipped-observation-unavailable");
             return;
         }
-        const mismatch = this.verifyPlannedPost(planned, pending, fresh);
-        if (mismatch !== "") {
-            this.diag("follow", correlation, revision, "follow", `skipped-${sanitizeKind(mismatch)}`);
-            return;
-        }
-        if (fresh.targetDesktopRef === null || fresh.targetDesktopRef !== pending.targetDesktopRef) {
-            this.diag("follow", correlation, revision, "follow", "skipped-target-ref");
-            return;
-        }
-        let moverRef: object | null = null;
-        for (const entry of fresh.targetWindows) {
-            if (entry.id === pending.moverId) {
-                moverRef = entry.ref;
-                break;
-            }
-        }
-        if (moverRef === null) {
-            this.diag("follow", correlation, revision, "follow", "skipped-mover-missing");
+        const moverRef = this.verifyNativeMove(planned, pending, fresh);
+        const targetDesktopRef = fresh.targetDesktopRef;
+        if (moverRef === null || targetDesktopRef === null) {
             return;
         }
         // Flight-pinned diagnostic basis. The gates above stay the only
@@ -2413,12 +2481,15 @@ export class WorkspaceSendAdapter {
         // stays frozen from the immutable dispatch snapshot.
         const basis: WorkspaceFollowDiagBasis = this.diagBasisOf(pending);
         // Before-setter observation: the pre-switch `fresh` binding above.
-        this.emitFollowDiag(correlation, revision, "follow-pre", fresh, basis, -1, -1);
+        pending.followStarted = true;
+        this.diag("follow", correlation, planned.baseRevision, "native-move-confirmed", "observed");
+        this.emitFollowDiag(correlation, planned.baseRevision, "follow-pre", fresh, basis, -1, -1);
         let switched = false;
+        this.nativeFollowDepth += 1;
         try {
-            switched = switchToTarget(fresh.targetDesktopRef, {
+            switched = switchToTarget(targetDesktopRef, {
                 correlation,
-                revision,
+                revision: planned.baseRevision,
                 nextSequence: () => this.nextDiagSeq(),
             }) === true;
         } catch (error) {
@@ -2437,7 +2508,7 @@ export class WorkspaceSendAdapter {
         }
         this.emitFollowDiag(
             correlation,
-            revision,
+            planned.baseRevision,
             "follow-switched",
             postSwitch,
             basis,
@@ -2445,14 +2516,20 @@ export class WorkspaceSendAdapter {
             -1,
         );
         if (!switched) {
-            this.diag("follow", correlation, revision, "follow", "switch-unconfirmed");
+            pending.followOutcome = "switch-unconfirmed";
+            this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
+            this.nativeFollowDepth -= 1;
+            return;
+        }
+        if (!this.inFlight || flight !== this.activeToken || this.pending !== pending) {
+            this.nativeFollowDepth -= 1;
             return;
         }
         let focused = false;
         try {
             focused = focusWindow(moverRef, {
                 correlation,
-                revision,
+                revision: planned.baseRevision,
                 nextSequence: () => this.nextDiagSeq(),
             }) === true;
         } catch (error) {
@@ -2470,7 +2547,7 @@ export class WorkspaceSendAdapter {
         }
         this.emitFollowDiag(
             correlation,
-            revision,
+            planned.baseRevision,
             "follow-focused",
             postFocus,
             basis,
@@ -2478,7 +2555,9 @@ export class WorkspaceSendAdapter {
             focused ? 1 : 0,
         );
         if (!focused) {
-            this.diag("follow", correlation, revision, "follow", "focus-unconfirmed");
+            pending.followOutcome = "focus-unconfirmed";
+            this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
+            this.nativeFollowDepth -= 1;
             return;
         }
         // Truthful telemetry only: WorkspaceWrapper setCurrentDesktopForScreen
@@ -2487,7 +2566,9 @@ export class WorkspaceSendAdapter {
         // composited/visible completion signal. state-confirmed means only
         // the immediate native current-map readback plus mover focus were
         // confirmed, never physical visible completion.
-        this.diag("follow", correlation, revision, "follow", "state-confirmed");
+        pending.followOutcome = "state-confirmed";
+        this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
+        this.nativeFollowDepth -= 1;
     }
 
     // Flight-pinned diagnostic basis using the dispatch-frozen source flags
@@ -2628,10 +2709,14 @@ export class WorkspaceSendAdapter {
         }
         const pending = this.pending;
         const revision = pending === null ? 0 : pending.baseRevision;
+        const followOutcome = pending?.followOutcome;
         // Post-plan terminal divergence: one bounded best-effort
         // `send-to-workspace-ack` `adapter-lost` to the still pinned owner
         // before disabling. Never the well-known name, never a retry, and a
         // failed report never changes the failure behavior.
+        if (pending?.planned !== null) {
+            this.planBlocked = true;
+        }
         this.reportAdapterLost();
         this.inFlight = false;
         this.pending = null;
@@ -2639,7 +2724,7 @@ export class WorkspaceSendAdapter {
         this.pinnedOwner = null;
         this.activeDeadline = 0;
         this.clearEcho();
-        this.diag("result", correlation, revision, "result", outcome);
+        this.diag("result", correlation, revision, "result", outcome, followOutcome);
         this.disable();
     }
 
@@ -2683,6 +2768,7 @@ export class WorkspaceSendAdapter {
         const pending = this.pending;
         const correlation = pending === null ? "" : pending.correlation;
         const revision = pending === null ? 0 : pending.baseRevision;
+        const followOutcome = pending?.followOutcome;
         // Exact pre-ack settlement only: a valid planned flight that has not
         // yet verified (verifiedObserved === null) may have converged locally
         // while its geometry/membership echoes were withheld or missed. Make
@@ -2738,6 +2824,7 @@ export class WorkspaceSendAdapter {
                 const fencePre = this.timeoutFenceDetail(planned, armedTotal);
                 this.clearEcho();
                 pending.verifiedObserved = fresh;
+                this.followAfterNativeMove(flight, correlation, fresh);
                 const payload = this.buildAckPayload(fresh, correlation, planned.baseRevision);
                 if (payload === null || payload.length > WORKSPACE_SEND_MAX_REQUEST_BYTES) {
                     this.logTimeoutSettle({
@@ -2803,6 +2890,9 @@ export class WorkspaceSendAdapter {
                 fence: this.timeoutFenceDetail(pending.planned, pending.fenceTotal),
             });
         }
+        if (pending?.planned !== null) {
+            this.planBlocked = true;
+        }
         this.clearTimer();
         // Post-plan timeout (ack/verify waiting on a valid planned reply) also
         // reports one best-effort adapter-lost to the pinned owner. The
@@ -2815,7 +2905,7 @@ export class WorkspaceSendAdapter {
         this.pinnedOwner = null;
         this.activeDeadline = 0;
         this.clearEcho();
-        this.diag("result", correlation, revision, `timeout-${stage}`, "timeout");
+        this.diag("result", correlation, revision, `timeout-${stage}`, "timeout", pending?.followOutcome ?? followOutcome);
         this.disable();
     }
 
@@ -2931,10 +3021,24 @@ export class WorkspaceSendAdapter {
         this.diag("request", "", 0, "refuse", outcome);
     }
 
-    private diag(stage: string, correlation: string, revision: number, event: string, outcome: string): void {
+    private diag(
+        stage: string,
+        correlation: string,
+        revision: number,
+        event: string,
+        outcome: string,
+        terminalFollowOutcome?: string,
+    ): void {
         try {
+            const followed =
+                terminalFollowOutcome === "state-confirmed" ||
+                terminalFollowOutcome === "switch-unconfirmed" ||
+                terminalFollowOutcome === "focus-unconfirmed" ||
+                terminalFollowOutcome === "hooks-unavailable";
             const followGate =
-                event === "refuse"
+                followed && (event === "result" || event.startsWith("timeout-"))
+                    ? ` follow=${terminalFollowOutcome} gate=native-move`
+                    : event === "refuse"
                     ? ` follow=not-reached gate=pre-commit phase=request reason=${outcome}`
                     : event === "result"
                       ? ` follow=not-reached gate=pre-commit phase=result reason=${outcome}`
@@ -2967,8 +3071,10 @@ export class WorkspaceSendAdapter {
         readonly fence: { readonly pending: number; readonly total: number; readonly moverSeen: number; readonly idx: string };
     }): void {
         try {
+            const followOutcome = this.pending?.followOutcome ?? "not-reached";
+            const followGate = followOutcome === "not-reached" ? "pre-commit" : "native-move";
             this.env.log(
-                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=timeout correlation=${detail.correlation} generation=${this.generation} revision=${String(toDiagInt(detail.revision, -1, WORKSPACE_SEND_MAX_REVISION))} diag_seq=${String(this.nextDiagSeq())} event=timeout-settle outcome=${sanitizeKind(detail.outcome)} verify_reason=${sanitizeKind(detail.verify.reason)} verify_gates=${detail.verify.reason === "ok" ? "complete" : "untested"} verify_geo_idx=${String(toDiagInt(detail.verify.geoIdx, -1, WORKSPACE_SEND_MAX_GEOMETRY))} verify_role=${sanitizeKind(detail.verify.role)} verify_dx=${String(toDiagInt(detail.verify.dx, -32768, 32768))} verify_dy=${String(toDiagInt(detail.verify.dy, -32768, 32768))} verify_dw=${String(toDiagInt(detail.verify.dw, -32768, 32768))} verify_dh=${String(toDiagInt(detail.verify.dh, -32768, 32768))} geo_seq=${String(this.nextGeometryDiagSeq())} fence_pending=${String(toDiagInt(detail.fence.pending, -1, WORKSPACE_SEND_MAX_GEOMETRY))} fence_total=${String(toDiagInt(detail.fence.total, -1, WORKSPACE_SEND_MAX_GEOMETRY))} mover_seen=${String(toDiagInt(detail.fence.moverSeen, -1, 1))} fence_idx=${detail.fence.idx}`,
+                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=timeout correlation=${detail.correlation} generation=${this.generation} revision=${String(toDiagInt(detail.revision, -1, WORKSPACE_SEND_MAX_REVISION))} diag_seq=${String(this.nextDiagSeq())} event=timeout-settle outcome=${sanitizeKind(detail.outcome)} follow=${sanitizeKind(followOutcome)} gate=${followGate} verify_reason=${sanitizeKind(detail.verify.reason)} verify_gates=${detail.verify.reason === "ok" ? "complete" : "incomplete"} verify_geo_idx=${String(toDiagInt(detail.verify.geoIdx, -1, WORKSPACE_SEND_MAX_GEOMETRY))} verify_role=${sanitizeKind(detail.verify.role)} verify_dx=${String(toDiagInt(detail.verify.dx, -32768, 32768))} verify_dy=${String(toDiagInt(detail.verify.dy, -32768, 32768))} verify_dw=${String(toDiagInt(detail.verify.dw, -32768, 32768))} verify_dh=${String(toDiagInt(detail.verify.dh, -32768, 32768))} geo_seq=${String(this.nextGeometryDiagSeq())} fence_pending=${String(toDiagInt(detail.fence.pending, -1, WORKSPACE_SEND_MAX_GEOMETRY))} fence_total=${String(toDiagInt(detail.fence.total, -1, WORKSPACE_SEND_MAX_GEOMETRY))} mover_seen=${String(toDiagInt(detail.fence.moverSeen, -1, 1))} fence_idx=${detail.fence.idx}`,
             );
         } catch (error) {
             void error;
@@ -3009,6 +3115,8 @@ export class WorkspaceSendAdapter {
                 return;
             }
             const fence = this.timeoutFenceDetail(planned, pending.fenceTotal);
+            const followOutcome = pending.followOutcome;
+            const followGate = followOutcome === "not-reached" ? "pre-commit" : "native-move";
             let verify: GeometryVerifyDetail = this.geometryVerifyDetail("none", -1, "unknown");
             try {
                 const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
@@ -3021,7 +3129,7 @@ export class WorkspaceSendAdapter {
             }
             try {
                 this.env.log(
-                    `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=request correlation=${pending.correlation} generation=${this.generation} revision=${String(toDiagInt(pending.baseRevision, -1, WORKSPACE_SEND_MAX_REVISION))} diag_seq=${String(this.nextDiagSeq())} event=disable-terminal outcome=disable-teardown follow=not-reached gate=pre-commit phase=disable reason=disable-teardown verify_reason=${sanitizeKind(verify.reason)} verify_gates=${verify.reason === "ok" ? "complete" : "untested"} verify_geo_idx=${String(toDiagInt(verify.geoIdx, -1, WORKSPACE_SEND_MAX_GEOMETRY))} verify_role=${sanitizeKind(verify.role)} verify_dx=${String(toDiagInt(verify.dx, -32768, 32768))} verify_dy=${String(toDiagInt(verify.dy, -32768, 32768))} verify_dw=${String(toDiagInt(verify.dw, -32768, 32768))} verify_dh=${String(toDiagInt(verify.dh, -32768, 32768))} geo_seq=${String(this.nextGeometryDiagSeq())} fence_pending=${String(toDiagInt(fence.pending, -1, WORKSPACE_SEND_MAX_GEOMETRY))} fence_total=${String(toDiagInt(fence.total, -1, WORKSPACE_SEND_MAX_GEOMETRY))} mover_seen=${String(toDiagInt(fence.moverSeen, -1, 1))} fence_idx=${fence.idx}`,
+                    `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=request correlation=${pending.correlation} generation=${this.generation} revision=${String(toDiagInt(pending.baseRevision, -1, WORKSPACE_SEND_MAX_REVISION))} diag_seq=${String(this.nextDiagSeq())} event=disable-terminal outcome=disable-teardown follow=${sanitizeKind(followOutcome)} gate=${followGate} phase=disable reason=disable-teardown verify_reason=${sanitizeKind(verify.reason)} verify_gates=${verify.reason === "ok" ? "complete" : "incomplete"} verify_geo_idx=${String(toDiagInt(verify.geoIdx, -1, WORKSPACE_SEND_MAX_GEOMETRY))} verify_role=${sanitizeKind(verify.role)} verify_dx=${String(toDiagInt(verify.dx, -32768, 32768))} verify_dy=${String(toDiagInt(verify.dy, -32768, 32768))} verify_dw=${String(toDiagInt(verify.dw, -32768, 32768))} verify_dh=${String(toDiagInt(verify.dh, -32768, 32768))} geo_seq=${String(this.nextGeometryDiagSeq())} fence_pending=${String(toDiagInt(fence.pending, -1, WORKSPACE_SEND_MAX_GEOMETRY))} fence_total=${String(toDiagInt(fence.total, -1, WORKSPACE_SEND_MAX_GEOMETRY))} mover_seen=${String(toDiagInt(fence.moverSeen, -1, 1))} fence_idx=${fence.idx}`,
                 );
             } catch (error) {
                 void error;

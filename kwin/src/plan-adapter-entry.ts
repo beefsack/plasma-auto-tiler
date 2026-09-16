@@ -1587,7 +1587,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         callDbus,
         scheduleOnce,
         log,
-        isSendActive: () => workspaceSendRef !== null && workspaceSendRef.isInFlight,
+        isSendActive: () => workspaceSendRef !== null && workspaceSendRef.blocksPlan,
         onPlannedApplied: () => {
             try {
                 highlightRefresh?.();
@@ -1859,8 +1859,9 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // Production dynamic workspace route: the native adapter owns the
     // project-owned backing-desktop mapping and lifecycle observation; the
     // existing send adapter owns the sole structural same-output tiled move
-    // through Rust, then follows to the Rust-planned target desktop and
-    // focuses the moved window only after commit.
+    // through Rust, then follows to the Rust-planned target desktop after its
+    // own fresh native mover-membership confirmation; Rust commit remains
+    // separately exact and may complete later.
     const workspaceNative = new WorkspaceNativeAdapter({
         getWorkspace: () => liveWorkspace,
         readWorkspaceMode: () => readWorkspaceModeValue(overrides.readWorkspaceModeFn),

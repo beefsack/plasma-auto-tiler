@@ -270,8 +270,7 @@ Historical implementation detail is recoverable in Git history.
 
 - Approved 2026-09-16: background tiling is supported at startup and on window
   open or move for non-visible workspaces, without switching visibility or
-  stealing focus. Implementation is deferred behind the P0 workspace-send
-  reliability blocker. Existing floating, sticky, fullscreen, maximize, and
+  stealing focus. Implementation remains pending. Existing floating, sticky, fullscreen, maximize, and
   configured-gap rules remain authoritative, with Rust retaining structural
   ownership and the native adapter retaining observation and actuation.
 - Pointer resize adjusts shared split boundaries or ratios and reflows
@@ -409,12 +408,29 @@ Historical implementation detail is recoverable in Git history.
 - `Meta+1..9` select an existing 1-based logical workspace without creation.
   `Meta+Shift+1..9` send only the focused tiled window to an existing
   same-output workspace through the Rust `MoveToWorkspace` route. `0` reuses or
-  creates the trailing empty target. A send switches to that target and focuses
-  the moved window only after Rust's exact accepted acknowledgement and matching
-  verified post-observation; rejected, stale, mismatched, and duplicate echoes
-  do not follow. The standard US shifted aliases `Meta+!` through `Meta+)` are
-  registered alongside the digit sends; registration preserves foreign shortcut
-  records and does not establish physical delivery.
+  creates the trailing empty target. A confirmed native mover transfer is a
+  user-visible partial success: after the mover desktop setter returns, one
+  fresh stable-id observation must prove the original flight's mover is absent
+  from its pinned source and present in its exact target, with source/target
+  output, domains, bounds, target availability, owner, generation, and flight
+  still valid. That one proof switches to the target and focuses the mover
+  promptly, without waiting for unrelated source or target geometry echoes,
+  Rust acknowledgement, verification, or commit. Setter returns and signal
+  delivery alone are not proof. Stale, ambiguous, missing, no-op, wrong-target,
+  owner, scope, and hook failures do not follow; switch or focus refusal is
+  reported without retry or fabricated rollback. The complete geometry and
+  membership observation remains the sole ack/verify/commit gate. A later exact
+  commit never follows twice; if no earlier fresh membership proof exists, its
+  exact observation may make the one follow. Native map/focus confirmation does
+  not claim rendered visibility. A post-plan uncertain terminal result keeps
+  Plan blocked rather than adopting the visible but uncommitted target domain;
+  only a committed send requests the normal Plan resync. KWin geometry and
+  membership are non-atomic and asynchronous: waiting for whole-layout
+  settlement before this confirmed native follow can strand the user after the
+  move, so unrelated layout settling must not gate it. The standard US shifted aliases `Meta+!`
+  through `Meta+)` are registered alongside the digit sends; registration
+  preserves foreign shortcut records and does not establish physical delivery.
+- USER VISUAL/MANUAL acceptance: "The issue appears to be fixed, I spam moved a window between many workspaces and it never failed. ... reinforces ... graceful handling ... actually feel really good even when spamming." This accepts move/follow usability and repeated same-session use across many workspaces. The supplied `/run/user/1000/plasma-auto-tiler-dev.E2E0QJ.log` is NOT ANALYZED and supplies no machine protocol, rendered-visibility, latency, recovery, or native-cause claim. The durable product preference is graceful, unsurprising handling of confirmed partial successes and responsiveness during rapid use; it does not authorize ignored errors, retries, queue resets, or an architecture or uncertain-recovery change.
 - A planned send that reaches its original pre-ack deadline may settle only from
   one fresh complete exact post-observation, then uses its original ack/verify
   transaction and one normal bounded deadline. It never rewrites, replays,

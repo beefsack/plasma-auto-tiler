@@ -164,7 +164,10 @@
   independently, and cannot acknowledge until both are seen. The flight clears
   only after commit or a defined terminal path. No source-defined ordering or
   ownership defect explains the absent mover echo, so no speculative correction
-  or telemetry-only change was made.
+  or telemetry-only change was made at that time. The later authorized
+  native-move follow behavior is narrower: a fresh stable-id membership proof
+  after the membership setter returns may follow once before unrelated geometry
+  settles; it does not infer a missing mover echo, commit, or rendered result.
 - The bounded unknown is whether the log ended before the flight's terminal
   timeout or KWin withheld/coalesced the mover or remaining geometry echo. The
   next useful user-owned observation is one labeled physical attempt, retaining
@@ -176,3 +179,7 @@
   bundled workspace-send adapter suite (86 tests). They confirm the modeled
   fence and later same-instance sends, but cannot prove native signal delivery
   or rendered visibility.
+
+## Closure
+
+- Subsequent USER VISUAL/MANUAL acceptance is: "The issue appears to be fixed, I spam moved a window between many workspaces and it never failed. ... reinforces ... graceful handling ... actually feel really good even when spamming." It accepts repeated same-session move/follow usability across many workspaces. The supplied `/run/user/1000/plasma-auto-tiler-dev.E2E0QJ.log` is NOT ANALYZED, so it does not alter this record's native-cause, protocol, or rendered-visibility limits.

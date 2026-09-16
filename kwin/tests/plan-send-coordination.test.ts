@@ -262,7 +262,7 @@ function fireSendTimeout(mocks: Mocks): void {
 }
 
 describe("plan/send P0 coordination through production wiring", () => {
-    it("blocks Plan admission during send, retains source, resyncs once, then allows distinct send", () => {
+    it("follows a confirmed native move before delayed target geometry commits, then resyncs once", () => {
         const world = makeWorld();
         const ws1 = world.desktops[0] as FakeDesktop;
         const ws2 = world.desktops[1] as FakeDesktop;
@@ -321,6 +321,22 @@ describe("plan/send P0 coordination through production wiring", () => {
         );
         const planCallsAfterInit = planCalls(mocks).length;
 
+        // Model a target client whose geometry setter returns normally but whose
+        // visible frame stays old until its later callback. The mover desktop
+        // assignment remains observable immediately.
+        const retainedTarget = world.wins.find((window) => window.internalId === "win-t") as FakeWindow;
+        let delayedTargetRect = retainedTarget.frameGeometry;
+        let holdTargetGeometry = true;
+        Object.defineProperty(retainedTarget, "frameGeometry", {
+            configurable: true,
+            get: (): { x: number; y: number; width: number; height: number } => delayedTargetRect,
+            set: (value: { x: number; y: number; width: number; height: number }): void => {
+                if (!holdTargetGeometry) {
+                    delayedTargetRect = value;
+                }
+            },
+        });
+
         // Start the first distinct send to ws-2 through production routing.
         handle?.requestWorkspaceMove(2);
         const ownerIndex = mocks.dbusCalls.findIndex((call) => call.method === "GetNameOwner");
@@ -363,8 +379,19 @@ describe("plan/send P0 coordination through production wiring", () => {
         // Native writes applied, ack held for echoes.
         const mover = world.wins.find((w) => w.internalId === "win-a") as FakeWindow;
         assert.ok((mover.desktops as FakeDesktop[]).some((d) => d.id === "ws-2"), "mover membership write applied");
+        assert.equal(delayedTargetRect.width, 100, "retained target geometry is still old");
         const ackBefore = sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace-ack").length;
         assert.equal(ackBefore, 0, "accepted ack must wait for echoes");
+
+        // Production entry follows the exact observed mover transfer without
+        // fabricating an acknowledgement or waiting for the unrelated target.
+        assert.equal(world.currentByOutput.get(world.outputs[0] as FakeOutput), ws2);
+        assert.equal(world.workspace["activeWindow"], mover);
+        assert.ok(
+            mocks.logs.some((l) => l.includes(`correlation=${correlation}`) && l.includes("event=native-move-confirmed")),
+            mocks.logs.join("\n"),
+        );
+        assert.ok(!mocks.logs.some((l) => l.includes(`correlation=${correlation}`) && l.includes("outcome=committed")), mocks.logs.join("\n"));
 
         // Source-current switch during held send: live current becomes target.
         world.currentByOutput.set(world.outputs[0] as FakeOutput, ws2);
@@ -387,7 +414,10 @@ describe("plan/send P0 coordination through production wiring", () => {
         assert.ok(mocks.logs.some((l) => l.includes("busy-refused kind=workspace-move")), "second send while send active busy-refuses");
         assert.equal(mocks.dbusCalls.length, dbusBeforeSecond, "blocked send must not touch D-Bus");
 
-        // Complete echoes: mover + all changed geometry.
+        // The delayed target eventually converges, then the original exact
+        // transaction acknowledges and commits without a second follow.
+        holdTargetGeometry = false;
+        retainedTarget.frameGeometry = { x: 600, y: 0, width: 600, height: 800 };
         for (const [, sigs] of winSignals) {
             fire(sigs.desktops);
         }
@@ -430,6 +460,11 @@ describe("plan/send P0 coordination through production wiring", () => {
         assert.ok(
             !mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")),
             mocks.logs.join("\n"),
+        );
+        assert.equal(
+            mocks.logs.filter((l) => l.includes(`correlation=${correlation}`) && l.includes("event=follow") && l.includes("outcome=state-confirmed")).length,
+            1,
+            "commit must not follow twice",
         );
 
         // Exactly one Plan resync after settlement.
@@ -897,7 +932,7 @@ describe("plan/send P0 coordination through production wiring", () => {
             return win;
         };
         const winA = mkWin("win-a", ws1, 0);
-        const winB = mkWin("win-b", ws1, 100);
+        mkWin("win-b", ws1, 100);
         mkWin("win-t", ws2, 0);
         world.workspace["activeWindow"] = winA;
 
@@ -926,6 +961,15 @@ describe("plan/send P0 coordination through production wiring", () => {
         const requests = sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace");
         assert.equal(requests.length, 1);
         const correlation = (requests[0]?.payload as Record<string, unknown>)["correlation_id"] as string;
+        let activeWrapper: FakeWindow = winA;
+        Object.defineProperty(world.workspace, "activeWindow", {
+            configurable: true,
+            get: (): FakeWindow => activeWrapper,
+            set: (value: unknown): void => {
+                // KWin may return a fresh script wrapper for the same Window.
+                activeWrapper = { ...(value as FakeWindow) };
+            },
+        });
         mocks.callbacks[requests[0]?.index as number]?.(
             JSON.stringify({
                 v: 1,
@@ -967,17 +1011,6 @@ describe("plan/send P0 coordination through production wiring", () => {
         );
         const verifyCalls = sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace-verify");
         assert.equal(verifyCalls.length, 1);
-        // Distinguish follow focus: move focus away before the verified commit.
-        world.workspace["activeWindow"] = winB;
-        let activeWrapper: FakeWindow = winB;
-        Object.defineProperty(world.workspace, "activeWindow", {
-            configurable: true,
-            get: (): FakeWindow => activeWrapper,
-            set: (value: unknown): void => {
-                // KWin may return a fresh script wrapper for the same Window.
-                activeWrapper = { ...(value as FakeWindow) };
-            },
-        });
         mocks.callbacks[verifyCalls[0]?.index as number]?.(
             JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", kind: "send-to-workspace", base_revision: 1 }),
         );
@@ -1092,7 +1125,7 @@ describe("plan/send P0 coordination through production wiring", () => {
         handle?.stop();
     });
 
-    it("terminal pre-ack timeout disables send with no resync, retry, or follow", () => {
+    it("terminal pre-ack timeout preserves confirmed native follow without commit or resync", () => {
         const world = makeWorld();
         const ws1 = world.desktops[0] as FakeDesktop;
         const ws2 = world.desktops[1] as FakeDesktop;
@@ -1212,17 +1245,18 @@ describe("plan/send P0 coordination through production wiring", () => {
         assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")), mocks.logs.join("\n"));
         assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
         assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
-        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
+        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
         assert.ok(
-            !mocks.logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=native-switch-")),
+            mocks.logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=native-switch-")),
             mocks.logs.join("\n"),
         );
         assert.ok(
-            mocks.logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=timeout-request") && line.includes("follow=not-reached gate=pre-commit phase=timeout reason=timeout-request")),
+            mocks.logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=timeout-request") && line.includes("follow=state-confirmed gate=native-move")),
             mocks.logs.join("\n"),
         );
-        assert.equal(world.currentByOutput.get(world.outputs[0] as FakeOutput), currentBefore, "no false follow");
-        assert.equal(world.workspace["activeWindow"], activeBefore, "no false focus");
+        assert.equal(currentBefore?.id, "ws-2", "native move already followed before timeout");
+        assert.equal(world.currentByOutput.get(world.outputs[0] as FakeOutput), currentBefore, "timeout does not rewrite the confirmed map");
+        assert.equal(world.workspace["activeWindow"], activeBefore, "timeout does not rewrite confirmed focus");
 
         // No onCommitted resync and no Plan lifecycle dispatch from the terminal path.
         assert.equal(planCalls(mocks).length, planAfterSettle, "terminal timeout must not resync Plan");
@@ -1241,7 +1275,7 @@ describe("plan/send P0 coordination through production wiring", () => {
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, dbusAfterTerminal, "late duplicates must not retry or replay");
         assert.equal(planCalls(mocks).length, planAfterSettle, "late duplicates must not dispatch Plan");
-        assert.equal(world.currentByOutput.get(world.outputs[0] as FakeOutput), currentBefore, "late duplicates must not follow");
+        assert.equal(world.currentByOutput.get(world.outputs[0] as FakeOutput)?.id, "ws-2", "late duplicates must not refollow");
 
         // Send stays disabled fail-closed.
         const dbusBeforeRetry = mocks.dbusCalls.length;

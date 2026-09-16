@@ -2,7 +2,7 @@
 
 ## Scope And Evidence
 
-- Documentation review followed by authorized production corrections and offline verification. No live KWin, D-Bus, window, focus, workspace, session, or client-protocol action occurred. The selected commit-before-follow protocol is unchanged.
+- Documentation review followed by authorized production corrections and offline verification. No live KWin, D-Bus, window, focus, workspace, session, or client-protocol action occurred. The later authorized native-move follow correction supersedes this audit snapshot's commit-before-follow protocol.
 - Finding consequences and the contract matrix describe the pre-correction audit snapshot; each finding's status and the implementation objectives below record completion.
 - Reviewed active production wiring only: `kwin/src/entry.ts:1-56`, `plan-adapter-entry.ts:1165-2014`, `plan-adapter.ts:2000-2384`, `workspace-send-adapter.ts:1288-2390`, and `workspace-native.ts:1540-1607`. The separately exportable `workspace-send-adapter-entry.ts` is test/isolated wiring, not the production entry.
 - Primary public API reference: [KWin scripting API](https://develop.kde.org/docs/plasma/kwin/api/). It identifies itself as generated "as of KWin 6.0" and supplies no 6.7.4 provenance or completion/error contract for the audited setters, signals, `callDBus`, or `QTimer`.
@@ -64,7 +64,7 @@
 - A no-op geometry, desktop, desktop-switch, maximize, or focus request may emit no signal. Signals can be deferred, intermediate, or coalesced; neither setter return, signal, immediate readback, Planner commit, nor `state-confirmed` proves rendered state.
 - `callDBus` returns no cancellable handle. A missing callback or logged exception does not prove the request was unprocessed, especially after native writes or Planner state mutation. Local timer deadlines, stale-reply drops, and loss settlement are project policy, not KWin request guarantees. Do not add `await` to setters, timer retry, reply-loss success inference, or a fabricated cancellation API.
 - `VirtualDesktop` and `Window` QObject reference stability is not documented across independent reads, deletion, output changes, or session lifetime. Current stale-object handling re-observes before writes and disconnects tracked handlers, which is correct. Reference-equality gates at `plan-adapter-entry.ts:1009-1018` and `workspace-send-adapter.ts:2021,2306` may falsely fail closed if wrappers are fresh; use stable desktop id only after an explicit availability-versus-strictness decision.
-- No public Script API exposes an atomic transaction across frame geometry, desktop membership, current desktop per output, and focus. The current sequential order is a selected product protocol: geometry, mover membership, exact post-observation, Planner ack/verify commit, desktop map switch, then focus. It must remain distinct from rendered completion.
+- No public Script API exposes an atomic transaction across frame geometry, desktop membership, current desktop per output, and focus. The selected product protocol writes geometry and mover membership, then after the setter stack returns may use one fresh stable-id mover-membership proof for target switch/focus. Exact full post-observation still gates Planner ack/verify/commit. Both native map/focus confirmation and commit remain distinct from rendered completion.
 
 ## Ordered Implementation Objectives
 
@@ -81,15 +81,24 @@
   `native-switch-*` records API availability, selected-output source, declared
   `void` setter boundary, call ordinal, and immediate current-map equality;
   `native-focus-*` records direct-assignment submission and active-window
-  native-id equality. `state-confirmed` remains immediate map-plus-focus state,
-  never rendered completion. Every terminal pre-commit entry refusal, adapter
-  refusal/activation/result/timeout, and direct disable record now explicitly
-  carries `follow=not-reached gate=pre-commit phase=<...> reason=<...>`.
-  Timeout and disable verifier short-circuits carry `verify_gates=untested`,
-  rather than implying a later membership check ran.
+  native-id equality. `native-move-confirmed` marks the separate native
+  transfer proof; `state-confirmed` remains immediate map-plus-focus state,
+  never rendered completion. Terminal records carry either
+  `follow=not-reached gate=pre-commit ...` or the actual one-shot native follow
+  result with `gate=native-move`, so a later layout timeout cannot misreport an
+  already-followed mover as not reached. An uncertain post-plan terminal state
+  blocks Plan admission instead of adopting the visible uncommitted target;
+  only commit performs the normal resync.
+  Timeout and disable verifier short-circuits carry `verify_gates=incomplete`:
+  an earlier scope or geometry gate may have run, but the full verifier did not
+  complete and later membership checks are not implied.
 - All values remain redacted session-local ordinals, counts, equality flags, and
   fixed tokens. Missing/unreadable reads are `-1` or `unreadable`; caught native
   exceptions use the fixed `caught` label. Diagnostic failures are ignored and
   do not alter the existing write, fence, commit, resync, or callback order.
 - Offline checks cover `npm run typecheck`, the focused 105-test adapter/production-entry subset, the full 692-test offline suite, explicit IIFE bundle build, and staged/unstaged whitespace checks. No live KWin, D-Bus, or rendered-state claim was made.
 - Offline implementation coverage includes production `startPlanAdapterEntry` tests for JavaScript property rejection, frame-geometry subscription, fresh focus wrappers, `NameHasOwner` absence activation with flags `0`, unique-owner pinning, stale reply rejection, and no accepted acknowledgement after a rejected membership write. Adapter tests cover the activation and existing signal-fence reentrant/no-op paths.
+- The production-wiring corrections above are not inferred from the separately
+  exportable isolated entry. The subsequent user acceptance is recorded in
+  `docs/decisions.md`; `/run/user/1000/plasma-auto-tiler-dev.E2E0QJ.log` is NOT
+  ANALYZED and supplies no API-contract or native-cause evidence.
