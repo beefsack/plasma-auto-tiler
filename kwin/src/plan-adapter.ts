@@ -97,6 +97,7 @@ export interface PlanSnapshotWindow {
     readonly fullscreen: boolean;
     readonly maximized: boolean;
     readonly floating: boolean;
+    readonly sticky?: boolean;
     readonly resourceClass: string;
 }
 
@@ -120,6 +121,7 @@ export function snapshotOf(observed: PlanObserved): PlanSnapshot {
         fullscreen: entry.fullscreen,
         maximized: entry.maximized,
         floating: entry.floating === true,
+        sticky: entry.sticky === true,
         resourceClass: isOpaqueId(entry.resourceClass) ? entry.resourceClass : "unknown",
     }));
     return {
@@ -2345,6 +2347,10 @@ export class PlanAdapter {
             workspace: entry.workspace,
             rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
             ...(entry.floating === true ? { floating: true } : {}),
+            // Internal fit opt-out for any floating, sticky, fullscreen, or
+            // maximized member. Rust declines fitting when any entry sets it;
+            // normal seed/reflow exception behavior is unchanged.
+            ...(entry.floating === true || entry.sticky === true || entry.fullscreen || entry.maximized ? { fit_excluded: true } : {}),
         }));
         let payload = "";
         try {

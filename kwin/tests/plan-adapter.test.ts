@@ -310,6 +310,39 @@ describe("plan adapter route identity and request shape", () => {
         assert.deepEqual(payload["command"], { op: "focus", window: "win-a", direction: "left" });
     });
 
+    it("marks floating, sticky, fullscreen, and maximized members fit_excluded", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = enableAdapter(mocks);
+        const classes = ["floating", "sticky", "fullscreen", "maximized"] as const;
+        classes.forEach((cls, index) => {
+            mocks.observeImpl = () => makeObserved(refs, { [cls]: { "win-a": true } });
+            adapter.requestFocus("left");
+            const payload = plannerPayload(mocks, index);
+            const windows = payload["windows"] as Array<Record<string, unknown>>;
+            assert.equal(windows.length, 2);
+            assert.equal(
+                (windows.find((entry) => entry["window"] === "win-a") as Record<string, unknown>)["fit_excluded"],
+                true,
+            );
+            assert.equal(
+                "fit_excluded" in (windows.find((entry) => entry["window"] === "win-b") as Record<string, unknown>),
+                false,
+            );
+            mocks.callbacks[index]?.(rejectedReply(payload["correlation_id"] as string, "snapshot-invalid"));
+        });
+        // Clean tiled members omit the marker entirely.
+        mocks.observeImpl = () => makeObserved(refs, {});
+        adapter.requestFocus("left");
+        const clean = plannerPayload(mocks, classes.length)["windows"] as Array<Record<string, unknown>>;
+        assert.deepEqual(clean[0], {
+            window: "win-a",
+            output: "out-1",
+            workspace: "ws-1",
+            rect: { x: 0, y: 0, w: 100, h: 100 },
+        });
+    });
+
     it("sends the deterministic numeric fingerprint binding", () => {
         const expected = planFingerprint("out-1", "ws-1", "win-a", ["win-a", "win-b"]);
         const refs = makeRefs();

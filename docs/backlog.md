@@ -114,12 +114,13 @@ Only meaningful pending or active work is listed.
   immediate reconcile. Multi-output, more-than-three-window, non-horizontal,
   boundary, atomicity, and parity claims remain unproven.
   [decision](decisions.md#production-interactive-edge-drag)
-- P2 | Placement-aware startup adoption implementation | Product choices are
-  resolved: try simple best-effort near-layout fitting at initial adoption,
-  falling back to normal deterministic tiling if no valid fit is produced.
-  Preserve existing exception behavior and avoid exhaustive search or
-  special-case complexity. Implementation is pending.
-  [proposal](changes/placement-aware-startup-adoption.md)
+- P2 | Placement-aware startup adoption live gate | Initial fresh adoption now
+  statically fits an exact, domain-aligned horizontal or vertical strip using
+  the configured gaps, then uses normal deterministic seed/reflow for every
+  other layout or exception. The Rust fit is transaction-bound and applies
+  independently to foreground and background domains; no live claim is made.
+  User-owned live acceptance remains pending.
+  [record](changes/placement-aware-startup-adoption.md)
 - P2 | KWin controller silent unload | Attribute a manual controller unload only
   with before/after `isScriptLoaded`, exact `Script<ID>` introspection, and KWin
   PID/start evidence.

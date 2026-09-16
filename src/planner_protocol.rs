@@ -37,7 +37,9 @@ use crate::contract::{
     AckOutcome, AdapterAck, FocusCapabilities, LifecycleCapabilities, LifecycleOperation,
     LifecyclePostObservation, LifecyclePrecondition, Observation,
 };
-use crate::directional::{Capabilities, Direction, NodeId, OutputId, WindowId, WorkspaceId};
+use crate::directional::{
+    Axis, Capabilities, Direction, Node, NodeId, OutputId, WindowId, WindowLink, WorkspaceId,
+};
 use crate::geometry::{Rect, project};
 use crate::ids::{CorrelationId, GenerationId, OwnerId};
 use crate::reconcile::{AckError, VerifyError};
@@ -174,6 +176,12 @@ struct ObservedDto {
     rect: RectDto,
     #[serde(default)]
     floating: bool,
+    /// Internal fit opt-out carried by the adapter for any floating, sticky,
+    /// fullscreen, or maximized snapshot entry. Defaults false so existing
+    /// fixtures parse unchanged; any set entry declines fitting while the
+    /// normal seed/reflow exception behavior is untouched.
+    #[serde(default)]
+    fit_excluded: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -833,6 +841,168 @@ fn seed_target_bounds(session: &Session, domain: &OutputDomain) -> Rect {
         return target.rect;
     }
     domain.bounds
+}
+
+/// Deterministic flat strip fit over the current admission's complete
+/// carried rectangles.
+///
+/// A simple project policy, not topology reconstruction: succeeds only when
+/// every non-excluded rectangle is valid, contained in the already-inset
+/// domain, non-overlapping, and the set forms one domain-aligned horizontal
+/// (side-by-side) or vertical (stacked) strip with exact configured sibling
+/// gaps. A horizontal strip needs every rect at the domain `y`/`h`, ordered
+/// by `x` from the domain left edge to the right edge with exactly
+/// `domain.gap` between siblings; vertical mirrors along `y`. A single
+/// window stays on the normal path (`None`).
+///
+/// Each matching strip builds one ordered flat N-ary `Node::Group` along
+/// that axis with the positive observed spans as shares, then projects it
+/// with the existing `project`. A strip is accepted only when the projection
+/// covers exactly the same window geometry (total projected movement zero,
+/// so no new magic threshold exists). When both strips match, the fixed
+/// Horizontal tie-break applies. Anything else returns `None` for the normal
+/// deterministic seed/reflow. Topology
+/// decisions use only rectangle geometry (never opaque window ids);
+/// leaf/group ids are safe internal deterministic index names.
+fn try_flat_strip_fit(
+    domain: &OutputDomain,
+    windows: &[ObservedDto],
+) -> Option<(Node, Vec<WindowLink>)> {
+    if windows.len() < 2 || windows.len() > PLAN_MAX_WINDOWS {
+        return None;
+    }
+    if windows.iter().any(|w| w.floating || w.fit_excluded) {
+        return None;
+    }
+    let mut items: Vec<(WindowId, Rect)> = Vec::with_capacity(windows.len());
+    for entry in windows {
+        let rect = Rect {
+            x: entry.rect.x,
+            y: entry.rect.y,
+            w: entry.rect.w,
+            h: entry.rect.h,
+        };
+        if !valid_carried_rect(rect.x, rect.y, rect.w, rect.h) {
+            return None;
+        }
+        if !rect_contained(rect, domain.bounds) {
+            return None;
+        }
+        items.push((WindowId(entry.window.clone()), rect));
+    }
+    for i in 0..items.len() {
+        for (_, other) in items.iter().skip(i + 1) {
+            let (a, b) = (items[i].1, *other);
+            if a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h {
+                return None;
+            }
+        }
+    }
+    // One axis attempt: order entries along the axis, check exact strip
+    // alignment against the inset domain with exact configured gaps, then
+    // project one flat N-ary group with observed spans as shares. Accepted
+    // only on exact same-geometry coverage with its movement total.
+    fn strip_candidate(
+        domain: &OutputDomain,
+        items: &[(WindowId, Rect)],
+        axis: Axis,
+    ) -> Option<(Node, Vec<WindowLink>)> {
+        let mut ordered: Vec<(WindowId, Rect)> = items.to_vec();
+        match axis {
+            Axis::Horizontal => ordered
+                .sort_by(|a, b| (a.1.x, a.1.y, a.1.w, a.1.h).cmp(&(b.1.x, b.1.y, b.1.w, b.1.h))),
+            Axis::Vertical => ordered
+                .sort_by(|a, b| (a.1.y, a.1.x, a.1.h, a.1.w).cmp(&(b.1.y, b.1.x, b.1.h, b.1.w))),
+        }
+        let gap = i64::from(domain.gap);
+        let mut cursor: i64 = match axis {
+            Axis::Horizontal => i64::from(domain.bounds.x),
+            Axis::Vertical => i64::from(domain.bounds.y),
+        };
+        let mut shares: Vec<u64> = Vec::with_capacity(ordered.len());
+        for (_, rect) in &ordered {
+            match axis {
+                Axis::Horizontal => {
+                    if rect.y != domain.bounds.y || rect.h != domain.bounds.h {
+                        return None;
+                    }
+                    if i64::from(rect.x) != cursor {
+                        return None;
+                    }
+                    if rect.w <= 0 {
+                        return None;
+                    }
+                    shares.push(rect.w as u64);
+                    cursor += i64::from(rect.w) + gap;
+                }
+                Axis::Vertical => {
+                    if rect.x != domain.bounds.x || rect.w != domain.bounds.w {
+                        return None;
+                    }
+                    if i64::from(rect.y) != cursor {
+                        return None;
+                    }
+                    if rect.h <= 0 {
+                        return None;
+                    }
+                    shares.push(rect.h as u64);
+                    cursor += i64::from(rect.h) + gap;
+                }
+            }
+        }
+        let end: i64 = match axis {
+            Axis::Horizontal => i64::from(domain.bounds.x) + i64::from(domain.bounds.w),
+            Axis::Vertical => i64::from(domain.bounds.y) + i64::from(domain.bounds.h),
+        };
+        if cursor - gap != end {
+            return None;
+        }
+        let children: Vec<Node> = (0..ordered.len())
+            .map(|i| Node::Leaf {
+                id: NodeId(format!("fit-l{i}")),
+            })
+            .collect();
+        let tree = Node::Group {
+            id: NodeId("fit-g0".to_owned()),
+            axis,
+            children,
+            shares,
+        };
+        let projected = project(&tree, domain.bounds, domain.gap).ok()?;
+        if projected.len() != ordered.len() {
+            return None;
+        }
+        for (index, (_, rect)) in ordered.iter().enumerate() {
+            let hit = &projected[index];
+            if hit.leaf.0 != format!("fit-l{index}") {
+                return None;
+            }
+            if hit.rect != *rect {
+                return None;
+            }
+        }
+        let links: Vec<WindowLink> = ordered
+            .iter()
+            .enumerate()
+            .map(|(index, (window, _))| WindowLink {
+                window: window.clone(),
+                leaf: NodeId(format!("fit-l{index}")),
+                output: domain.id.clone(),
+                workspace: domain.workspace.clone(),
+            })
+            .collect();
+        Some((tree, links))
+    }
+    let horizontal = strip_candidate(domain, &items, Axis::Horizontal);
+    let vertical = strip_candidate(domain, &items, Axis::Vertical);
+    match (horizontal, vertical) {
+        // Both candidates have exact projected geometry, so the fixed
+        // Horizontal tie-break keeps the choice deterministic.
+        (Some(h), Some(_)) => Some(h),
+        (Some(h), None) => Some(h),
+        (None, Some(v)) => Some(v),
+        (None, None) => None,
+    }
 }
 
 /// Rebuild ephemeral authoritative topology from the normalized observation.
@@ -1608,6 +1778,85 @@ impl Planner {
             }
             None => None,
         };
+        // Flat strip fit: truly fresh domains only (no retained session at
+        // all, including empty/pending/diverged/mismatch slots which stay on
+        // `run_retained`), `admit` only, no explicit placement bounds, and the
+        // admitted window is the focused window. The fitted topology still
+        // goes through the real proposal/acknowledgement/`verify_lifecycle`
+        // commit path with pre-commit base revision 0. Anything unsupported
+        // falls through to the normal seed/reflow below, independently per
+        // foreground or background domain through this same admit route.
+        if placement_explicit.is_none()
+            && command.window == ctx.request.focused_window
+            && self.sessions.get(&ctx.domain_key).is_none()
+            && let Some((tree, links)) = try_flat_strip_fit(&ctx.domain, &ctx.request.windows)
+            && let Some(focus_leaf) = links
+                .iter()
+                .find(|l| l.window.0 == command.window)
+                .map(|l| l.leaf.clone())
+        {
+            if let Ok(mut fitted) = Session::new(
+                ctx.owner.clone(),
+                ctx.generation.clone(),
+                0,
+                ctx.request.fingerprint,
+                vec![ctx.domain.clone()],
+            ) {
+                let base = fitted.accepted_revision();
+                let observation = observation_for(base, ctx);
+                let window = WindowId(command.window.clone());
+                let output = OutputId(command.output.clone());
+                let workspace = WorkspaceId(command.workspace.clone());
+                if let Ok(plan) = fitted.propose_fitted_admit(
+                    tree,
+                    links,
+                    focus_leaf,
+                    &window,
+                    &output,
+                    &workspace,
+                    &observation,
+                    &ctx.correlation,
+                    &LifecycleCapabilities::full(),
+                ) {
+                    let text = planned_reply(
+                        &ctx.request.correlation_id,
+                        plan.dispatch.base_revision,
+                        serde_json::json!({
+                            "kind": "admit",
+                            "policy_version": plan.dispatch.policy_version,
+                            "capability": "admit-tiled",
+                        }),
+                        &plan.desired_geometry,
+                        match (&plan.desired_focus_domain, &plan.desired_focus_leaf) {
+                            (Some(d), Some(l)) => Some((d, l)),
+                            _ => None,
+                        },
+                    );
+                    if acknowledge(&mut fitted, ctx, base) {
+                        let post = crate::contract::LifecyclePostObservation::new(
+                            Observation::new(
+                                ctx.owner.clone(),
+                                ctx.generation.clone(),
+                                base,
+                                ctx.request.fingerprint,
+                            ),
+                            ctx.correlation.clone(),
+                            true,
+                            plan.dispatch.preconditions.clone(),
+                            plan.dispatch.operation.clone(),
+                        );
+                        if fitted.verify_lifecycle(&post).is_ok() {
+                            self.store_committed(
+                                ctx.domain_key.clone(),
+                                fitted,
+                                ctx.request.domain.outer_gap,
+                            );
+                            return text;
+                        }
+                    }
+                }
+            }
+        }
         let seed_order = spatial_with_focus_last(
             ctx.request
                 .windows
@@ -7020,5 +7269,285 @@ mod tests {
         let cleared = parse_reply(&evaluate_plan_json(&solo));
         assert_eq!(cleared["outcome"], "no-group", "{cleared}");
         assert_eq!(cleared["detail"]["reason"], "no-parent-group", "{cleared}");
+    }
+
+    fn fit_excluded_request(
+        correlation: &str,
+        focused: &str,
+        windows: &[(&str, i32, i32, i32, i32)],
+        excluded: &[&str],
+        command: serde_json::Value,
+    ) -> String {
+        let mut request: serde_json::Value = serde_json::from_str(&retained_request(
+            correlation,
+            "owner-1",
+            "gen-1",
+            focused,
+            windows,
+            command,
+        ))
+        .expect("valid retained request");
+        for entry in request["windows"].as_array_mut().expect("windows") {
+            if excluded.contains(&entry["window"].as_str().expect("window")) {
+                entry["fit_excluded"] = serde_json::Value::Bool(true);
+            }
+        }
+        request.to_string()
+    }
+
+    fn fit_leaves(reply: &serde_json::Value) -> Vec<String> {
+        let mut leaves: Vec<String> = reply["desired_geometry"]
+            .as_array()
+            .expect("planned geometry present")
+            .iter()
+            .map(|entry| entry["leaf"].as_str().expect("leaf").to_owned())
+            .collect();
+        leaves.sort();
+        leaves
+    }
+
+    #[test]
+    fn fit_horizontal_strip_commits_through_lifecycle_at_base_zero() {
+        // Unequal 400/800 side-by-side strip: the normal seed would reflow to
+        // an equal split, so exact observed geometry proves the fit path.
+        let windows = [("win-1", 0, 0, 400, 800), ("win-2", 400, 0, 800, 800)];
+        let mut first = Planner::new();
+        let reply = parse_reply(&first.evaluate(&retained_request(
+            "fit-h-1",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &windows,
+            admit_body("win-2"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["base_revision"], 0, "{reply}");
+        assert_geometry_covers(&reply, &["win-1", "win-2"]);
+        assert_eq!(
+            geometry_by_window(&reply),
+            std::collections::BTreeMap::from([
+                ("win-1".to_owned(), (0, 0, 400, 800)),
+                ("win-2".to_owned(), (400, 0, 800, 800)),
+            ]),
+            "{reply}"
+        );
+        assert_eq!(fit_leaves(&reply), vec!["fit-l0", "fit-l1"], "{reply}");
+        // Deterministic across fresh planners.
+        let mut second = Planner::new();
+        let again = parse_reply(&second.evaluate(&retained_request(
+            "fit-h-1",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &windows,
+            admit_body("win-2"),
+        )));
+        assert_eq!(
+            again["desired_geometry"], reply["desired_geometry"],
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn fit_vertical_flat_nary_strip_with_exact_shares() {
+        // Three-high stacked strip: one flat N-ary group with positive spans
+        // as shares projects back to the exact observed geometry.
+        let windows = [
+            ("win-1", 0, 0, 1200, 200),
+            ("win-2", 0, 200, 1200, 200),
+            ("win-3", 0, 400, 1200, 400),
+        ];
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&retained_request(
+            "fit-v-1",
+            "owner-1",
+            "gen-1",
+            "win-3",
+            &windows,
+            admit_body("win-3"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["base_revision"], 0, "{reply}");
+        assert_geometry_covers(&reply, &["win-1", "win-2", "win-3"]);
+        assert_eq!(
+            geometry_by_window(&reply),
+            std::collections::BTreeMap::from([
+                ("win-1".to_owned(), (0, 0, 1200, 200)),
+                ("win-2".to_owned(), (0, 200, 1200, 200)),
+                ("win-3".to_owned(), (0, 400, 1200, 400)),
+            ]),
+            "{reply}"
+        );
+        assert_eq!(
+            fit_leaves(&reply),
+            vec!["fit-l0", "fit-l1", "fit-l2"],
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn fit_respects_configured_inner_and_outer_gaps() {
+        let windows = [("win-1", 8, 8, 588, 784), ("win-2", 604, 8, 588, 784)];
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&retained_request_with_selected_gaps(
+            "fit-gap-1",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &windows,
+            admit_body("win-2"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["base_revision"], 0, "{reply}");
+        assert_geometry_covers(&reply, &["win-1", "win-2"]);
+        let got = geometry_by_window(&reply);
+        assert_eq!(got["win-1"], (8, 8, 588, 784), "{reply}");
+        assert_eq!(got["win-2"], (604, 8, 588, 784), "{reply}");
+        assert_eq!(
+            got["win-2"].0,
+            got["win-1"].0 + got["win-1"].2 + 8,
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn fit_falls_back_to_normal_seed_on_overlap_misalignment_out_of_domain() {
+        // None of these form an exact domain-aligned strip, so every case
+        // must take the normal deterministic seed/reflow instead of fitting.
+        let normal = std::collections::BTreeMap::from([
+            ("win-1".to_owned(), (0, 0, 600, 800)),
+            ("win-2".to_owned(), (600, 0, 600, 800)),
+        ]);
+        for (correlation, windows) in [
+            (
+                "fit-fb-1",
+                vec![("win-1", 0, 0, 700, 800), ("win-2", 500, 0, 700, 800)],
+            ),
+            (
+                "fit-fb-2",
+                vec![("win-1", 0, 0, 600, 800), ("win-2", 600, 1, 600, 799)],
+            ),
+            (
+                "fit-fb-3",
+                vec![("win-1", 0, 0, 600, 800), ("win-2", 600, 0, 700, 800)],
+            ),
+        ] {
+            let mut planner = Planner::new();
+            let reply = parse_reply(&planner.evaluate(&retained_request(
+                correlation,
+                "owner-1",
+                "gen-1",
+                "win-2",
+                &windows,
+                admit_body("win-2"),
+            )));
+            assert_eq!(reply["outcome"], "planned", "{correlation} {reply}");
+            assert_geometry_covers(&reply, &["win-1", "win-2"]);
+            assert_eq!(geometry_by_window(&reply), normal, "{correlation} {reply}");
+        }
+    }
+
+    #[test]
+    fn fit_excluded_flag_declines_fit_without_changing_normal_path() {
+        // The marker only declines fitting: the normal seed still tiles the
+        // flagged member to the same deterministic geometry.
+        let windows = [("win-1", 0, 0, 400, 800), ("win-2", 400, 0, 800, 800)];
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&fit_excluded_request(
+            "fit-x-1",
+            "win-2",
+            &windows,
+            &["win-1"],
+            admit_body("win-2"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_geometry_covers(&reply, &["win-1", "win-2"]);
+        assert_eq!(
+            geometry_by_window(&reply),
+            std::collections::BTreeMap::from([
+                ("win-1".to_owned(), (0, 0, 600, 800)),
+                ("win-2".to_owned(), (600, 0, 600, 800)),
+            ]),
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn fit_gates_on_focused_admit_without_explicit_placement() {
+        // Admitting a non-focused window never fits, even on exact strip
+        // geometry: the focused window must be the admitted one.
+        let windows = [("win-1", 0, 0, 400, 800), ("win-2", 400, 0, 800, 800)];
+        let normal = std::collections::BTreeMap::from([
+            ("win-1".to_owned(), (0, 0, 600, 800)),
+            ("win-2".to_owned(), (600, 0, 600, 800)),
+        ]);
+        let mut unfocused = Planner::new();
+        let reply = parse_reply(&unfocused.evaluate(&retained_request(
+            "fit-g-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &windows,
+            admit_body("win-2"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(geometry_by_window(&reply), normal, "{reply}");
+        // Explicit placement bounds also opt out of fitting.
+        let mut placed = Planner::new();
+        let placed_reply = parse_reply(&placed.evaluate(&retained_request(
+            "fit-g-2",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &windows,
+            serde_json::json!({
+                "op": "admit",
+                "window": "win-2",
+                "output": "out-1",
+                "workspace": "ws-1",
+                "placement_bounds": {"x": 0, "y": 0, "w": 1200, "h": 800},
+            }),
+        )));
+        assert_eq!(placed_reply["outcome"], "planned", "{placed_reply}");
+        assert_eq!(geometry_by_window(&placed_reply), normal, "{placed_reply}");
+    }
+
+    #[test]
+    fn fit_commits_once_and_retained_followup_never_refits() {
+        let mut planner = Planner::new();
+        let fitted = parse_reply(&planner.evaluate(&retained_request(
+            "fit-r-1",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &[("win-1", 0, 0, 400, 800), ("win-2", 400, 0, 800, 800)],
+            admit_body("win-2"),
+        )));
+        assert_eq!(fitted["outcome"], "planned", "{fitted}");
+        assert_eq!(fitted["base_revision"], 0, "{fitted}");
+        let before = geometry_by_window(&fitted)["win-1"];
+        // A retained follow-up (existing session) always uses the normal
+        // path: base 1 proves the fit committed exactly once, and the fitted
+        // first child is not rewritten.
+        let follow = parse_reply(&planner.evaluate(&retained_request(
+            "fit-r-2",
+            "owner-1",
+            "gen-1",
+            "win-3",
+            &[
+                ("win-1", 0, 0, 400, 800),
+                ("win-2", 400, 0, 800, 800),
+                ("win-3", 0, 0, 100, 80),
+            ],
+            admit_body("win-3"),
+        )));
+        assert_eq!(follow["outcome"], "planned", "{follow}");
+        assert_eq!(follow["base_revision"], 1, "{follow}");
+        assert_geometry_covers(&follow, &["win-1", "win-2", "win-3"]);
+        assert_eq!(
+            geometry_by_window(&follow)["win-1"],
+            before,
+            "{follow} vs {fitted}"
+        );
     }
 }

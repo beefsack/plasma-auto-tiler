@@ -103,15 +103,27 @@
   (`docs/decisions.md:416-445`; `src/cosmic_v1.rs:50-198`). A fitted adoption
   policy is therefore a documented project policy, not claimed COSMIC parity.
 
-## Implementation Work Still Needed
+## Implementation Outcome
 
-- Implement the selected INITIAL and post-CONFIRMED-Planner-loss fresh-session
-  near-layout fit, using the existing normal deterministic seed/reflow whenever
-  it cannot produce a valid supported layout.
-- Preserve the existing floating, sticky, fullscreen, maximize, and configured
-  gap behavior while connecting the fit to the current eligibility/pure input
-  boundary. This does not authorize transaction recovery, retained-tree
-  reconstruction, workspace work, or a broader activation lifecycle.
+- Static implementation delivers the INITIAL fit only. A fresh focused admit
+  with no retained domain attempts one deterministic flat horizontal or
+  vertical strip fit. The complete strip must align to the current inset domain
+  with the configured inner gap and reproject to the observed geometry exactly;
+  otherwise normal deterministic seed/reflow runs.
+- Rust constructs and validates the fitted N-ary topology, then proposes,
+  acknowledges, verifies, and commits it through the existing lifecycle path.
+  Foreground and background domains use the same fresh-admit route. Retained,
+  pending, divergent, explicit-placement, unfocused, and single-window paths
+  retain their prior behavior.
+- The native adapter marks any floating, sticky, fullscreen, or maximized
+  member as fit-excluded. That declines fitting and preserves the existing
+  normal seed/reflow exception behavior; configured gaps remain adapter inputs
+  and Rust projection policy. Planner-loss fresh-session integration is still
+  pending and will reuse this helper without changing recovery semantics.
+- Offline Rust and TypeScript coverage establishes deterministic strip results,
+  configured gap/inset handling, exceptions and unsupported-input fallback,
+  lifecycle base revision, retained follow-up behavior, and adapter payload
+  exclusion. Live KWin/Plasma acceptance is user-owned and pending.
 
 ## Backlog Maintenance Finding
 
