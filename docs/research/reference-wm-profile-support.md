@@ -17,8 +17,8 @@ No live compositor, DBus, session, configuration, or manual testing occurred.
 The current direction remains `cosmic_v1`: the core owns deterministic ordered
 N-ary split trees, shares, policy, and logical intent; adapters own native
 identity, work area, pixel projection, focus, shortcuts, native workspaces,
-actuation, and verification. See [the shared-core boundary](../../changes/archive/shared-rust-core-architecture.md)
-and [current decisions](../../decisions.md#cosmic-movement-and-groups). A future
+actuation, and verification. See [the shared-core boundary](../changes/archive/shared-rust-core-architecture.md)
+and [current decisions](../decisions.md#cosmic-movement-and-groups). A future
 profile is required to include both algorithm and matching shortcuts, but no
 Hyprland or native backend is selected.
 
@@ -27,7 +27,7 @@ The pins below are release baselines, retrieved 2026-09-17:
 | System | Pin and provenance | Important default distinction |
 | --- | --- | --- |
 | Hyprland | [`v0.56.2`](https://github.com/hyprwm/Hyprland/tree/v0.56.2), commit [`efb50993780079460b0cbed1363e2166a2de1d9f`](https://github.com/hyprwm/Hyprland/commit/efb50993780079460b0cbed1363e2166a2de1d9f), released 2026-08-05. | The first-run generated configuration embeds the tagged [`example/hyprland.lua`](https://github.com/hyprwm/Hyprland/blob/v0.56.2/example/hyprland.lua). It is an editable example, not an enforced global keymap. The unversioned wiki is Latest git and is not evidence of this release's defaults. |
-| bspwm | [`0.9.12`](https://github.com/baskerville/bspwm/tree/0.9.12), commit [`c5cf7d3943f9a34a5cb2bab36bf473fd77e7d4f6`](https://github.com/baskerville/bspwm/commit/c5cf7d3943f9a34a5cb2bab36bf473fd77e7d4f6), released 2025-10-08. | bspwm has no keyboard/pointer binding subsystem. Its tagged [`examples/sxhkdrc`](https://github.com/baskerville/bspwm/blob/0.9.12/examples/sxhkdrc) is an example requiring `sxhkd` (or an equivalent `bspc` invoker), not a bspwm default and not a distro default. |
+| bspwm | [`0.9.12`](https://github.com/baskerville/bspwm/tree/0.9.12), commit [`c5cf7d3943f9a34a5cb2bab36bf473fd77e7d4f6`](https://github.com/baskerville/bspwm/commit/c5cf7d3943f9a34a5cb2bab36bf473fd77e7d4f6), released 2025-10-08. | bspwm has no keyboard-binding subsystem; its tagged [`examples/sxhkdrc`](https://github.com/baskerville/bspwm/blob/0.9.12/examples/sxhkdrc) requires `sxhkd` (or an equivalent `bspc` invoker), and is neither a bspwm nor distro default. bspwm does have configurable native pointer modifier/actions. |
 | PaperWM | [`v50.0.1`](https://github.com/paperwm/PaperWM/tree/v50.0.1), commit [`af20e70e5d3f9c83a7e1bd548fbcb9377a4b698b`](https://github.com/paperwm/PaperWM/commit/af20e70e5d3f9c83a7e1bd548fbcb9377a4b698b), released 2026-04-21. Tagged [`metadata.json`](https://github.com/paperwm/PaperWM/blob/v50.0.1/metadata.json) declares Shell 45-50. | Its GSettings schema supplies extension defaults. PaperWM may blank conflicting GNOME bindings while enabled and restore saved values on disable; actual conflicts remain host, distro, extension, and user-config dependent. It is a GNOME Shell extension, not a standalone compositor. |
 
 Availability of a source or protocol does not grant permission to copy code or
@@ -91,15 +91,57 @@ column/viewport projection model rather than silently mapping it to
 | Concern | Source-evidenced behavior and consequence |
 | --- | --- |
 | Structural model and opening | The default open position is right of the active window. Settings can cycle right, left, start, end, down, and up; the tagged defaults enable right/left/down in that cycle. A column stacks windows vertically; columns form an unbounded horizontal strip. |
-| Focus and movement | Directional and linear focus ensure the selected window is visible by scrolling the viewport. `move-*` calls the extension's swap path; available source/history evidence describes column movement when the active member belongs to a column, so it must not be assumed to be a single-leaf tree move without a version-pinned fixture. |
+| Focus and movement | Directional and linear focus ensure the selected window is visible by scrolling the viewport. Left/right swaps whole columns; up/down swaps rows within the selected window's column. The exact tagged control flow and examples are below. |
 | Column operations | `slurp-in` consumes a window into the active column. `barf-out` expels the bottom window, while `barf-out-active` expels the active window, to its own column. No generic tab group, merge-all, or split-tree reparenting API is established. |
 | Resize, cycling, and placement | Width and height can increment/decrement or cycle through configured steps. `toggle-maximize-width` is horizontal maximize within the tiling geometry. Mouse edge previews can activate concealed windows; drag supports column layout and edge drift. |
-| Close and collapse | `close-window` requests client deletion. This pass found no separately bindable collapse operation; resulting column collapse behavior must be fixture-mined before it is claimed as policy parity. |
+| Close and collapse | `close-window` requests client deletion. The extension's window-removal handler removes the row; if that was the last row, it removes the column. This is automatic live-column collapse, not a separately bindable operation or retained empty column. |
 | Exceptions | Scratch windows are detached floating, above, and sticky via extension internals. `paper-toggle-fullscreen` is separate from width maximize. No PaperWM schema action for general native sticky or full maximize was found. |
 | Workspaces and outputs | PaperWM maintains one scrollable tiling per workspace. The workspace stack is shared across monitors, while additional monitors make another workspace visible. It overrides GNOME dynamic-workspace handling to retain enough workspaces for visible monitors. This does not equal KWin's three logical workspace modes. |
 | Pointer, gestures, and keyboard | Top-bar/position-bar scroll changes visible windows; edge previews are clickable; touchpad swipes move the viewport or workspace stack (Wayland-only). Extension keybindings are GSettings defaults, not compositor-global immutable defaults. |
 
 Primary source: tagged [`tiling.js`](https://github.com/paperwm/PaperWM/blob/v50.0.1/tiling.js), [`keybindings.js`](https://github.com/paperwm/PaperWM/blob/v50.0.1/keybindings.js), [`settings.js`](https://github.com/paperwm/PaperWM/blob/v50.0.1/settings.js), [`patches.js`](https://github.com/paperwm/PaperWM/blob/v50.0.1/patches.js), [`topbar.js`](https://github.com/paperwm/PaperWM/blob/v50.0.1/topbar.js), and [README](https://github.com/paperwm/PaperWM/blob/v50.0.1/README.md).
+
+#### PaperWM `v50.0.1` Movement And Collapse Trace
+
+The tagged key handlers call `Space.swap` for every directional move
+([`keybindings.js:230-237`](https://github.com/paperwm/PaperWM/blob/af20e70e5d3f9c83a7e1bd548fbcb9377a4b698b/keybindings.js#L230-L237)).
+`Space.swap` finds `[column, row]`, changes column for left/right or row for
+up/down, rejects an out-of-range target, swaps the row, swaps the column, then
+lays out and ensures the selected window is visible
+([`tiling.js:1063-1094`](https://github.com/paperwm/PaperWM/blob/af20e70e5d3f9c83a7e1bd548fbcb9377a4b698b/tiling.js#L1063-L1094)).
+The two swaps make the actual semantics precise:
+
+| Before and command | After | Source result |
+| --- | --- | --- |
+| `[[A] [B*] [C]]`, move right | `[[A] [C] [B*]]` | Left/right leaves `row` unchanged, making the row swap a no-op and swapping whole columns. |
+| `[[A] [B* B2] [C]]`, move right | `[[A] [C] [B* B2]]` | A stacked column moves intact; its row order is retained. |
+| `[[A] [B* B2]]`, move down | `[[A] [B2 B*]]` | Up/down leaves `column` unchanged, making the column swap a no-op and swapping rows in that column. |
+| `[[A*]]`, move up or down | unchanged | The origin column has no target row, so `Space.swap` returns. Left from the first column and right from the last also return. |
+
+`slurp-in` calls `Tiling.slurp(mw)`, while `barf-out` calls
+`Tiling.barf(mw)` and `barf-out-active` calls `Tiling.barf(mw, mw)`
+([`keybindings.js:322-332`](https://github.com/paperwm/PaperWM/blob/af20e70e5d3f9c83a7e1bd548fbcb9377a4b698b/keybindings.js#L322-L332)).
+Their keybinding path uses the current opening-position setting and the default
+bottom insertion, not a generic tree reparent operation:
+
+| Before and command | After | Source result |
+| --- | --- | --- |
+| `[[A*] [B]]`, slurp with right/default opening | `[[A* B]]` | `slurp` takes row 0 from the neighboring column, appends it to the active column, and removes the now-empty source column. |
+| `[[A] [B*]]`, slurp with left/start opening | `[[B* A]]` | The left neighbor is appended beneath the active member. |
+| `[[A B* C]]`, barf out | `[[A B*] [C]]` | Without `expelWindow`, `barf` removes the bottom row and creates a new adjacent column. |
+| `[[A B* C]]`, barf out active | `[[A C] [B*]]` | With `expelWindow`, it removes the active row and creates a new adjacent column. |
+
+These transformations are implemented by tagged [`Tiling.slurp`
+lines 5228-5310](https://github.com/paperwm/PaperWM/blob/af20e70e5d3f9c83a7e1bd548fbcb9377a4b698b/tiling.js#L5228-L5310).
+The tagged [`Tiling.barf` lines 5317-5359](https://github.com/paperwm/PaperWM/blob/af20e70e5d3f9c83a7e1bd548fbcb9377a4b698b/tiling.js#L5317-L5359)
+implements the expel cases. Each is a no-op respectively with fewer than two columns or fewer than two rows
+in the active column. `close-window` calls `Meta.Window.delete`; the tagged
+removal path removes the row and splices the column when it becomes empty
+([`keybindings.js:318-320`](https://github.com/paperwm/PaperWM/blob/af20e70e5d3f9c83a7e1bd548fbcb9377a4b698b/keybindings.js#L318-L320),
+[`Space.removeWindow:981-1030`](https://github.com/paperwm/PaperWM/blob/af20e70e5d3f9c83a7e1bd548fbcb9377a4b698b/tiling.js#L981-L1030),
+[`remove_handler:3950-3967`](https://github.com/paperwm/PaperWM/blob/af20e70e5d3f9c83a7e1bd548fbcb9377a4b698b/tiling.js#L3950-L3967)).
+For example, closing `B2*` in `[[A] [B1 B2*] [C]]` yields `[[A] [B1] [C]]`;
+closing sole `B*` in `[[A] [B*]]` yields `[[A]]`.
 
 ## Default Shortcut Catalogs
 
@@ -155,8 +197,8 @@ retrieved 2026-09-17. `[]` schema values are shown as `UNBOUND`.
 | Action family | Default bindings | Meaning / absence |
 | --- | --- | --- |
 | Open, close, focus | Super+Return or Super+N; Super+BackSpace; Super+Period/Comma; Super+arrows; Super+Home/End | New same-application window; close; next/previous; directional; first/last. Loop/global/numbered-position focus is **UNBOUND**. |
-| Move and columns | Super+Ctrl+Period or Super+Shift+Period or Super+Ctrl+Right; corresponding Comma/Left; Super+Ctrl+Up/Down; Super+I; Super+O; Super+Shift+O; Super+T | Move right/left/up/down; slurp; barf bottom; barf active; take-and-drop navigation. |
-| Resize and view | Super+Plus/Minus; Super+Shift+Plus/Minus; Super+R; Super+Alt+R; Super+Shift+R; Super+Alt+Shift+R; Super+[ / ] | Width; height; cycle width/height forward/back; drift viewport. |
+| Move and columns | Super+Ctrl+Period or Super+Shift+Period or Super+Ctrl+Right; corresponding Comma/Left; Super+Ctrl+Up/Down; Super+I; Super+O; Super+Shift+O; Super+T | Move whole column right/left; swap active row up/down; slurp a neighbor; barf bottom row; barf active row; take-and-drop navigation. |
+| Resize and view | Super+Plus/Minus; Super+Shift+Plus/Minus; Super+R; Super+Alt+R; Super+Shift+R; Super+Alt+Shift+R; Super+[ / ] | Width increment/decrement; height increment/decrement; cycle width/height forward/back; drift viewport. |
 | Float, maximize, fullscreen | Super+F; Super+Shift+F; Super+Escape / Shift+Escape / Ctrl+Escape | Width maximize; fullscreen; show scratch / scratch layer / attach scratch. General float and sticky bindings are **UNBOUND**. |
 | Workspace | Super+PageDown/PageUp; Super+Ctrl+PageDown/PageUp; Super+Above_Tab; Super+Shift+Above_Tab | Switch or send within current-monitor workspace sequence; previous workspace and reverse. All-monitors sequence bindings are **UNBOUND**. |
 | Output and workspace-output | Super+Shift+arrows; Super+Ctrl+Shift+arrows; Ctrl+Alt+Shift+arrows; Super+Alt+arrows | Focus monitor; send active window; move workspace; swap workspace with directional monitor. |
