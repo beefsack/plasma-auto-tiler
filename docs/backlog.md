@@ -195,6 +195,12 @@ Only meaningful pending or active work is listed.
   `main`, require explicit user authorization before deletion.
 - P3 | Other compositor validation | Validate bspwm, Hyprland, and COSMIC at
   their actual runtimes. [comparison](reference-wm-comparison.md)
+- P3 | Cross-platform adapter feasibility | Research establishes a public,
+  normal-window subset for Windows, macOS, and GNOME but rejects literal
+  cross-platform workspace/shortcut/focus parity. No port, workspace model,
+  panel, settings toolkit, or package format is approved. Any future work must
+  select a host/version and pass its bounded capability prototype first.
+  [research](research/cross-platform-support/feasibility.md)
 - P3 | Artifact publication | Publish reproducible KPackage artifacts to KDE
   Store and GitHub Release after MVP delivery dependencies complete.
   [foundations](changes/archive/delivered-foundations.md)
