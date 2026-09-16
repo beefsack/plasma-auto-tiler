@@ -277,6 +277,73 @@ export function ensureTrailingEmptyDesktop(
     return { removedIds: Object.freeze(removedIds), appendedId };
 }
 
+export interface DisplacedRect {
+    readonly x: number;
+    readonly y: number;
+    readonly w: number;
+    readonly h: number;
+}
+
+export interface DisplacedDestinationCandidate {
+    readonly key: string;
+    readonly rect: DisplacedRect | null;
+}
+
+// Session-local output-displacement destination: nearest survivor only when
+// the caller supplies removed-output geometry from the native handling
+// source, else the current primary (active) survivor, else deterministic
+// existing output ordering. The current adapter does not retain removed
+// geometry, so it passes a null reference and falls back to primary/order.
+// Post-disconnect window frame geometry is never used as a proxy for
+// removed-output geometry. No historical geometry tracking: callers pass
+// only live survivor rects and the live primary key. Pure and deterministic
+// for offline tests.
+export function chooseDisplacedDestination(
+    survivors: ReadonlyArray<DisplacedDestinationCandidate>,
+    activeKey: string | null,
+    reference: DisplacedRect | null,
+): string | null {
+    if (survivors.length === 0) {
+        return null;
+    }
+    if (survivors.length === 1) {
+        const only = survivors[0];
+        return only === undefined ? null : only.key;
+    }
+    if (reference !== null) {
+        const rx = reference.x + reference.w / 2;
+        const ry = reference.y + reference.h / 2;
+        let bestKey: string | null = null;
+        let bestDist = Number.POSITIVE_INFINITY;
+        for (const candidate of survivors) {
+            if (candidate.rect === null) {
+                continue;
+            }
+            const cx = candidate.rect.x + candidate.rect.w / 2;
+            const cy = candidate.rect.y + candidate.rect.h / 2;
+            const dx = cx - rx;
+            const dy = cy - ry;
+            const dist = dx * dx + dy * dy;
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestKey = candidate.key;
+            }
+        }
+        if (bestKey !== null) {
+            return bestKey;
+        }
+    }
+    if (activeKey !== null) {
+        for (const candidate of survivors) {
+            if (candidate.key === activeKey) {
+                return activeKey;
+            }
+        }
+    }
+    const first = survivors[0];
+    return first === undefined ? null : first.key;
+}
+
 class SessionOutputKeys {
     private readonly slots: Array<{ readonly key: string; readonly tuple: string }> = [];
     private readonly byOutput = new Map<object, string>();
@@ -350,6 +417,23 @@ export class WorkspaceNativeAdapter {
     private globalPrimary: string | undefined = undefined;
     private readonly sharedIds: string[] = [];
     private readonly owned = new Set<string>();
+    // Session-local output-displacement mapping only, no restart persistence.
+    // Origin output key -> displaced workspace ids plus chosen survivor key.
+    // Workspace relocation is the unit: return moves whole workspaces with
+    // CURRENT contents, never individual windows.
+    private readonly displacedByOrigin = new Map<string, { workspaceIds: string[]; destKey: string }>();
+    // Last known visible desktop per stable output key, updated on each
+    // topology signal while the output is live. Session-local mapping state
+    // (not geometry history) so a removed output's visible workspace can be
+    // displaced even when its mapping list is empty. Primed at enable.
+    private readonly lastVisibleByKey = new Map<string, string>();
+    // Last known workspace membership per stable output key, grouped from
+    // observed window output while the output was live. Session-local mapping
+    // state (not geometry history) so background/non-visible occupied
+    // workspaces of a removed output are displaced as a unit even when the
+    // mapping list missed them. Primed at enable, refreshed after each
+    // displacement pass; never records historical geometry.
+    private readonly lastKnownByKey = new Map<string, string[]>();
 
     constructor(private readonly env: WorkspaceNativeEnv) {}
 
@@ -378,6 +462,7 @@ export class WorkspaceNativeAdapter {
         this.enabled = true;
         this.rebuildKeysAndMappings();
         this.cleanupDesktops();
+        this.primeDisplacedTracking();
         return true;
     }
 
@@ -393,6 +478,9 @@ export class WorkspaceNativeAdapter {
         this.globalInverse.clear();
         this.globalPrimary = undefined;
         this.sharedIds.length = 0;
+        this.displacedByOrigin.clear();
+        this.lastVisibleByKey.clear();
+        this.lastKnownByKey.clear();
     }
 
     private pruneOwnedToLive(): void {
@@ -432,15 +520,42 @@ export class WorkspaceNativeAdapter {
         return Object.freeze([...this.sharedIds]);
     }
 
+    displacedSnapshot(): Readonly<Record<string, { readonly workspaceIds: ReadonlyArray<string>; readonly destKey: string }>> {
+        const out: Record<string, { readonly workspaceIds: ReadonlyArray<string>; readonly destKey: string }> = {};
+        for (const [origin, entry] of this.displacedByOrigin) {
+            out[origin] = Object.freeze({ workspaceIds: Object.freeze([...entry.workspaceIds]), destKey: entry.destKey });
+        }
+        return Object.freeze(out);
+    }
+
     // One synchronous cleanup per workspace or window signal. Creates or
     // retires backing desktops so every relevant domain keeps one trailing
     // empty. Never removes populated, current, visible, unowned, or one of
-    // the minimum two global desktops.
+    // the minimum two global desktops. Output disconnect/reconnect
+    // displacement runs after the ordinary lifecycle so displaced layouts
+    // stay separate workspaces on a survivor and return with CURRENT
+    // contents on reconnect.
     handleTopologySignal(): void {
         if (!this.enabled || this.reconciling) {
             return;
         }
+        // Refresh stable output keys from handling-time screens only (no
+        // historical geometry). New tuples get new stable keys; known tuples
+        // keep theirs, so a tuple replacement never aliases the removed key.
+        const preScreens = this.liveScreens();
+        if (preScreens !== null) {
+            this.outputKeys.rebuild(preScreens);
+        }
+        const prevLocal = new Map<string, string[]>();
+        for (const [key, ids] of this.localWorkspaces) {
+            prevLocal.set(key, [...ids]);
+        }
+        const prevGlobal = new Map<string, string[]>();
+        for (const [key, ids] of this.globalAssigned) {
+            prevGlobal.set(key, [...ids]);
+        }
         this.cleanupDesktops();
+        this.reconcileOutputDisplacement(prevLocal, prevGlobal);
     }
 
     // Meta+1..9: select only an existing logical position on the active
@@ -671,13 +786,11 @@ export class WorkspaceNativeAdapter {
             this.localPrimary = keys[0];
         }
         const liveIds = new Set(live.map((entry) => entry.id));
-        for (const key of [...this.localWorkspaces.keys()]) {
-            if (!keys.includes(key)) {
-                this.localWorkspaces.delete(key);
-            }
-        }
-        for (const key of keys) {
-            const list = this.localWorkspaces.get(key) ?? [];
+        // Retain removed-output lists (filtered to live) so displacement can
+        // move them as a unit or defer without orphaning. Deletion of a
+        // removed origin happens only on successful displacement or when the
+        // origin is proven empty.
+        for (const [key, list] of [...this.localWorkspaces]) {
             this.localWorkspaces.set(key, list.filter((id) => liveIds.has(id)));
         }
         const primary = this.localPrimary;
@@ -764,12 +877,33 @@ export class WorkspaceNativeAdapter {
         if (this.globalPrimary === undefined || !connected.has(this.globalPrimary)) {
             this.globalPrimary = keys[0];
         }
-        for (const key of [...this.globalAssigned.keys()]) {
-            if (!connected.has(key)) {
-                for (const id of [...(this.globalAssigned.get(key) ?? [])]) {
-                    this.unassignGlobal(id);
+        // Retain removed-output assignments (filtered to live) so
+        // displacement can move them as a unit or defer without orphaning or
+        // silently rehoming to the primary. Deletion happens only on
+        // successful displacement or when proven empty.
+        const liveIds = new Set(live.map((entry) => entry.id));
+        for (const [key, list] of [...this.globalAssigned]) {
+            const filtered = list.filter((id) => liveIds.has(id));
+            if (filtered.length === 0) {
+                // Keep empty live keys; drop empty removed keys only when not
+                // displaced (displacement owns their lifetime).
+                if (!connected.has(key) && !this.displacedByOrigin.has(key)) {
+                    for (const id of list) {
+                        if (this.globalInverse.get(id) === key) {
+                            this.globalInverse.delete(id);
+                        }
+                    }
+                    this.globalAssigned.delete(key);
+                    continue;
                 }
-                this.globalAssigned.delete(key);
+            }
+            this.globalAssigned.set(key, filtered);
+        }
+        // Prune inverse entries for dead desktops.
+        for (const [id, key] of [...this.globalInverse]) {
+            if (!liveIds.has(id)) {
+                this.globalInverse.delete(id);
+                void key;
             }
         }
         for (const entry of live) {
@@ -781,7 +915,6 @@ export class WorkspaceNativeAdapter {
             }
             this.assignGlobal(entry.id, this.globalPrimary);
         }
-        const liveIds = new Set(live.map((entry) => entry.id));
         for (const key of keys) {
             const list = this.globalAssigned.get(key);
             if (list === undefined) {
@@ -989,6 +1122,591 @@ export class WorkspaceNativeAdapter {
         }
         this.rebuildSharedMapping(live);
         this.enforceSharedTrailing(visible, occupied);
+    }
+
+    // Output disconnect/reconnect displacement, session-local only.
+    // Displaced layouts stay separate workspaces on a survivor, never merged
+    // into its visible tree. Visibility follows the active window at
+    // disconnect; otherwise the surviving view is preserved. On reconnect,
+    // each displaced workspace returns with CURRENT contents (unit
+    // relocation by workspace id). Destination is the live primary survivor,
+    // else existing output ordering; nearest applies only if the native
+    // handling source exposes removed-output geometry (the current adapter
+    // does not retain removed geometry, so it never claims nearest from
+    // moved-window geometry). No historical geometry tracking. Fail-closed on unreadable topology:
+    // mapping is never deleted/orphaned or silently rehomed when no survivor
+    // destination exists. Stable output keys are tuple-bound, so a tuple
+    // replacement (new key) never falsely returns to a different identity;
+    // return requires exact origin-key reappearance.
+    private reconcileOutputDisplacement(
+        prevLocal: ReadonlyMap<string, ReadonlyArray<string>>,
+        prevGlobal: ReadonlyMap<string, ReadonlyArray<string>>,
+    ): void {
+        if (this.mode === "shared") {
+            return;
+        }
+        const screens = this.liveScreens();
+        const live = this.liveOrdered();
+        if (screens === null || live === null) {
+            return;
+        }
+        const liveIds = new Set(live.map((entry) => entry.id));
+        // Prune displaced records to still-live workspaces. Expiry deletes
+        // the record (bounded log) without inventing a return or touching
+        // native state. Mapping cleanup for the emptied origin happens below.
+        for (const [origin, entry] of [...this.displacedByOrigin]) {
+            const kept = entry.workspaceIds.filter((id) => liveIds.has(id));
+            if (kept.length !== entry.workspaceIds.length) {
+                if (kept.length === 0) {
+                    this.displacedByOrigin.delete(origin);
+                    this.logToken(`workspace-displaced-expired:${origin}`);
+                } else {
+                    this.displacedByOrigin.set(origin, { workspaceIds: kept, destKey: entry.destKey });
+                }
+            }
+        }
+        const currentKeys: string[] = [];
+        for (const output of screens) {
+            const key = this.outputKeys.keyFor(output);
+            if (key !== undefined && !currentKeys.includes(key)) {
+                currentKeys.push(key);
+            }
+        }
+        if (currentKeys.length === 0) {
+            return;
+        }
+        const prevKeys = this.mode === "per-output-local" ? [...prevLocal.keys()] : [...prevGlobal.keys()];
+        // Union with last-known tracking so newly seen stable keys (tuple
+        // replacement) count as added and stale removed keys count as
+        // removed even when the mapping was already pruned.
+        const knownKeys = new Set<string>(prevKeys);
+        for (const key of this.lastVisibleByKey.keys()) {
+            knownKeys.add(key);
+        }
+        for (const key of this.lastKnownByKey.keys()) {
+            knownKeys.add(key);
+        }
+        for (const key of this.displacedByOrigin.keys()) {
+            knownKeys.add(key);
+        }
+        const removed = [...knownKeys].filter((key) => !currentKeys.includes(key));
+        this.reconciling = true;
+        try {
+            for (const origin of removed) {
+                const existing = this.displacedByOrigin.get(origin);
+                if (existing !== undefined) {
+                    // Already displaced: keep the survivor association alive.
+                    // If the survivor itself is gone, re-target as a unit;
+                    // never merge, orphan, or invent a return.
+                    if (currentKeys.includes(existing.destKey)) {
+                        this.ensureDisplacedPresent(existing.workspaceIds.filter((id) => liveIds.has(id)), existing.destKey);
+                        continue;
+                    }
+                    const stillLive = existing.workspaceIds.filter((id) => liveIds.has(id));
+                    if (stillLive.length === 0) {
+                        this.displacedByOrigin.delete(origin);
+                        this.logToken(`workspace-displaced-expired:${origin}`);
+                        this.dropOriginMapping(origin);
+                        continue;
+                    }
+                    const destKey = this.selectSurvivorKey(screens, currentKeys);
+                    if (destKey === null || destKey === origin) {
+                        this.logToken(`workspace-displaced-deferred:${origin}`);
+                        continue;
+                    }
+                    this.displacedByOrigin.set(origin, { workspaceIds: [...stillLive], destKey });
+                    this.moveLocalIdsTo(stillLive, destKey);
+                    this.logToken(`workspace-displaced:${origin}:${destKey}:${String(stillLive.length)}`);
+                    continue;
+                }
+                // Full association for the removed output: previous mapping
+                // plus last-known window-output membership plus last-visible,
+                // so background/non-visible occupied workspaces move as a unit.
+                // Uses only handling-time inputs plus session-local mapping
+                // state; never stale output geometry.
+                const prevIds = (this.mode === "per-output-local" ? prevLocal.get(origin) : prevGlobal.get(origin)) ?? [];
+                const known = this.lastKnownByKey.get(origin) ?? [];
+                const combined: string[] = [];
+                for (const id of [...prevIds, ...known]) {
+                    if (!combined.includes(id)) {
+                        combined.push(id);
+                    }
+                }
+                const lastVisible = this.lastVisibleByKey.get(origin);
+                if (lastVisible !== undefined && !combined.includes(lastVisible)) {
+                    combined.push(lastVisible);
+                }
+                const workspaceIds = combined.filter((id) => liveIds.has(id));
+                if (workspaceIds.length === 0) {
+                    this.dropOriginMapping(origin);
+                    continue;
+                }
+                const destKey = this.selectSurvivorKey(screens, currentKeys);
+                if (destKey === null || destKey === origin) {
+                    // Defer safely: retain the origin mapping, create no
+                    // record, rehome/merge nothing.
+                    this.logToken(`workspace-displaced-deferred:${origin}`);
+                    continue;
+                }
+                this.displacedByOrigin.set(origin, { workspaceIds: [...workspaceIds], destKey });
+                if (this.mode === "per-output-local") {
+                    this.moveLocalIdsTo(workspaceIds, destKey);
+                    this.localWorkspaces.delete(origin);
+                } else {
+                    for (const id of workspaceIds) {
+                        this.assignGlobal(id, destKey);
+                    }
+                    const originList = this.globalAssigned.get(origin);
+                    if (originList !== undefined && originList.length === 0) {
+                        this.globalAssigned.delete(origin);
+                    }
+                }
+                this.logToken(`workspace-displaced:${origin}:${destKey}:${String(workspaceIds.length)}`);
+                this.showDisplacedIfActiveThere(workspaceIds, destKey, screens);
+            }
+            for (const key of currentKeys) {
+                // Exact stable-key return only: a tuple replacement carries a
+                // new key and never matches the displaced origin, so no false
+                // return occurs. The displaced association simply stays on its
+                // survivor until the true origin reappears or expires.
+                const entry = this.displacedByOrigin.get(key);
+                if (entry === undefined) {
+                    continue;
+                }
+                const returning = entry.workspaceIds.filter((id) => liveIds.has(id));
+                if (returning.length === 0) {
+                    this.displacedByOrigin.delete(key);
+                    this.logToken(`workspace-displaced-expired:${key}`);
+                    this.dropOriginMapping(key);
+                    continue;
+                }
+                if (this.mode === "per-output-local") {
+                    // Remove from wherever each id currently lives (user
+                    // membership edits while displaced converge as current
+                    // state: the workspace unit returns, never individual
+                    // windows), then restore exactly once on the origin.
+                    for (const id of returning) {
+                        this.removeLocalIdEverywhere(id);
+                    }
+                    const originList = this.localWorkspaces.get(key) ?? [];
+                    for (const id of returning) {
+                        if (!originList.includes(id)) {
+                            originList.push(id);
+                        }
+                    }
+                    this.localWorkspaces.set(key, originList);
+                } else {
+                    for (const id of returning) {
+                        this.assignGlobal(id, key);
+                    }
+                }
+                const remaining = entry.workspaceIds.filter((id) => !returning.includes(id));
+                if (remaining.length === 0) {
+                    this.displacedByOrigin.delete(key);
+                } else {
+                    this.displacedByOrigin.set(key, { workspaceIds: remaining, destKey: entry.destKey });
+                }
+                this.logToken(`workspace-returned:${key}:${String(returning.length)}`);
+                this.showReturningIfActiveThere(returning, key, screens);
+            }
+            this.refreshLastVisible(screens);
+            this.refreshLastKnown(screens);
+        } finally {
+            this.reconciling = false;
+        }
+    }
+
+    private dropOriginMapping(origin: string): void {
+        if (this.mode === "per-output-local") {
+            const list = this.localWorkspaces.get(origin);
+            if (list !== undefined && list.length === 0) {
+                this.localWorkspaces.delete(origin);
+            } else if (list === undefined) {
+                // Already absent: nothing to orphan.
+            } else if (!this.displacedByOrigin.has(origin)) {
+                // Non-empty retained mapping stays for a deferred pass; only
+                // empty origins are dropped here.
+            }
+        } else if (this.mode === "global-unique") {
+            const list = this.globalAssigned.get(origin);
+            if (list !== undefined && list.length === 0 && !this.displacedByOrigin.has(origin)) {
+                this.globalAssigned.delete(origin);
+            }
+        }
+    }
+
+    private removeLocalIdEverywhere(id: string): void {
+        for (const list of this.localWorkspaces.values()) {
+            const at = list.indexOf(id);
+            if (at >= 0) {
+                list.splice(at, 1);
+            }
+        }
+    }
+
+    private moveLocalIdsTo(ids: ReadonlyArray<string>, destKey: string): void {
+        for (const id of ids) {
+            this.removeLocalIdEverywhere(id);
+        }
+        const destList = this.localWorkspaces.get(destKey) ?? [];
+        for (const id of ids) {
+            if (!destList.includes(id)) {
+                destList.push(id);
+            }
+        }
+        this.localWorkspaces.set(destKey, destList);
+    }
+
+    private ensureDisplacedPresent(ids: ReadonlyArray<string>, destKey: string): void {
+        if (this.mode !== "per-output-local") {
+            for (const id of ids) {
+                if (this.globalInverse.get(id) !== destKey) {
+                    this.assignGlobal(id, destKey);
+                }
+            }
+            return;
+        }
+        const destList = this.localWorkspaces.get(destKey) ?? [];
+        let changed = false;
+        for (const id of ids) {
+            // Repair any duplicate or drift without duplicating: exactly once
+            // on the recorded survivor.
+            let occurrences = 0;
+            for (const list of this.localWorkspaces.values()) {
+                for (const entry of list) {
+                    if (entry === id) {
+                        occurrences += 1;
+                    }
+                }
+            }
+            if (occurrences !== 1 || !destList.includes(id)) {
+                this.removeLocalIdEverywhere(id);
+                if (!destList.includes(id)) {
+                    destList.push(id);
+                }
+                changed = true;
+            }
+        }
+        if (changed || !this.localWorkspaces.has(destKey)) {
+            this.localWorkspaces.set(destKey, destList);
+        }
+    }
+
+    private primeDisplacedTracking(): void {
+        const screens = this.liveScreens();
+        if (screens === null) {
+            return;
+        }
+        this.refreshLastVisible(screens);
+        this.refreshLastKnown(screens);
+    }
+
+    // Group desktop memberships by observed window output key from
+    // handling-time inputs only. Null on any unreadable topology (fail
+    // closed). Sticky windows are global, not members of a backing desktop.
+    private membershipByKey(screens: ReadonlyArray<object>): Map<string, Set<string>> | null {
+        const surface = this.liveWorkspace();
+        if (surface === null) {
+            return null;
+        }
+        const lister = readProp(surface, "windowList");
+        if (typeof lister !== "function") {
+            return null;
+        }
+        let raw: unknown = undefined;
+        try {
+            raw = Reflect.apply(lister as (...args: ReadonlyArray<never>) => unknown, surface, []);
+        } catch (error) {
+            void error;
+            return null;
+        }
+        const windows = decodeList(raw, MAX_LIST);
+        if (windows === null) {
+            return null;
+        }
+        const grouped = new Map<string, Set<string>>();
+        for (const item of windows) {
+            if (typeof item !== "object" || item === null) {
+                continue;
+            }
+            const ref = item as object;
+            if (readProp(ref, "onAllDesktops") === true) {
+                continue;
+            }
+            const outputRaw = readProp(ref, "output");
+            if (typeof outputRaw !== "object" || outputRaw === null) {
+                return null;
+            }
+            const key = this.outputKeys.keyFor(outputRaw as object);
+            if (key === undefined) {
+                continue;
+            }
+            // Only attribute to currently live outputs; post-disconnect
+            // windows already live on survivors and must not rewrite the
+            // removed origin's last-known set.
+            let live = false;
+            for (const output of screens) {
+                if (this.outputKeys.keyFor(output) === key) {
+                    live = true;
+                    break;
+                }
+            }
+            if (!live) {
+                continue;
+            }
+            const membership = decodeList(readProp(ref, "desktops"), MAX_DESKTOPS);
+            if (membership === null) {
+                return null;
+            }
+            const bucket = grouped.get(key) ?? new Set<string>();
+            for (const member of membership) {
+                if (typeof member !== "object" || member === null) {
+                    return null;
+                }
+                const id = readDesktopId(member as object);
+                if (id === null) {
+                    return null;
+                }
+                bucket.add(id);
+            }
+            grouped.set(key, bucket);
+        }
+        return grouped;
+    }
+
+    private refreshLastKnown(screens: ReadonlyArray<object>): void {
+        const grouped = this.membershipByKey(screens);
+        if (grouped !== null) {
+            for (const [key, ids] of grouped) {
+                this.lastKnownByKey.set(key, [...ids]);
+            }
+        }
+        // Drop stale origins that are neither live nor displaced.
+        const liveKeys = new Set<string>();
+        for (const output of screens) {
+            const key = this.outputKeys.keyFor(output);
+            if (key !== undefined) {
+                liveKeys.add(key);
+            }
+        }
+        for (const key of [...this.lastKnownByKey.keys()]) {
+            if (!liveKeys.has(key) && !this.displacedByOrigin.has(key)) {
+                this.lastKnownByKey.delete(key);
+            }
+        }
+    }
+
+    private refreshLastVisible(screens: ReadonlyArray<object>): void {
+        for (const output of screens) {
+            const key = this.outputKeys.keyFor(output);
+            if (key === undefined) {
+                continue;
+            }
+            const current = this.currentOnOutput(output);
+            if (current !== null) {
+                this.lastVisibleByKey.set(key, current.id);
+            }
+        }
+        // Drop stale origins that are neither live nor displaced.
+        for (const key of [...this.lastVisibleByKey.keys()]) {
+            let live = false;
+            for (const output of screens) {
+                if (this.outputKeys.keyFor(output) === key) {
+                    live = true;
+                    break;
+                }
+            }
+            if (!live && !this.displacedByOrigin.has(key)) {
+                this.lastVisibleByKey.delete(key);
+            }
+        }
+    }
+
+    // Survivor destination without removed-output geometry: the current
+    // adapter does not retain removed geometry, so no reference is supplied
+    // and selection falls back to live primary then deterministic ordering.
+    // Nearest applies only if a future handling source exposes removed
+    // geometry to the pure helper.
+    private selectSurvivorKey(
+        screens: ReadonlyArray<object>,
+        currentKeys: ReadonlyArray<string>,
+    ): string | null {
+        const candidates: DisplacedDestinationCandidate[] = [];
+        for (const output of screens) {
+            const key = this.outputKeys.keyFor(output);
+            if (key === undefined || !currentKeys.includes(key)) {
+                continue;
+            }
+            candidates.push({ key, rect: this.readOutputRect(output) });
+        }
+        const activeKey = this.activeScreenKey(screens, currentKeys);
+        return chooseDisplacedDestination(candidates, activeKey, null);
+    }
+
+    private activeScreenKey(screens: ReadonlyArray<object>, currentKeys: ReadonlyArray<string>): string | null {
+        const surface = this.liveWorkspace();
+        if (surface === null) {
+            return null;
+        }
+        try {
+            const screen = Reflect.get(surface, "activeScreen");
+            if (typeof screen === "object" && screen !== null) {
+                const key = this.outputKeys.keyFor(screen as object);
+                if (key !== undefined && currentKeys.includes(key)) {
+                    return key;
+                }
+            }
+        } catch (error) {
+            void error;
+        }
+        void screens;
+        return null;
+    }
+
+    private activeWindowRef(): object | null {
+        const surface = this.liveWorkspace();
+        if (surface === null) {
+            return null;
+        }
+        try {
+            const active = Reflect.get(surface, "activeWindow");
+            return typeof active === "object" && active !== null ? (active as object) : null;
+        } catch (error) {
+            void error;
+            return null;
+        }
+    }
+
+    private windowDesktopIds(ref: object): ReadonlyArray<string> | null {
+        const membership = decodeList(readProp(ref, "desktops"), MAX_DESKTOPS);
+        if (membership === null) {
+            return null;
+        }
+        const ids: string[] = [];
+        for (const member of membership) {
+            if (typeof member !== "object" || member === null) {
+                return null;
+            }
+            const id = readDesktopId(member as object);
+            if (id === null) {
+                return null;
+            }
+            ids.push(id);
+        }
+        return Object.freeze(ids);
+    }
+
+    private readOutputRect(output: object): DisplacedRect | null {
+        const geometry = readProp(output, "geometry");
+        if (typeof geometry !== "object" || geometry === null) {
+            return null;
+        }
+        const record = geometry as Record<string, unknown>;
+        const x = record["x"];
+        const y = record["y"];
+        const wRaw = record["width"] !== undefined ? record["width"] : record["w"];
+        const hRaw = record["height"] !== undefined ? record["height"] : record["h"];
+        if (typeof x !== "number" || typeof y !== "number" || typeof wRaw !== "number" || typeof hRaw !== "number") {
+            return null;
+        }
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(wRaw) || !Number.isFinite(hRaw)) {
+            return null;
+        }
+        if (wRaw <= 0 || hRaw <= 0 || wRaw > 16384 || hRaw > 16384) {
+            return null;
+        }
+        if (x < -16384 || x > 16384 || y < -16384 || y > 16384) {
+            return null;
+        }
+        return { x, y, w: wRaw, h: hRaw };
+    }
+
+    private outputForKey(screens: ReadonlyArray<object>, key: string): object | null {
+        for (const output of screens) {
+            if (this.outputKeys.keyFor(output) === key) {
+                return output;
+            }
+        }
+        return null;
+    }
+
+    // On disconnect, if the active window lives in a relocated workspace,
+    // show that workspace on the survivor and retain focus. Otherwise
+    // preserve the surviving view/focus with no writes.
+    private showDisplacedIfActiveThere(workspaceIds: ReadonlyArray<string>, destKey: string, screens: ReadonlyArray<object>): void {
+        const active = this.activeWindowRef();
+        if (active === null) {
+            this.logToken("workspace-preserve-view:no-active");
+            return;
+        }
+        const members = this.windowDesktopIds(active);
+        if (members === null) {
+            this.logToken("workspace-preserve-view:active-unreadable");
+            return;
+        }
+        const activeId = members.find((id) => workspaceIds.includes(id));
+        if (activeId === undefined) {
+            this.logToken("workspace-preserve-view:survivor-active");
+            return;
+        }
+        const destOutput = this.outputForKey(screens, destKey);
+        const target = this.findLive(activeId);
+        if (destOutput === null || target === null) {
+            this.logToken("workspace-show-displaced-deferred");
+            return;
+        }
+        if (!this.writeCurrent(target.ref, destOutput)) {
+            this.logToken("workspace-show-displaced-deferred");
+            return;
+        }
+        try {
+            const surface = this.liveWorkspace();
+            if (surface !== null) {
+                Reflect.set(surface, "activeWindow", active);
+            }
+        } catch (error) {
+            void error;
+        }
+        this.logToken(`workspace-show-displaced:${activeId}`);
+    }
+
+    // On reconnect, if the active window lives in a returning workspace,
+    // show it on the reconnected output and retain focus. Otherwise preserve.
+    private showReturningIfActiveThere(returning: ReadonlyArray<string>, originKey: string, screens: ReadonlyArray<object>): void {
+        const active = this.activeWindowRef();
+        if (active === null) {
+            this.logToken("workspace-preserve-view:no-active");
+            return;
+        }
+        const members = this.windowDesktopIds(active);
+        if (members === null) {
+            this.logToken("workspace-preserve-view:active-unreadable");
+            return;
+        }
+        const activeId = members.find((id) => returning.includes(id));
+        if (activeId === undefined) {
+            this.logToken("workspace-preserve-view:survivor-active");
+            return;
+        }
+        const originOutput = this.outputForKey(screens, originKey);
+        const target = this.findLive(activeId);
+        if (originOutput === null || target === null) {
+            this.logToken("workspace-show-returning-deferred");
+            return;
+        }
+        if (!this.writeCurrent(target.ref, originOutput)) {
+            this.logToken("workspace-show-returning-deferred");
+            return;
+        }
+        try {
+            const surface = this.liveWorkspace();
+            if (surface !== null) {
+                Reflect.set(surface, "activeWindow", active);
+            }
+        } catch (error) {
+            void error;
+        }
+        this.logToken(`workspace-show-returning:${activeId}`);
     }
 
     private terminalRunStart(orderedIds: ReadonlyArray<string>, occupied: Set<string>): number {

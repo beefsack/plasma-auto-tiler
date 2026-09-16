@@ -58,10 +58,13 @@ Only meaningful pending or active work is listed.
   later. Visibility follows the active window's location at disconnect; with no
   active window, preserve the surviving view. Displaced workspaces return on
   reconnect with current contents/layout; explicitly moved-out windows stay out.
-  Choose nearest from already-available geometry without added history tracking,
-  otherwise use the surviving primary. Reconnection keeps the active window
-  visible/focused without restoring view history. Product choices are resolved;
-  session-local implementation and live acceptance remain pending.
+  Choose nearest only when the native handling source exposes removed-output
+  geometry, otherwise use the surviving primary (then deterministic ordering).
+  The current adapter does not retain removed geometry so it falls back to
+  primary/ordering and never uses post-disconnect window geometry as a proxy. Reconnection keeps the active window
+  visible/focused without restoring view history. Offline coverage exists for
+  the stated displacement/return, atomicity, and preservation pieces; live
+  acceptance remains pending and no live result is claimed.
   [investigation](changes/reliability-condition-investigation.md)
 - P1 | Work-area change projection live gate | Static code projects one retained
   existing domain through resolution, scaling, and work-area changes without the

@@ -747,6 +747,106 @@ impl Session {
         }
     }
 
+    /// Portable output relocation for one retained domain: move the domain
+    /// key from `source` to `target` (same workspace, different output)
+    /// preserving topology, shares, focus, exceptions, float geometry, and
+    /// accepted revision. Updates domain bounds/gap plus every window link
+    /// and exception homed on the source. Atomic: any validation failure
+    /// leaves revision, gap, tree/shares, windows, exceptions, and focus
+    /// exactly as before (`false`, no mutation). Refuses on workspace
+    /// mismatch, same output, unknown source, existing target,
+    /// pending/drag/divergence residue, or invalid bounds/gap. Exception
+    /// classes (`flags`, `floating_geometry`) are never altered, only the
+    /// homing output id.
+    pub fn relocate_domain(
+        &mut self,
+        source: &DomainKey,
+        target: &DomainKey,
+        bounds: Rect,
+        gap: i32,
+    ) -> bool {
+        if source == target {
+            return false;
+        }
+        if source.workspace != target.workspace {
+            return false;
+        }
+        if source.output == target.output {
+            return false;
+        }
+        if bounds.w <= 0 || bounds.h <= 0 {
+            return false;
+        }
+        if gap < 0 || gap > 64 {
+            return false;
+        }
+        if self.reconciler.divergence().is_some() {
+            return false;
+        }
+        if self.has_pending() || self.has_pending_desired() {
+            return false;
+        }
+        if self.drag.is_some() {
+            return false;
+        }
+        if self.trees.contains_key(target) {
+            return false;
+        }
+        if self.domains.iter().find(|d| &d.key() == target).is_some() {
+            return false;
+        }
+        let source_index = match self.domains.iter().position(|d| &d.key() == source) {
+            Some(index) => index,
+            None => return false,
+        };
+        if !self.validate_current_topology() {
+            return false;
+        }
+        if !self.trees.contains_key(source) {
+            return false;
+        }
+        // Atomic mutation with rollback: snapshot every mutated field so the
+        // trailing topology validation (or any unexpected failure) restores
+        // the exact prior revision, gap, tree/shares, windows, exceptions,
+        // and focus instead of leaving partial state.
+        let backup = self.clone();
+        let tree = match self.trees.remove(source) {
+            Some(tree) => tree,
+            None => return false,
+        };
+        // Update domain identity/bounds/gap in place, preserving order.
+        self.domains[source_index].id = target.output.clone();
+        self.domains[source_index].bounds = bounds;
+        self.domains[source_index].gap = gap;
+        self.trees.insert(target.clone(), tree);
+        for link in self.windows.values_mut() {
+            if link.output == source.output && link.workspace == source.workspace {
+                link.output = target.output.clone();
+            }
+        }
+        for record in self.exceptions.values_mut() {
+            if record.output == source.output && record.workspace == source.workspace {
+                record.output = target.output.clone();
+            }
+        }
+        if self.focused_domain.as_ref() == Some(source) {
+            self.focused_domain = Some(target.clone());
+        }
+        if let Some(stack) = self.focus_stack.remove(source) {
+            self.focus_stack.insert(target.clone(), stack);
+        }
+        if let Some(active) = self.last_active.remove(source) {
+            self.last_active.insert(target.clone(), active);
+        }
+        // Pending desired mirrors committed state when present; relocation
+        // already refused pending, so no pendingDesired update is needed.
+        if self.validate_current_topology() {
+            return true;
+        }
+        *self = backup;
+        false
+    }
+
     /// Propose a complete fitted initial topology through the normal
     /// lifecycle path. Fresh single-domain normal-only adoption: fails with a
     /// refusal (no mutation) unless this session has exactly one domain, no
@@ -9158,5 +9258,73 @@ mod tests {
         assert!(session.has_drag());
         assert_eq!(session.accepted_revision(), revision);
         session.cancel_drag();
+    }
+
+    #[test]
+    fn relocate_domain_is_atomic_on_validation_failure() {
+        // Every refusal leaves revision, domains, trees, windows,
+        // exceptions, and focus exactly as before.
+        let source_domain = domain();
+        let other = domain_two();
+        let mut session =
+            Session::new(owner(), generation(), 0, 7, vec![source_domain.clone(), other.clone()])
+                .expect("new");
+        let before_snapshot = session.snapshot();
+        let before_revision = session.accepted_revision();
+        let source_key = source_domain.key();
+        let other_key = other.key();
+        let target = DomainKey {
+            output: OutputId("out-9".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+        };
+        // Workspace mismatch.
+        assert!(!session.relocate_domain(
+            &source_key,
+            &DomainKey {
+                output: OutputId("out-9".to_owned()),
+                workspace: WorkspaceId("ws-other".to_owned()),
+            },
+            Rect { x: 0, y: 0, w: 120, h: 80 },
+            0,
+        ));
+        // Existing target collision.
+        assert!(!session.relocate_domain(
+            &source_key,
+            &other_key,
+            Rect { x: 0, y: 0, w: 120, h: 80 },
+            0,
+        ));
+        // Invalid gap and bounds.
+        assert!(!session.relocate_domain(
+            &source_key,
+            &target,
+            Rect { x: 0, y: 0, w: 120, h: 80 },
+            999,
+        ));
+        assert!(!session.relocate_domain(
+            &source_key,
+            &target,
+            Rect { x: 0, y: 0, w: 0, h: 80 },
+            0,
+        ));
+        // Unknown source.
+        assert!(!session.relocate_domain(
+            &target, &source_key,
+            Rect { x: 0, y: 0, w: 120, h: 80 },
+            0,
+        ));
+        assert_eq!(session.snapshot(), before_snapshot);
+        assert_eq!(session.accepted_revision(), before_revision);
+        assert_eq!(session.focus(), (None, None));
+        // Successful relocation preserves revision and moves homing as a unit.
+        assert!(session.relocate_domain(
+            &source_key,
+            &target,
+            Rect { x: 0, y: 0, w: 120, h: 80 },
+            0,
+        ));
+        assert_eq!(session.accepted_revision(), before_revision);
+        assert!(session.domains().iter().any(|d| d.key() == target));
+        assert!(!session.domains().iter().any(|d| d.key() == source_key));
     }
 }

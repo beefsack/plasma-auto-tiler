@@ -406,7 +406,9 @@ Historical implementation detail is recoverable in Git history.
   that is not identifiable, use existing available output ordering as the
   deterministic fallback. Availability and lifetime of removed-output geometry
   are implementation source-check details, not a claim that nearest is always
-  feasible. This destination choice is distinct from the selected displacement
+  feasible. The current adapter does not retain removed geometry so it falls
+  back to primary/ordering and never uses post-disconnect window frame
+  geometry as a proxy. This destination choice is distinct from the selected displacement
   association required for automatic workspace return. On original-output
   reconnect, if the active window is in a returning workspace, show that
   workspace on the reconnected monitor and retain focus on that window. If the
@@ -414,8 +416,10 @@ Historical implementation detail is recoverable in Git history.
   no focus stealing. Other workspace selection follows ordinary behavior, with
   no prior-view tracking or new state/history. The initial scope is
   session-local with no restart-persistent mapping or return guarantee. All
-  initial hotplug product choices are resolved; implementation and live
-  disconnect/reconnect verification remain pending.
+  initial hotplug product choices are resolved; offline coverage exists for
+  the stated displacement/return, atomicity, and preservation pieces and live
+  disconnect/reconnect verification remains pending with no live result
+  claimed.
 - `Meta+1..9` select an existing 1-based logical workspace without creation.
   `Meta+Shift+1..9` send only the focused tiled window to an existing
   same-output workspace through the Rust `MoveToWorkspace` route. `0` reuses or

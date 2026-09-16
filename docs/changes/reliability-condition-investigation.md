@@ -9,57 +9,65 @@
 
 ## Verdicts
 
-### Output Hotplug - NOT HANDLED
+### Output Hotplug - OFFLINE PIECES COVERED, LIVE GATE PENDING
 
-- The production adapter observes only the domain of the active normal window:
-  `kwin/src/plan-adapter-entry.ts:292-388`. `screensChanged` only schedules its
-  debounced refresh: `kwin/src/plan-adapter-entry.ts:694-727`; it does not
-  enumerate output removal or addition, retire a domain, or reconcile all
-  domains.
-- The Rust planner retains `BTreeMap<DomainKey, Session>`:
-  `src/planner_protocol.rs:1263-1288`. A missing domain is never removed. It is
-  discarded only on a later same-key bounds/gap mismatch, divergence, or owner
-  or generation change: `src/planner_protocol.rs:1242-1248,1315-1329,1364-1384`.
-- The tree does not retain a native output object. It retains opaque output ID
-  and bounds inside the session, so an unplugged domain becomes stale retained
-  state rather than a tree reference to a destroyed KWin object.
-- Expected failure: an unplugged output leaves an unretired logical domain. An
-  output is not initialized or reconciled until it becomes the active observed
-  domain. A later same-key observation can reuse stale topology, while a changed
-  bounds/gap observation discards it and reseeds from current geometry. Neither
-  outcome is an explicit hotplug policy. At the 16-domain cap, first insertion
-  of a new key clears every retained domain: `src/session.rs:101` and
-  `src/planner_protocol.rs:1377-1384`.
-- Selected initial product direction: preserve a disconnected output's displaced
-  layout in separate workspace(s), not by merging it into a new top-level split
-  of the remaining visible layout. If the active window was on the disconnected
-  monitor, show its relocated workspace and retain focus on that window. If the
-  active window was on a surviving monitor, preserve its current visible
-  workspace and focus; displaced workspaces remain accessible through normal
-  workspace switching. If there is no active window, preserve the surviving
-  monitor view. On reconnection, displaced workspaces automatically return to
-  their original monitor with their then-current contents and layout, not a
-  saved snapshot: split edits, closed and new windows remain reflected.
-  Workspace relocation is the unit: a window explicitly moved out stays at its
-  destination and is never individually pulled back, while a window moved into
-  a displaced workspace returns with it. This behavior is not implemented or
-  verified; user-configurable handling is deferred. Destination among multiple
-  surviving outputs uses the nearest surviving monitor from geometry already
-  available while handling disconnect, with no added historical state. If that
-  would require old output geometry/history or an extra tracking mechanism, use
-  the current primary surviving monitor; if that is not identifiable, use
-  existing available output ordering as the deterministic fallback. Availability
-  and lifetime of removed-output geometry are implementation source-check
-  details, not a claim that nearest is always feasible. This destination choice
-  is distinct from the selected displacement association required for automatic
-  workspace return. On original-output reconnect, if the active window is in a
-  returning workspace, show that workspace on the reconnected monitor and
-  retain focus on that window. If the active window remains on a surviving
-  output, preserve its view and focus with no focus stealing. Other workspace
-  selection follows ordinary behavior, with no prior-view tracking or new
-  state/history. The initial scope is session-local with no restart-persistent
-  mapping or return guarantee. All initial hotplug product choices are
-  resolved; implementation and live verification remain pending.
+- The Rust planner retains `BTreeMap<DomainKey, Session>` and relocates a
+  retained domain by workspace id when the same workspace is observed on a
+  different output: `src/session.rs:relocate_domain` is atomic on any
+  validation failure and preserves exception classes, gap, revision,
+  tree/shares, and focus while updating domain bounds/gap plus window and
+  exception homing; `src/planner_protocol.rs:try_relocate_for_target`
+  validates workspace-send pending state, request outer gap, target collision,
+  and source uniqueness/usability before any source mutation, honors normal
+  retained capacity constraints without all-domain clearing, and restores the
+  source on any rejected follow-up in the retained and reconcile paths, so
+  displaced layouts converge through the normal admit/remove/reconcile flow
+  with CURRENT contents. Offline tests cover same-workspace survivor reuse,
+  current-contents edits, no-merge into the survivor tree, target
+  collision/outer-gap/ambiguous-source/pending refusal atomicity, and
+  revision/gap/tree/focus plus float exception class preservation. The
+  standalone workspace-send cross-output refusal is unchanged.
+- The TypeScript native layer owns session-local displacement identity and
+  actuation: `kwin/src/workspace-native.ts:chooseDisplacedDestination` picks
+  the nearest survivor only when the native handling source exposes
+  removed-output geometry, else the live primary, else existing output
+  ordering, with no historical geometry tracking; the current adapter does
+  not retain removed geometry so it falls back to primary/ordering and never
+  uses post-disconnect window frame geometry as a proxy;
+  `reconcileOutputDisplacement` captures a handling-time topology snapshot
+  (previous mapping plus last-known window-output membership plus
+  last-visible, keyed by stable output) before destructive cleanup, primes
+  visible/membership tracking at enable, moves every associated workspace of a
+  removed output as a unit (including background occupied workspaces, never
+  bulk-assigned to the primary), defers safely with no orphan/rehome/merge
+  when no survivor exists, keeps workspace ids unique across logical lists,
+  returns by exact stable-key reappearance only (tuple replacements never
+  falsely return; unreturnable associations expire with a bounded log and no
+  invented return), and returns each workspace by id with current contents on
+  reconnect. Visibility follows the active window; otherwise the surviving
+  view/focus is preserved. Offline tests cover multiple occupied workspaces on
+  one removed output, global-unique and shared behavior, no-duplicate and
+  current-membership convergence, and tuple-replacement safety. Hermetic Rust
+  and KWin coverage only; no live KWin, Plasma, or D-Bus action occurred.
+- The tree retains opaque output IDs only, never native output objects.
+
+#### User-Owned Live Gate - Not Run
+
+1. The user follows `docs/live-kwin-testing.md`, obtains the required session
+   authorization, and records a restorable baseline for a tiled scope on two
+   outputs, including per-output current desktops, frame geometries, active
+   output/workspace, and `plasma-auto-tiler:plan` plus
+   `plasma-auto-tiler:workspace` journal lines.
+2. The user unplugs (or disables) the secondary output, waits for the
+   debounced refresh, and records all Plan requests, frame geometries, current
+   desktops, active window, and journal lines. The user replugs the output and
+   records the same evidence. No project D-Bus method is injected.
+3. Pass only if unplug keeps the displaced layout as separate workspace(s) on
+   a survivor with no merge into the visible tree, visibility/focus follows
+   the active window's location (survivor view preserved otherwise), replug
+   returns each displaced workspace with its then-current contents/layout by
+   workspace unit, no writes target absent outputs, and no unrelated domain is
+   evicted. Record the exact failing observation otherwise.
 
 ### Resolution And Scaling Changes - CODE ADDRESSED, LIVE GATE PENDING
 

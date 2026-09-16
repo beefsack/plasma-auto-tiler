@@ -1598,6 +1598,97 @@ impl Planner {
         self.sessions.insert(domain_key, session);
     }
 
+    /// Portable output relocation: when no usable session exists for the
+    /// target key, move a usable retained session with the same workspace id
+    /// from a different output to the target, preserving topology, shares,
+    /// focus, exceptions, and revision. Updates domain bounds/gap plus window
+    /// and exception homing. Session-local only, no history. A target session
+    /// that existed at the start of request handling is never removed or
+    /// superseded to permit source relocation: `try_relocate_for_target`
+    /// returns false without mutation if `sessions` contains the target,
+    /// even when that target is empty, unusable, or mismatched (normal
+    /// target cleanup/seeding owns that slot). Fails closed with no source
+    /// mutation when no single usable non-empty source exists, when a
+    /// standalone workspace-send is pending, when the request outer gap is
+    /// out of range, or when the move itself refuses. The insert honors
+    /// normal `store_committed` constraints (never retain empty, never exceed
+    /// `MAX_DOMAINS`) without the all-domain clearing eviction: at capacity
+    /// the relocation fails closed and the source is restored. The standalone
+    /// workspace-send route is untouched.
+    fn try_relocate_for_target(
+        &mut self,
+        target_key: &DomainKey,
+        target_domain: &OutputDomain,
+        request_outer_gap: i32,
+    ) -> bool {
+        if self.workspace_pending.is_some() {
+            return false;
+        }
+        if request_outer_gap < 0 || request_outer_gap > GEOMETRY_MAX_GAP {
+            return false;
+        }
+        // Target collision: a session that exists for the target at handling
+        // start is never removed or superseded for relocation, even if it is
+        // empty, unusable, or mismatched. Normal target cleanup/seeding owns
+        // that slot.
+        if self.sessions.contains_key(target_key) {
+            return false;
+        }
+        let mut source_key: Option<DomainKey> = None;
+        for key in self.sessions.keys() {
+            if key.workspace == target_key.workspace && key.output != target_key.output {
+                if source_key.is_some() {
+                    // Ambiguous source: fail closed, no mutation.
+                    return false;
+                }
+                source_key = Some(key.clone());
+            }
+        }
+        let Some(source) = source_key else {
+            return false;
+        };
+        let Some(session) = self.sessions.get(&source) else {
+            return false;
+        };
+        if !session_usable(session) {
+            return false;
+        }
+        // Pending-desired and drag residue refuse like the session does;
+        // `session_usable` covers divergence/pending, these cover the rest.
+        if session.has_pending_desired() || session.has_drag() {
+            return false;
+        }
+        if committed_session_is_empty(session) {
+            return false;
+        }
+        // Validate the move on a clone first: no retained mutation yet.
+        let mut moved = session.clone();
+        if !moved.relocate_domain(&source, target_key, target_domain.bounds, target_domain.gap) {
+            return false;
+        }
+        if committed_session_is_empty(&moved) {
+            return false;
+        }
+        // All validation passed: mutate. Capacity was freed by removing the
+        // source; insert under normal constraints without all-clear.
+        let backup_session = session.clone();
+        let backup_outer = self.domain_outer_gaps.get(&source).copied();
+        self.domain_outer_gaps.remove(&source);
+        self.sessions.remove(&source);
+        if self.sessions.len() >= crate::session::MAX_DOMAINS {
+            // Fail closed, restore source, no clearing.
+            self.sessions.insert(source.clone(), backup_session);
+            if let Some(gap) = backup_outer {
+                self.domain_outer_gaps.insert(source, gap);
+            }
+            return false;
+        }
+        self.domain_outer_gaps
+            .insert(target_key.clone(), request_outer_gap);
+        self.sessions.insert(target_key.clone(), moved);
+        true
+    }
+
     /// Shared retained propose/commit: try the usable retained session, then
     /// rebuild once from `seed_order`. `ambiguous_as_snapshot` selects the
     /// fail-closed kind when no safe order exists (admit/remove use
@@ -1613,6 +1704,11 @@ impl Planner {
         commit: impl Fn(&mut Session, &R, &Validated, u64) -> bool,
     ) -> String {
         let cid = ctx.request.correlation_id.clone();
+        // Target presence at handling start: normal target processing/seeding
+        // owns that slot. Source relocation is attempted only when no target
+        // session existed, even if normal cleanup removes a stale target
+        // below. This preserves existing non-hotplug behavior.
+        let target_existed = self.sessions.contains_key(&ctx.domain_key);
         if let Some(mut session) = self.take_usable_session(&ctx.domain_key, &ctx.domain) {
             let base = session.accepted_revision();
             let observation = observation_for(base, ctx);
@@ -1637,6 +1733,57 @@ impl Planner {
                 }
                 Err(error) => {
                     return propose_failure(error, cid.clone());
+                }
+            }
+        } else if !target_existed {
+            // Displaced workspace relocation: same workspace id observed on a
+            // different output (monitor disconnect/reconnect) reuses the
+            // retained tree instead of reseeding, preserving CURRENT contents
+            // convergence through the normal propose path below. A rejected
+            // follow-up leaves retained state untouched: the source backup is
+            // restored before falling through or replying.
+            let backup_sessions = self.sessions.clone();
+            let backup_gaps = self.domain_outer_gaps.clone();
+            if self.try_relocate_for_target(
+                &ctx.domain_key,
+                &ctx.domain,
+                ctx.request.domain.outer_gap,
+            ) {
+                if let Some(mut session) = self.take_usable_session(&ctx.domain_key, &ctx.domain) {
+                    let base = session.accepted_revision();
+                    let observation = observation_for(base, ctx);
+                    match propose(&mut session, &observation) {
+                        Ok(plan) => {
+                            let text = reply(&plan);
+                            if commit(&mut session, &plan, ctx, base) {
+                                self.store_committed(
+                                    ctx.domain_key.clone(),
+                                    session,
+                                    ctx.request.domain.outer_gap,
+                                );
+                                return text;
+                            }
+                            // Commit rejected: restore source, no mutation.
+                            self.sessions = backup_sessions;
+                            self.domain_outer_gaps = backup_gaps;
+                            return snapshot_invalid(cid, MSG_OBSERVATION, "commit-rejected");
+                        }
+                        Err(error) if needs_rebuild(&error) => {
+                            // Rebuild path: restore source, then fall through
+                            // to seed the target from scratch.
+                            self.sessions = backup_sessions;
+                            self.domain_outer_gaps = backup_gaps;
+                        }
+                        Err(error) => {
+                            self.sessions = backup_sessions;
+                            self.domain_outer_gaps = backup_gaps;
+                            return propose_failure(error, cid.clone());
+                        }
+                    }
+                } else {
+                    // Relocated target unusable: restore source, fall through.
+                    self.sessions = backup_sessions;
+                    self.domain_outer_gaps = backup_gaps;
                 }
             }
         }
@@ -2458,7 +2605,52 @@ impl Planner {
             );
         }
         let cid = ctx.request.correlation_id.clone();
+        // Displaced workspace relocation for reconcile: same workspace id on
+        // a different output reuses the retained tree. No retained mutation
+        // occurs on any rejection: outer-gap is pre-validated against the
+        // source before mutating, and any later rejection restores the source.
+        let backup_sessions = self.sessions.clone();
+        let backup_gaps = self.domain_outer_gaps.clone();
+        let mut relocated_here = false;
+        if !self.sessions.contains_key(&ctx.domain_key) {
+            // Pre-validate outer-gap against the unique source so a mismatch
+            // fails closed with no mutation (target collision inside
+            // `try_relocate_for_target` likewise mutates nothing).
+            let mut source_key: Option<DomainKey> = None;
+            for key in self.sessions.keys() {
+                if key.workspace == ctx.domain_key.workspace && key.output != ctx.domain_key.output {
+                    if source_key.is_some() {
+                        source_key = None;
+                        break;
+                    }
+                    source_key = Some(key.clone());
+                }
+            }
+            let outer_ok = match &source_key {
+                Some(source) => self.domain_outer_gaps.get(source).copied()
+                    == Some(ctx.request.domain.outer_gap),
+                None => false,
+            };
+            if outer_ok {
+                relocated_here = self.try_relocate_for_target(
+                    &ctx.domain_key,
+                    &ctx.domain,
+                    ctx.request.domain.outer_gap,
+                );
+            }
+        }
+        // Restore helper: any rejection below with `relocated_here` set
+        // returns retained state to the pre-request backup.
+        macro_rules! restore_on_reject {
+            () => {
+                if relocated_here {
+                    self.sessions = backup_sessions.clone();
+                    self.domain_outer_gaps = backup_gaps.clone();
+                }
+            };
+        }
         let Some(session) = self.sessions.get(&ctx.domain_key).cloned() else {
+            restore_on_reject!();
             return rejected(
                 cid,
                 RefusalKind::UnknownDomain.as_str(),
@@ -2466,9 +2658,11 @@ impl Planner {
             );
         };
         if let Some(reason) = session.divergence() {
+            restore_on_reject!();
             return rejected(cid, reason.as_str(), reason.message());
         }
         if session.has_pending() || session.has_pending_desired() || session.has_drag() {
+            restore_on_reject!();
             return rejected(
                 cid,
                 "pending-exists",
@@ -2481,6 +2675,7 @@ impl Planner {
             .find(|d| d.key() == ctx.domain_key)
             .cloned()
         else {
+            restore_on_reject!();
             return rejected(
                 cid,
                 RefusalKind::UnknownDomain.as_str(),
@@ -2488,6 +2683,7 @@ impl Planner {
             );
         };
         if retained_domain.gap != ctx.domain.gap {
+            restore_on_reject!();
             return rejected(
                 cid,
                 "domain-mismatch",
@@ -2497,6 +2693,7 @@ impl Planner {
         if self.domain_outer_gaps.get(&ctx.domain_key).copied()
             != Some(ctx.request.domain.outer_gap)
         {
+            restore_on_reject!();
             return rejected(
                 cid,
                 "domain-mismatch",
@@ -2520,6 +2717,7 @@ impl Planner {
             .map(|w| w.window.clone())
             .collect();
         if observed != known {
+            restore_on_reject!();
             return rejected(
                 cid,
                 RefusalKind::PartialObservation.as_str(),
@@ -2550,6 +2748,7 @@ impl Planner {
                     None,
                 );
             }
+            restore_on_reject!();
             return rejected(
                 cid,
                 RefusalKind::MalformedTopology.as_str(),
@@ -2558,6 +2757,7 @@ impl Planner {
         };
         let (focus_domain, focus_leaf) = session.focus();
         let (Some(focus_domain), Some(focus_leaf)) = (focus_domain, focus_leaf) else {
+            restore_on_reject!();
             return rejected(
                 cid,
                 RefusalKind::FocusMismatch.as_str(),
@@ -2565,6 +2765,7 @@ impl Planner {
             );
         };
         if focus_domain != ctx.domain_key {
+            restore_on_reject!();
             return rejected(
                 cid,
                 RefusalKind::FocusMismatch.as_str(),
@@ -2572,6 +2773,7 @@ impl Planner {
             );
         }
         let Ok(projected) = project(&tree, ctx.domain.bounds, retained_domain.gap) else {
+            restore_on_reject!();
             return rejected(
                 cid,
                 RefusalKind::MalformedTopology.as_str(),
@@ -2586,6 +2788,7 @@ impl Planner {
             Vec::with_capacity(projected.len());
         for leaf in projected {
             let Some(window) = leaf_to_window.get(&leaf.leaf.0) else {
+                restore_on_reject!();
                 return rejected(
                     cid,
                     RefusalKind::MalformedTopology.as_str(),
@@ -2593,6 +2796,7 @@ impl Planner {
                 );
             };
             if leaf.rect.w <= 0 || leaf.rect.h <= 0 {
+                restore_on_reject!();
                 return rejected(
                     cid,
                     RefusalKind::MalformedTopology.as_str(),
@@ -2615,6 +2819,7 @@ impl Planner {
                 .then(a.leaf.0.cmp(&b.leaf.0))
         });
         if geometry.len() != known.len() {
+            restore_on_reject!();
             return rejected(
                 cid,
                 RefusalKind::MalformedTopology.as_str(),
@@ -7701,5 +7906,607 @@ mod tests {
             before,
             "{follow} vs {fitted}"
         );
+    }
+
+    #[test]
+    fn output_relocation_preserves_topology_on_same_workspace_survivor() {
+        // Displaced workspace (same id) observed on a survivor output reuses
+        // the retained tree instead of reseeding. Offline only.
+        let mut planner = Planner::new();
+        let first = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-1",
+            "owner-1",
+            "gen-1",
+            "out-removed",
+            "ws-9",
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-2", "output": "out-removed", "workspace": "ws-9"}),
+        )));
+        assert_eq!(first["outcome"], "planned", "{first}");
+        assert_eq!(planner.retained_domains(), 1);
+        // Same workspace id now observed on the survivor with the same
+        // members: a reconcile must project the retained allocation, not
+        // reseed, and the domain count stays one (source moved, not copied).
+        let moved = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-2",
+            "owner-1",
+            "gen-1",
+            "out-survivor",
+            "ws-9",
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(moved["outcome"], "planned", "{moved}");
+        assert_eq!(moved["detail"]["kind"], "reconcile", "{moved}");
+        assert_eq!(planner.retained_domains(), 1, "{moved}");
+        assert_geometry_covers(&moved, &["win-1", "win-2"]);
+    }
+
+    #[test]
+    fn output_relocation_returns_with_current_contents_after_edits() {
+        // Membership edits while displaced converge through the normal
+        // remove/admit path on the relocated tree: moved-out stays out,
+        // moved-in admits into the relocated topology.
+        let mut planner = Planner::new();
+        let seed = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-edit-1",
+            "owner-1",
+            "gen-1",
+            "out-old",
+            "ws-7",
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-2", "output": "out-old", "workspace": "ws-7"}),
+        )));
+        assert_eq!(seed["outcome"], "planned", "{seed}");
+        // Displace with the same set: relocation preserves the tree.
+        let displaced = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-edit-2",
+            "owner-1",
+            "gen-1",
+            "out-new",
+            "ws-7",
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(displaced["outcome"], "planned", "{displaced}");
+        assert_eq!(planner.retained_domains(), 1, "{displaced}");
+        // While displaced, remove win-2 (moved-out stays out).
+        let removed = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-edit-3",
+            "owner-1",
+            "gen-1",
+            "out-new",
+            "ws-7",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 0, 0, 100, 80)],
+            serde_json::json!({"op": "remove", "window": "win-2"}),
+        )));
+        assert_eq!(removed["outcome"], "planned", "{removed}");
+        // Admit win-3 into the displaced workspace (moved-in returns with it).
+        let admitted = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-edit-4",
+            "owner-1",
+            "gen-1",
+            "out-new",
+            "ws-7",
+            "win-3",
+            &[("win-1", 0, 0, 100, 80), ("win-3", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-3", "output": "out-new", "workspace": "ws-7"}),
+        )));
+        assert_eq!(admitted["outcome"], "planned", "{admitted}");
+        assert_geometry_covers(&admitted, &["win-1", "win-3"]);
+        // Return to the original output with current contents.
+        let returned = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-edit-5",
+            "owner-1",
+            "gen-1",
+            "out-old",
+            "ws-7",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-3", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(returned["outcome"], "planned", "{returned}");
+        assert_geometry_covers(&returned, &["win-1", "win-3"]);
+        assert_eq!(planner.retained_domains(), 1, "{returned}");
+    }
+
+    #[test]
+    fn output_relocation_never_merges_into_survivor_visible_tree() {
+        // A survivor output with its own workspace keeps its session; the
+        // displaced workspace arrives as a separate domain, never merged.
+        let mut planner = Planner::new();
+        let survivor = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-merge-1",
+            "owner-1",
+            "gen-1",
+            "out-keep",
+            "ws-keep",
+            "win-k",
+            &[("win-k", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-k", "output": "out-keep", "workspace": "ws-keep"}),
+        )));
+        assert_eq!(survivor["outcome"], "planned", "{survivor}");
+        let displaced = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-merge-2",
+            "owner-1",
+            "gen-1",
+            "out-gone",
+            "ws-away",
+            "win-a",
+            &[("win-a", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-a", "output": "out-gone", "workspace": "ws-away"}),
+        )));
+        assert_eq!(displaced["outcome"], "planned", "{displaced}");
+        assert_eq!(planner.retained_domains(), 2);
+        let relocated = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-merge-3",
+            "owner-1",
+            "gen-1",
+            "out-keep",
+            "ws-away",
+            "win-a",
+            &[("win-a", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(relocated["outcome"], "planned", "{relocated}");
+        // Two separate domains: survivor visible plus displaced, not one
+        // merged tree.
+        assert_eq!(planner.retained_domains(), 2, "{relocated}");
+        assert_geometry_covers(&relocated, &["win-a"]);
+    }
+
+    #[test]
+    fn output_relocation_target_collision_is_atomic() {
+        // A usable non-empty target is a collision: fail closed with no
+        // source mutation. Both domains stay retained and usable.
+        let mut planner = Planner::new();
+        let source = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-coll-1",
+            "owner-1",
+            "gen-1",
+            "out-gone",
+            "ws-away",
+            "win-a",
+            &[("win-a", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-a", "output": "out-gone", "workspace": "ws-away"}),
+        )));
+        assert_eq!(source["outcome"], "planned", "{source}");
+        let target = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-coll-2",
+            "owner-1",
+            "gen-1",
+            "out-keep",
+            "ws-away",
+            "win-k",
+            &[("win-k", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-k", "output": "out-keep", "workspace": "ws-away"}),
+        )));
+        assert_eq!(target["outcome"], "planned", "{target}");
+        assert_eq!(planner.retained_domains(), 2);
+        // Reconcile on the existing target follows the normal path; the
+        // source is untouched (no relocation, no destruction).
+        let again = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-coll-3",
+            "owner-1",
+            "gen-1",
+            "out-keep",
+            "ws-away",
+            "win-k",
+            &[("win-k", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(again["outcome"], "planned", "{again}");
+        assert_eq!(planner.retained_domains(), 2, "{again}");
+        let source_again = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-coll-4",
+            "owner-1",
+            "gen-1",
+            "out-gone",
+            "ws-away",
+            "win-a",
+            &[("win-a", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(source_again["outcome"], "planned", "{source_again}");
+        assert_eq!(planner.retained_domains(), 2, "{source_again}");
+    }
+
+    #[test]
+    fn output_relocation_mismatched_target_does_not_relocate_source() {
+        // A target session that existed at handling start is never removed
+        // or superseded for relocation, even when normal target cleanup
+        // drops it as mismatched. The stale target follows the normal
+        // seed path while the source stays retained and usable.
+        let mut planner = Planner::new();
+        let source = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-mismatch-1",
+            "owner-1",
+            "gen-1",
+            "out-gone",
+            "ws-away",
+            "win-a",
+            &[("win-a", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-a", "output": "out-gone", "workspace": "ws-away"}),
+        )));
+        assert_eq!(source["outcome"], "planned", "{source}");
+        let target = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-mismatch-2",
+            "owner-1",
+            "gen-1",
+            "out-keep",
+            "ws-away",
+            "win-k",
+            &[("win-k", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-k", "output": "out-keep", "workspace": "ws-away"}),
+        )));
+        assert_eq!(target["outcome"], "planned", "{target}");
+        assert_eq!(planner.retained_domains(), 2);
+        // Admit on the existing target with different bounds: normal cleanup
+        // drops the mismatched target slot, but source relocation must not
+        // run because the target existed at handling start.
+        let mut mismatched: serde_json::Value =
+            serde_json::from_str(&retained_request_for_domain(
+                "reloc-mismatch-3",
+                "owner-1",
+                "gen-1",
+                "out-keep",
+                "ws-away",
+                "win-k2",
+                &[("win-k", 0, 0, 100, 80), ("win-k2", 0, 0, 100, 80)],
+                serde_json::json!({"op": "admit", "window": "win-k2", "output": "out-keep", "workspace": "ws-away"}),
+            ))
+            .expect("request JSON");
+        mismatched["domain"]["bounds"] = serde_json::json!({"x": 0, "y": 0, "w": 800, "h": 600});
+        let reseeded = parse_reply(&planner.evaluate(&mismatched.to_string()));
+        assert_eq!(reseeded["outcome"], "planned", "{reseeded}");
+        // Normal seeding replaced the target; the source was not relocated.
+        assert_eq!(planner.retained_domains(), 2, "{reseeded}");
+        let source_key = DomainKey {
+            output: OutputId("out-gone".to_owned()),
+            workspace: WorkspaceId("ws-away".to_owned()),
+        };
+        let target_key = DomainKey {
+            output: OutputId("out-keep".to_owned()),
+            workspace: WorkspaceId("ws-away".to_owned()),
+        };
+        assert!(planner.sessions.contains_key(&source_key), "{reseeded}");
+        assert!(planner.sessions.contains_key(&target_key), "{reseeded}");
+        assert_geometry_covers(&reseeded, &["win-k", "win-k2"]);
+        // Source is untouched and still reconciles on its own domain.
+        let source_again = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-mismatch-4",
+            "owner-1",
+            "gen-1",
+            "out-gone",
+            "ws-away",
+            "win-a",
+            &[("win-a", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(source_again["outcome"], "planned", "{source_again}");
+        assert_eq!(planner.retained_domains(), 2, "{source_again}");
+    }
+
+    #[test]
+    fn output_relocation_outer_gap_mismatch_is_atomic() {
+        // Outer-gap mismatch against the source fails closed with no retained
+        // mutation: the source stays and no target is created.
+        let mut planner = Planner::new();
+        let seed = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-gap-1",
+            "owner-1",
+            "gen-1",
+            "out-gone",
+            "ws-away",
+            "win-a",
+            &[("win-a", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-a", "output": "out-gone", "workspace": "ws-away"}),
+        )));
+        assert_eq!(seed["outcome"], "planned", "{seed}");
+        assert_eq!(planner.retained_domains(), 1);
+        let mut mismatched: serde_json::Value =
+            serde_json::from_str(&retained_request_for_domain(
+                "reloc-gap-2",
+                "owner-1",
+                "gen-1",
+                "out-keep",
+                "ws-away",
+                "win-a",
+                &[("win-a", 0, 0, 100, 80)],
+                serde_json::json!({"op": "reconcile"}),
+            ))
+            .expect("request JSON");
+        mismatched["domain"]["outer_gap"] = serde_json::json!(8);
+        let rejected_reply = parse_reply(&planner.evaluate(&mismatched.to_string()));
+        assert_eq!(rejected_reply["outcome"], "rejected", "{rejected_reply}");
+        assert_eq!(planner.retained_domains(), 1, "{rejected_reply}");
+        // Source is untouched and still reconciles.
+        let source_again = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-gap-3",
+            "owner-1",
+            "gen-1",
+            "out-gone",
+            "ws-away",
+            "win-a",
+            &[("win-a", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(source_again["outcome"], "planned", "{source_again}");
+        assert_eq!(planner.retained_domains(), 1, "{source_again}");
+    }
+
+    #[test]
+    fn output_relocation_ambiguous_source_is_atomic() {
+        // Two usable sources with the same workspace refuse relocation with
+        // no mutation: both stay retained.
+        let mut planner = Planner::new();
+        for (correlation, output, window) in
+            [("reloc-amb-1", "out-a", "win-a"), ("reloc-amb-2", "out-b", "win-b")]
+        {
+            let seeded = parse_reply(&planner.evaluate(&retained_request_for_domain(
+                correlation,
+                "owner-1",
+                "gen-1",
+                output,
+                "ws-x",
+                window,
+                &[(window, 0, 0, 100, 80)],
+                serde_json::json!({"op": "admit", "window": window, "output": output, "workspace": "ws-x"}),
+            )));
+            assert_eq!(seeded["outcome"], "planned", "{seeded}");
+        }
+        assert_eq!(planner.retained_domains(), 2);
+        let ambiguous = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-amb-3",
+            "owner-1",
+            "gen-1",
+            "out-c",
+            "ws-x",
+            "win-a",
+            &[("win-a", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(ambiguous["outcome"], "rejected", "{ambiguous}");
+        assert_eq!(planner.retained_domains(), 2, "{ambiguous}");
+    }
+
+    #[test]
+    fn output_relocation_blocked_while_workspace_send_pending() {
+        // A pending standalone workspace-send blocks normal relocation fail
+        // closed: the displaced target is not created and the source stays.
+        // The workspace-send route itself is unchanged (still pending).
+        let mut planner = Planner::new();
+        let seed = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-pend-1",
+            "owner-1",
+            "gen-1",
+            "out-gone",
+            "ws-9",
+            "win-a",
+            &[("win-a", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-a", "output": "out-gone", "workspace": "ws-9"}),
+        )));
+        assert_eq!(seed["outcome"], "planned", "{seed}");
+        // Open a standalone workspace-send pending session (out-1/ws-1 ->
+        // out-1/ws-2); it stays pending across calls until ack/verify.
+        let source = vec![
+            workspace_entry("win-1", "ws-1", 0),
+            workspace_entry("win-2", "ws-1", 100),
+        ];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let send = parse_reply(&planner.evaluate(&workspace_request(
+            "reloc-pend-send-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source,
+            target,
+            workspace_send_body(),
+        )));
+        assert_eq!(send["outcome"], "planned", "{send}");
+        assert_eq!(send["kind"], "send-to-workspace", "{send}");
+        // Displaced reconcile while the send is pending fails closed.
+        let blocked = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-pend-2",
+            "owner-1",
+            "gen-1",
+            "out-survivor",
+            "ws-9",
+            "win-a",
+            &[("win-a", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(blocked["outcome"], "rejected", "{blocked}");
+        assert_eq!(planner.retained_domains(), 1, "{blocked}");
+        // Source is untouched and still reconciles; the send is still pending
+        // (a second send is rejected rather than silently replaced).
+        let source_again = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-pend-3",
+            "owner-1",
+            "gen-1",
+            "out-gone",
+            "ws-9",
+            "win-a",
+            &[("win-a", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(source_again["outcome"], "planned", "{source_again}");
+        let second = parse_reply(&planner.evaluate(&workspace_request(
+            "reloc-pend-send-2",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_send_body(),
+        )));
+        assert_eq!(second["outcome"], "rejected", "{second}");
+    }
+
+    #[test]
+    fn output_relocation_preserves_exception_class_and_float_geometry() {
+        // A floated exception keeps its class (flags) and floating geometry
+        // across relocation; only the homing output moves. Revision is
+        // preserved.
+        let mut planner = Planner::new();
+        let seed = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-exc-1",
+            "owner-1",
+            "gen-1",
+            "out-removed",
+            "ws-9",
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-2", "output": "out-removed", "workspace": "ws-9"}),
+        )));
+        assert_eq!(seed["outcome"], "planned", "{seed}");
+        let floated = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-exc-2",
+            "owner-1",
+            "gen-1",
+            "out-removed",
+            "ws-9",
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 0, 0, 100, 80)],
+            serde_json::json!({"op": "toggle-float", "window": "win-1"}),
+        )));
+        assert_eq!(floated["outcome"], "planned", "{floated}");
+        let source_key = DomainKey {
+            output: OutputId("out-removed".to_owned()),
+            workspace: WorkspaceId("ws-9".to_owned()),
+        };
+        let before = planner
+            .sessions
+            .get(&source_key)
+            .expect("source retained")
+            .clone();
+        assert_eq!(before.exception_count(), 1, "{floated}");
+        let before_revision = before.accepted_revision();
+        let before_exception = before
+            .exception_observed()
+            .into_iter()
+            .next()
+            .expect("float exception");
+        assert!(before_exception.floating, "{floated}");
+        let before_float_geometry = before.floating_geometry(&before_exception.window);
+        // Displaced observation carries the floated window flagged floating and
+        // admits a new tiled window through the normal admit path (reconcile
+        // projects tiled leaves only, so membership changes converge via
+        // admit/remove instead).
+        let mut displaced: serde_json::Value = serde_json::from_str(&retained_request_for_domain(
+            "reloc-exc-3",
+            "owner-1",
+            "gen-1",
+            "out-survivor",
+            "ws-9",
+            "win-3",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 0, 0, 100, 80), ("win-3", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-3", "output": "out-survivor", "workspace": "ws-9"}),
+        ))
+        .expect("request JSON");
+        displaced["windows"][0]["floating"] = serde_json::json!(true);
+        let moved = parse_reply(&planner.evaluate(&displaced.to_string()));
+        assert_eq!(moved["outcome"], "planned", "{moved}");
+        assert_eq!(planner.retained_domains(), 1, "{moved}");
+        let target_key = DomainKey {
+            output: OutputId("out-survivor".to_owned()),
+            workspace: WorkspaceId("ws-9".to_owned()),
+        };
+        let after = planner.sessions.get(&target_key).expect("target retained");
+        // One admit applied on the relocated tree: revision advances by
+        // exactly one (relocation itself adds zero).
+        assert_eq!(after.accepted_revision(), before_revision + 1, "{moved}");
+        assert_eq!(after.exception_count(), 1, "{moved}");
+        let after_exception = after
+            .exception_observed()
+            .into_iter()
+            .next()
+            .expect("relocated exception");
+        assert_eq!(after_exception.floating, before_exception.floating, "{moved}");
+        assert_eq!(after_exception.fullscreen, before_exception.fullscreen, "{moved}");
+        assert_eq!(after_exception.maximized, before_exception.maximized, "{moved}");
+        assert_eq!(after_exception.sticky, before_exception.sticky, "{moved}");
+        assert_eq!(after_exception.output.0, "out-survivor", "{moved}");
+        assert_eq!(after_exception.workspace.0, "ws-9", "{moved}");
+        assert_eq!(
+            after.floating_geometry(&after_exception.window),
+            before_float_geometry,
+            "{moved}"
+        );
+    }
+
+    #[test]
+    fn output_relocation_preserves_revision_gap_tree_and_focus() {        // Successful relocation keeps accepted revision, inner gap, topology
+        // shares, window homing, and focus; only output identity changes.
+        let mut planner = Planner::new();
+        let seed = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-state-1",
+            "owner-1",
+            "gen-1",
+            "out-removed",
+            "ws-9",
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-2", "output": "out-removed", "workspace": "ws-9"}),
+        )));
+        assert_eq!(seed["outcome"], "planned", "{seed}");
+        let source_key = DomainKey {
+            output: OutputId("out-removed".to_owned()),
+            workspace: WorkspaceId("ws-9".to_owned()),
+        };
+        let before = planner
+            .sessions
+            .get(&source_key)
+            .expect("source retained")
+            .clone();
+        let before_revision = before.accepted_revision();
+        let before_snapshot = before.snapshot();
+        let (before_focus_domain, before_focus_leaf) = before.focus();
+        assert!(before_focus_leaf.is_some(), "seeded focus");
+        let moved = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "reloc-state-2",
+            "owner-1",
+            "gen-1",
+            "out-survivor",
+            "ws-9",
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(moved["outcome"], "planned", "{moved}");
+        assert_eq!(planner.retained_domains(), 1, "{moved}");
+        assert!(!planner.sessions.contains_key(&source_key), "{moved}");
+        let target_key = DomainKey {
+            output: OutputId("out-survivor".to_owned()),
+            workspace: WorkspaceId("ws-9".to_owned()),
+        };
+        let after = planner
+            .sessions
+            .get(&target_key)
+            .expect("target retained");
+        assert_eq!(after.accepted_revision(), before_revision, "{moved}");
+        // Topology shares and window set are preserved; only output homing
+        // moves to the survivor.
+        let after_snapshot = after.snapshot();
+        assert_eq!(
+            after_snapshot.windows.len(),
+            before_snapshot.windows.len(),
+            "{moved}"
+        );
+        for link in &after_snapshot.windows {
+            assert_eq!(link.output.0, "out-survivor", "{moved}");
+            assert_eq!(link.workspace.0, "ws-9", "{moved}");
+        }
+        let (after_focus_domain, after_focus_leaf) = after.focus();
+        assert_eq!(after_focus_domain, Some(target_key.clone()), "{moved}");
+        assert_eq!(after_focus_leaf, before_focus_leaf, "{moved}");
+        assert_eq!(before_focus_domain, Some(source_key), "{moved}");
     }
 }
