@@ -1,4 +1,5 @@
 import { connectSignal, isConnectableSignal, readSignal } from "./signal-capability";
+import { KWIN_TRACE_ENABLED } from "./trace";
 export const DRAG_ORACLE_SERVICE = "org.plasmaautotiler.DragOracle"; export const DRAG_ORACLE_OBJECT = "/org/plasmaautotiler/DragOracle"; export const DRAG_ORACLE_INTERFACE = "org.plasmaautotiler.DragOracle1"; export const DRAG_ORACLE_METHOD = "LastVerdict";
 export const DRAG_ORACLE_MAX_REPLY_BYTES = 64 * 1024; export const DRAG_ORACLE_MAX_TOKEN_LEN = 128; export const DRAG_ORACLE_MAX_REASON_LEN = 64; export const DRAG_ORACLE_MAX_ID_LEN = 128;
 const ROUTE_DIAG = "plasma-auto-tiler:route-diag"; const VERDICT_PREFIX = `${ROUTE_DIAG}:drag-verdict`; const PULL_DISPATCH_LINE = `${ROUTE_DIAG}:drag-pull action=dispatch`; const CALL_MISSING_LINE = `${ROUTE_DIAG}:drag-call-missing`; const CALL_THROWN_LINE = `${ROUTE_DIAG}:drag-call-thrown`; const REPLY_INVALID_LINE = `${ROUTE_DIAG}:drag-reply-invalid`; const ROUTE_MISSING_LINE = `${ROUTE_DIAG}:drag-route-missing`; const ENTRY_WORKSPACE_MISSING = `${ROUTE_DIAG}:drag-entry-workspace-missing`; const ENTRY_CALL_MISSING = `${ROUTE_DIAG}:drag-entry-call-missing`; const ENTRY_CALL_THROWN = `${ROUTE_DIAG}:drag-entry-call-thrown`; const ENTRY_LIST_MISSING = `${ROUTE_DIAG}:drag-entry-list-missing`; const ENTRY_LIST_THROWN = `${ROUTE_DIAG}:drag-entry-list-thrown`; const ENTRY_LIST_INVALID = `${ROUTE_DIAG}:drag-entry-list-invalid`; const ENTRY_FINISHED_INVALID = `${ROUTE_DIAG}:drag-entry-finished-invalid`; const ENTRY_NO_WINDOWS = `${ROUTE_DIAG}:drag-entry-no-windows`; const ENTRY_NO_FINISHED = `${ROUTE_DIAG}:drag-entry-no-finished`; const ENTRY_ADDED_INVALID = `${ROUTE_DIAG}:drag-entry-added-invalid`; const ENTRY_ADDED_CONNECT_FAILED = `${ROUTE_DIAG}:drag-entry-added-connect-failed`; const MAX_LIST = 1024;
@@ -83,7 +84,7 @@ export class DragOraclePull {
         let verdict: DragOracleVerdict | null = null;
         try { verdict = parseDragOracleVerdict(reply); } catch (_e) { verdict = null; }
         if (verdict === null) { this.logToken(REPLY_INVALID_LINE); this.notifySettled(null, ctx); return; }
-        try { this.env.log(formatDragOracleVerdict(verdict)); } catch (_e) { /* fail-closed */ }
+        if (KWIN_TRACE_ENABLED) try { this.env.log(formatDragOracleVerdict(verdict)); } catch (_e) { /* fail-closed */ }
         // Cancelled verdicts (including Esc/no-change) are a strict no-op:
         // no planner call, no share change. Non-cancelled verdicts route
         // exactly once through the injected pointer route, which owns strict
@@ -105,7 +106,7 @@ export class DragOraclePull {
         } catch (_e) { /* fail-closed */ }
     }
     private logToken(line: string): void { try { this.env.log(line); } catch (_e) { /* fail-closed */ } }
-    private logPullDispatch(): void { try { this.env.log(PULL_DISPATCH_LINE); } catch (_e) { /* fail-closed */ } }
+    private logPullDispatch(): void { if (KWIN_TRACE_ENABLED) try { this.env.log(PULL_DISPATCH_LINE); } catch (_e) { /* fail-closed */ } }
 }
 function resolveLexicalWorkspace(): unknown {
     try {

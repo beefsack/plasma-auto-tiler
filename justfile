@@ -837,8 +837,8 @@ dev-status:
       echo "dev mode: SPLIT (planner $PLANNER_FACT${PLANNER_DETAIL:+, $PLANNER_DETAIL}, controller $CTRL_FACT)"
     fi
 
-# Optional `verbose` arg enables Planner full request/reply logging to its own log file:
-# `just dev verbose` (or `PLASMA_AUTO_TILER_PLANNER_VERBOSE=1 just dev` via env passthrough).
+# `just dev verbose` keeps bounded lifecycle and failure diagnostics. `just dev trace`
+# additionally enables bounded structural Planner request/reply, KWin per-window writes, and hook detail.
 # Foreground full-solution dev session: build all components, refuse unless DOWN, run dev-on, tail logs, and tear down on exit/Ctrl-C.
 [continue]
 dev mode="":
@@ -848,10 +848,12 @@ dev mode="":
     RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
     STATE_DIR="$RUNTIME_DIR/plasma-auto-tiler-dev"
     DEV_MODE="{{ mode }}"
-    if [[ "$DEV_MODE" == "verbose" ]]; then
-      export PLASMA_AUTO_TILER_PLANNER_VERBOSE=1
+    if [[ "$DEV_MODE" == "trace" ]]; then
+      export PLASMA_AUTO_TILER_TRACE=1
+    elif [[ "$DEV_MODE" == "verbose" ]]; then
+      :
     elif [[ -n "$DEV_MODE" ]]; then
-      echo "error: just dev: unknown mode '$DEV_MODE' (expected '' or 'verbose')" >&2
+      echo "error: just dev: unknown mode '$DEV_MODE' (expected '', 'verbose', or 'trace')" >&2
       exit 1
     fi
     # Reuse the existing strict read-only health probe; only a known DOWN

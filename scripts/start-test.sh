@@ -641,8 +641,12 @@ cmd_start() {
   }
   controller_build="controller-v1-$source_digest"
 
-  if ! ( cd "$KWIN_DIR" && npm run build ); then
-    echo "error: npm run build failed in $KWIN_DIR" >&2
+  local build_script="build"
+  if [[ "${PLASMA_AUTO_TILER_TRACE:-}" == "1" ]]; then
+    build_script="build:trace"
+  fi
+  if ! ( cd "$KWIN_DIR" && npm run "$build_script" ); then
+    echo "error: npm run $build_script failed in $KWIN_DIR" >&2
     exit 1
   fi
   if [[ ! -f "$BUNDLE" ]]; then

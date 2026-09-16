@@ -10,17 +10,14 @@
 // the next command. Stale replies are fenced against newer observations by
 // epoch plus correlation.
 //
-// Diagnostics are always-on and bounded per discrete user action or state
-// change: a cmd route-entry line (`outcome=dispatch`) plus a terminal outcome
-// line per flight, one `rejected kind=` line per Rust rejection, one
-// per-member `write window=<id> resource_class=<class> disposition=... rect=...` line per applied
-// geometry command, dedicated scope-transition/work-area-reprojection lines,
-// exact echo-fence transition tokens, an exact snapshot-invalid detail, and an
-// exact per-cause refusal token for every distinct request-route refusal. No
+// Ordinary diagnostics retain terminal command outcomes, rejections, scope,
+// fence, and refusal evidence. Dispatch and per-member geometry detail are
+// trace-only so background reconciliation cannot flood the KWin journal. No
 // captions or sensitive payload detail is logged beyond the stable opaque
 // window id.
 
 import { orderGeometryWrites } from "./geometry-order";
+import { KWIN_TRACE_ENABLED } from "./trace";
 
 export const PLAN_SERVICE = "org.plasmaautotiler.Planner";
 export const PLAN_OBJECT = "/org/plasmaautotiler/Planner";
@@ -2955,6 +2952,9 @@ export class PlanAdapter {
     }
 
     private diag(op: PlanOp, correlation: string, windows: number, outcome: string): void {
+        if (outcome === "dispatch" && !KWIN_TRACE_ENABLED) {
+            return;
+        }
         try {
             this.env.log(`${LOG_PREFIX}:cmd=${correlation} kind=${op} windows=${String(windows)} outcome=${outcome}`);
         } catch (error) {
@@ -2971,6 +2971,9 @@ export class PlanAdapter {
     }
 
     private writeDiag(window: string, resourceClass: string, disposition: string, rect: PlanRect): void {
+        if (!KWIN_TRACE_ENABLED && disposition !== "write-failed" && disposition !== "float-write-failed") {
+            return;
+        }
         this.logToken(
             `${LOG_PREFIX}:write window=${window} resource_class=${resourceClass} disposition=${disposition} rect=${String(rect.x)},${String(rect.y)},${String(rect.w)},${String(rect.h)}`,
         );

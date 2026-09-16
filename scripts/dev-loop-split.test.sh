@@ -126,7 +126,7 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'setsid %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
-printf 'setsid-env VERBOSE=%s\n' "${PLASMA_AUTO_TILER_PLANNER_VERBOSE:-0}" >> "${FAKE_CALL_LOG:?}"
+printf 'setsid-env TRACE=%s\n' "${PLASMA_AUTO_TILER_TRACE:-0}" >> "${FAKE_CALL_LOG:?}"
 exit 0
 EOF
   cat > "$FAKE_BIN/bin/systemctl" <<'EOF'
@@ -176,7 +176,7 @@ set -euo pipefail
 state="${FAKE_STATE_DIR:?}"
 calllog="${FAKE_CALL_LOG:?}"
 if [[ "${1:-}" == "start" ]]; then
-  printf 'start-test start\n' >> "$calllog"
+  printf 'start-test start TRACE=%s\n' "${PLASMA_AUTO_TILER_TRACE:-0}" >> "$calllog"
   if [[ -f "$state/start-fails" ]]; then
     echo "fake start-test: simulated start failure" >&2
     exit 1
@@ -1008,7 +1008,7 @@ assert_contains "logout/login" "dev teardown failure recovery"
 assert_calls_contain "start-test stop 7" "dev teardown exact stop once"
 assert_calls_missing "dogfood enable" "dev teardown failure no further teardown"
 
-# dev verbose: unknown mode refuses before mutation.
+# dev modes: unknown mode refuses before mutation.
 reset_state
 set_controller false
 run_just dev bogus
@@ -1021,13 +1021,32 @@ assert_calls_missing "cargo " "dev bogus no cargo"
 assert_calls_missing "npm " "dev bogus no npm"
 assert_calls_missing "cmake " "dev bogus no cmake"
 
-# dev verbose: DOWN bring-up exports exactly 1 to the Planner launch.
+# dev trace: DOWN bring-up exports exactly 1 to the Planner and KWin builds.
 reset_state
 set_controller false
-unset PLASMA_AUTO_TILER_PLANNER_VERBOSE 2>/dev/null || true
+unset PLASMA_AUTO_TILER_TRACE 2>/dev/null || true
 sleep 300 &
 DEV_VERBOSE_PID=$!
 make_planner_proc "$DEV_VERBOSE_PID" 999001
+printf '%s\n' "$DEV_VERBOSE_PID" > "$WORK/state/owner-pid"
+run_just dev trace
+DEV_VERBOSE_EXIT="$EXIT"
+kill "$DEV_VERBOSE_PID" 2>/dev/null || true
+wait "$DEV_VERBOSE_PID" 2>/dev/null || true
+EXIT="$DEV_VERBOSE_EXIT"
+check_exit 0 "dev trace cycle exit"
+assert_calls_contain "setsid-env TRACE=1" "dev trace exports planner opt-in"
+assert_calls_contain "start-test start TRACE=1" "dev trace exports KWin opt-in"
+assert_calls_contain "start-test stop 7" "dev trace teardown stop"
+unset PLASMA_AUTO_TILER_TRACE 2>/dev/null || true
+
+# dev verbose: explicit troubleshooting mode stays bounded and non-trace.
+reset_state
+set_controller false
+unset PLASMA_AUTO_TILER_TRACE 2>/dev/null || true
+sleep 300 &
+DEV_VERBOSE_PID=$!
+make_planner_proc "$DEV_VERBOSE_PID" 999003
 printf '%s\n' "$DEV_VERBOSE_PID" > "$WORK/state/owner-pid"
 run_just dev verbose
 DEV_VERBOSE_EXIT="$EXIT"
@@ -1035,17 +1054,17 @@ kill "$DEV_VERBOSE_PID" 2>/dev/null || true
 wait "$DEV_VERBOSE_PID" 2>/dev/null || true
 EXIT="$DEV_VERBOSE_EXIT"
 check_exit 0 "dev verbose cycle exit"
-assert_calls_contain "setsid-env VERBOSE=1" "dev verbose exports opt-in"
+assert_calls_contain "setsid-env TRACE=0" "dev verbose stays non-trace"
+assert_calls_contain "start-test start TRACE=0" "dev verbose keeps ordinary KWin build"
 assert_calls_contain "start-test stop 7" "dev verbose teardown stop"
-unset PLASMA_AUTO_TILER_PLANNER_VERBOSE 2>/dev/null || true
 
-# dev default: no mode arg leaves the Planner launch silent (VERBOSE=0).
+# dev default: no mode arg leaves trace disabled.
 reset_state
 set_controller false
-unset PLASMA_AUTO_TILER_PLANNER_VERBOSE 2>/dev/null || true
+unset PLASMA_AUTO_TILER_TRACE 2>/dev/null || true
 sleep 300 &
 DEV_QUIET_PID=$!
-make_planner_proc "$DEV_QUIET_PID" 999002
+make_planner_proc "$DEV_QUIET_PID" 999004
 printf '%s\n' "$DEV_QUIET_PID" > "$WORK/state/owner-pid"
 run_just dev
 DEV_QUIET_EXIT="$EXIT"
@@ -1053,17 +1072,17 @@ kill "$DEV_QUIET_PID" 2>/dev/null || true
 wait "$DEV_QUIET_PID" 2>/dev/null || true
 EXIT="$DEV_QUIET_EXIT"
 check_exit 0 "dev default cycle exit"
-assert_calls_contain "setsid-env VERBOSE=0" "dev default stays silent"
+assert_calls_contain "setsid-env TRACE=0" "dev default stays non-trace"
 assert_calls_contain "start-test stop 7" "dev default teardown stop"
-unset PLASMA_AUTO_TILER_PLANNER_VERBOSE 2>/dev/null || true
+unset PLASMA_AUTO_TILER_TRACE 2>/dev/null || true
 
-# dev env passthrough: exported 1 without the arg still reaches the launch.
+# dev env passthrough: exported 1 without the arg still reaches both builds.
 reset_state
 set_controller false
-export PLASMA_AUTO_TILER_PLANNER_VERBOSE=1
+export PLASMA_AUTO_TILER_TRACE=1
 sleep 300 &
 DEV_PASS_PID=$!
-make_planner_proc "$DEV_PASS_PID" 999003
+make_planner_proc "$DEV_PASS_PID" 999005
 printf '%s\n' "$DEV_PASS_PID" > "$WORK/state/owner-pid"
 run_just dev
 DEV_PASS_EXIT="$EXIT"
@@ -1071,9 +1090,10 @@ kill "$DEV_PASS_PID" 2>/dev/null || true
 wait "$DEV_PASS_PID" 2>/dev/null || true
 EXIT="$DEV_PASS_EXIT"
 check_exit 0 "dev passthrough cycle exit"
-assert_calls_contain "setsid-env VERBOSE=1" "dev passthrough exports opt-in"
+assert_calls_contain "setsid-env TRACE=1" "dev passthrough exports opt-in"
+assert_calls_contain "start-test start TRACE=1" "dev passthrough exports KWin opt-in"
 assert_calls_contain "start-test stop 7" "dev passthrough teardown stop"
-unset PLASMA_AUTO_TILER_PLANNER_VERBOSE 2>/dev/null || true
+unset PLASMA_AUTO_TILER_TRACE 2>/dev/null || true
 
 # start-test.sh: unloadScript=false verifies only with strict post false + receipt identity.
 START_STATE="$WORK/start-false-state"

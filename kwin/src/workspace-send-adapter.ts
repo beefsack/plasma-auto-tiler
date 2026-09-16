@@ -53,6 +53,7 @@
 
 import { DOMAIN_GAP_DEFAULT, DomainGaps, normalizeGap, OUTER_DOMAIN_GAP_DEFAULT, readDomainGaps } from "./domain-gap";
 import { orderGeometryWrites } from "./geometry-order";
+import { KWIN_TRACE_ENABLED } from "./trace";
 
 export const WORKSPACE_SEND_SERVICE = "org.plasmaautotiler.Planner";
 export const WORKSPACE_SEND_OBJECT = "/org/plasmaautotiler/Planner";
@@ -1922,19 +1923,21 @@ export class WorkspaceSendAdapter {
         }
         const detach = this.geoDetaches.get(windowId);
         const entry = this.geometryEntry(planned, windowId);
-        this.logGeometryDiag({
-            correlation,
-            revision: planned.baseRevision,
-            event: "plan-geometry",
-            outcome: "consumed",
-            planned,
-            pending,
-            entry,
-            writeOrdinal: -1,
-            writeTotal: -1,
-            writeReturned: -1,
-            readback: this.readGeometryDetail(this.geoRefs.get(windowId), entry?.rect),
-        });
+        if (KWIN_TRACE_ENABLED) {
+            this.logGeometryDiag({
+                correlation,
+                revision: planned.baseRevision,
+                event: "plan-geometry",
+                outcome: "consumed",
+                planned,
+                pending,
+                entry,
+                writeOrdinal: -1,
+                writeTotal: -1,
+                writeReturned: -1,
+                readback: this.readGeometryDetail(this.geoRefs.get(windowId), entry?.rect),
+            });
+        }
         if (detach !== undefined) {
             this.geoDetaches.delete(windowId);
             try {
@@ -2062,19 +2065,21 @@ export class WorkspaceSendAdapter {
                 void error;
                 written = false;
             }
-            this.logGeometryDiag({
-                correlation: planned.correlationId,
-                revision: planned.baseRevision,
-                event: "geometry-write",
-                outcome: "returned",
-                planned,
-                pending: flightState,
-                entry,
-                writeOrdinal,
-                writeTotal: ordered.length,
-                writeReturned: written ? 1 : 0,
-                readback: this.readGeometryDetail(target, entry.rect),
-            });
+            if (KWIN_TRACE_ENABLED) {
+                this.logGeometryDiag({
+                    correlation: planned.correlationId,
+                    revision: planned.baseRevision,
+                    event: "geometry-write",
+                    outcome: "returned",
+                    planned,
+                    pending: flightState,
+                    entry,
+                    writeOrdinal,
+                    writeTotal: ordered.length,
+                    writeReturned: written ? 1 : 0,
+                    readback: this.readGeometryDetail(target, entry.rect),
+                });
+            }
             if (!written) {
                 return false;
             }
@@ -3029,6 +3034,18 @@ export class WorkspaceSendAdapter {
         outcome: string,
         terminalFollowOutcome?: string,
     ): void {
+        if (
+            !KWIN_TRACE_ENABLED &&
+            stage !== "result" &&
+            stage !== "follow" &&
+            event !== "refuse" &&
+            outcome !== "no-planner" &&
+            !(event === "plan" && outcome === "planned") &&
+            !(event === "ack" && outcome === "acknowledged") &&
+            !(event === "verify" && outcome === "committed")
+        ) {
+            return;
+        }
         try {
             const followed =
                 terminalFollowOutcome === "state-confirmed" ||
@@ -3265,6 +3282,9 @@ export class WorkspaceSendAdapter {
         readonly writeReturned: number;
         readonly readback: GeometryReadbackDetail;
     }): void {
+        if (!KWIN_TRACE_ENABLED) {
+            return;
+        }
         try {
             const geoIdx = detail.entry === null ? -1 : detail.planned.geometry.indexOf(detail.entry);
             this.env.log(

@@ -101,9 +101,9 @@
    records the same evidence. The user restores the exact baseline. No project
    D-Bus method is injected in either journey.
 4. The user repeats one resolution or scaling change with one member fullscreen,
-   records the Planner verbose request/reply, bounded plan diagnostics, and all
+   records the Planner trace request/reply, bounded plan diagnostics, and all
    member frames, then exits fullscreen and restores the exact baseline. The
-   per-member `plasma-auto-tiler:plan:write` lines prove the fullscreen member
+    trace per-member `plasma-auto-tiler:plan:write` lines prove the fullscreen member
    carried `disposition=skip-fullscreen` while every sibling carried
    `disposition=written`.
 5. Pass only if each bounds change issues one retained projection to the new

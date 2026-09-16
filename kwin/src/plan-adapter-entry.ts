@@ -39,6 +39,7 @@ import {
 import { PLAN_INTERFACE, PLAN_METHOD, PLAN_OBJECT, PLAN_SERVICE, PlanAdapter, PlanDirection, PlanObserved, PlanResizeMode, planFingerprint } from "./plan-adapter";
 import { PLAN_SOURCE_REV } from "./source-rev";
 import { connectSignal, readSignal } from "./signal-capability";
+import { KWIN_TRACE_ENABLED } from "./trace";
 import { WorkspaceNativeAdapter, workspaceShortcutCatalog } from "./workspace-native";
 import {
     WORKSPACE_SEND_DBUS_SERVICE,
@@ -2028,6 +2029,9 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     });
     const eligibilityReasons = new Map<string, string>();
     const reportEligibility: EligibilityReporter = (ref, reason): void => {
+        if (!KWIN_TRACE_ENABLED) {
+            return;
+        }
         const id = readNativeId(ref);
         if (id === null) {
             if (reason !== null) {
@@ -2389,6 +2393,9 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             readonly exception: string;
         },
     ): void => {
+        if (!KWIN_TRACE_ENABLED) {
+            return;
+        }
         try {
             log(
                 `plasma-auto-tiler:route-diag component=cosmic-send stage=follow correlation=${diagnostic.correlation} generation=${String(overrides.generation)} revision=${String(diagnostic.revision)} event=${event} outcome=${outcome} diag_seq=${String(diagnostic.nextSequence())} api=${detail.api} return_kind=${detail.returnKind} call_ord=${String(detail.callOrdinal)} call_total=${String(detail.callTotal)} selection=${detail.selection} mode=${detail.mode} outputs=${String(detail.outputs)} tgt_ord=${String(detail.targetOrdinal)} cur_id_eq=${String(detail.currentIdEq)} active_id_eq=${String(detail.activeIdEq)} exception=${detail.exception}`,

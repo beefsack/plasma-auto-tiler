@@ -6,9 +6,10 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
     "build": "rm -rf dist && esbuild src/entry.ts --bundle --format=iife --target=es2017 --outfile=contents/code/main.js",
+    "build:trace": "rm -rf dist && esbuild src/entry.ts --bundle --format=iife --target=es2017 --define:__PLASMA_AUTO_TILER_TRACE__='\"1\"' --outfile=contents/code/main.js",
     "test:movement": "rm -rf dist/tests-movement && esbuild \"tests/movement-adapter.test.ts\" --bundle --platform=node --format=cjs --target=es2020 --outdir=dist/tests-movement && node --test \"dist/tests-movement/**/*.test.js\"",
     "test:resize": "rm -rf dist/tests-resize && esbuild \"tests/resize-adapter.test.ts\" --bundle --platform=node --format=cjs --target=es2020 --outdir=dist/tests-resize && node --test \"dist/tests-resize/**/*.test.js\"",
-    "test": "npm run build && rm -rf dist/tests && esbuild \"tests/*.test.ts\" --bundle --platform=node --format=cjs --target=es2020 --outdir=dist/tests && TRAY_BRIDGE_FIXTURE=../test-fixtures/tray-bridge-v1.json node --test \"dist/tests/**/*.test.js\"",
+    "test": "npm run build && rm -rf dist/tests && esbuild \"tests/*.test.ts\" --bundle --platform=node --format=cjs --target=es2020 --define:__PLASMA_AUTO_TILER_TRACE__='\"1\"' --outdir=dist/tests && TRAY_BRIDGE_FIXTURE=../test-fixtures/tray-bridge-v1.json node --test \"dist/tests/**/*.test.js\"",
     "build:installed": "rm -rf dist && esbuild src/entry.ts --bundle --format=iife --target=es2017 --define:__PLASMA_AUTO_TILER_SOURCE_REV__='\"'\"$PLASMA_AUTO_TILER_SOURCE_REV\"'\"' --outfile=contents/code/main.js"
   },
   "engines": {

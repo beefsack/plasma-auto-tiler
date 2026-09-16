@@ -6,6 +6,8 @@ These recipes never stop or mask units, never resolve the Planner through
 
 ```sh
 just dev         # foreground: refuse unless DOWN, dev-on, tail labeled logs, Ctrl-C tears down via dev-off
+just dev verbose # same bounded operational diagnostics, named explicitly for troubleshooting
+just dev trace   # additionally build KWin trace detail and log Planner request/reply payloads
 just dev-on      # disable packaged script, start worktree Planner + KWin bundle
 just dev-status  # read-only: name owner, isScriptLoaded, receipt, unit state
 just reload      # rebuild and swap only the recorded worktree Planner
@@ -25,8 +27,8 @@ just dev-off     # unload exact script, stop recorded Planner, re-enable package
   and no extra teardown (rollback stays owned by `dev-on`). On success it
   arms `just dev-off` for `INT`/`TERM`/`EXIT`, then tails the live Planner
   log from `$STATE_DIR/planner-log` prefixed `[planner]` and the KWin
-  journal plugin lines (`journalctl --user -f _PID=<kwin-pid>` from the
-   receipt `.pid`, filtered to `plasma-auto-tiler:plan`) prefixed `[kwin]`.
+   journal plugin lines (`journalctl --user -f _PID=<kwin-pid>` from the
+    receipt `.pid`, filtered to `plasma-auto-tiler:`) prefixed `[kwin]`.
    The labeled stream is also captured at `$STATE_DIR/dev-log`'s path; the
    durable file persists after teardown.
    `Ctrl-C` stops the tails and runs the existing fail-closed receipt-bound
@@ -93,12 +95,14 @@ Single engine: the worktree KWin bundle (`kwin/src/entry.ts` via
 is the only observer/actuator. Rust owns all tiling, order, membership, and
 rejection decisions through the stateless `DescribePlan` D-Bus route
 (`org.plasmaautotiler.Planner` / `/org/plasmaautotiler/Planner` /
-`org.plasmaautotiler.Planner1`). Only normal windows on the active
-output/workspace are observed; reply geometries are applied in shared
-canonical grow-before-shrink order. There is no journal readiness wait and
-no second runtime: bring-up is proven by the strict `isScriptLoaded`
-envelope plus receipt-bound exact `Script<ID>` introspection, and teardown
-is receipt-bound exact unload.
+`org.plasmaautotiler.Planner1`). Normal windows are observed in the active
+foreground domain and every other readable background `(output, workspace)`
+domain. Background replies write only their exact domain and never request
+native focus or desktop visibility changes; reply geometries use shared
+canonical grow-before-shrink order. There is no journal readiness wait and no
+second runtime: bring-up is proven by the strict `isScriptLoaded` envelope plus
+receipt-bound exact `Script<ID>` introspection, and teardown is receipt-bound
+exact unload.
 
 ## Manual Fallback
 
@@ -245,11 +249,13 @@ prove live callbacks.
 
 Filter by the recorded KWin PID only: `journalctl --user --no-pager _PID=<kwin-pid>`
 (never `journalctl --system`). All emitted production diagnostics carry the
-fixed `plasma-auto-tiler:` prefix and are always-on (never verbose-gated).
-The complete reference below is bounded per discrete user action or state
-change; no line carries a caption or title. Window-bearing lines carry the
-stable `resource_class` application identifier as well as the opaque id; it is
-not a caption and cannot contain document or page content.
+fixed `plasma-auto-tiler:` prefix. `just dev` and `just dev verbose` retain
+bounded lifecycle, terminal, refusal, and rejection evidence. `just dev trace`
+additionally enables redacted per-window and hook detail plus the Planner's
+bounded structural request/reply JSON. It does not capture raw native D-Bus
+payloads. No line carries a caption or title. Window-bearing trace lines carry
+the stable `resource_class` application identifier as well as the opaque id; it
+is not a caption and cannot contain document or page content.
 
 Startup context (exactly one line per successful plan entry start, using the
 existing owner/generation provenance plus the compiled-in source revision;
@@ -258,11 +264,13 @@ existing owner/generation provenance plus the compiled-in source revision;
 
 - `plasma-auto-tiler:plan:ready owner=<owner> generation=<generation> source=<source-rev>`
 
-Per dispatched `DescribePlan` flight (exactly two `cmd=` lines: one route
-entry with `outcome=dispatch` and one terminal verdict line):
+Per dispatched `DescribePlan` flight, ordinary output retains one terminal
+verdict line. Trace also records its route entry:
 
 - `plasma-auto-tiler:plan:cmd=<correlation> kind=<op> windows=<N> outcome=dispatch`
 - `plasma-auto-tiler:plan:cmd=<correlation> kind=<op> windows=<N> outcome=<outcome>`
+
+The `outcome=dispatch` form is trace-only; the terminal form is ordinary.
 
 where `<op>` is one of `admit|remove|move|focus|resize|reconcile|pointer-resize|toggle-float`,
 `<correlation>` is `<generation>-p<seq>` (production: `plan-1-p<seq>`), `<N>`
@@ -286,11 +294,13 @@ The third form is emitted when the adapter can identify the invalid carried
 rectangle. It uses the same stable opaque id, resource class, and integer
 geometry already emitted for applied writes.
 
-Per applied geometry command (every member exactly one line, non-focus ops;
+Trace only: per applied geometry command (every member exactly one line, non-focus ops;
 `<id>` is the stable opaque normalized window id, `<class>` is KWin's bounded
 non-sensitive resource class, and `<rect>` is `x,y,w,h`):
 
 - `plasma-auto-tiler:plan:write window=<id> resource_class=<class> disposition=<written|skip-fullscreen|skip-maximized|skip-floating|skip-already-equal|write-failed|float-written|float-write-failed> rect=<rect>`
+
+`write-failed` and `float-write-failed` remain ordinary failure evidence.
 
 Per work-area/scope change (dedicated pair, never the generic reconcile line):
 
@@ -377,16 +387,16 @@ Intentional-float Planner snapshot-invalid details:
 - `toggle-float-window-invalid`
 - `float-rect-invalid`
 
-Per window excluded before admission (one line per unchanged exclusion state for
+Trace only: per window excluded before admission (one line per unchanged exclusion state for
 an identified window; `<id>` is the normalized window id, or `unknown` when
 KWin cannot provide one. `<class>` is KWin's non-sensitive resource class, or
 `unknown` when unavailable):
 
 - `plasma-auto-tiler:plan:observe-excluded reason=<active-normal-window|normal-window|output-missing|output-mismatch|desktop-mismatch|frame-rect-missing|frame-rect-coordinate-invalid|frame-rect-size-invalid|frame-rect-coordinate-out-of-range|frame-rect-size-out-of-range> window=<id> resource_class=<class>`
 
-Drag-oracle route lines (always-on; entry then verdict; the pointer route's
-adapter emits the exact `pointer-refused-*` token above per cause, never a
-catch-all line):
+Trace only: normal drag pull and verdict lines. Ordinary output retains the
+failure tokens below; the pointer route's adapter emits the exact
+`pointer-refused-*` token above per cause, never a catch-all line:
 
 - `plasma-auto-tiler:route-diag:drag-pull action=dispatch`
 - `plasma-auto-tiler:route-diag:drag-verdict cancelled=<true|false> correlation=<drag-N> reason=<reason>`
@@ -418,9 +428,11 @@ Drag-oracle entry startup refusal (exactly one token per refused
 - `plasma-auto-tiler:route-diag:drag-entry-added-invalid` (missing or non-connectable windowAdded signal)
 - `plasma-auto-tiler:route-diag:drag-entry-added-connect-failed` (windowAdded attach returned null or threw)
 
-Map each journey step above to one command pair: add -> `kind=admit`,
-close -> `kind=remove`, directional focus -> `kind=focus`, directional move ->
-`kind=move`, resize -> `kind=resize`, intentional float toggle -> `kind=toggle-float`.
-Pointer focus change alone emits no command line. A rejection still emits the
-pair above and recovers on the next fresh observation; the adapter never
-disables itself after a reply.
+Map each journey step above to one Plan command: add -> `kind=admit`, close ->
+`kind=remove`, directional focus -> `kind=focus`, directional move ->
+`kind=move`, resize -> `kind=resize`, intentional float toggle ->
+`kind=toggle-float`. Ordinary output emits its terminal outcome; trace also
+emits its dispatch line. Pointer focus change alone emits no command line. A
+rejection still emits its ordinary terminal and rejection-kind lines, then
+recovers on the next fresh observation; the adapter never disables itself after
+a reply.

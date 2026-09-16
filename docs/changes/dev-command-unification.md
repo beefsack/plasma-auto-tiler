@@ -7,7 +7,7 @@
 - `just build-native-effect` builds and stages the active-border
   effect, drag-oracle effect, and active-border KCM.
 - `just build` aggregates those three builds.
-- `just dev [verbose]` accepts only a known DOWN dev state, runs `just build`,
+- `just dev [verbose|trace]` accepts only a known DOWN dev state, runs `just build`,
   warns about the native session boundary, then retains the existing foreground
   `dev-on`/log-tail/receipt-bound `dev-off` lifecycle.
 
@@ -57,6 +57,17 @@ independently editable component retains a cheap direct command.
   journal fixture and proves it reaches the labelled KWin stream.
 - Follow-up static verification: `scripts/dev-loop-split.test.sh` passed
   `PASS=277 FAIL=0`; `just --fmt --check` passed.
+
+## Logging Levels
+
+- `just dev` and `just dev verbose` retain bounded lifecycle, terminal,
+  rejection, and refusal diagnostics. `just dev trace` compiles the KWin trace
+  bundle and enables bounded structural Planner request/reply detail through
+  `PLASMA_AUTO_TILER_TRACE=1`.
+- Trace-only output includes Plan dispatch/per-window geometry dispositions,
+  exclusion observations, workspace-send geometry and native-hook detail, and
+  normal drag pull/verdict records. Failures and transaction/follow summaries
+  remain visible without trace.
 
 ## User-Owned Checks
 

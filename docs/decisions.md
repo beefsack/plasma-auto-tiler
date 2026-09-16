@@ -251,9 +251,12 @@ Historical implementation detail is recoverable in Git history.
   before mutation. This authorization does not broaden access to non-project
   resources.
 - Before any further troubleshooting or product development, current project
-  processes and Rust-path IPC must emit verbose, structured, correlated logs to
-  their existing visible KWin console, stdout, or stderr/journal sinks. Future
-  troubleshooting checks those logs first. The shared
+  processes and Rust-path IPC must emit bounded, structured, correlated lifecycle
+  and terminal logs to their existing visible KWin console, stdout, or
+  stderr/journal sinks. `just dev verbose` keeps those summaries while
+  `just dev trace` opt-in enables redacted high-volume per-window, hook, and
+  bounded structural request/reply detail, never raw native D-Bus payloads.
+  Future troubleshooting checks those logs first. The shared
   `plasma-auto-tiler:route-diag` schema must identify component, direction or
   stage, correlation, authority generation, revision, event/action, and
   outcome while excluding captions, application content, secrets, raw

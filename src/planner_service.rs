@@ -97,39 +97,39 @@ pub fn caller_uid_authorized(caller_uid: Option<u32>, expected_uid: u32) -> bool
 // no forensics, and no ambient environment authority anywhere in this
 // service.
 
-/// Opt-in verbose diagnostic gate for DescribePlan flights. Default off:
+/// Opt-in trace diagnostic gate for DescribePlan flights. Default off:
 /// only the exact value `1` enables full request/reply logging to the
 /// Planner's own log file (stderr, captured via the dev `planner-log`
 /// pointer). Any other value, including unset and empty, stays silent so the
 /// default journal surface (one bounded line per command plus one per
 /// rejection, KWin side only) is preserved exactly.
-pub const PLANNER_VERBOSE_ENV_VAR: &str = "PLASMA_AUTO_TILER_PLANNER_VERBOSE";
+pub const PLANNER_TRACE_ENV_VAR: &str = "PLASMA_AUTO_TILER_TRACE";
 
-/// Whether verbose DescribePlan logging is enabled (`1` only).
+/// Whether trace DescribePlan logging is enabled (`1` only).
 #[must_use]
-pub fn planner_verbose_enabled() -> bool {
+pub fn planner_trace_enabled() -> bool {
     matches!(
-        std::env::var(PLANNER_VERBOSE_ENV_VAR),
+        std::env::var(PLANNER_TRACE_ENV_VAR),
         Ok(value) if value == "1"
     )
 }
 
-/// Pure verbose line formatting: full request and reply JSON with stable
-/// prefixes. No truncation: verbose mode is explicitly opt-in diagnostics.
+/// Pure trace line formatting: full request and reply JSON with stable
+/// prefixes. No truncation: trace mode is explicitly opt-in diagnostics.
 #[must_use]
-pub fn format_verbose_plan_lines(request: &str, reply: &str) -> (String, String) {
+pub fn format_trace_plan_lines(request: &str, reply: &str) -> (String, String) {
     (
-        format!("plasma-auto-tiler:plan-verbose:request {request}"),
-        format!("plasma-auto-tiler:plan-verbose:reply {reply}"),
+        format!("plasma-auto-tiler:plan-trace:request {request}"),
+        format!("plasma-auto-tiler:plan-trace:reply {reply}"),
     )
 }
 
-/// Verbose lines when enabled, `None` when default-off. Pure gate for tests;
+/// Trace lines when enabled, `None` when default-off. Pure gate for tests;
 /// production writes the lines with `eprintln!` (Planner's own log file).
 #[must_use]
-pub fn verbose_plan_lines(request: &str, reply: &str) -> Option<(String, String)> {
-    if planner_verbose_enabled() {
-        Some(format_verbose_plan_lines(request, reply))
+pub fn trace_plan_lines(request: &str, reply: &str) -> Option<(String, String)> {
+    if planner_trace_enabled() {
+        Some(format_trace_plan_lines(request, reply))
     } else {
         None
     }
@@ -299,13 +299,13 @@ impl PlannerEndpoint {
         // Planned and recoverably rejected replies are silent by default
         // (zero diagnostic lines): the reply is returned with the lock
         // released and no logging, so output never triggers bus activation
-        // and never holds the operation lock. Opt-in verbose mode
-        // (`PLASMA_AUTO_TILER_PLANNER_VERBOSE=1`) writes the full request
+        // and never holds the operation lock. Opt-in trace mode
+        // (`PLASMA_AUTO_TILER_TRACE=1`) writes the full request
         // and reply JSON to the Planner's own log file (stderr) after the
         // guard is released; the KWin journal surface stays exactly one
         // bounded line per command plus one per rejection.
         drop(_guard);
-        if let Some((request_line, reply_line)) = verbose_plan_lines(&request, &reply) {
+        if let Some((request_line, reply_line)) = trace_plan_lines(&request, &reply) {
             eprintln!("{request_line}");
             eprintln!("{reply_line}");
         }
@@ -801,36 +801,36 @@ mod tests {
     }
 
     #[test]
-    fn planner_verbose_is_default_off_and_opt_in_by_single_env() {
+    fn planner_trace_is_default_off_and_opt_in_by_single_env() {
         // D7: default-off gate plus full-JSON line formatting. Single test
         // touches the process env var to avoid parallel-test races.
-        let var = crate::planner_service::PLANNER_VERBOSE_ENV_VAR;
+        let var = crate::planner_service::PLANNER_TRACE_ENV_VAR;
         let previous = std::env::var(var).ok();
         unsafe { std::env::remove_var(var) };
         assert!(
-            !crate::planner_service::planner_verbose_enabled(),
+            !crate::planner_service::planner_trace_enabled(),
             "unset must stay silent"
         );
         assert!(
-            crate::planner_service::verbose_plan_lines("{}", "{}").is_none(),
+            crate::planner_service::trace_plan_lines("{}", "{}").is_none(),
             "unset must produce no lines"
         );
         for off in ["0", "", "true", "TRUE", "2"] {
             unsafe { std::env::set_var(var, off) };
             assert!(
-                !crate::planner_service::planner_verbose_enabled(),
+                !crate::planner_service::planner_trace_enabled(),
                 "value {off:?} must stay silent"
             );
             assert!(
-                crate::planner_service::verbose_plan_lines("{}", "{}").is_none(),
+                crate::planner_service::trace_plan_lines("{}", "{}").is_none(),
                 "value {off:?} must produce no lines"
             );
         }
         unsafe { std::env::set_var(var, "1") };
-        assert!(crate::planner_service::planner_verbose_enabled());
+        assert!(crate::planner_service::planner_trace_enabled());
         let request = r#"{"v":1,"correlation_id":"plan-1-p44"}"#;
         let reply = r#"{"v":1,"outcome":"rejected","kind":"snapshot-invalid"}"#;
-        let lines = crate::planner_service::verbose_plan_lines(request, reply)
+        let lines = crate::planner_service::trace_plan_lines(request, reply)
             .expect("value 1 must produce lines");
         assert!(
             lines.0.contains(request),
@@ -843,11 +843,11 @@ mod tests {
         assert!(
             lines
                 .0
-                .starts_with("plasma-auto-tiler:plan-verbose:request "),
+                .starts_with("plasma-auto-tiler:plan-trace:request "),
             "{lines:?}"
         );
         assert!(
-            lines.1.starts_with("plasma-auto-tiler:plan-verbose:reply "),
+            lines.1.starts_with("plasma-auto-tiler:plan-trace:reply "),
             "{lines:?}"
         );
         match previous {
