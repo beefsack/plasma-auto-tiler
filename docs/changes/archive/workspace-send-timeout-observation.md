@@ -126,6 +126,36 @@
   Diagnostic failure is ignored and never changes teardown, timer, fence, or
   enablement. It does not reconstruct the historical w19 path and claims no
   source binding for it.
+- The later exact authorized LNq6hA capture has a distinct terminal shape. Its
+  `plan-1-w0` send is planned with two geometry entries, then consumes the mover
+  and only one geometry fence; timeout settlement reports
+  `geometry-rect-mismatch`, `verify_geo_idx=1`, `fence_pending=1`, and
+  `fence_idx=1`. It has no post-mover observation, accepted acknowledgement,
+  verify, commit, or follow event. Thus the user-reported unchanged visible
+  workspace is not a failed follow: follow was not eligible to run. The
+  plan-relative second geometry entry remained both pending and mismatched.
+- The Planner and KWin sinks have no common ordering. The later target-domain
+  observations establish only that a later observation saw the target geometry;
+  they cannot verify the earlier send. The capture has no marker for the user's
+  manual workspace visit or Ctrl-C, so it neither attributes the terminal loss
+  to shutdown nor orders the visit against timeout settlement.
+- Current source writes the target-domain geometry before mover membership and
+  binds a `frameGeometryChanged` fence for every changed planned geometry. It
+  cannot acknowledge, commit, or follow until the mover and every such geometry
+  echo arrive (`kwin/src/workspace-send-adapter.ts:1630-1707,1797-1846,
+  2136-2182`). The subscriptions are installed before writes, and unchanged
+  geometry is excluded from the fence. No source or host-native evidence proves
+  that KWin suppresses or defers a hidden-workspace geometry signal; that remains
+  a possible native cause, not a supported correction. The existing one-shot
+  exact timeout settlement is the only allowed signal-independent reconciliation
+  (`kwin/src/workspace-send-adapter.ts:2515-2667`).
+- Separately, ordinary observation selects the active output's current desktop.
+  Startup, window addition, and a move into a non-current target therefore do
+  not tile that hidden domain until it becomes current. This explains the
+  reported stale hidden-domain layout/panel preview coverage, but does not prove
+  the LNq6hA geometry fence cause
+  (`kwin/src/plan-adapter-entry.ts:917-941,994-1018`). General hidden-domain
+  tiling would broaden product behavior and is not selected here.
 
 ## Legacy Route Comparison
 
@@ -161,6 +191,9 @@
 - The unresolved work is to identify why planned geometry entry 1 did not
   converge to its exact rectangle and did not produce its confirmation. No
   recovery or terminal-policy redesign is selected.
+- Keep non-visible workspace tiling as a separate product decision. Recommendation:
+  do not activate or generally reconcile hidden domains until its intended
+  adoption, geometry, focus, and lifecycle behavior is selected and tested.
 
 ## Backlog Recommendation
 

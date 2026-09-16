@@ -2,18 +2,24 @@
 
 Only meaningful pending or active work is listed.
 
-- P0 | Workspace-send reliability (next dogfooding blocker) | Comparison with
-  the user-confirmed working pre-removal legacy route found the same native
-  membership/switch primitives and no supported parity fix. Rust additionally
-  gates follow on direct-geometry confirmation and exact ack/verify/commit.
-  WwQ9G6 has 19 committed sends, then w19 loses the adapter before ack/commit;
-  its cause remains unresolved. Direct pre-ack disable now has a statically
-  verified terminal diagnostic, not a behavior fix. Next obtain one labeled
-  failure with that diagnostic. Keep the earlier pJOooO geometry-index-1 timeout
-  mismatch and committed/readback-confirmed visible failures distinct. Restore
-  visible follow/focus and continued usability; border causation is unconfirmed.
+- P0 | Workspace-send reliability (next dogfooding blocker) | LNq6hA confirms
+  a pre-ack timeout: mover and one geometry echo consumed, plan geometry index
+  1 still pending and mismatched. Follow never ran; the user saw the window
+  move 3->2 while 3 stayed visible with a border for the hidden window. Identify
+  why that geometry did not converge; hidden-window delivery is unproven, and
+  the capture does not time the later manual visit against timeout. No behavior
+  fix is established. Keep WwQ9G6 pre-ack loss and earlier committed-but-invisible
+  failures distinct. Restore follow/focus and usability without attributing the
+  initiating loss to user shutdown or assuming border causation.
   [timeout record](changes/archive/workspace-send-timeout-observation.md)
   [earlier record](changes/archive/workspace-send-visible-follow-boundary.md)
+- P1 | Non-visible workspace tiling investigation | User observes deferred
+  retiling until visiting a workspace, leaving stale panel previews. Source
+  confirms normal observation/reconciliation covers the active output's current
+  desktop; the separate send transaction does write hidden-target geometry.
+  Select startup and window-open/move hidden-domain adoption/reconciliation
+  without changing visibility or focus before implementing broader activation.
+  Its causal connection to the send blocker remains unproven.
 - P1 | Remaining workspace-send uncertainty recovery | Diagnose ordinary send
   defects first; any new recovery semantics remain a separate product decision.
   Proven pre-dispatch and well-formed request rejection paths are reusable. Sent request/lost callback,
