@@ -80,23 +80,40 @@ Only meaningful pending or active work is listed.
   [investigation](changes/reliability-condition-investigation.md)
 - P1 | All settings live application (launch blocker) | Before launch, every
   user-facing setting must apply live, including tiling, workspace, shortcut,
-  and effect settings. Verify running behavior reflects saved settings without
-  requiring a tiler reload. The interim reload approach does not satisfy this.
+  and effect settings. Overall liveness is PARTIAL, not complete: gaps apply
+  through the deliberate retained reload below and borders stay live; the
+  rest is pending. `shortcutProfile`/`workspaceMode` are startup-only
+  (restart applies them); `tilingAlgorithm`, `automaticSplitTarget`, and
+  `dropOutlinePreview` are persisted but consumed by nothing, so neither
+  reload nor restart applies them. Verify running behavior reflects saved
+  settings without requiring a tiler reload. The interim reload approach
+  does not satisfy this.
   [investigation](changes/reliability-condition-investigation.md)
-- P2 | Interim runtime configuration reload | Static-complete, live gate
-  pending: deliberate gap-only tiler reload after saving gap settings, with clear
-  reload/restart UI and existing live border updates retained. Saving gaps
-  marks reload-required and enables Reload Tiler; saving only non-gap startup
-  settings marks restart-required with reload disabled; combined saves enable
-  reload for gaps while retaining restart-required for other settings. A no-pending request sends nothing. A deliberate
+- P2 | Interim runtime configuration reload | Static-complete with retained
+  offline proof, live gate pending: deliberate gap-only tiler reload after
+  saving gap settings, with clear reload/restart UI and existing live border
+  updates retained. Saving gaps marks reload-required and enables Reload
+  Tiler; saving only non-gap script settings marks restart-required with
+  reload disabled (note: restart genuinely applies only startup-read
+  `shortcutProfile`/`workspaceMode`; the unconsumed `tilingAlgorithm`,
+  `automaticSplitTarget`, `dropOutlinePreview` are applied by nothing today).
+  Combined saves enable reload for gaps while retaining restart-required for
+  other settings. A no-pending request sends nothing. A deliberate
   reload sends one typed KWin reconfigure request reported as
   sent-but-unconfirmed or failed, never applied; a queued send never clears
   restart-required; session restart remains the
-  guarantee. The running controller subscribes to the KWin Options
+  fallback guarantee for gap pickup only where the retained route cannot
+  converge. The running controller subscribes to the KWin Options
   `configChanged` signal emitted after that reconfigure reparses kwinrc, then
-  re-reads validated gap configuration and requests one debounced resync;
-  unchanged signals resync nothing and shortcuts are never re-registered.
-  Non-gap startup settings stay startup-only. Reload/restart-required is dialog-scoped in-memory state: dialog
+  re-reads validated gap configuration and requests one debounced resync that
+  dispatches retained `update-gaps` for a changed gap pair (proven offline
+  for inner, outer, and combined changes with topology/share/focus
+  preservation; ordinary drift reconcile still refuses gaps);
+  unchanged signals resync nothing and shortcuts are never re-registered
+  (no unregister operation exists on the pinned KWin scripting surface, so
+  re-registration is unselected and foreign records stay KCM-explicit-only).
+  Startup-read settings stay startup-only; unconsumed settings stay
+  unconsumed. Reload/restart-required is dialog-scoped in-memory state: dialog
   load/reopen resets it and truthful cross-reload preservation is blocked
   (no authorized persistent key, no supported runtime observation). No live
   result is claimed and the all-settings live-application launch blocker is

@@ -1144,11 +1144,12 @@ describe("plan adapter client self-resize reconcile", () => {
         ]);
         assert.ok(mocks.logs.some((line) => line.includes(`cmd=${retryCorrelation}`) && line.includes("outcome=planned-applied")));
     });
-    it("does not classify an outer-gap change as work-area reprojection", () => {
+    it("routes an outer-gap change through retained update-gaps, not work-area reprojection", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         baseline(mocks, refs);
         const callsBefore = mocks.dbusCalls.length;
+        const writesBefore = mocks.geometries.length;
         mocks.observeImpl = () =>
             makeObserved(refs, {
                 focused: refs.a,
@@ -1157,8 +1158,37 @@ describe("plan adapter client self-resize reconcile", () => {
             });
         fire(mocks, "geometry");
         runDebounce(mocks);
-        assert.equal(mocks.dbusCalls.length, callsBefore);
-        assert.equal(mocks.geometries.length, 0);
+        // The deliberate gap reload path dispatches exactly one retained
+        // gap reprojection: never a work-area reconcile, never silent adopt.
+        assert.equal(mocks.dbusCalls.length, callsBefore + 1);
+        const cmd = plannerPayload(mocks, callsBefore)["command"] as Record<string, unknown>;
+        assert.deepEqual(cmd, { op: "update-gaps" });
+        assert.equal((plannerPayload(mocks, callsBefore)["domain"] as Record<string, unknown>)["outer_gap"], 0);
+        assert.ok(
+            mocks.logs.some((line) => line.includes("gap-reprojection selected=retained")),
+            "distinct retained gap reprojection event, not the generic reconcile line",
+        );
+        assert.ok(
+            !mocks.logs.some((line) => line.includes("work-area-reprojection selected=retained")),
+            "a gap-only change must not log work-area reprojection",
+        );
+        // The applied reply converges the new gaps natively.
+        const corr = plannerPayload(mocks, callsBefore)["correlation_id"] as string;
+        mocks.callbacks[callsBefore]?.(
+            plannedReply(
+                corr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 596, h: 800 } },
+                    { window: "win-b", rect: { x: 604, y: 0, w: 596, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        assert.deepEqual(mocks.geometries.slice(writesBefore), [
+            { target: refs.a, rect: { x: 0, y: 0, w: 596, h: 800 } },
+            { target: refs.b, rect: { x: 604, y: 0, w: 596, h: 800 } },
+        ]);
+        assert.ok(mocks.logs.some((line) => line.includes(`cmd=${corr}`) && line.includes("kind=update-gaps") && line.includes("outcome=planned-applied")));
     });
     it("retains allocation on self-resize and resets on matching geometry", () => {
         const refs = makeRefs();

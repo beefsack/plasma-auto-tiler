@@ -1548,6 +1548,7 @@ impl Planner {
             "resize" => self.evaluate_resize_retained(&ctx),
             "pointer-resize" => self.evaluate_pointer_resize_retained(&ctx),
             "reconcile" => self.evaluate_reconcile_retained(&ctx),
+            "update-gaps" => self.evaluate_update_gaps_retained(&ctx),
             "toggle-float" => self.evaluate_toggle_float_retained(&ctx),
             "active-group" => self.evaluate_active_group_retained(&ctx),
             _ => rejected(
@@ -2843,6 +2844,220 @@ impl Planner {
         )
     }
 
+    /// Deliberate retained gap-update reprojection for the interim tiler
+    /// reload: adopt the carried inner/outer gaps (plus the carried
+    /// outer-inset bounds they imply) and reproject the retained tree with
+    /// the new inner gap, preserving topology, shares, membership, focus,
+    /// exceptions, and accepted revision. No pending is staged: like
+    /// reconcile this is a pure projection whose reply the adapter applies
+    /// natively. Fail-closed without mutation on unknown/diverged/pending
+    /// domains, membership or focus mismatch, unprojectable results, or an
+    /// unadoptable gap/bounds update. Never seeds, relocates, resets, or
+    /// reseeds a session: an unknown domain refuses so the normal admit path
+    /// seeds it with the new gaps instead. A simultaneous work-area change
+    /// folds into the same projection with reconcile-equivalent safety; a
+    /// simultaneous membership change refuses as partial-observation and the
+    /// normal admit/remove path owns it.
+    fn evaluate_update_gaps_retained(&mut self, ctx: &Validated) -> String {
+        let command: UpdateGapsCommand = match serde_json::from_value(ctx.request.command.clone())
+        {
+            Ok(command) => command,
+            Err(error) => {
+                let (kind, message) = classify_parse_error(&error);
+                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+            }
+        };
+        if command.op != "update-gaps" {
+            return snapshot_invalid(
+                ctx.request.correlation_id.clone(),
+                MSG_OPAQUE_ID,
+                "update-gaps-op-invalid",
+            );
+        }
+        let cid = ctx.request.correlation_id.clone();
+        let Some(session) = self.sessions.get(&ctx.domain_key).cloned() else {
+            return rejected(
+                cid,
+                RefusalKind::UnknownDomain.as_str(),
+                RefusalKind::UnknownDomain.message(),
+            );
+        };
+        if let Some(reason) = session.divergence() {
+            return rejected(cid, reason.as_str(), reason.message());
+        }
+        if session.has_pending() || session.has_pending_desired() || session.has_drag() {
+            return rejected(
+                cid,
+                "pending-exists",
+                "complete the pending plan before proposing",
+            );
+        }
+        if session
+            .domains()
+            .iter()
+            .find(|d| d.key() == ctx.domain_key)
+            .is_none()
+        {
+            return rejected(
+                cid,
+                RefusalKind::UnknownDomain.as_str(),
+                RefusalKind::UnknownDomain.message(),
+            );
+        }
+        let snapshot = session.snapshot();
+        let mut known: std::collections::BTreeSet<String> = snapshot
+            .windows
+            .iter()
+            .map(|l| l.window.0.clone())
+            .collect();
+        for entry in session.exception_observed() {
+            known.insert(entry.window.0.clone());
+        }
+        let observed: std::collections::BTreeSet<String> = ctx
+            .request
+            .windows
+            .iter()
+            .map(|w| w.window.clone())
+            .collect();
+        if observed != known {
+            return rejected(
+                cid,
+                RefusalKind::PartialObservation.as_str(),
+                RefusalKind::PartialObservation.message(),
+            );
+        }
+        // Empty retained domain: no tree, no windows, no focus. Adopt the new
+        // gap state trivially without touching anything else.
+        let domain_view = snapshot.domains.into_iter().find(|d| {
+            d.output.0 == ctx.domain_key.output.0 && d.workspace.0 == ctx.domain_key.workspace.0
+        });
+        let tree = domain_view.and_then(|d| d.tree);
+        let Some(tree) = tree else {
+            if known.is_empty() && observed.is_empty() {
+                if let Some(session) = self.sessions.get_mut(&ctx.domain_key)
+                    && !session.update_domain_gaps(
+                        &ctx.domain_key,
+                        ctx.domain.bounds,
+                        ctx.domain.gap,
+                    )
+                {
+                    return rejected(
+                        cid,
+                        RefusalKind::MalformedTopology.as_str(),
+                        RefusalKind::MalformedTopology.message(),
+                    );
+                }
+                self.domain_outer_gaps
+                    .insert(ctx.domain_key.clone(), ctx.request.domain.outer_gap);
+                return planned_reply(
+                    &cid,
+                    session.accepted_revision(),
+                    serde_json::json!({
+                        "kind": "update-gaps",
+                        "capability": "update-gaps-geometry",
+                    }),
+                    &[],
+                    None,
+                );
+            }
+            return rejected(
+                cid,
+                RefusalKind::MalformedTopology.as_str(),
+                RefusalKind::MalformedTopology.message(),
+            );
+        };
+        let (focus_domain, focus_leaf) = session.focus();
+        let (Some(focus_domain), Some(focus_leaf)) = (focus_domain, focus_leaf) else {
+            return rejected(
+                cid,
+                RefusalKind::FocusMismatch.as_str(),
+                RefusalKind::FocusMismatch.message(),
+            );
+        };
+        if focus_domain != ctx.domain_key {
+            return rejected(
+                cid,
+                RefusalKind::FocusMismatch.as_str(),
+                RefusalKind::FocusMismatch.message(),
+            );
+        }
+        // Project the retained tree with the NEW inner gap into the NEW
+        // outer-inset bounds before mutating anything; observed client
+        // rectangles are never adopted and shares are untouched.
+        let Ok(projected) = project(&tree, ctx.domain.bounds, ctx.domain.gap) else {
+            return rejected(
+                cid,
+                RefusalKind::MalformedTopology.as_str(),
+                RefusalKind::MalformedTopology.message(),
+            );
+        };
+        let leaf_to_window: std::collections::BTreeMap<String, String> =
+            snapshot_windows_leaf_map(&session, &ctx.domain_key);
+        let mut geometry: Vec<crate::session::DesiredGeometry> =
+            Vec::with_capacity(projected.len());
+        for leaf in projected {
+            let Some(window) = leaf_to_window.get(&leaf.leaf.0) else {
+                return rejected(
+                    cid,
+                    RefusalKind::MalformedTopology.as_str(),
+                    RefusalKind::MalformedTopology.message(),
+                );
+            };
+            if leaf.rect.w <= 0 || leaf.rect.h <= 0 {
+                return rejected(
+                    cid,
+                    RefusalKind::MalformedTopology.as_str(),
+                    RefusalKind::MalformedTopology.message(),
+                );
+            }
+            geometry.push(crate::session::DesiredGeometry {
+                window: WindowId(window.clone()),
+                leaf: leaf.leaf.clone(),
+                output: ctx.domain_key.output.clone(),
+                workspace: ctx.domain_key.workspace.clone(),
+                rect: leaf.rect,
+            });
+        }
+        geometry.sort_by(|a, b| {
+            a.output
+                .0
+                .cmp(&b.output.0)
+                .then(a.workspace.0.cmp(&b.workspace.0))
+                .then(a.leaf.0.cmp(&b.leaf.0))
+        });
+        if geometry.len() != known.len() {
+            return rejected(
+                cid,
+                RefusalKind::MalformedTopology.as_str(),
+                RefusalKind::MalformedTopology.message(),
+            );
+        }
+        let mut session = session;
+        if !session.update_domain_gaps(&ctx.domain_key, ctx.domain.bounds, ctx.domain.gap) {
+            return rejected(
+                cid,
+                RefusalKind::MalformedTopology.as_str(),
+                RefusalKind::MalformedTopology.message(),
+            );
+        }
+        let revision = session.accepted_revision();
+        self.store_committed(
+            ctx.domain_key.clone(),
+            session,
+            ctx.request.domain.outer_gap,
+        );
+        planned_reply(
+            &cid,
+            revision,
+            serde_json::json!({
+                "kind": "update-gaps",
+                "capability": "update-gaps-geometry",
+            }),
+            &geometry,
+            Some((&focus_domain, &focus_leaf)),
+        )
+    }
+
     /// Retained read-only active-group highlight query over the existing
     /// `DescribePlan` transport. No mutation, no timer, no Meta state, no
     /// polling/retry/fallback: resolves the current retained focused leaf's
@@ -3953,6 +4168,16 @@ struct PointerResizeCommand {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ReconcileCommand {
+    op: String,
+}
+
+/// Deliberate gap-update command: same strict envelope as [`ReconcileCommand`]
+/// but an explicit opt-in to retained gap reprojection. Only the deliberate
+/// tiler-reload route sends it; ordinary drift reconciliation keeps refusing
+/// gap changes as `domain-mismatch`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateGapsCommand {
     op: String,
 }
 
@@ -5842,6 +6067,340 @@ mod tests {
             "domain outer gap does not match retained state"
         );
         assert!(reply.get("detail").is_none(), "{reply}");
+    }
+
+    fn seed_gap_planner() -> Planner {
+        let mut planner = Planner::new();
+        for (correlation, windows, command) in [
+            (
+                "gap-seed-1",
+                vec![("win-1", 0, 0, 100, 80)],
+                admit_body("win-1"),
+            ),
+            (
+                "gap-seed-2",
+                vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                admit_body("win-2"),
+            ),
+        ] {
+            let reply = parse_reply(&planner.evaluate(&retained_request_with_selected_gaps(
+                correlation,
+                "owner-1",
+                "gen-1",
+                "win-1",
+                &windows,
+                command,
+            )));
+            assert_eq!(reply["outcome"], "planned", "{reply}");
+        }
+        assert_eq!(planner.retained_domains(), 1);
+        planner
+    }
+
+    fn update_gaps_request(correlation: &str, inner: i32, outer: i32) -> String {
+        let mut request: serde_json::Value =
+            serde_json::from_str(&retained_request_with_selected_gaps(
+                correlation,
+                "owner-1",
+                "gen-1",
+                "win-1",
+                &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                serde_json::json!({"op": "update-gaps"}),
+            ))
+            .expect("valid request");
+        request["domain"]["gap"] = serde_json::json!(inner);
+        request["domain"]["outer_gap"] = serde_json::json!(outer);
+        request.to_string()
+    }
+
+    fn reconcile_gaps_request(correlation: &str, inner: i32, outer: i32) -> String {
+        let mut request: serde_json::Value =
+            serde_json::from_str(&retained_request_with_selected_gaps(
+                correlation,
+                "owner-1",
+                "gen-1",
+                "win-1",
+                &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                serde_json::json!({"op": "reconcile"}),
+            ))
+            .expect("valid request");
+        request["domain"]["gap"] = serde_json::json!(inner);
+        request["domain"]["outer_gap"] = serde_json::json!(outer);
+        request.to_string()
+    }
+
+    #[test]
+    fn update_gaps_accepts_changed_inner_gap_and_reprojects_retained_tree() {
+        let mut planner = seed_gap_planner();
+        let baseline = parse_reply(&planner.evaluate(&reconcile_gaps_request("gap-base-1", 8, 8)));
+        assert_eq!(baseline["outcome"], "planned", "{baseline}");
+        assert_eq!(baseline["detail"]["kind"], "reconcile", "{baseline}");
+        assert_geometry_covers(&baseline, &["win-1", "win-2"]);
+        let before = geometry_by_window(&baseline);
+        assert_eq!(
+            before,
+            std::collections::BTreeMap::from([
+                ("win-1".to_owned(), (8, 8, 588, 784)),
+                ("win-2".to_owned(), (604, 8, 588, 784)),
+            ]),
+            "{baseline}"
+        );
+
+        let updated = parse_reply(&planner.evaluate(&update_gaps_request("gap-inner-1", 16, 8)));
+        assert_eq!(updated["outcome"], "planned", "{updated}");
+        assert_eq!(updated["detail"]["kind"], "update-gaps", "{updated}");
+        assert_eq!(
+            updated["detail"]["capability"], "update-gaps-geometry",
+            "{updated}"
+        );
+        assert_geometry_covers(&updated, &["win-1", "win-2"]);
+        // Native-apply-relevant reply: the retained tree reprojected with the
+        // new inner gap into the unchanged outer-inset bounds.
+        assert_eq!(
+            geometry_by_window(&updated),
+            std::collections::BTreeMap::from([
+                ("win-1".to_owned(), (8, 8, 584, 784)),
+                ("win-2".to_owned(), (608, 8, 584, 784)),
+            ]),
+            "{updated}"
+        );
+        assert_ne!(geometry_by_window(&updated), before, "{updated}");
+        // Focus and accepted revision are preserved, not reseeded.
+        assert_eq!(updated["desired_focus"], baseline["desired_focus"], "{updated}");
+        assert_eq!(updated["base_revision"], baseline["base_revision"], "{updated}");
+        assert_eq!(planner.retained_domains(), 1);
+
+        // The retained session now owns the new gaps: a normal reconcile with
+        // the new gaps converges, while the old-flight gaps refuse.
+        let converged = parse_reply(&planner.evaluate(&reconcile_gaps_request("gap-inner-2", 16, 8)));
+        assert_eq!(converged["outcome"], "planned", "{converged}");
+        assert_eq!(
+            geometry_by_window(&converged),
+            geometry_by_window(&updated),
+            "{converged} vs {updated}"
+        );
+        let stale = parse_reply(&planner.evaluate(&reconcile_gaps_request("gap-inner-3", 8, 8)));
+        assert_eq!(stale["outcome"], "rejected", "{stale}");
+        assert_eq!(stale["kind"], "domain-mismatch", "{stale}");
+
+        // Round trip back to the original gaps restores the exact baseline
+        // allocation: topology and shares survived, nothing reseeded.
+        let restored = parse_reply(&planner.evaluate(&update_gaps_request("gap-inner-4", 8, 8)));
+        assert_eq!(restored["outcome"], "planned", "{restored}");
+        assert_eq!(geometry_by_window(&restored), before, "{restored}");
+        assert_eq!(restored["desired_focus"], baseline["desired_focus"], "{restored}");
+    }
+
+    #[test]
+    fn update_gaps_accepts_changed_outer_gap_and_reprojects_retained_tree() {
+        let mut planner = seed_gap_planner();
+        let baseline = parse_reply(&planner.evaluate(&reconcile_gaps_request("gap-obase-1", 8, 8)));
+        assert_eq!(baseline["outcome"], "planned", "{baseline}");
+        let before = geometry_by_window(&baseline);
+
+        let updated = parse_reply(&planner.evaluate(&update_gaps_request("gap-outer-1", 8, 0)));
+        assert_eq!(updated["outcome"], "planned", "{updated}");
+        assert_eq!(updated["detail"]["kind"], "update-gaps", "{updated}");
+        assert_geometry_covers(&updated, &["win-1", "win-2"]);
+        // Outer zero drops the work-area inset: the full 1200x800 carries the
+        // retained split with the unchanged inner gap.
+        assert_eq!(
+            geometry_by_window(&updated),
+            std::collections::BTreeMap::from([
+                ("win-1".to_owned(), (0, 0, 596, 800)),
+                ("win-2".to_owned(), (604, 0, 596, 800)),
+            ]),
+            "{updated}"
+        );
+        assert_ne!(geometry_by_window(&updated), before, "{updated}");
+        assert_eq!(updated["desired_focus"], baseline["desired_focus"], "{updated}");
+        assert_eq!(updated["base_revision"], baseline["base_revision"], "{updated}");
+        assert_eq!(planner.retained_domains(), 1);
+
+        let converged = parse_reply(&planner.evaluate(&reconcile_gaps_request("gap-outer-2", 8, 0)));
+        assert_eq!(converged["outcome"], "planned", "{converged}");
+        assert_eq!(
+            geometry_by_window(&converged),
+            geometry_by_window(&updated),
+            "{converged} vs {updated}"
+        );
+        let stale = parse_reply(&planner.evaluate(&reconcile_gaps_request("gap-outer-3", 8, 8)));
+        assert_eq!(stale["outcome"], "rejected", "{stale}");
+        assert_eq!(stale["kind"], "domain-mismatch", "{stale}");
+
+        let restored = parse_reply(&planner.evaluate(&update_gaps_request("gap-outer-4", 8, 8)));
+        assert_eq!(restored["outcome"], "planned", "{restored}");
+        assert_eq!(geometry_by_window(&restored), before, "{restored}");
+    }
+
+    #[test]
+    fn update_gaps_accepts_combined_inner_and_outer_change() {
+        let mut planner = seed_gap_planner();
+        let baseline = parse_reply(&planner.evaluate(&reconcile_gaps_request("gap-cbase-1", 8, 8)));
+        assert_eq!(baseline["outcome"], "planned", "{baseline}");
+
+        let updated = parse_reply(&planner.evaluate(&update_gaps_request("gap-combo-1", 4, 12)));
+        assert_eq!(updated["outcome"], "planned", "{updated}");
+        assert_eq!(updated["detail"]["kind"], "update-gaps", "{updated}");
+        assert_geometry_covers(&updated, &["win-1", "win-2"]);
+        // Outer 12 insets to (12,12,1176,776); inner 4 splits 1172 into 586s.
+        assert_eq!(
+            geometry_by_window(&updated),
+            std::collections::BTreeMap::from([
+                ("win-1".to_owned(), (12, 12, 586, 776)),
+                ("win-2".to_owned(), (602, 12, 586, 776)),
+            ]),
+            "{updated}"
+        );
+        assert_eq!(updated["desired_focus"], baseline["desired_focus"], "{updated}");
+        assert_eq!(updated["base_revision"], baseline["base_revision"], "{updated}");
+
+        // A later directional command still plans on the retained tree with
+        // the new gaps instead of reseeding.
+        let mut follow: serde_json::Value =
+            serde_json::from_str(&retained_request_with_selected_gaps(
+                "gap-combo-2",
+                "owner-1",
+                "gen-1",
+                "win-1",
+                &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                serde_json::json!({"op": "focus", "window": "win-1", "direction": "right"}),
+            ))
+            .expect("valid request");
+        follow["domain"]["gap"] = serde_json::json!(4);
+        follow["domain"]["outer_gap"] = serde_json::json!(12);
+        let follow_reply = parse_reply(&planner.evaluate(&follow.to_string()));
+        assert_eq!(follow_reply["outcome"], "planned", "{follow_reply}");
+    }
+
+    #[test]
+    fn update_gaps_preserves_resized_shares_across_round_trip() {
+        let mut planner = seed_gap_planner();
+        let resized = parse_reply(&planner.evaluate(&retained_request_with_selected_gaps(
+            "gap-share-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({
+                "op": "resize",
+                "window": "win-1",
+                "direction": "right",
+                "mode": "outwards",
+                "press_index": 0,
+            }),
+        )));
+        assert_eq!(resized["outcome"], "planned", "{resized}");
+        let shares = geometry_by_window(&resized);
+        assert_ne!(
+            shares["win-1"].2, shares["win-2"].2,
+            "resize must leave unequal shares {resized}"
+        );
+        let baseline = parse_reply(&planner.evaluate(&reconcile_gaps_request("gap-share-2", 8, 8)));
+        assert_eq!(baseline["outcome"], "planned", "{baseline}");
+        let before = geometry_by_window(&baseline);
+        assert_ne!(
+            before["win-1"].2, before["win-2"].2,
+            "reconcile must retain resized shares {baseline}"
+        );
+
+        let updated = parse_reply(&planner.evaluate(&update_gaps_request("gap-share-3", 16, 8)));
+        assert_eq!(updated["outcome"], "planned", "{updated}");
+        let reprojected = geometry_by_window(&updated);
+        assert_ne!(
+            reprojected["win-1"].2, reprojected["win-2"].2,
+            "gap reprojection must retain resized shares {updated}"
+        );
+        // Leaf identity is stable: the same retained leaves carry new rects.
+        let leaves_before: std::collections::BTreeSet<String> = baseline["desired_geometry"]
+            .as_array()
+            .expect("geometry")
+            .iter()
+            .map(|g| g["leaf"].as_str().expect("leaf").to_owned())
+            .collect();
+        let leaves_after: std::collections::BTreeSet<String> = updated["desired_geometry"]
+            .as_array()
+            .expect("geometry")
+            .iter()
+            .map(|g| g["leaf"].as_str().expect("leaf").to_owned())
+            .collect();
+        assert_eq!(leaves_before, leaves_after, "{updated}");
+
+        let restored = parse_reply(&planner.evaluate(&update_gaps_request("gap-share-4", 8, 8)));
+        assert_eq!(restored["outcome"], "planned", "{restored}");
+        assert_eq!(
+            geometry_by_window(&restored), before,
+            "round trip must restore resized allocation exactly {restored}"
+        );
+    }
+
+    #[test]
+    fn update_gaps_refuses_membership_change_without_mutation() {
+        let mut planner = seed_gap_planner();
+        let baseline = parse_reply(&planner.evaluate(&reconcile_gaps_request("gap-part-1", 8, 8)));
+        assert_eq!(baseline["outcome"], "planned", "{baseline}");
+        let before = geometry_by_window(&baseline);
+
+        let mut partial: serde_json::Value =
+            serde_json::from_str(&update_gaps_request("gap-part-2", 16, 8))
+                .expect("valid request");
+        partial["windows"] = serde_json::json!([
+            {"window": "win-1", "output": "out-1", "workspace": "ws-1",
+             "rect": {"x": 0, "y": 0, "w": 100, "h": 80}},
+        ]);
+        let refused = parse_reply(&planner.evaluate(&partial.to_string()));
+        assert_eq!(refused["outcome"], "rejected", "{refused}");
+        assert_eq!(refused["kind"], "partial-observation", "{refused}");
+
+        // The refused update mutated nothing: the old gaps still converge to
+        // the exact baseline allocation.
+        let converged = parse_reply(&planner.evaluate(&reconcile_gaps_request("gap-part-3", 8, 8)));
+        assert_eq!(converged["outcome"], "planned", "{converged}");
+        assert_eq!(geometry_by_window(&converged), before, "{converged}");
+    }
+
+    #[test]
+    fn update_gaps_refuses_unknown_domain_without_seeding() {
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&update_gaps_request("gap-unknown-1", 16, 8)));
+        assert_eq!(reply["outcome"], "rejected", "{reply}");
+        assert_eq!(reply["kind"], "unknown-domain", "{reply}");
+        assert_eq!(planner.retained_domains(), 0);
+    }
+
+    #[test]
+    fn update_gaps_rejects_out_of_range_gaps_as_snapshot_invalid() {
+        let mut planner = seed_gap_planner();
+        for (correlation, inner, outer, expected) in [
+            ("gap-range-1", -1, 8, "gap-low"),
+            ("gap-range-2", 65, 8, "gap-high"),
+            ("gap-range-3", 8, -1, "outer-gap-low"),
+            ("gap-range-4", 8, 65, "outer-gap-high"),
+        ] {
+            let reply = parse_reply(&planner.evaluate(&update_gaps_request(
+                correlation,
+                inner,
+                outer,
+            )));
+            assert_eq!(reply["outcome"], "rejected", "{reply}");
+            assert_eq!(reply["kind"], "snapshot-invalid", "{reply}");
+            assert_eq!(reply["detail"], expected, "{reply}");
+        }
+        // The refused range checks mutated nothing: old gaps still converge.
+        let converged = parse_reply(&planner.evaluate(&reconcile_gaps_request("gap-range-5", 8, 8)));
+        assert_eq!(converged["outcome"], "planned", "{converged}");
+    }
+
+    #[test]
+    fn update_gaps_rejects_malformed_command_shape() {
+        let mut planner = seed_gap_planner();
+        let mut request: serde_json::Value =
+            serde_json::from_str(&update_gaps_request("gap-shape-1", 16, 8))
+                .expect("valid request");
+        request["command"] = serde_json::json!({"op": "update-gaps", "extra": 1});
+        let reply = parse_reply(&planner.evaluate(&request.to_string()));
+        assert_eq!(reply["outcome"], "rejected", "{reply}");
+        assert_eq!(reply["kind"], "unknown-field", "{reply}");
     }
 
     #[test]

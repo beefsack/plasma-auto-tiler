@@ -53,9 +53,20 @@ Historical implementation detail is recoverable in Git history.
   outline, and border settings through the Desktop Effects entry. Existing
   script groups, keys, values, and defaults remain unchanged. The approved
   interim target is a deliberate gap-only tiler reload after save with clear
-  reload/restart UI (non-gap startup settings require session restart);
+  reload/restart UI (startup-read `shortcutProfile`/`workspaceMode` require
+  session restart, which genuinely applies them);
   existing live border updates remain live. Its
-  implementation is static-complete with live verification pending. Before launch, every
+  implementation is static-complete with retained offline proof and live
+  verification pending: the resync dispatches retained `update-gaps`, accepted
+  and reprojected by the existing session with topology/share/focus
+  preservation for changed inner, outer, or combined gaps. Overall settings
+  liveness is PARTIAL, not complete. `tilingAlgorithm`,
+  `automaticSplitTarget`, and `dropOutlinePreview` are persisted but consumed
+  by nothing, so neither reload nor restart applies them; consuming them is
+  launch-blocker work. Shortcut re-registration is unselected: the pinned
+  scripting surface offers no unregister operation, so reload never
+  re-registers and foreign records change only through explicit KCM
+  Apply/Revert. Before launch, every
   user-facing setting must apply live. That requirement is a mandatory launch
   blocker, and the interim reload does not satisfy it.
 - The core distribution remains the script KPackage for KDE Store and an
@@ -155,8 +166,9 @@ Historical implementation detail is recoverable in Git history.
   restart with no enabled generic reload path. The approved interim reload is
   gap-only (`innerGap`/`outerGap`) via `options.configChanged`,
   sent/queued-but-unconfirmed because KWin reconfigure is Q_NOREPLY;
-  implementation is static-complete
-  with live verification pending. Before launch, this and every other user-facing setting must
+  implementation is static-complete with retained offline proof
+  (explicit `update-gaps` reprojection with topology/share/focus preservation)
+  and live verification pending. Before launch, this and every other user-facing setting must
   apply live; that is a mandatory launch blocker, and the gap-only reload does
   not satisfy it.
 - Approved 2026-09-16: when the first startup domain has no usable retained

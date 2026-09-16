@@ -267,12 +267,14 @@
   early when running), so the entry subscription is the pickup route: it
   re-reads validated gaps, logs one bounded `config-reloaded` line, and
   requests one debounced resync through the existing single-flight guards.
+  That resync dispatches one retained `update-gaps` plan for a changed gap
+  pair (never a silent baseline adopt, never a work-area reconcile).
   Unchanged signals resync nothing; shortcuts are never re-registered and no
   script/plugin lifecycle runs.
 - KCM Apply no longer auto-queues a script reconfigure on save. Saving gaps
   sets reload-required with the exact status `Tiling gaps saved. Reload
   required: the running tiler still uses startup gap values.` Saving only
-  non-gap startup settings sets restart-required with `Startup setting saved.
+  non-gap script settings sets restart-required with `Startup setting saved.
   Session restart required: the running tiler still uses startup values.` and
   leaves Reload Tiler disabled. A combined save enables reload for gaps while
   retaining restart-required with `Tiling gaps and startup settings saved.
@@ -289,12 +291,32 @@
   uses startup values; retry or restart the session.` and keeps
   reload-required (plus restart-required when present). No status claims applied. KCM-side running confirmation is
   not provable: KWin's reconfigure is Q_NOREPLY, so a queued send alone is
-  reported as unconfirmed and session restart remains the guarantee. The
-  intended route is proven in source and offline behavior instead: the entry
-  `options.configChanged` subscription re-reads validated gaps and the
-  behavioral tests prove an altered gap reaches the reconfigured controller's
-  next DescribePlan domain payload on deliberate signal. The
+  reported as unconfirmed and session restart remains the guarantee for gap
+  pickup only where the retained route below cannot converge (for example a
+  refused update). The
   button never touches shortcuts and never unloads scripts or plugins.
+- The retained gap-update route is proven in source and offline behavior, not
+  payload-only: the entry `options.configChanged` subscription re-reads
+  validated gaps and the adapter's debounced resync now dispatches one explicit
+  retained `update-gaps` DescribePlan (same domain and complete window set,
+  changed inner and/or outer gap; a simultaneous work-area change folds into
+  the same projection) instead of silently adopting the new baseline. The Rust
+  Planner accepts it on the existing session without reseeding: `Session::
+  update_domain_gaps` (`src/session.rs`) adopts the new outer-inset bounds
+  plus inner gap atomically while preserving topology, shares, membership,
+  focus, exceptions, and accepted revision, and `evaluate_update_gaps_retained`
+  (`src/planner_protocol.rs`) reprojects the retained tree with the new inner
+  gap and replies the native-apply-relevant geometry plus preserved focus. It
+  stages no pending, replays no flight, resets/discards no session, and never
+  seeds: unknown domains refuse so the normal admit path seeds them with the
+  new gaps. Ordinary drift reconciliation still refuses any gap change as
+  `domain-mismatch`; only the deliberate op crosses the boundary. Refusals
+  (unknown/diverged/pending/partial-observation/focus-mismatch/malformed plus
+  the inherited 0..64 gap-range validation) mutate nothing and keep the old
+  baseline, so a later resync retries the same update. The adapter defers the
+  update behind an in-flight command through the existing single-flight
+  (correlation/epoch/stale-scope fences drop old flights), blocks it while a
+  workspace send owns Plan, and never touches drift reconcile accounting.
 - Reload/restart-required is dialog-scoped in-memory KCM state, not persisted runtime
   truth: `load()` resets both to `No pending tiler reload in this dialog.` So a
   save-then-load/reopen cycle clears the pending flag even though the running
@@ -306,33 +328,64 @@
   preserving (risking a false pending) and clearing (risking a false clean)
   misstate unobservable runtime state; the implementation keeps the explicit
   dialog-scoped reset and claims no runtime application.
-- Shortcut Apply and Revert are explicit KCM operations:
-  `kwin/native-effect/activeborderconfig_module.cpp:254-323`. The KCM can detect
-  recorded-postimage drift when opened: `kwin/native-effect/activeborderconfig_module.cpp:448-457`.
-  No running-script watcher reconciles externally changed shortcuts or `kwinrc`.
+- Shortcut registration is startup-only by safe-capability choice, not by
+  categorical assumption: the pinned KWin scripting surface
+  (`kwin/src/kwin-globals.d.ts`, sourced to `src/scripting/scripting.h`)
+  exposes only `bool registerShortcut(...)` with no unregister or
+  re-register operation, so the reload path cannot safely refresh bindings
+  (re-calling register would duplicate action registrations, and foreign
+  records change only through the explicit KCM Apply/Revert table). The
+  deliberate reload therefore never re-registers shortcuts; a profile or mode
+  change still needs a session restart, which is the only route that
+  re-executes startup registration. Shortcut Apply and Revert stay explicit
+  KCM operations (`kwin/native-effect/activeborderconfig_module.cpp:254-323`):
+  the KCM can detect recorded-postimage drift when opened
+  (`activeborderconfig_module.cpp:448-457`), and no running-script watcher
+  reconciles externally changed shortcuts or `kwinrc`.
 - Expected residual: hand-edited `kwinrc`, externally changed script settings, or
   a KCM change can leave the already running script using its startup values
   for everything except the gap pair picked up by the deliberate reload,
   including existing shortcut registrations. The deliberate
-  reload request is unacknowledged at the KCM transport, so only a session
-  restart guarantees pickup. Border settings are the only confirmed live
-  configuration path. The
-  all-settings live-application launch blocker is unchanged.
+  reload request is unacknowledged at the KWin transport, so a refused or
+  unconverged gap update still needs a session restart for gap pickup; the
+  retained `update-gaps` route is the normal pickup and restart is the
+  fallback, not the mechanism. Border settings are the only other confirmed live
+  configuration path. A command issued inside the ~120ms resync debounce
+  window after reload can still carry new gaps before the update flight
+  converges and take the pre-existing scope-change reseed path; likewise a
+  simultaneous membership change is owned by admit/remove with existing
+  scope-change semantics, not by the gap update. The
+  all-settings live-application launch blocker is unchanged: overall settings
+  liveness is PARTIAL (gaps deliberate-reload plus live borders only).
+- Consumed versus unconsumed settings (no false restart promise): session
+  restart applies only what startup reads. `shortcutProfile` and
+  `workspaceMode` are read at startup (`kwin/src/plan-adapter-entry.ts:
+  readShortcutProfile`, `readWorkspaceModeValue`, workspace-native mapping),
+  so restart genuinely picks them up. `tilingAlgorithm`,
+  `automaticSplitTarget`, and `dropOutlinePreview` are persisted by the KCM
+  but read by nothing in the running controller, so neither reload nor
+  session restart applies them today; the KCM restart-required status is
+  over-broad for saves that touch only those three keys, and consuming them
+  is launch-blocker work, not a restart.
 - Offline verification (2026-09-17, no live KWin, Plasma, D-Bus, or session
   action): `npm run typecheck --prefix kwin` passes; `npm test --prefix kwin`
-  passes 764 tests across 107 suites with 0 failures (including the
-  `tiler-reload-interim` contract plus 3 `deliberate tiler reload behavior`
-  tests proving an altered gap pair reaches the reconfigured controller's
-  next DescribePlan payload on `configChanged`, an unchanged signal resyncs
-  nothing, and startup without an options surface stays stable); `npm run build --prefix kwin`
-  emits the `kwin/contents/code/main.js` bundle; native `ctest` passes 27 of 27
-  including the `native-effect-kcm-tiler-reload` scenario (KCM
-  persistence, live border vs reload-required, deliberate reload
-  success/failure, typed DBus contract, no reload on unchanged save, no-pending
-  reload no-send with the button disabled, button enablement transitions,
-  border+tiling one-save behavior, gap-setting reload-required, no
-  shortcut mutation, no applied claim, poisoned-bus failure); `cargo test`
-  passes 523 tests with 0 failures and `cargo build` succeeds. No runtime
+  passes 773 tests across 110 suites with 0 failures (including the
+  `tiler-reload-interim` contract plus `gap-update-reprojection` adapter and
+  production-entry tests proving the deliberate signal dispatches retained
+  `update-gaps`, the planned reply writes natively with focus preserved and
+  converges the baseline, in-flight deferral without replay/reset,
+  stale-correlation drop, refusal without baseline motion, and no shortcut
+  re-registration; plus the updated work-area test proving a gap change
+  routes to `update-gaps`, never to work-area reconcile or silent adopt);
+  `npm run build --prefix kwin`
+  emits the `kwin/contents/code/main.js` bundle; native `ctest` was not
+  re-run (no native source changed); `cargo test`
+  passes 531 tests with 0 failures (including 8 retained `update-gaps`
+  Planner tests proving inner, outer, and combined acceptance with exact
+  reprojected geometries, focus/revision preservation, resized-share
+  round-trip restoration, old-flight `domain-mismatch` refusal after update,
+  membership/unknown-domain/out-of-range/malformed refusals without
+  mutation or seeding) and `cargo build` succeeds. No runtime
   claim is made.
 
 ## Proposed Slices

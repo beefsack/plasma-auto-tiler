@@ -747,6 +747,43 @@ impl Session {
         }
     }
 
+    /// Deliberate gap-update reprojection for one retained domain: adopt new
+    /// projected work-area bounds plus a new inner gap while preserving
+    /// topology, shares, membership, focus, exceptions, and accepted revision.
+    /// Atomic: any validation failure leaves state exactly as before (`false`,
+    /// no mutation). Refuses an out-of-range gap, invalid bounds,
+    /// divergence, pending/drag residue, or an unknown domain. Outer-gap
+    /// state lives in the Planner map, not here.
+    pub fn update_domain_gaps(&mut self, key: &DomainKey, bounds: Rect, gap: i32) -> bool {
+        if !(0..=64).contains(&gap) {
+            return false;
+        }
+        if bounds.w <= 0 || bounds.h <= 0 {
+            return false;
+        }
+        if self.reconciler.divergence().is_some() {
+            return false;
+        }
+        if self.has_pending() || self.has_pending_desired() {
+            return false;
+        }
+        if self.drag.is_some() {
+            return false;
+        }
+        let index = match self.domains.iter().position(|d| &d.key() == key) {
+            Some(index) => index,
+            None => return false,
+        };
+        let backup = self.clone();
+        self.domains[index].bounds = bounds;
+        self.domains[index].gap = gap;
+        if self.validate_current_topology() {
+            return true;
+        }
+        *self = backup;
+        false
+    }
+
     /// Portable output relocation for one retained domain: move the domain
     /// key from `source` to `target` (same workspace, different output)
     /// preserving topology, shares, focus, exceptions, float geometry, and

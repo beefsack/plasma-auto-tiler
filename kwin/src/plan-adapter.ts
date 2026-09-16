@@ -61,7 +61,7 @@ const LOG_PREFIX = "plasma-auto-tiler:plan";
 export type PlanDirection = "left" | "right" | "up" | "down";
 export type PlanResizeMode = "inwards" | "outwards";
 export type PlanSignal = "added" | "removed" | "activated" | "geometry" | "scope" | "fullscreen" | "maximize" | "desktops";
-export type PlanOp = "admit" | "remove" | "move" | "focus" | "resize" | "reconcile" | "pointer-resize" | "toggle-float";
+export type PlanOp = "admit" | "remove" | "move" | "focus" | "resize" | "reconcile" | "update-gaps" | "pointer-resize" | "toggle-float";
 export type NativeStateWriteOutcome = "invoked" | "missing" | "threw";
 export type MaximizeClearOutcome = NativeStateWriteOutcome;
 
@@ -325,6 +325,35 @@ function sameReprojectionScope(a: PlanSnapshot, b: PlanSnapshot): boolean {
         a.domainBounds.w === b.domainBounds.w &&
         a.domainBounds.h === b.domainBounds.h
     );
+}
+
+// Deliberate gap-update scope: the same logical domain and complete window
+// set with a changed inner and/or outer gap. Work-area bounds may or may not
+// have changed alongside; the retained route folds both into one projection.
+// Membership changes never qualify: admit/remove own those. Gap values here
+// only ever change on the deliberate Options `configChanged` reload, so this
+// branch cannot fire on ordinary drift.
+function sameGapUpdateScope(a: PlanSnapshot, b: PlanSnapshot): boolean {
+    if (a.domainGap === b.domainGap && a.domainOuterGap === b.domainOuterGap) {
+        return false;
+    }
+    if (a.domainOutput !== b.domainOutput || a.domainWorkspace !== b.domainWorkspace) {
+        return false;
+    }
+    if (a.windows.length !== b.windows.length) {
+        return false;
+    }
+    const byId = new Map<string, PlanSnapshotWindow>();
+    for (const entry of a.windows) {
+        byId.set(entry.id, entry);
+    }
+    for (const entry of b.windows) {
+        const other = byId.get(entry.id);
+        if (other === undefined || other.output !== entry.output || other.workspace !== entry.workspace) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // Geometry-only equality ignoring focus and fingerprint: true when the same
@@ -1861,6 +1890,35 @@ export class PlanAdapter {
             }
             return;
         }
+        // Deliberate gap reload: the same domain and complete window set with
+        // a changed inner and/or outer gap reprojection through the retained
+        // route, preserving topology, shares, and focus. Bounds may have
+        // changed alongside; the retained route folds both into one
+        // projection. This never reseeds: a rejected update keeps the old
+        // baseline and ordinary drift accounting is untouched.
+        if (sameGapUpdateScope(previous, freshSnapshot)) {
+            const oldInner = previous.domainGap;
+            const oldOuter = previous.domainOuterGap;
+            this.logToken(
+                `${LOG_PREFIX}:gap-reprojection selected=retained inner=${String(oldInner)}->${String(freshSnapshot.domainGap)} outer=${String(oldOuter)}->${String(freshSnapshot.domainOuterGap)}`,
+            );
+            this.pointerEcho = null;
+            this.deferredAuto = {
+                op: "update-gaps",
+                snapshot: freshSnapshot,
+                removed: null,
+                body: { op: "update-gaps" },
+            };
+            if (this.inFlight) {
+                return;
+            }
+            const next = this.deferredAuto;
+            this.deferredAuto = null;
+            if (next !== null) {
+                this.dispatch(next);
+            }
+            return;
+        }
         if (sameRects(previous, freshSnapshot) && !knownOutOfBounds) {
             this.pointerEcho = null;
             this.setLastGood(freshSnapshot);
@@ -2217,6 +2275,19 @@ export class PlanAdapter {
                 removed: null,
                 body: { op: "reconcile" },
                 workAreaReprojection: true,
+                background: true,
+            };
+        }
+        // Deliberate gap reload for a background domain: same membership with
+        // a changed inner and/or outer gap, converged through the shared
+        // single-flight without touching visibility or focus.
+        if (sameGapUpdateScope(previous, freshSnapshot)) {
+            this.logToken(`${LOG_PREFIX}:gap-reprojection selected=retained`);
+            return {
+                op: "update-gaps",
+                snapshot: freshSnapshot,
+                removed: null,
+                body: { op: "update-gaps" },
                 background: true,
             };
         }
