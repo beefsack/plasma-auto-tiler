@@ -2,13 +2,13 @@
 
 Only meaningful pending or active work is listed.
 
-- P1 | Non-visible workspace tiling implementation | User observes deferred
-  retiling until visiting a workspace, leaving stale panel previews. Source
-  confirms normal observation/reconciliation covers the active output's current
-  desktop; the separate send transaction does write hidden-target geometry.
-  Background tiling is now approved: adopt/reconcile hidden domains at startup
-  and on window open/move without changing visibility or focus. Implementation
-  remains pending; graceful move-follow has separate user manual acceptance.
+- P1 | Non-visible workspace tiling live gate | Background tiling is statically
+  implemented and verified: startup and window open/move adopt or reconcile
+  non-foreground domains without switching desktop visibility or stealing native
+  focus. User-owned live acceptance must cover hidden startup/open/move,
+  multi-output domains, unchanged native focus/desktop, and the absence of any
+  rendered-state claim. Graceful move-follow has separate user manual
+  acceptance. [record](changes/background-tiling.md)
 - P1 | Remaining workspace-send uncertainty recovery | Graceful move-follow is
   implemented and manually accepted after rapid sends across many workspaces.
   USER VISUAL/MANUAL: "The issue appears to be fixed, I spam moved a window between many workspaces and it never failed. ... reinforces ... graceful handling ... actually feel really good even when spamming." The supplied

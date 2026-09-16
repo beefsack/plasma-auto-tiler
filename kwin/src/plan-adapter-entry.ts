@@ -12,7 +12,13 @@
 // shared canonical order. Directional focus/move shortcuts and
 // direction-plus-mode resize shortcuts from the configured profile catalog
 // map to parameterized plan commands. Window and scope signals feed one
-// debounced fresh-snapshot resync owned by the adapter. No tiling, order,
+// debounced fresh-snapshot resync owned by the adapter. Foreground plus
+// hidden-domain observation feed one shared single-flight: at startup and on
+// window open/move/scope signals the adapter also adopts/reconciles
+// non-visible (output, workspace) domains without switching desktop
+// visibility or writing native focus. Hidden snapshots carry a deterministic
+// domain-local structural anchor as focusedId and only drive
+// admit/remove/reconcile geometry on exact hidden-domain refs. No tiling, order,
 // membership, or rejection policy lives here. Diagnostics are always-on and
 // bounded: the adapter's cmd route entry/terminal, rejected-kind, per-member
 // write, scope-transition, echo-fence, and refusal lines, plus one bounded
@@ -841,6 +847,478 @@ export function observeSendTarget(
     }
 }
 
+// Background-tiling hidden-domain observation for every non-foreground
+// (output, workspace) pair with tiled members. The single active foreground
+// is (activeWindow.output, currentDesktopForScreen(activeWindow.output))
+// exactly as observeNative defines it, whenever a normal active window with
+// a valid output/current desktop exists. Every other pair - including the
+// activeScreen domain when it differs - is a background lifecycle domain.
+// Read-only public surfaces only (screens, desktops, activeWindow,
+// activeScreen, currentDesktopForScreen, clientArea, windowList), mirroring
+// the observeSendTarget enumeration patterns and the observeNative
+// eligibility rules (normal windows only, same output, desktop membership
+// or sticky, normalized native ids, quantized frame extents). activeWindow
+// is read solely to determine this boundary and never writes visibility or
+// focus: each snapshot's focusedId is a deterministic domain-local
+// structural anchor (spatial-first y, x, h, w, then id) and activeRef is
+// that anchor's ref solely to satisfy the shared observation shape. When no
+// valid active normal foreground exists, the safe default excludes
+// (activeScreen, currentDesktopForScreen(activeScreen)) so hidden startup
+// with no active window still has a visible domain to exclude. Hidden flights only admit/remove/reconcile geometry
+// through the shared PlanAdapter single-flight. A verified-empty domain (no
+// mapped members, readable bounds, output not tainted, no duplicate or
+// unreadable frame) is reported explicitly as an empty snapshot (focusedId
+// "", activeExcluded true, zero windows) so retirement has fresh, complete
+// evidence. Exception-only domains with no eligible tiled member (all
+// floating/sticky/fullscreen/maximized) are reported with their members so
+// the adapter can protect a retained baseline, but the adapter never
+// dispatches admission/reconcile/removal solely for them. Anything unreadable
+// or tainted is omitted as unknown and must never be treated as empty.
+// Omission fails closed per domain, per output, or overall. The bounded-domain cap is
+// enforced by the adapter (which can distinguish cap from empty); this
+// observer reports every eligible background domain without inventing
+// over-limit policy.
+export function observeHiddenDomains(
+    liveWorkspace: unknown,
+    cache: Map<string, string>,
+    floatingIds: ReadonlySet<string>,
+    gaps: DomainGaps,
+    reportEligibility?: (ref: object, reason: string | null) => void,
+): ReadonlyArray<PlanObserved> {
+    try {
+        if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
+            return [];
+        }
+        const surface = liveWorkspace as Record<string, unknown>;
+        const screens = decodeList(readProp(surface, "screens"), MAX_LIST);
+        const desktops = decodeList(readProp(surface, "desktops"), MAX_DESKTOPS);
+        if (screens === null || screens.length === 0 || desktops === null || desktops.length === 0) {
+            return [];
+        }
+        const currentFn = readProp(surface, "currentDesktopForScreen");
+        const lister = readProp(surface, "windowList");
+        if (typeof currentFn !== "function" || typeof lister !== "function") {
+            return [];
+        }
+        const screenEntries: Array<{ ref: object; name: string }> = [];
+        for (const item of screens) {
+            if (typeof item !== "object" || item === null) {
+                continue;
+            }
+            const nameRaw = readProp(item as object, "name");
+            if (!isOpaqueId(nameRaw)) {
+                continue;
+            }
+            screenEntries.push({ ref: item as object, name: nameRaw as string });
+        }
+        const desktopEntries: Array<{ ref: object; id: string }> = [];
+        for (const item of desktops) {
+            if (typeof item !== "object" || item === null) {
+                continue;
+            }
+            const idRaw = readProp(item as object, "id");
+            if (!isOpaqueId(idRaw)) {
+                continue;
+            }
+            desktopEntries.push({ ref: item as object, id: idRaw as string });
+        }
+        if (screenEntries.length === 0 || desktopEntries.length === 0) {
+            return [];
+        }
+        // Single active foreground by stable id, exactly the observeNative
+        // domain whenever a normal active window with a valid output/current
+        // desktop exists: (activeWindow.output,
+        // currentDesktopForScreen(activeWindow.output)). activeWindow is read
+        // solely to determine this boundary; it never writes visibility or
+        // focus. When no valid active normal foreground exists, fall back to
+        // (activeScreen, currentDesktopForScreen(activeScreen)) so hidden
+        // startup with no active window still excludes a visible domain.
+        // Every other pair - including the non-foreground screen's currently
+        // displayed desktop - is a background lifecycle domain. An unreadable
+        // boundary is unclassifiable: fail closed overall rather than risk
+        // tiling the foreground via the background path.
+        let foregroundKey: string | null = null;
+        const activeWindowRaw = readProp(surface, "activeWindow");
+        if (typeof activeWindowRaw === "object" && activeWindowRaw !== null) {
+            const activeWindowRef = activeWindowRaw as object;
+            if (readProp(activeWindowRef, "normalWindow") === true) {
+                const activeWindowOutput = readProp(activeWindowRef, "output");
+                if (typeof activeWindowOutput === "object" && activeWindowOutput !== null) {
+                    const activeWindowNameRaw = readProp(activeWindowOutput as object, "name");
+                    if (isOpaqueId(activeWindowNameRaw)) {
+                        let activeWindowDesktop: unknown = undefined;
+                        try {
+                            activeWindowDesktop = Reflect.apply(
+                                currentFn as (...args: ReadonlyArray<never>) => unknown,
+                                surface,
+                                [activeWindowOutput],
+                            );
+                        } catch (error) {
+                            void error;
+                            activeWindowDesktop = undefined;
+                        }
+                        if (typeof activeWindowDesktop === "object" && activeWindowDesktop !== null) {
+                            const activeWindowDesktopIdRaw = readProp(activeWindowDesktop as object, "id");
+                            if (isOpaqueId(activeWindowDesktopIdRaw)) {
+                                foregroundKey = `${activeWindowNameRaw as string}\u0000${activeWindowDesktopIdRaw as string}`;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (foregroundKey === null) {
+            const activeScreenRaw = readProp(surface, "activeScreen");
+            if (typeof activeScreenRaw !== "object" || activeScreenRaw === null) {
+                return [];
+            }
+            const activeScreenRef = activeScreenRaw as object;
+            const activeNameRaw = readProp(activeScreenRef, "name");
+            if (!isOpaqueId(activeNameRaw)) {
+                return [];
+            }
+            const activeName = activeNameRaw as string;
+            let activeCurrent: unknown = undefined;
+            try {
+                activeCurrent = Reflect.apply(
+                    currentFn as (...args: ReadonlyArray<never>) => unknown,
+                    surface,
+                    [activeScreenRef],
+                );
+            } catch (error) {
+                void error;
+                activeCurrent = undefined;
+            }
+            if (typeof activeCurrent !== "object" || activeCurrent === null) {
+                return [];
+            }
+            const activeCurrentIdRaw = readProp(activeCurrent as object, "id");
+            if (!isOpaqueId(activeCurrentIdRaw)) {
+                return [];
+            }
+            foregroundKey = `${activeName}\u0000${activeCurrentIdRaw as string}`;
+        }
+        let rawList: unknown = undefined;
+        try {
+            rawList = Reflect.apply(lister as (...args: ReadonlyArray<never>) => unknown, surface, []);
+        } catch (error) {
+            void error;
+            return [];
+        }
+        const windows = decodeList(rawList, MAX_LIST);
+        if (windows === null) {
+            return [];
+        }
+        interface ParsedWindow {
+            readonly ref: object;
+            readonly output: string;
+            readonly native: string;
+            readonly sticky: boolean;
+            readonly members: ReadonlyArray<object>;
+        }
+        const parsed: ParsedWindow[] = [];
+        const taintedOutputs = new Set<string>();
+        for (const item of windows) {
+            if (typeof item !== "object" || item === null) {
+                continue;
+            }
+            const ref = item as object;
+            if (readProp(ref, "normalWindow") !== true) {
+                reportEligibility?.(ref, "normal-window");
+                continue;
+            }
+            const output = readProp(ref, "output");
+            if (typeof output !== "object" || output === null) {
+                reportEligibility?.(ref, "output-missing");
+                continue;
+            }
+            const nameRaw = readProp(output as object, "name");
+            if (!isOpaqueId(nameRaw)) {
+                reportEligibility?.(ref, "output-missing");
+                continue;
+            }
+            const outputName = nameRaw as string;
+            // An undecodable identity or membership cannot be placed: quarantine
+            // the output's hidden pairs rather than tiling a partial domain.
+            let native: string | null = null;
+            try {
+                native = normalizeNativeId(readProp(ref, "internalId"));
+            } catch (error) {
+                void error;
+                taintedOutputs.add(outputName);
+                reportEligibility?.(ref, "native-id-unreadable");
+                continue;
+            }
+            if (native === null) {
+                taintedOutputs.add(outputName);
+                reportEligibility?.(ref, "native-id-unreadable");
+                continue;
+            }
+            const sticky = readProp(ref, "onAllDesktops") === true;
+            const membership = decodeList(readProp(ref, "desktops"), MAX_DESKTOPS);
+            if (membership === null) {
+                taintedOutputs.add(outputName);
+                reportEligibility?.(ref, "desktop-membership-unreadable");
+                continue;
+            }
+            const members: object[] = [];
+            for (const member of membership) {
+                if (typeof member === "object" && member !== null) {
+                    members.push(member as object);
+                }
+            }
+            parsed.push({ ref, output: outputName, native, sticky, members });
+        }
+        const out: PlanObserved[] = [];
+        for (const screen of screenEntries) {
+            if (taintedOutputs.has(screen.name)) {
+                continue;
+            }
+            for (const desktop of desktopEntries) {
+                if (`${screen.name}\u0000${desktop.id}` === foregroundKey) {
+                    continue;
+                }
+                const bounds = readWorkAreaFor(surface, screen.ref, desktop.ref);
+                if (bounds === null) {
+                    continue;
+                }
+                const seen = new Set<string>();
+                let duplicate = false;
+                let incomplete = false;
+                const entries: Array<{
+                    id: string;
+                    ref: object;
+                    rect: { x: number; y: number; w: number; h: number };
+                    fullscreen: boolean;
+                    maximized: boolean;
+                    floating: boolean;
+                    sticky: boolean;
+                    resourceClass: string;
+                }> = [];
+                for (const candidate of parsed) {
+                    if (candidate.output !== screen.name) {
+                        continue;
+                    }
+                    if (!candidate.sticky && candidate.members.indexOf(desktop.ref) < 0) {
+                        continue;
+                    }
+                    const id = internNativeId(cache, candidate.native);
+                    if (seen.has(id)) {
+                        duplicate = true;
+                        break;
+                    }
+                    seen.add(id);
+                    const frame = readFrameRect(candidate.ref);
+                    if (typeof frame === "string") {
+                        seen.delete(id);
+                        incomplete = true;
+                        reportEligibility?.(candidate.ref, frame);
+                        continue;
+                    }
+                    entries.push({
+                        id,
+                        ref: candidate.ref,
+                        rect: { x: frame.x, y: frame.y, w: frame.w, h: frame.h },
+                        fullscreen: readProp(candidate.ref, "fullScreen") !== false,
+                        maximized: readProp(candidate.ref, "maximizeMode") !== 0,
+                        floating: floatingIds.has(id) || candidate.sticky,
+                        sticky: candidate.sticky,
+                        resourceClass: readResourceClass(candidate.ref),
+                    });
+                    reportEligibility?.(candidate.ref, null);
+                }
+                // Partial observation is unknown, never empty: duplicate ids or
+                // any unreadable frame omits the whole domain fail-closed.
+                if (duplicate || incomplete) {
+                    continue;
+                }
+                if (entries.length === 0) {
+                    // Verified-empty domain: no mapped members, readable
+                    // bounds, output not tainted, no duplicate or unreadable
+                    // frame. Explicit empty evidence for retirement; the
+                    // adapter retires only from this shape, never from
+                    // absence. activeRef is the stable desktop ref; the
+                    // adapter never routes focus for hidden domains.
+                    const emptyFingerprint = String(planFingerprint(screen.name, desktop.id, "", []));
+                    const emptyBounds = { x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h };
+                    const emptyInnerGap = gaps.innerGap;
+                    const emptyOuterGap = gaps.outerGap;
+                    const emptyActiveRef: object = desktop.ref;
+                    const emptyExpected = emptyFingerprint;
+                    out.push({
+                        domainOutput: screen.name,
+                        domainWorkspace: desktop.id,
+                        domainBounds: Object.freeze({ x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h }),
+                        domainGap: gaps.innerGap,
+                        domainOuterGap: gaps.outerGap,
+                        focusedId: "",
+                        activeExcluded: true,
+                        windows: Object.freeze([]),
+                        activeRef: emptyActiveRef,
+                        fingerprint: emptyExpected,
+                        revalidate: () => {
+                            try {
+                                const fresh = observeHiddenDomains(liveWorkspace, cache, floatingIds, gaps);
+                                for (const candidate of fresh) {
+                                    if (
+                                        candidate.domainOutput !== screen.name ||
+                                        candidate.domainWorkspace !== desktop.id
+                                    ) {
+                                        continue;
+                                    }
+                                    return (
+                                        candidate.fingerprint === emptyExpected &&
+                                        candidate.windows.length === 0 &&
+                                        candidate.focusedId === "" &&
+                                        candidate.activeExcluded === true &&
+                                        candidate.domainBounds.x === emptyBounds.x &&
+                                        candidate.domainBounds.y === emptyBounds.y &&
+                                        candidate.domainBounds.w === emptyBounds.w &&
+                                        candidate.domainBounds.h === emptyBounds.h &&
+                                        candidate.domainGap === emptyInnerGap &&
+                                        candidate.domainOuterGap === emptyOuterGap
+                                    );
+                                }
+                                return false;
+                            } catch (error) {
+                                void error;
+                                return false;
+                            }
+                        },
+                    });
+                    continue;
+                }
+                // Exception-only domains (all floating/sticky/fullscreen/
+                // maximized) are reported with their members so a retained
+                // baseline stays protected. The adapter never dispatches
+                // admission/reconcile/removal solely for them; foreground
+                // exception semantics are untouched and mixed domains keep
+                // their Rust handling.
+                const sortedIds = entries.map((entry) => entry.id).sort();
+                const anchor = [...entries].sort((a, b) =>
+                    a.rect.y !== b.rect.y
+                        ? a.rect.y - b.rect.y
+                        : a.rect.x !== b.rect.x
+                          ? a.rect.x - b.rect.x
+                          : a.rect.h !== b.rect.h
+                            ? a.rect.h - b.rect.h
+                            : a.rect.w !== b.rect.w
+                              ? a.rect.w - b.rect.w
+                              : a.id < b.id
+                                ? -1
+                                : a.id > b.id
+                                  ? 1
+                                  : 0,
+                )[0] as { id: string; ref: object };
+                const anchorRef = anchor.ref;
+                const anchorId = anchor.id;
+                const fingerprint = String(planFingerprint(screen.name, desktop.id, anchorId, sortedIds));
+                const frozenWindows = Object.freeze(
+                    entries.map((entry) =>
+                        Object.freeze({
+                            id: entry.id,
+                            ref: entry.ref,
+                            rect: Object.freeze({ x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h }),
+                            output: screen.name,
+                            workspace: desktop.id,
+                            fullscreen: entry.fullscreen,
+                            maximized: entry.maximized,
+                            floating: entry.floating,
+                            sticky: entry.sticky,
+                            resourceClass: entry.resourceClass,
+                        }),
+                    ),
+                );
+                const expected = fingerprint;
+                const expectedBounds = { x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h };
+                const expectedInnerGap = gaps.innerGap;
+                const expectedOuterGap = gaps.outerGap;
+                const expectedAnchorId = anchorId;
+                const expectedAnchorRef = anchorRef;
+                out.push({
+                    domainOutput: screen.name,
+                    domainWorkspace: desktop.id,
+                    domainBounds: Object.freeze({ x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h }),
+                    domainGap: gaps.innerGap,
+                    domainOuterGap: gaps.outerGap,
+                    focusedId: anchorId,
+                    activeExcluded: false,
+                    windows: frozenWindows,
+                    activeRef: anchorRef,
+                    fingerprint: expected,
+                    revalidate: () => {
+                        try {
+                            const fresh = observeHiddenDomains(liveWorkspace, cache, floatingIds, gaps);
+                            for (const candidate of fresh) {
+                                if (
+                                    candidate.domainOutput !== screen.name ||
+                                    candidate.domainWorkspace !== desktop.id ||
+                                    candidate.fingerprint !== expected
+                                ) {
+                                    continue;
+                                }
+                                if (
+                                    candidate.domainBounds.x !== expectedBounds.x ||
+                                    candidate.domainBounds.y !== expectedBounds.y ||
+                                    candidate.domainBounds.w !== expectedBounds.w ||
+                                    candidate.domainBounds.h !== expectedBounds.h ||
+                                    candidate.domainGap !== expectedInnerGap ||
+                                    candidate.domainOuterGap !== expectedOuterGap ||
+                                    candidate.focusedId !== expectedAnchorId ||
+                                    candidate.activeRef !== expectedAnchorRef ||
+                                    candidate.activeExcluded !== false
+                                ) {
+                                    return false;
+                                }
+                                if (candidate.windows.length !== frozenWindows.length) {
+                                    return false;
+                                }
+                                for (const entry of frozenWindows) {
+                                    let matched = false;
+                                    for (const other of candidate.windows) {
+                                        if (other.id === entry.id) {
+                                            matched = true;
+                                            if (other.ref !== entry.ref) {
+                                                return false;
+                                            }
+                                            if (
+                                                other.rect.x !== entry.rect.x ||
+                                                other.rect.y !== entry.rect.y ||
+                                                other.rect.w !== entry.rect.w ||
+                                                other.rect.h !== entry.rect.h ||
+                                                other.fullscreen !== entry.fullscreen ||
+                                                other.maximized !== entry.maximized
+                                            ) {
+                                                return false;
+                                            }
+                                            break;
+                                        }
+                                    }
+                                    if (!matched) {
+                                        return false;
+                                    }
+                                }
+                                return true;
+                            }
+                            return false;
+                        } catch (error) {
+                            void error;
+                            return false;
+                        }
+                    },
+                });
+            }
+        }
+        // The bounded-domain cap is enforced fail-closed by the adapter (which
+        // distinguishes cap from empty for baseline cleanup). Report every
+        // eligible background domain without inventing over-limit policy.
+        return Object.freeze(out);
+    } catch (error) {
+        void error;
+        return [];
+    }
+}
+
 function internNativeId(cache: Map<string, string>, native: string): string {
     const known = cache.get(native);
     if (known !== undefined) {
@@ -1596,6 +2074,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             }
         },
         observe: () => observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility),
+        observeHidden: () => observeHiddenDomains(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility),
         clearMaximize: (target) => {
             try {
                 const method = readProp(target, "setMaximize");
@@ -1765,7 +2244,30 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         return null;
     }
     const initial = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility);
-    if (initial === null || initial.windows.length === 0) {
+    const initialHidden = observeHiddenDomains(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility);
+    // Startup enables when the foreground is observable or when any eligible
+    // background domain exists (non-empty with at least one tiled,
+    // non-exception member). Explicit empty and exception-only observations
+    // never enable by themselves; only when neither foreground nor eligible
+    // hidden exists is the old fail-closed disable preserved.
+    let hasEligibleHidden = false;
+    for (const entry of initialHidden) {
+        if (entry.windows.length === 0) {
+            continue;
+        }
+        let eligible = false;
+        for (const member of entry.windows) {
+            if (!member.floating && !member.sticky && !member.fullscreen && !member.maximized) {
+                eligible = true;
+                break;
+            }
+        }
+        if (eligible) {
+            hasEligibleHidden = true;
+            break;
+        }
+    }
+    if ((initial === null || initial.windows.length === 0) && !hasEligibleHidden) {
         adapter.disable();
         return null;
     }

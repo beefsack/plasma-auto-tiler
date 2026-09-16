@@ -261,6 +261,43 @@ function fireSendTimeout(mocks: Mocks): void {
     assert.ok(fired, "send timeout timer expected");
 }
 
+// Background-tiling drain: answer every pending Plan lifecycle flight with an
+// echo covering exactly its wanted set (no focus), looping until the shared
+// single-flight chain goes quiet. Stale callbacks are ignored by the
+// adapter's flight token, so re-answering settled flights is a no-op. Send
+// ops are never touched.
+function settleBackgroundPlans(mocks: Mocks): void {
+    for (let round = 0; round < 8; round += 1) {
+        const before = planCalls(mocks).length;
+        for (const call of planCalls(mocks)) {
+            const payload = call.payload;
+            const command = payload["command"] as Record<string, unknown>;
+            const windows = payload["windows"] as Array<Record<string, unknown>>;
+            const removed = command["op"] === "remove" ? (command["window"] as string) : null;
+            const geometry = windows
+                .filter((entry) => entry["floating"] !== true && entry["window"] !== removed)
+                .map((entry) => ({
+                    window: entry["window"],
+                    leaf: `leaf-${entry["window"] as string}`,
+                    output: entry["output"],
+                    workspace: entry["workspace"],
+                    rect: entry["rect"],
+                }));
+            mocks.callbacks[call.index]?.(
+                JSON.stringify({
+                    v: 1,
+                    correlation_id: payload["correlation_id"],
+                    outcome: "planned",
+                    desired_geometry: geometry,
+                }),
+            );
+        }
+        if (planCalls(mocks).length === before) {
+            break;
+        }
+    }
+}
+
 describe("plan/send P0 coordination through production wiring", () => {
     it("follows a confirmed native move before delayed target geometry commits, then resyncs once", () => {
         const world = makeWorld();
@@ -319,7 +356,11 @@ describe("plan/send P0 coordination through production wiring", () => {
                 ],
             }),
         );
+        // Background tiling adopts the hidden ws-2 domain through the same
+        // single-flight; settle it so the send starts from idle.
+        settleBackgroundPlans(mocks);
         const planCallsAfterInit = planCalls(mocks).length;
+        assert.equal(planCallsAfterInit, 2, "foreground admit plus hidden ws-2 adoption");
 
         // Model a target client whose geometry setter returns normally but whose
         // visible frame stays old until its later callback. The mover desktop
@@ -489,7 +530,16 @@ describe("plan/send P0 coordination through production wiring", () => {
             }),
         );
         runDebounce(mocks);
-        assert.equal(planCalls(mocks).length, planAfterResync, "no further Plan dispatch after resync completes");
+        // Answering the resync chains exactly one background remove for the
+        // vacated source window on the now-hidden ws-1 domain.
+        assert.equal(planCalls(mocks).length, planAfterResync + 1, "resync chains one background remove");
+        // Background convergence removes the vacated source window from the
+        // now-hidden ws-1 domain; settle it so the late-duplicate checks below
+        // observe quiet.
+        settleBackgroundPlans(mocks);
+        runDebounce(mocks);
+        const planAfterBackground = planCalls(mocks).length;
+        assert.equal(planAfterBackground, planAfterResync + 1, "exactly one background remove after resync");
 
         // Late callback isolation: duplicate committed reply ignored.
         const switchesBefore = JSON.stringify(world.workspace["currentDesktop"]);
@@ -498,7 +548,7 @@ describe("plan/send P0 coordination through production wiring", () => {
         );
         assert.equal(JSON.stringify(world.workspace["currentDesktop"]), switchesBefore, "late duplicate must not refollow");
         runDebounce(mocks);
-        assert.equal(planCalls(mocks).length, planAfterResync, "late duplicate must not resync");
+        assert.equal(planCalls(mocks).length, planAfterBackground, "late duplicate must not resync");
 
         // Subsequent distinct send can complete (move win-a back to ws-1).
         const dbusBeforeSecondSend = mocks.dbusCalls.length;
@@ -652,6 +702,9 @@ describe("plan/send P0 coordination through production wiring", () => {
                 ],
             }),
         );
+        // Background tiling adopts the hidden ws-2 domain through the same
+        // single-flight; settle it so the send starts from idle.
+        settleBackgroundPlans(mocks);
 
         // New-window domain becomes current with the new window focused.
         // F2A19Z equivalent: source is the new desktop, target is the boot desktop.
@@ -779,30 +832,13 @@ describe("plan/send P0 coordination through production wiring", () => {
         assert.ok(orderedFollow.every((sequence, index) => index === 0 || sequence > orderedFollow[index - 1]!), orderedFollow.join(","));
 
         // Commit is preserved and the instance stays usable: consume any
-        // onCommitted resync, restore the native switch, move to where the
-        // window now lives, then complete a later valid same-instance send.
+        // onCommitted resync (background admit of the populated target plus
+        // background remove of the vacated empty source), restore the native
+        // switch, move to where the window now lives, then complete a later
+        // valid same-instance send.
         runDebounce(mocks);
-        const pendingPlans = planCalls(mocks);
-        const lastPending = pendingPlans[pendingPlans.length - 1];
-        if (lastPending !== undefined && (lastPending.payload["correlation_id"] as string) !== bootCorrelation) {
-            const pendingCorrelation = lastPending.payload["correlation_id"] as string;
-            const pendingCommand = (lastPending.payload["command"] as Record<string, unknown>)["op"] as string;
-            if (pendingCommand === "admit" || pendingCommand === "reconcile") {
-                mocks.callbacks[lastPending.index]?.(
-                    JSON.stringify({
-                        v: 1,
-                        correlation_id: pendingCorrelation,
-                        outcome: "planned",
-                        desired_geometry: [
-                            { window: "win-a", leaf: "win-a-leaf", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
-                            { window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } },
-                            { window: "win-t", leaf: "win-t-leaf", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 1200, h: 800 } },
-                        ],
-                    }),
-                );
-                runDebounce(mocks);
-            }
-        }
+        settleBackgroundPlans(mocks);
+        runDebounce(mocks);
         world.workspace["setCurrentDesktopForScreen"] = workingSetter;
         world.currentByOutput.set(world.outputs[0] as FakeOutput, wsBoot);
         world.workspace["currentDesktop"] = wsBoot;
@@ -953,6 +989,9 @@ describe("plan/send P0 coordination through production wiring", () => {
                 ],
             }),
         );
+        // Background tiling adopts the hidden ws-2 domain through the same
+        // single-flight; settle it so the later Plan move starts from idle.
+        settleBackgroundPlans(mocks);
 
         handle?.requestWorkspaceMove(2);
         const ownerIndex = mocks.dbusCalls.findIndex((call) => call.method === "GetNameOwner");
@@ -1081,6 +1120,9 @@ describe("plan/send P0 coordination through production wiring", () => {
                 ],
             }),
         );
+        // Background tiling adopts the hidden ws-2 domain through the same
+        // single-flight; settle it so the later Plan move starts from idle.
+        settleBackgroundPlans(mocks);
         const planAfterSettle = planCalls(mocks).length;
         const sendAfterSettle = sendCalls(mocks).length;
 
@@ -1177,6 +1219,9 @@ describe("plan/send P0 coordination through production wiring", () => {
                 ],
             }),
         );
+        // Background tiling adopts the hidden ws-2 domain through the same
+        // single-flight; settle it so the send starts from idle.
+        settleBackgroundPlans(mocks);
         const planAfterSettle = planCalls(mocks).length;
 
         const dbusBeforeSend = mocks.dbusCalls.length;

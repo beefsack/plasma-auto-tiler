@@ -409,6 +409,13 @@ export interface PlanAdapterEnv {
     readonly scheduleOnce: (delayMs: number, callback: () => void) => () => void;
     readonly log: (message: string) => void;
     readonly observe: () => PlanObserved | null;
+    // Hidden-domain observation for background tiling: every non-visible
+    // (output, workspace) domain with tiled members, each carrying a
+    // deterministic domain-local structural anchor as focusedId (never native
+    // focus). Absent in isolated core tests; the entry supplies it in
+    // production. Hidden flights only ever admit/remove/reconcile geometry
+    // and never route focus or interactive commands.
+    readonly observeHidden?: () => ReadonlyArray<PlanObserved>;
     readonly clearMaximize: (target: object) => MaximizeClearOutcome;
     readonly setMaximize?: (target: object, maximized: boolean) => NativeStateWriteOutcome;
     readonly setAllDesktops?: (target: object, allDesktops: boolean) => NativeStateWriteOutcome;
@@ -822,6 +829,10 @@ interface PendingFlight {
     readonly admissionMaximizeClears: ReadonlyArray<string>;
     readonly floatTarget: { readonly window: string; readonly floating: boolean } | null;
     readonly stickyTarget: { readonly window: string; readonly previousFloating: boolean } | null;
+    // True for a hidden-domain (background) flight: geometry only, never
+    // focus or interactive commands. Serialized through the same
+    // single-flight and send-blocking as foreground.
+    readonly background: boolean;
 }
 
 interface AutoIntent {
@@ -834,6 +845,7 @@ interface AutoIntent {
     readonly admissionMaximizeClears?: ReadonlyArray<string>;
     readonly floatTarget?: { readonly window: string; readonly floating: boolean } | null;
     readonly stickyTarget?: { readonly window: string; readonly previousFloating: boolean } | null;
+    readonly background?: boolean;
 }
 
 interface PointerEcho {
@@ -907,6 +919,14 @@ export class PlanAdapter {
     private lastGoodByDomain = new Map<string, PlanSnapshot>();
     private reconcileAttempts = 0;
     private parked = false;
+    // Per-domain background reconcile accounting, keyed exactly like
+    // lastGoodByDomain. Foreground counters above are never touched by
+    // hidden-domain flights so background drift can never park foreground.
+    private backgroundAttempts = new Map<string, number>();
+    private backgroundParked = new Set<string>();
+    // Reentrancy guard for the finishFlight hidden-domain chain: a
+    // synchronously failing background dispatch must not recurse.
+    private chainingHidden = false;
     private repeatFocused: string | null = null;
     private repeatDirection: PlanDirection | null = null;
     private repeatMode: PlanResizeMode | null = null;
@@ -974,6 +994,8 @@ export class PlanAdapter {
         this.lastGoodByDomain.clear();
         this.reconcileAttempts = 0;
         this.parked = false;
+        this.backgroundAttempts.clear();
+        this.backgroundParked.clear();
         this.pointerEcho = null;
         this.maximizeAdmissionEcho = null;
         this.maximizeAdmissionAttempts.clear();
@@ -997,6 +1019,8 @@ export class PlanAdapter {
         this.lastGoodByDomain.clear();
         this.reconcileAttempts = 0;
         this.parked = false;
+        this.backgroundAttempts.clear();
+        this.backgroundParked.clear();
         this.pointerEcho = null;
         this.maximizeAdmissionEcho = null;
         this.maximizeAdmissionAttempts.clear();
@@ -1595,7 +1619,32 @@ export class PlanAdapter {
         }
     }
 
+    // Shared debounced entry: foreground lifecycle first, then at most one
+    // hidden-domain lifecycle step. Foreground behavior is unchanged and
+    // always wins: a foreground intent (dispatched or deferred) suppresses the
+    // background scan for this round, and the finishFlight chain converges
+    // remaining hidden domains afterwards.
     private refreshNow(): void {
+        if (this.chainingHidden) {
+            this.refreshForegroundNow();
+            return;
+        }
+        this.chainingHidden = true;
+        try {
+            this.refreshForegroundNow();
+            if (!this.enabled || this.inFlight || this.deferredAuto !== null) {
+                return;
+            }
+            if (this.blockedBySend()) {
+                return;
+            }
+            this.refreshHiddenNow();
+        } finally {
+            this.chainingHidden = false;
+        }
+    }
+
+    private refreshForegroundNow(): void {
         if (!this.enabled) {
             return;
         }
@@ -1838,9 +1887,328 @@ export class PlanAdapter {
         }
     }
 
+    // Background tiling: adopt/reconcile hidden (non-visible output,
+    // workspace) domains without touching desktop visibility or native focus.
+    // Runs only while idle (no flight, no deferred foreground intent) and
+    // never while a send flight blocks Plan. Dispatches at most one
+    // admit/remove/reconcile flight per round through the shared single-flight;
+    // the finishFlight chain picks up the next domain. Per-domain baselines
+    // advance only on applied replies via the shared writeGeometries path, and
+    // the existing domain/window protocol caps fail closed here as everywhere.
+    private refreshHiddenNow(): void {
+        if (!this.enabled || this.inFlight || this.deferredAuto !== null) {
+            return;
+        }
+        if (this.blockedBySend()) {
+            return;
+        }
+        let hidden: ReadonlyArray<PlanObserved> = [];
+        try {
+            const observeHidden = this.env.observeHidden;
+            if (typeof observeHidden !== "function") {
+                return;
+            }
+            hidden = observeHidden();
+        } catch (error) {
+            void error;
+            return;
+        }
+        if (!Array.isArray(hidden)) {
+            return;
+        }
+        const valid: PlanObserved[] = [];
+        for (const entry of hidden) {
+            if (validateObserved(entry)) {
+                valid.push(entry);
+            }
+        }
+        // Bounded-domain cap stays fail-closed for new background admission
+        // (hiddenIntentFor/setLastGood refuse without evicting foreground),
+        // but explicit empty-source cleanup for an already-retained domain is
+        // still considered at cap so a committed last remove can release its
+        // slot. Over-limit hidden sets (no room left for the foreground) skip
+        // new domains entirely; retained domains still converge below. Cap
+        // counts only non-empty observations: explicit empty evidence never
+        // occupies a slot.
+        const nonEmpty = valid.filter((entry) => entry.windows.length > 0);
+        const emptyExplicit = valid.filter((entry) => entry.windows.length === 0);
+        const overLimit = nonEmpty.length >= PLAN_MAX_DOMAINS;
+        for (const observed of nonEmpty) {
+            if (overLimit && !this.lastGoodByDomain.has(this.domainKey(snapshotOf(observed)))) {
+                continue;
+            }
+            const intent = this.hiddenIntentFor(observed);
+            if (intent !== null) {
+                this.dispatch(intent);
+                return;
+            }
+        }
+        // Empty-source cleanup only from explicit fresh, complete
+        // empty-domain evidence whose output is not tainted/unclassifiable.
+        // Absence is unknown (exception transition, tainted output,
+        // unreadable domain, or overall failure) and must never synthesize
+        // an empty snapshot. Per-domain baselines and cap slots are cleaned
+        // only via applied removes; attempts/parked use the per-domain
+        // background accounting. No visibility history or polling is invented.
+        let foregroundKey: string | null = null;
+        try {
+            const foreground = this.freshObserved();
+            if (foreground !== null) {
+                foregroundKey = this.domainKey(snapshotOf(foreground));
+            }
+        } catch (error) {
+            void error;
+            foregroundKey = null;
+        }
+        for (const observed of emptyExplicit) {
+            const key = this.domainKey(observed);
+            if (foregroundKey !== null && key === foregroundKey) {
+                continue;
+            }
+            const previous = this.lastGoodByDomain.get(key);
+            if (previous === undefined || previous.windows.length === 0) {
+                continue;
+            }
+            // Single-remove transaction only: when several members vanish
+            // together the exact missing set cannot be committed safely, so
+            // stay fail-closed without dispatching (no retry noise, no false
+            // commit). The retained baseline is kept; see residual notes.
+            if (previous.windows.length !== 1) {
+                continue;
+            }
+            const intent = this.hiddenIntentFor(observed);
+            if (intent !== null) {
+                this.dispatch(intent);
+                return;
+            }
+        }
+    }
+
+    private freshHiddenFor(domain: Pick<PlanSnapshot, "domainOutput" | "domainWorkspace">): PlanObserved | null {
+        let hidden: ReadonlyArray<PlanObserved> = [];
+        try {
+            const observeHidden = this.env.observeHidden;
+            if (typeof observeHidden !== "function") {
+                return null;
+            }
+            hidden = observeHidden();
+        } catch (error) {
+            void error;
+            return null;
+        }
+        if (!Array.isArray(hidden)) {
+            return null;
+        }
+        for (const entry of hidden) {
+            if (
+                validateObserved(entry) &&
+                entry.domainOutput === domain.domainOutput &&
+                entry.domainWorkspace === domain.domainWorkspace
+            ) {
+                return entry;
+            }
+        }
+        // Absence is unknown, never empty: exception-only, tainted, or
+        // unreadable domains are omitted by the observer and must remain
+        // untouched. Only an explicit empty-domain observation counts as
+        // empty evidence. No synthesis here.
+        return null;
+    }
+
+    // Single hidden-domain lifecycle step mirroring the foreground
+    // admit/remove/reconcile derivation, minus focus advancement, echo fences,
+    // and interactive commands. The anchor focusedId is recomputed
+    // deterministically from the same members and rects, so the shared
+    // snapshot-equality reply checks apply unchanged.
+    private hiddenIntentFor(observed: PlanObserved): AutoIntent | null {
+        const key = this.domainKey(observed);
+        if (this.backgroundParked.has(key) || (this.backgroundAttempts.get(key) ?? 0) >= MAX_RECONCILE_ATTEMPTS) {
+            if (!this.backgroundParked.has(key)) {
+                this.backgroundParked.add(key);
+                this.logToken(`${LOG_PREFIX}:reconcile-parked`);
+            }
+            return null;
+        }
+        // Exception-only domains stay observable to protect a retained
+        // baseline but never dispatch admission/reconcile/removal solely for
+        // exception members. Existing exceptional geometry/no-focus behavior
+        // is preserved by leaving the baseline untouched.
+        if (observed.windows.length > 0) {
+            let hasEligibleTiled = false;
+            for (const entry of observed.windows) {
+                if (!entry.fullscreen && !entry.maximized && entry.floating !== true && entry.sticky !== true) {
+                    hasEligibleTiled = true;
+                    break;
+                }
+            }
+            if (!hasEligibleTiled) {
+                return null;
+            }
+        } else {
+            // Explicit empty evidence never admits: without a retained
+            // baseline there is nothing to retire.
+            if (this.lastGoodFor(snapshotOf(observed)) === null) {
+                return null;
+            }
+        }
+        const prepared = this.clearMaximizeAtAdmission(observed, this.lastGoodFor(snapshotOf(observed)), () =>
+            this.freshHiddenFor(observed),
+        );
+        if (prepared === null) {
+            return null;
+        }
+        const freshSnapshot = this.carriedSnapshot(prepared.observed);
+        const previous = this.lastGoodFor(freshSnapshot);
+        if (previous === null) {
+            if (!this.lastGoodByDomain.has(this.domainKey(freshSnapshot)) && this.lastGoodByDomain.size >= PLAN_MAX_DOMAINS) {
+                return null;
+            }
+            return {
+                op: "admit",
+                snapshot: freshSnapshot,
+                removed: null,
+                body: {
+                    op: "admit",
+                    window: freshSnapshot.focusedId,
+                    output: freshSnapshot.domainOutput,
+                    workspace: freshSnapshot.domainWorkspace,
+                },
+                admissionMaximizeClears: prepared.cleared,
+                background: true,
+            };
+        }
+        const before = new Set<string>();
+        for (const entry of previous.windows) {
+            before.add(entry.id);
+        }
+        const after = new Set<string>();
+        for (const entry of freshSnapshot.windows) {
+            after.add(entry.id);
+        }
+        for (const entry of previous.windows) {
+            if (!after.has(entry.id)) {
+                this.maximizeAdmissionAttempts.delete(entry.id);
+                try {
+                    this.env.noteRemoved?.(entry.id);
+                } catch (error) {
+                    void error;
+                }
+            }
+        }
+        for (const entry of freshSnapshot.windows) {
+            if (!before.has(entry.id)) {
+                return {
+                    op: "admit",
+                    snapshot: freshSnapshot,
+                    removed: null,
+                    body: {
+                        op: "admit",
+                        window: entry.id,
+                        output: freshSnapshot.domainOutput,
+                        workspace: freshSnapshot.domainWorkspace,
+                    },
+                    admissionMaximizeClears: prepared.cleared,
+                    background: true,
+                };
+            }
+        }
+        const missing: string[] = [];
+        for (const entry of previous.windows) {
+            if (!after.has(entry.id)) {
+                missing.push(entry.id);
+            }
+        }
+        // Single-remove transaction only: several simultaneous disappearances
+        // cannot be committed safely, so stay fail-closed without dispatching
+        // (no retry noise, no false commit). The baseline is preserved.
+        if (missing.length > 1) {
+            return null;
+        }
+        if (missing.length === 1) {
+            const single = missing[0] as string;
+            return {
+                op: "remove",
+                snapshot: previous,
+                removed: single,
+                body: { op: "remove", window: single },
+                background: true,
+            };
+        }
+        const knownOutOfBounds = prepared.observed.windows.some(
+            (entry) =>
+                !entry.fullscreen &&
+                !entry.maximized &&
+                before.has(entry.id) &&
+                !rectContained(entry.rect, freshSnapshot.domainBounds),
+        );
+        if (snapshotsEqual(freshSnapshot, previous) && !knownOutOfBounds) {
+            this.clearBackgroundReconcile(freshSnapshot);
+            return null;
+        }
+        if (
+            sameDomainAndWindowSet(previous, freshSnapshot) &&
+            (previous.domainBounds.x !== freshSnapshot.domainBounds.x ||
+                previous.domainBounds.y !== freshSnapshot.domainBounds.y ||
+                previous.domainBounds.w !== freshSnapshot.domainBounds.w ||
+                previous.domainBounds.h !== freshSnapshot.domainBounds.h)
+        ) {
+            const oldBounds = previous.domainBounds;
+            const newBounds = freshSnapshot.domainBounds;
+            this.logToken(
+                `${LOG_PREFIX}:scope-transition old=${String(oldBounds.x)},${String(oldBounds.y)},${String(oldBounds.w)},${String(oldBounds.h)} new=${String(newBounds.x)},${String(newBounds.y)},${String(newBounds.w)},${String(newBounds.h)}`,
+            );
+            this.logToken(`${LOG_PREFIX}:work-area-reprojection selected=retained`);
+            this.clearBackgroundReconcile(freshSnapshot);
+            return {
+                op: "reconcile",
+                snapshot: this.reprojectionSnapshot(prepared.observed, previous),
+                removed: null,
+                body: { op: "reconcile" },
+                workAreaReprojection: true,
+                background: true,
+            };
+        }
+        if (sameRects(previous, freshSnapshot) && !knownOutOfBounds) {
+            this.setLastGood(freshSnapshot, true);
+            this.clearBackgroundReconcile(freshSnapshot);
+            return null;
+        }
+        if (!sameScope(previous, freshSnapshot)) {
+            this.setLastGood(freshSnapshot, true);
+            this.clearBackgroundReconcile(freshSnapshot);
+            return null;
+        }
+        return {
+            op: "reconcile",
+            snapshot: freshSnapshot,
+            removed: null,
+            body: { op: "reconcile" },
+            background: true,
+        };
+    }
+
+    private noteBackgroundTerminal(snapshot: Pick<PlanSnapshot, "domainOutput" | "domainWorkspace">): void {
+        const key = this.domainKey(snapshot);
+        const attempts = (this.backgroundAttempts.get(key) ?? 0) + 1;
+        this.backgroundAttempts.set(key, attempts);
+        if (attempts >= MAX_RECONCILE_ATTEMPTS && !this.backgroundParked.has(key)) {
+            this.backgroundParked.add(key);
+            // Bounded parking transition, same token as foreground, exactly
+            // once per parked hidden domain.
+            this.logToken(`${LOG_PREFIX}:reconcile-parked`);
+        }
+    }
+
+    private clearBackgroundReconcile(snapshot: Pick<PlanSnapshot, "domainOutput" | "domainWorkspace">): void {
+        const key = this.domainKey(snapshot);
+        this.backgroundAttempts.delete(key);
+        this.backgroundParked.delete(key);
+    }
+
     private clearMaximizeAtAdmission(
         observed: PlanObserved,
         previous: PlanSnapshot | null,
+        refetch: () => PlanObserved | null = () => this.freshObserved(),
     ): { observed: PlanObserved; cleared: ReadonlyArray<string> } | null {
         const known = new Set<string>();
         if (previous !== null) {
@@ -1876,7 +2244,7 @@ export class PlanAdapter {
         if (attempted.length === 0) {
             return { observed, cleared: Object.freeze([]) };
         }
-        const fresh = this.freshObserved();
+        const fresh = refetch();
         if (fresh === null) {
             return null;
         }
@@ -1952,7 +2320,11 @@ export class PlanAdapter {
             return;
         }
         if (intent.workAreaReprojection === true) {
-            this.resetReconcileState();
+            if (intent.background === true) {
+                this.clearBackgroundReconcile(intent.snapshot);
+            } else {
+                this.resetReconcileState();
+            }
         }
         if (this.seq < 0 || this.seq > PLAN_MAX_SEQ) {
             return;
@@ -2022,6 +2394,7 @@ export class PlanAdapter {
             admissionMaximizeClears: intent.admissionMaximizeClears ?? Object.freeze([]),
             floatTarget: intent.floatTarget ?? null,
             stickyTarget: intent.stickyTarget ?? null,
+            background: intent.background === true,
         };
         // Bounded route entry: every dispatched flight opens with the same
         // cmd line shape and `outcome=dispatch`, then closes with its terminal
@@ -2040,7 +2413,11 @@ export class PlanAdapter {
             this.inFlight = false;
             this.pending = null;
             this.diag(intent.op, correlation, sortedIds.length, "timer-failed");
-            this.noteReconcileTerminal(intent.op, intent.workAreaReprojection === true);
+            if (intent.background === true) {
+                this.noteBackgroundTerminal(intent.snapshot);
+            } else {
+                this.noteReconcileTerminal(intent.op, intent.workAreaReprojection === true);
+            }
             this.finishFlight();
             return;
         }
@@ -2059,7 +2436,11 @@ export class PlanAdapter {
             this.inFlight = false;
             this.pending = null;
             this.diag(intent.op, correlation, sortedIds.length, "dbus-failed");
-            this.noteReconcileTerminal(intent.op, intent.workAreaReprojection === true);
+            if (intent.background === true) {
+                this.noteBackgroundTerminal(intent.snapshot);
+            } else {
+                this.noteReconcileTerminal(intent.op, intent.workAreaReprojection === true);
+            }
             this.finishFlight();
         }
     }
@@ -2074,7 +2455,11 @@ export class PlanAdapter {
         this.pending = null;
         if (lost !== null) {
             this.diag(lost.op, lost.correlation, lost.windowCount, "timeout");
-            this.noteReconcileTerminal(lost.op, lost.workAreaReprojection);
+            if (lost.background === true) {
+                this.noteBackgroundTerminal(lost.snapshot);
+            } else {
+                this.noteReconcileTerminal(lost.op, lost.workAreaReprojection);
+            }
         }
         this.finishFlight();
     }
@@ -2121,7 +2506,11 @@ export class PlanAdapter {
             this.pending = null;
             this.diag(flightState.op, flightState.correlation, flightState.windowCount, "rejected");
             this.rejectKind(kind, detail, flightState.snapshot);
-            this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
+            if (flightState.background === true) {
+                this.noteBackgroundTerminal(flightState.snapshot);
+            } else {
+                this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
+            }
             this.finishFlight();
             return;
         }
@@ -2134,7 +2523,11 @@ export class PlanAdapter {
             this.inFlight = false;
             this.pending = null;
             this.diag(flightState.op, flightState.correlation, flightState.windowCount, "stale-dropped");
-            this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
+            if (flightState.background === true) {
+                this.noteBackgroundTerminal(flightState.snapshot);
+            } else {
+                this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
+            }
             this.finishFlight();
             return;
         }
@@ -2186,7 +2579,11 @@ export class PlanAdapter {
     // primitive snapshot, and resolve all geometry/focus targets only from the
     // fresh observation.
     private applyPlanned(planned: PlannedReply, flightState: PendingFlight): void {
-        const fresh = this.freshObserved();
+        // Reply-boundary re-observation resolves targets from the flight's own
+        // domain only, so hidden-domain geometry is never applied to
+        // foreground refs and vice versa.
+        const fresh =
+            flightState.background === true ? this.freshHiddenFor(flightState.snapshot) : this.freshObserved();
         if (fresh === null) {
             this.failFlight(flightState, "stale-scope");
             return;
@@ -2344,7 +2741,10 @@ export class PlanAdapter {
             }
         }
         const focus = planned.focus;
-        if (focus !== null) {
+        // Hidden-domain flights never route focus: the anchor focusedId is a
+        // structural placeholder, and applying it would steal native focus and
+        // switch desktop visibility.
+        if (focus !== null && flightState.background !== true) {
             let focusWindow: string | null = null;
             for (const entry of planned.geometry) {
                 if (entry.leaf === focus.leaf) {
@@ -2400,7 +2800,34 @@ export class PlanAdapter {
                 const next = floatRect ?? rect;
                 return { id: entry.id, rect: { x: next.x, y: next.y, w: next.w, h: next.h }, output: entry.output, workspace: entry.workspace, fullscreen: entry.fullscreen, maximized: entry.maximized, floating, resourceClass: entry.resourceClass };
             });
-            this.setLastGood({ ...base, windows: Object.freeze(windows) });
+            // A committed remove that empties the domain retires its baseline
+            // and all background accounting at the same applied boundary so
+            // the slot is released. Zero-window baselines are never retained.
+            if (flightState.op === "remove" && windows.length === 0) {
+                const emptyKey = this.domainKey(base);
+                this.lastGoodByDomain.delete(emptyKey);
+                if (flightState.background === true) {
+                    this.clearBackgroundReconcile(base);
+                }
+                if (flightState.removed !== null) {
+                    this.maximizeAdmissionAttempts.delete(flightState.removed);
+                    try {
+                        this.env.noteRemoved?.(flightState.removed);
+                    } catch (error) {
+                        void error;
+                    }
+                }
+            } else {
+                const retained = this.setLastGood({ ...base, windows: Object.freeze(windows) }, flightState.background === true);
+                if (flightState.background === true && !retained) {
+                    // Background cap-race: the applied result cannot be retained
+                    // without evicting the foreground baseline. Fail closed without
+                    // clearing accounting (which would retry forever): count the
+                    // terminal attempt so the domain parks boundedly instead.
+                    this.failFlight(flightState, "cap-race");
+                    return;
+                }
+            }
             if (flightState.op === "pointer-resize" && flightState.pointerSource !== null) {
                 const neighbours = planned.geometry
                     .filter((entry) => entry.window !== flightState.pointerSource)
@@ -2417,7 +2844,13 @@ export class PlanAdapter {
                 this.logToken(`${LOG_PREFIX}:echo-fence-armed`);
             }
             if (flightState.op === "reconcile") {
-                this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
+                if (flightState.background === true) {
+                    this.clearBackgroundReconcile(flightState.snapshot);
+                } else {
+                    this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
+                }
+            } else if (flightState.background === true) {
+                this.clearBackgroundReconcile(flightState.snapshot);
             } else {
                 this.reconcileAttempts = 0;
                 this.parked = false;
@@ -2440,10 +2873,11 @@ export class PlanAdapter {
         // is best-effort and non-blocking: it must not delay the deferred
         // foreground command below.
         if (
-            flightState.op === "admit" ||
-            flightState.op === "move" ||
-            flightState.op === "remove" ||
-            flightState.op === "resize"
+            flightState.background !== true &&
+            (flightState.op === "admit" ||
+                flightState.op === "move" ||
+                flightState.op === "remove" ||
+                flightState.op === "resize")
         ) {
             try {
                 this.env.onPlannedApplied?.(flightState.op);
@@ -2458,12 +2892,18 @@ export class PlanAdapter {
         this.inFlight = false;
         this.pending = null;
         this.diag(flightState.op, flightState.correlation, flightState.windowCount, outcome);
-        this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
+        if (flightState.background === true) {
+            this.noteBackgroundTerminal(flightState.snapshot);
+        } else {
+            this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
+        }
         this.finishFlight();
     }
 
     // After every flight, exactly one deferred signal-driven auto command
-    // runs so admit/remove converge without queues or retries.
+    // runs so admit/remove converge without queues or retries. When idle with
+    // nothing deferred, one hidden-domain step chains so background domains
+    // converge across successive flights without polling or new timers.
     private finishFlight(): void {
         if (!this.enabled) {
             return;
@@ -2479,6 +2919,14 @@ export class PlanAdapter {
                 return;
             }
             this.dispatch(next);
+        }
+        if (!this.inFlight && this.deferredAuto === null && !this.chainingHidden) {
+            this.chainingHidden = true;
+            try {
+                this.refreshHiddenNow();
+            } finally {
+                this.chainingHidden = false;
+            }
         }
     }
 
@@ -2554,13 +3002,19 @@ export class PlanAdapter {
         return this.lastGoodByDomain.get(this.domainKey(snapshot)) ?? null;
     }
 
-    private setLastGood(snapshot: PlanSnapshot): void {
+    private setLastGood(snapshot: PlanSnapshot, background = false): boolean {
         const key = this.domainKey(snapshot);
         if (!this.lastGoodByDomain.has(key) && this.lastGoodByDomain.size >= PLAN_MAX_DOMAINS) {
+            if (background) {
+                // Fail closed without evicting the foreground baseline: a
+                // hidden candidate never forces foreground re-admission.
+                return false;
+            }
             // Match the Planner's bounded-domain eviction before retaining the
             // projection that committed the replacement domain.
             this.lastGoodByDomain.clear();
         }
         this.lastGoodByDomain.set(key, snapshot);
+        return true;
     }
 }

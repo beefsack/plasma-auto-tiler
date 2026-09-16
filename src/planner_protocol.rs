@@ -1287,6 +1287,12 @@ fn session_usable(session: &Session) -> bool {
     session.divergence().is_none() && !session.has_pending()
 }
 
+/// A committed session with no tiled members and no deferred exceptions holds
+/// no topology and must not consume a domain slot.
+fn committed_session_is_empty(session: &Session) -> bool {
+    session.snapshot().windows.is_empty() && session.exception_count() == 0
+}
+
 fn needs_rebuild(error: &ProposeError) -> bool {
     match error {
         ProposeError::Diverged(_) => true,
@@ -1415,10 +1421,25 @@ impl Planner {
             self.domain_outer_gaps.remove(domain_key);
             return None;
         }
+        // Legacy empty slots never block capacity: drop them lazily without
+        // proposing, so a later admission can reuse the slot.
+        if committed_session_is_empty(session) {
+            self.sessions.remove(domain_key);
+            self.domain_outer_gaps.remove(domain_key);
+            return None;
+        }
         Some(session.clone())
     }
 
     fn store_committed(&mut self, domain_key: DomainKey, session: Session, outer_gap: i32) {
+        // A committed remove that empties the domain retires its session at
+        // the same applied boundary so the slot is released. Zero-window
+        // sessions are never retained.
+        if committed_session_is_empty(&session) {
+            self.sessions.remove(&domain_key);
+            self.domain_outer_gaps.remove(&domain_key);
+            return;
+        }
         if self.sessions.len() >= crate::session::MAX_DOMAINS
             && !self.sessions.contains_key(&domain_key)
         {
@@ -6781,6 +6802,198 @@ mod tests {
             vec!["win-2".to_owned(), "win-3".to_owned()],
             "{after_reply}"
         );
+    }
+
+    fn retained_request_for_domain(
+        correlation: &str,
+        owner: &str,
+        generation: &str,
+        output: &str,
+        workspace: &str,
+        focused: &str,
+        windows: &[(&str, i32, i32, i32, i32)],
+        command: serde_json::Value,
+    ) -> String {
+        let entries: Vec<serde_json::Value> = windows
+            .iter()
+            .map(|(window, x, y, w, h)| {
+                serde_json::json!({
+                    "window": window,
+                    "output": output,
+                    "workspace": workspace,
+                    "rect": {"x": x, "y": y, "w": w, "h": h},
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "v": 1,
+            "correlation_id": correlation,
+            "owner": owner,
+            "generation": generation,
+            "revision": 0,
+            "fingerprint": 7,
+            "domain": {
+                "output": output,
+                "workspace": workspace,
+                "bounds": {"x": 0, "y": 0, "w": 1200, "h": 800},
+                "gap": 0,
+                "outer_gap": 0,
+            },
+            "focused_window": focused,
+            "windows": entries,
+            "command": command,
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn retained_last_remove_retires_empty_session_and_frees_slot() {
+        // Closing the final member retires the empty session at the same
+        // committed boundary so a later background domain can be admitted.
+        // Offline only: retained Planner evaluation, no bus.
+        let mut planner = Planner::new();
+        let admit = retained_request_for_domain(
+            "empty-retire-1",
+            "owner-1",
+            "gen-1",
+            "out-1",
+            "ws-2",
+            "win-h",
+            &[("win-h", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-h", "output": "out-1", "workspace": "ws-2"}),
+        );
+        let admit_reply = parse_reply(&planner.evaluate(&admit));
+        assert_eq!(admit_reply["outcome"], "planned", "{admit_reply}");
+        assert_eq!(planner.retained_domains(), 1);
+        let remove = retained_request_for_domain(
+            "empty-retire-2",
+            "owner-1",
+            "gen-1",
+            "out-1",
+            "ws-2",
+            "win-h",
+            &[("win-h", 0, 0, 100, 80)],
+            serde_json::json!({"op": "remove", "window": "win-h"}),
+        );
+        let remove_reply = parse_reply(&planner.evaluate(&remove));
+        assert_eq!(remove_reply["outcome"], "planned", "{remove_reply}");
+        assert_eq!(
+            remove_reply["desired_geometry"].as_array().map(Vec::len),
+            Some(0),
+            "{remove_reply}"
+        );
+        assert_eq!(planner.retained_domains(), 0);
+        // The freed slot admits a subsequent background domain.
+        let next = retained_request_for_domain(
+            "empty-retire-3",
+            "owner-1",
+            "gen-1",
+            "out-1",
+            "ws-3",
+            "win-n",
+            &[("win-n", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-n", "output": "out-1", "workspace": "ws-3"}),
+        );
+        let next_reply = parse_reply(&planner.evaluate(&next));
+        assert_eq!(next_reply["outcome"], "planned", "{next_reply}");
+        assert_eq!(planner.retained_domains(), 1);
+    }
+
+    #[test]
+    fn retained_at_cap_empty_cleanup_releases_one_slot() {
+        // At cap, removing the final member of an already-retained domain
+        // still commits and retires, freeing exactly one slot. Offline only.
+        let mut planner = Planner::new();
+        for index in 1..=crate::session::MAX_DOMAINS {
+            let workspace = format!("ws-{index}");
+            let window = format!("win-{index}");
+            let correlation = format!("cap-retire-admit-{index}");
+            let request = retained_request_for_domain(
+                &correlation,
+                "owner-1",
+                "gen-1",
+                "out-1",
+                &workspace,
+                &window,
+                &[(window.as_str(), 0, 0, 100, 80)],
+                serde_json::json!({"op": "admit", "window": window, "output": "out-1", "workspace": workspace}),
+            );
+            let reply = parse_reply(&planner.evaluate(&request));
+            assert_eq!(reply["outcome"], "planned", "{reply} {index}");
+        }
+        assert_eq!(planner.retained_domains(), crate::session::MAX_DOMAINS);
+        // Empty the first retained domain with its exact single-member
+        // observation: the committed remove retires it even at cap.
+        let remove = retained_request_for_domain(
+            "cap-retire-remove-1",
+            "owner-1",
+            "gen-1",
+            "out-1",
+            "ws-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "remove", "window": "win-1"}),
+        );
+        let remove_reply = parse_reply(&planner.evaluate(&remove));
+        assert_eq!(remove_reply["outcome"], "planned", "{remove_reply}");
+        assert_eq!(
+            remove_reply["desired_geometry"].as_array().map(Vec::len),
+            Some(0),
+            "{remove_reply}"
+        );
+        assert_eq!(planner.retained_domains(), crate::session::MAX_DOMAINS - 1);
+    }
+
+    #[test]
+    fn retained_multi_member_collapse_is_not_falsely_committed() {
+        // Two members vanishing before one observation cannot be committed
+        // through the single-remove transaction: the empty post-observation
+        // must not produce a planned empty commit. Offline only.
+        let mut planner = Planner::new();
+        for (correlation, focused, windows, command) in [
+            (
+                "collapse-1",
+                "win-1",
+                vec![("win-1", 0, 0, 100, 80)],
+                serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
+            ),
+            (
+                "collapse-2",
+                "win-1",
+                vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                serde_json::json!({"op": "admit", "window": "win-2", "output": "out-1", "workspace": "ws-1"}),
+            ),
+        ] {
+            let request = retained_request_for_domain(
+                correlation,
+                "owner-1",
+                "gen-1",
+                "out-1",
+                "ws-1",
+                focused,
+                &windows,
+                command,
+            );
+            assert_eq!(parse_reply(&planner.evaluate(&request))["outcome"], "planned");
+        }
+        assert_eq!(planner.retained_domains(), 1);
+        // Both members gone: an empty observation with a single-remove
+        // command must stay fail-closed, never a planned empty commit.
+        let collapsed = retained_request_for_domain(
+            "collapse-3",
+            "owner-1",
+            "gen-1",
+            "out-1",
+            "ws-1",
+            "",
+            &[],
+            serde_json::json!({"op": "remove", "window": "win-1"}),
+        );
+        let reply = parse_reply(&planner.evaluate(&collapsed));
+        assert_ne!(reply["outcome"], "planned", "{reply}");
+        if let Some(geometry) = reply.get("desired_geometry") {
+            assert_ne!(geometry.as_array().map(Vec::len), Some(0), "{reply}");
+        }
     }
 
     #[test]
