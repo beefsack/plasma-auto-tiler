@@ -106,10 +106,17 @@
 ## Implementation Outcome
 
 - Static implementation delivers the INITIAL fit only. A fresh focused admit
-  with no retained domain attempts one deterministic flat horizontal or
-  vertical strip fit. The complete strip must align to the current inset domain
-  with the configured inner gap and reproject to the observed geometry exactly;
-  otherwise normal deterministic seed/reflow runs.
+  with no retained domain attempts one deterministic near-strip fit. After the
+  existing valid contained non-overlapping checks, horizontal support needs the
+  existing `(x, y, w, h)` order to have strictly non-overlapping sequential x
+  intervals (`previous.x + previous.w <= next.x`), regardless of domain edge
+  offsets, cross-axis drift, or the observed inter-window gap; vertical mirrors
+  with `(y, x, h, w)` order and y intervals. One flat N-ary group uses the
+  observed primary spans as shares and projects with the configured gap as the
+  canonical valid complete result; exact input reprojection is not required.
+  Both axes supporting selects horizontal. Grids, nested, and T arrangements
+  with interval overlap on both axes, plus exceptions and invalid geometry,
+  use the normal deterministic seed/reflow fallback.
 - Rust constructs and validates the fitted N-ary topology, then proposes,
   acknowledges, verifies, and commits it through the existing lifecycle path.
   Foreground and background domains use the same fresh-admit route. Retained,
@@ -120,10 +127,12 @@
   normal seed/reflow exception behavior; configured gaps remain adapter inputs
   and Rust projection policy. Planner-loss fresh-session integration is still
   pending and will reuse this helper without changing recovery semantics.
-- Offline Rust and TypeScript coverage establishes deterministic strip results,
-  configured gap/inset handling, exceptions and unsupported-input fallback,
-  lifecycle base revision, retained follow-up behavior, and adapter payload
-  exclusion. Live KWin/Plasma acceptance is user-owned and pending.
+- Offline Rust and TypeScript coverage establishes deterministic near-strip
+  results, canonical configured-gap projection, exceptions and
+  unsupported-input fallback, lifecycle base revision, retained follow-up
+  behavior, and adapter payload exclusion. Static state is covered by unit
+  tests; live KWin/Plasma acceptance is user-owned and pending, and fitted
+  geometry is the projected static result, not a live-state claim.
 
 ## Backlog Maintenance Finding
 

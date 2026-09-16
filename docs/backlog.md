@@ -115,11 +115,14 @@ Only meaningful pending or active work is listed.
   boundary, atomicity, and parity claims remain unproven.
   [decision](decisions.md#production-interactive-edge-drag)
 - P2 | Placement-aware startup adoption live gate | Initial fresh adoption now
-  statically fits an exact, domain-aligned horizontal or vertical strip using
-  the configured gaps, then uses normal deterministic seed/reflow for every
-  other layout or exception. The Rust fit is transaction-bound and applies
-  independently to foreground and background domains; no live claim is made.
-  User-owned live acceptance remains pending.
+  statically fits a best-effort near strip: unambiguous sequential primary
+  intervals in `(x, y, w, h)` / `(y, x, h, w)` order, regardless of edge
+  offsets, cross-axis drift, or observed gaps, projected with the configured
+  gaps as the canonical result; grids, nested, T arrangements, and exceptions
+  use normal deterministic seed/reflow fallback. The Rust fit is
+  transaction-bound and applies independently to foreground and background
+  domains; static unit coverage only, no live claim is made. User-owned live
+  acceptance remains pending.
   [record](changes/placement-aware-startup-adoption.md)
 - P2 | KWin controller silent unload | Attribute a manual controller unload only
   with before/after `isScriptLoaded`, exact `Script<ID>` introspection, and KWin

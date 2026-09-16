@@ -843,27 +843,31 @@ fn seed_target_bounds(session: &Session, domain: &OutputDomain) -> Rect {
     domain.bounds
 }
 
-/// Deterministic flat strip fit over the current admission's complete
+/// Deterministic near-strip fit over the current admission's complete
 /// carried rectangles.
 ///
-/// A simple project policy, not topology reconstruction: succeeds only when
-/// every non-excluded rectangle is valid, contained in the already-inset
-/// domain, non-overlapping, and the set forms one domain-aligned horizontal
-/// (side-by-side) or vertical (stacked) strip with exact configured sibling
-/// gaps. A horizontal strip needs every rect at the domain `y`/`h`, ordered
-/// by `x` from the domain left edge to the right edge with exactly
-/// `domain.gap` between siblings; vertical mirrors along `y`. A single
-/// window stays on the normal path (`None`).
+/// A simple best-effort project policy, not topology reconstruction and not
+/// exact recognition: succeeds only when every non-excluded rectangle is
+/// valid, contained in the already-inset domain, and non-overlapping, plus
+/// one axis has unambiguous sequential primary intervals. A horizontal
+/// near-strip sorts by the existing `(x, y, w, h)` key and needs each
+/// carried positive x interval strictly non-overlapping and sequential
+/// (`previous.x + previous.w <= next.x`), regardless of domain edge offsets,
+/// cross-axis drift, or the observed inter-window gap; vertical mirrors by
+/// sorting on `(y, x, h, w)` and checking `previous.y + previous.h <=
+/// next.y`. A single window stays on the normal path (`None`).
 ///
-/// Each matching strip builds one ordered flat N-ary `Node::Group` along
-/// that axis with the positive observed spans as shares, then projects it
-/// with the existing `project`. A strip is accepted only when the projection
-/// covers exactly the same window geometry (total projected movement zero,
-/// so no new magic threshold exists). When both strips match, the fixed
-/// Horizontal tie-break applies. Anything else returns `None` for the normal
-/// deterministic seed/reflow. Topology
-/// decisions use only rectangle geometry (never opaque window ids);
-/// leaf/group ids are safe internal deterministic index names.
+/// Each supported axis builds one ordered flat N-ary `Node::Group` along
+/// that axis with the observed primary spans (`w` horizontal, `h` vertical)
+/// as shares, then projects it with the existing
+/// `project(domain.bounds, domain.gap)` as the canonical valid complete
+/// result with the configured gap. No exact input reprojection is required.
+/// When both axes support, the fixed Horizontal tie-break applies. Anything
+/// else returns `None` for the normal deterministic seed/reflow. Grids,
+/// nested, and T arrangements with primary-interval overlap on both axes are
+/// normal unsupported fallback, not fitted topology. Topology decisions use
+/// only rectangle geometry (never opaque window ids); leaf/group ids are
+/// safe internal deterministic index names.
 fn try_flat_strip_fit(
     domain: &OutputDomain,
     windows: &[ObservedDto],
@@ -898,10 +902,11 @@ fn try_flat_strip_fit(
             }
         }
     }
-    // One axis attempt: order entries along the axis, check exact strip
-    // alignment against the inset domain with exact configured gaps, then
-    // project one flat N-ary group with observed spans as shares. Accepted
-    // only on exact same-geometry coverage with its movement total.
+    // One axis attempt: sort by the existing geometry key, require strictly
+    // non-overlapping sequential primary intervals with no tolerance knobs,
+    // then project one flat N-ary group with observed primary spans as
+    // shares. Edge offsets, cross-axis drift, and observed gaps never gate
+    // support; the configured-gap projection is the canonical result.
     fn strip_candidate(
         domain: &OutputDomain,
         items: &[(WindowId, Rect)],
@@ -914,47 +919,29 @@ fn try_flat_strip_fit(
             Axis::Vertical => ordered
                 .sort_by(|a, b| (a.1.y, a.1.x, a.1.h, a.1.w).cmp(&(b.1.y, b.1.x, b.1.h, b.1.w))),
         }
-        let gap = i64::from(domain.gap);
-        let mut cursor: i64 = match axis {
-            Axis::Horizontal => i64::from(domain.bounds.x),
-            Axis::Vertical => i64::from(domain.bounds.y),
-        };
-        let mut shares: Vec<u64> = Vec::with_capacity(ordered.len());
-        for (_, rect) in &ordered {
+        for pair in ordered.windows(2) {
+            let (previous, next) = (pair[0].1, pair[1].1);
             match axis {
                 Axis::Horizontal => {
-                    if rect.y != domain.bounds.y || rect.h != domain.bounds.h {
+                    if i64::from(previous.x) + i64::from(previous.w) > i64::from(next.x) {
                         return None;
                     }
-                    if i64::from(rect.x) != cursor {
-                        return None;
-                    }
-                    if rect.w <= 0 {
-                        return None;
-                    }
-                    shares.push(rect.w as u64);
-                    cursor += i64::from(rect.w) + gap;
                 }
                 Axis::Vertical => {
-                    if rect.x != domain.bounds.x || rect.w != domain.bounds.w {
+                    if i64::from(previous.y) + i64::from(previous.h) > i64::from(next.y) {
                         return None;
                     }
-                    if i64::from(rect.y) != cursor {
-                        return None;
-                    }
-                    if rect.h <= 0 {
-                        return None;
-                    }
-                    shares.push(rect.h as u64);
-                    cursor += i64::from(rect.h) + gap;
                 }
             }
         }
-        let end: i64 = match axis {
-            Axis::Horizontal => i64::from(domain.bounds.x) + i64::from(domain.bounds.w),
-            Axis::Vertical => i64::from(domain.bounds.y) + i64::from(domain.bounds.h),
-        };
-        if cursor - gap != end {
+        let shares: Vec<u64> = ordered
+            .iter()
+            .map(|(_, rect)| match axis {
+                Axis::Horizontal => rect.w as u64,
+                Axis::Vertical => rect.h as u64,
+            })
+            .collect();
+        if shares.iter().any(|share| *share == 0) {
             return None;
         }
         let children: Vec<Node> = (0..ordered.len())
@@ -972,15 +959,6 @@ fn try_flat_strip_fit(
         if projected.len() != ordered.len() {
             return None;
         }
-        for (index, (_, rect)) in ordered.iter().enumerate() {
-            let hit = &projected[index];
-            if hit.leaf.0 != format!("fit-l{index}") {
-                return None;
-            }
-            if hit.rect != *rect {
-                return None;
-            }
-        }
         let links: Vec<WindowLink> = ordered
             .iter()
             .enumerate()
@@ -996,8 +974,8 @@ fn try_flat_strip_fit(
     let horizontal = strip_candidate(domain, &items, Axis::Horizontal);
     let vertical = strip_candidate(domain, &items, Axis::Vertical);
     match (horizontal, vertical) {
-        // Both candidates have exact projected geometry, so the fixed
-        // Horizontal tie-break keeps the choice deterministic.
+        // Fixed Horizontal tie-break keeps the choice deterministic when both
+        // interval orders support a near strip.
         (Some(h), Some(_)) => Some(h),
         (Some(h), None) => Some(h),
         (None, Some(v)) => Some(v),
@@ -7411,9 +7389,11 @@ mod tests {
     }
 
     #[test]
-    fn fit_falls_back_to_normal_seed_on_overlap_misalignment_out_of_domain() {
-        // None of these form an exact domain-aligned strip, so every case
-        // must take the normal deterministic seed/reflow instead of fitting.
+    fn fit_falls_back_to_normal_seed_on_overlap_grid_and_out_of_domain() {
+        // Overlap and out-of-domain stay on the initial overlap/containment
+        // boundary; a T arrangement with primary-interval overlap on both axes
+        // is genuinely unsupported under the near-strip interval policy, so
+        // every case must take the normal deterministic seed/reflow.
         let normal = std::collections::BTreeMap::from([
             ("win-1".to_owned(), (0, 0, 600, 800)),
             ("win-2".to_owned(), (600, 0, 600, 800)),
@@ -7422,10 +7402,6 @@ mod tests {
             (
                 "fit-fb-1",
                 vec![("win-1", 0, 0, 700, 800), ("win-2", 500, 0, 700, 800)],
-            ),
-            (
-                "fit-fb-2",
-                vec![("win-1", 0, 0, 600, 800), ("win-2", 600, 1, 600, 799)],
             ),
             (
                 "fit-fb-3",
@@ -7444,7 +7420,183 @@ mod tests {
             assert_eq!(reply["outcome"], "planned", "{correlation} {reply}");
             assert_geometry_covers(&reply, &["win-1", "win-2"]);
             assert_eq!(geometry_by_window(&reply), normal, "{correlation} {reply}");
+            assert!(
+                !fit_leaves(&reply)
+                    .iter()
+                    .any(|leaf| leaf.starts_with("fit-l")),
+                "{correlation} {reply}"
+            );
         }
+        // T arrangement: top full-width plus two bottom siblings. Sorted x
+        // intervals overlap (top spans both bottom cells) and sorted y
+        // intervals overlap (bottom siblings share one row), so neither axis
+        // supports a near strip.
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&retained_request(
+            "fit-fb-grid-1",
+            "owner-1",
+            "gen-1",
+            "win-3",
+            &[
+                ("win-1", 0, 0, 1200, 400),
+                ("win-2", 0, 400, 600, 400),
+                ("win-3", 600, 400, 600, 400),
+            ],
+            admit_body("win-3"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_geometry_covers(&reply, &["win-1", "win-2", "win-3"]);
+        assert!(
+            !fit_leaves(&reply)
+                .iter()
+                .any(|leaf| leaf.starts_with("fit-l")),
+            "{reply}"
+        );
+        // Deterministic normal fallback across fresh planners.
+        let mut second = Planner::new();
+        let again = parse_reply(&second.evaluate(&retained_request(
+            "fit-fb-grid-1",
+            "owner-1",
+            "gen-1",
+            "win-3",
+            &[
+                ("win-1", 0, 0, 1200, 400),
+                ("win-2", 0, 400, 600, 400),
+                ("win-3", 600, 400, 600, 400),
+            ],
+            admit_body("win-3"),
+        )));
+        assert_eq!(
+            again["desired_geometry"], reply["desired_geometry"],
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn fit_horizontal_near_strip_with_drift_projects_canonical_gaps() {
+        // Imperfect horizontal near strip: left/right edge offsets, cross-axis
+        // drift, and a nonconfigured observed 7px inter-gap. The x intervals
+        // stay sequential, so the fit builds one flat N-ary group with the
+        // observed widths as shares and projects the canonical configured-gap
+        // result, which matches neither the observed geometry nor the normal
+        // equal reflow.
+        let windows = [("win-1", 10, 5, 398, 790), ("win-2", 415, 2, 770, 795)];
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&retained_request(
+            "fit-near-h-1",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &windows,
+            admit_body("win-2"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["base_revision"], 0, "{reply}");
+        assert_geometry_covers(&reply, &["win-1", "win-2"]);
+        let got = geometry_by_window(&reply);
+        assert_eq!(
+            got,
+            std::collections::BTreeMap::from([
+                ("win-1".to_owned(), (0, 0, 409, 800)),
+                ("win-2".to_owned(), (409, 0, 791, 800)),
+            ]),
+            "{reply}"
+        );
+        assert_eq!(fit_leaves(&reply), vec!["fit-l0", "fit-l1"], "{reply}");
+        assert_ne!(
+            got,
+            std::collections::BTreeMap::from([
+                ("win-1".to_owned(), (10, 5, 398, 790)),
+                ("win-2".to_owned(), (415, 2, 770, 795)),
+            ]),
+            "{reply}"
+        );
+        assert_ne!(
+            got,
+            std::collections::BTreeMap::from([
+                ("win-1".to_owned(), (0, 0, 600, 800)),
+                ("win-2".to_owned(), (600, 0, 600, 800)),
+            ]),
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn fit_horizontal_near_strip_with_configured_gaps() {
+        // Same interval policy under the configured outer/inner gaps: edge
+        // offsets, cross-axis drift, and a nonconfigured observed 10px gap
+        // still support a horizontal near strip with the observed widths as
+        // shares, projected with the configured 8px gap.
+        let windows = [("win-1", 10, 10, 400, 780), ("win-2", 420, 12, 760, 778)];
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&retained_request_with_selected_gaps(
+            "fit-near-gap-1",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &windows,
+            admit_body("win-2"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["base_revision"], 0, "{reply}");
+        assert_geometry_covers(&reply, &["win-1", "win-2"]);
+        let got = geometry_by_window(&reply);
+        assert_eq!(
+            got,
+            std::collections::BTreeMap::from([
+                ("win-1".to_owned(), (8, 8, 405, 784)),
+                ("win-2".to_owned(), (421, 8, 771, 784)),
+            ]),
+            "{reply}"
+        );
+        assert_eq!(fit_leaves(&reply), vec!["fit-l0", "fit-l1"], "{reply}");
+        assert_eq!(
+            got["win-2"].0,
+            got["win-1"].0 + got["win-1"].2 + 8,
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn fit_vertical_near_strip_with_drift_is_deterministic() {
+        // Imperfect vertical near strip: cross-axis drift with x intervals
+        // overlapping (so horizontal is unsupported) while y intervals stay
+        // sequential. Canonical heights come from the observed spans.
+        let windows = [("win-1", 5, 10, 1190, 250), ("win-2", 2, 270, 1194, 515)];
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&retained_request(
+            "fit-near-v-1",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &windows,
+            admit_body("win-2"),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["base_revision"], 0, "{reply}");
+        assert_geometry_covers(&reply, &["win-1", "win-2"]);
+        assert_eq!(
+            geometry_by_window(&reply),
+            std::collections::BTreeMap::from([
+                ("win-1".to_owned(), (0, 0, 1200, 261)),
+                ("win-2".to_owned(), (0, 261, 1200, 539)),
+            ]),
+            "{reply}"
+        );
+        assert_eq!(fit_leaves(&reply), vec!["fit-l0", "fit-l1"], "{reply}");
+        let mut second = Planner::new();
+        let again = parse_reply(&second.evaluate(&retained_request(
+            "fit-near-v-1",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &windows,
+            admit_body("win-2"),
+        )));
+        assert_eq!(
+            again["desired_geometry"], reply["desired_geometry"],
+            "{reply}"
+        );
     }
 
     #[test]
