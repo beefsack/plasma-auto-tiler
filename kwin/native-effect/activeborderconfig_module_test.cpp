@@ -13,7 +13,9 @@
 #include <QComboBox>
 #include <QDBusMessage>
 #include <QDoubleSpinBox>
+#include <QLabel>
 #include <QMimeData>
+#include <QPushButton>
 #include <QSpinBox>
 #include <QTemporaryDir>
 
@@ -73,6 +75,26 @@ KColorButton *borderColorButton(KWin::ActiveBorderConfigModule &module)
 QCheckBox *useThemeColorCheckBox(KWin::ActiveBorderConfigModule &module)
 {
     return module.widget()->findChild<QCheckBox *>(QStringLiteral("kcfg_UseThemeColor"));
+}
+
+QComboBox *tilingAlgorithmCombo(KWin::ActiveBorderConfigModule &module)
+{
+    return module.widget()->findChild<QComboBox *>(QStringLiteral("tilingAlgorithmCombo"));
+}
+
+QLabel *tilerReloadStatusLabel(KWin::ActiveBorderConfigModule &module)
+{
+    return module.widget()->findChild<QLabel *>(QStringLiteral("tilerReloadStatusLabel"));
+}
+
+QPushButton *tilerReloadButton(KWin::ActiveBorderConfigModule &module)
+{
+    return module.widget()->findChild<QPushButton *>(QStringLiteral("tilerReloadButton"));
+}
+
+bool containsAppliedClaim(const QString &text)
+{
+    return text.toLower().contains(QStringLiteral("applied"));
 }
 
 QColor defaultBorderColor()
@@ -665,6 +687,164 @@ void gapContractNormalizesBoundsAndPersists()
     }
 }
 
+class CountingScriptReloadModule : public KWin::ActiveBorderConfigModule
+{
+public:
+    using KWin::ActiveBorderConfigModule::ActiveBorderConfigModule;
+    bool requestEffectReconfigure() override
+    {
+        ++effectCalls;
+        return effectSucceed;
+    }
+    bool requestScriptReconfigure() override
+    {
+        ++scriptCalls;
+        return scriptSucceed;
+    }
+    int effectCalls = 0;
+    int scriptCalls = 0;
+    bool effectSucceed = true;
+    bool scriptSucceed = false;
+};
+
+void unchangedSaveMarksNoReloadWithoutSend()
+{
+    CountingScriptReloadModule module(nullptr, KPluginMetaData());
+    module.load();
+    CHECK(!module.isTilerReloadRequired());
+    CHECK(tilerReloadStatusLabel(module) != nullptr);
+    CHECK(tilerReloadButton(module) != nullptr);
+    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("No pending")));
+    CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
+    int confirms = 0;
+    module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
+        ++confirms;
+        return false;
+    });
+    module.save();
+    CHECK(!module.isTilerReloadRequired());
+    CHECK(module.scriptCalls == 0);
+    CHECK(module.effectCalls == 0);
+    CHECK(!module.needsSave());
+    CHECK(confirms == 0);
+    CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
+}
+
+void tilingSaveMarksReloadRequiredWithoutAutoSend()
+{
+    CountingScriptReloadModule module(nullptr, KPluginMetaData());
+    module.load();
+    QComboBox *tiling = tilingAlgorithmCombo(module);
+    CHECK(tiling != nullptr);
+    if (!tiling) {
+        return;
+    }
+    const int rows = tiling->findData(QStringLiteral("rows"));
+    CHECK(rows >= 0);
+    tiling->setCurrentIndex(rows);
+    CHECK(module.needsSave());
+    int confirms = 0;
+    module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
+        ++confirms;
+        return false;
+    });
+    module.save();
+    CHECK(scriptGroup().readEntry(QStringLiteral("tilingAlgorithm"), QString()) == QStringLiteral("rows"));
+    CHECK(module.isTilerReloadRequired());
+    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("Reload required")));
+    CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
+    CHECK(module.scriptCalls == 0);
+    CHECK(module.effectCalls == 0);
+    CHECK(!module.needsSave());
+    CHECK(confirms == 0);
+    // An unchanged follow-up save must not auto-send and must keep the flag.
+    module.save();
+    CHECK(module.isTilerReloadRequired());
+    CHECK(module.scriptCalls == 0);
+    CHECK(confirms == 0);
+}
+
+void borderOnlySaveHotAppliesWithoutReloadRequired()
+{
+    CountingScriptReloadModule module(nullptr, KPluginMetaData());
+    module.load();
+    QDoubleSpinBox *width = borderWidthSpinBox(module);
+    CHECK(width != nullptr);
+    if (!width) {
+        return;
+    }
+    const double target = (width->value() == 7.5) ? 6.5 : 7.5;
+    width->setValue(target);
+    module.save();
+    CHECK(borderGroup().readEntry(QStringLiteral("BorderWidth"), 0.0) == target);
+    CHECK(!module.isTilerReloadRequired());
+    CHECK(module.effectCalls == 1);
+    CHECK(module.scriptCalls == 0);
+    CHECK(!module.needsSave());
+}
+
+void deliberateReloadSuccessIsUnconfirmedWithoutAppliedClaim()
+{
+    CountingScriptReloadModule module(nullptr, KPluginMetaData());
+    module.load();
+    QComboBox *tiling = tilingAlgorithmCombo(module);
+    CHECK(tiling != nullptr);
+    if (!tiling) {
+        return;
+    }
+    tiling->setCurrentIndex(tiling->findData(QStringLiteral("balanced-grid")));
+    module.save();
+    CHECK(module.isTilerReloadRequired());
+    CHECK(module.scriptCalls == 0);
+    module.scriptSucceed = true;
+    int confirms = 0;
+    module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
+        ++confirms;
+        return false;
+    });
+    module.requestTilerReload();
+    CHECK(module.scriptCalls == 1);
+    CHECK(module.isTilerReloadRequired());
+    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("unconfirmed")));
+    CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
+    CHECK(!module.needsSave());
+    CHECK(confirms == 0);
+    CHECK(scriptGroup().readEntry(QStringLiteral("tilingAlgorithm"), QString()) == QStringLiteral("balanced-grid"));
+}
+
+void deliberateReloadFailureKeepsRequiredWithoutAppliedClaim()
+{
+    CountingScriptReloadModule module(nullptr, KPluginMetaData());
+    module.load();
+    QComboBox *tiling = tilingAlgorithmCombo(module);
+    CHECK(tiling != nullptr);
+    if (!tiling) {
+        return;
+    }
+    tiling->setCurrentIndex(tiling->findData(QStringLiteral("dwindle")));
+    module.save();
+    // Force a real tiling change when the stored value already is dwindle.
+    if (!module.isTilerReloadRequired()) {
+        tiling->setCurrentIndex(tiling->findData(QStringLiteral("rows")));
+        module.save();
+    }
+    CHECK(module.isTilerReloadRequired());
+    module.scriptSucceed = false;
+    module.requestTilerReload();
+    CHECK(module.scriptCalls == 1);
+    CHECK(module.isTilerReloadRequired());
+    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("failed")));
+    CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
+    CHECK(!module.needsSave());
+}
+
+void poisonedBusScriptSendFailsClosed()
+{
+    KWin::ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    module.load();
+    CHECK(!module.requestScriptReconfigure());
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -683,7 +863,7 @@ int main(int argc, char **argv)
     app.clipboard()->setMimeData(new QMimeData);
 
     if (argc != 2) {
-        std::fprintf(stderr, "usage: %s malformed|valid|missing|dbus|hotapply|border|config|gaps\n", argv[0]);
+        std::fprintf(stderr, "usage: %s malformed|valid|missing|dbus|hotapply|border|config|gaps|reload\n", argv[0]);
         return EXIT_FAILURE;
     }
 
@@ -718,6 +898,14 @@ int main(int argc, char **argv)
         effectConfigReloadReflectsStoredValues();
     } else if (scenario == QStringLiteral("gaps")) {
         gapContractNormalizesBoundsAndPersists();
+    } else if (scenario == QStringLiteral("reload")) {
+        scriptReconfigureTargetIsExact();
+        unchangedSaveMarksNoReloadWithoutSend();
+        tilingSaveMarksReloadRequiredWithoutAutoSend();
+        borderOnlySaveHotAppliesWithoutReloadRequired();
+        deliberateReloadSuccessIsUnconfirmedWithoutAppliedClaim();
+        deliberateReloadFailureKeepsRequiredWithoutAppliedClaim();
+        poisonedBusScriptSendFailsClosed();
     } else {
         std::fprintf(stderr, "unknown scenario: %s\n", argv[1]);
         return EXIT_FAILURE;

@@ -83,9 +83,13 @@ Only meaningful pending or active work is listed.
   and effect settings. Verify running behavior reflects saved settings without
   requiring a tiler reload. The interim reload approach does not satisfy this.
   [investigation](changes/reliability-condition-investigation.md)
-- P2 | Interim runtime configuration reload | Implement and verify deliberate
-  tiler reload after saving tiling settings, with clear reload-required UI and
-  existing live border updates retained. Prevent silent stale configuration.
+- P2 | Interim runtime configuration reload | Static-complete, live gate
+  pending: deliberate tiler reload after saving tiling settings, with clear
+  reload-required UI and existing live border updates retained. Saving tiling
+  settings marks reload-required; the deliberate Reload Tiler button sends one
+  typed KWin reconfigure request reported as sent-but-unconfirmed or failed,
+  never applied; session restart remains the guarantee. No live result is
+  claimed and the all-settings live-application launch blocker is unchanged.
   [investigation](changes/reliability-condition-investigation.md)
 - P1 | Rust-engine/direct-geometry migration live gate | Rust-mode exact-three
   focus, movement, keyboard resize, and pointer resize are static-complete behind

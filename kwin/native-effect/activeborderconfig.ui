@@ -232,6 +232,42 @@
      </widget>
     </item>
     <item>
+     <widget class="QGroupBox" name="tilerReloadGroup">
+      <property name="title">
+       <string>Tiler Reload</string>
+      </property>
+      <layout class="QVBoxLayout" name="tilerReloadLayout">
+       <item>
+        <widget class="QLabel" name="tilerReloadStatusLabel">
+         <property name="text">
+          <string>No pending tiler reload in this dialog.</string>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="tilerReloadButton">
+         <property name="text">
+          <string>Reload Tiler</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="tilerReloadDescription">
+         <property name="text">
+          <string>Tiling settings are saved to kwinrc and read by the running tiler only at startup. Saving marks a reload as required. Reload sends one typed KWin reconfigure request; the send is unconfirmed and never claims the running tiler applied the settings. Restart the session to guarantee pickup. This never changes shortcuts.</string>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
      <widget class="QGroupBox" name="shortcutGroup">
       <property name="title">
        <string>Shortcuts</string>

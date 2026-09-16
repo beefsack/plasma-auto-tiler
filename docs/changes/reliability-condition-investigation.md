@@ -239,13 +239,13 @@
    native write reached it, while the sibling's `disposition=written` line
    proves the sibling write. Record the exact failing observation otherwise.
 
-### Underlying Configuration Changes - NOT HANDLED
+### Underlying Configuration Changes - INTERIM STATIC-COMPLETE, LIVE GATE PENDING
 
-- Approved direction, implementation and live verification pending: after save,
-  perform a deliberate tiler reload and show clear reload-required UI. Existing
-  live border updates remain live. This is an interim target only: before
-  launch, every user-facing setting must apply live, which is a mandatory launch
-  blocker.
+- Approved interim, statically implemented, live verification pending: after
+  save, the KCM marks a reload as required and offers a deliberate tiler
+  reload with clear reload-required UI. Existing live border updates remain
+  live. This is an interim target only: before launch, every user-facing
+  setting must apply live, which is a mandatory launch blocker.
 - The active-border effect does handle a KWin reconfigure call: it rereads its
   configuration and updates the outline and border at
   `kwin/native-effect/activewindowborder.cpp:45-50`.
@@ -253,21 +253,41 @@
   `innerGap` and `outerGap` values. Production reads `shortcutProfile`,
   `workspaceMode`, and the gap pair once during startup; no production script
   source subscribes to a configuration-change or reconfigure signal.
-- KCM Apply queues an unacknowledged KWin `reconfigure` call:
-  `kwin/native-effect/activeborderconfig_module.cpp:128-136,514-523`.
-  It does not establish that a running script rereads configuration or that the
-  approved interim reload target is implemented.
+- KCM Apply no longer auto-queues a script reconfigure on save. Saving tiling
+  settings sets reload-required with the exact status `Tiling settings saved.
+  Reload required: the running tiler still uses startup values.` An unchanged
+  save sends nothing and leaves the flag untouched. The deliberate Reload
+  Tiler button sends exactly one typed `org.kde.KWin /KWin org.kde.KWin
+  reconfigure` request: success reports `Reload request sent. Application
+  unconfirmed; restart the session to guarantee pickup.` and keeps
+  reload-required; failure reports `Reload request failed. Running tiler still
+  uses startup values; retry or restart the session.` and keeps
+  reload-required. No status claims applied. Running confirmation is not
+  provable in current source: the controller has no config-change
+  subscription and KWin's reconfigure is Q_NOREPLY, so a queued send alone is
+  reported as unconfirmed and session restart remains the guarantee. The
+  button never touches shortcuts and never unloads scripts or plugins.
 - Shortcut Apply and Revert are explicit KCM operations:
   `kwin/native-effect/activeborderconfig_module.cpp:183-252`. The KCM can detect
   recorded-postimage drift when opened: `kwin/native-effect/activeborderconfig_module.cpp:376-414`.
   No running-script watcher reconciles externally changed shortcuts or `kwinrc`.
-- Expected failure: hand-edited `kwinrc`, externally changed script settings, or
+- Expected residual: hand-edited `kwinrc`, externally changed script settings, or
   a KCM change can leave the already running script using its startup values,
-  including its gap pair and existing shortcut registrations. KCM's queued
-  reconfigure provides no acknowledged script reload. Border settings are the
-  only confirmed live configuration path. The interim reload and its required
-  UI must prevent silent stale state until the all-settings live-application
-  launch blocker is satisfied.
+  including its gap pair and existing shortcut registrations. The deliberate
+  reload request is unacknowledged, so only a session restart guarantees
+  pickup. Border settings are the only confirmed live configuration path. The
+  all-settings live-application launch blocker is unchanged.
+- Offline verification (2026-09-16, no live KWin, Plasma, D-Bus, or session
+  action): `npm run typecheck --prefix kwin` passes; `npm test --prefix kwin`
+  passes 760 tests across 106 suites with 0 failures (including 7 new
+  `tiler-reload-interim` static contract tests); `npm run build --prefix kwin`
+  emits the `contents/code/main.js` bundle; native `ctest` passes 22 of 22
+  including the new `native-effect-kcm-tiler-reload` scenario (KCM
+  persistence, live border vs reload-required, deliberate reload
+  success/failure, typed DBus contract, no reload on unchanged save, no
+  shortcut mutation, no applied claim, poisoned-bus failure); `cargo test`
+  passes 523 tests with 0 failures and `cargo build` succeeds. No runtime
+  claim is made.
 
 ## Proposed Slices
 
@@ -325,9 +345,10 @@
   live result is claimed.
 - P1 | All user-facing settings live application (launch blocker) | Boundary:
   script settings, KCM Apply, external `kwinrc`, shortcut drift, and effect
-  reconfigure. Until it is complete, implement and verify the approved interim:
-  deliberate tiler reload after save, clear reload-required UI, retained live
-  border updates, and no silent stale state. Before launch, change each
+  reconfigure. The approved interim is statically implemented (deliberate
+  tiler reload after save, clear reload-required UI, retained live border
+  updates, sent-but-unconfirmed reporting, no silent stale state); its live
+  verification remains pending. Before launch, change each
   user-facing setting through KCM and its underlying store and prove live
   application, including shortcut registration state.
 

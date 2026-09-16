@@ -34,6 +34,8 @@ public:
     static QString scriptInterface();
     static QString scriptMethod();
     virtual bool requestScriptReconfigure();
+    QString tilerReloadStatusText() const;
+    bool isTilerReloadRequired() const;
 
     void setShortcutStores(ShortcutStore *store, JournalStore *journal);
     void setShortcutConfirmHandler(std::function<bool(const QString &, const QString &)> handler);
@@ -52,6 +54,7 @@ public Q_SLOTS:
     void requestShortcutFinishApply();
     void requestShortcutRevert();
     void requestShortcutRestore();
+    void requestTilerReload();
 
 private:
     QVariantMap currentScriptValues() const;
@@ -59,6 +62,7 @@ private:
     void runShortcutApply();
     void runShortcutRevert();
     void updateShortcutPresentation(bool interrupted);
+    void updateTilerReloadPresentation();
 
     ::Ui::ActiveBorderConfig m_ui;
     QVariantMap m_loadedScriptValues;
@@ -66,7 +70,8 @@ private:
     bool m_loadedInnerGapRawValid = true;
     bool m_loadedOuterGapRawValid = true;
     bool m_effectReconfigurePending = false;
-    bool m_scriptReconfigurePending = false;
+    bool m_tilerReloadRequired = false;
+    QString m_tilerReloadStatus;
     ShortcutStore *m_shortcutStore = nullptr;
     JournalStore *m_shortcutJournal = nullptr;
     bool m_ownsShortcutStores = false;

@@ -88,7 +88,11 @@ ActiveBorderConfigModule::ActiveBorderConfigModule(QObject *parent, const KPlugi
     connect(m_ui.shortcutRevertButton, &QPushButton::clicked, this, &ActiveBorderConfigModule::requestShortcutRevert);
     connect(m_ui.shortcutFinishApplyButton, &QPushButton::clicked, this, &ActiveBorderConfigModule::requestShortcutFinishApply);
     connect(m_ui.shortcutRestoreButton, &QPushButton::clicked, this, &ActiveBorderConfigModule::requestShortcutRestore);
+    connect(m_ui.tilerReloadButton, &QPushButton::clicked, this, &ActiveBorderConfigModule::requestTilerReload);
     refreshShortcutState();
+    m_tilerReloadRequired = false;
+    m_tilerReloadStatus = QStringLiteral("No pending tiler reload in this dialog.");
+    updateTilerReloadPresentation();
 }
 
 ActiveBorderConfigModule::~ActiveBorderConfigModule()
@@ -201,6 +205,42 @@ bool ActiveBorderConfigModule::isShortcutFinishApplyVisible() const
 bool ActiveBorderConfigModule::isShortcutRestoreVisible() const
 {
     return m_ui.shortcutRestoreButton != nullptr && !m_ui.shortcutRestoreButton->isHidden();
+}
+
+QString ActiveBorderConfigModule::tilerReloadStatusText() const
+{
+    return m_tilerReloadStatus;
+}
+
+bool ActiveBorderConfigModule::isTilerReloadRequired() const
+{
+    return m_tilerReloadRequired;
+}
+
+void ActiveBorderConfigModule::requestTilerReload()
+{
+    // Deliberate controller reload only: one typed KWin reconfigure send.
+    // KWin's reconfigure is Q_NOREPLY, so a queued send never proves the
+    // running script reread kwinrc. Success keeps reload-required and reports
+    // sent-but-unconfirmed; failure keeps reload-required and reports failed.
+    // This never claims applied, never touches shortcuts, and never unloads
+    // scripts or plugins.
+    if (requestScriptReconfigure()) {
+        m_tilerReloadStatus = QStringLiteral(
+            "Reload request sent. Application unconfirmed; restart the session to guarantee pickup.");
+    } else {
+        m_tilerReloadRequired = true;
+        m_tilerReloadStatus = QStringLiteral(
+            "Reload request failed. Running tiler still uses startup values; retry or restart the session.");
+    }
+    updateTilerReloadPresentation();
+}
+
+void ActiveBorderConfigModule::updateTilerReloadPresentation()
+{
+    if (m_ui.tilerReloadStatusLabel != nullptr) {
+        m_ui.tilerReloadStatusLabel->setText(m_tilerReloadStatus);
+    }
 }
 
 bool ActiveBorderConfigModule::confirmShortcutAction(const QString &title, const QString &text)
@@ -513,6 +553,9 @@ void ActiveBorderConfigModule::load()
     };
     updateScriptState();
     refreshShortcutState();
+    m_tilerReloadRequired = false;
+    m_tilerReloadStatus = QStringLiteral("No pending tiler reload in this dialog.");
+    updateTilerReloadPresentation();
 }
 
 void ActiveBorderConfigModule::save()
@@ -549,8 +592,12 @@ void ActiveBorderConfigModule::save()
         m_loadedDropOutlinePreviewRawValid = true;
         m_loadedInnerGapRawValid = true;
         m_loadedOuterGapRawValid = true;
+        m_tilerReloadRequired = true;
+        m_tilerReloadStatus = QStringLiteral(
+            "Tiling settings saved. Reload required: the running tiler still uses startup values.");
     }
     updateScriptState();
+    updateTilerReloadPresentation();
 
     if (borderChanged) {
         m_effectReconfigurePending = true;
@@ -562,16 +609,12 @@ void ActiveBorderConfigModule::save()
             markAsChanged();
         }
     }
-    // KWin's reconfigure method is Q_NOREPLY. Queue it once after sync; that
-    // does not prove the script finished reloading. A queueing failure retries
-    // on the next Apply.
-    if (m_scriptReconfigurePending) {
-        if (requestScriptReconfigure()) {
-            m_scriptReconfigurePending = false;
-        } else {
-            markAsChanged();
-        }
-    }
+    // Border hot-apply stays live through the native effect reconfigure. The
+    // script controller reads kwinrc once at startup with no config-change
+    // subscription, and KWin's reconfigure is Q_NOREPLY, so save() never
+    // auto-sends a tiler reload and never claims the running tiler applied
+    // saved values. The deliberate Reload Tiler button sends one typed
+    // reconfigure request and reports sent-but-unconfirmed or failed.
 }
 
 void ActiveBorderConfigModule::defaults()
