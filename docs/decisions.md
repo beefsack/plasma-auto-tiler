@@ -151,11 +151,14 @@ Historical implementation detail is recoverable in Git history.
   restored backing-desktop/numbered workspace routes, bounded reconciliation,
   and the selected initial first-startup fitting direction below. General
   existing-window adoption and default promotion remain unselected. KCM Apply
-  currently persists the selection and queues an unacknowledged KWin
-  reconfigure request. The approved interim target is a deliberate tiler reload
-  after save with clear reload-required UI; implementation is static-complete
+  currently persists the selection as a startup-only setting requiring session
+  restart with no enabled generic reload path. The approved interim reload is
+  gap-only (`innerGap`/`outerGap`) via `options.configChanged`,
+  sent/queued-but-unconfirmed because KWin reconfigure is Q_NOREPLY;
+  implementation is static-complete
   with live verification pending. Before launch, this and every other user-facing setting must
-  apply live; that is a mandatory launch blocker.
+  apply live; that is a mandatory launch blocker, and the gap-only reload does
+  not satisfy it.
 - Approved 2026-09-16: when the first startup domain has no usable retained
   session, Rust may use a versioned, best-effort near-layout fitting heuristic
   to minimize unnecessary initial window movement. It must be simple,
