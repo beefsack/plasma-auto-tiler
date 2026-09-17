@@ -3341,7 +3341,11 @@ export class PlanAdapter {
             }
             if (flightState.op === "reconcile") {
                 if (flightState.background === true) {
-                    this.clearBackgroundReconcile(flightState.snapshot);
+                    if (flightState.workAreaReprojection === true) {
+                        this.clearBackgroundReconcile(flightState.snapshot);
+                    } else {
+                        this.noteBackgroundTerminal(flightState.snapshot);
+                    }
                 } else {
                     this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
                 }

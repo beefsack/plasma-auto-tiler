@@ -360,6 +360,44 @@ describe("hidden terminal isolation", () => {
         assert.equal((payload(mocks, before)["domain"] as Record<string, unknown>)["workspace"], "ws-1");
     });
 
+    it("successful background same-scope drift reconciles park after three", () => {
+        const world: World = { fgA: makeRef(), fgB: makeRef(), hiddenRefs: new Map() };
+        const mocks = mockEnv();
+        enableAdapter(mocks);
+        baselineFgAndHidden(mocks, world, "ws-2");
+        const hiddenRef = world.hiddenRefs.get("ws-2") as object;
+        mocks.observeImpl = () => fgObserved(world.fgA, world.fgB, ALLOC_A);
+        mocks.observeHiddenImpl = () => [hiddenObserved("ws-2", "win-ws-2", hiddenRef, HIDDEN_DRIFT)];
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 3, "first drift reconcile dispatches");
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            const index = 2 + attempt;
+            const call = payload(mocks, index);
+            assert.equal((call["domain"] as Record<string, unknown>)["workspace"], "ws-2");
+            assert.deepEqual((call["command"] as Record<string, unknown>)["op"], "reconcile");
+            const correlation = call["correlation_id"] as string;
+            mocks.callbacks[index]?.(JSON.stringify({
+                v: 1,
+                correlation_id: correlation,
+                outcome: "planned",
+                desired_geometry: [{
+                    window: "win-ws-2",
+                    leaf: "win-ws-2-leaf",
+                    output: "out-1",
+                    workspace: "ws-2",
+                    rect: { x: HIDDEN_STABLE.x, y: HIDDEN_STABLE.y, w: HIDDEN_STABLE.w, h: HIDDEN_STABLE.h },
+                }],
+            }));
+        }
+        assert.equal(mocks.dbusCalls.length, 5, "exactly three successful background reconciles");
+        assert.equal(mocks.logs.filter((line) => line === "plasma-auto-tiler:plan:reconcile-parked").length, 1);
+        const parkedCalls = mocks.dbusCalls.length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, parkedCalls, "parked hidden domain dispatches nothing further");
+    });
+
     it("synchronous hidden dispatch failure chains at most one hidden step per round", () => {
         const world: World = { fgA: makeRef(), fgB: makeRef(), hiddenRefs: new Map() };
         const mocks = mockEnv();
