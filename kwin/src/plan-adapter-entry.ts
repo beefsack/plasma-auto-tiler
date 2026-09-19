@@ -407,7 +407,10 @@ function readWorkAreaFor(
     }
     let area: unknown = undefined;
     try {
-        area = Reflect.apply(areaFn as (...args: ReadonlyArray<never>) => unknown, surface, [5, outputRef, desktopRef]);
+        // PlacementArea (0) is the per-output usable area. WorkArea (5) is
+        // the whole work area across all screens and must never size a
+        // per-output domain.
+        area = Reflect.apply(areaFn as (...args: ReadonlyArray<never>) => unknown, surface, [0, outputRef, desktopRef]);
     } catch (error) {
         void error;
         return null;
@@ -1438,8 +1441,10 @@ function observeNative(
         const domainWorkspace = desktopIdRaw as string;
         let area: unknown = undefined;
         try {
+            // PlacementArea (0): per-output usable area. WorkArea (5) is
+            // global across screens and must never size this domain.
             area = Reflect.apply(areaFn as (...args: ReadonlyArray<never>) => unknown, surface, [
-                5,
+                0,
                 activeOutput,
                 desktopRef,
             ]);
