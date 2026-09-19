@@ -10,12 +10,21 @@ Only meaningful pending or active work is listed.
   a planned `2032x1092` becomes `1920x1036`, exactly the secondary usable size.
   Another primary Ghostty accepts `2032x1092`; a per-window native constraint
   or stale output-derived cap is possible, not established. Setter acceptance
-  is not native resize completion. No code correction is yet justified.
-  Next: user manually drags one affected terminal's bottom edge through the
-  extra gap and reports whether it grows during the drag and stays expanded.
+  is not native resize completion. Further user evidence: Ghostty cannot be
+  manually resized; replacement Firefox starts at correct height but a bottom
+  edge drag leaves a gap. Restart fixes Firefox height, not Ghostty. In
+  `H[Ghostty Firefox]`, Firefox's shared left edge snaps back on release while
+  its bottom edge does not. Replacement trace records three drag-oracle pulls
+  without observed callbacks or pointer-resize plans. This does not establish
+  endpoint unavailability or an edge-classification defect. Earlier reconcile
+  parking could suppress later ordinary restore in the same scope, but pull
+  logs lack domain correlation. Next: user read-only checks for the exact
+  DragOracle bus owner and, if present, `LastVerdict` responsiveness. No new
+  session or parking-policy change is selected as a repair.
   Primary 125%/secondary 100% scaling causality remains unproven. Prior
   output-jumping and startup-loop fixes remain manually accepted.
   [bounds fix](changes/multi-output-domain-bounds.md)
+  [drag investigation](changes/window-alignment-drag-investigation.md)
 - P1 | Non-visible workspace tiling live gate | Background tiling is statically
   implemented and verified: startup and window open/move adopt or reconcile
   non-foreground domains without switching desktop visibility or stealing native
