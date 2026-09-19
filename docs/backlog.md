@@ -2,12 +2,6 @@
 
 Only meaningful pending or active work is listed.
 
-- P1 | Development startup reconcile-loop live confirmation | Offline reproduction
-  found successful background reconciles reset their retry accounting; they now
-  obey the existing three-attempt park policy. The supplied log proves 6,808
-  consecutive one-window reconciles but does not identify the native mismatch
-  trigger. User confirmation on the original workspace-2 setup remains pending.
-  [record](changes/archive/dev-startup-reconcile-loop.md)
 - P1 | Non-visible workspace tiling live gate | Background tiling is statically
   implemented and verified: startup and window open/move adopt or reconcile
   non-foreground domains without switching desktop visibility or stealing native

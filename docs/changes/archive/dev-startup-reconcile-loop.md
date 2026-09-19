@@ -28,6 +28,7 @@
 - `npm run typecheck --prefix kwin` passes.
 - `npm test --prefix kwin` passes: 774 tests in 110 suites.
 - `npm run build --prefix kwin` produces the production KWin IIFE.
-- No live KWin, Plasma, D-Bus, or `just dev` action occurred. Live acceptance
-  remains pending because the supplied log cannot identify its concrete domain
-  or native geometry trigger.
+- No agent-run live KWin, Plasma, D-Bus, or `just dev` action occurred.
+- Subsequent user manual confirmation: "That fixed the issue thank you."
+  This accepts resolution of the reported startup loop; it does not identify
+  the original native geometry trigger or establish exact geometry convergence.
