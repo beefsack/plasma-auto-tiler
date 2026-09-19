@@ -2,27 +2,26 @@
 
 Only meaningful pending or active work is listed.
 
-- P1 | Window alignment gaps | User manually confirms the per-output bounds fix
-  stopped windows jumping between monitors. Remaining issue: primary workspace 2
-  has an unwanted bottom gap, and other workspaces have other gaps. Supplied
-  `/tmp/dev.log` and `~/Pictures/Screenshots/Screenshot_20260919_155734.png`
-  show correct requested primary geometry but persistently shorter native frames:
-  a planned `2032x1092` becomes `1920x1036`, exactly the secondary usable size.
-  Another primary Ghostty accepts `2032x1092`; a per-window native constraint
-  or stale output-derived cap is possible, not established. Setter acceptance
-  is not native resize completion. Further user evidence: Ghostty cannot be
-  manually resized; replacement Firefox starts at correct height but a bottom
-  edge drag leaves a gap. Restart fixes Firefox height, not Ghostty. In
-  `H[Ghostty Firefox]`, Firefox's shared left edge snaps back on release while
-  its bottom edge does not. Replacement trace records three drag-oracle pulls
-  without observed callbacks or pointer-resize plans. This does not establish
-  endpoint unavailability or an edge-classification defect. Earlier reconcile
-  parking could suppress later ordinary restore in the same scope, but pull
-  logs lack domain correlation. Next: user read-only checks for the exact
-  DragOracle bus owner and, if present, `LastVerdict` responsiveness. No new
-  session or parking-policy change is selected as a repair.
-  Primary 125%/secondary 100% scaling causality remains unproven. Prior
-  output-jumping and startup-loop fixes remain manually accepted.
+- P1 | Interactive resize correction live gate | Ordinary foreground drift
+  reconciliation fought Firefox during a held native resize, consumed its retry
+  budget, and could leave the dropped frame misaligned. Static fix suppresses
+  those reconciles during native resize and requests normal retained correction
+  at finish without requiring an oracle callback. Delayed valid oracle replies
+  retain split-resize authority; no shares are inferred from ordinary drift.
+  TypeScript tests (782), planner protocol tests (84), typecheck, and build pass.
+  Next: user repeats the held Firefox edge drag and release from a fresh
+  `just dev trace`, checking no mid-drag fighting and correct final allocation.
+  Existing parked scopes and the three-attempt policy remain unchanged.
+  [record](changes/window-alignment-drag-investigation.md)
+- P1 | Remaining native window alignment and oracle delivery | Ghostty's
+  persistent short frame remains unresolved: a requested `2032x1092` became
+  `1920x1036`, matching secondary usable size, while another primary Ghostty
+  accepted the full size. Native per-window constraint or stale output-derived
+  cap remains a hypothesis; primary 125%/secondary 100% scaling causality is
+  unproven. User confirmed no DragOracle bus owner, and KWin's available-effects
+  list omitted both project effects. Oracle remains inactive after user session
+  restart; delivery is deferred at the user's direction. Prior output-jumping
+  and startup-loop fixes remain manually accepted.
   [bounds fix](changes/multi-output-domain-bounds.md)
   [drag investigation](changes/window-alignment-drag-investigation.md)
 - P1 | Non-visible workspace tiling live gate | Background tiling is statically

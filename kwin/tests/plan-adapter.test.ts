@@ -1062,6 +1062,7 @@ describe("plan adapter client self-resize reconcile", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         baseline(mocks, refs);
+        (mocks.env as { isInteractiveResizeActive?: () => boolean }).isInteractiveResizeActive = () => true;
         const writesBeforeScale = mocks.geometries.length;
         const scaled = { x: 0, y: 0, w: 1800, h: 1200 };
         mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, bounds: scaled, rects: { "win-a": allocA, "win-b": allocB } });
@@ -1213,6 +1214,76 @@ describe("plan adapter client self-resize reconcile", () => {
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, callsBefore);
         assert.equal(adapter.isEnabled, true);
+    });
+    it("suppresses a held interactive resize then reconciles once it finishes", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = baseline(mocks, refs);
+        let interactiveResize = false;
+        (mocks.env as { isInteractiveResizeActive?: () => boolean }).isInteractiveResizeActive = () => interactiveResize;
+
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: driftRects("increment") });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 2, "pre-start drift opens one ordinary reconcile");
+        const writesBeforeStart = mocks.geometries.length;
+
+        interactiveResize = true;
+        adapter.setInteractiveResizeActive(true);
+        const staleCorrelation = plannerPayload(mocks, 1)["correlation_id"] as string;
+        mocks.callbacks[1]?.(plannedReply(staleCorrelation, [{ window: "win-a", rect: allocA }, { window: "win-b", rect: allocB }], "win-a-leaf"));
+        assert.equal(mocks.geometries.length, writesBeforeStart, "a pre-start reply cannot write into the held resize");
+
+        for (const width of [700, 800, 900]) {
+            mocks.observeImpl = () =>
+                makeObserved(refs, {
+                    focused: refs.a,
+                    rects: { "win-a": { x: 0, y: 0, w: width, h: 800 }, "win-b": allocB },
+                });
+            fire(mocks, "geometry");
+            runDebounce(mocks);
+        }
+        assert.equal(mocks.dbusCalls.length, 2, "held pointer updates dispatch no ordinary reconcile");
+        assert.equal(mocks.geometries.length, writesBeforeStart, "held pointer updates write no retained geometry");
+
+        interactiveResize = false;
+        adapter.setInteractiveResizeActive(false);
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 3, "finish schedules one normal retained reconcile");
+        const finishCorrelation = plannerPayload(mocks, 2)["correlation_id"] as string;
+        mocks.callbacks[2]?.(plannedReply(finishCorrelation, [{ window: "win-a", rect: allocA }, { window: "win-b", rect: allocB }], "win-a-leaf"));
+        assert.ok(mocks.geometries.length > writesBeforeStart, "the finish reconcile restores the retained allocation");
+
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            fire(mocks, "geometry");
+            runDebounce(mocks);
+            const index = 3 + attempt;
+            const correlation = plannerPayload(mocks, index)["correlation_id"] as string;
+            mocks.callbacks[index]?.(plannedReply(correlation, [{ window: "win-a", rect: allocA }, { window: "win-b", rect: allocB }], "win-a-leaf"));
+        }
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"), "only the third post-finish reconcile parks");
+    });
+    it("lets a pointer resize preempt the queued interactive-finish resync", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = baseline(mocks, refs);
+        let interactiveResize = true;
+        (mocks.env as { isInteractiveResizeActive?: () => boolean }).isInteractiveResizeActive = () => interactiveResize;
+
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: driftRects("increment") });
+        adapter.setInteractiveResizeActive(true);
+        adapter.setInteractiveResizeActive(false);
+        interactiveResize = false;
+        assert.equal(adapter.requestPointerResize("win-a", "right", 700), true);
+        assert.equal(mocks.dbusCalls.length, 2);
+        assert.deepEqual((plannerPayload(mocks, 1)["command"] as Record<string, unknown>), {
+            op: "pointer-resize",
+            window: "win-a",
+            direction: "right",
+            boundary: 700,
+        });
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 2, "the queued finish resync cannot compete with the pointer route");
     });
     it("reasserts allocation across a focus-only change while geometry has drifted", () => {
         const refs = makeRefs();

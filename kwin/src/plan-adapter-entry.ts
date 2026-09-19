@@ -2101,6 +2101,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         scheduleOnce,
         log,
         isSendActive: () => workspaceSendRef !== null && workspaceSendRef.blocksPlan,
+        isInteractiveResizeActive: () => interactiveResizeRefs.size > 0,
         onPlannedApplied: () => {
             try {
                 highlightRefresh?.();
@@ -2869,6 +2870,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // closed and never clears the newer start. Cancelled verdicts never reach
     // the pointer route and never change a share.
     const oracleStarts = new Map<object, { id: string; rect: { x: number; y: number; w: number; h: number }; move: boolean; resize: boolean; epoch: number }>();
+    const interactiveResizeRefs = new Set<object>();
     let oracleEpoch = 0;
     const readLiveState = (target: object): { move: boolean; resize: boolean } | null => {
         try {
@@ -2893,6 +2895,10 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                         return;
                     }
                     oracleStarts.set(ref, { id: entry.id, rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h }, move: state.move, resize: state.resize, epoch: (oracleEpoch += 1) });
+                    if (state.move === false && state.resize === true && !interactiveResizeRefs.has(ref)) {
+                        interactiveResizeRefs.add(ref);
+                        adapter.setInteractiveResizeActive(true);
+                    }
                     return;
                 }
             }
@@ -3019,6 +3025,9 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 }
             }
             oracleStarts.delete(ref);
+            if (interactiveResizeRefs.delete(ref) && interactiveResizeRefs.size === 0) {
+                adapter.setInteractiveResizeActive(false);
+            }
             oracleSeen.delete(ref);
         } catch (error) {
             void error;
@@ -3027,19 +3036,34 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     const attachOracleStartOne = (ref: object): void => {
         if (oracleSeen.has(ref)) return;
         let started: unknown = null;
+        let finished: unknown = null;
         try {
             started = readSignal(ref, "interactiveMoveResizeStarted");
+            finished = readSignal(ref, "interactiveMoveResizeFinished");
         } catch (error) { void error; return; }
         let startedDetach: (() => void) | null = null;
+        let finishedDetach: (() => void) | null = null;
         try {
             startedDetach = connectSignal(started, () => {
                 try { captureOracleStart(ref); } catch (error) { void error; }
             });
             if (startedDetach === null) return;
+            finishedDetach = connectSignal(finished, () => {
+                try {
+                    if (interactiveResizeRefs.delete(ref) && interactiveResizeRefs.size === 0) {
+                        adapter.setInteractiveResizeActive(false);
+                    }
+                } catch (error) { void error; }
+            });
+            if (finishedDetach === null) {
+                startedDetach();
+                return;
+            }
         } catch (error) { void error; return; }
-        if (startedDetach === null) return;
+        if (startedDetach === null || finishedDetach === null) return;
         oracleSeen.add(ref);
         trackOracleDetach(ref, startedDetach);
+        trackOracleDetach(ref, finishedDetach);
     };
     const attachOracleStartAll = (): void => {
         try {

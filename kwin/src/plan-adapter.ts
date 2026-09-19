@@ -475,6 +475,9 @@ export interface PlanAdapterEnv {
     // resync after send completes converges) and foreground commands refuse
     // with the existing busy-refused diagnostic. No queues or coalescing.
     readonly isSendActive?: () => boolean;
+    // Entry-owned native interaction guard. Ordinary retained reconciliation
+    // must not compete with an active interactive edge resize.
+    readonly isInteractiveResizeActive?: () => boolean;
     // Observational active-group refresh after exactly one successful
     // geometry-plan boundary (admit/move/remove/resize `planned-applied`).
     // Synchronous, single call, no retries/polling; must never block
@@ -1586,6 +1589,13 @@ export class PlanAdapter {
             body: { op: "pointer-resize", window: windowId as string, direction, boundary },
             pointerSource: windowId as string,
         };
+        // A final-geometry pointer route is selected ahead of the ordinary
+        // finish resync. Do not let that resync restore the old split first.
+        this.clearDebounce();
+        if (this.deferredAuto?.op === "reconcile" && this.deferredAuto.workAreaReprojection !== true) {
+            this.deferredAuto = null;
+        }
+        this.discardInteractiveReconcile();
         if (this.inFlight) {
             this.deferredAuto = intent;
             return true;
@@ -1596,6 +1606,20 @@ export class PlanAdapter {
 
     requestResync(): void {
         this.onSignal();
+    }
+
+    setInteractiveResizeActive(active: boolean): void {
+        if (active) {
+            this.clearDebounce();
+            if (this.deferredAuto?.op === "reconcile" && this.deferredAuto.workAreaReprojection !== true) {
+                this.deferredAuto = null;
+            }
+            this.discardInteractiveReconcile();
+            return;
+        }
+        // Reuse the normal debounced observation path. This reasserts only the
+        // retained allocation and never derives a split from native geometry.
+        this.requestResync();
     }
 
     private clearRepeat(): void {
@@ -1646,6 +1670,33 @@ export class PlanAdapter {
             void error;
             return true;
         }
+    }
+
+    private interactiveResizeActive(): boolean {
+        try {
+            return this.env.isInteractiveResizeActive?.() === true;
+        } catch (error) {
+            void error;
+            return true;
+        }
+    }
+
+    private discardInteractiveReconcile(): void {
+        const flight = this.pending;
+        if (
+            flight === null ||
+            flight.background === true ||
+            flight.op !== "reconcile" ||
+            flight.workAreaReprojection
+        ) {
+            return;
+        }
+        this.clearTimer();
+        this.inFlight = false;
+        this.pending = null;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
+        this.diag(flight.op, flight.correlation, flight.windowCount, "interactive-resize-suppressed");
     }
 
     private onSignal(kind?: PlanSignal, target?: object): void {
@@ -1979,6 +2030,12 @@ export class PlanAdapter {
         }
         if (this.parked || this.reconcileAttempts >= MAX_RECONCILE_ATTEMPTS) {
             this.parked = true;
+            return;
+        }
+        if (this.interactiveResizeActive()) {
+            if (this.deferredAuto?.op === "reconcile" && this.deferredAuto.workAreaReprojection !== true) {
+                this.deferredAuto = null;
+            }
             return;
         }
         this.deferredAuto = {
@@ -2443,6 +2500,14 @@ export class PlanAdapter {
         // callback must not make a later recovery decision for an older flight.
         this.activeProbe = 0;
         if (this.blockedBySend()) {
+            return;
+        }
+        if (
+            intent.op === "reconcile" &&
+            intent.background !== true &&
+            intent.workAreaReprojection !== true &&
+            this.interactiveResizeActive()
+        ) {
             return;
         }
         if (intent.workAreaReprojection === true) {
@@ -3075,6 +3140,16 @@ export class PlanAdapter {
     // primitive snapshot, and resolve all geometry/focus targets only from the
     // fresh observation.
     private applyPlanned(planned: PlannedReply, flightState: PendingFlight): void {
+        if (
+            flightState.op === "reconcile" &&
+            flightState.background !== true &&
+            flightState.workAreaReprojection !== true &&
+            this.interactiveResizeActive()
+        ) {
+            this.discardInteractiveReconcile();
+            this.finishFlight();
+            return;
+        }
         // Reply-boundary re-observation resolves targets from the flight's own
         // domain only, so hidden-domain geometry is never applied to
         // foreground refs and vice versa.
@@ -3434,8 +3509,9 @@ export class PlanAdapter {
         if (next !== null && !this.inFlight) {
             if (
                 next.op === "reconcile" &&
+                next.background !== true &&
                 next.workAreaReprojection !== true &&
-                (this.parked || this.reconcileAttempts >= MAX_RECONCILE_ATTEMPTS)
+                (this.interactiveResizeActive() || this.parked || this.reconcileAttempts >= MAX_RECONCILE_ATTEMPTS)
             ) {
                 return;
             }

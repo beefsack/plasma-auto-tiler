@@ -5963,6 +5963,65 @@ mod tests {
     }
 
     #[test]
+    fn discarded_reconcile_reply_leaves_retained_session_ready_for_finish_and_pointer_resize() {
+        let mut planner = seed_two_window_planner();
+        // The adapter may suppress this reply after native resize starts, but
+        // the server has already completed this pure retained projection.
+        let held = retained_request(
+            "rec-held-1",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &[("win-1", 0, 0, 500, 80), ("win-2", 500, 0, 700, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let held_reply = parse_reply(&planner.evaluate(&held));
+        assert_eq!(held_reply["outcome"], "planned", "{held_reply}");
+
+        // A no-oracle finish resync remains usable in the same retained
+        // session: reconcile stages no Session pending transaction.
+        let finish = retained_request(
+            "rec-finish-1",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &[("win-1", 0, 0, 450, 80), ("win-2", 450, 0, 750, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let finish_reply = parse_reply(&planner.evaluate(&finish));
+        assert_eq!(finish_reply["outcome"], "planned", "{finish_reply}");
+        assert_eq!(
+            geometry_by_window(&finish_reply),
+            geometry_by_window(&held_reply),
+            "finish resync retains the original allocation"
+        );
+
+        // A delayed valid oracle verdict can still commit the selected pointer
+        // share adjustment after either retained projection has been evaluated.
+        let pointer = retained_request(
+            "rec-pointer-1",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({
+                "op": "pointer-resize",
+                "window": "win-2",
+                "direction": "left",
+                "boundary": 550,
+            }),
+        );
+        let pointer_reply = parse_reply(&planner.evaluate(&pointer));
+        assert_eq!(pointer_reply["outcome"], "planned", "{pointer_reply}");
+        assert_eq!(pointer_reply["detail"]["kind"], "pointer-resize", "{pointer_reply}");
+        assert_ne!(
+            pointer_reply["detail"]["old_shares"],
+            pointer_reply["detail"]["new_shares"],
+            "the delayed oracle boundary remains authoritative"
+        );
+    }
+
+    #[test]
     fn reconcile_reprojects_retained_tree_for_scale_style_work_area_change() {
         let mut planner = Planner::new();
         for (correlation, windows, command) in [

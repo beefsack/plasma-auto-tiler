@@ -408,6 +408,7 @@ function oracleWorld(opts: { fullscreen?: ReadonlyArray<string>; maximized?: Rea
         move: opts.move?.[id] ?? false,
         resize: opts.resize?.[id] ?? true,
         moveResizedChanged: geo.signal,
+        frameGeometryChanged: geo.signal,
         interactiveMoveResizeStarted: started.signal,
         interactiveMoveResizeFinished: finished.signal,
         fullScreenChanged: oracleFireSignal().signal,
@@ -434,25 +435,32 @@ function oracleWorld(opts: { fullscreen?: ReadonlyArray<string>; maximized?: Rea
 }
 
 interface OracleMocks {
-    readonly planCalls: Array<{ method: string; payload: string }>;
+    readonly planCalls: Array<{ method: string; payload: string; callback: (reply: unknown) => void }>;
     readonly oracleCalls: Array<(reply: unknown) => void>;
+    readonly timers: Array<{ delayMs: number; callback: () => void; cancelled: boolean }>;
     readonly logs: string[];
 }
 
 function startOracleEntry(world: OracleWorld): { stop: () => void; mocks: OracleMocks } {
-    const mocks: OracleMocks = { planCalls: [], oracleCalls: [], logs: [] };
+    const mocks: OracleMocks = { planCalls: [], oracleCalls: [], timers: [], logs: [] };
     const handle = startPlanAdapterEntry({
         workspace: world.workspace,
         callDbus: (_s, _p, _i, method, payload, _callback): void => {
             if (method === "NameHasOwner") { _callback(true); return; }
             if (method === "GetNameOwner") { _callback(":1.7"); return; }
             if (method === "StartServiceByName") { _callback(1); return; }
-            mocks.planCalls.push({ method, payload });
+            mocks.planCalls.push({ method, payload, callback: _callback });
         },
         oracleCallDbus: (_s, _p, _i, _m, callback): void => {
             mocks.oracleCalls.push(callback);
         },
-        scheduleOnce: (_delayMs, _callback): (() => void) => (): void => {},
+        scheduleOnce: (delayMs, callback): (() => void) => {
+            const timer = { delayMs, callback, cancelled: false };
+            mocks.timers.push(timer);
+            return (): void => {
+                timer.cancelled = true;
+            };
+        },
         log: (message): void => {
             mocks.logs.push(message);
         },
@@ -472,6 +480,46 @@ function fireAll(signal: OracleFireSignal | undefined): void {
     for (const handler of [...signal.handlers]) {
         handler();
     }
+}
+
+function runOracleDebounce(mocks: OracleMocks): void {
+    const pending = [...mocks.timers];
+    mocks.timers.length = 0;
+    for (const timer of pending) {
+        if (!timer.cancelled && timer.delayMs === PLAN_DEBOUNCE_MS) {
+            timer.callback();
+        } else if (!timer.cancelled) {
+            mocks.timers.push(timer);
+        }
+    }
+}
+
+function retainedSplitReply(correlation: string): string {
+    return JSON.stringify({
+        v: 1,
+        correlation_id: correlation,
+        outcome: "planned",
+        base_revision: 2,
+        detail: { kind: "reconcile" },
+        desired_geometry: [
+            { window: "win-a", leaf: "win-a-leaf", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
+            { window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } },
+        ],
+    });
+}
+
+function pointerSplitReply(correlation: string): string {
+    return JSON.stringify({
+        v: 1,
+        correlation_id: correlation,
+        outcome: "planned",
+        base_revision: 2,
+        detail: { kind: "pointer-resize" },
+        desired_geometry: [
+            { window: "win-a", leaf: "win-a-leaf", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 1000, h: 800 } },
+            { window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 1000, y: 0, w: 200, h: 800 } },
+        ],
+    });
 }
 
 function cancelledWinA(correlation: string): string {
@@ -497,6 +545,106 @@ function movedWinA(correlation: string): string {
 }
 
 describe("slice 2 entry finish consumes the captured start", () => {
+    it("holds ordinary reconciliation until native resize finish when the oracle never replies", () => {
+        const world = oracleWorld();
+        const { stop, mocks } = startOracleEntry(world);
+        const winA = world.wins["win-a"];
+        assert.ok(winA !== undefined);
+        runOracleDebounce(mocks);
+        assert.equal(mocks.planCalls.length, 1);
+        const baseline = JSON.parse(mocks.planCalls[0]?.payload as string) as Record<string, unknown>;
+        mocks.planCalls[0]?.callback(retainedSplitReply(baseline["correlation_id"] as string));
+
+        winA["frameGeometry"] = { x: 0, y: 0, width: 700, height: 800 };
+        fireAll(world.signals["geoA"]);
+        runOracleDebounce(mocks);
+        assert.equal(mocks.planCalls.length, 2, "pre-start drift opened one ordinary reconcile");
+
+        fireAll(world.signals["startedA"]);
+        const preStart = JSON.parse(mocks.planCalls[1]?.payload as string) as Record<string, unknown>;
+        mocks.planCalls[1]?.callback(retainedSplitReply(preStart["correlation_id"] as string));
+        for (const width of [750, 800, 850]) {
+            winA["frameGeometry"] = { x: 0, y: 0, width, height: 800 };
+            fireAll(world.signals["geoA"]);
+            runOracleDebounce(mocks);
+        }
+        assert.equal(mocks.planCalls.length, 2, "held frame changes do not dispatch ordinary reconciliation");
+
+        fireAll(world.signals["finishedA"]);
+        assert.equal(mocks.oracleCalls.length, 1, "finish still performs the selected oracle pull");
+        runOracleDebounce(mocks);
+        assert.equal(mocks.planCalls.length, 3, "finish restores through one ordinary retained reconcile without an oracle reply");
+        const finish = JSON.parse(mocks.planCalls[2]?.payload as string) as Record<string, unknown>;
+        assert.deepEqual(finish["command"], { op: "reconcile" });
+        stop();
+    });
+
+    it("lets a delayed oracle verdict cancel the dispatched finish reconcile before its reply", () => {
+        const world = oracleWorld();
+        const { stop, mocks } = startOracleEntry(world);
+        const winA = world.wins["win-a"];
+        assert.ok(winA !== undefined);
+        runOracleDebounce(mocks);
+        const baseline = JSON.parse(mocks.planCalls[0]?.payload as string) as Record<string, unknown>;
+        mocks.planCalls[0]?.callback(retainedSplitReply(baseline["correlation_id"] as string));
+
+        fireAll(world.signals["startedA"]);
+        winA["frameGeometry"] = { x: 0, y: 0, width: 1000, height: 800 };
+        fireAll(world.signals["geoA"]);
+        fireAll(world.signals["finishedA"]);
+        runOracleDebounce(mocks);
+        assert.equal(mocks.planCalls.length, 2);
+        assert.deepEqual((JSON.parse(mocks.planCalls[1]?.payload as string) as Record<string, unknown>)["command"], { op: "reconcile" });
+
+        (mocks.oracleCalls[0] as (reply: unknown) => void)(movedWinA("drag-1"));
+        assert.equal(mocks.planCalls.length, 3, "the valid delayed verdict dispatches pointer-resize");
+        assert.deepEqual((JSON.parse(mocks.planCalls[2]?.payload as string) as Record<string, unknown>)["command"], {
+            op: "pointer-resize",
+            window: "win-a",
+            direction: "right",
+            boundary: 1000,
+        });
+
+        const staleReconcile = JSON.parse(mocks.planCalls[1]?.payload as string) as Record<string, unknown>;
+        mocks.planCalls[1]?.callback(retainedSplitReply(staleReconcile["correlation_id"] as string));
+        assert.equal(mocks.planCalls.length, 3, "the cancelled reconcile reply cannot write or enqueue another plan");
+        stop();
+    });
+
+    it("applies a delayed oracle pointer resize after the finish reconcile already wrote", () => {
+        const world = oracleWorld();
+        const { stop, mocks } = startOracleEntry(world);
+        const winA = world.wins["win-a"];
+        const winB = world.wins["win-b"];
+        assert.ok(winA !== undefined);
+        assert.ok(winB !== undefined);
+        runOracleDebounce(mocks);
+        const baseline = JSON.parse(mocks.planCalls[0]?.payload as string) as Record<string, unknown>;
+        mocks.planCalls[0]?.callback(retainedSplitReply(baseline["correlation_id"] as string));
+
+        fireAll(world.signals["startedA"]);
+        winA["frameGeometry"] = { x: 0, y: 0, width: 1000, height: 800 };
+        fireAll(world.signals["geoA"]);
+        fireAll(world.signals["finishedA"]);
+        runOracleDebounce(mocks);
+        const finish = JSON.parse(mocks.planCalls[1]?.payload as string) as Record<string, unknown>;
+        mocks.planCalls[1]?.callback(retainedSplitReply(finish["correlation_id"] as string));
+        assert.deepEqual(winA["frameGeometry"], { x: 0, y: 0, width: 600, height: 800 });
+
+        (mocks.oracleCalls[0] as (reply: unknown) => void)(movedWinA("drag-1"));
+        assert.deepEqual((JSON.parse(mocks.planCalls[2]?.payload as string) as Record<string, unknown>)["command"], {
+            op: "pointer-resize",
+            window: "win-a",
+            direction: "right",
+            boundary: 1000,
+        });
+        const pointer = JSON.parse(mocks.planCalls[2]?.payload as string) as Record<string, unknown>;
+        mocks.planCalls[2]?.callback(pointerSplitReply(pointer["correlation_id"] as string));
+        assert.deepEqual(winA["frameGeometry"], { x: 0, y: 0, width: 1000, height: 800 });
+        assert.deepEqual(winB["frameGeometry"], { x: 1000, y: 0, width: 200, height: 800 });
+        stop();
+    });
+
     it("started, cancelled finish, then non-cancelled finish without a new start sends no pointer plan", () => {
         const world = oracleWorld();
         const { stop, mocks } = startOracleEntry(world);
