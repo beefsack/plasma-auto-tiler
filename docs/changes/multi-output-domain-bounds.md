@@ -31,5 +31,15 @@
   failed by observing the shared global rectangle. Static verification passed:
   `npm run typecheck --prefix kwin`, `npm test --prefix kwin` (777 pass),
   `npm run build --prefix kwin`, and `git diff --check`.
-- No live KWin, Plasma, or D-Bus testing occurred. User live acceptance remains
-  a repeat of the diagnosed multi-output setup.
+- The user manually accepted the output-placement result: "the windows stopped
+  jumping around between monitors." This accepts only the diagnosed
+  per-output placement behavior, not scaling or general geometry convergence.
+- The supplied trace and screenshot also show a separate DP-6 alignment issue:
+  exact planned `8,52,2032,1092` writes are later observed as shorter frames.
+  That post-write clamp is under investigation and is not evidence that this
+  per-output bounds fix regressed. No live KWin, Plasma, or D-Bus testing was
+  performed for this record.
+- A user-owned bottom-edge drag observation may narrow the separate issue only
+  if it records both during-drag growth and the post-release result; snapback
+  alone is not proof of a hard client or native cap because existing tiler
+  resize policy can also act after release.

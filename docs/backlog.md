@@ -2,15 +2,20 @@
 
 Only meaningful pending or active work is listed.
 
-- P1 | Multi-output domain bounds live gate | Foreground and background Plan
-  bounds now use per-output KWin `PlacementArea` instead of global `WorkArea`.
-  Three regression cases fail with the old query and pass with the fix,
-  including nonzero output origin, gap-bearing writes, maximize isolation,
-  and focus/desktop preservation. Next: repeat the user's two-output startup
-  and occupied-secondary-workspace switching to check spanning and output jumps.
-  Primary 125% and secondary 100% scaling is not established as causal; live
-  acceptance remains pending. The prior startup-loop fix remains accepted.
-  [record](changes/multi-output-domain-bounds.md)
+- P1 | Window alignment gaps | User manually confirms the per-output bounds fix
+  stopped windows jumping between monitors. Remaining issue: primary workspace 2
+  has an unwanted bottom gap, and other workspaces have other gaps. Supplied
+  `/tmp/dev.log` and `~/Pictures/Screenshots/Screenshot_20260919_155734.png`
+  show correct requested primary geometry but persistently shorter native frames:
+  a planned `2032x1092` becomes `1920x1036`, exactly the secondary usable size.
+  Another primary Ghostty accepts `2032x1092`; a per-window native constraint
+  or stale output-derived cap is possible, not established. Setter acceptance
+  is not native resize completion. No code correction is yet justified.
+  Next: user manually drags one affected terminal's bottom edge through the
+  extra gap and reports whether it grows during the drag and stays expanded.
+  Primary 125%/secondary 100% scaling causality remains unproven. Prior
+  output-jumping and startup-loop fixes remain manually accepted.
+  [bounds fix](changes/multi-output-domain-bounds.md)
 - P1 | Non-visible workspace tiling live gate | Background tiling is statically
   implemented and verified: startup and window open/move adopt or reconcile
   non-foreground domains without switching desktop visibility or stealing native
