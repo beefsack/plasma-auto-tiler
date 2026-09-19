@@ -2,6 +2,18 @@
 
 Only meaningful pending or active work is listed.
 
+- P1 | Multi-output domain bounds correction | Trace diagnosis found
+  `kwin/src/plan-adapter-entry.ts` requests `clientArea(5, output, desktop)`:
+  KWin `WorkArea` is global across outputs, despite the incorrect per-output
+  comment in `kwin/src/kwin-globals.d.ts`. The replacement `/tmp/dev.log`
+  trace first requests bounds `0,116,3968,1036` on `HDMI-A-2` (line 107),
+  plans `8,124,3952,1020` (119), observes the member under `DP-6` (139),
+  and logs the write (156). Oversized geometry explains the reported spanning
+  and output jumping; native reassignment details remain inferred. Primary
+  125% and secondary 100% scaling is not established as causal. Next: use
+  per-output `PlacementArea` (`0`), correct the type comment, and add a
+  regression distinguishing global from per-output bounds for two outputs.
+  The previously accepted startup-loop fix is present and remains accepted.
 - P1 | Non-visible workspace tiling live gate | Background tiling is statically
   implemented and verified: startup and window open/move adopt or reconcile
   non-foreground domains without switching desktop visibility or stealing native
