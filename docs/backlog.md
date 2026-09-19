@@ -2,26 +2,21 @@
 
 Only meaningful pending or active work is listed.
 
-- P1 | Interactive resize correction live gate | Ordinary foreground drift
-  reconciliation fought Firefox during a held native resize, consumed its retry
-  budget, and could leave the dropped frame misaligned. Static fix suppresses
-  those reconciles during native resize and requests normal retained correction
-  at finish without requiring an oracle callback. Delayed valid oracle replies
-  retain split-resize authority; no shares are inferred from ordinary drift.
-  TypeScript tests (782), planner protocol tests (84), typecheck, and build pass.
-  Next: user repeats the held Firefox edge drag and release from a fresh
-  `just dev trace`, checking no mid-drag fighting and correct final allocation.
-  Existing parked scopes and the three-attempt policy remain unchanged.
-  [record](changes/window-alignment-drag-investigation.md)
 - P1 | Remaining native window alignment and oracle delivery | Ghostty's
   persistent short frame remains unresolved: a requested `2032x1092` became
   `1920x1036`, matching secondary usable size, while another primary Ghostty
   accepted the full size. Native per-window constraint or stale output-derived
   cap remains a hypothesis; primary 125%/secondary 100% scaling causality is
-  unproven. User confirmed no DragOracle bus owner, and KWin's available-effects
-  list omitted both project effects. Oracle remains inactive after user session
-  restart; delivery is deferred at the user's direction. Prior output-jumping
-  and startup-loop fixes remain manually accepted.
+  unproven. Authorized read-only current-session inspection confirms no
+  DragOracle owner and neither project effect discovered or loaded. Staged
+  oracle binary exists, but the documented project Plasma environment script
+  and oracle enable key are absent. This establishes the documented delivery
+  route is unconfigured and is a strong discovery-failure candidate; denied
+  current KWin environment access leaves alternate delivery unproven.
+  Next: obtain authorization for project delivery setup and explicit enable,
+  then user logout/login and discovery verification. No native mutation occurred.
+  The interactive-resize fighting/drop correction is now manually accepted;
+  prior output-jumping and startup-loop fixes remain manually accepted.
   [bounds fix](changes/multi-output-domain-bounds.md)
   [drag investigation](changes/window-alignment-drag-investigation.md)
 - P1 | Non-visible workspace tiling live gate | Background tiling is statically

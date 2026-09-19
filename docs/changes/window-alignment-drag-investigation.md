@@ -52,6 +52,35 @@
 - The active effect's `LastVerdict()` endpoint is read-only
   (`kwin/native-effect/dragoracle.cpp:20-35`).
 
+## Manual Acceptance
+
+- User manually accepted the latest resize reconciliation fix: "Excellent,
+  that fixed that specific issue." This accepts only the absence of fighting
+  and an incorrect final drop during the tested native resize. It is not
+  acceptance of Drag Oracle delivery or Ghostty behavior.
+
+## Current Oracle Diagnosis
+
+- Read-only inspection found KWin 6.7.5 at PID 16891. Its D-Bus
+  `listOfEffects` and `loadedEffects` omit both project effects;
+  `isEffectSupported("plasma-auto-tiler-drag-oracle")` is false and
+  `org.plasmaautotiler.DragOracle` has no owner.
+- The staged oracle exists at
+  `target/kwin-native-effect-stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so`,
+  but the exact documented delivery script
+  `~/.config/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh` is
+  absent. The oracle enable key is also absent. Its metadata is
+  `EnabledByDefault: false`.
+- Reading this KWin process's `/proc/16891/environ` was denied, so its actual
+  `QT_PLUGIN_PATH` remains unproven. The missing script establishes that the
+  documented delivery route is unconfigured and is a strong candidate for the
+  discovery failure; it does not rule out an alternate delivery path.
+- The smallest next action requires separate mutation authorization: install
+  the exact project delivery script and explicit oracle enable setting, then a
+  user-performed logout/login. Re-query discovery after that boundary. If it
+  remains false, inspect only that KWin PID's project plugin-load diagnostics;
+  the current evidence does not establish an ABI or factory failure.
+
 ## Verification
 
 - Hermetic adapter replay covers a pre-start in-flight reconcile, three held
@@ -73,5 +102,7 @@
 
 ## Limits
 
-- No live KWin, Plasma, D-Bus, or host mutation was performed. Current native
-  signal timing and the inactive oracle remain unverified on-device.
+- Implementation verification performed no live KWin, Plasma, D-Bus, or host
+  mutation. This record now also includes read-only current-session diagnostics
+  and limited manual acceptance of the resize correction; neither verifies
+  current native signal timing or oracle delivery on-device.
