@@ -107,6 +107,18 @@ function twoDomainObserved(
     };
 }
 
+function sourceObserved(
+    r: { a: object; b: object; x: object },
+    aRect: { x: number; y: number; w: number; h: number },
+): PlanObserved {
+    const observed = twoDomainObserved(r, { aRect });
+    const { domains: _domains, ...source } = observed;
+    return {
+        ...source,
+        windows: Object.freeze(observed.windows.filter((entry) => entry.output === "out-1")),
+    };
+}
+
 interface Mocks {
     readonly dbusCalls: Array<{ method: string; payload: string }>;
     readonly callbacks: Array<(reply: unknown) => void>;
@@ -510,6 +522,32 @@ describe("plan adapter directional cross-output (active route)", () => {
         mocks.callbacks[0]?.(local);
         assert.equal(mocks.geometries.length, 1);
         assert.equal(mocks.actives.length, 1);
+    });
+
+    it("does not synthesize a target removal after a local two-domain move", () => {
+        const r = refs();
+        const mocks = mockEnv(r);
+        mocks.activeImpl = () => r.x;
+        const adapter = enable(mocks);
+        adapter.requestMove("right");
+        const body = payload(mocks, 0);
+        mocks.callbacks[0]?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: body["correlation_id"],
+                outcome: "planned",
+                base_revision: 2,
+                detail: { kind: "move", rule: "R1", capability: "WrapPerpendicular", direction: "right" },
+                desired_geometry: [
+                    { window: "win-a", leaf: "leaf-a", output: "out-1", workspace: "ws-a", rect: { x: 10, y: 10, w: 380, h: 580 } },
+                ],
+                desired_focus: { domain_output: "out-1", domain_workspace: "ws-a", leaf: "leaf-a" },
+            }),
+        );
+        mocks.observeImpl = () => sourceObserved(r, { x: 10, y: 10, w: 380, h: 580 });
+        mocks.subscribes.find((entry) => entry.kind === "geometry")?.handler(r.a);
+        mocks.timers[mocks.timers.length - 1]?.callback();
+        assert.equal(mocks.dbusCalls.length, 1);
     });
 
     it("refuses on stale directional scope before any write", () => {

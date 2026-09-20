@@ -497,6 +497,87 @@ describe("plan adapter geometry application", () => {
         );
     });
 
+    it("traces native constraints across a write and later contained height mismatch", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let observedB = { x: 100, y: 0, w: 500, h: 500 };
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.b,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 100, h: 100 },
+                    "win-b": observedB,
+                },
+            });
+        mocks.activeImpl = () => refs.b;
+        const env: PlanAdapterEnv = {
+            ...mocks.env,
+            setGeometry: (target, rect): boolean => {
+                const written = mocks.env.setGeometry(target, rect);
+                if (target === refs.b && written) {
+                    observedB = { x: rect.x, y: rect.y, w: rect.w, h: rect.h };
+                }
+                return written;
+            },
+            readGeometry: (target) => (target === refs.b ? observedB : { x: 0, y: 0, w: 100, h: 100 }),
+            readWindowConstraints: (target) => {
+                if (target === refs.a) {
+                    throw new Error("constraint getter failed");
+                }
+                return {
+                    resizeable: true,
+                    minSize: { w: 80, h: 60 },
+                    maxSize: { w: 1600, h: 900 },
+                };
+            },
+        };
+        const adapter = new PlanAdapter(env);
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        adapter.requestMove("left");
+        const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+        assert.ok(
+            mocks.logs.some(
+                (line) =>
+                    line ===
+                    "plasma-auto-tiler:plan:constraint-trace corr=pre-plan phase=plan window=win-b output=out-1 resource_class=unknown resizeable=true min=80,60 max=1600,900 workarea=0,0,1200,800 requested=unknown observed=100,0,500,500",
+            ),
+        );
+        mocks.callbacks[0]?.(
+            plannedReply(
+                correlation,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 100, h: 100 } },
+                    { window: "win-b", rect: { x: 100, y: 0, w: 400, h: 500 } },
+                ],
+                "win-b-leaf",
+            ),
+        );
+        assert.ok(
+            mocks.logs.some(
+                (line) =>
+                    line ===
+                    `plasma-auto-tiler:plan:constraint-trace corr=${correlation} phase=plan window=win-b output=out-1 resource_class=unknown resizeable=true min=80,60 max=1600,900 workarea=0,0,1200,800 requested=100,0,400,500 observed=100,0,500,500`,
+            ),
+        );
+        assert.ok(
+            mocks.logs.some(
+                (line) =>
+                    line ===
+                    `plasma-auto-tiler:plan:constraint-trace corr=${correlation} phase=write window=win-b output=out-1 resource_class=unknown resizeable=true min=80,60 max=1600,900 workarea=0,0,1200,800 requested=100,0,400,500 observed=100,0,400,500`,
+            ),
+        );
+        observedB = { x: 100, y: 0, w: 400, h: 450 };
+        mocks.subscribes.find((entry) => entry.kind === "geometry")?.handler(refs.b);
+        mocks.timers[mocks.timers.length - 1]?.callback();
+        assert.ok(
+            mocks.logs.some(
+                (line) =>
+                    line ===
+                    `plasma-auto-tiler:plan:constraint-trace corr=${correlation} phase=post-signal window=win-b output=out-1 resource_class=unknown resizeable=true min=80,60 max=1600,900 workarea=0,0,1200,800 requested=100,0,400,500 observed=100,0,400,450`,
+            ),
+        );
+    });
+
     it("rejects partial or unknown reply windows without native writes", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
@@ -1422,6 +1503,35 @@ describe("plan adapter client self-resize reconcile", () => {
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, parkedCalls);
         assert.equal(mocks.logs.length, parkedLogs);
+    });
+    it("allows an explicit move after reconcile parking and clears the park on success", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = baseline(mocks, refs);
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: driftRects("increment") });
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            fire(mocks, "geometry");
+            runDebounce(mocks);
+            const index = 1 + attempt;
+            mocks.callbacks[index]?.(rejectedReply(plannerPayload(mocks, index)["correlation_id"] as string, "snapshot-invalid"));
+        }
+        const parkedCalls = mocks.dbusCalls.length;
+        adapter.requestMove("left");
+        assert.equal(mocks.dbusCalls.length, parkedCalls + 1);
+        const moveIndex = parkedCalls;
+        const moveCorrelation = plannerPayload(mocks, moveIndex)["correlation_id"] as string;
+        assert.deepEqual((plannerPayload(mocks, moveIndex)["command"] as Record<string, unknown>)["op"], "move");
+        mocks.callbacks[moveIndex]?.(
+            plannedReply(
+                moveCorrelation,
+                [{ window: "win-a", rect: allocA }, { window: "win-b", rect: allocB }],
+                "win-a-leaf",
+            ),
+        );
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, parkedCalls + 2);
+        assert.deepEqual((plannerPayload(mocks, parkedCalls + 1)["command"] as Record<string, unknown>)["op"], "reconcile");
     });
     it("parks repeated stale reconcile signals after three with no further D-Bus", () => {
         const refs = makeRefs();

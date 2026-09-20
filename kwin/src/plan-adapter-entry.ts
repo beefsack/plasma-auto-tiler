@@ -36,7 +36,7 @@ import {
     GROUP_HIGHLIGHT_SET_METHOD,
     startActiveGroupHighlight,
 } from "./active-group-highlight";
-import { PLAN_DBUS_SERVICE, PLAN_INTERFACE, PLAN_METHOD, PLAN_OBJECT, PLAN_SERVICE, PLAN_START_FLAGS, PLAN_START_METHOD, PlanAdapter, PlanDirection, PlanDomain, PlanObserved, PlanResizeMode, DirectionalObservation, planDirectionalFingerprint, planFingerprint } from "./plan-adapter";
+import { PLAN_DBUS_SERVICE, PLAN_INTERFACE, PLAN_METHOD, PLAN_OBJECT, PLAN_SERVICE, PLAN_START_FLAGS, PLAN_START_METHOD, PlanAdapter, PlanDirection, PlanDomain, PlanObserved, PlanResizeMode, DirectionalObservation, PlanWindowConstraints, planDirectionalFingerprint, planFingerprint } from "./plan-adapter";
 import { PLAN_SOURCE_REV } from "./source-rev";
 import { connectSignal, readSignal } from "./signal-capability";
 import { KWIN_TRACE_ENABLED } from "./trace";
@@ -247,6 +247,28 @@ function readFrameRect(ref: object): FrameRectRead {
         return "frame-rect-size-out-of-range";
     }
     return { x, y, w, h };
+}
+
+function readConstraintSize(value: unknown): { w: number; h: number } | null {
+    if (typeof value !== "object" || value === null) {
+        return null;
+    }
+    const record = value as Record<string, unknown>;
+    const width = toQuantizedInt(record["width"] !== undefined ? record["width"] : record["w"]);
+    const height = toQuantizedInt(record["height"] !== undefined ? record["height"] : record["h"]);
+    if (width === null || height === null || width < 0 || height < 0) {
+        return null;
+    }
+    return { w: width, h: height };
+}
+
+function readWindowConstraints(ref: object): PlanWindowConstraints {
+    const resizeable = readProp(ref, "resizeable");
+    return {
+        resizeable: typeof resizeable === "boolean" ? resizeable : null,
+        minSize: readConstraintSize(readProp(ref, "minSize")),
+        maxSize: readConstraintSize(readProp(ref, "maxSize")),
+    };
 }
 
 // Directional shortcut catalog. All three configured profiles share one
@@ -2674,6 +2696,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 return null;
             }
         },
+        readWindowConstraints: (ref) => readWindowConstraints(ref),
         // Bounded R4 signal fences grounded in the documented notify
         // signals: outputChanged carries the old output (re-read for the
         // current value), desktopsChanged for membership, and

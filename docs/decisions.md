@@ -406,6 +406,20 @@ Historical implementation detail is recoverable in Git history.
   advances that domain's baseline only after a matching `planned` reply is
   applied. A rejected, timed-out, stale, or failed membership command never
   changes the baseline used to derive later admissions or removals.
+- USER-APPROVED recoverability, 2026-09-21: "log and continue rather than hard
+  fail." A failed native geometry operation or client geometry discrepancy is
+  an operation failure, not a permanently disabled window or domain. Later
+  valid commands and fresh observations remain usable while the adapter retains
+  confirmed canonical topology where available. Bounded reconciliation may park
+  only further automatic reflow after repeated mismatch; it never blocks a
+  later explicit command, retries indefinitely, fabricates acknowledgement,
+   applies stale geometry, or recovers uncertain cross-output transfers.
+   Authorization, malformed-input, owner, correlation, and stale-scope fences
+   remain fail-closed.
+   Detailed uncertain-transaction recovery remains pending. Any future design
+   must preserve safe handling of later valid commands without treating the
+   uncertain transaction as success, replaying it, resetting topology, or
+   weakening those fences.
 - Permissive admission, authorized 2026-09-14: an observed normal window's
   incoming frame rectangle never decides whether it may join a tiled domain.
   Admission assigns a new complete geometry for every member and may reflow

@@ -95,6 +95,12 @@ export interface PlanRect {
     readonly h: number;
 }
 
+export interface PlanWindowConstraints {
+    readonly resizeable: boolean | null;
+    readonly minSize: { readonly w: number; readonly h: number } | null;
+    readonly maxSize: { readonly w: number; readonly h: number } | null;
+}
+
 export interface PlanObservedWindow {
     readonly id: string;
     readonly ref: object;
@@ -619,6 +625,9 @@ export interface PlanAdapterEnv {
     readonly readOutputName?: (ref: object) => string | null;
     readonly readDesktopIds?: (ref: object) => ReadonlyArray<string> | null;
     readonly readGeometry?: (ref: object) => PlanRect | null;
+    // Trace-only native constraint read. It is optional so the planner route
+    // remains usable on older script surfaces and isolated tests.
+    readonly readWindowConstraints?: (ref: object) => PlanWindowConstraints | null;
     readonly subscribeMoverOutput?: (mover: object, handler: (old: unknown) => void) => (() => void) | null;
     readonly subscribeMoverDesktops?: (mover: object, handler: () => void) => (() => void) | null;
     readonly subscribeWindowGeometry?: (ref: object, handler: () => void) => (() => void) | null;
@@ -1642,6 +1651,9 @@ export class PlanAdapter {
     private repeatNext = 0;
     private repeatFingerprint = "";
     private pointerEcho: PointerEcho | null = null;
+    // Trace-only post-write evidence. One entry per written window avoids
+    // turning repeated client or pointer updates into an unbounded trace.
+    private constraintTracePending = new Map<string, { correlation: string; resourceClass: string; requested: PlanRect }>();
     private maximizeAdmissionEcho: object | null = null;
     private maximizeAdmissionAttempts = new Set<string>();
     private maximizeToggleEcho: { ref: object; id: string; resourceClass: string } | null = null;
@@ -1732,6 +1744,7 @@ export class PlanAdapter {
         this.backgroundAttempts.clear();
         this.backgroundParked.clear();
         this.pointerEcho = null;
+        this.constraintTracePending.clear();
         this.maximizeAdmissionEcho = null;
         this.maximizeAdmissionAttempts.clear();
         this.maximizeToggleEcho = null;
@@ -1764,6 +1777,7 @@ export class PlanAdapter {
         this.backgroundAttempts.clear();
         this.backgroundParked.clear();
         this.pointerEcho = null;
+        this.constraintTracePending.clear();
         this.maximizeAdmissionEcho = null;
         this.maximizeAdmissionAttempts.clear();
         this.maximizeToggleEcho = null;
@@ -2018,6 +2032,21 @@ export class PlanAdapter {
         }
         const snapshot = this.carriedSnapshot(observed);
         this.noteObservation(snapshot.fingerprint);
+        if (KWIN_TRACE_ENABLED && typeof this.env.readWindowConstraints === "function") {
+            for (const entry of observed.windows) {
+                this.traceConstraints(
+                    "pre-plan",
+                    "plan",
+                    entry.id,
+                    entry.output,
+                    isOpaqueId(entry.resourceClass) ? entry.resourceClass : "unknown",
+                    entry.ref,
+                    this.workAreaFor(snapshot, entry.output, entry.workspace),
+                    null,
+                    entry.rect,
+                );
+            }
+        }
         this.dispatch({
             op: "move",
             snapshot,
@@ -2612,6 +2641,31 @@ export class PlanAdapter {
                 previous.windows.some((retained) => retained.id === entry.id) &&
                 !rectContained(entry.rect, freshSnapshot.domainBounds),
         );
+        for (const entry of fresh.windows) {
+            const trace = this.constraintTracePending.get(entry.id);
+            if (trace === undefined) {
+                continue;
+            }
+            this.constraintTracePending.delete(entry.id);
+            if (
+                entry.rect.x !== trace.requested.x ||
+                entry.rect.y !== trace.requested.y ||
+                entry.rect.w !== trace.requested.w ||
+                entry.rect.h !== trace.requested.h
+            ) {
+                this.traceConstraints(
+                    trace.correlation,
+                    "post-signal",
+                    entry.id,
+                    freshSnapshot.domainOutput,
+                    trace.resourceClass,
+                    entry.ref,
+                    freshSnapshot.domainBounds,
+                    trace.requested,
+                    entry.rect,
+                );
+            }
+        }
         const before = new Set<string>();
         for (const entry of previous.windows) {
             before.add(entry.id);
@@ -4680,6 +4734,24 @@ export class PlanAdapter {
                     this.failFlight(flightState, "precondition-mismatch");
                     return;
                 }
+                const resourceClass = resourceClassById.get(entry.window) ?? "unknown";
+                const traceNativeConstraints =
+                    flightState.op !== "pointer-resize" &&
+                    KWIN_TRACE_ENABLED &&
+                    typeof this.env.readWindowConstraints === "function";
+                if (traceNativeConstraints) {
+                    this.traceConstraints(
+                        flightState.correlation,
+                        "plan",
+                        entry.window,
+                        entry.output,
+                        resourceClass,
+                        target,
+                        this.workAreaFor(flightState.snapshot, entry.output, entry.workspace),
+                        entry.rect,
+                        oldById.get(entry.window) ?? null,
+                    );
+                }
                 let written = false;
                 try {
                     written = this.env.setGeometry(target, entry.rect) === true;
@@ -4692,7 +4764,25 @@ export class PlanAdapter {
                     this.failFlight(flightState, "write-failed");
                     return;
                 }
-                this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "written", entry.rect);
+                this.writeDiag(entry.window, resourceClass, "written", entry.rect);
+                if (traceNativeConstraints) {
+                    this.constraintTracePending.set(entry.window, {
+                        correlation: flightState.correlation,
+                        resourceClass,
+                        requested: entry.rect,
+                    });
+                    this.traceConstraints(
+                        flightState.correlation,
+                        "write",
+                        entry.window,
+                        entry.output,
+                        resourceClass,
+                        target,
+                        this.workAreaFor(flightState.snapshot, entry.output, entry.workspace),
+                        entry.rect,
+                        null,
+                    );
+                }
             }
             const transition = flightState.floatTarget;
             if (transition !== null && transition.floating) {
@@ -4762,11 +4852,32 @@ export class PlanAdapter {
         }
         if (flightState.op !== "focus") {
             const base = this.carriedSnapshot(current);
+            // A local reply to a directional two-domain request only owns the
+            // source domain. Retaining the untouched target here would later
+            // synthesize its removal under the source bounds.
+            const localDirectional =
+                flightState.op === "move" &&
+                flightState.snapshot.domains !== undefined &&
+                flightState.snapshot.domains.length === 2 &&
+                planned.operation === null;
+            const { domains: _domains, ...sourceBase } = base;
+            const retainedBase = localDirectional
+                ? {
+                      ...sourceBase,
+                      windows: Object.freeze(
+                          base.windows.filter(
+                              (entry) =>
+                                  entry.output === flightState.snapshot.domainOutput &&
+                                  entry.workspace === flightState.snapshot.domainWorkspace,
+                          ),
+                      ),
+                  }
+                : base;
             const rectById = new Map<string, PlanRect>();
             for (const entry of planned.geometry) {
                 rectById.set(entry.window, entry.rect);
             }
-            const windows = base.windows.map((entry) => {
+            const windows = retainedBase.windows.map((entry) => {
                 // Every member (including a fullscreen or maximized one)
                 // records the planner's retained projection from the reply: the
                 // tree slot must survive enter/exit, and the carried baseline
@@ -4796,7 +4907,7 @@ export class PlanAdapter {
                     }
                 }
             } else {
-                const retained = this.setLastGood({ ...base, windows: Object.freeze(windows) }, flightState.background === true);
+                const retained = this.setLastGood({ ...retainedBase, windows: Object.freeze(windows) }, flightState.background === true);
                 if (flightState.background === true && !retained) {
                     // Background cap-race: the applied result cannot be retained
                     // without evicting the foreground baseline. Fail closed without
@@ -5597,6 +5708,49 @@ export class PlanAdapter {
         }
         this.logToken(
             `${LOG_PREFIX}:write window=${window} resource_class=${resourceClass} disposition=${disposition} rect=${String(rect.x)},${String(rect.y)},${String(rect.w)},${String(rect.h)}`,
+        );
+    }
+
+    private workAreaFor(snapshot: PlanSnapshot, output: string, workspace: string): PlanRect | null {
+        if (snapshot.domainOutput === output && snapshot.domainWorkspace === workspace) {
+            return snapshot.domainBounds;
+        }
+        return snapshot.domains?.find((domain) => domain.output === output && domain.workspace === workspace)?.bounds ?? null;
+    }
+
+    private traceConstraints(
+        correlation: string,
+        phase: "plan" | "write" | "post-signal",
+        window: string,
+        output: string,
+        resourceClass: string,
+        ref: object,
+        workArea: PlanRect | null,
+        requested: PlanRect | null,
+        observed: PlanRect | null,
+    ): void {
+        if (!KWIN_TRACE_ENABLED || typeof this.env.readWindowConstraints !== "function") {
+            return;
+        }
+        let constraints: PlanWindowConstraints | null = null;
+        let actual = observed;
+        try {
+            constraints = this.env.readWindowConstraints(ref);
+        } catch (error) {
+            void error;
+        }
+        try {
+            actual = this.env.readGeometry?.(ref) ?? actual;
+        } catch (error) {
+            void error;
+        }
+        const size = (value: { readonly w: number; readonly h: number } | null): string =>
+            value === null ? "unknown" : `${String(value.w)},${String(value.h)}`;
+        const rect = (value: PlanRect | null): string =>
+            value === null ? "unknown" : `${String(value.x)},${String(value.y)},${String(value.w)},${String(value.h)}`;
+        const resizeable = constraints?.resizeable === true ? "true" : constraints?.resizeable === false ? "false" : "unknown";
+        this.logToken(
+            `${LOG_PREFIX}:constraint-trace corr=${correlation} phase=${phase} window=${window} output=${output} resource_class=${resourceClass} resizeable=${resizeable} min=${size(constraints?.minSize ?? null)} max=${size(constraints?.maxSize ?? null)} workarea=${rect(workArea)} requested=${rect(requested)} observed=${rect(actual)}`,
         );
     }
 

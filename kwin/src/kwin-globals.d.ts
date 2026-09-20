@@ -131,6 +131,10 @@ interface Window {
     readonly normalWindow: boolean;
     readonly managed: boolean;
     readonly resizeable: boolean;
+    // src/window.h Q_PROPERTY(QSizeF minSize READ minSize) and maxSize. These
+    // are read only and used only by trace diagnostics for native constraints.
+    readonly minSize: Size;
+    readonly maxSize: Size;
     readonly appletPopup: boolean;
     // QList<VirtualDesktop *> has no established JavaScript marshalling contract.
     // Read-write in the official KWin scripting API (KWin::Window -> Read-write

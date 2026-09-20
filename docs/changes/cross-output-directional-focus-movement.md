@@ -95,8 +95,14 @@ Restore the documented COSMIC output-edge behavior for `Meta+Arrow` focus and
   `directional-move-ack` with `adapter-lost` (lines 51-52 and 63), terminally
   diverging the retained pair. The immediate, well-formed reverse `p7` then
   correctly received `diverged/adapter-lost` before planning (lines 59-60,
-  then adapter service fault at 73-74). This was a permanently terminal state,
-  not an eligible reverse blocked by a legitimate live flight.
+   then adapter service fault at 73-74). At the time, this was a permanently
+   terminal state, not an eligible reverse blocked by a legitimate live flight.
+   It is not the selected product policy: the user-approved "log and continue
+   rather than hard fail" direction supersedes permanent disable after an
+   operation failure. Current uncertain R4 transaction recovery remains
+   terminal and unfinished until a separate design can safely preserve later
+   valid commands without acknowledging, replaying, or resetting the uncertain
+   transaction.
 - Both output domains in the outbound request use workspace
   `45e11f71-14f9-44bf-98ec-aca62648c9b8` (line 37). Assigning that unchanged
   desktop membership does not produce a KWin `desktopsChanged` notification,
@@ -146,6 +152,60 @@ Restore the documented COSMIC output-edge behavior for `Meta+Arrow` focus and
   does not attribute the final `1012x1036` Ghostty frame to an app constraint,
   KWin rule, or scaling conversion. The sibling Ghostty reaching `1092` proves
   only that the DP-6 work area itself permits that height.
+
+## Local Geometry Incident
+
+- `/run/user/1000/plasma-auto-tiler-dev.nEimw8.log` is a local R1 move, not an
+  output crossing: `plan-1-p4` requests two-domain observation but replies with
+  three DP-6 rectangles only (lines 49-50), then writes only DP-6 windows
+  (lines 55-59). Rust still synchronously commits the local tree before the
+  asynchronous frame writes settle.
+- The command stall has a separate concrete adapter cause. That local reply
+  retained the untouched HDMI-A-2 Firefox in the DP-6 baseline. The next
+  foreground refresh synthesized `plan-1-p5` removal of Firefox under DP-6
+  bounds (lines 53-54), producing `window-out-of-bounds` at lines 66 and 70-87.
+  A local two-domain reply now retains only its source-domain windows and drops
+  its directional pair metadata; it cannot synthesize target removal or poison
+  the source baseline. Offline coverage proves that exact sequence makes no
+  second remove request.
+- This correction does not accept the client geometry mismatch. The planned W3
+  frame is `1538,52,502,1092` (lines 50 and 57), while later observation is
+  `1538,52,502,1036` (lines 69, 76, and 83). Firefox also later reports
+  `x=144` while still identifying HDMI-A-2, outside that output's bounds.
+  No Firefox setter appears in the local move writes. KWin 6.7.5 `window.h`
+  exposes `resizeable`, `minSize`, and `maxSize`; `waylandwindow.cpp`
+  `updateGeometry` derives output from the global frame center. The trace does
+  not contain those values or the Ghostty executable version, so it cannot
+  distinguish client constraints, a rule, or inconsistent native observation.
+  The bounded next diagnostic is a trace-only read of these three public Window
+   properties for the affected stable IDs before planner dispatch, at write, and
+   post-signal time;
+  it must not move, resize, focus, or load a production script.
+- That diagnostic is implemented behind the existing compile-time trace gate.
+  Each `constraint-trace` line carries only the existing opaque window ID,
+   output, resource class, `resizeable`, `minSize`, `maxSize`, per-output
+   PlacementArea, requested rectangle, and fresh observed rectangle. The
+   pre-plan line uses `requested=unknown`, allowing a rejected request to report
+   its constraints without a native write. Getter failure is logged as `unknown`
+   and cannot change planning or actuation. The entry reads KWin
+  6.7.5 public `Window` Q_PROPERTIES (`QSizeF minSize`, `QSizeF maxSize`, and
+  `bool resizeable`); it does not inspect captions, raw native identifiers, or
+  D-Bus payloads. Post-signal evidence is emitted once only for a mismatched
+  non-pointer geometry write, including a contained height mismatch such as
+  W3's `1092 -> 1036` frame.
+- The selected recoverability rule applies to this local discrepancy: its
+   `snapshot-invalid` reply is a failed operation, not a disabled window or
+   domain. Existing bounded reconciliation may stop automatic reflow after
+   three mismatches, but later explicit commands and fresh valid observations
+   remain enabled. This does not relax stale/owner/input fences, claim the
+   `1036` frame satisfied the `1092` allocation, replay an uncertain command,
+   or alter the separate R4 terminal-transfer policy.
+- Rust validates carried rectangles only for containment in their supplied
+  domain, not equality with retained allocation rectangles. Therefore a later
+  explicit move carrying the contained `1036` W3 frame is not rejected for a
+  `1092` canonical mismatch. Adapter parking blocks only automatic
+  reconciliation; a successful explicit move clears that parking. The local
+  baseline correction remains limited to removing fabricated target membership.
 
 ## Outcome
 

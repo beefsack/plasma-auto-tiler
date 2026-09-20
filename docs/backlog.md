@@ -2,6 +2,31 @@
 
 Only meaningful pending or active work is listed.
 
+- P1 | Local movement height mismatch and stalled commands | User reproduced
+  the stall without crossing outputs: O1 `H[W1 V[W2 W3]]`, O2 `W4`, with
+  W1/W3 Ghostty, W2 Kate, W4 Firefox. Moving W3 right produced local
+  `H[W1 H[W2 W3]]`, left W3 roughly 5% short vertically, and blocked later
+  local/output moves. `/run/user/1000/plasma-auto-tiler-dev.nEimw8.log` reveals
+  a two-domain local reply polluted the source membership baseline with the
+  target window, producing a false removal. The source-only baseline correction
+  is statically verified with 811 KWin tests, typecheck, and build. W3 requested
+  `502x1092` but observed `502x1036`; the native cause remains unknown. Bounded
+  trace-only size hints (`resizeable`, `minSize`, `maxSize`), workarea/output,
+  and requested/observed frames now cover pre-plan, plan, write, and post-signal.
+  Next: user restarts `just dev trace`, repeats the local move and a subsequent
+  command, and provides the exact trace to distinguish native constraints from
+  post-write mismatch. No native lifecycle or geometry mutation ran in verification.
+- P1 | Recoverable window handling | User requires logged problems and continued
+  window handling, never a permanently disabled window/domain after a tiling
+  failure. Reconsider existing terminal divergence/parking accordingly while
+  keeping immediate work focused on the local-move defect and height mismatch.
+  Failed operations must not be reported as successful; select a minimal fresh-
+  observation recovery path that preserves usable layouts and subsequent
+  commands without tight retry loops or fighting active user interaction.
+  Detailed uncertain-transfer recovery remains to be designed under this newly
+  approved recoverability requirement, superseding permanent-disable behavior.
+  Regression coverage confirms existing explicit moves can bypass reconcile
+  parking and clear it on success; general recovery is not yet implemented.
 - P1 | Cross-output directional focus and movement live gate | Implemented
   Meta+Left/Right focus and Meta+Shift+Left/Right movement across horizontally
   adjacent outputs after local operations are exhausted. Targets use the other
