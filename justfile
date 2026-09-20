@@ -1133,24 +1133,27 @@ build-kwin-script:
     npm --prefix "$KWIN_DIR" run build || { echo "error: npm run build failed for $KWIN_DIR" >&2; exit 1; }
     [[ -f "$BUNDLE" ]] || { echo "error: KWin bundle missing after build: $BUNDLE" >&2; exit 1; }
 
-# Build the native active-border + drag-oracle effects + KCM against the pinned KWin CMake dir and stage all three .so files under target/ for QT_PLUGIN_PATH use. No KWin, D-Bus, loading, config, user/system-path, or live actions (subset build, static only).
+# Build the native active-border + drag-oracle effects + KCM against the exact host KWin derivation dev output via scripts/nix-host-kwin-build.sh and stage all three .so files under target/ for QT_PLUGIN_PATH use. No KWin, D-Bus, loading, config, user/system-path, or live actions (subset build, static only).
 build-native-effect:
     #!/usr/bin/env bash
     set -euo pipefail
     REPO_ROOT="{{ justfile_directory() }}"
     SOURCE_DIR="$REPO_ROOT/kwin/native-effect"
-    BUILD_DIR="$REPO_ROOT/target/kwin-native-effect-build"
-    STAGE="$REPO_ROOT/target/kwin-native-effect-stage"
     TARGET_DIR="$REPO_ROOT/target"
     EFFECT_SO="plasma-auto-tiler-active-border.so"
     DRAG_SO="plasma-auto-tiler-drag-oracle.so"
     KCM_SO="plasma-auto-tiler-active-border_config.so"
-    KWIN_DEV_CMAKE_DIR="${PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR:-}"
-    [[ -n "$KWIN_DEV_CMAKE_DIR" ]] || { echo "error: PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR is not set; refusing (enter 'devenv shell --impure' so the pinned KWin CMake dir is exported)" >&2; exit 1; }
-    [[ -d "$KWIN_DEV_CMAKE_DIR" ]] || { echo "error: PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR is not a directory: $KWIN_DEV_CMAKE_DIR; refusing" >&2; exit 1; }
-    command -v cmake >/dev/null 2>&1 || { echo "error: required tool 'cmake' not found in PATH; refusing" >&2; exit 1; }
-    cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" -DKWin_DIR="$KWIN_DEV_CMAKE_DIR" -DBUILD_TESTING=OFF || { echo "error: cmake configure failed for $SOURCE_DIR" >&2; exit 1; }
-    cmake --build "$BUILD_DIR" || { echo "error: cmake --build failed for $BUILD_DIR" >&2; exit 1; }
+    BUILDER="$REPO_ROOT/scripts/nix-host-kwin-build.sh"
+    [[ -x "$BUILDER" ]] || { echo "error: host-matched builder missing or not executable: $BUILDER" >&2; exit 1; }
+    # Read-only provenance first (no realization, metadata only; KWinConfig is
+    # validated later inside `nix develop` where Nix has realized the dev
+    # output): fails closed on missing/malformed host derivation.
+    RESOLVE_OUT="$(env -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN bash "$BUILDER" resolve)" || { echo "error: host KWin provenance resolution failed; refusing native build (no fallback)" >&2; exit 1; }
+    IDENTITY="$(printf '%s\n' "$RESOLVE_OUT" | sed -n 's/^identity=//p' | head -n 1)"
+    [[ "$IDENTITY" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "error: invalid host package identity from builder: '${IDENTITY:-empty}'" >&2; exit 1; }
+    BUILD_DIR="${PLASMA_AUTO_TILER_NATIVE_BUILD:-$REPO_ROOT/target/kwin-native-host-$IDENTITY-build}"
+    STAGE="${PLASMA_AUTO_TILER_NATIVE_STAGE:-$REPO_ROOT/target/kwin-native-effect-stage}"
+    env -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN bash "$BUILDER" build --source "$SOURCE_DIR" --build-dir "$BUILD_DIR" --expected-identity "$IDENTITY" || { echo "error: host-matched native build failed for $SOURCE_DIR" >&2; exit 1; }
     BUILT_SO="$BUILD_DIR/bin/kwin/effects/plugins/$EFFECT_SO"
     BUILT_DRAG="$BUILD_DIR/bin/kwin/effects/plugins/$DRAG_SO"
     BUILT_KCM="$BUILD_DIR/bin/kwin/effects/configs/$KCM_SO"

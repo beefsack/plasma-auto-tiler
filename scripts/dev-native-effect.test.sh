@@ -763,6 +763,41 @@ echo "plasma-auto-tiler:plan:cmd=x kind=admit windows=1 outcome=planned-applied"
 exit 0
 EOF
   chmod +x "$fbin/"*
+  cat > "$fbin/nix" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'nix %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
+state="${FAKE_STATE_DIR:?}"
+if [[ "${1:-}" == "path-info" ]]; then
+  printf '%s\n' "${FAKE_DRV:?}"
+  exit 0
+fi
+if [[ "${1:-}" == "derivation" ]]; then
+  printf '{"%s":{"outputs":{"out":{"path":"%s"},"dev":{"path":"%s"}}}}\n' "${FAKE_DRV:?}" "${FAKE_STORE_PATH:?}" "${FAKE_DEV_OUT:?}"
+  exit 0
+fi
+if [[ "${1:-}" == "develop" ]]; then
+  shift
+  shift || true
+  shift
+  exec "$@"
+fi
+exit 2
+EOF
+  chmod +x "$fbin/nix"
+  mkdir -p "$jwork/fake-store/hash-rustc/bin" "$jwork/fake-store/hash-cargo/bin" "$jwork/fake-store/hash-cmake/bin"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$jwork/fake-store/hash-rustc/bin/rustc"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$jwork/fake-store/hash-cargo/bin/cargo"
+  chmod +x "$jwork/fake-store/hash-rustc/bin/rustc" "$jwork/fake-store/hash-cargo/bin/cargo"
+  cp "$fbin/cmake" "$jwork/fake-store/hash-cmake/bin/cmake"
+  chmod +x "$jwork/fake-store/hash-cmake/bin/cmake"
+  mkdir -p "$jwork/fake-store/hash-kwin-6.7.5/bin" "$jwork/fake-store/hash-kwin-dev-6.7.5/lib/cmake/KWin" "$jwork/fake-host"
+  printf 'fake-kwin\n' > "$jwork/fake-store/hash-kwin-6.7.5/bin/kwin_wayland"
+  printf '# fake KWinConfig\n' > "$jwork/fake-store/hash-kwin-dev-6.7.5/lib/cmake/KWin/KWinConfig.cmake"
+  ln -sf "$jwork/fake-store/hash-kwin-6.7.5/bin/kwin_wayland" "$jwork/fake-host/kwin_wayland"
+  export FAKE_DRV="$jwork/fake-store/abc123-kwin-6.7.5.drv"
+  export FAKE_STORE_PATH="$jwork/fake-store/hash-kwin-6.7.5/bin/kwin_wayland"
+  export FAKE_DEV_OUT="$jwork/fake-store/hash-kwin-dev-6.7.5"
   cat > "$jwork/fake-start.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -813,6 +848,12 @@ EOF
     export PLASMA_AUTO_TILER_NATIVE_STAGE="$jwork/fake-native-stage"
     export PLASMA_AUTO_TILER_TARGET_DIR="$jwork/fake-target"
     export PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$jwork/fake-kwin-cmake"
+    export PLASMA_AUTO_TILER_HOST_KWIN_BIN="$jwork/fake-host/kwin_wayland"
+    export PLASMA_AUTO_TILER_STORE_ROOT="$jwork/fake-store"
+    export NIX_BIN="$fbin/nix"
+    export RUSTC_BIN="$jwork/fake-store/hash-rustc/bin/rustc"
+    export CARGO_BIN="$jwork/fake-store/hash-cargo/bin/cargo"
+    export CMAKE_BIN="$jwork/fake-store/hash-cmake/bin/cmake"
     export XDG_RUNTIME_DIR="$jwork/runtime"
     export DEV_LOOP_START_TEST="$jwork/fake-start.sh"
     export DEV_LOOP_DOGFOOD="$jwork/fake-dogfood.sh"
@@ -830,7 +871,7 @@ EOF
   }
   jrun() {
     set +e
-    FAKE_STATE_DIR="$jwork/state" FAKE_CALL_LOG="$jwork/calls.log" PROC_ROOT="$jwork/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" PLASMA_AUTO_TILER_KWIN_DIR="$jwork/fake-kwin" PLASMA_AUTO_TILER_NATIVE_BUILD="$jwork/fake-native-build" PLASMA_AUTO_TILER_NATIVE_STAGE="$jwork/fake-native-stage" PLASMA_AUTO_TILER_TARGET_DIR="$jwork/fake-target" PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$jwork/fake-kwin-cmake" XDG_RUNTIME_DIR="$jwork/runtime" DEV_LOOP_START_TEST="$jwork/fake-start.sh" DEV_LOOP_DOGFOOD="$jwork/fake-dogfood.sh" PATH="$fbin:$PATH" just --justfile "$isolated" "$@" >"$OUTPUT" 2>&1
+    FAKE_STATE_DIR="$jwork/state" FAKE_CALL_LOG="$jwork/calls.log" PROC_ROOT="$jwork/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" PLASMA_AUTO_TILER_KWIN_DIR="$jwork/fake-kwin" PLASMA_AUTO_TILER_NATIVE_BUILD="$jwork/fake-native-build" PLASMA_AUTO_TILER_NATIVE_STAGE="$jwork/fake-native-stage" PLASMA_AUTO_TILER_TARGET_DIR="$jwork/fake-target" PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$jwork/fake-kwin-cmake" PLASMA_AUTO_TILER_HOST_KWIN_BIN="$jwork/fake-host/kwin_wayland" PLASMA_AUTO_TILER_STORE_ROOT="$jwork/fake-store" NIX_BIN="$fbin/nix" RUSTC_BIN="$jwork/fake-store/hash-rustc/bin/rustc" CARGO_BIN="$jwork/fake-store/hash-cargo/bin/cargo" CMAKE_BIN="$jwork/fake-store/hash-cmake/bin/cmake" FAKE_DRV="$FAKE_DRV" FAKE_STORE_PATH="$FAKE_STORE_PATH" FAKE_DEV_OUT="$FAKE_DEV_OUT" XDG_RUNTIME_DIR="$jwork/runtime" DEV_LOOP_START_TEST="$jwork/fake-start.sh" DEV_LOOP_DOGFOOD="$jwork/fake-dogfood.sh" PATH="$fbin:$PATH" just --justfile "$isolated" "$@" >"$OUTPUT" 2>&1
     EXIT=$?
     set -e
   }

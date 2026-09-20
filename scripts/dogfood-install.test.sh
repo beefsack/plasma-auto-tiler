@@ -34,6 +34,15 @@ if [[ -z "$REAL_MV" ]]; then
   exit 1
 fi
 BASH_PATH="$(command -v bash)"
+REAL_JQ="$(command -v jq || true)"
+if [[ -z "$REAL_JQ" ]]; then
+  echo "FAIL: jq not found in PATH; builder provenance requires it" >&2
+  exit 1
+fi
+FAKE_STORE="$WORK/fake-store"
+FAKE_HOST_DIR="$WORK/fake-host"
+FAKE_NIX_LOG="$WORK/nix.log"
+: > "$FAKE_NIX_LOG"
 
 make_fake_tools() {
   mkdir -p "$FAKE_BIN/bin" "$FAKE_BIN/core"
@@ -246,6 +255,14 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'jq %s\n' "$*" >> "${FAKE_TOOL_LOG:?}"
+# Builder provenance queries (nix derivation show JSON) delegate to real jq
+# so host-matched resolution is exercised for real; only the package metadata
+# path uses the hermetic fake below.
+case "$*" in
+  *"outputs"*|*'.[$'*|*"dev.path"*)
+    exec "${FAKE_REAL_JQ:?}" "$@"
+    ;;
+esac
 if [[ -f "${FAKE_STATE_DIR:?}/jq-fail" ]]; then
   echo "fake jq: simulated JSON parse failure" >&2
   exit 1
@@ -272,7 +289,89 @@ done < "$file"
 printf '%s\n' "$id"
 EOF
 
-  chmod +x "$FAKE_BIN/bin/npm" "$FAKE_BIN/bin/kwriteconfig6" "$FAKE_BIN/bin/kreadconfig6" "$FAKE_BIN/bin/qdbus" "$FAKE_BIN/bin/jq" "$FAKE_BIN/bin/cmake" "$FAKE_BIN/bin/mv"
+  # Host-matched builder fakes: fake nix with provenance + develop that
+  # executes the inner command with a simulated host-native cmake on PATH
+  # (so host cmake, not outer, runs and logs to cmake.log and creates .so
+  # files). Portable rustc lives under the fake store root so the builder's
+  # explicit /nix/store (STORE_ROOT) check is exercised for real. Outer
+  # cmake/cargo are never required nor injected.
+  cat > "$FAKE_BIN/bin/nix" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'nix %s\n' "$*" >> "${FAKE_NIX_LOG:?}"
+if [[ -n "${PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR:-}" ]]; then
+  printf 'LEAKED_PINNED=%s\n' "$PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR" >> "${FAKE_NIX_LOG:?}"
+fi
+if [[ -n "${DOGFOOD_KWIN_DEV_CMAKE_DIR:-}" ]]; then
+  printf 'LEAKED_DOGFOOD=%s\n' "$DOGFOOD_KWIN_DEV_CMAKE_DIR" >> "${FAKE_NIX_LOG:?}"
+fi
+if [[ -n "${CMAKE_BIN:-}" ]]; then
+  printf 'LEAKED_CMAKE_BIN=%s\n' "$CMAKE_BIN" >> "${FAKE_NIX_LOG:?}"
+fi
+state="${FAKE_STATE_DIR:?}"
+if [[ "${1:-}" == "path-info" ]]; then
+  target="${@: -1}"
+  if [[ -f "$state/nix-path-info-fail" ]]; then
+    echo "fake nix: simulated path-info failure" >&2
+    exit 1
+  fi
+  if [[ -n "${FAKE_DEV_OUT:-}" && "$target" == "$FAKE_DEV_OUT" ]]; then
+    printf 'path-info-dev-called %s\n' "$target" >> "${FAKE_NIX_LOG:?}"
+    printf '%s\n' "${FAKE_DRV:?}"
+    exit 0
+  fi
+  printf '%s\n' "${FAKE_DRV:?}"
+  exit 0
+fi
+if [[ "${1:-}" == "derivation" ]]; then
+  if [[ -f "$state/nix-derivation-show-fail" ]]; then
+    echo "fake nix: simulated derivation show failure" >&2
+    exit 1
+  fi
+  printf '{"derivations":{"%s":{"env":{"dev":"%s"},"outputs":{"out":{"path":"%s"},"dev":{"path":"%s"}}}}}\n' "${FAKE_DRV:?}" "${FAKE_DEV_OUT:?}" "${FAKE_STORE_PATH:?}" "${FAKE_DEV_OUT:?}"
+  exit 0
+fi
+if [[ "${1:-}" == "develop" ]]; then
+  if [[ -f "$state/nix-develop-fail" ]]; then
+    echo "fake nix: simulated develop failure" >&2
+    exit 1
+  fi
+  # args: develop <drv> --command <cmd...> ; execute the inner command with
+  # host-native cmake first on PATH so host cmake (not outer) runs.
+  shift
+  drv_arg="${1:-}"; shift || true
+  [[ "${1:-}" == "--command" ]] || { echo "fake nix: expected --command" >&2; exit 2; }
+  shift
+  export PATH="${FAKE_HOST_NATIVE_BIN:?}:$PATH"
+  exec "$@"
+fi
+echo "fake nix: unexpected args: $*" >&2
+exit 2
+EOF
+
+  chmod +x "$FAKE_BIN/bin/npm" "$FAKE_BIN/bin/kwriteconfig6" "$FAKE_BIN/bin/kreadconfig6" "$FAKE_BIN/bin/qdbus" "$FAKE_BIN/bin/jq" "$FAKE_BIN/bin/cmake" "$FAKE_BIN/bin/mv" "$FAKE_BIN/bin/nix"
+
+  # Host-native cmake (simulates `nix develop <drv>` providing cmake): logs
+  # to the same cmake.log and creates .so files, honoring cmake-fail and
+  # cmake-missing-kcm state flags like the outer fake did.
+  mkdir -p "$WORK/host-native/bin"
+  cp "$FAKE_BIN/bin/cmake" "$WORK/host-native/bin/cmake"
+  chmod +x "$WORK/host-native/bin/cmake"
+  export FAKE_HOST_NATIVE_BIN="$WORK/host-native/bin"
+
+  # Fake store with portable rustc only (CMake native sources use bare rustc;
+  # outer cargo/cmake are not needed) + host KWin provenance (real files).
+  mkdir -p "$FAKE_STORE/hash-rustc/bin"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$FAKE_STORE/hash-rustc/bin/rustc"
+  chmod +x "$FAKE_STORE/hash-rustc/bin/rustc"
+  FAKE_DRV="$FAKE_STORE/abc123-kwin-6.7.5.drv"
+  FAKE_STORE_PATH="$FAKE_STORE/hash-kwin-6.7.5/bin/kwin_wayland"
+  FAKE_DEV_OUT="$FAKE_STORE/hash-kwin-dev-6.7.5"
+  mkdir -p "$(dirname "$FAKE_STORE_PATH")" "$FAKE_DEV_OUT/lib/cmake/KWin" "$FAKE_HOST_DIR"
+  printf 'fake-kwin\n' > "$FAKE_STORE_PATH"
+  printf '# fake KWinConfig\n' > "$FAKE_DEV_OUT/lib/cmake/KWin/KWinConfig.cmake"
+  ln -sf "$FAKE_STORE_PATH" "$FAKE_HOST_DIR/kwin_wayland"
+  export FAKE_DRV FAKE_STORE_PATH FAKE_DEV_OUT
 
   for tool in dirname pwd rm mkdir cp cat mktemp mv; do
     ln -sf "$(command -v "$tool")" "$FAKE_BIN/core/$tool"
@@ -290,12 +389,16 @@ reset_state() {
   : > "$WORK/npm.log"
   : > "$WORK/tools.log"
   : > "$WORK/cmake.log"
+  : > "$FAKE_NIX_LOG"
   TEST_NPM_BIN="$FAKE_BIN/bin/npm"
   TEST_KWRITECONFIG6_BIN="$FAKE_BIN/bin/kwriteconfig6"
   TEST_KREADCONFIG6_BIN="$FAKE_BIN/bin/kreadconfig6"
   TEST_QDBUS_BIN="$FAKE_BIN/bin/qdbus"
   TEST_JQ_BIN="$FAKE_BIN/bin/jq"
-  TEST_CMAKE_BIN="$FAKE_BIN/bin/cmake"
+  TEST_NIX_BIN="$FAKE_BIN/bin/nix"
+  TEST_RUSTC_BIN="$FAKE_STORE/hash-rustc/bin/rustc"
+  TEST_HOST_KWIN_BIN="$FAKE_HOST_DIR/kwin_wayland"
+  TEST_STORE_ROOT="$FAKE_STORE"
   TEST_SCRIPT=""
   TEST_PATH="$PATH"
   unset JQ_FAKE_OUTPUT
@@ -303,6 +406,7 @@ reset_state() {
   unset FAKE_QDBUS_LOADED
   unset TEST_KWIN_ENVIRON_FILE
   unset TEST_KWIN_DEV_CMAKE_DIR
+  unset TEST_CMAKE_BIN
   unset FAKE_MOVE_SIGNAL_MATCH FAKE_MOVE_SIGNAL FAKE_MOVE_SIGNAL_WHAT FAKE_MOVE_FAIL_SOURCE_SUFFIX
   # Default to "not running" so effect-status tests never fall through to
   # scanning the real host /proc; individual tests override
@@ -313,15 +417,20 @@ reset_state() {
 run_script() {
   set +e
   local script="${TEST_SCRIPT:-$SCRIPT}"
-  local cmd=(env -u NPM_BIN -u KWRITECONFIG6_BIN -u KREADCONFIG6_BIN -u QDBUS_BIN -u JQ_BIN -u CMAKE_BIN -u XDG_DATA_HOME -u XDG_CONFIG_HOME \
+  local cmd=(env -u NPM_BIN -u KWRITECONFIG6_BIN -u KREADCONFIG6_BIN -u QDBUS_BIN -u JQ_BIN -u CMAKE_BIN -u CARGO_BIN -u NIX_BIN -u RUSTC_BIN -u XDG_DATA_HOME -u XDG_CONFIG_HOME \
     -u DOGFOOD_KWIN_ENVIRON_FILE -u DOGFOOD_KWIN_NOT_RUNNING -u DOGFOOD_KWIN_DEV_CMAKE_DIR \
+    -u PLASMA_AUTO_TILER_HOST_KWIN_BIN -u PLASMA_AUTO_TILER_STORE_ROOT -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR \
     "DOGFOOD_DATA_ROOT=$DATA" "DOGFOOD_CONFIG_ROOT=$CONFIG" "HOME=$FAKE_HOME" "PATH=$TEST_PATH")
   [[ -z "$TEST_NPM_BIN" ]] || cmd+=("NPM_BIN=$TEST_NPM_BIN")
   [[ -z "$TEST_KWRITECONFIG6_BIN" ]] || cmd+=("KWRITECONFIG6_BIN=$TEST_KWRITECONFIG6_BIN")
   [[ -z "$TEST_KREADCONFIG6_BIN" ]] || cmd+=("KREADCONFIG6_BIN=$TEST_KREADCONFIG6_BIN")
   [[ -z "$TEST_QDBUS_BIN" ]] || cmd+=("QDBUS_BIN=$TEST_QDBUS_BIN")
   [[ -z "$TEST_JQ_BIN" ]] || cmd+=("JQ_BIN=$TEST_JQ_BIN")
-  [[ -z "$TEST_CMAKE_BIN" ]] || cmd+=("CMAKE_BIN=$TEST_CMAKE_BIN")
+  [[ -z "${TEST_NIX_BIN:-}" ]] || cmd+=("NIX_BIN=$TEST_NIX_BIN")
+  [[ -z "${TEST_RUSTC_BIN:-}" ]] || cmd+=("RUSTC_BIN=$TEST_RUSTC_BIN")
+  [[ -z "${TEST_CMAKE_BIN:-}" ]] || cmd+=("CMAKE_BIN=$TEST_CMAKE_BIN")
+  [[ -z "${TEST_HOST_KWIN_BIN:-}" ]] || cmd+=("PLASMA_AUTO_TILER_HOST_KWIN_BIN=$TEST_HOST_KWIN_BIN")
+  [[ -z "${TEST_STORE_ROOT:-}" ]] || cmd+=("PLASMA_AUTO_TILER_STORE_ROOT=$TEST_STORE_ROOT")
   [[ -z "${JQ_FAKE_OUTPUT:-}" ]] || cmd+=("JQ_FAKE_OUTPUT=$JQ_FAKE_OUTPUT")
   [[ -z "${FAKE_QDBUS_SUPPORTED:-}" ]] || cmd+=("FAKE_QDBUS_SUPPORTED=$FAKE_QDBUS_SUPPORTED")
   [[ -z "${FAKE_QDBUS_LOADED:-}" ]] || cmd+=("FAKE_QDBUS_LOADED=$FAKE_QDBUS_LOADED")
@@ -332,7 +441,8 @@ run_script() {
   [[ -z "${FAKE_MOVE_SIGNAL:-}" ]] || cmd+=("FAKE_MOVE_SIGNAL=$FAKE_MOVE_SIGNAL")
   [[ -z "${FAKE_MOVE_SIGNAL_WHAT:-}" ]] || cmd+=("FAKE_MOVE_SIGNAL_WHAT=$FAKE_MOVE_SIGNAL_WHAT")
   [[ -z "${FAKE_MOVE_FAIL_SOURCE_SUFFIX:-}" ]] || cmd+=("FAKE_MOVE_FAIL_SOURCE_SUFFIX=$FAKE_MOVE_FAIL_SOURCE_SUFFIX")
-  cmd+=( "FAKE_NPM_LOG=$WORK/npm.log" "FAKE_TOOL_LOG=$WORK/tools.log" "FAKE_STATE_DIR=$WORK/state" "FAKE_REAL_NPM=$REAL_NPM" "FAKE_REAL_MV=$REAL_MV" "FAKE_CMAKE_LOG=$WORK/cmake.log" )
+  cmd+=( "FAKE_NPM_LOG=$WORK/npm.log" "FAKE_TOOL_LOG=$WORK/tools.log" "FAKE_STATE_DIR=$WORK/state" "FAKE_REAL_NPM=$REAL_NPM" "FAKE_REAL_MV=$REAL_MV" "FAKE_CMAKE_LOG=$WORK/cmake.log" "FAKE_REAL_JQ=$REAL_JQ" )
+  cmd+=( "FAKE_NIX_LOG=$FAKE_NIX_LOG" "FAKE_DRV=$FAKE_DRV" "FAKE_STORE_PATH=$FAKE_STORE_PATH" "FAKE_DEV_OUT=$FAKE_DEV_OUT" "FAKE_HOST_NATIVE_BIN=$WORK/host-native/bin" )
   cmd+=( "$BASH_PATH" "$script" "$@" )
   "${cmd[@]}" >"$OUTPUT" 2>&1
   EXIT=$?
@@ -554,14 +664,6 @@ run_script status
 check_exit 1
 assert_contains "required tool 'kreadconfig6' not found in PATH"
 assert_contains "set KREADCONFIG6_BIN to its absolute path"
-
-reset_state
-TEST_CMAKE_BIN=""
-TEST_PATH="$FAKE_BIN/core"
-run_script effect-install
-check_exit 1
-assert_contains "required tool 'cmake' not found in PATH"
-assert_contains "set CMAKE_BIN to its absolute path"
 
 reset_state
 TEST_KWRITECONFIG6_BIN=""
@@ -884,12 +986,23 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-# effect-install: cmake configure failure fails closed
+# effect-install: outer CMAKE_BIN is ignored (host cmake from `nix develop`
+# is used); even a failing outer cmake does not break the build.
+reset_state
+printf '#!/usr/bin/env bash\necho outer-cmake-should-never-run >&2\nexit 1\n' > "$WORK/failing-cmake"
+chmod +x "$WORK/failing-cmake"
+TEST_CMAKE_BIN="$WORK/failing-cmake"
+run_script effect-install
+check_exit 0
+assert_contains "staged: $DATA/plasma-auto-tiler-native-effect/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+assert_grep_file "-DKWin_DIR=$FAKE_DEV_OUT/lib/cmake/KWin" "$WORK/cmake.log"
+
+# effect-install: host-matched build failure fails closed (via builder, no fallback)
 reset_state
 touch "$WORK/state/cmake-fail"
 run_script effect-install
 check_exit 1
-assert_contains "error: cmake configure failed for"
+assert_contains "error: host-matched native build failed for"
 assert_not_exists "$EFFECT_STAGED_SO"
 assert_not_exists "$EFFECT_ENV_FILE"
 
@@ -1064,22 +1177,60 @@ run_script effect-remove
 check_exit 130
 assert_contains "error: interrupted by SIGINT; rollback failed"
 
-# effect-install: pinned KWin_DIR path exists -> passed to cmake
+# effect-install: host-matched builder drives cmake with the resolved dev output,
+# ignoring any legacy pinned KWin dir (neither drives nor leaks).
 reset_state
 mkdir -p "$WORK/fake-kwin-dev-dir"
 TEST_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-dev-dir"
+TEST_PATH="$FAKE_BIN/bin:$PATH"
 run_script effect-install
 check_exit 0
-assert_grep_file "-DKWin_DIR=$WORK/fake-kwin-dev-dir" "$WORK/cmake.log"
+assert_grep_file "-DKWin_DIR=$FAKE_DEV_OUT/lib/cmake/KWin" "$WORK/cmake.log"
+assert_not_grep_file "$WORK/fake-kwin-dev-dir" "$WORK/cmake.log"
+assert_not_grep_file "$WORK/fake-kwin-dev-dir" "$FAKE_NIX_LOG"
+if grep -Fq "LEAKED_PINNED" "$FAKE_NIX_LOG" || grep -Fq "LEAKED_DOGFOOD" "$FAKE_NIX_LOG"; then
+  echo "FAIL: pinned KWin dir leaked into nix develop environment" >&2
+  cat "$FAKE_NIX_LOG" >&2
+  FAIL=$((FAIL + 1))
+else
+  PASS=$((PASS + 1))
+fi
+if grep -Fq "nix develop $FAKE_DRV --command" "$FAKE_NIX_LOG"; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: effect-install did not build via host derivation dev shell ($FAKE_DRV)" >&2
+  cat "$FAKE_NIX_LOG" >&2
+  FAIL=$((FAIL + 1))
+fi
 
-# effect-install: pinned KWin_DIR path does not exist -> omitted, build still succeeds
+# effect-install: missing pinned KWin_DIR still builds via host resolution,
+# and the transaction build dir is identity-keyed.
 reset_state
 TEST_KWIN_DEV_CMAKE_DIR="$WORK/does-not-exist-kwin-dev-dir"
 run_script effect-install
 check_exit 0
-assert_not_grep_file "-DKWin_DIR=" "$WORK/cmake.log"
+assert_grep_file "-DKWin_DIR=$FAKE_DEV_OUT/lib/cmake/KWin" "$WORK/cmake.log"
+assert_grep_file "-B $DATA/.plasma-auto-tiler-native-effect." "$WORK/cmake.log"
+if grep -E -q "\-B $DATA/\.plasma-auto-tiler-native-effect\.[^ ]*/host-abc123-kwin-6\.7\.5-build" "$WORK/cmake.log"; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: transaction build dir is not identity-keyed (host-abc123-kwin-6.7.5-build)" >&2
+  cat "$WORK/cmake.log" >&2
+  FAIL=$((FAIL + 1))
+fi
 EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
 assert_file "$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+
+# effect-install: bad host provenance fails closed with no staging side effects,
+# preserving builder diagnostics (stderr not discarded).
+reset_state
+TEST_HOST_KWIN_BIN="$WORK/does-not-exist-kwin"
+run_script effect-install
+check_exit 1
+assert_contains "host KWin provenance resolution failed"
+assert_contains "host KWin binary not found"
+assert_not_exists "$DATA/plasma-auto-tiler-native-effect"
+assert_not_exists "$CONFIG/kwinrc"
 
 # effect-status: nothing staged, no env script, kwin_wayland not running (the
 # reset_state default) - all five stages fail/unknown with guidance, and it
@@ -1447,10 +1598,11 @@ assert_grep_file "plasma-auto-tiler-kwinEnabled=true" "$CONFIG/kwinrc"
 assert_file "$EFFECT_STAGED_SO"
 assert_grep_file "loadEffect plasma-auto-tiler-active-border" "$WORK/tools.log"
 
-# setup: cmake unavailable -> effect stage gracefully skipped, whole command
-# still succeeds
+# setup: rustc toolchain unavailable -> effect stage gracefully skipped,
+# whole command still succeeds (outer cmake is never required; host cmake
+# comes from `nix develop`, portable rustc from /nix/store is required).
 reset_state
-TEST_CMAKE_BIN=""
+TEST_RUSTC_BIN=""
 TEST_PATH="$FAKE_BIN/core:$(dirname "$BASH_PATH")"
 run_script setup
 check_exit 0

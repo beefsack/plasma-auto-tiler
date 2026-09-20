@@ -112,11 +112,17 @@ Historical implementation detail is recoverable in Git history.
   invocation-owned effects with KWin owner guards (preserving preloaded ones
   in reverse-order teardown), and promises no hot reload; unload verification
   never proves the library is unmapped.
-- Approved 2026-09-20, interim only: the development `nixpkgs` input is pinned
-  to current host revision `e554fab72f81915600f3f449b786fd9af40439a5` to
-  restore the native KWin 6.7.5 ABI match. This is not the selected durable
-  host-follow design; a better host-matched native development build workflow
-  remains unresolved.
+- Approved 2026-09-20, durable for native development: the current-system
+  host KWin derivation is the native development authority.
+  `scripts/nix-host-kwin-build.sh` resolves
+  `/run/current-system/sw/bin/kwin_wayland` to its exact derivation and
+  matching `dev` output and builds inside `nix develop <host-drv>` with only
+  explicit `/nix/store` rustc injected and `-DKWin_DIR=<resolved-dev>/lib/cmake/KWin`;
+  legacy pinned CMake dirs never drive or leak. `just build-native-effect`
+  and dogfood `effect-install` route through that builder with
+  identity-keyed build dirs and fail closed on missing provenance. The former
+  shared `e554fab72f81915600f3f449b786fd9af40439a5` dev pin remains only
+  portable/interim compatibility, no longer native authority.
 
 ## Linux Planner Activation
 

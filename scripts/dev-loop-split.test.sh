@@ -229,6 +229,53 @@ echo "plasma-auto-tiler:route-diag:drag-pull action=dispatch"
 exit 0
 EOF
   chmod +x "$FAKE_BIN/bin/busctl" "$FAKE_BIN/bin/cargo" "$FAKE_BIN/bin/npm" "$FAKE_BIN/bin/cmake" "$FAKE_BIN/bin/devenv" "$FAKE_BIN/bin/setsid" "$FAKE_BIN/bin/systemctl" "$FAKE_BIN/bin/tail" "$FAKE_BIN/bin/journalctl"
+  cat > "$FAKE_BIN/bin/nix" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'nix %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
+state="${FAKE_STATE_DIR:?}"
+if [[ "${1:-}" == "path-info" ]]; then
+  target="${@: -1}"
+  if [[ -f "$state/nix-path-info-fail" ]]; then
+    echo "fake nix: simulated path-info failure" >&2
+    exit 1
+  fi
+  printf '%s\n' "${FAKE_DRV:?}"
+  exit 0
+fi
+if [[ "${1:-}" == "derivation" ]]; then
+  printf '{"%s":{"outputs":{"out":{"path":"%s"},"dev":{"path":"%s"}}}}\n' "${FAKE_DRV:?}" "${FAKE_STORE_PATH:?}" "${FAKE_DEV_OUT:?}"
+  exit 0
+fi
+if [[ "${1:-}" == "develop" ]]; then
+  if [[ -f "$state/nix-develop-fail" ]]; then
+    echo "fake nix: simulated develop failure" >&2
+    exit 1
+  fi
+  shift
+  shift || true
+  [[ "${1:-}" == "--command" ]] || { echo "fake nix: expected --command" >&2; exit 2; }
+  shift
+  exec "$@"
+fi
+echo "fake nix: unexpected args: $*" >&2
+exit 2
+EOF
+  chmod +x "$FAKE_BIN/bin/nix"
+  # Host-matched store + provenance (real files so builder resolution is real).
+  mkdir -p "$WORK/fake-store/hash-rustc/bin" "$WORK/fake-store/hash-cargo/bin" "$WORK/fake-store/hash-cmake/bin"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$WORK/fake-store/hash-rustc/bin/rustc"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$WORK/fake-store/hash-cargo/bin/cargo"
+  chmod +x "$WORK/fake-store/hash-rustc/bin/rustc" "$WORK/fake-store/hash-cargo/bin/cargo"
+  cp "$FAKE_BIN/bin/cmake" "$WORK/fake-store/hash-cmake/bin/cmake"
+  chmod +x "$WORK/fake-store/hash-cmake/bin/cmake"
+  mkdir -p "$WORK/fake-store/hash-kwin-6.7.5/bin" "$WORK/fake-store/hash-kwin-dev-6.7.5/lib/cmake/KWin" "$WORK/fake-host"
+  printf 'fake-kwin\n' > "$WORK/fake-store/hash-kwin-6.7.5/bin/kwin_wayland"
+  printf '# fake KWinConfig\n' > "$WORK/fake-store/hash-kwin-dev-6.7.5/lib/cmake/KWin/KWinConfig.cmake"
+  ln -sf "$WORK/fake-store/hash-kwin-6.7.5/bin/kwin_wayland" "$WORK/fake-host/kwin_wayland"
+  export FAKE_DRV="$WORK/fake-store/abc123-kwin-6.7.5.drv"
+  export FAKE_STORE_PATH="$WORK/fake-store/hash-kwin-6.7.5/bin/kwin_wayland"
+  export FAKE_DEV_OUT="$WORK/fake-store/hash-kwin-dev-6.7.5"
   cat > "$WORK/fake-start-test.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -347,6 +394,7 @@ reset_state() {
   rm -f "$WORK/state/planner-owned" "$WORK/state/owner-pid" "$WORK/state/loaded-malformed" "$WORK/state/loaded-call-fail" "$WORK/state/start-fails" "$WORK/state/stop-fails" "$WORK/state/cargo-fails" "$WORK/state/npm-fails" "$WORK/state/cmake-fails"
   rm -f "$WORK/state/kwin-unowned" "$WORK/state/effect-supported-fail" "$WORK/state/effect-supported-malformed" "$WORK/state/effect-loaded-fail" "$WORK/state/effect-loaded-malformed" "$WORK/state/effect-load-fail" "$WORK/state/effect-unload-fail"
   printf '// fake kwin bundle\n' > "$WORK/fake-kwin/contents/code/main.js"
+  printf 'cmake_minimum_required(VERSION 3.19)\nproject(fake)\n' > "$WORK/fake-native-source/CMakeLists.txt"
   export FAKE_STATE_DIR="$WORK/state"
   export FAKE_CALL_LOG="$WORK/calls.log"
   export PROC_ROOT="$WORK/proc"
@@ -357,6 +405,12 @@ reset_state() {
   export PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/fake-native-stage"
   export PLASMA_AUTO_TILER_TARGET_DIR="$WORK/fake-target"
   export PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake"
+  export PLASMA_AUTO_TILER_HOST_KWIN_BIN="$WORK/fake-host/kwin_wayland"
+  export PLASMA_AUTO_TILER_STORE_ROOT="$WORK/fake-store"
+  export NIX_BIN="$FAKE_BIN/bin/nix"
+  export RUSTC_BIN="$WORK/fake-store/hash-rustc/bin/rustc"
+  export CARGO_BIN="$WORK/fake-store/hash-cargo/bin/cargo"
+  export CMAKE_BIN="$WORK/fake-store/hash-cmake/bin/cmake"
   export XDG_RUNTIME_DIR="$WORK/runtime"
   export DEV_LOOP_START_TEST="$WORK/fake-start-test.sh"
   export DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh"
@@ -393,7 +447,7 @@ set_controller() {
 
 run_just() {
   set +e
-  FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" PLASMA_AUTO_TILER_KWIN_DIR="$WORK/fake-kwin" PLASMA_AUTO_TILER_NATIVE_SOURCE="$WORK/fake-native-source" PLASMA_AUTO_TILER_NATIVE_BUILD="$WORK/fake-native-build" PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/fake-native-stage" PLASMA_AUTO_TILER_TARGET_DIR="$WORK/fake-target" PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" PATH="$FAKE_BIN/bin:$PATH" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1
+  FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" PLASMA_AUTO_TILER_KWIN_DIR="$WORK/fake-kwin" PLASMA_AUTO_TILER_NATIVE_SOURCE="$WORK/fake-native-source" PLASMA_AUTO_TILER_NATIVE_BUILD="$WORK/fake-native-build" PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/fake-native-stage" PLASMA_AUTO_TILER_TARGET_DIR="$WORK/fake-target" PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake" PLASMA_AUTO_TILER_HOST_KWIN_BIN="$WORK/fake-host/kwin_wayland" PLASMA_AUTO_TILER_STORE_ROOT="$WORK/fake-store" NIX_BIN="$FAKE_BIN/bin/nix" RUSTC_BIN="$WORK/fake-store/hash-rustc/bin/rustc" CARGO_BIN="$WORK/fake-store/hash-cargo/bin/cargo" CMAKE_BIN="$WORK/fake-store/hash-cmake/bin/cmake" FAKE_DRV="$FAKE_DRV" FAKE_STORE_PATH="$FAKE_STORE_PATH" FAKE_DEV_OUT="$FAKE_DEV_OUT" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" PATH="$FAKE_BIN/bin:$PATH" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
 }
@@ -401,7 +455,7 @@ run_just() {
 run_just_async() {
   set +e
   set -m
-  FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" PLASMA_AUTO_TILER_KWIN_DIR="$WORK/fake-kwin" PLASMA_AUTO_TILER_NATIVE_SOURCE="$WORK/fake-native-source" PLASMA_AUTO_TILER_NATIVE_BUILD="$WORK/fake-native-build" PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/fake-native-stage" PLASMA_AUTO_TILER_TARGET_DIR="$WORK/fake-target" PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" FAKE_TAIL_FOLLOW_BLOCK="${FAKE_TAIL_FOLLOW_BLOCK:-0}" PATH="$FAKE_BIN/bin:$PATH" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1 &
+  FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" PLASMA_AUTO_TILER_KWIN_DIR="$WORK/fake-kwin" PLASMA_AUTO_TILER_NATIVE_SOURCE="$WORK/fake-native-source" PLASMA_AUTO_TILER_NATIVE_BUILD="$WORK/fake-native-build" PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/fake-native-stage" PLASMA_AUTO_TILER_TARGET_DIR="$WORK/fake-target" PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake" PLASMA_AUTO_TILER_HOST_KWIN_BIN="$WORK/fake-host/kwin_wayland" PLASMA_AUTO_TILER_STORE_ROOT="$WORK/fake-store" NIX_BIN="$FAKE_BIN/bin/nix" RUSTC_BIN="$WORK/fake-store/hash-rustc/bin/rustc" CARGO_BIN="$WORK/fake-store/hash-cargo/bin/cargo" CMAKE_BIN="$WORK/fake-store/hash-cmake/bin/cmake" FAKE_DRV="$FAKE_DRV" FAKE_STORE_PATH="$FAKE_STORE_PATH" FAKE_DEV_OUT="$FAKE_DEV_OUT" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" FAKE_TAIL_FOLLOW_BLOCK="${FAKE_TAIL_FOLLOW_BLOCK:-0}" PATH="$FAKE_BIN/bin:$PATH" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1 &
   JUST_ASYNC_PID=$!
   set +m
   set -e
@@ -503,7 +557,7 @@ run_just_real --dry-run build
 check_exit 0 "real justfile dry-run build"
 assert_contains "cargo build" "real justfile dry-run build rust"
 assert_contains "npm --prefix" "real justfile dry-run build kwin"
-assert_contains "cmake" "real justfile dry-run build native"
+assert_contains "nix-host-kwin-build.sh" "real justfile dry-run build native builder"
 
 run_just_real --dry-run build-rust
 check_exit 0 "real justfile dry-run build-rust"
@@ -515,7 +569,8 @@ assert_contains "npm --prefix" "real justfile dry-run build-kwin-script npm"
 
 run_just_real --dry-run build-native-effect
 check_exit 0 "real justfile dry-run build-native-effect"
-assert_contains "cmake" "real justfile dry-run build-native-effect cmake"
+assert_contains "nix-host-kwin-build.sh" "real justfile dry-run build-native-effect builder"
+assert_contains "resolve" "real justfile dry-run build-native-effect resolve"
 
 # dev-on: both up reports already up and changes nothing.
 reset_state
@@ -945,7 +1000,7 @@ run_just --dry-run build
 check_exit 0 "isolated dry-run build exit"
 assert_contains "cargo build" "isolated dry-run build rust"
 assert_contains "npm --prefix" "isolated dry-run build kwin"
-assert_contains "cmake" "isolated dry-run build native"
+assert_contains "nix-host-kwin-build.sh" "isolated dry-run build native builder"
 
 run_just --dry-run build-rust
 check_exit 0 "isolated dry-run build-rust"

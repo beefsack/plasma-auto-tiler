@@ -31,10 +31,10 @@ EFFECT_PLUGIN_ID="plasma-auto-tiler-active-border"
 # Derived from EFFECT_PLUGIN_ID so there is one place this identifier is
 # spelled out, not two.
 EFFECT_CONFIG_KEY="${EFFECT_PLUGIN_ID}Enabled"
-# KWin dev-package cmake config dir, used only when present (see
-# cmd_effect_install below). DOGFOOD_KWIN_DEV_CMAKE_DIR is a test-only
-# override with precedence over the development environment default.
-KWIN_DEV_CMAKE_DIR="${DOGFOOD_KWIN_DEV_CMAKE_DIR:-${PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR:-}}"
+# Host-matched native builder (scripts/nix-host-kwin-build.sh) owns all
+# KWin CMake resolution. The legacy pinned PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR
+# / DOGFOOD_KWIN_DEV_CMAKE_DIR path never drives or leaks into effect-install.
+BUILDER="$REPO_ROOT/scripts/nix-host-kwin-build.sh"
 
 # Normal roots derive from XDG paths. Test-only overrides: DOGFOOD_DATA_ROOT and
 # DOGFOOD_CONFIG_ROOT point the script at a throwaway tree so shell tests never
@@ -126,13 +126,18 @@ Commands:
   --help     show this help and exit
 
 Runtime tool-path overrides: NPM_BIN, KWRITECONFIG6_BIN, KREADCONFIG6_BIN,
-QDBUS_BIN, JQ_BIN, CMAKE_BIN.
+QDBUS_BIN, JQ_BIN.
 Test-only destination/config root overrides: DOGFOOD_DATA_ROOT,
 DOGFOOD_CONFIG_ROOT. Test-only effect-status session-delivery overrides:
 DOGFOOD_KWIN_ENVIRON_FILE (read this path instead of scanning /proc),
 DOGFOOD_KWIN_NOT_RUNNING (force the "process not found" branch).
-Test-only effect-install override: DOGFOOD_KWIN_DEV_CMAKE_DIR (overrides the
-default -DKWin_DIR= path used only when it exists on disk).
+Native effect compilation is host-matched via
+scripts/nix-host-kwin-build.sh, which resolves the exact current-system
+KWin derivation dev output (read-only `resolve` proves derivation metadata
+only; KWinConfig is validated inside `nix develop <host-drv>` where Nix has
+realized it) and builds inside `nix develop <host-drv>` with only explicit
+rustc from /nix/store (cmake comes from the host dev shell); it never uses
+a pinned KWin CMake dir nor outer cmake/cargo.
 
 install and uninstall never touch KWin configuration; enable, disable, and
 reload mutate kwinrc and reconfigure the running KWin session.
@@ -424,10 +429,12 @@ effect_install_abort() {
 }
 
 cmd_effect_install() {
-  require_tool CMAKE_BIN cmake
-  local cmake="$TOOL"
   require_tool KWRITECONFIG6_BIN kwriteconfig6
   local kwriteconfig="$TOOL"
+  [[ -x "$BUILDER" ]] || {
+    echo "error: host-matched builder missing or not executable: $BUILDER" >&2
+    exit 1
+  }
   if effect_env_refuse_dev_owned "$EFFECT_ENV_FILE" "overwrite"; then
     exit 1
   fi
@@ -445,7 +452,24 @@ cmd_effect_install() {
     echo "error: could not create native-effect transaction directory under $DATA_ROOT" >&2
     exit 1
   }
-  local install_build_dir="$install_transaction/build"
+  # Identity-keyed build dir inside the transaction shares the one common
+  # host-matched builder with staging; resolved read-only (metadata only;
+  # KWinConfig validated inside `nix develop` during build) before any build.
+  # Preserve builder stderr so resolution failure diagnostics are visible.
+  local builder_resolve_out=""
+  builder_resolve_out="$(env -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN bash "$BUILDER" resolve)" || {
+    rm -rf -- "$install_transaction"
+    echo "error: host KWin provenance resolution failed; refusing native-effect build (no fallback)" >&2
+    exit 1
+  }
+  local host_identity=""
+  host_identity="$(printf '%s\n' "$builder_resolve_out" | sed -n 's/^identity=//p' | head -n 1)"
+  if [[ ! "$host_identity" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    rm -rf -- "$install_transaction"
+    echo "error: invalid host package identity from builder: '${host_identity:-empty}'" >&2
+    exit 1
+  fi
+  local install_build_dir="$install_transaction/host-$host_identity-build"
   local install_payload="$install_transaction/payload"
   local install_root_backup="$install_transaction/previous-root"
   local install_env_backup="$install_transaction/previous-env"
@@ -459,17 +483,12 @@ cmd_effect_install() {
   trap 'effect_install_signal HUP' HUP
   trap 'effect_install_cleanup' EXIT
 
-  local cmake_args=(-S "$EFFECT_SOURCE_DIR" -B "$install_build_dir")
-  if [[ -d "$KWIN_DEV_CMAKE_DIR" ]]; then
-    cmake_args+=(-DKWin_DIR="$KWIN_DEV_CMAKE_DIR")
-  fi
-  cmake_args+=(-DBUILD_TESTING=OFF)
-  if ! "$cmake" "${cmake_args[@]}"; then
-    effect_install_abort "cmake configure failed for $EFFECT_SOURCE_DIR"
-  fi
-  effect_install_check_signal
-  if ! "$cmake" --build "$install_build_dir"; then
-    effect_install_abort "cmake --build failed for $install_build_dir"
+  # Host-matched compile into the transaction directory (one common builder;
+  # never direct cmake, never the legacy pinned KWin dir, never outer cmake).
+  # --expected-identity pins the caller resolve to the build resolve; the
+  # builder fails closed if the host changed in between.
+  if ! env -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN bash "$BUILDER" build --source "$EFFECT_SOURCE_DIR" --build-dir "$install_build_dir" --expected-identity "$host_identity"; then
+    effect_install_abort "host-matched native build failed for $EFFECT_SOURCE_DIR"
   fi
   effect_install_check_signal
 

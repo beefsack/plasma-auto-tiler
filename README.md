@@ -144,7 +144,10 @@ session):
 
 Other runtime tool requirements:
 
-- `jq` - used by `dry-run` to validate the source package metadata
+- `jq` - used by `dry-run` to validate the source package metadata and by
+  the host-matched native builder (`scripts/nix-host-kwin-build.sh`
+  `resolve`/`build`) to select the exact `dev` output from derivation
+  metadata
 
 `kwriteconfig6`, `kreadconfig6`, and `qdbus` are host Plasma runtime tools, not
 devenv dependencies. The script detects each required tool at runtime per
@@ -166,10 +169,12 @@ devenv shell --impure -- bash scripts/dogfood-install.sh setup
 `setup` always runs `install` then `enable` first; a real failure in either
 aborts the whole command with a non-zero exit, exactly as running that
 command standalone would. It then attempts `effect-install` and
-`effect-reload`. If a native build prerequisite (for example `cmake`) is
-unavailable - for example when not run inside `devenv shell --impure` - it
+`effect-reload`. If a host-matched native build prerequisite (for example
+`nix`, `jq`, portable `/nix/store` `rustc`, or the current-system KWin
+derivation/`dev` output) is unavailable or the build fails, it
 skips the native-effect half, reports that plainly, and still completes
-successfully (exit 0) with the KWin script installed and enabled. `setup`
+successfully (exit 0) with the KWin script installed and enabled. Outer
+`cmake`/`cargo` are never required for this path. `setup`
 always ends with a summary naming every stage's outcome and exactly what
 remains manual.
 
@@ -410,8 +415,13 @@ bash scripts/dogfood-install.sh effect-reload
 bash scripts/dogfood-install.sh effect-remove
 ```
 
-`effect-install` builds the effect and KCM against the pinned KWin ABI (needs
-`devenv shell --impure` for the pinned dev store paths) and stages them under
+`effect-install` builds the effect and KCM against the running host's
+current-system KWin derivation via `scripts/nix-host-kwin-build.sh`
+(read-only `resolve` proves derivation metadata only, then `build` runs
+`nix develop <host-drv>` where `cmake` must resolve host-native and only
+explicit `/nix/store` `rustc` is injected; outer `cmake`/`cargo` are never
+required and the legacy pinned `PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR` never
+drives or leaks) and stages them under
 `$XDG_DATA_HOME/plasma-auto-tiler-native-effect/kwin/effects/plugins/` and
 `$XDG_DATA_HOME/plasma-auto-tiler-native-effect/kwin/effects/configs/` (or the
 `$HOME/.local/share` equivalents), then writes a `QT_PLUGIN_PATH` export
@@ -484,18 +494,15 @@ after undo too. With no OpenGL backend there is no border.
 
 ### Building without Nix/devenv
 
-This is an unsupported build fallback, not part of the supported Nix-managed
-Plasma/KWin consumer scope. No non-Nix host integration or ABI compatibility is
-claimed.
+This is unsupported and separate from the dogfood path, not part of the
+supported Nix-managed Plasma/KWin consumer scope. No non-Nix host
+integration or ABI compatibility is claimed. It is not a dogfood fallback:
+`scripts/dogfood-install.sh effect-install` always builds through the host
+current-system derivation builder above and never falls through to plain
+`find_package` resolution.
 
-`scripts/dogfood-install.sh effect-install` normally runs inside `devenv
-shell --impure` so `cmake` can find KWin's dev package via a pinned Nix
-store path (`-DKWin_DIR=...`), matching the exact KWin build this repo's
-`devenv.nix` targets. `kwin/native-effect/CMakeLists.txt` itself only needs
-a plain `find_package(KWin REQUIRED)` - the pinned override is layered on
-top by the install script and used only when that exact pinned path exists
-on disk; on any other host `cmake` falls through to this plain
-`find_package` resolution automatically, with no script change needed.
+`kwin/native-effect/CMakeLists.txt` itself only needs
+a plain `find_package(KWin REQUIRED)`.
 
 To build the native effect on a non-Nix host, install your distribution's
 KWin development package first - typically `kwin` on Arch (headers and

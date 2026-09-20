@@ -8,26 +8,20 @@ Only meaningful pending or active work is listed.
   transiently loads project effects, and unloads only invocation-owned loads;
   preloaded effects and persistent enabled settings are preserved. Isolated
   setup, collision, lifecycle, interrupt, and new-inode staging checks pass.
-  User ran setup and logged out/in; read-only inspection now proves both
-  plugins are discovered, but the staged factory ABI is KWin 6.7.4 and the host
-  requires 6.7.5. Preflight now diagnoses the proven Nix ABI mismatch explicitly.
-  Approved interim alignment of `devenv.yaml`/`devenv.lock` is complete at host
-  Nixpkgs revision `e554fab72f81915600f3f449b786fd9af40439a5`; package evaluation
-  selects KWin 6.7.5 and matching development output. `flake.lock` is unchanged.
-  Next: user re-enters the dev environment, runs `just build-native-effect`,
-  logs out/in, and runs `just dev trace`. Existing staged binaries were not
-  rebuilt by this input update. Long-term host matching remains separate below.
+  User setup and session restart proved discovery; the subsequent 6.7.4/6.7.5
+  ABI mismatch is now addressed by the host-derived native builder. Direct
+  staging and dogfood compilation share the exact current-system KWin
+  derivation/dev environment, independent of the portable devenv pin. Actual
+  native build/staging against host KWin 6.7.5 and 27 native CTest cases pass;
+  shared lockfiles are unchanged. Next: user restarts the development session
+  for changed `devenv.nix`, logs out/in, then runs `just dev trace`. Matching
+  native binaries are already staged; no additional build is required first.
   Native load/oracle/cleanup acceptance remains pending. Native rebuild
   activation requires a fresh session; unload is not proof of library release.
   No agent host mutation occurred. Removal and dogfood coexistence refusal
   remain live-unverified.
   [record](changes/archive/native-dev-setup-lifecycle.md)
-- P2 | Portable host-matched native development builds | Replace the interim
-  practice of repinning the shared development lockfile for each host KWin
-  version. User requires a better long-term solution; investigate a reproducible
-  host-compatible native build input without coupling the whole development
-  environment to one machine. Exact input selection and delivery design remain
-  unselected; do not broaden the currently approved pin update into this work.
+  [host builder](changes/archive/host-matched-native-development-builds.md)
 - P1 | Remaining native window alignment | Ghostty's
   persistent short frame remains unresolved: a requested `2032x1092` became
   `1920x1036`, matching secondary usable size, while another primary Ghostty
