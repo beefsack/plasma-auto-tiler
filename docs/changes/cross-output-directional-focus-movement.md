@@ -114,6 +114,39 @@ Restore the documented COSMIC output-edge behavior for `Meta+Arrow` focus and
   a committed occupied-target transfer plans the immediate reverse R4 from the
   retained target pair.
 
+## Geometry-Fence Correction
+
+- The supplied `/run/user/1000/plasma-auto-tiler-dev.kjFKIE.log` records the
+  `plan-1-p3` left transfer requesting the correct DP-6 rectangles: the mover
+  and target Ghostty are both `1012x1092` at lines 24 and 41-42. Output and
+  same-workspace desktop readback both completed (lines 38-39), but the first
+  `r4-geometry-echo` occurred before any geometry write (line 37 precedes
+  lines 40-42). The adapter previously counted that `sendClientToScreen`
+  intermediate mover geometry as the planned mover resize, then considered the
+  geometry fence complete once the remaining echoes arrived. Its exact
+  post-readback instead terminally reported `post-observation-mismatch` at
+  line 47 and sent `adapter-lost` (line 25). Every later command was a planner
+  `diverged/adapter-lost` followed by adapter `service-fault`, not a live
+  single-flight busy refusal.
+- `onR4GeometryEcho` now consumes a per-window geometry fence only after it
+  reads that exact window at its planned rectangle. An intermediate or
+  different client-committed rectangle leaves the existing bounded deadline
+  armed, then terminates as `timeout` if no exact echo arrives; it never
+  acknowledges, verifies, commits, retries, or accepts a client-size drift.
+  The regression uses a shorter source work area, taller target work area, an
+  output-transfer mover echo before geometry writes, and a delayed final mover
+  echo. It failed before the correction by sending the accepted ack early, then
+  completes ack, verify, and commit after the final exact echo.
+- KWin 6.7.5 source confirms the ordering is meaningful: `Window::sendToOutput`
+  first calls `moveResize` (`src/window.cpp:3879-3923`), while the subsequent
+  script frame write runs through XDG configure/ack/client commit
+  (`src/xdgshellwindow.cpp:85-289`). KWin ultimately uses the
+  client-committed frame geometry. KWin's public script surface does not expose
+  a window's XDG minimum/maximum sizes or configure serials, so this record
+  does not attribute the final `1012x1036` Ghostty frame to an app constraint,
+  KWin rule, or scaling conversion. The sibling Ghostty reaching `1092` proves
+  only that the DP-6 work area itself permits that height.
+
 ## Outcome
 
 - The active `DescribePlan` route validates complete two-domain evidence and
@@ -131,7 +164,7 @@ Restore the documented COSMIC output-edge behavior for `Meta+Arrow` focus and
   wrong output, failed write, or incomplete proof, with no replay.
 - Offline verification completed 2026-09-20: `cargo fmt --check`, `cargo test`
   (299 unit tests plus all integration suites), `npm --prefix kwin run
-  typecheck`, `npm --prefix kwin run test` (807 passed, 0 failed), and `npm
+  typecheck`, `npm --prefix kwin run test` (808 passed, 0 failed), and `npm
   --prefix kwin run build` (497.2 kB bundle).
 - The user manually confirmed the rightward native transfer rendered as
   `left W1`, `right H[W2 W3]`; the trace also records its native writes. This
@@ -140,3 +173,8 @@ Restore the documented COSMIC output-edge behavior for `Meta+Arrow` focus and
 - The full corrected same-workspace outbound-and-immediate-reverse sequence
   remains the required live acceptance boundary; no broader live correctness
   claim is made.
+- The premature intermediate-geometry fence consumption is corrected and
+  statically verified. The Ghostty `1012x1036` final frame is a separate,
+  unresolved native/client constraint observation: it is neither attributed
+  nor accepted, and the next trace must establish exact geometry plus commit
+  or the bounded timeout before local or reverse movement is evaluated.

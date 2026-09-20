@@ -24,12 +24,14 @@ function twoDomainObserved(
         xRect?: { x: number; y: number; w: number; h: number };
         bRect?: { x: number; y: number; w: number; h: number };
         targetWorkspace?: string;
+        targetBounds?: { x: number; y: number; w: number; h: number };
     } = {},
 ): PlanObserved {
     const focused = opts.focused ?? r.a;
     const aRect = opts.aRect ?? { x: 810, y: 10, w: 100, h: 80 };
     const xRect = opts.xRect ?? { x: 10, y: 10, w: 100, h: 80 };
     const targetWorkspace = opts.targetWorkspace ?? "ws-b";
+    const targetBounds = opts.targetBounds ?? { x: 800, y: 0, w: 800, h: 600 };
     const extra =
         opts.bRect === undefined
             ? []
@@ -66,7 +68,7 @@ function twoDomainObserved(
             Object.freeze({
                 output: "out-2",
                 workspace: targetWorkspace,
-                bounds: { x: 800, y: 0, w: 800, h: 600 },
+                bounds: targetBounds,
                 gap: 4,
                 outerGap: 8,
                 adjacent: Object.freeze({ left: "out-1" }),
@@ -232,7 +234,7 @@ function crossFocusReply(correlation: string): string {
     });
 }
 
-function crossMoveReply(correlation: string, targetWorkspace = "ws-b"): string {
+function crossMoveReply(correlation: string, targetWorkspace = "ws-b", targetHeight = 580): string {
     return JSON.stringify({
         v: 1,
         correlation_id: correlation,
@@ -240,8 +242,8 @@ function crossMoveReply(correlation: string, targetWorkspace = "ws-b"): string {
         base_revision: 2,
         detail: { kind: "move", rule: "R4", capability: "CrossOutputTransfer", direction: "right" },
         desired_geometry: [
-            { window: "win-a", leaf: "leaf-a", output: "out-2", workspace: targetWorkspace, rect: { x: 810, y: 10, w: 380, h: 580 } },
-            { window: "win-x", leaf: "leaf-x", output: "out-2", workspace: targetWorkspace, rect: { x: 1200, y: 10, w: 380, h: 580 } },
+            { window: "win-a", leaf: "leaf-a", output: "out-2", workspace: targetWorkspace, rect: { x: 810, y: 10, w: 380, h: targetHeight } },
+            { window: "win-x", leaf: "leaf-x", output: "out-2", workspace: targetWorkspace, rect: { x: 1200, y: 10, w: 380, h: targetHeight } },
         ],
         desired_focus: { domain_output: "out-2", domain_workspace: targetWorkspace, leaf: "leaf-a" },
         operation: {
@@ -559,6 +561,7 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
         geoHandlers: Map<string, () => void>;
         sentTransfers: Array<{ mover: object; output: object }>;
         sentMemberships: Array<{ mover: object; refs: ReadonlyArray<object> }>;
+        duringTransfer?: () => void;
     }
 
     function r4Mocks(r: { a: object; b: object; x: object }): { mocks: Mocks; native: R4Native } {
@@ -592,6 +595,7 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
                 return false;
             }
             native.outputOfMover = (output as { name: string }).name;
+            native.duringTransfer?.();
             return true;
         };
         env["setDesktops"] = (mover: object, refs: ReadonlyArray<object>): boolean => {
@@ -774,6 +778,37 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
         assert.equal(mocks.dbusCalls.length, 3);
         mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 }));
         assert.equal(adapter.isR4InFlight, false);
+        assert.equal(adapter.isInFlight, false);
+    });
+
+    it("waits for the mover's final geometry after an output-transfer geometry echo", () => {
+        const r = refs();
+        const { mocks, native } = r4Mocks(r);
+        native.duringTransfer = () => native.geoHandlers.get("win-a")?.();
+        mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
+            status: "ready",
+            observed: twoDomainObserved(r, { targetBounds: { x: 800, y: 0, w: 800, h: 720 } }),
+        });
+        const adapter = enable(mocks);
+        adapter.requestMove("right");
+        const correlation = payload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(crossMoveReply(correlation, "ws-b", 700));
+
+        // sendClientToScreen repositions the mover before its queued XDG resize
+        // reaches the client. That intermediate echo must not consume the
+        // mover's planned-geometry fence.
+        native.outputHandlers.forEach((handler) => handler(native.out1));
+        native.desktopsHandlers.forEach((handler) => handler());
+        native.geoHandlers.get("win-x")?.();
+        assert.equal(mocks.dbusCalls.length, 1);
+        assert.equal(adapter.isR4InFlight, true);
+
+        // The delayed client resize now reports the exact target rectangle.
+        native.geoHandlers.get("win-a")?.();
+        assert.equal(mocks.dbusCalls.length, 2);
+        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", base_revision: 2 }));
+        assert.equal(mocks.dbusCalls.length, 3);
+        mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 }));
         assert.equal(adapter.isInFlight, false);
     });
 

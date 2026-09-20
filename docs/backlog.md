@@ -10,7 +10,7 @@ Only meaningful pending or active work is listed.
   Canonical per-domain state is retained without spatial reseeding. Native
   transfer uses public `workspace.sendClientToScreen`; confirmed target output
   and desktop membership permits one prompt follow, while complete geometry
-  and ack/verify gate commit. Rust tests, 807 KWin tests, typecheck, and build
+  and ack/verify gate commit. Rust tests, 808 KWin tests, typecheck, and build
   pass. User manually observed one successful rightward transfer:
   left `H[W1 W2]`, right `W3` became left `W1`, right `H[W2 W3]`.
   Immediate leftward return of W2 then failed. Exact supplied log
@@ -18,9 +18,16 @@ Only meaningful pending or active work is listed.
   membership produced no echo, so the outbound transfer timed out and diverged.
   Static correction accepts fresh exact membership readback when the mover
   already had the target desktop; changed membership still requires its echo.
-  Next: fresh `just dev trace`, repeat right then left, verifying both moves
-  complete. This accepts only the previously observed one-way movement, not
-  corrected transaction completion or general cross-output operation.
+  New test: right `H[W2 W3]` to left `W1` produced left `H[W1 W2]`, right
+  `W3`, but W2's bottom edge remained roughly 5% short. Both return-right and
+  local-left swap then failed. `/run/user/1000/plasma-auto-tiler-dev.kjFKIE.log`
+  proves an intermediate output-transfer geometry signal was counted before
+  planned writes, causing premature post-observation mismatch and divergence.
+  Static correction consumes each geometry fence only at the exact planned
+  rectangle and otherwise waits within the existing deadline. Ghostty's final
+  `1012x1036` versus requested `1012x1092` remains unexplained, not accepted as
+  correct or bypassed. Next: fresh trace repeats right-to-left and records final
+  exact geometry/commit or timeout before testing subsequent local/return moves.
   Up/Down local behavior and directional workspace cycling are unchanged.
   [record](changes/cross-output-directional-focus-movement.md)
 - P1 | Native dev setup and lifecycle live gate | Explicit `just dev-native-setup`

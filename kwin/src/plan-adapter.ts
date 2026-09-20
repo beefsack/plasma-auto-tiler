@@ -4973,6 +4973,28 @@ export class PlanAdapter {
         if (!r4.geoPending.has(windowId)) {
             return;
         }
+        const expected = r4.planned.geometry.find((entry) => entry.window === windowId);
+        if (expected === undefined) {
+            this.failR4Terminal("precondition-mismatch", true);
+            return;
+        }
+        const ref = r4.byRef.get(windowId);
+        if (ref === undefined) {
+            this.failR4Terminal("precondition-mismatch", true);
+            return;
+        }
+        let rect: PlanRect | null = null;
+        try {
+            rect = this.env.readGeometry?.(ref) ?? null;
+        } catch (error) {
+            void error;
+        }
+        // sendClientToScreen can emit an intermediate mover geometry before
+        // its queued Wayland resize commits. Keep this per-window fence armed
+        // until an echo reads back the exact planned rectangle.
+        if (rect === null || rect.x !== expected.rect.x || rect.y !== expected.rect.y || rect.w !== expected.rect.w || rect.h !== expected.rect.h) {
+            return;
+        }
         r4.geoPending.delete(windowId);
         this.diag(r4.op, r4.correlation, r4.planned.geometry.length, "r4-geometry-echo");
         this.tryR4MaybeAck(flight, session);
