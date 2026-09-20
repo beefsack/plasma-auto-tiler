@@ -244,6 +244,26 @@ effect_loaded_word() {
   fi
 }
 
+# KWin encodes its non-compatible effect-factory ABI in the plugin IID. On a
+# Nix host, the running KWin package path supplies the corresponding version.
+# This is only a diagnostic: an unrecognized layout leaves preflight generic.
+native_abi_skew_hint() {
+  local status runtime_bin runtime_version border_iid oracle_iid border_version oracle_version
+  [[ -f "$BORDER_SO" && -f "$ORACLE_SO" ]] || return 1
+  status="$(busctl --user status org.kde.KWin 2>/dev/null)" || return 1
+  runtime_bin="$(sed -n 's/^CommandLine=\([^[:space:]]*\).*$/\1/p' <<<"$status")"
+  [[ "$runtime_bin" =~ ^/nix/store/[^/]+-kwin-([0-9]+\.[0-9]+\.[0-9]+)/bin/kwin_wayland$ ]] || return 1
+  runtime_version="${BASH_REMATCH[1]}"
+  border_iid="$(LC_ALL=C grep -aoE 'org\.kde\.kwin\.EffectPluginFactory[0-9]+\.[0-9]+\.[0-9]+' "$BORDER_SO" 2>/dev/null | sort -u)"
+  oracle_iid="$(LC_ALL=C grep -aoE 'org\.kde\.kwin\.EffectPluginFactory[0-9]+\.[0-9]+\.[0-9]+' "$ORACLE_SO" 2>/dev/null | sort -u)"
+  [[ "$border_iid" =~ ^org\.kde\.kwin\.EffectPluginFactory([0-9]+\.[0-9]+\.[0-9]+)$ ]] || return 1
+  border_version="${BASH_REMATCH[1]}"
+  [[ "$oracle_iid" =~ ^org\.kde\.kwin\.EffectPluginFactory([0-9]+\.[0-9]+\.[0-9]+)$ ]] || return 1
+  oracle_version="${BASH_REMATCH[1]}"
+  [[ "$border_version" != "$runtime_version" || "$oracle_version" != "$runtime_version" ]] || return 1
+  echo "hint: staged native effect ABI differs from running KWin (active-border=$border_version, drag-oracle=$oracle_version, KWin=$runtime_version); rebuild the stage with a matching KWin development package, then start a new Plasma session. Setup alone cannot resolve this ABI mismatch." >&2
+}
+
 verify_kwin_owner() {
   local expect_owner="$1" expect_pid="$2" expect_start="$3" current_owner current_pid current_start
   [[ "$expect_owner" =~ ^:[0-9]+\.[0-9]+$ ]] || {
@@ -322,7 +342,9 @@ cmd_preflight() {
   if [[ "$border_supported" != "true" || "$oracle_supported" != "true" ]]; then
     echo "error: one or more dev native effects are unavailable to KWin (isEffectSupported: $BORDER_EFFECT=$border_supported, $ORACLE_EFFECT=$oracle_supported)" >&2
     echo "hint: this result does not establish a session boundary and may indicate a plugin load, factory, or ABI failure, not only missing discovery." >&2
-    echo "hint: run 'just dev-native-setup', then log out and log back in (or start a new session), then re-run. If still unsupported after a new session with a current env script, check KWin plugin-loading diagnostics (journalctl --user -b) around $BORDER_EFFECT / $ORACLE_EFFECT." >&2
+    if ! native_abi_skew_hint; then
+      echo "hint: run 'just dev-native-setup', then log out and log back in (or start a new session), then re-run. If still unsupported after a new session with a current env script, check KWin plugin-loading diagnostics (journalctl --user -b) around $BORDER_EFFECT / $ORACLE_EFFECT." >&2
+    fi
     exit 2
   fi
 }

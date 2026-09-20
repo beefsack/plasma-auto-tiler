@@ -313,6 +313,9 @@ case "$*" in
   *"GetConnectionUnixProcessID s :"*)
     pid="$(cat "$state/kwin-pid" 2>/dev/null || printf '5151')"
     printf '{"type":"u","data":[%s]}\n' "$pid" ;;
+  *"status org.kde.KWin"*)
+    if [[ -f "$state/status-fail" ]]; then exit 1; fi
+    printf 'CommandLine=/nix/store/fake-kwin-6.7.5/bin/kwin_wayland --wayland-fd 7\n' ;;
   *"isEffectSupported"*)
     if [[ -f "$state/supported-fail" ]]; then exit 1; fi
     if [[ -f "$state/supported-malformed" ]]; then printf '{"type":"b","data":[true,false]}\n'; exit 0; fi
@@ -351,6 +354,10 @@ EOF
   export FAKE_STATE_DIR="$WORK/p2/state"
   export FAKE_CALL_LOG="$WORK/p2/calls.log"
   export PROC_ROOT="$WORK/p2/proc"
+  export PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/p2/stage"
+  mkdir -p "$PLASMA_AUTO_TILER_NATIVE_STAGE/kwin/effects/plugins"
+  printf 'x\0org.kde.kwin.EffectPluginFactory6.7.4\0' > "$PLASMA_AUTO_TILER_NATIVE_STAGE/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+  printf 'x\0org.kde.kwin.EffectPluginFactory6.7.4\0' > "$PLASMA_AUTO_TILER_NATIVE_STAGE/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
   mkdir -p "$PROC_ROOT/5151"
   printf '5151 (kwin_wayland) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 777888\n' > "$PROC_ROOT/5151/stat"
   printf '5151\n' > "$WORK/p2/state/kwin-pid"
@@ -362,7 +369,7 @@ EOF
 }
 
 p2_reset() {
-  rm -f "$WORK/p2/state"/kwin-unowned "$WORK/p2/state"/kwin-owner "$WORK/p2/state"/owner-malformed "$WORK/p2/state"/supported-fail "$WORK/p2/state"/supported-malformed "$WORK/p2/state"/loaded-fail "$WORK/p2/state"/loaded-malformed "$WORK/p2/state"/load-fail "$WORK/p2/state"/load-fail-oracle "$WORK/p2/state"/unload-fail "$WORK/p2/state"/unload-fail-oracle
+  rm -f "$WORK/p2/state"/kwin-unowned "$WORK/p2/state"/kwin-owner "$WORK/p2/state"/owner-malformed "$WORK/p2/state"/status-fail "$WORK/p2/state"/supported-fail "$WORK/p2/state"/supported-malformed "$WORK/p2/state"/loaded-fail "$WORK/p2/state"/loaded-malformed "$WORK/p2/state"/load-fail "$WORK/p2/state"/load-fail-oracle "$WORK/p2/state"/unload-fail "$WORK/p2/state"/unload-fail-oracle
   printf '5151\n' > "$WORK/p2/state/kwin-pid"
   printf 'true\n' > "$WORK/p2/state/border-supported"
   printf 'true\n' > "$WORK/p2/state/oracle-supported"
@@ -389,7 +396,7 @@ part2_tests() {
   assert_contains "effect plasma-auto-tiler-active-border supported=true loaded=false" "preflight border"
   assert_contains "effect plasma-auto-tiler-drag-oracle supported=true loaded=false" "preflight oracle"
 
-  # Unsupported actionable (exit 2, setup + logout/login + factory/ABI, not only discovery).
+  # Unsupported ABI skew is actionable without incorrectly repeating setup.
   p2_reset
   printf 'false\n' > "$WORK/p2/state/oracle-supported"
   set +e
@@ -399,7 +406,22 @@ part2_tests() {
   check_exit 2 "preflight unsupported"
   assert_contains "does not establish a session boundary" "unsupported not only discovery"
   assert_contains "plugin load, factory, or ABI failure" "unsupported factory"
-  assert_contains "log out" "unsupported logout"
+  assert_contains "active-border=6.7.4, drag-oracle=6.7.4, KWin=6.7.5" "unsupported ABI versions"
+  assert_contains "Setup alone cannot resolve this ABI mismatch" "unsupported ABI no repeat setup"
+  assert_not_contains "just dev-native-setup" "unsupported ABI omits setup"
+
+  # Without recognized ABI evidence, retain the generic delivery guidance.
+  p2_reset
+  touch "$WORK/p2/state/status-fail"
+  printf 'false\n' > "$WORK/p2/state/oracle-supported"
+  set +e
+  bash "$HELPER" preflight >"$OUTPUT" 2>&1
+  EXIT=$?
+  set -e
+  check_exit 2 "preflight unsupported generic fallback"
+  assert_contains "just dev-native-setup" "unsupported generic setup"
+  assert_contains "log out" "unsupported generic logout"
+  assert_not_contains "Setup alone cannot resolve this ABI mismatch" "unsupported generic no ABI claim"
 
   # Transport failure ordinary (exit 1).
   p2_reset

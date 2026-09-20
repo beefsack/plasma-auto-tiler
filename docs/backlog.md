@@ -8,11 +8,16 @@ Only meaningful pending or active work is listed.
   transiently loads project effects, and unloads only invocation-owned loads;
   preloaded effects and persistent enabled settings are preserved. Isolated
   setup, collision, lifecycle, interrupt, and new-inode staging checks pass.
-  Next: user runs setup, logs out/in, then verifies `just dev trace` discovery,
-  oracle operation, and cleanup. Native rebuild activation still requires a
-  fresh session; unload is not proof of library release. No host setup or native
-  lifecycle mutation was performed during implementation. Removal and dogfood
-  coexistence refusal remain live-unverified.
+  User ran setup and logged out/in; read-only inspection now proves both
+  plugins are discovered, but the staged factory ABI is KWin 6.7.4 and the host
+  requires 6.7.5. Preflight now diagnoses the proven Nix ABI mismatch explicitly.
+  Next decision: align `devenv.yaml`/`devenv.lock` to host Nixpkgs revision
+  `e554fab72f81915600f3f449b786fd9af40439a5`, replacing the development package
+  set, then re-enter the dev environment, rebuild native effects, and log out/in.
+  Native load/oracle/cleanup acceptance remains pending. Native rebuild
+  activation requires a fresh session; unload is not proof of library release.
+  No agent host mutation occurred. Removal and dogfood coexistence refusal
+  remain live-unverified.
   [record](changes/archive/native-dev-setup-lifecycle.md)
 - P1 | Remaining native window alignment | Ghostty's
   persistent short frame remains unresolved: a requested `2032x1092` became

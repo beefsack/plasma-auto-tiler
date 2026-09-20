@@ -119,3 +119,33 @@
   logout/login, native load/unload in the running session, interrupt timing
   in `just dev`, and visual border rendering remain pending live evidence; no
   live result is claimed.
+
+## Live Setup Diagnosis (2026-09-20)
+
+- After the implemented `just dev-native-setup` and a logout/login, the
+  project-owned env script was present with its exact stage prefix and the
+  current user-manager `QT_PLUGIN_PATH` included that prefix. KWin's current
+  `listOfEffects` included both plugin IDs and its boot journal named both
+  exact staged `.so` paths. Discovery, stage structure, file permissions, and
+  session delivery therefore succeeded.
+- Both effects remained `isEffectSupported=false` because the staged plugins
+  embed `org.kde.kwin.EffectPluginFactory6.7.4` and link KWin 6.7.4, while the
+  running KWin 6.7.5 exposes `org.kde.kwin.EffectPluginFactory6.7.5`. KWin's
+  factory IID has no binary-compatibility guarantee across this version
+  boundary. The current `devenv.nix`/`build-native-effect` producer is pinned
+  to the incompatible 6.7.4 package set.
+- The host declares but has not realized its 6.7.5 `kwin.dev` output. Using it
+  would materialize a host package and was not attempted. Correcting the
+  pinned producer or selecting a host-matching development package requires a
+  delivery-policy decision before implementation; no host state was changed.
+- Preflight now detects this exact Nix ABI skew from each staged plugin's
+  embedded factory IID and the running KWin package path. It reports the
+  versions and says that setup alone cannot resolve the mismatch, while
+  preserving the generic session-delivery guidance for unrecognized layouts.
+- The host reports Nixpkgs revision
+  `e554fab72f81915600f3f449b786fd9af40439a5`; the repository's
+  `devenv.lock` instead resolves Nixpkgs
+  `54ba4bcec4043e72a4006d825e0d7aff5562008f`. Replacing the latter's
+  Cachix rolling input with the former is a reproducible repo-owned correction,
+  but changes the complete development package set and remains a scoped
+  source-authority decision.
