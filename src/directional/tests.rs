@@ -340,6 +340,7 @@ fn r4_occupied_and_empty_after_boundary_s20_s22_s23_p1_p5_f1_f3() {
         MoveOperation::CrossOutput {
             rule: Rule::R4,
             target_output: OutputId::from("left"),
+            target_workspace: WorkspaceId::from("workspace-1"),
             source_root_child_index: 0,
             target: CrossOutputTarget::Occupied,
         }
@@ -355,6 +356,7 @@ fn r4_occupied_and_empty_after_boundary_s20_s22_s23_p1_p5_f1_f3() {
         MoveOperation::CrossOutput {
             rule: Rule::R4,
             target_output: OutputId::from("left"),
+            target_workspace: WorkspaceId::from("workspace-1"),
             source_root_child_index: 0,
             target: CrossOutputTarget::Empty,
         }
@@ -362,7 +364,7 @@ fn r4_occupied_and_empty_after_boundary_s20_s22_s23_p1_p5_f1_f3() {
 }
 
 #[test]
-fn r4_denied_without_adjacency_or_on_workspace_mismatch_s5_s6_s17_s21_m3() {
+fn r4_denied_without_adjacency_and_never_vertically() {
     let tree = group("root", Axis::Horizontal, vec![leaf("W"), leaf("B")]);
     let missing = single_output(tree.clone());
     assert_eq!(
@@ -372,7 +374,29 @@ fn r4_denied_without_adjacency_or_on_workspace_mismatch_s5_s6_s17_s21_m3() {
         }
     );
 
-    let mut mismatched = snapshot(vec![
+    // Up/Down never cross even with vertical adjacency: local behavior only.
+    let vertical = snapshot(vec![
+        output("top", Some(leaf("X")), vec![(Direction::Down, "source")]),
+        output(
+            "source",
+            Some(group("root-v", Axis::Vertical, vec![leaf("W"), leaf("B")])),
+            vec![(Direction::Up, "top")],
+        ),
+    ]);
+    let outcome = plan_move(&vertical, &intent("source", "W", Direction::Up));
+    assert!(
+        !matches!(
+            outcome,
+            MoveOutcome::Planned(ref plan) if plan.rule == Rule::R4
+        ),
+        "vertical output crossing must never plan R4"
+    );
+}
+
+#[test]
+fn r4_cross_workspace_targets_adjacent_current_workspace() {
+    let tree = group("root", Axis::Horizontal, vec![leaf("W"), leaf("B")]);
+    let mut cross = snapshot(vec![
         output(
             "target",
             Some(leaf("X")),
@@ -380,20 +404,26 @@ fn r4_denied_without_adjacency_or_on_workspace_mismatch_s5_s6_s17_s21_m3() {
         ),
         output("source", Some(tree), vec![(Direction::Left, "target")]),
     ]);
-    mismatched.outputs[0].workspace = WorkspaceId::from("workspace-2");
-    // Repair the link workspace so topology validates; the denial under test
-    // is the output-scope mismatch at the R4 gate.
-    for link in &mut mismatched.windows {
+    cross.outputs[0].workspace = WorkspaceId::from("workspace-2");
+    for link in &mut cross.windows {
         if link.output.0 == "target" {
             link.workspace = WorkspaceId::from("workspace-2");
         }
     }
-    assert_eq!(
-        plan_move(&mismatched, &intent("source", "W", Direction::Left)),
-        MoveOutcome::Noop {
-            reason: NoopReason::NoAdjacentOutput
+    let outcome = plan_move(&cross, &intent("source", "W", Direction::Left));
+    let plan = planned(&outcome);
+    assert_eq!(plan.rule, Rule::R4);
+    match &plan.operation {
+        MoveOperation::CrossOutput {
+            target_output,
+            target_workspace,
+            ..
+        } => {
+            assert_eq!(target_output, &OutputId::from("target"));
+            assert_eq!(target_workspace, &WorkspaceId::from("workspace-2"));
         }
-    );
+        other => panic!("expected cross-output, got {other:?}"),
+    }
 }
 
 // ---- validation translations (fail-closed topology) ----

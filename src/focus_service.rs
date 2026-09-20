@@ -345,6 +345,7 @@ fn precondition_str(value: &crate::contract::FocusPrecondition) -> &'static str 
         P::FocusedLeafOccupiedByFocusedWindow => "focused-leaf-occupied-by-focused-window",
         P::TargetLeafOccupied => "target-leaf-occupied",
         P::FocusTargetsSameDomain => "focus-targets-same-domain",
+        P::FocusTargetsAdjacentOutput => "focus-targets-adjacent-output",
         P::AdapterMustVerifyPostconditions => "adapter-must-verify-postconditions",
     }
 }
@@ -1234,6 +1235,10 @@ impl FocusService {
                 .iter()
                 .map(|id| NodeId(id.clone()))
                 .collect(),
+            // Shared-contract compatibility only: legacy local focus never
+            // carries a cross source; preserved pre-change behavior.
+            cross_source_output: None,
+            cross_source_workspace: None,
         };
         // Bind the post-observation fingerprint exactly to the deterministic
         // observation (seeded membership + verified target as focused).

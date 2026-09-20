@@ -841,9 +841,7 @@ mod tests {
             "reply line must carry full JSON: {lines:?}"
         );
         assert!(
-            lines
-                .0
-                .starts_with("plasma-auto-tiler:plan-trace:request "),
+            lines.0.starts_with("plasma-auto-tiler:plan-trace:request "),
             "{lines:?}"
         );
         assert!(

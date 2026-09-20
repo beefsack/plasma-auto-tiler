@@ -924,6 +924,8 @@ fn cross_kind_verify_diverges() {
         to_window: WindowId("win-3".to_owned()),
         direction: Direction::Right,
         route: vec![NodeId("leaf-win-3".to_owned())],
+        cross_source_output: None,
+        cross_source_workspace: None,
     };
     let cross = plasma_auto_tiler::contract::FocusPostObservation::new(
         Observation::new(owner(), generation(), base, 2),

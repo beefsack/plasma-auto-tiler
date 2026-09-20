@@ -620,6 +620,7 @@ pub enum FocusPrecondition {
     FocusedLeafOccupiedByFocusedWindow,
     TargetLeafOccupied,
     FocusTargetsSameDomain,
+    FocusTargetsAdjacentOutput,
     AdapterMustVerifyPostconditions,
 }
 
@@ -636,11 +637,16 @@ pub struct FocusIntent {
 }
 
 /// Structural focus operation with fully resolved portable identities.
-/// Names the exact logical domain, the source and target leaves/windows, the
-/// intentional direction, and the deterministic tree-relative `route` from the
-/// directional planner (group-to-leaf descent, outermost first including the
-/// target leaf). No geometry or native handles; desired topology is unmodified
-/// and carried by the session layer.
+///
+/// For local focus, `domain_output`/`domain_workspace` name the single domain
+/// containing both leaves and `cross_source` is `None`. For cross-output
+/// focus (Left/Right exhausted edge to a horizontally adjacent output's
+/// currently selected logical workspace), `domain_output`/`domain_workspace`
+/// name the TARGET domain, `from_*` name the source focused leaf/window,
+/// `to_*` name the target focused leaf/window, `cross_source` names the
+/// source domain, and `route` is the single-element `[to_leaf]` (no
+/// tree-relative descent across domains). No geometry or native handles;
+/// desired topology is unmodified and carried by the session layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FocusOperation {
     pub domain_output: OutputId,
@@ -651,6 +657,8 @@ pub struct FocusOperation {
     pub to_window: WindowId,
     pub direction: Direction,
     pub route: Vec<NodeId>,
+    pub cross_source_output: Option<OutputId>,
+    pub cross_source_workspace: Option<WorkspaceId>,
 }
 
 impl FocusOperation {
@@ -664,12 +672,25 @@ impl FocusOperation {
     /// [`FocusPrecondition::AdapterMustVerifyPostconditions`]).
     #[must_use]
     pub fn preconditions(&self) -> Vec<FocusPrecondition> {
+        let domain_target =
+            if self.cross_source_output.is_some() || self.cross_source_workspace.is_some() {
+                FocusPrecondition::FocusTargetsAdjacentOutput
+            } else {
+                FocusPrecondition::FocusTargetsSameDomain
+            };
         vec![
             FocusPrecondition::FocusedLeafOccupiedByFocusedWindow,
             FocusPrecondition::TargetLeafOccupied,
-            FocusPrecondition::FocusTargetsSameDomain,
+            domain_target,
             FocusPrecondition::AdapterMustVerifyPostconditions,
         ]
+    }
+
+    /// Whether this operation is a cross-output focus (has an explicit
+    /// cross source distinct from the target domain).
+    #[must_use]
+    pub fn is_cross_output(&self) -> bool {
+        self.cross_source_output.is_some() || self.cross_source_workspace.is_some()
     }
 }
 

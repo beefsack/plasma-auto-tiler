@@ -1369,3 +1369,143 @@ fn strict_first_request_schema_refuses_domains_revision_identity() {
     assert_eq!(reply_outcome(&seeded.evaluate_json(&bad_gen)), "rejected");
     assert!(!seeded.is_diverged());
 }
+
+#[test]
+fn legacy_cross_output_verify_binds_session_workspace() {
+    // Historical same-workspace wire shape (no `target_workspace`) still
+    // verifies against a same-workspace R4 plan: the caller session binds
+    // its unambiguous source workspace. Nothing is derived from
+    // `target_output`.
+    let domains = format!("[{}]", r4_domains_json());
+    let req = r4_seed_request(
+        "m-leg-1",
+        "win-3",
+        "right",
+        &[
+            ("win-1", "out-1", "ws-1"),
+            ("win-2", "out-2", "ws-1"),
+            ("win-3", "out-1", "ws-1"),
+        ],
+        &domains,
+    );
+    let mut service = MovementService::new();
+    let planned = service.evaluate_json(&req);
+    assert_eq!(reply_outcome(&planned), "planned", "{planned}");
+    let v: serde_json::Value = serde_json::from_str(&planned).expect("json");
+    assert_eq!(v.get("rule").and_then(|r| r.as_str()), Some("R4"));
+    // The emitted plan carries the current shape.
+    assert_eq!(
+        v["operation"]
+            .get("target_workspace")
+            .and_then(|w| w.as_str()),
+        Some("ws-1")
+    );
+    let base = service.accepted_revision();
+    assert_eq!(
+        reply_outcome(&service.evaluate_json(&ack_json("m-leg-1", base, "accepted"))),
+        "acknowledged"
+    );
+    let desired_out = v["desired_focus"]
+        .get("domain_output")
+        .and_then(|x| x.as_str())
+        .expect("out");
+    let desired_ws = v["desired_focus"]
+        .get("domain_workspace")
+        .and_then(|x| x.as_str())
+        .expect("ws");
+    let post_fp = post_fingerprint_for(desired_out, desired_ws, "win-3", service.session());
+    let mut legacy_op = v.get("operation").expect("op").clone();
+    assert!(
+        legacy_op
+            .as_object_mut()
+            .expect("obj")
+            .remove("target_workspace")
+            .is_some()
+    );
+    // Legacy shape binds the session workspace (ws-1) and commits.
+    let verify = serde_json::json!({
+        "v": 1, "action": "verify", "correlation_id": "m-leg-1",
+        "owner": "owner-1", "generation": "gen-1",
+        "revision": base, "fingerprint": post_fp, "verified": true,
+        "verified_preconditions": v.get("preconditions").expect("pre"),
+        "verified_operation": legacy_op,
+        "verified_geometry": v.get("desired_geometry").expect("geo"),
+        "verified_focus": v.get("desired_focus").expect("focus"),
+    });
+    assert_eq!(
+        reply_outcome(&service.evaluate_json(&verify.to_string())),
+        "committed",
+        "legacy same-workspace verify must commit"
+    );
+    // A fabricated workspace derived from the output name must NOT verify:
+    // legacy binding is the session workspace, never `target_output`.
+    // Separate service: divergence is terminal.
+    let mut forged_service = MovementService::new();
+    let forged_planned = forged_service.evaluate_json(&r4_seed_request(
+        "m-leg-2",
+        "win-3",
+        "right",
+        &[
+            ("win-1", "out-1", "ws-1"),
+            ("win-2", "out-2", "ws-1"),
+            ("win-3", "out-1", "ws-1"),
+        ],
+        &format!("[{}]", r4_domains_json()),
+    ));
+    assert_eq!(reply_outcome(&forged_planned), "planned");
+    let fv: serde_json::Value = serde_json::from_str(&forged_planned).expect("json");
+    let forged_base = forged_service.accepted_revision();
+    assert_eq!(
+        reply_outcome(&forged_service.evaluate_json(&ack_json("m-leg-2", forged_base, "accepted"))),
+        "acknowledged"
+    );
+    let mut forged = fv.get("operation").expect("op").clone();
+    forged
+        .as_object_mut()
+        .expect("obj")
+        .insert("target_workspace".to_owned(), serde_json::json!("out-2"));
+    let forged_fp = post_fingerprint_for("out-2", "ws-1", "win-3", forged_service.session());
+    let forged_verify = serde_json::json!({
+        "v": 1, "action": "verify", "correlation_id": "m-leg-2",
+        "owner": "owner-1", "generation": "gen-1",
+        "revision": forged_base, "fingerprint": forged_fp, "verified": true,
+        "verified_preconditions": fv.get("preconditions").expect("pre"),
+        "verified_operation": forged,
+        "verified_geometry": fv.get("desired_geometry").expect("geo"),
+        "verified_focus": fv.get("desired_focus").expect("focus"),
+    });
+    assert_eq!(
+        reply_outcome(&forged_service.evaluate_json(&forged_verify.to_string())),
+        "diverged",
+        "output-derived workspace must fail closed"
+    );
+}
+
+#[test]
+fn legacy_cross_output_verify_without_session_fails_closed() {
+    // No caller session means no source workspace is available at the
+    // boundary: the legacy shape fails closed (terminal diverge) before any
+    // plan or verify side effect, and stages no pending.
+    let mut service = MovementService::new();
+    let legacy_op = serde_json::json!({
+        "kind": "CrossOutput", "rule": "R4", "target_output": "out-2",
+        "source_root_child_index": 0, "target": "empty",
+    });
+    let verify = serde_json::json!({
+        "v": 1, "action": "verify", "correlation_id": "m-leg-2",
+        "owner": "owner-1", "generation": "gen-1",
+        "revision": 0, "fingerprint": 0, "verified": true,
+        "verified_preconditions": [
+            "focused-leaf-occupied-by-focused-window",
+            "source-root-membership-and-adjacent-same-workspace-output",
+            "adapter-must-verify-postconditions",
+        ],
+        "verified_operation": legacy_op,
+        "verified_geometry": [],
+        "verified_focus": {"domain_output": "out-2", "domain_workspace": "ws-1", "leaf": "leaf-1"},
+    });
+    let reply = service.evaluate_json(&verify.to_string());
+    assert_eq!(reply_outcome(&reply), "diverged", "{reply}");
+    // Terminal fail-closed with nothing staged: unseeded and no plan.
+    assert!(!service.is_seeded());
+}

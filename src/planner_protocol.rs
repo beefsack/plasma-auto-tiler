@@ -111,6 +111,94 @@ fn is_opaque_id(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
 }
 
+/// Canonical production directional fingerprint (FNV-1a 32-bit) over the
+/// full two-domain evidence, byte-identical to the adapter's
+/// `planDirectionalFingerprint`: ordered domain primitives (output,
+/// workspace, raw bounds, gaps, left/right adjacency), the focused id, and
+/// every window sorted by id (id, output, workspace, rect, floating,
+/// fit-excluded). Any alteration of target rect, bounds, or adjacency
+/// changes the value. Legacy single-domain requests keep `planFingerprint`.
+fn directional_fingerprint(
+    entries: &[DirectionalDomainDto],
+    focused: &str,
+    windows: &[ObservedDto],
+) -> u64 {
+    fn feed(hash: &mut u32, text: &str) {
+        for byte in text.bytes() {
+            *hash ^= u32::from(byte);
+            *hash = hash.wrapping_mul(16777619);
+        }
+    }
+    fn sep(hash: &mut u32, byte: u8) {
+        *hash ^= u32::from(byte);
+        *hash = hash.wrapping_mul(16777619);
+    }
+    let mut hash: u32 = 2166136261;
+    for (index, entry) in entries.iter().enumerate() {
+        if index > 0 {
+            sep(&mut hash, 0x1e);
+        }
+        feed(&mut hash, &entry.output);
+        sep(&mut hash, 0x1f);
+        feed(&mut hash, &entry.workspace);
+        sep(&mut hash, 0x1f);
+        feed(&mut hash, &entry.bounds.x.to_string());
+        sep(&mut hash, 0x1f);
+        feed(&mut hash, &entry.bounds.y.to_string());
+        sep(&mut hash, 0x1f);
+        feed(&mut hash, &entry.bounds.w.to_string());
+        sep(&mut hash, 0x1f);
+        feed(&mut hash, &entry.bounds.h.to_string());
+        sep(&mut hash, 0x1f);
+        feed(&mut hash, &entry.gap.to_string());
+        sep(&mut hash, 0x1f);
+        feed(&mut hash, &entry.outer_gap.to_string());
+        sep(&mut hash, 0x1f);
+        feed(&mut hash, "left");
+        sep(&mut hash, 0x1f);
+        feed(
+            &mut hash,
+            entry.adjacent.get("left").map(String::as_str).unwrap_or(""),
+        );
+        sep(&mut hash, 0x1f);
+        feed(&mut hash, "right");
+        sep(&mut hash, 0x1f);
+        feed(
+            &mut hash,
+            entry
+                .adjacent
+                .get("right")
+                .map(String::as_str)
+                .unwrap_or(""),
+        );
+    }
+    sep(&mut hash, 0x1f);
+    feed(&mut hash, focused);
+    let mut ordered: Vec<&ObservedDto> = windows.iter().collect();
+    ordered.sort_by(|a, b| a.window.cmp(&b.window));
+    for entry in ordered {
+        sep(&mut hash, 0x1f);
+        feed(&mut hash, &entry.window);
+        sep(&mut hash, 0x1f);
+        feed(&mut hash, &entry.output);
+        sep(&mut hash, 0x1f);
+        feed(&mut hash, &entry.workspace);
+        sep(&mut hash, 0x1f);
+        feed(&mut hash, &entry.rect.x.to_string());
+        sep(&mut hash, 0x1f);
+        feed(&mut hash, &entry.rect.y.to_string());
+        sep(&mut hash, 0x1f);
+        feed(&mut hash, &entry.rect.w.to_string());
+        sep(&mut hash, 0x1f);
+        feed(&mut hash, &entry.rect.h.to_string());
+        sep(&mut hash, 0x1f);
+        feed(&mut hash, if entry.floating { "1" } else { "0" });
+        sep(&mut hash, 0x1f);
+        feed(&mut hash, if entry.fit_excluded { "1" } else { "0" });
+    }
+    u64::from(hash)
+}
+
 fn valid_correlation_echo(value: &serde_json::Value) -> String {
     value
         .get("correlation_id")
@@ -184,6 +272,25 @@ struct ObservedDto {
     fit_excluded: bool,
 }
 
+/// Production directional domains payload (DescribePlan active route only).
+/// Bounded primitive per domain: output, workspace, work-area bounds, inner
+/// and outer gaps, plus horizontal reciprocal adjacency (`left`/`right` to an
+/// output name). At most two domains: source first (must equal `domain`),
+/// then the horizontally adjacent output's current logical workspace (which
+/// may differ in workspace id). Up/Down keys are never admitted.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DirectionalDomainDto {
+    output: String,
+    workspace: String,
+    bounds: RectDto,
+    gap: i32,
+    #[serde(default)]
+    outer_gap: i32,
+    #[serde(default)]
+    adjacent: std::collections::BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RequestDto {
@@ -198,6 +305,11 @@ struct RequestDto {
     target_domain: Option<DomainDto>,
     #[serde(default)]
     target_windows: Vec<ObservedDto>,
+    /// Production directional cross-output observation: source plus at most
+    /// one horizontally reciprocal adjacent domain. Absent for legacy
+    /// single-domain requests, whose behavior is unchanged.
+    #[serde(default)]
+    domains: Option<Vec<DirectionalDomainDto>>,
     focused_window: String,
     windows: Vec<ObservedDto>,
     command: serde_json::Value,
@@ -310,8 +422,15 @@ const PLANNER_SNAPSHOT_DETAILS: &[&str] = &[
     "window-rect-invalid",
     "window-out-of-bounds",
     "focused-not-observed",
+    "fingerprint-mismatch",
     "inset-exhausted",
     "domain-invalid",
+    "canonical-state-unavailable",
+    "canonical-source-unavailable",
+    "canonical-pair-domain-mismatch",
+    "canonical-pair-identity-mismatch",
+    "canonical-pair-unusable",
+    "canonical-pair-duplicate-state",
     "commit-rejected",
     "missing-seed-order",
     "seed-failed",
@@ -398,6 +517,133 @@ struct Validated {
     correlation: CorrelationId,
     domain: OutputDomain,
     domain_key: DomainKey,
+    /// Production directional domains (source first) when the adapter sent a
+    /// bounded `domains` payload on focus/move. `None` for legacy
+    /// single-domain requests, whose behavior is unchanged.
+    directional_domains: Option<Vec<OutputDomain>>,
+    directional_keys: Option<Vec<DomainKey>>,
+}
+
+/// Parse one directional wire domain into its projected [`OutputDomain`].
+/// Fails closed on any unreadable shape; only `left`/`right` adjacency keys
+/// are admitted (Up/Down never cross).
+fn parse_directional_domain(
+    entry: &DirectionalDomainDto,
+    correlation_id: &str,
+) -> Result<(OutputDomain, DomainKey), String> {
+    if !is_opaque_id(&entry.output) {
+        return Err(snapshot_invalid(
+            correlation_id.to_owned(),
+            MSG_OPAQUE_ID,
+            "domain-output-invalid",
+        ));
+    }
+    if !is_opaque_id(&entry.workspace) {
+        return Err(snapshot_invalid(
+            correlation_id.to_owned(),
+            MSG_OPAQUE_ID,
+            "domain-workspace-invalid",
+        ));
+    }
+    let carried = Rect {
+        x: entry.bounds.x,
+        y: entry.bounds.y,
+        w: entry.bounds.w,
+        h: entry.bounds.h,
+    };
+    if !valid_carried_rect(carried.x, carried.y, carried.w, carried.h) {
+        return Err(snapshot_invalid(
+            correlation_id.to_owned(),
+            MSG_OBSERVATION,
+            "domain-bounds-invalid",
+        ));
+    }
+    if entry.gap < 0 {
+        return Err(snapshot_invalid(
+            correlation_id.to_owned(),
+            MSG_OBSERVATION,
+            "gap-low",
+        ));
+    }
+    if entry.gap > GEOMETRY_MAX_GAP {
+        return Err(snapshot_invalid(
+            correlation_id.to_owned(),
+            MSG_OBSERVATION,
+            "gap-high",
+        ));
+    }
+    if entry.outer_gap < 0 {
+        return Err(snapshot_invalid(
+            correlation_id.to_owned(),
+            MSG_OBSERVATION,
+            "outer-gap-low",
+        ));
+    }
+    if entry.outer_gap > GEOMETRY_MAX_GAP {
+        return Err(snapshot_invalid(
+            correlation_id.to_owned(),
+            MSG_OBSERVATION,
+            "outer-gap-high",
+        ));
+    }
+    let mut adjacent: std::collections::BTreeMap<Direction, OutputId> =
+        std::collections::BTreeMap::new();
+    for (key, target) in &entry.adjacent {
+        let direction = match key.as_str() {
+            "left" => Direction::Left,
+            "right" => Direction::Right,
+            _ => {
+                return Err(snapshot_invalid(
+                    correlation_id.to_owned(),
+                    MSG_OBSERVATION,
+                    "domain-invalid",
+                ));
+            }
+        };
+        if !is_opaque_id(target) {
+            return Err(snapshot_invalid(
+                correlation_id.to_owned(),
+                MSG_OPAQUE_ID,
+                "domain-output-invalid",
+            ));
+        }
+        if adjacent
+            .insert(direction, OutputId(target.clone()))
+            .is_some()
+        {
+            return Err(snapshot_invalid(
+                correlation_id.to_owned(),
+                MSG_OBSERVATION,
+                "domain-invalid",
+            ));
+        }
+    }
+    let Ok(projected) = crate::geometry::inset_bounds(carried, entry.outer_gap) else {
+        return Err(snapshot_invalid(
+            correlation_id.to_owned(),
+            MSG_OBSERVATION,
+            "inset-exhausted",
+        ));
+    };
+    let domain = OutputDomain {
+        id: OutputId(entry.output.clone()),
+        workspace: WorkspaceId(entry.workspace.clone()),
+        bounds: projected,
+        gap: entry.gap,
+        adjacent,
+    };
+    if !domain.validate() {
+        return Err(snapshot_invalid(
+            correlation_id.to_owned(),
+            MSG_OBSERVATION,
+            "domain-invalid",
+        ));
+    }
+    let key = DomainKey {
+        output: OutputId(entry.output.clone()),
+        workspace: WorkspaceId(entry.workspace.clone()),
+    };
+    Ok((domain, key))
 }
 
 /// Shared request validation: bounds, opaque ids, geometry containment for
@@ -564,11 +810,125 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
             "outer-gap-high",
         ));
     }
-    let admission = request
+    let op_str = request
         .command
         .get("op")
         .and_then(serde_json::Value::as_str)
-        == Some("admit");
+        .unwrap_or_default();
+    let admission = op_str == "admit";
+    // Production directional payload: only focus/move may carry `domains`;
+    // every other op (including the standalone workspace-send route) keeps
+    // legacy single-domain behavior and refuses it fail-closed. The
+    // directional R4 async ack/verify phases carry the same two-domain
+    // post-observation, so they admit `domains` with no new topology
+    // seeding.
+    let directional = match (&request.domains, op_str) {
+        (None, _) => None,
+        (Some(_), "focus")
+        | (Some(_), "move")
+        | (Some(_), "directional-move-ack")
+        | (Some(_), "directional-move-verify") => request.domains.clone(),
+        (Some(_), _) => {
+            return Err(snapshot_invalid(
+                request.correlation_id.clone(),
+                MSG_OBSERVATION,
+                "domain-invalid",
+            ));
+        }
+    };
+    // Parsed directional domains (source first), when present.
+    let mut directional_parsed: Option<Vec<(OutputDomain, DomainKey)>> = None;
+    if let Some(entries) = &directional {
+        if entries.is_empty() || entries.len() > 2 {
+            return Err(snapshot_invalid(
+                request.correlation_id.clone(),
+                MSG_OBSERVATION,
+                "domain-invalid",
+            ));
+        }
+        let mut parsed: Vec<(OutputDomain, DomainKey)> = Vec::with_capacity(entries.len());
+        for entry in entries {
+            parsed.push(parse_directional_domain(entry, &request.correlation_id)?);
+        }
+        // Source entry must equal the carried source domain (output,
+        // workspace, raw bounds, gaps). Adjacency lives only in `domains`;
+        // the inset-projected bounds are compared via the wire entry so the
+        // raw work area must match exactly.
+        {
+            let wire_source = &entries[0];
+            if wire_source.output != request.domain.output
+                || wire_source.workspace != request.domain.workspace
+                || wire_source.bounds.x != request.domain.bounds.x
+                || wire_source.bounds.y != request.domain.bounds.y
+                || wire_source.bounds.w != request.domain.bounds.w
+                || wire_source.bounds.h != request.domain.bounds.h
+                || wire_source.gap != request.domain.gap
+                || wire_source.outer_gap != request.domain.outer_gap
+            {
+                return Err(snapshot_invalid(
+                    request.correlation_id.clone(),
+                    MSG_OBSERVATION,
+                    "domain-invalid",
+                ));
+            }
+        }
+        // Distinct (output, workspace) pairs and distinct outputs.
+        {
+            let mut seen_pairs = std::collections::HashSet::new();
+            let mut seen_outputs = std::collections::HashSet::new();
+            for (domain, _) in &parsed {
+                if !seen_pairs.insert((domain.id.0.clone(), domain.workspace.0.clone())) {
+                    return Err(snapshot_invalid(
+                        request.correlation_id.clone(),
+                        MSG_OBSERVATION,
+                        "domain-invalid",
+                    ));
+                }
+                if !seen_outputs.insert(domain.id.0.clone()) {
+                    // Ambiguous duplicate output ids fail closed.
+                    return Err(snapshot_invalid(
+                        request.correlation_id.clone(),
+                        MSG_OBSERVATION,
+                        "domain-invalid",
+                    ));
+                }
+            }
+        }
+        // Two-domain reciprocity: source names target on Left/Right and the
+        // target names source back on the opposite side. Single-domain
+        // payloads carry no adjacency requirement.
+        if parsed.len() == 2 {
+            let (source_domain, _) = &parsed[0];
+            let (target_domain, _) = &parsed[1];
+            let mut reciprocal = false;
+            for direction in [Direction::Left, Direction::Right] {
+                let opposite = match direction {
+                    Direction::Left => Direction::Right,
+                    Direction::Right => Direction::Left,
+                    _ => continue,
+                };
+                if source_domain.adjacent.get(&direction) == Some(&target_domain.id)
+                    && target_domain.adjacent.get(&opposite) == Some(&source_domain.id)
+                {
+                    reciprocal = true;
+                    break;
+                }
+            }
+            if !reciprocal {
+                return Err(snapshot_invalid(
+                    request.correlation_id.clone(),
+                    MSG_OBSERVATION,
+                    "domain-invalid",
+                ));
+            }
+        }
+        directional_parsed = Some(parsed);
+    }
+    // Per-domain carried bounds for containment (projected bounds above are
+    // per domain; containment uses the already-inset domain bounds).
+    let directional_bounds: Option<Vec<Rect>> = directional_parsed
+        .as_ref()
+        .map(|parsed| parsed.iter().map(|(d, _)| d.bounds).collect());
     for entry in &request.windows {
         if !admission && !valid_carried_rect(entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h)
         {
@@ -578,42 +938,78 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
                 "window-rect-invalid",
             ));
         }
-        if !admission
-            && !entry.floating
-            && !rect_contained(
-                Rect {
-                    x: entry.rect.x,
-                    y: entry.rect.y,
-                    w: entry.rect.w,
-                    h: entry.rect.h,
-                },
-                carried_bounds,
-            )
-        {
-            return Err(snapshot_invalid(
-                request.correlation_id.clone(),
-                MSG_OBSERVATION,
-                "window-out-of-bounds",
-            ));
-        }
-        if entry.output != request.domain.output || entry.workspace != request.domain.workspace {
-            return Err(rejected(
-                request.correlation_id.clone(),
-                "cross-domain-mismatch",
-                MSG_CROSS_DOMAIN,
-            ));
+        let entry_rect = Rect {
+            x: entry.rect.x,
+            y: entry.rect.y,
+            w: entry.rect.w,
+            h: entry.rect.h,
+        };
+        if let Some(parsed) = &directional_parsed {
+            let bounds_list: &Vec<Rect> = directional_bounds.as_ref().expect("built");
+            let mut homed = false;
+            for ((domain, _), bounds) in parsed.iter().zip(bounds_list.iter()) {
+                if entry.output == domain.id.0 && entry.workspace == domain.workspace.0 {
+                    homed = true;
+                    if !admission && !entry.floating && !rect_contained(entry_rect, *bounds) {
+                        return Err(snapshot_invalid(
+                            request.correlation_id.clone(),
+                            MSG_OBSERVATION,
+                            "window-out-of-bounds",
+                        ));
+                    }
+                    break;
+                }
+            }
+            if !homed {
+                return Err(rejected(
+                    request.correlation_id.clone(),
+                    "cross-domain-mismatch",
+                    MSG_CROSS_DOMAIN,
+                ));
+            }
+        } else {
+            if !admission
+                && !entry.floating
+                && !rect_contained(
+                    Rect {
+                        x: entry.rect.x,
+                        y: entry.rect.y,
+                        w: entry.rect.w,
+                        h: entry.rect.h,
+                    },
+                    carried_bounds,
+                )
+            {
+                return Err(snapshot_invalid(
+                    request.correlation_id.clone(),
+                    MSG_OBSERVATION,
+                    "window-out-of-bounds",
+                ));
+            }
+            if entry.output != request.domain.output || entry.workspace != request.domain.workspace
+            {
+                return Err(rejected(
+                    request.correlation_id.clone(),
+                    "cross-domain-mismatch",
+                    MSG_CROSS_DOMAIN,
+                ));
+            }
         }
     }
     // Ack/verify phases carry the complete source+target post-observation
     // where focus is not a planning input: after the mover leaves the source
     // desktop the observed focus may be empty or a remaining source window, so
-    // the focus-membership gate is relaxed for those two ops only.
+    // the focus-membership gate is relaxed for those ops only (workspace and
+    // directional R4 async routes).
     let focus_skipped_for_ack_verify = matches!(
         request
             .command
             .get("op")
             .and_then(serde_json::Value::as_str),
-        Some("send-to-workspace-ack") | Some("send-to-workspace-verify")
+        Some("send-to-workspace-ack")
+            | Some("send-to-workspace-verify")
+            | Some("directional-move-ack")
+            | Some("directional-move-verify")
     );
     if !request.windows.is_empty()
         && !focus_skipped_for_ack_verify
@@ -627,6 +1023,37 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
             MSG_OBSERVATION,
             "focused-not-observed",
         ));
+    }
+    // Directional focus/move: the focused window must live in the source
+    // domain (cross targets are never the planning input). Binds the request
+    // to the source so a stale target substitution cannot redirect planning.
+    if directional_parsed.is_some()
+        && !focus_skipped_for_ack_verify
+        && !request.windows.iter().any(|w| {
+            w.window == request.focused_window
+                && w.output == request.domain.output
+                && w.workspace == request.domain.workspace
+        })
+    {
+        return Err(snapshot_invalid(
+            request.correlation_id.clone(),
+            MSG_OBSERVATION,
+            "focused-not-observed",
+        ));
+    }
+    // Directional fingerprint binding: recompute over the full two-domain
+    // evidence (ordered domain primitives, focused id, every window) and
+    // refuse altered target rects/bounds/adjacency here at request
+    // validation, not only at reply revalidation downstream.
+    if let Some(entries) = &directional {
+        let expected = directional_fingerprint(entries, &request.focused_window, &request.windows);
+        if request.fingerprint != expected {
+            return Err(snapshot_invalid(
+                request.correlation_id.clone(),
+                MSG_OBSERVATION,
+                "fingerprint-mismatch",
+            ));
+        }
     }
     let owner = OwnerId::parse(&request.owner).expect("validated");
     let generation = GenerationId::parse(&request.generation).expect("validated");
@@ -660,6 +1087,21 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
         output: OutputId(request.domain.output.clone()),
         workspace: WorkspaceId(request.domain.workspace.clone()),
     };
+    // Directional domains/keys for the focus/move cross route. Single entry
+    // means source-only (behaves like legacy); two entries carry the
+    // reciprocal adjacent target.
+    let (directional_domains, directional_keys) = match directional_parsed {
+        Some(parsed) => {
+            let mut domains = Vec::with_capacity(parsed.len());
+            let mut keys = Vec::with_capacity(parsed.len());
+            for (d, k) in parsed {
+                domains.push(d);
+                keys.push(k);
+            }
+            (Some(domains), Some(keys))
+        }
+        None => (None, None),
+    };
     Ok(Validated {
         request,
         raw,
@@ -668,6 +1110,8 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
         correlation,
         domain,
         domain_key,
+        directional_domains,
+        directional_keys,
     })
 }
 
@@ -717,6 +1161,103 @@ fn acknowledge(session: &mut Session, ctx: &Validated, base: u64) -> bool {
         crate::contract::AckOutcome::Accepted,
     );
     session.acknowledge(&ack).is_ok()
+}
+
+/// Wire token for a directional move precondition (production cross-output
+/// route). Matches the portable movement-service vocabulary exactly.
+fn move_precondition_str(value: crate::directional::Precondition) -> &'static str {
+    match value {
+        crate::directional::Precondition::FocusedLeafOccupiedByFocusedWindow => {
+            "focused-leaf-occupied-by-focused-window"
+        }
+        crate::directional::Precondition::NeighborLeafOccupied => "neighbor-leaf-occupied",
+        crate::directional::Precondition::ContainerIsDirectParent => "container-is-direct-parent",
+        crate::directional::Precondition::TargetGroupMembership => "target-group-membership",
+        crate::directional::Precondition::ParentGroupMembership => "parent-group-membership",
+        crate::directional::Precondition::SourceRootMembershipAndAdjacentSameWorkspaceOutput => {
+            "source-root-membership-and-adjacent-same-workspace-output"
+        }
+        crate::directional::Precondition::AdapterMustVerifyPostconditions => {
+            "adapter-must-verify-postconditions"
+        }
+    }
+}
+
+/// Wire token for a focus precondition (production directional route).
+fn focus_precondition_str(value: crate::contract::FocusPrecondition) -> &'static str {
+    match value {
+        crate::contract::FocusPrecondition::FocusedLeafOccupiedByFocusedWindow => {
+            "focused-leaf-occupied-by-focused-window"
+        }
+        crate::contract::FocusPrecondition::TargetLeafOccupied => "target-leaf-occupied",
+        crate::contract::FocusPrecondition::FocusTargetsSameDomain => "focus-targets-same-domain",
+        crate::contract::FocusPrecondition::FocusTargetsAdjacentOutput => {
+            "focus-targets-adjacent-output"
+        }
+        crate::contract::FocusPrecondition::AdapterMustVerifyPostconditions => {
+            "adapter-must-verify-postconditions"
+        }
+    }
+}
+
+/// Planned cross-output focus reply: full source+target geometry, target
+/// focus, plus the exact operation/preconditions the adapter must fence
+/// (target domain plus explicit cross source must match the captured source).
+fn cross_focus_planned_reply(
+    correlation_id: &str,
+    base_revision: u64,
+    detail: serde_json::Value,
+    geometry: &[crate::session::DesiredGeometry],
+    focus: (&DomainKey, &NodeId),
+    operation: &crate::contract::FocusOperation,
+) -> String {
+    let operation_value = serde_json::json!({
+        "op": "focus",
+        "domain_output": operation.domain_output.0,
+        "domain_workspace": operation.domain_workspace.0,
+        "from_leaf": operation.from_leaf.0,
+        "to_leaf": operation.to_leaf.0,
+        "from_window": operation.from_window.0,
+        "to_window": operation.to_window.0,
+        "direction": direction_str(operation.direction),
+        "route": operation.route.iter().map(|id| id.0.clone()).collect::<Vec<_>>(),
+        "cross_source_output": operation.cross_source_output.as_ref().map(|id| id.0.clone()),
+        "cross_source_workspace": operation.cross_source_workspace.as_ref().map(|id| id.0.clone()),
+    });
+    let preconditions: Vec<&'static str> = operation
+        .preconditions()
+        .iter()
+        .map(|p| focus_precondition_str(*p))
+        .collect();
+    serialize_bounded(&PlanReply {
+        v: PLAN_CONTRACT_VERSION,
+        correlation_id: correlation_id.to_owned(),
+        outcome: "planned",
+        kind: None,
+        message: None,
+        base_revision: Some(base_revision),
+        detail: Some(detail),
+        desired_geometry: Some(geometry.iter().map(geometry_reply).collect()),
+        desired_focus: Some(focus_reply(focus.0, focus.1)),
+        float_geometry: None,
+        preconditions: Some(preconditions),
+        operation: Some(operation_value),
+    })
+}
+
+/// Directional pair from a validated request: source + adjacent target when
+/// the adapter sent two domains. Single-domain payloads return `None` and
+/// keep legacy behavior.
+fn directional_pair(
+    ctx: &Validated,
+) -> Option<(&OutputDomain, &DomainKey, &OutputDomain, &DomainKey)> {
+    let domains = ctx.directional_domains.as_ref()?;
+    let keys = ctx.directional_keys.as_ref()?;
+    if domains.len() == 2 && keys.len() == 2 {
+        Some((&domains[0], &keys[0], &domains[1], &keys[1]))
+    } else {
+        None
+    }
 }
 
 fn planned_reply(
@@ -1131,6 +1672,32 @@ struct WorkspacePending {
     desired_geometry: Vec<DesiredGeometry>,
 }
 
+/// One retained pending two-domain directional R4 cross-output move. Bound to
+/// owner/generation/correlation/base revision plus the source/target pair
+/// keys and outer gaps; no owner rebind during pending and no new topology
+/// seeding. R4 proposes once and retains the pair Session (with its single
+/// reconciler pending slot) until an exact accepted `directional-move-ack`
+/// and a matching verified `directional-move-verify` post-observation commit
+/// it via `Session::verify_move` then split/store the canonical sessions
+/// once. Pending mismatch, refused ack, failed verification, or
+/// identity/correlation/revision loss is terminal `diverged` with no commit.
+/// R1-R3 never stage this pending and stay synchronous.
+#[derive(Debug)]
+struct DirectionalMovePending {
+    owner: OwnerId,
+    generation: GenerationId,
+    correlation: CorrelationId,
+    base_revision: u64,
+    session: Session,
+    source_key: DomainKey,
+    target_key: DomainKey,
+    source_outer_gap: i32,
+    target_outer_gap: i32,
+    desired_geometry: Vec<DesiredGeometry>,
+    operation: crate::directional::MoveOperation,
+    preconditions: Vec<crate::directional::Precondition>,
+}
+
 /// Validated workspace-send route input: the target domain plus the exact
 /// mover binding. The source domain is the already-validated request domain.
 #[derive(Debug)]
@@ -1423,12 +1990,172 @@ fn parse_lifecycle_preconditions(value: &serde_json::Value) -> Option<Vec<Lifecy
     Some(out)
 }
 
+/// Parse one directional move precondition token (fail-closed on unknown).
+fn parse_directional_precondition(value: &str) -> Option<crate::directional::Precondition> {
+    use crate::directional::Precondition as P;
+    match value {
+        "focused-leaf-occupied-by-focused-window" => Some(P::FocusedLeafOccupiedByFocusedWindow),
+        "neighbor-leaf-occupied" => Some(P::NeighborLeafOccupied),
+        "container-is-direct-parent" => Some(P::ContainerIsDirectParent),
+        "target-group-membership" => Some(P::TargetGroupMembership),
+        "parent-group-membership" => Some(P::ParentGroupMembership),
+        "source-root-membership-and-adjacent-same-workspace-output" => {
+            Some(P::SourceRootMembershipAndAdjacentSameWorkspaceOutput)
+        }
+        "adapter-must-verify-postconditions" => Some(P::AdapterMustVerifyPostconditions),
+        _ => None,
+    }
+}
+
+/// Parse the exact directional precondition vector from the verify command.
+fn parse_directional_preconditions(
+    value: &serde_json::Value,
+) -> Option<Vec<crate::directional::Precondition>> {
+    let values = value.as_array()?;
+    if values.is_empty() || values.len() > crate::contract::MAX_PRECONDITIONS {
+        return None;
+    }
+    let mut out = Vec::with_capacity(values.len());
+    for entry in values {
+        out.push(parse_directional_precondition(entry.as_str()?)?);
+    }
+    Some(out)
+}
+
+/// Parse an R4 cross-output move operation from the verify command back to
+/// its typed directional form. Strict bounded parsing: requires the exact
+/// fenced wire shape emitted in the planned reply (`op`/`rule`/`capability`/
+/// left-right `direction`, opaque window/leaf/source/target ids, bounded
+/// child index, empty/occupied target). Extra fencing fields are validated
+/// for shape; the typed operation equality plus the post-observation geometry
+/// check enforce exactness at verify time.
+fn parse_directional_move_operation(
+    value: &serde_json::Value,
+) -> Option<crate::directional::MoveOperation> {
+    if !value.is_object() {
+        return None;
+    }
+    if value.get("op").and_then(serde_json::Value::as_str) != Some("move") {
+        return None;
+    }
+    if value.get("rule").and_then(serde_json::Value::as_str) != Some("R4") {
+        return None;
+    }
+    if value.get("capability").and_then(serde_json::Value::as_str) != Some("CrossOutputTransfer") {
+        return None;
+    }
+    let direction = value.get("direction").and_then(serde_json::Value::as_str)?;
+    if direction != "left" && direction != "right" {
+        return None;
+    }
+    let window = value.get("window").and_then(serde_json::Value::as_str)?;
+    let leaf = value.get("leaf").and_then(serde_json::Value::as_str)?;
+    let source_output = value
+        .get("source_output")
+        .and_then(serde_json::Value::as_str)?;
+    let source_workspace = value
+        .get("source_workspace")
+        .and_then(serde_json::Value::as_str)?;
+    let target_output = value
+        .get("target_output")
+        .and_then(serde_json::Value::as_str)?;
+    let target_workspace = value
+        .get("target_workspace")
+        .and_then(serde_json::Value::as_str)?;
+    if !is_opaque_id(window)
+        || !is_opaque_id(leaf)
+        || !is_opaque_id(source_output)
+        || !is_opaque_id(source_workspace)
+        || !is_opaque_id(target_output)
+        || !is_opaque_id(target_workspace)
+    {
+        return None;
+    }
+    let index = value.get("source_root_child_index")?.as_u64()?;
+    let Ok(index) = usize::try_from(index) else {
+        return None;
+    };
+    let target = match value.get("target").and_then(serde_json::Value::as_str) {
+        Some("empty") => crate::directional::CrossOutputTarget::Empty,
+        Some("occupied") => crate::directional::CrossOutputTarget::Occupied,
+        _ => return None,
+    };
+    Some(crate::directional::MoveOperation::CrossOutput {
+        rule: crate::directional::Rule::R4,
+        target_output: OutputId(target_output.to_owned()),
+        target_workspace: WorkspaceId(target_workspace.to_owned()),
+        source_root_child_index: index,
+        target,
+    })
+}
+
+/// Complete directional post-observation validation against the retained R4
+/// plan: every desired window must be carried exactly once (source plus
+/// target homed entries in `windows`) with the expected output, workspace,
+/// and rectangle. Any missing, duplicate, extra, mis-homed, or mis-sized
+/// window fails closed so a bare `verified: true` never commits.
+fn directional_post_matches(pending: &DirectionalMovePending, ctx: &Validated) -> bool {
+    let mut observed: std::collections::HashMap<&str, &ObservedDto> =
+        std::collections::HashMap::with_capacity(ctx.request.windows.len());
+    for entry in ctx.request.windows.iter() {
+        if observed.insert(entry.window.as_str(), entry).is_some() {
+            return false;
+        }
+    }
+    if observed.len() != pending.desired_geometry.len() {
+        return false;
+    }
+    for desired in &pending.desired_geometry {
+        let Some(entry) = observed.get(desired.window.0.as_str()) else {
+            return false;
+        };
+        if entry.output != desired.output.0
+            || entry.workspace != desired.workspace.0
+            || entry.rect.x != desired.rect.x
+            || entry.rect.y != desired.rect.y
+            || entry.rect.w != desired.rect.w
+            || entry.rect.h != desired.rect.h
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether a validated request touches either key of a live directional R4
+/// pair: its source domain key, any carried directional domain key, or (for
+/// the workspace route) its target domain matches the pair.
+fn ctx_affects_pair(ctx: &Validated, pending: &DirectionalMovePending) -> bool {
+    if ctx.domain_key == pending.source_key || ctx.domain_key == pending.target_key {
+        return true;
+    }
+    if let Some(keys) = ctx.directional_keys.as_ref() {
+        for key in keys {
+            if *key == pending.source_key || *key == pending.target_key {
+                return true;
+            }
+        }
+    }
+    if let Some(target) = ctx.request.target_domain.as_ref() {
+        if (target.output == pending.source_key.output.0
+            && target.workspace == pending.source_key.workspace.0)
+            || (target.output == pending.target_key.output.0
+                && target.workspace == pending.target_key.workspace.0)
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn session_domain_matches(session: &Session, domain: &OutputDomain) -> bool {
     session
         .domains()
         .iter()
         .find(|d| d.id == domain.id && d.workspace == domain.workspace)
-        .is_some_and(|d| d.bounds == domain.bounds && d.gap == domain.gap)
+        .is_some_and(|d| {
+            d.bounds == domain.bounds && d.gap == domain.gap && d.adjacent == domain.adjacent
+        })
 }
 
 fn session_usable(session: &Session) -> bool {
@@ -1469,6 +2196,13 @@ fn needs_rebuild(error: &ProposeError) -> bool {
 /// one pending two-domain Session in [`WorkspacePending`], never crossing
 /// routes. No owner rebind during pending; pending mismatch/loss/refused
 /// ack/failed verification is terminal `diverged`.
+///
+/// Directional R4 route: `move` with a two-domain payload proposes an R4
+/// cross-output transfer once and retains it in [`DirectionalMovePending`]
+/// until `directional-move-ack`/`directional-move-verify` commit it. R1-R3
+/// stay synchronous with no pending. While either pending exists, all other
+/// plan operations block as `pending-exists` (diverged on identity loss) so
+/// workspace and directional routes never interleave.
 #[derive(Debug, Default)]
 pub struct Planner {
     owner: Option<OwnerId>,
@@ -1476,6 +2210,7 @@ pub struct Planner {
     sessions: BTreeMap<DomainKey, Session>,
     domain_outer_gaps: BTreeMap<DomainKey, i32>,
     workspace_pending: Option<WorkspacePending>,
+    directional_pending: Option<DirectionalMovePending>,
 }
 
 impl Planner {
@@ -1525,18 +2260,31 @@ impl Planner {
     /// vs rebuilt). Retained reconcile accepts work-area bounds changes only when
     /// the domain key and complete window set remain unchanged, projecting the
     /// existing tree without replacing shares or topology. The standalone
-    /// workspace-send route dispatches before the legacy owner/generation binding
-    /// sync so its one pending Session is never discarded or rebound mid-flight;
-    /// legacy requests are unchanged.
+    /// workspace-send and directional-move routes dispatch their ack/verify
+    /// phases before the legacy owner/generation binding sync so a pending
+    /// Session is never discarded or rebound mid-flight; legacy requests are
+    /// unchanged except that any pending (workspace or directional) blocks all
+    /// other plan operations.
     pub fn evaluate(&mut self, request_json: &str) -> String {
         let ctx = match validate_request(request_json) {
             Ok(ctx) => ctx,
             Err(reply) => return reply,
         };
         match validated_op(&ctx).as_str() {
-            "send-to-workspace" => return self.evaluate_workspace_request(&ctx),
             "send-to-workspace-ack" => return self.evaluate_workspace_ack(&ctx),
             "send-to-workspace-verify" => return self.evaluate_workspace_verify(&ctx),
+            "directional-move-ack" => return self.evaluate_directional_ack(&ctx),
+            "directional-move-verify" => return self.evaluate_directional_verify(&ctx),
+            _ => {}
+        }
+        // Full global pending conflict boundary: while either pending exists,
+        // every other plan operation blocks (diverged on identity/divergence
+        // loss, else `pending-exists`). Ack/verify above never reach here.
+        if let Some(reply) = self.pending_conflict_reply(&ctx) {
+            return reply;
+        }
+        match validated_op(&ctx).as_str() {
+            "send-to-workspace" => return self.evaluate_workspace_request(&ctx),
             _ => {}
         }
         self.sync_binding(&ctx.owner, &ctx.generation);
@@ -1580,6 +2328,73 @@ impl Planner {
         Some(session.clone())
     }
 
+    /// Pending conflict boundary for every non-ack/verify plan operation.
+    ///
+    /// Directional R4 pending: terminal `diverged` on pending divergence or
+    /// owner/generation loss for any operation (so a stale identity never
+    /// silently rebinds around the live pair); otherwise the standalone
+    /// workspace-send route is blocked entirely and ordinary plans affecting
+    /// either pair key are rejected as `pending-exists`. Unrelated domains
+    /// stay usable, mirroring the workspace route's existing relocation
+    /// behavior.
+    ///
+    /// Workspace pending: existing single-domain behavior is preserved
+    /// untouched; only new directional two-domain moves are blocked here
+    /// (diverged on pending divergence/identity loss, else `pending-exists`).
+    /// The second-send guard stays inside `evaluate_workspace_request`.
+    fn pending_conflict_reply(&self, ctx: &Validated) -> Option<String> {
+        let cid = ctx.request.correlation_id.clone();
+        let op = validated_op(ctx);
+        if let Some(pending) = &self.directional_pending {
+            if let Some(reason) = pending.session.divergence() {
+                return Some(diverged_reply(&cid, reason));
+            }
+            if pending.owner != ctx.owner || pending.generation != ctx.generation {
+                return Some(diverged_reply(
+                    &cid,
+                    crate::contract::DivergenceKind::OwnerMismatch,
+                ));
+            }
+            if op == "send-to-workspace" {
+                return Some(rejected(
+                    cid,
+                    "pending-exists",
+                    "complete the pending plan before proposing",
+                ));
+            }
+            if op != "active-group" && ctx_affects_pair(ctx, pending) {
+                return Some(rejected(
+                    cid,
+                    "pending-exists",
+                    "complete the pending plan before proposing",
+                ));
+            }
+            return None;
+        }
+        if let Some(pending) = &self.workspace_pending {
+            // Only two-domain directional moves enter the conflict zone; all
+            // other operations keep their existing behavior.
+            if op != "move" || directional_pair(ctx).is_none() {
+                return None;
+            }
+            if let Some(reason) = pending.session.divergence() {
+                return Some(diverged_reply(&cid, reason));
+            }
+            if pending.owner != ctx.owner || pending.generation != ctx.generation {
+                return Some(diverged_reply(
+                    &cid,
+                    crate::contract::DivergenceKind::OwnerMismatch,
+                ));
+            }
+            return Some(rejected(
+                cid,
+                "pending-exists",
+                "complete the pending plan before proposing",
+            ));
+        }
+        None
+    }
+
     fn store_committed(&mut self, domain_key: DomainKey, session: Session, outer_gap: i32) {
         // A committed remove that empties the domain retires its session at
         // the same applied boundary so the slot is released. Zero-window
@@ -1592,11 +2407,100 @@ impl Planner {
         if self.sessions.len() >= crate::session::MAX_DOMAINS
             && !self.sessions.contains_key(&domain_key)
         {
-            self.sessions.clear();
-            self.domain_outer_gaps.clear();
+            // Retained topology is authoritative. A capacity miss must never
+            // evict unrelated domains and force their later spatial rebuild.
+            return;
         }
         self.domain_outer_gaps.insert(domain_key.clone(), outer_gap);
         self.sessions.insert(domain_key, session);
+    }
+
+    fn canonical_component_domain(domain: &OutputDomain) -> OutputDomain {
+        OutputDomain {
+            id: domain.id.clone(),
+            workspace: domain.workspace.clone(),
+            bounds: domain.bounds,
+            gap: domain.gap,
+            adjacent: BTreeMap::new(),
+        }
+    }
+
+    /// Assemble a temporary directional view solely from canonical per-domain
+    /// sessions. This deliberately never infers a tree from current geometry:
+    /// selected cross-output paths require retained authoritative state.
+    fn canonical_directional_pair(
+        &mut self,
+        source_domain: &OutputDomain,
+        source_key: &DomainKey,
+        target_domain: &OutputDomain,
+        target_key: &DomainKey,
+    ) -> Result<Session, &'static str> {
+        let source_component = Self::canonical_component_domain(source_domain);
+        let target_component = Self::canonical_component_domain(target_domain);
+        // Cross-domain pairing must never discard a canonical component merely
+        // because an adjacent work area changed. A normal reconcile owns that
+        // update; this selected path fails closed without spatial rebuilding.
+        let source = self
+            .sessions
+            .get(source_key)
+            .filter(|session| {
+                session_usable(session)
+                    && !committed_session_is_empty(session)
+                    && session_domain_matches(session, &source_component)
+            })
+            .cloned()
+            .ok_or("canonical-source-unavailable")?;
+        let target = match self.sessions.get(target_key) {
+            None => None,
+            Some(session)
+                if session_usable(session)
+                    && !committed_session_is_empty(session)
+                    && session_domain_matches(session, &target_component) =>
+            {
+                Some(session.clone())
+            }
+            Some(_) => return Err("canonical-pair-unusable"),
+        };
+        Session::paired_from_canonical(
+            &source,
+            target.as_ref(),
+            vec![source_domain.clone(), target_domain.clone()],
+        )
+        .map_err(|error| match error {
+            crate::session::CanonicalPairError::MismatchedIdentity => {
+                "canonical-pair-identity-mismatch"
+            }
+            crate::session::CanonicalPairError::UnusableInput => "canonical-pair-unusable",
+            crate::session::CanonicalPairError::DomainMismatch => "canonical-pair-domain-mismatch",
+            crate::session::CanonicalPairError::DuplicateState => "canonical-pair-duplicate-state",
+        })
+    }
+
+    /// Return a terminal two-domain transaction to the sole canonical state
+    /// authority. The pair is never retained after this boundary.
+    fn store_canonical_directional_pair(
+        &mut self,
+        source_key: DomainKey,
+        target_key: DomainKey,
+        pair: Session,
+        source_outer_gap: i32,
+    ) -> bool {
+        let Ok((source, target)) = pair.split_canonical_pair() else {
+            return false;
+        };
+        let target_outer_gap = self
+            .domain_outer_gaps
+            .get(&target_key)
+            .copied()
+            .unwrap_or(0);
+        self.store_committed(source_key, source, source_outer_gap);
+        if let Some(target) = target {
+            self.store_committed(target_key, target, target_outer_gap);
+        } else {
+            self.sessions.remove(&target_key);
+            self.domain_outer_gaps.remove(&target_key);
+        }
+        true
     }
 
     /// Portable output relocation: when no usable session exists for the
@@ -1610,8 +2514,9 @@ impl Planner {
     /// even when that target is empty, unusable, or mismatched (normal
     /// target cleanup/seeding owns that slot). Fails closed with no source
     /// mutation when no single usable non-empty source exists, when a
-    /// standalone workspace-send is pending, when the request outer gap is
-    /// out of range, or when the move itself refuses. The insert honors
+    /// standalone workspace-send or directional R4 move is pending, when the
+    /// request outer gap is out of range, or when the move itself refuses. The
+    /// insert honors
     /// normal `store_committed` constraints (never retain empty, never exceed
     /// `MAX_DOMAINS`) without the all-domain clearing eviction: at capacity
     /// the relocation fails closed and the source is restored. The standalone
@@ -1622,7 +2527,7 @@ impl Planner {
         target_domain: &OutputDomain,
         request_outer_gap: i32,
     ) -> bool {
-        if self.workspace_pending.is_some() {
+        if self.workspace_pending.is_some() || self.directional_pending.is_some() {
             return false;
         }
         if request_outer_gap < 0 || request_outer_gap > GEOMETRY_MAX_GAP {
@@ -2223,6 +3128,12 @@ impl Planner {
                 "move-op-invalid",
             );
         }
+        // Production directional route: two-domain observations build one
+        // temporary pair from canonical retained domain sessions.
+        // Single-domain legacy requests fall through unchanged.
+        if directional_pair(ctx).is_some() {
+            return self.evaluate_move_directional(ctx, &command);
+        }
         if !is_opaque_id(&command.window) {
             return snapshot_invalid(
                 ctx.request.correlation_id.clone(),
@@ -2311,6 +3222,13 @@ impl Planner {
                 "focus-op-invalid",
             );
         }
+        // Production directional route: two-domain observations try local
+        // focus first, then the exhausted Left/Right cross-output proposal
+        // against a temporary pair built from canonical domain state.
+        // Single-domain legacy requests fall through unchanged.
+        if directional_pair(ctx).is_some() {
+            return self.evaluate_focus_directional(ctx, &command);
+        }
         if !is_opaque_id(&command.window) {
             return snapshot_invalid(
                 ctx.request.correlation_id.clone(),
@@ -2382,6 +3300,416 @@ impl Planner {
                 session.verify_focus(&post).is_ok()
             },
         )
+    }
+
+    /// Production directional move: retained two-domain session, existing
+    /// local R1/R2/R3 first (S21 no-cross preserved) and committed
+    /// synchronously exactly as before, crossing only at the actual output
+    /// boundary via the multi-domain R4 planner (S20/S22/S23). R4 cross-output
+    /// transfers no longer acknowledge/verify/split synchronously: they
+    /// propose once and retain a [`DirectionalMovePending`] pair Session until
+    /// an exact accepted `directional-move-ack` and a matching verified
+    /// `directional-move-verify` post-observation commit it. Complete
+    /// source+target geometry, focus follow, and the existing
+    /// owner/generation/revision/correlation/single-pending/total-observation/
+    /// duplicate/stale/visibility safeguards apply. Up/Down never cross (the
+    /// directional core gates R4 to Left/Right).
+    fn evaluate_move_directional(&mut self, ctx: &Validated, command: &DirectedCommand) -> String {
+        let cid = ctx.request.correlation_id.clone();
+        if !is_opaque_id(&command.window) {
+            return snapshot_invalid(cid, MSG_OPAQUE_ID, "move-window-invalid");
+        }
+        let Some(direction) = parse_direction(&command.direction) else {
+            return rejected(cid, "direction-invalid", MSG_DIRECTION);
+        };
+        let Some((source_domain, source_key, target_domain, target_key)) = directional_pair(ctx)
+        else {
+            return snapshot_invalid(cid, MSG_OBSERVATION, "domain-invalid");
+        };
+        let window = WindowId(command.window.clone());
+        let mut session = match self.canonical_directional_pair(
+            source_domain,
+            source_key,
+            target_domain,
+            target_key,
+        ) {
+            Ok(session) => session,
+            Err(detail) => return snapshot_invalid(cid, MSG_OBSERVATION, detail),
+        };
+        let base = session.accepted_revision();
+        let observation = observation_for(base, ctx);
+        match self.propose_directional_move(
+            &mut session,
+            ctx,
+            command,
+            source_key,
+            &window,
+            direction,
+            &observation,
+        ) {
+            Ok(plan) => {
+                // R4 cross-output: stage the async pending, never sync-commit.
+                if matches!(
+                    plan.dispatch.operation,
+                    crate::directional::MoveOperation::CrossOutput { .. }
+                ) {
+                    // Global boundary already blocks when either pending
+                    // exists, but refuse here as well without mutation when a
+                    // wedged or live pending is present.
+                    if let Some(pending) = &self.directional_pending {
+                        if let Some(reason) = pending.session.divergence() {
+                            return diverged_reply(&cid, reason);
+                        }
+                        return rejected(
+                            cid,
+                            "pending-exists",
+                            "complete the pending plan before proposing",
+                        );
+                    }
+                    if let Some(pending) = &self.workspace_pending {
+                        if let Some(reason) = pending.session.divergence() {
+                            return diverged_reply(&cid, reason);
+                        }
+                        return rejected(
+                            cid,
+                            "pending-exists",
+                            "complete the pending plan before proposing",
+                        );
+                    }
+                    let target_outer_gap = ctx
+                        .raw
+                        .get("domains")
+                        .and_then(serde_json::Value::as_array)
+                        .and_then(|entries| entries.get(1))
+                        .and_then(|entry| entry.get("outer_gap"))
+                        .and_then(serde_json::Value::as_i64)
+                        .filter(|gap| (0..=i64::from(GEOMETRY_MAX_GAP)).contains(gap))
+                        .map(|gap| gap as i32)
+                        .unwrap_or(0);
+                    let text = self.move_directional_reply(ctx, direction, &plan);
+                    self.directional_pending = Some(DirectionalMovePending {
+                        owner: ctx.owner.clone(),
+                        generation: ctx.generation.clone(),
+                        correlation: ctx.correlation.clone(),
+                        base_revision: base,
+                        session,
+                        source_key: source_key.clone(),
+                        target_key: target_key.clone(),
+                        source_outer_gap: ctx.request.domain.outer_gap,
+                        target_outer_gap,
+                        desired_geometry: plan.desired_geometry.clone(),
+                        operation: plan.dispatch.operation.clone(),
+                        preconditions: plan.dispatch.preconditions.clone(),
+                    });
+                    return text;
+                }
+                // R1-R3 local: synchronous acknowledge/verify/split, unchanged.
+                let text = self.move_directional_reply(ctx, direction, &plan);
+                if self.commit_move_directional(&mut session, ctx, &plan, base) {
+                    if self.store_canonical_directional_pair(
+                        source_key.clone(),
+                        target_key.clone(),
+                        session,
+                        ctx.request.domain.outer_gap,
+                    ) {
+                        return text;
+                    }
+                }
+                snapshot_invalid(cid, MSG_OBSERVATION, "commit-rejected")
+            }
+            Err(error) => propose_failure(error, cid),
+        }
+    }
+
+    fn propose_directional_move(
+        &self,
+        session: &mut Session,
+        ctx: &Validated,
+        command: &DirectedCommand,
+        source_key: &DomainKey,
+        window: &WindowId,
+        direction: Direction,
+        observation: &SessionObservation,
+    ) -> Result<crate::session::SessionMovePlan, ProposeError> {
+        let _ = session
+            .sync_focus_from_window(source_key, &WindowId(ctx.request.focused_window.clone()));
+        let mut capabilities = Capabilities::full();
+        capabilities.cross_output_transfer = command.cross_output_transfer;
+        session.propose_move(
+            source_key,
+            window,
+            direction,
+            observation,
+            &ctx.correlation,
+            &capabilities,
+        )
+    }
+
+    /// Production directional move reply. R4 cross-output plans carry the
+    /// exact operation/preconditions the adapter must fence (source, target,
+    /// direction, mover, target workspace, R4 rule, transfer capability);
+    /// local R1/R2/R3 plans carry neither, like the legacy route.
+    fn move_directional_reply(
+        &self,
+        ctx: &Validated,
+        direction: Direction,
+        plan: &crate::session::SessionMovePlan,
+    ) -> String {
+        let detail = serde_json::json!({
+            "kind": "move",
+            "rule": format!("{:?}", plan.dispatch.rule),
+            "capability": format!("{:?}", plan.dispatch.required_capability),
+            "direction": direction_str(direction),
+        });
+        let focus = Some((&plan.desired_focus_domain, &plan.desired_focus_leaf));
+        match &plan.dispatch.operation {
+            crate::directional::MoveOperation::CrossOutput {
+                rule,
+                target_output,
+                target_workspace,
+                source_root_child_index,
+                target,
+            } => {
+                let Some((_, source_key, _, _)) = directional_pair(ctx) else {
+                    return snapshot_invalid(
+                        ctx.request.correlation_id.clone(),
+                        MSG_OBSERVATION,
+                        "domain-invalid",
+                    );
+                };
+                let operation_value = serde_json::json!({
+                    "op": "move",
+                    "rule": format!("{rule:?}"),
+                    "capability": format!("{:?}", plan.dispatch.required_capability),
+                    "direction": direction_str(plan.dispatch.intent.direction),
+                    "window": plan.dispatch.intent.focused_window.0,
+                    "leaf": plan.dispatch.intent.focused_leaf.0,
+                    "source_output": source_key.output.0,
+                    "source_workspace": source_key.workspace.0,
+                    "target_output": target_output.0,
+                    "target_workspace": target_workspace.0,
+                    "source_root_child_index": source_root_child_index,
+                    "target": match target {
+                        crate::directional::CrossOutputTarget::Empty => "empty",
+                        crate::directional::CrossOutputTarget::Occupied => "occupied",
+                    },
+                });
+                let preconditions: Vec<&'static str> = plan
+                    .dispatch
+                    .preconditions
+                    .iter()
+                    .map(|p| move_precondition_str(*p))
+                    .collect();
+                serialize_bounded(&PlanReply {
+                    v: PLAN_CONTRACT_VERSION,
+                    correlation_id: ctx.request.correlation_id.clone(),
+                    outcome: "planned",
+                    kind: None,
+                    message: None,
+                    base_revision: Some(plan.dispatch.base_revision),
+                    detail: Some(detail),
+                    desired_geometry: Some(
+                        plan.desired_geometry.iter().map(geometry_reply).collect(),
+                    ),
+                    desired_focus: focus.map(|(domain, leaf)| focus_reply(domain, leaf)),
+                    float_geometry: None,
+                    preconditions: Some(preconditions),
+                    operation: Some(operation_value),
+                })
+            }
+            _ => planned_reply(
+                &ctx.request.correlation_id,
+                plan.dispatch.base_revision,
+                detail,
+                &plan.desired_geometry,
+                focus,
+            ),
+        }
+    }
+
+    fn commit_move_directional(
+        &self,
+        session: &mut Session,
+        ctx: &Validated,
+        plan: &crate::session::SessionMovePlan,
+        base: u64,
+    ) -> bool {
+        if !acknowledge(session, ctx, base) {
+            return false;
+        }
+        let post = crate::contract::PostObservation::new(
+            Observation::new(
+                ctx.owner.clone(),
+                ctx.generation.clone(),
+                base,
+                ctx.request.fingerprint,
+            ),
+            ctx.correlation.clone(),
+            true,
+            plan.dispatch.preconditions.clone(),
+            plan.dispatch.operation.clone(),
+        );
+        session.verify_move(&post).is_ok()
+    }
+
+    /// Production directional focus: local focus first; on local `Unchanged`
+    /// and Left/Right call `Session::propose_cross_output_focus` to the
+    /// adjacent output's current workspace last-focused leaf. Up/Down stay
+    /// local (no vertical crossing). Exactly one focus actuation downstream;
+    /// no geometry/layout/window membership writes.
+    fn evaluate_focus_directional(&mut self, ctx: &Validated, command: &DirectedCommand) -> String {
+        let cid = ctx.request.correlation_id.clone();
+        if !is_opaque_id(&command.window) {
+            return snapshot_invalid(cid, MSG_OPAQUE_ID, "focus-window-invalid");
+        }
+        let Some(direction) = parse_direction(&command.direction) else {
+            return rejected(cid, "direction-invalid", MSG_DIRECTION);
+        };
+        let Some((source_domain, source_key, target_domain, target_key)) = directional_pair(ctx)
+        else {
+            return snapshot_invalid(cid, MSG_OBSERVATION, "domain-invalid");
+        };
+        let window = WindowId(command.window.clone());
+        let mut session = match self.canonical_directional_pair(
+            source_domain,
+            source_key,
+            target_domain,
+            target_key,
+        ) {
+            Ok(session) => session,
+            Err(detail) => return snapshot_invalid(cid, MSG_OBSERVATION, detail),
+        };
+        let base = session.accepted_revision();
+        let observation = observation_for(base, ctx);
+        match self.propose_directional_focus(
+            &mut session,
+            ctx,
+            source_key,
+            &window,
+            direction,
+            &observation,
+        ) {
+            Ok((plan, crossed)) => {
+                let text = self.focus_directional_reply(ctx, direction, &plan, crossed);
+                if self.commit_focus_directional(&mut session, ctx, &plan, base) {
+                    if self.store_canonical_directional_pair(
+                        source_key.clone(),
+                        target_key.clone(),
+                        session,
+                        ctx.request.domain.outer_gap,
+                    ) {
+                        return text;
+                    }
+                }
+                snapshot_invalid(cid, MSG_OBSERVATION, "commit-rejected")
+            }
+            Err(error) => propose_failure(error, cid),
+        }
+    }
+
+    fn propose_directional_focus(
+        &self,
+        session: &mut Session,
+        ctx: &Validated,
+        source_key: &DomainKey,
+        window: &WindowId,
+        direction: Direction,
+        observation: &SessionObservation,
+    ) -> Result<(crate::session::SessionFocusPlan, bool), ProposeError> {
+        let _ = session
+            .sync_focus_from_window(source_key, &WindowId(ctx.request.focused_window.clone()));
+        // Local first: any local target wins (no cross).
+        match session.propose_focus(
+            source_key,
+            window,
+            direction,
+            observation,
+            &ctx.correlation,
+            &FocusCapabilities::full(),
+        ) {
+            Ok(plan) => Ok((plan, false)),
+            Err(ProposeError::Refused(RefusalKind::Unchanged))
+                if matches!(direction, Direction::Left | Direction::Right) =>
+            {
+                // Exhausted horizontal edge: cross to the adjacent output's
+                // current workspace last-focused leaf. Up/Down never reach
+                // here (local Unchanged stays terminal for them).
+                session
+                    .propose_cross_output_focus(
+                        source_key,
+                        window,
+                        direction,
+                        observation,
+                        &ctx.correlation,
+                        &FocusCapabilities::full(),
+                    )
+                    .map(|plan| (plan, true))
+            }
+            Err(other) => Err(other),
+        }
+    }
+
+    fn focus_directional_reply(
+        &self,
+        ctx: &Validated,
+        direction: Direction,
+        plan: &crate::session::SessionFocusPlan,
+        crossed: bool,
+    ) -> String {
+        if crossed {
+            cross_focus_planned_reply(
+                &ctx.request.correlation_id,
+                plan.dispatch.base_revision,
+                serde_json::json!({
+                    "kind": "focus",
+                    "capability": "directional-focus",
+                    "direction": direction_str(direction),
+                    "to_window": plan.dispatch.operation.to_window.0,
+                    "cross_output": true,
+                }),
+                &plan.desired_geometry,
+                (&plan.desired_focus_domain, &plan.desired_focus_leaf),
+                &plan.dispatch.operation,
+            )
+        } else {
+            planned_reply(
+                &ctx.request.correlation_id,
+                plan.dispatch.base_revision,
+                serde_json::json!({
+                    "kind": "focus",
+                    "capability": "directional-focus",
+                    "direction": direction_str(direction),
+                    "to_window": plan.dispatch.operation.to_window.0,
+                }),
+                &plan.desired_geometry,
+                Some((&plan.desired_focus_domain, &plan.desired_focus_leaf)),
+            )
+        }
+    }
+
+    fn commit_focus_directional(
+        &self,
+        session: &mut Session,
+        ctx: &Validated,
+        plan: &crate::session::SessionFocusPlan,
+        base: u64,
+    ) -> bool {
+        if !acknowledge(session, ctx, base) {
+            return false;
+        }
+        let post = crate::contract::FocusPostObservation::new(
+            Observation::new(
+                ctx.owner.clone(),
+                ctx.generation.clone(),
+                base,
+                ctx.request.fingerprint,
+            ),
+            ctx.correlation.clone(),
+            true,
+            plan.dispatch.preconditions.clone(),
+            plan.dispatch.operation.clone(),
+        );
+        session.verify_focus(&post).is_ok()
     }
 
     fn evaluate_resize_retained(&mut self, ctx: &Validated) -> String {
@@ -2619,7 +3947,8 @@ impl Planner {
             // `try_relocate_for_target` likewise mutates nothing).
             let mut source_key: Option<DomainKey> = None;
             for key in self.sessions.keys() {
-                if key.workspace == ctx.domain_key.workspace && key.output != ctx.domain_key.output {
+                if key.workspace == ctx.domain_key.workspace && key.output != ctx.domain_key.output
+                {
                     if source_key.is_some() {
                         source_key = None;
                         break;
@@ -2628,8 +3957,10 @@ impl Planner {
                 }
             }
             let outer_ok = match &source_key {
-                Some(source) => self.domain_outer_gaps.get(source).copied()
-                    == Some(ctx.request.domain.outer_gap),
+                Some(source) => {
+                    self.domain_outer_gaps.get(source).copied()
+                        == Some(ctx.request.domain.outer_gap)
+                }
                 None => false,
             };
             if outer_ok {
@@ -2859,8 +4190,7 @@ impl Planner {
     /// simultaneous membership change refuses as partial-observation and the
     /// normal admit/remove path owns it.
     fn evaluate_update_gaps_retained(&mut self, ctx: &Validated) -> String {
-        let command: UpdateGapsCommand = match serde_json::from_value(ctx.request.command.clone())
-        {
+        let command: UpdateGapsCommand = match serde_json::from_value(ctx.request.command.clone()) {
             Ok(command) => command,
             Err(error) => {
                 let (kind, message) = classify_parse_error(&error);
@@ -3573,6 +4903,243 @@ impl Planner {
             }
         }
     }
+
+    /// Directional R4 acknowledgement phase: exact accepted acknowledgement
+    /// against the retained pending pair Session. Refused ack or
+    /// identity/correlation/revision mismatch is terminal divergence with no
+    /// commit and no canonical split. Strict bounded parsing, no new topology
+    /// seeding.
+    fn evaluate_directional_ack(&mut self, ctx: &Validated) -> String {
+        let cid = ctx.request.correlation_id.clone();
+        let command: DirectionalMoveAckCommand =
+            match serde_json::from_value(ctx.request.command.clone()) {
+                Ok(command) => command,
+                Err(error) => {
+                    let (kind, message) = classify_parse_error(&error);
+                    return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+                }
+            };
+        if command.op != "directional-move-ack" {
+            return snapshot_invalid(cid, MSG_OPAQUE_ID, "ack-op-invalid");
+        }
+        let outcome = match command.ack_outcome.as_str() {
+            "accepted" => AckOutcome::Accepted,
+            "refused-capability" => AckOutcome::RefusedCapability,
+            "partial-application" => AckOutcome::PartialApplication,
+            "adapter-lost" => AckOutcome::AdapterLost,
+            _ => {
+                return rejected(cid, "ack-refused", "acknowledgement outcome is invalid");
+            }
+        };
+        let Some(pending) = &mut self.directional_pending else {
+            return rejected(cid, "no-pending", "no directional move is pending");
+        };
+        if let Some(reason) = pending.session.divergence() {
+            return diverged_reply(&cid, reason);
+        }
+        if pending.owner != ctx.owner || pending.generation != ctx.generation {
+            return diverged_reply(&cid, crate::contract::DivergenceKind::OwnerMismatch);
+        }
+        if pending.correlation != ctx.correlation {
+            return diverged_reply(&cid, crate::contract::DivergenceKind::CorrelationMismatch);
+        }
+        if ctx.request.revision != pending.base_revision {
+            return diverged_reply(&cid, crate::contract::DivergenceKind::StaleRevision);
+        }
+        let ack = AdapterAck::new(
+            ctx.correlation.clone(),
+            ctx.owner.clone(),
+            ctx.generation.clone(),
+            pending.base_revision,
+            outcome,
+        );
+        match pending.session.acknowledge(&ack) {
+            Ok(_) => serialize_bounded(&PlanReply {
+                v: PLAN_CONTRACT_VERSION,
+                correlation_id: cid,
+                outcome: "acknowledged",
+                kind: Some("directional-move".to_owned()),
+                message: None,
+                base_revision: Some(pending.base_revision),
+                detail: None,
+                desired_geometry: None,
+                desired_focus: None,
+                float_geometry: None,
+                preconditions: None,
+                operation: None,
+            }),
+            Err(AckError::Diverged(reason)) => diverged_reply(&cid, reason),
+            Err(AckError::NoPending) => {
+                rejected(cid, "no-pending", "no directional move is pending")
+            }
+        }
+    }
+
+    /// Directional R4 verification phase: exact post-observation (operation
+    /// and preconditions echoed from the plan) plus a complete matching
+    /// source+target observation commits via `Session::verify_move`, then
+    /// splits/stores the canonical sessions once and replies `committed`.
+    /// Mismatch, refused ack residue, failed verification, or
+    /// identity/correlation/revision loss is terminal `diverged` with no
+    /// commit. A bare `verified: true` never commits.
+    fn evaluate_directional_verify(&mut self, ctx: &Validated) -> String {
+        let cid = ctx.request.correlation_id.clone();
+        let command: DirectionalMoveVerifyCommand =
+            match serde_json::from_value(ctx.request.command.clone()) {
+                Ok(command) => command,
+                Err(error) => {
+                    let (kind, message) = classify_parse_error(&error);
+                    return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+                }
+            };
+        if command.op != "directional-move-verify" {
+            return snapshot_invalid(cid, MSG_OPAQUE_ID, "verify-op-invalid");
+        }
+        if !command.verified {
+            return diverged_reply(
+                &cid,
+                crate::contract::DivergenceKind::PostconditionUnverified,
+            );
+        }
+        let Some(preconditions) = parse_directional_preconditions(&command.preconditions) else {
+            return rejected(cid, "verify-invalid", "preconditions are invalid");
+        };
+        let Some(operation) = parse_directional_move_operation(&command.operation) else {
+            return rejected(cid, "verify-invalid", "operation is invalid");
+        };
+        let Some(mut pending) = self.directional_pending.take() else {
+            return rejected(cid, "no-pending", "no directional move is pending");
+        };
+        if let Some(reason) = pending.session.divergence() {
+            self.directional_pending = Some(pending);
+            return diverged_reply(&cid, reason);
+        }
+        if pending.owner != ctx.owner || pending.generation != ctx.generation {
+            self.directional_pending = Some(pending);
+            return diverged_reply(&cid, crate::contract::DivergenceKind::OwnerMismatch);
+        }
+        if pending.correlation != ctx.correlation {
+            self.directional_pending = Some(pending);
+            return diverged_reply(&cid, crate::contract::DivergenceKind::CorrelationMismatch);
+        }
+        if ctx.request.revision != pending.base_revision {
+            self.directional_pending = Some(pending);
+            return diverged_reply(&cid, crate::contract::DivergenceKind::StaleRevision);
+        }
+        // Exact pending operation/preconditions binding before any commit.
+        if operation != pending.operation || preconditions != pending.preconditions {
+            let reason = pending.session.note_postcondition_mismatch();
+            self.directional_pending = Some(pending);
+            return diverged_reply(&cid, reason);
+        }
+        // Complete source+target post-observation must equal the retained
+        // desired geometry/membership exactly.
+        if !directional_post_matches(&pending, ctx) {
+            let reason = pending.session.note_postcondition_mismatch();
+            self.directional_pending = Some(pending);
+            return diverged_reply(&cid, reason);
+        }
+        // Fenced source/target binding: the echoed operation target must home
+        // to the retained pair, and any carried source binding must match.
+        if let crate::directional::MoveOperation::CrossOutput {
+            target_output,
+            target_workspace,
+            ..
+        } = &pending.operation
+        {
+            let op_target_output = command
+                .operation
+                .get("target_output")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let op_target_workspace = command
+                .operation
+                .get("target_workspace")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let op_source_output = command
+                .operation
+                .get("source_output")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let op_source_workspace = command
+                .operation
+                .get("source_workspace")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if op_target_output != target_output.0
+                || op_target_workspace != target_workspace.0
+                || op_target_output != pending.target_key.output.0
+                || op_target_workspace != pending.target_key.workspace.0
+                || op_source_output != pending.source_key.output.0
+                || op_source_workspace != pending.source_key.workspace.0
+            {
+                let reason = pending.session.note_postcondition_mismatch();
+                self.directional_pending = Some(pending);
+                return diverged_reply(&cid, reason);
+            }
+        }
+        let post = crate::contract::PostObservation::new(
+            Observation::new(
+                ctx.owner.clone(),
+                ctx.generation.clone(),
+                pending.base_revision,
+                ctx.request.fingerprint,
+            ),
+            ctx.correlation.clone(),
+            true,
+            preconditions,
+            operation,
+        );
+        match pending.session.verify_move(&post) {
+            Ok(commit) => {
+                let source_key = pending.source_key.clone();
+                let target_key = pending.target_key.clone();
+                let source_outer_gap = pending.source_outer_gap;
+                let target_outer_gap = pending.target_outer_gap;
+                let Ok((source, target)) = pending.session.split_canonical_pair() else {
+                    // Verification already committed the pair. Retain an
+                    // explicit terminal wedge rather than losing canonical
+                    // state and permitting a spatial rebuild around it.
+                    self.directional_pending = Some(pending);
+                    return diverged_reply(
+                        &cid,
+                        crate::contract::DivergenceKind::PostconditionMismatch,
+                    );
+                };
+                self.directional_pending = None;
+                self.store_committed(source_key, source, source_outer_gap);
+                if let Some(target) = target {
+                    self.store_committed(target_key, target, target_outer_gap);
+                } else {
+                    self.sessions.remove(&target_key);
+                    self.domain_outer_gaps.remove(&target_key);
+                }
+                serialize_bounded(&PlanReply {
+                    v: PLAN_CONTRACT_VERSION,
+                    correlation_id: cid,
+                    outcome: "committed",
+                    kind: Some("directional-move".to_owned()),
+                    message: None,
+                    base_revision: Some(commit.revision),
+                    detail: None,
+                    desired_geometry: None,
+                    desired_focus: None,
+                    float_geometry: None,
+                    preconditions: None,
+                    operation: None,
+                })
+            }
+            Err(VerifyError::Diverged(reason)) => {
+                self.directional_pending = Some(pending);
+                diverged_reply(&cid, reason)
+            }
+            Err(_) => {
+                self.directional_pending = Some(pending);
+                rejected(cid, "verify-rejected", "directional verification failed")
+            }
+        }
+    }
 }
 
 /// Strict stateless Planner evaluation. Always returns a bounded reply:
@@ -4004,6 +5571,16 @@ struct DirectedCommand {
     op: String,
     window: String,
     direction: String,
+    /// Active KWin currently has no public output-transfer primitive. The
+    /// adapter sends false for a two-domain flight, preserving local movement
+    /// while rejecting R4 before the planner stages any state. Omitted legacy
+    /// requests retain their historical full-capability behavior.
+    #[serde(default = "default_cross_output_transfer")]
+    cross_output_transfer: bool,
+}
+
+const fn default_cross_output_transfer() -> bool {
+    true
 }
 
 fn build_full_session(ctx: &Validated) -> Result<(Session, SessionObservation), &'static str> {
@@ -4403,6 +5980,25 @@ struct WorkspaceAckCommand {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WorkspaceVerifyCommand {
+    op: String,
+    verified: bool,
+    preconditions: serde_json::Value,
+    operation: serde_json::Value,
+}
+
+/// Strict directional R4 acknowledgement command.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DirectionalMoveAckCommand {
+    op: String,
+    ack_outcome: String,
+}
+
+/// Strict directional R4 verification command: exact echoed preconditions and
+/// cross-output operation plus the explicit native verification flag.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DirectionalMoveVerifyCommand {
     op: String,
     verified: bool,
     preconditions: serde_json::Value,
@@ -5854,7 +7450,7 @@ mod tests {
             );
             assert!(seen.insert(*token), "duplicate token: {token}");
         }
-        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 43, "closed registry size");
+        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 50, "closed registry size");
     }
 
     fn geometry_by_window(
@@ -6013,10 +7609,12 @@ mod tests {
         );
         let pointer_reply = parse_reply(&planner.evaluate(&pointer));
         assert_eq!(pointer_reply["outcome"], "planned", "{pointer_reply}");
-        assert_eq!(pointer_reply["detail"]["kind"], "pointer-resize", "{pointer_reply}");
+        assert_eq!(
+            pointer_reply["detail"]["kind"], "pointer-resize",
+            "{pointer_reply}"
+        );
         assert_ne!(
-            pointer_reply["detail"]["old_shares"],
-            pointer_reply["detail"]["new_shares"],
+            pointer_reply["detail"]["old_shares"], pointer_reply["detail"]["new_shares"],
             "the delayed oracle boundary remains authoritative"
         );
     }
@@ -6225,13 +7823,20 @@ mod tests {
         );
         assert_ne!(geometry_by_window(&updated), before, "{updated}");
         // Focus and accepted revision are preserved, not reseeded.
-        assert_eq!(updated["desired_focus"], baseline["desired_focus"], "{updated}");
-        assert_eq!(updated["base_revision"], baseline["base_revision"], "{updated}");
+        assert_eq!(
+            updated["desired_focus"], baseline["desired_focus"],
+            "{updated}"
+        );
+        assert_eq!(
+            updated["base_revision"], baseline["base_revision"],
+            "{updated}"
+        );
         assert_eq!(planner.retained_domains(), 1);
 
         // The retained session now owns the new gaps: a normal reconcile with
         // the new gaps converges, while the old-flight gaps refuse.
-        let converged = parse_reply(&planner.evaluate(&reconcile_gaps_request("gap-inner-2", 16, 8)));
+        let converged =
+            parse_reply(&planner.evaluate(&reconcile_gaps_request("gap-inner-2", 16, 8)));
         assert_eq!(converged["outcome"], "planned", "{converged}");
         assert_eq!(
             geometry_by_window(&converged),
@@ -6247,7 +7852,10 @@ mod tests {
         let restored = parse_reply(&planner.evaluate(&update_gaps_request("gap-inner-4", 8, 8)));
         assert_eq!(restored["outcome"], "planned", "{restored}");
         assert_eq!(geometry_by_window(&restored), before, "{restored}");
-        assert_eq!(restored["desired_focus"], baseline["desired_focus"], "{restored}");
+        assert_eq!(
+            restored["desired_focus"], baseline["desired_focus"],
+            "{restored}"
+        );
     }
 
     #[test]
@@ -6272,11 +7880,18 @@ mod tests {
             "{updated}"
         );
         assert_ne!(geometry_by_window(&updated), before, "{updated}");
-        assert_eq!(updated["desired_focus"], baseline["desired_focus"], "{updated}");
-        assert_eq!(updated["base_revision"], baseline["base_revision"], "{updated}");
+        assert_eq!(
+            updated["desired_focus"], baseline["desired_focus"],
+            "{updated}"
+        );
+        assert_eq!(
+            updated["base_revision"], baseline["base_revision"],
+            "{updated}"
+        );
         assert_eq!(planner.retained_domains(), 1);
 
-        let converged = parse_reply(&planner.evaluate(&reconcile_gaps_request("gap-outer-2", 8, 0)));
+        let converged =
+            parse_reply(&planner.evaluate(&reconcile_gaps_request("gap-outer-2", 8, 0)));
         assert_eq!(converged["outcome"], "planned", "{converged}");
         assert_eq!(
             geometry_by_window(&converged),
@@ -6311,8 +7926,14 @@ mod tests {
             ]),
             "{updated}"
         );
-        assert_eq!(updated["desired_focus"], baseline["desired_focus"], "{updated}");
-        assert_eq!(updated["base_revision"], baseline["base_revision"], "{updated}");
+        assert_eq!(
+            updated["desired_focus"], baseline["desired_focus"],
+            "{updated}"
+        );
+        assert_eq!(
+            updated["base_revision"], baseline["base_revision"],
+            "{updated}"
+        );
 
         // A later directional command still plans on the retained tree with
         // the new gaps instead of reseeding.
@@ -6388,7 +8009,8 @@ mod tests {
         let restored = parse_reply(&planner.evaluate(&update_gaps_request("gap-share-4", 8, 8)));
         assert_eq!(restored["outcome"], "planned", "{restored}");
         assert_eq!(
-            geometry_by_window(&restored), before,
+            geometry_by_window(&restored),
+            before,
             "round trip must restore resized allocation exactly {restored}"
         );
     }
@@ -6401,8 +8023,7 @@ mod tests {
         let before = geometry_by_window(&baseline);
 
         let mut partial: serde_json::Value =
-            serde_json::from_str(&update_gaps_request("gap-part-2", 16, 8))
-                .expect("valid request");
+            serde_json::from_str(&update_gaps_request("gap-part-2", 16, 8)).expect("valid request");
         partial["windows"] = serde_json::json!([
             {"window": "win-1", "output": "out-1", "workspace": "ws-1",
              "rect": {"x": 0, "y": 0, "w": 100, "h": 80}},
@@ -6436,17 +8057,15 @@ mod tests {
             ("gap-range-3", 8, -1, "outer-gap-low"),
             ("gap-range-4", 8, 65, "outer-gap-high"),
         ] {
-            let reply = parse_reply(&planner.evaluate(&update_gaps_request(
-                correlation,
-                inner,
-                outer,
-            )));
+            let reply =
+                parse_reply(&planner.evaluate(&update_gaps_request(correlation, inner, outer)));
             assert_eq!(reply["outcome"], "rejected", "{reply}");
             assert_eq!(reply["kind"], "snapshot-invalid", "{reply}");
             assert_eq!(reply["detail"], expected, "{reply}");
         }
         // The refused range checks mutated nothing: old gaps still converge.
-        let converged = parse_reply(&planner.evaluate(&reconcile_gaps_request("gap-range-5", 8, 8)));
+        let converged =
+            parse_reply(&planner.evaluate(&reconcile_gaps_request("gap-range-5", 8, 8)));
         assert_eq!(converged["outcome"], "planned", "{converged}");
     }
 
@@ -7643,11 +9262,23 @@ mod tests {
         );
         let initial_reply = parse_reply(&planner.evaluate(&initial));
         assert_eq!(initial_reply["outcome"], "active-group", "{initial_reply}");
-        assert_eq!(initial_reply["correlation_id"], "ag-initial-1", "{initial_reply}");
+        assert_eq!(
+            initial_reply["correlation_id"], "ag-initial-1",
+            "{initial_reply}"
+        );
         assert_eq!(initial_reply["base_revision"], 2, "{initial_reply}");
-        assert_eq!(initial_reply["detail"]["owner"], "owner-1", "{initial_reply}");
-        assert_eq!(initial_reply["detail"]["generation"], "gen-1", "{initial_reply}");
-        assert_eq!(initial_reply["detail"]["focused_window"], "win-2", "{initial_reply}");
+        assert_eq!(
+            initial_reply["detail"]["owner"], "owner-1",
+            "{initial_reply}"
+        );
+        assert_eq!(
+            initial_reply["detail"]["generation"], "gen-1",
+            "{initial_reply}"
+        );
+        assert_eq!(
+            initial_reply["detail"]["focused_window"], "win-2",
+            "{initial_reply}"
+        );
         // Fresh revision with the same observation resolves identically and
         // echoes the exact identity binding.
         let fresh = active_group_request(
@@ -7682,9 +9313,15 @@ mod tests {
             ],
         );
         let diverged_reply = parse_reply(&planner.evaluate(&diverged));
-        assert_eq!(diverged_reply["outcome"], "active-group", "{diverged_reply}");
+        assert_eq!(
+            diverged_reply["outcome"], "active-group",
+            "{diverged_reply}"
+        );
         assert_eq!(diverged_reply["base_revision"], 2, "{diverged_reply}");
-        assert_eq!(diverged_reply["detail"]["focused_window"], "win-2", "{diverged_reply}");
+        assert_eq!(
+            diverged_reply["detail"]["focused_window"], "win-2",
+            "{diverged_reply}"
+        );
         // Generation change (adapter restart) discards retained state instead
         // of leaking the previous generation's group.
         let rotated = active_group_request(
@@ -7772,7 +9409,11 @@ mod tests {
             .map(|m| m["window"].as_str().expect("window").to_owned())
             .collect();
         members.sort();
-        assert_eq!(members, vec!["win-2".to_owned(), "win-3".to_owned()], "{aligned_reply}");
+        assert_eq!(
+            members,
+            vec!["win-2".to_owned(), "win-3".to_owned()],
+            "{aligned_reply}"
+        );
         // Root H proof: focusing win-1 resolves the 3-member root group.
         let root = active_group_request(
             "ag-nested-5",
@@ -8024,7 +9665,10 @@ mod tests {
                 &windows,
                 command,
             );
-            assert_eq!(parse_reply(&planner.evaluate(&request))["outcome"], "planned");
+            assert_eq!(
+                parse_reply(&planner.evaluate(&request))["outcome"],
+                "planned"
+            );
         }
         assert_eq!(planner.retained_domains(), 1);
         // Both members gone: an empty observation with a single-remove
@@ -8827,18 +10471,17 @@ mod tests {
         )));
         assert_eq!(seed["outcome"], "planned", "{seed}");
         assert_eq!(planner.retained_domains(), 1);
-        let mut mismatched: serde_json::Value =
-            serde_json::from_str(&retained_request_for_domain(
-                "reloc-gap-2",
-                "owner-1",
-                "gen-1",
-                "out-keep",
-                "ws-away",
-                "win-a",
-                &[("win-a", 0, 0, 100, 80)],
-                serde_json::json!({"op": "reconcile"}),
-            ))
-            .expect("request JSON");
+        let mut mismatched: serde_json::Value = serde_json::from_str(&retained_request_for_domain(
+            "reloc-gap-2",
+            "owner-1",
+            "gen-1",
+            "out-keep",
+            "ws-away",
+            "win-a",
+            &[("win-a", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        ))
+        .expect("request JSON");
         mismatched["domain"]["outer_gap"] = serde_json::json!(8);
         let rejected_reply = parse_reply(&planner.evaluate(&mismatched.to_string()));
         assert_eq!(rejected_reply["outcome"], "rejected", "{rejected_reply}");
@@ -8863,9 +10506,10 @@ mod tests {
         // Two usable sources with the same workspace refuse relocation with
         // no mutation: both stay retained.
         let mut planner = Planner::new();
-        for (correlation, output, window) in
-            [("reloc-amb-1", "out-a", "win-a"), ("reloc-amb-2", "out-b", "win-b")]
-        {
+        for (correlation, output, window) in [
+            ("reloc-amb-1", "out-a", "win-a"),
+            ("reloc-amb-2", "out-b", "win-b"),
+        ] {
             let seeded = parse_reply(&planner.evaluate(&retained_request_for_domain(
                 correlation,
                 "owner-1",
@@ -9047,9 +10691,18 @@ mod tests {
             .into_iter()
             .next()
             .expect("relocated exception");
-        assert_eq!(after_exception.floating, before_exception.floating, "{moved}");
-        assert_eq!(after_exception.fullscreen, before_exception.fullscreen, "{moved}");
-        assert_eq!(after_exception.maximized, before_exception.maximized, "{moved}");
+        assert_eq!(
+            after_exception.floating, before_exception.floating,
+            "{moved}"
+        );
+        assert_eq!(
+            after_exception.fullscreen, before_exception.fullscreen,
+            "{moved}"
+        );
+        assert_eq!(
+            after_exception.maximized, before_exception.maximized,
+            "{moved}"
+        );
         assert_eq!(after_exception.sticky, before_exception.sticky, "{moved}");
         assert_eq!(after_exception.output.0, "out-survivor", "{moved}");
         assert_eq!(after_exception.workspace.0, "ws-9", "{moved}");
@@ -9061,7 +10714,8 @@ mod tests {
     }
 
     #[test]
-    fn output_relocation_preserves_revision_gap_tree_and_focus() {        // Successful relocation keeps accepted revision, inner gap, topology
+    fn output_relocation_preserves_revision_gap_tree_and_focus() {
+        // Successful relocation keeps accepted revision, inner gap, topology
         // shares, window homing, and focus; only output identity changes.
         let mut planner = Planner::new();
         let seed = parse_reply(&planner.evaluate(&retained_request_for_domain(
@@ -9105,10 +10759,7 @@ mod tests {
             output: OutputId("out-survivor".to_owned()),
             workspace: WorkspaceId("ws-9".to_owned()),
         };
-        let after = planner
-            .sessions
-            .get(&target_key)
-            .expect("target retained");
+        let after = planner.sessions.get(&target_key).expect("target retained");
         assert_eq!(after.accepted_revision(), before_revision, "{moved}");
         // Topology shares and window set are preserved; only output homing
         // moves to the survivor.

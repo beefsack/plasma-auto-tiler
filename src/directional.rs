@@ -278,6 +278,7 @@ pub enum MoveOperation {
     CrossOutput {
         rule: Rule,
         target_output: OutputId,
+        target_workspace: WorkspaceId,
         source_root_child_index: usize,
         target: CrossOutputTarget,
     },
@@ -974,6 +975,12 @@ pub fn plan_move_with_capabilities(
     if path.len() != 1 || !matches!(tree, Node::Group { .. }) {
         return gate(local, capabilities);
     }
+    // Source default Vertical layout output axis only: only Left/Right cross
+    // horizontally adjacent outputs. Up/Down retain local behavior and never
+    // cross (no vertical output crossing, no workspace cycling).
+    if !matches!(intent.direction, Direction::Left | Direction::Right) {
+        return gate(local, capabilities);
+    }
     let Some(target_id) = validated.source.adjacent.get(&intent.direction) else {
         return MoveOutcome::Noop {
             reason: NoopReason::NoAdjacentOutput,
@@ -988,17 +995,20 @@ pub fn plan_move_with_capabilities(
             reason: NoopReason::NoAdjacentOutput,
         };
     };
-    if target.workspace != validated.source.workspace {
-        return MoveOutcome::Noop {
-            reason: NoopReason::NoAdjacentOutput,
-        };
-    }
+    // Cross-workspace allowed: the target is the adjacent output's currently
+    // selected logical workspace (its Snapshot workspace), not the same
+    // backing desktop index. Ambiguous duplicate output ids fail closed at
+    // validation (global duplicate NodeIds aside, duplicate OutputIds would
+    // make find() ambiguous); here the first match wins deterministically but
+    // session-layer adjacency validation requires exactly one domain per
+    // output id for cross-output to avoid ambiguity.
     let source_root_child_index = path[0].child_index;
     let outcome = MoveOutcome::Planned(MovePlan::for_operation(
         intent,
         MoveOperation::CrossOutput {
             rule: Rule::R4,
             target_output: target.id.clone(),
+            target_workspace: target.workspace.clone(),
             source_root_child_index,
             target: if target.tree.is_none() {
                 CrossOutputTarget::Empty

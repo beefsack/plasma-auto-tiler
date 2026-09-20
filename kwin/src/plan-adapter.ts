@@ -56,6 +56,29 @@ export const PLAN_MAX_GEOMETRY = 64;
 export const PLAN_MAX_SEQ = 1000000;
 export const PLAN_MAX_DOMAINS = 16;
 
+// KWin's public Script API exposes Window.output read-only and has no public
+// output-transfer operation. A desktop-membership setter and target geometry
+// do not prove an output transfer, so active R4 moves stay unavailable
+// unless the entry supplies every R4 native capability (exact Output object
+// resolution, exact VirtualDesktop resolution, sendClientToScreen transfer,
+// mover desktop-membership write, output/membership/geometry reads, and the
+// outputChanged/desktopsChanged/frameGeometryChanged fences). The request
+// `cross_output_transfer` flag is true only when all of them are present.
+export function crossOutputTransferSupported(env: PlanAdapterEnv): boolean {
+    return (
+        typeof env.resolveOutput === "function" &&
+        typeof env.resolveDesktop === "function" &&
+        typeof env.sendClientToScreen === "function" &&
+        typeof env.setDesktops === "function" &&
+        typeof env.readOutputName === "function" &&
+        typeof env.readDesktopIds === "function" &&
+        typeof env.readGeometry === "function" &&
+        typeof env.subscribeMoverOutput === "function" &&
+        typeof env.subscribeMoverDesktops === "function" &&
+        typeof env.subscribeWindowGeometry === "function"
+    );
+}
+
 const LOG_PREFIX = "plasma-auto-tiler:plan";
 
 export type PlanDirection = "left" | "right" | "up" | "down";
@@ -85,6 +108,33 @@ export interface PlanObservedWindow {
     readonly resourceClass?: string;
 }
 
+// Production directional domain descriptor: bounded primitive per domain
+// (output, workspace, work-area bounds, inner/outer gaps, horizontal
+// reciprocal adjacency). At most two entries: source first, then the
+// horizontally adjacent output's current logical workspace (which may differ
+// in workspace id). Only `left`/`right` adjacency keys are admitted.
+export interface PlanDomain {
+    readonly output: string;
+    readonly workspace: string;
+    readonly bounds: PlanRect;
+    readonly gap: number;
+    readonly outerGap: number;
+    readonly adjacent: Readonly<Partial<Record<"left" | "right", string>>>;
+}
+
+// Typed production directional observation outcome (active Left/Right
+// route only). `ready` carries the validated two-domain observation;
+// `no-target` means a confirmed no-adjacent/single-output condition and
+// keeps local single-domain behavior; `invalid` covers ambiguous,
+// unreadable, or malformed two-domain evidence and must refuse before any
+// local mutation. Up/Down never consult this hook.
+export type DirectionalObservationStatus = "ready" | "no-target" | "invalid";
+
+export interface DirectionalObservation {
+    readonly status: DirectionalObservationStatus;
+    readonly observed: PlanObserved | null;
+}
+
 export interface PlanObserved {
     readonly domainOutput: string;
     readonly domainWorkspace: string;
@@ -96,6 +146,11 @@ export interface PlanObserved {
     // planner member. A surviving tiled member may supply focusedId solely for
     // the removal observation; interactive tiled commands must refuse.
     readonly activeExcluded?: boolean;
+    // Production directional observation: source plus at most one
+    // horizontally reciprocal adjacent domain. Absent for legacy
+    // single-domain observations. Windows carry their exact output/workspace
+    // across both domains; the fingerprint binds the full observation.
+    readonly domains?: ReadonlyArray<PlanDomain>;
     readonly windows: ReadonlyArray<PlanObservedWindow>;
     readonly activeRef: object;
     readonly fingerprint: string;
@@ -125,6 +180,9 @@ export interface PlanSnapshot {
     readonly domainGap: number;
     readonly domainOuterGap: number;
     readonly focusedId: string;
+    // Retained directional domains (primitive only, no refs). Absent for
+    // legacy single-domain snapshots.
+    readonly domains?: ReadonlyArray<PlanDomain>;
     readonly windows: ReadonlyArray<PlanSnapshotWindow>;
     readonly fingerprint: string;
 }
@@ -141,6 +199,21 @@ export function snapshotOf(observed: PlanObserved): PlanSnapshot {
         sticky: entry.sticky === true,
         resourceClass: isOpaqueId(entry.resourceClass) ? entry.resourceClass : "unknown",
     }));
+    const domains =
+        observed.domains === undefined
+            ? undefined
+            : Object.freeze(
+                  observed.domains.map((entry) =>
+                      Object.freeze({
+                          output: entry.output,
+                          workspace: entry.workspace,
+                          bounds: { x: entry.bounds.x, y: entry.bounds.y, w: entry.bounds.w, h: entry.bounds.h },
+                          gap: entry.gap,
+                          outerGap: entry.outerGap,
+                          adjacent: Object.freeze({ ...(entry.adjacent as Record<string, string>) }),
+                      }),
+                  ),
+              );
     return {
         domainOutput: observed.domainOutput,
         domainWorkspace: observed.domainWorkspace,
@@ -153,6 +226,7 @@ export function snapshotOf(observed: PlanObserved): PlanSnapshot {
         domainGap: observed.domainGap,
         domainOuterGap: observed.domainOuterGap,
         focusedId: observed.focusedId,
+        ...(domains === undefined ? {} : { domains }),
         windows,
         fingerprint: observed.fingerprint,
     };
@@ -184,6 +258,56 @@ function rectContained(inner: PlanRect, outer: PlanRect): boolean {
     );
 }
 
+// Directional domains equality: same length with identical primitive
+// entries in order (output, workspace, bounds, gaps, adjacency). Binds the
+// stale-scope fence to the full source+target observation so a stale target
+// substitution cannot pass as fresh.
+function domainsEqual(
+    a: ReadonlyArray<PlanDomain> | undefined,
+    b: ReadonlyArray<PlanDomain> | undefined,
+): boolean {
+    if (a === undefined || b === undefined) {
+        return a === undefined && b === undefined;
+    }
+    if (a.length !== b.length) {
+        return false;
+    }
+    for (let index = 0; index < a.length; index += 1) {
+        const left = a[index] as PlanDomain;
+        const right = b[index] as PlanDomain;
+        if (
+            left.output !== right.output ||
+            left.workspace !== right.workspace ||
+            left.bounds.x !== right.bounds.x ||
+            left.bounds.y !== right.bounds.y ||
+            left.bounds.w !== right.bounds.w ||
+            left.bounds.h !== right.bounds.h ||
+            left.gap !== right.gap ||
+            left.outerGap !== right.outerGap
+        ) {
+            return false;
+        }
+        const leftKeys = Object.keys(left.adjacent).sort();
+        const rightKeys = Object.keys(right.adjacent).sort();
+        if (leftKeys.length !== rightKeys.length) {
+            return false;
+        }
+        for (let keyIndex = 0; keyIndex < leftKeys.length; keyIndex += 1) {
+            if (leftKeys[keyIndex] !== rightKeys[keyIndex]) {
+                return false;
+            }
+            const key = leftKeys[keyIndex] as string;
+            if (
+                (left.adjacent as Record<string, string>)[key] !==
+                (right.adjacent as Record<string, string>)[key]
+            ) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 function snapshotsEqual(a: PlanSnapshot, b: PlanSnapshot): boolean {
     if (
         a.domainOutput !== b.domainOutput ||
@@ -191,7 +315,8 @@ function snapshotsEqual(a: PlanSnapshot, b: PlanSnapshot): boolean {
         a.domainGap !== b.domainGap ||
         a.domainOuterGap !== b.domainOuterGap ||
         a.focusedId !== b.focusedId ||
-        a.fingerprint !== b.fingerprint
+        a.fingerprint !== b.fingerprint ||
+        !domainsEqual(a.domains, b.domains)
     ) {
         return false;
     }
@@ -300,7 +425,8 @@ function sameDomainAndWindowSet(a: PlanSnapshot, b: PlanSnapshot): boolean {
         a.domainWorkspace !== b.domainWorkspace ||
         a.domainGap !== b.domainGap ||
         a.domainOuterGap !== b.domainOuterGap ||
-        a.windows.length !== b.windows.length
+        a.windows.length !== b.windows.length ||
+        !domainsEqual(a.domains, b.domains)
     ) {
         return false;
     }
@@ -461,6 +587,15 @@ export interface PlanAdapterEnv {
     // production. Hidden flights only ever admit/remove/reconcile geometry
     // and never route focus or interactive commands.
     readonly observeHidden?: () => ReadonlyArray<PlanObserved>;
+    // Production directional observation for Left/Right focus/move: source
+    // plus the horizontally reciprocal adjacent output's current desktop
+    // (bounded max two domains) with multi-domain windows. Absent in
+    // isolated core tests; Up/Down never use it. May return the typed
+    // {@link DirectionalObservation} outcome or, for legacy mocks, a bare
+    // {@link PlanObserved} (treated as ready) or null (treated as invalid).
+    readonly observeDirectional?: (
+        direction: PlanDirection,
+    ) => DirectionalObservation | PlanObserved | null;
     readonly clearMaximize: (target: object) => MaximizeClearOutcome;
     readonly setMaximize?: (target: object, maximized: boolean) => NativeStateWriteOutcome;
     readonly setAllDesktops?: (target: object, allDesktops: boolean) => NativeStateWriteOutcome;
@@ -468,6 +603,25 @@ export interface PlanAdapterEnv {
     readonly setFloating?: (id: string, floating: boolean) => void;
     readonly setActive: (target: object) => boolean;
     readonly active: () => object | null;
+    // Production R4 cross-output transfer capabilities. All ten must be
+    // present for `cross_output_transfer: true`; any absence keeps R4
+    // unavailable and local R1-R3 behavior unchanged. The entry binds them
+    // to public typed surfaces only: exact Output object resolution by name,
+    // exact VirtualDesktop resolution by id, workspace.sendClientToScreen
+    // with the exact target Output object, the mover desktops write with the
+    // exact target VirtualDesktop refs, synchronous output/membership/
+    // geometry reads for proof, and one-shot outputChanged (old value
+    // re-read), desktopsChanged, and frameGeometryChanged fences.
+    readonly resolveOutput?: (name: string) => object | null;
+    readonly resolveDesktop?: (workspace: string) => object | null;
+    readonly sendClientToScreen?: (mover: object, output: object) => boolean;
+    readonly setDesktops?: (mover: object, desktops: ReadonlyArray<object>) => boolean;
+    readonly readOutputName?: (ref: object) => string | null;
+    readonly readDesktopIds?: (ref: object) => ReadonlyArray<string> | null;
+    readonly readGeometry?: (ref: object) => PlanRect | null;
+    readonly subscribeMoverOutput?: (mover: object, handler: (old: unknown) => void) => (() => void) | null;
+    readonly subscribeMoverDesktops?: (mover: object, handler: () => void) => (() => void) | null;
+    readonly subscribeWindowGeometry?: (ref: object, handler: () => void) => (() => void) | null;
     readonly subscribe: (kind: PlanSignal, handler: (target?: object) => void) => () => void;
     readonly noteRemoved?: (id: string) => void;
     // Entry-owned coordination: true while a workspace-send flight is active.
@@ -519,6 +673,95 @@ export function planFingerprint(
         hash ^= 0x1f;
         hash = Math.imul(hash, 16777619);
         feed(id);
+    }
+    return hash >>> 0;
+}
+
+// Wire-shaped window for the production directional fingerprint: exactly the
+// fields carried on the request (id, output, workspace, rect, floating,
+// fit-excluded).
+export interface DirectionalFingerprintWindow {
+    readonly window: string;
+    readonly output: string;
+    readonly workspace: string;
+    readonly rect: PlanRect;
+    readonly floating: boolean;
+    readonly fitExcluded: boolean;
+}
+
+// Canonical production directional fingerprint (FNV-1a 32-bit) over the full
+// two-domain evidence, byte-identical to Rust's `directional_fingerprint`:
+// ordered domain primitives (output, workspace, raw bounds, gaps, left/right
+// adjacency), the focused id, and every window sorted by id. Any alteration
+// of target rect, bounds, or adjacency changes the value and fails Rust
+// request validation. Legacy single-domain requests keep `planFingerprint`.
+export function planDirectionalFingerprint(
+    domains: ReadonlyArray<PlanDomain>,
+    focusedId: string,
+    windows: ReadonlyArray<DirectionalFingerprintWindow>,
+): number {
+    let hash = 2166136261;
+    const feed = (text: string): void => {
+        for (let index = 0; index < text.length; index += 1) {
+            hash ^= text.charCodeAt(index) & 0xff;
+            hash = Math.imul(hash, 16777619);
+        }
+    };
+    const sep = (code: number): void => {
+        hash ^= code;
+        hash = Math.imul(hash, 16777619);
+    };
+    for (let index = 0; index < domains.length; index += 1) {
+        const entry = domains[index] as PlanDomain;
+        if (index > 0) {
+            sep(0x1e);
+        }
+        feed(entry.output);
+        sep(0x1f);
+        feed(entry.workspace);
+        sep(0x1f);
+        feed(String(entry.bounds.x));
+        sep(0x1f);
+        feed(String(entry.bounds.y));
+        sep(0x1f);
+        feed(String(entry.bounds.w));
+        sep(0x1f);
+        feed(String(entry.bounds.h));
+        sep(0x1f);
+        feed(String(entry.gap));
+        sep(0x1f);
+        feed(String(entry.outerGap));
+        sep(0x1f);
+        feed("left");
+        sep(0x1f);
+        feed((entry.adjacent as Record<string, string>)["left"] ?? "");
+        sep(0x1f);
+        feed("right");
+        sep(0x1f);
+        feed((entry.adjacent as Record<string, string>)["right"] ?? "");
+    }
+    sep(0x1f);
+    feed(focusedId);
+    const ordered = [...windows].sort((a, b) => (a.window < b.window ? -1 : a.window > b.window ? 1 : 0));
+    for (const entry of ordered) {
+        sep(0x1f);
+        feed(entry.window);
+        sep(0x1f);
+        feed(entry.output);
+        sep(0x1f);
+        feed(entry.workspace);
+        sep(0x1f);
+        feed(String(entry.rect.x));
+        sep(0x1f);
+        feed(String(entry.rect.y));
+        sep(0x1f);
+        feed(String(entry.rect.w));
+        sep(0x1f);
+        feed(String(entry.rect.h));
+        sep(0x1f);
+        feed(entry.floating ? "1" : "0");
+        sep(0x1f);
+        feed(entry.fitExcluded ? "1" : "0");
     }
     return hash >>> 0;
 }
@@ -672,11 +915,55 @@ interface PlanFocusBody {
     readonly leaf: string;
 }
 
+export interface PlanFocusOperation {
+    readonly op: "focus";
+    readonly domainOutput: string;
+    readonly domainWorkspace: string;
+    readonly fromLeaf: string;
+    readonly toLeaf: string;
+    readonly fromWindow: string;
+    readonly toWindow: string;
+    readonly direction: string;
+    readonly route: ReadonlyArray<string>;
+    readonly crossSourceOutput: string | null;
+    readonly crossSourceWorkspace: string | null;
+}
+
+// Exact production cross-output move operation (R4 only): the mover, the
+// captured source, the adjacent target with its current workspace, the
+// commanded direction, the R4 rule, and the transfer capability. Absent for
+// local R1/R2/R3 plans. The adapter fences every field before any
+// membership/geometry/focus write; no looser alternate plan is accepted.
+export interface PlanMoveOperation {
+    readonly op: "move";
+    readonly rule: string;
+    readonly capability: string;
+    readonly direction: string;
+    readonly window: string;
+    readonly leaf: string;
+    readonly sourceOutput: string;
+    readonly sourceWorkspace: string;
+    readonly targetOutput: string;
+    readonly targetWorkspace: string;
+    readonly sourceRootChildIndex: number;
+    readonly target: string;
+}
+
 interface PlannedReply {
     readonly correlationId: string;
+    readonly baseRevision: number | null;
     readonly geometry: ReadonlyArray<PlanGeometryEntry>;
     readonly focus: PlanFocusBody | null;
     readonly floatGeometry: { readonly window: string; readonly rect: PlanRect } | null;
+    // Exact cross-output operation/preconditions when the planner crossed
+    // outputs (focus or R4 move). Absent for local plans. The adapter fences
+    // them against the captured source before any actuation.
+    readonly operation: PlanFocusOperation | PlanMoveOperation | null;
+    readonly preconditions: ReadonlyArray<string> | null;
+    // Raw wire operation/preconditions retained verbatim for the R4 verify
+    // echo (Rust parses snake_case and compares typed equality).
+    readonly rawOperation: unknown;
+    readonly rawPreconditions: unknown;
 }
 
 function validateGeometryEntry(value: unknown): PlanGeometryEntry | null {
@@ -734,6 +1021,17 @@ function validateFocusBody(value: unknown): PlanFocusBody | null {
     };
 }
 
+function parseBaseRevision(reply: unknown): number | null {
+    if (!isRecord(reply)) {
+        return null;
+    }
+    const value = reply["base_revision"];
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > PLAN_MAX_SEQ) {
+        return null;
+    }
+    return value;
+}
+
 function validatePlanned(reply: unknown, correlationId: string): PlannedReply | null {
     if (!isRecord(reply)) {
         return null;
@@ -768,10 +1066,233 @@ function validatePlanned(reply: unknown, correlationId: string): PlannedReply | 
             return null;
         }
         const floatGeometry = validateFloatGeometry(reply["float_geometry"]);
-        return floatGeometry === undefined ? null : { correlationId, geometry: Object.freeze(geometry), focus, floatGeometry };
+        if (floatGeometry === undefined) {
+            return null;
+        }
+        const operation = validateOperation(reply["operation"]);
+        if (operation === undefined) {
+            return null;
+        }
+        const preconditions = validatePreconditions(reply["preconditions"]);
+        if (preconditions === undefined) {
+            return null;
+        }
+        // Cross focus operations must carry the exact adjacent-output
+        // precondition; local focus operations must carry the same-domain
+        // one. Move operations pair only with the move precondition set
+        // (fenced by the active cross-focus path); any other pairing is
+        // malformed.
+        if (operation !== null && operation.op === "focus") {
+            const hasAdjacent = preconditions !== null && preconditions.indexOf("focus-targets-adjacent-output") >= 0;
+            const hasSame = preconditions !== null && preconditions.indexOf("focus-targets-same-domain") >= 0;
+            const isCross = operation.crossSourceOutput !== null || operation.crossSourceWorkspace !== null;
+            if (isCross !== hasAdjacent || (!isCross && !hasSame)) {
+                return null;
+            }
+            if (hasAdjacent && hasSame) {
+                return null;
+            }
+        } else if (operation !== null && operation.op === "move") {
+            if (preconditions === null) {
+                return null;
+            }
+            const allowed = new Set([
+                "focused-leaf-occupied-by-focused-window",
+                "source-root-membership-and-adjacent-same-workspace-output",
+                "adapter-must-verify-postconditions",
+            ]);
+            if (preconditions.length !== 3) {
+                return null;
+            }
+            for (const token of preconditions) {
+                if (!allowed.has(token)) {
+                    return null;
+                }
+            }
+        } else if (preconditions !== null) {
+            return null;
+        }
+        return { correlationId, baseRevision: parseBaseRevision(reply), geometry: Object.freeze(geometry), focus, floatGeometry, operation, preconditions, rawOperation: reply["operation"] ?? null, rawPreconditions: reply["preconditions"] ?? null };
     }
     const floatGeometry = validateFloatGeometry(reply["float_geometry"]);
-    return floatGeometry === undefined ? null : { correlationId, geometry: Object.freeze(geometry), focus: null, floatGeometry };
+    if (floatGeometry === undefined) {
+        return null;
+    }
+    const operation = validateOperation(reply["operation"]);
+    if (operation === undefined) {
+        return null;
+    }
+    const preconditions = validatePreconditions(reply["preconditions"]);
+    if (preconditions === undefined || operation !== null || preconditions !== null) {
+        return null;
+    }
+    return { correlationId, baseRevision: parseBaseRevision(reply), geometry: Object.freeze(geometry), focus: null, floatGeometry, operation, preconditions, rawOperation: null, rawPreconditions: null };
+}
+
+// Operation envelope shared by focus and move replies: parsed by the `op`
+// tag into the exact variant. Unknown tags and malformed variants are
+// `undefined` (malformed reply); absent is `null`.
+function validateOperation(value: unknown): PlanFocusOperation | PlanMoveOperation | null | undefined {
+    if (value === undefined || value === null) {
+        return null;
+    }
+    if (!isRecord(value)) {
+        return undefined;
+    }
+    if (value["op"] === "focus") {
+        return validateFocusOperation(value);
+    }
+    if (value["op"] === "move") {
+        return validateMoveOperation(value);
+    }
+    return undefined;
+}
+
+function validateMoveOperation(value: unknown): PlanMoveOperation | null | undefined {
+    if (!isRecord(value)) {
+        return undefined;
+    }
+    const want = ["op", "rule", "capability", "direction", "window", "leaf", "source_output", "source_workspace", "target_output", "target_workspace", "source_root_child_index", "target"];
+    if (!hasExactKeys(value, want)) {
+        return undefined;
+    }
+    if (
+        !isOpaqueId(value["window"]) ||
+        !isOpaqueId(value["leaf"]) ||
+        !isOpaqueId(value["source_output"]) ||
+        !isOpaqueId(value["source_workspace"]) ||
+        !isOpaqueId(value["target_output"]) ||
+        !isOpaqueId(value["target_workspace"])
+    ) {
+        return undefined;
+    }
+    const direction = value["direction"];
+    if (direction !== "left" && direction !== "right" && direction !== "up" && direction !== "down") {
+        return undefined;
+    }
+    const rule = value["rule"];
+    if (typeof rule !== "string" || rule.length === 0 || rule.length > 32) {
+        return undefined;
+    }
+    const capability = value["capability"];
+    if (typeof capability !== "string" || capability.length === 0 || capability.length > 64) {
+        return undefined;
+    }
+    const sourceRootChildIndex = value["source_root_child_index"];
+    if (!isFiniteInt(sourceRootChildIndex) || (sourceRootChildIndex as number) < 0) {
+        return undefined;
+    }
+    const target = value["target"];
+    if (target !== "empty" && target !== "occupied") {
+        return undefined;
+    }
+    return {
+        op: "move",
+        rule: rule as string,
+        capability: capability as string,
+        direction: direction as string,
+        window: value["window"] as string,
+        leaf: value["leaf"] as string,
+        sourceOutput: value["source_output"] as string,
+        sourceWorkspace: value["source_workspace"] as string,
+        targetOutput: value["target_output"] as string,
+        targetWorkspace: value["target_workspace"] as string,
+        sourceRootChildIndex: sourceRootChildIndex as number,
+        target: target as string,
+    };
+}
+
+function validateFocusOperation(value: unknown): PlanFocusOperation | null | undefined {
+    if (value === undefined || value === null) {
+        return null;
+    }
+    if (!isRecord(value)) {
+        return undefined;
+    }
+    const keys = Object.keys(value);
+    const want = ["op", "domain_output", "domain_workspace", "from_leaf", "to_leaf", "from_window", "to_window", "direction", "route", "cross_source_output", "cross_source_workspace"];
+    if (keys.length !== want.length) {
+        return undefined;
+    }
+    for (const key of want) {
+        if (!Object.prototype.hasOwnProperty.call(value, key)) {
+            return undefined;
+        }
+    }
+    if (value["op"] !== "focus") {
+        return undefined;
+    }
+    if (
+        !isOpaqueId(value["domain_output"]) ||
+        !isOpaqueId(value["domain_workspace"]) ||
+        !isOpaqueId(value["from_leaf"]) ||
+        !isOpaqueId(value["to_leaf"]) ||
+        !isOpaqueId(value["from_window"]) ||
+        !isOpaqueId(value["to_window"])
+    ) {
+        return undefined;
+    }
+    const direction = value["direction"];
+    if (direction !== "left" && direction !== "right" && direction !== "up" && direction !== "down") {
+        return undefined;
+    }
+    const route = value["route"];
+    if (!Array.isArray(route) || route.length === 0 || route.length > PLAN_MAX_WINDOWS) {
+        return undefined;
+    }
+    const routeOut: string[] = [];
+    for (const entry of route) {
+        if (!isOpaqueId(entry)) {
+            return undefined;
+        }
+        routeOut.push(entry as string);
+    }
+    const crossOutput = value["cross_source_output"];
+    const crossWorkspace = value["cross_source_workspace"];
+    if (crossOutput !== null && !isOpaqueId(crossOutput)) {
+        return undefined;
+    }
+    if (crossWorkspace !== null && !isOpaqueId(crossWorkspace)) {
+        return undefined;
+    }
+    return {
+        op: "focus",
+        domainOutput: value["domain_output"] as string,
+        domainWorkspace: value["domain_workspace"] as string,
+        fromLeaf: value["from_leaf"] as string,
+        toLeaf: value["to_leaf"] as string,
+        fromWindow: value["from_window"] as string,
+        toWindow: value["to_window"] as string,
+        direction: direction as string,
+        route: Object.freeze(routeOut),
+        crossSourceOutput: (crossOutput as string | null) ?? null,
+        crossSourceWorkspace: (crossWorkspace as string | null) ?? null,
+    };
+}
+
+function validatePreconditions(value: unknown): ReadonlyArray<string> | null | undefined {
+    if (value === undefined || value === null) {
+        return null;
+    }
+    if (!Array.isArray(value) || value.length === 0 || value.length > 8) {
+        return undefined;
+    }
+    const allowed = new Set([
+        "focused-leaf-occupied-by-focused-window",
+        "target-leaf-occupied",
+        "focus-targets-same-domain",
+        "focus-targets-adjacent-output",
+        "source-root-membership-and-adjacent-same-workspace-output",
+        "adapter-must-verify-postconditions",
+    ]);
+    const out: string[] = [];
+    for (const entry of value) {
+        if (typeof entry !== "string" || !allowed.has(entry)) {
+            return undefined;
+        }
+        out.push(entry);
+    }
+    return Object.freeze(out);
 }
 
 function validateFloatGeometry(value: unknown): { readonly window: string; readonly rect: PlanRect } | null | undefined {
@@ -820,6 +1341,89 @@ function validateObserved(observed: PlanObserved | null): observed is PlanObserv
     if (!isFiniteInt(observed.domainOuterGap) || observed.domainOuterGap < 0 || observed.domainOuterGap > 64) {
         return false;
     }
+    // Directional domains: at most two primitive entries, source first and
+    // equal to the carried source domain, with distinct outputs and
+    // reciprocal left/right adjacency when two are present.
+    const domains = observed.domains;
+    if (domains !== undefined) {
+        if (!Array.isArray(domains) || domains.length === 0 || domains.length > 2) {
+            return false;
+        }
+        const first = domains[0] as PlanDomain;
+        if (
+            first.output !== observed.domainOutput ||
+            first.workspace !== observed.domainWorkspace ||
+            first.bounds.x !== observed.domainBounds.x ||
+            first.bounds.y !== observed.domainBounds.y ||
+            first.bounds.w !== observed.domainBounds.w ||
+            first.bounds.h !== observed.domainBounds.h ||
+            first.gap !== observed.domainGap ||
+            first.outerGap !== observed.domainOuterGap
+        ) {
+            return false;
+        }
+        const seenOutputs = new Set<string>();
+        for (const entry of domains) {
+            if (typeof entry !== "object" || entry === null) {
+                return false;
+            }
+            const candidate = entry as PlanDomain;
+            if (!isOpaqueId(candidate.output) || !isOpaqueId(candidate.workspace)) {
+                return false;
+            }
+            if (!isTargetRect({ x: candidate.bounds.x, y: candidate.bounds.y, w: candidate.bounds.w, h: candidate.bounds.h })) {
+                return false;
+            }
+            if (!isFiniteInt(candidate.gap) || candidate.gap < 0 || candidate.gap > 64) {
+                return false;
+            }
+            if (!isFiniteInt(candidate.outerGap) || candidate.outerGap < 0 || candidate.outerGap > 64) {
+                return false;
+            }
+            if (typeof candidate.adjacent !== "object" || candidate.adjacent === null || Array.isArray(candidate.adjacent)) {
+                return false;
+            }
+            for (const key of Object.keys(candidate.adjacent)) {
+                if (key !== "left" && key !== "right") {
+                    return false;
+                }
+                const target = (candidate.adjacent as Record<string, unknown>)[key];
+                if (!isOpaqueId(target)) {
+                    return false;
+                }
+            }
+            if (seenOutputs.has(candidate.output)) {
+                return false;
+            }
+            seenOutputs.add(candidate.output);
+        }
+        if (domains.length === 2) {
+            const firstEntry = domains[0] as PlanDomain;
+            const secondEntry = domains[1] as PlanDomain;
+            let reciprocal = false;
+            for (const direction of ["left", "right"] as const) {
+                const opposite = direction === "left" ? "right" : "left";
+                if (
+                    (firstEntry.adjacent as Record<string, string>)[direction] === secondEntry.output &&
+                    (secondEntry.adjacent as Record<string, string>)[opposite] === firstEntry.output
+                ) {
+                    reciprocal = true;
+                    break;
+                }
+            }
+            if (!reciprocal) {
+                return false;
+            }
+        }
+    }
+    const homedPairs = new Set<string>();
+    if (domains !== undefined) {
+        for (const entry of domains) {
+            homedPairs.add(`${(entry as PlanDomain).output}\u0000${(entry as PlanDomain).workspace}`);
+        }
+    } else {
+        homedPairs.add(`${observed.domainOutput}\u0000${observed.domainWorkspace}`);
+    }
     const seen = new Set<string>();
     let focusedFound = false;
     for (const entry of windows) {
@@ -839,7 +1443,7 @@ function validateObserved(observed: PlanObserved | null): observed is PlanObserv
         if (candidate.floating !== undefined && typeof candidate.floating !== "boolean") {
             return false;
         }
-        if (candidate.output !== observed.domainOutput || candidate.workspace !== observed.domainWorkspace) {
+        if (!homedPairs.has(`${candidate.output}\u0000${candidate.workspace}`)) {
             return false;
         }
         if (
@@ -853,6 +1457,15 @@ function validateObserved(observed: PlanObserved | null): observed is PlanObserv
         seen.add(candidate.id);
         if (candidate.id === observed.focusedId) {
             focusedFound = true;
+            // Directional requests plan from the source focus: the focused
+            // window must live in the source domain, never the target.
+            if (
+                domains !== undefined &&
+                (candidate.output !== observed.domainOutput ||
+                    candidate.workspace !== observed.domainWorkspace)
+            ) {
+                return false;
+            }
         }
     }
     if (!focusedFound) {
@@ -887,12 +1500,47 @@ interface PendingFlight {
     // focus or interactive commands. Serialized through the same
     // single-flight and send-blocking as foreground.
     readonly background: boolean;
+    // Directional command direction for Left/Right focus/move (else null).
+    // Selects the directional re-observation at apply time so a stale target
+    // substitution fails closed before any write.
+    readonly direction: PlanDirection | null;
     // Pinned-owner transport payload retained across activation steps.
     readonly requestPayload: string;
     // True when dispatched from confirmed-loss recovery: a terminal failure
     // stays bounded without a second identity probe, so a failed recovery
     // never loops.
     readonly isRecovery: boolean;
+}
+
+// Production R4 cross-output move flight: retained after the first R4
+// `planned` reply (which stages but never commits) across native transfer,
+// accepted ack, and verified verify. Exactly one flight serializes through
+// the shared single-flight; while live every other PlanAdapter operation
+// refuses busy and no replay ever occurs.
+interface R4Flight {
+    readonly flight: number;
+    readonly session: number;
+    readonly correlation: string;
+    readonly baseRevision: number;
+    readonly epoch: number;
+    readonly op: PlanOp;
+    readonly snapshot: PlanSnapshot;
+    readonly planned: PlannedReply;
+    readonly moverId: string;
+    readonly moverRef: object;
+    readonly targetOutput: string;
+    readonly targetWorkspace: string;
+    readonly targetOutputRef: object;
+    readonly targetDesktopRef: object;
+    readonly byRef: ReadonlyMap<string, object>;
+    readonly direction: PlanDirection;
+    acked: boolean;
+    followed: boolean;
+    outputSeen: boolean;
+    desktopsSeen: boolean;
+    geoPending: Set<string>;
+    detaches: Array<() => void>;
+    settled: boolean;
 }
 
 interface AutoIntent {
@@ -906,6 +1554,7 @@ interface AutoIntent {
     readonly floatTarget?: { readonly window: string; readonly floating: boolean } | null;
     readonly stickyTarget?: { readonly window: string; readonly previousFloating: boolean } | null;
     readonly background?: boolean;
+    readonly direction?: PlanDirection | null;
 }
 
 interface PointerEcho {
@@ -1013,6 +1662,11 @@ export class PlanAdapter {
     private nextIsRecovery = false;
     private probeToken = 0;
     private activeProbe = 0;
+    // Live production R4 flight (planned staged, native/ack/verify pending).
+    // While non-null the shared single-flight stays held and every other
+    // PlanAdapter operation refuses busy; completion or terminal failure
+    // always clears it exactly once with no replay.
+    private r4Flight: R4Flight | null = null;
 
     constructor(private readonly env: PlanAdapterEnv) {}
 
@@ -1022,6 +1676,13 @@ export class PlanAdapter {
 
     get isInFlight(): boolean {
         return this.inFlight;
+    }
+
+    // Global R4 pending gate: true while an R4 move flight holds the shared
+    // single-flight across native transfer plus ack/verify. Entry and tests
+    // use it alongside isInFlight to block interleaving work.
+    get isR4InFlight(): boolean {
+        return this.r4Flight !== null;
     }
 
     enable(auth: PlanEnableAuth): boolean {
@@ -1062,6 +1723,7 @@ export class PlanAdapter {
         this.enabled = true;
         this.inFlight = false;
         this.pending = null;
+        this.r4Flight = null;
         this.deferredAuto = null;
         this.epoch = 0;
         this.lastGoodByDomain.clear();
@@ -1094,6 +1756,7 @@ export class PlanAdapter {
         this.enabled = false;
         this.inFlight = false;
         this.pending = null;
+        this.clearR4Flight();
         this.deferredAuto = null;
         this.lastGoodByDomain.clear();
         this.reconcileAttempts = 0;
@@ -1126,6 +1789,62 @@ export class PlanAdapter {
         this.detaches = [];
     }
 
+    // Directional observation outcome for Left/Right focus/move. `ready`
+    // carries a validated two-domain observation; `no-target` is a confirmed
+    // no-adjacent/single-output condition that keeps local single-domain
+    // behavior; `invalid` (ambiguous, unreadable, malformed) must refuse
+    // before any local mutation. `legacy` covers Up/Down and hook-absent
+    // isolated tests, which stay on the normal single-domain observation.
+    private readDirectional(
+        direction: PlanDirection,
+    ): { kind: "ready"; observed: PlanObserved } | { kind: "no-target" } | { kind: "invalid" } | { kind: "legacy" } {
+        if (direction !== "left" && direction !== "right") {
+            return { kind: "legacy" };
+        }
+        const hook = this.env.observeDirectional;
+        if (typeof hook !== "function") {
+            return { kind: "legacy" };
+        }
+        let raw: DirectionalObservation | PlanObserved | null = null;
+        try {
+            raw = hook(direction);
+        } catch (error) {
+            void error;
+            return { kind: "invalid" };
+        }
+        if (raw === null || raw === undefined) {
+            return { kind: "invalid" };
+        }
+        if (typeof raw === "object" && "status" in raw) {
+            const outcome = raw as DirectionalObservation;
+            if (outcome.status === "ready") {
+                return validateObserved(outcome.observed) ? { kind: "ready", observed: outcome.observed as PlanObserved } : { kind: "invalid" };
+            }
+            if (outcome.status === "no-target") {
+                return { kind: "no-target" };
+            }
+            return { kind: "invalid" };
+        }
+        // Legacy mock shape: a bare observation is a ready candidate that
+        // still must validate; anything else is invalid, never silent local.
+        return validateObserved(raw as PlanObserved | null)
+            ? { kind: "ready", observed: raw as PlanObserved }
+            : { kind: "invalid" };
+    }
+
+    // Directional re-observation for a flight: the same commanded direction
+    // re-resolves source plus the same adjacent target. Anything unreadable,
+    // ambiguous, changed, or newly targetless fails closed (null) before any
+    // write.
+    private freshDirectionalForFlight(flightState: PendingFlight): PlanObserved | null {
+        const direction = flightState.direction;
+        if (direction !== "left" && direction !== "right") {
+            return null;
+        }
+        const outcome = this.readDirectional(direction);
+        return outcome.kind === "ready" ? outcome.observed : null;
+    }
+
     requestFocus(direction: unknown): void {
         if (!this.enabled) {
             this.logToken(`${LOG_PREFIX}:focus-refused-disabled`);
@@ -1139,11 +1858,21 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=focus`);
             return;
         }
+        if (this.r4Flight !== null) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=focus`);
+            return;
+        }
         if (this.inFlight) {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=focus`);
             return;
         }
-        const observed = this.freshObserved();
+        const directional = this.readDirectional(direction);
+        if (directional.kind === "invalid") {
+            this.logToken(`${LOG_PREFIX}:focus-refused-ambiguous`);
+            return;
+        }
+        const observed =
+            directional.kind === "ready" ? directional.observed : this.freshObserved();
         if (observed === null) {
             this.logToken(`${LOG_PREFIX}:focus-refused-observe`);
             return;
@@ -1159,6 +1888,7 @@ export class PlanAdapter {
             snapshot,
             removed: null,
             body: { op: "focus", window: snapshot.focusedId, direction },
+            direction,
         });
     }
 
@@ -1255,11 +1985,21 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=move`);
             return;
         }
+        if (this.r4Flight !== null) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=move`);
+            return;
+        }
         if (this.inFlight) {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=move`);
             return;
         }
-        const observed = this.freshObserved();
+        const directional = this.readDirectional(direction);
+        if (directional.kind === "invalid") {
+            this.logToken(`${LOG_PREFIX}:move-refused-ambiguous`);
+            return;
+        }
+        const observed =
+            directional.kind === "ready" ? directional.observed : this.freshObserved();
         if (observed === null) {
             this.logToken(`${LOG_PREFIX}:move-refused-observe`);
             return;
@@ -1282,7 +2022,18 @@ export class PlanAdapter {
             op: "move",
             snapshot,
             removed: null,
-            body: { op: "move", window: snapshot.focusedId, direction },
+            body: {
+                op: "move",
+                window: snapshot.focusedId,
+                direction,
+                // Rust preserves local R1/R2/R3 but stages R4 only when the
+                // adapter transfers outputs. True solely when every R4
+                // native capability is supplied.
+                ...(snapshot.domains?.length === 2
+                    ? { cross_output_transfer: crossOutputTransferSupported(this.env) }
+                    : {}),
+            },
+            direction,
         });
     }
 
@@ -1300,6 +2051,10 @@ export class PlanAdapter {
             return;
         }
         if (this.blockedBySend()) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=resize`);
+            return;
+        }
+        if (this.r4Flight !== null) {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=resize`);
             return;
         }
@@ -1352,6 +2107,10 @@ export class PlanAdapter {
             return;
         }
         if (this.blockedBySend()) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-float`);
+            return;
+        }
+        if (this.r4Flight !== null) {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-float`);
             return;
         }
@@ -1408,6 +2167,10 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-maximize`);
             return;
         }
+        if (this.r4Flight !== null) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-maximize`);
+            return;
+        }
         if (this.inFlight) {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-maximize`);
             return;
@@ -1455,6 +2218,10 @@ export class PlanAdapter {
             return;
         }
         if (this.blockedBySend()) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-sticky`);
+            return;
+        }
+        if (this.r4Flight !== null) {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-sticky`);
             return;
         }
@@ -1553,6 +2320,10 @@ export class PlanAdapter {
             return false;
         }
         if (this.blockedBySend()) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=pointer-resize`);
+            return false;
+        }
+        if (this.r4Flight !== null) {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=pointer-resize`);
             return false;
         }
@@ -1703,6 +2474,14 @@ export class PlanAdapter {
         if (!this.enabled) {
             return;
         }
+        // While an R4 flight holds the single-flight across native transfer
+        // plus ack/verify, lifecycle signals (including echoes of our own
+        // native writes) must not advance epoch or queue auto intents. The
+        // R4 fence consumes its own echoes; one resync after R4 settles
+        // converges everything else.
+        if (this.r4Flight !== null) {
+            return;
+        }
         if (kind === "maximize" && this.maximizeAdmissionEcho !== null) {
             if (target === this.maximizeAdmissionEcho) {
                 this.maximizeAdmissionEcho = null;
@@ -1757,6 +2536,9 @@ export class PlanAdapter {
     // background scan for this round, and the finishFlight chain converges
     // remaining hidden domains afterwards.
     private refreshNow(): void {
+        if (this.r4Flight !== null) {
+            return;
+        }
         if (this.chainingHidden) {
             this.refreshForegroundNow();
             return;
@@ -2493,7 +3275,7 @@ export class PlanAdapter {
     }
 
     private dispatch(intent: AutoIntent): void {
-        if (!this.enabled || this.inFlight) {
+        if (!this.enabled || this.inFlight || this.r4Flight !== null) {
             return;
         }
         // A new lifecycle command supersedes an unanswered terminal probe. Its
@@ -2527,12 +3309,6 @@ export class PlanAdapter {
         }
         const snapshot = intent.snapshot;
         const sortedIds = snapshot.windows.map((entry) => entry.id).sort();
-        const fingerprint = planFingerprint(
-            snapshot.domainOutput,
-            snapshot.domainWorkspace,
-            snapshot.focusedId,
-            sortedIds,
-        );
         const windows = snapshot.windows.map((entry) => ({
             window: entry.id,
             output: entry.output,
@@ -2544,6 +3320,46 @@ export class PlanAdapter {
             // normal seed/reflow exception behavior is unchanged.
             ...(entry.floating === true || entry.sticky === true || entry.fullscreen || entry.maximized ? { fit_excluded: true } : {}),
         }));
+        // Directional domains payload: only focus/move may carry it, and
+        // only when the snapshot holds two validated domains. The source
+        // `domain` stays for compatibility; `domains` binds the full
+        // source+target observation so stale targets fail closed.
+        const directionalDomains =
+            (intent.op === "focus" || intent.op === "move") &&
+            snapshot.domains !== undefined &&
+            snapshot.domains.length === 2
+                ? snapshot.domains.map((entry) => ({
+                      output: entry.output,
+                      workspace: entry.workspace,
+                      bounds: { x: entry.bounds.x, y: entry.bounds.y, w: entry.bounds.w, h: entry.bounds.h },
+                      gap: entry.gap,
+                      outer_gap: entry.outerGap,
+                      adjacent: { ...(entry.adjacent as Record<string, string>) },
+                  }))
+                : undefined;
+        // Directional requests bind the full two-domain evidence in the
+        // fingerprint (Rust re-derives and validates it); legacy requests
+        // keep the historical plan fingerprint scheme unchanged.
+        const fingerprint =
+            directionalDomains === undefined
+                ? planFingerprint(
+                      snapshot.domainOutput,
+                      snapshot.domainWorkspace,
+                      snapshot.focusedId,
+                      sortedIds,
+                  )
+                : planDirectionalFingerprint(
+                      snapshot.domains as ReadonlyArray<PlanDomain>,
+                      snapshot.focusedId,
+                      windows.map((entry) => ({
+                          window: entry.window as string,
+                          output: entry.output as string,
+                          workspace: entry.workspace as string,
+                          rect: entry.rect as PlanRect,
+                          floating: (entry as Record<string, unknown>)["floating"] === true,
+                          fitExcluded: (entry as Record<string, unknown>)["fit_excluded"] === true,
+                      })),
+                  );
         let payload = "";
         try {
             payload = JSON.stringify({
@@ -2565,6 +3381,7 @@ export class PlanAdapter {
                     gap: snapshot.domainGap,
                     outer_gap: snapshot.domainOuterGap,
                 },
+                ...(directionalDomains === undefined ? {} : { domains: directionalDomains }),
                 focused_window: snapshot.focusedId,
                 windows,
                 command: intent.body,
@@ -2593,6 +3410,13 @@ export class PlanAdapter {
             floatTarget: intent.floatTarget ?? null,
             stickyTarget: intent.stickyTarget ?? null,
             background: intent.background === true,
+            direction:
+                intent.direction === "left" ||
+                intent.direction === "right" ||
+                intent.direction === "up" ||
+                intent.direction === "down"
+                    ? intent.direction
+                    : null,
             requestPayload: payload,
             isRecovery,
         };
@@ -2949,7 +3773,7 @@ export class PlanAdapter {
     }
 
     private triggerRecovery(reason: string): void {
-        if (!this.enabled || this.inFlight) {
+        if (!this.enabled || this.inFlight || this.r4Flight !== null) {
             return;
         }
         if (this.blockedBySend()) {
@@ -2993,6 +3817,12 @@ export class PlanAdapter {
 
     private onTimeout(flight: number, session: number): void {
         if (!this.inFlight || flight !== this.activeToken || session !== this.plannerSession) {
+            return;
+        }
+        // The dispatch-phase timer is always cleared before R4 arming; a late
+        // fire while R4 holds the flight belongs to the R4 deadline.
+        if (this.r4Flight !== null) {
+            this.onR4Timeout(flight, session);
             return;
         }
         const lost = this.pending;
@@ -3108,15 +3938,21 @@ export class PlanAdapter {
     // request window set (admit/move/focus/resize) or exactly the survivors
     // (remove). Unknown or partial windows never reach native writes. The
     // wanted set is derived from the primitive dispatch snapshot only.
+    // Directional focus/move may alternatively carry a source-only local
+    // plan on a two-domain snapshot: then the geometry must cover exactly
+    // the source-domain wanted subset (the target is untouched).
     private geometryCovers(planned: PlannedReply, flightState: PendingFlight): boolean {
         const wanted = new Set<string>();
+        const wantedById = new Map<string, PlanSnapshotWindow>();
         for (const entry of flightState.snapshot.windows) {
             if (entry.floating !== true || (flightState.floatTarget?.window === entry.id && flightState.floatTarget.floating === false)) {
                 wanted.add(entry.id);
+                wantedById.set(entry.id, entry);
             }
         }
         if (flightState.removed !== null) {
             wanted.delete(flightState.removed);
+            wantedById.delete(flightState.removed);
         }
         if (flightState.op === "toggle-float") {
             const target = flightState.floatTarget;
@@ -3124,15 +3960,68 @@ export class PlanAdapter {
                 return false;
             }
         }
-        if (planned.geometry.length !== wanted.size) {
-            return false;
+        // Every planned entry must be wanted. Directional two-domain flights
+        // additionally require homing to one of the snapshot domains so a
+        // stale target substitution cannot pass; legacy single-domain flows
+        // keep the historical id-only binding unchanged.
+        const directionalHoming = flightState.snapshot.domains;
+        let homedPairs: Set<string> | null = null;
+        if (directionalHoming !== undefined) {
+            homedPairs = new Set<string>();
+            for (const entry of directionalHoming) {
+                homedPairs.add(`${entry.output}\u0000${entry.workspace}`);
+            }
         }
         for (const entry of planned.geometry) {
             if (!wanted.has(entry.window)) {
                 return false;
             }
+            if (homedPairs !== null && !homedPairs.has(`${entry.output}\u0000${entry.workspace}`)) {
+                return false;
+            }
         }
-        return true;
+        if (planned.geometry.length === wanted.size) {
+            return true;
+        }
+        // Directional local plan on a two-domain snapshot: exactly the
+        // source-domain wanted subset, all homed to the source domain.
+        const domains = flightState.snapshot.domains;
+        if (
+            (flightState.op === "focus" || flightState.op === "move") &&
+            domains !== undefined &&
+            domains.length === 2
+        ) {
+            const sourceOutput = flightState.snapshot.domainOutput;
+            const sourceWorkspace = flightState.snapshot.domainWorkspace;
+            let sourceWanted = 0;
+            for (const entry of wantedById.values()) {
+                if (entry.output === sourceOutput && entry.workspace === sourceWorkspace) {
+                    sourceWanted += 1;
+                }
+            }
+            if (planned.geometry.length !== sourceWanted || sourceWanted === 0) {
+                return false;
+            }
+            for (const entry of planned.geometry) {
+                if (entry.output !== sourceOutput || entry.workspace !== sourceWorkspace) {
+                    return false;
+                }
+            }
+            // A local plan must not carry a cross focus operation.
+            if (planned.operation !== null) {
+                return false;
+            }
+            // A local plan's focus (when present) must stay in the source.
+            if (
+                planned.focus !== null &&
+                (planned.focus.domainOutput !== sourceOutput ||
+                    planned.focus.domainWorkspace !== sourceWorkspace)
+            ) {
+                return false;
+            }
+            return true;
+        }
+        return false;
     }
 
     // Reply-boundary revalidation: never touch a possibly-destroyed Window
@@ -3150,11 +4039,23 @@ export class PlanAdapter {
             this.finishFlight();
             return;
         }
+        // Directional focus/move flights re-observe directionally (source
+        // plus the same adjacent target) so cross targets resolve from fresh
+        // evidence and stale substitutions fail closed before any write.
         // Reply-boundary re-observation resolves targets from the flight's own
         // domain only, so hidden-domain geometry is never applied to
         // foreground refs and vice versa.
-        const fresh =
-            flightState.background === true ? this.freshHiddenFor(flightState.snapshot) : this.freshObserved();
+        const directionalFlight =
+            flightState.background !== true &&
+            (flightState.op === "focus" || flightState.op === "move") &&
+            flightState.snapshot.domains !== undefined &&
+            flightState.snapshot.domains.length === 2 &&
+            flightState.direction !== null;
+        const fresh = directionalFlight
+            ? this.freshDirectionalForFlight(flightState)
+            : flightState.background === true
+              ? this.freshHiddenFor(flightState.snapshot)
+              : this.freshObserved();
         if (fresh === null) {
             this.failFlight(flightState, "stale-scope");
             return;
@@ -3211,11 +4112,517 @@ export class PlanAdapter {
         this.writeGeometries(planned, flightState, fresh);
     }
 
+    // Cross-output focus gate: exact operation fields, preconditions, and
+    // target/source binding. Returns true only when every fence passes; any
+    // mismatch is a precondition failure handled by the caller.
+    private isCrossFocus(planned: PlannedReply, flightState: PendingFlight): boolean {
+        if (flightState.op !== "focus" || flightState.background === true) {
+            return false;
+        }
+        const domains = flightState.snapshot.domains;
+        if (domains === undefined || domains.length !== 2) {
+            return false;
+        }
+        const operation = planned.operation;
+        const focus = planned.focus;
+        if (operation === null || operation.op !== "focus" || focus === null || planned.preconditions === null) {
+            return false;
+        }
+        const source = domains[0] as PlanDomain;
+        const target = domains[1] as PlanDomain;
+        if (
+            operation.crossSourceOutput !== source.output ||
+            operation.crossSourceWorkspace !== source.workspace ||
+            operation.domainOutput !== target.output ||
+            operation.domainWorkspace !== target.workspace ||
+            focus.domainOutput !== target.output ||
+            focus.domainWorkspace !== target.workspace
+        ) {
+            return false;
+        }
+        if (operation.fromWindow !== flightState.snapshot.focusedId) {
+            return false;
+        }
+        if (flightState.direction === null || operation.direction !== flightState.direction) {
+            return false;
+        }
+        if (operation.direction !== "left" && operation.direction !== "right") {
+            return false;
+        }
+        if (operation.toLeaf !== focus.leaf || operation.toWindow.length === 0) {
+            return false;
+        }
+        if (operation.route.length !== 1 || operation.route[0] !== operation.toLeaf) {
+            return false;
+        }
+        const expected = [
+            "focused-leaf-occupied-by-focused-window",
+            "target-leaf-occupied",
+            "focus-targets-adjacent-output",
+            "adapter-must-verify-postconditions",
+        ];
+        const actual = planned.preconditions;
+        if (actual.length !== expected.length) {
+            return false;
+        }
+        for (let index = 0; index < expected.length; index += 1) {
+            if (actual[index] !== expected[index]) {
+                return false;
+            }
+        }
+        // The focus leaf must resolve through the planned geometry to the
+        // operation's target window.
+        for (const entry of planned.geometry) {
+            if (entry.leaf === focus.leaf && entry.window !== operation.toWindow) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Cross-output focus actuation: exactly one `setActive` on the resolved
+    // target window, no geometry/layout/window membership writes. Every fence
+    // refuses before the actuation; the existing acknowledgement/verification
+    // already committed in Rust, and the adapter's epoch/scope fences hold.
+    private applyCrossFocus(
+        planned: PlannedReply,
+        flightState: PendingFlight,
+        current: PlanObserved,
+    ): void {
+        const operation = planned.operation;
+        const focus = planned.focus;
+        if (operation === null || operation.op !== "focus" || focus === null) {
+            this.failFlight(flightState, "precondition-mismatch");
+            return;
+        }
+        const domains = flightState.snapshot.domains;
+        if (domains === undefined || domains.length !== 2) {
+            this.failFlight(flightState, "precondition-mismatch");
+            return;
+        }
+        const target = domains[1] as PlanDomain;
+        // Resolve the target from the fresh cross-domain observation only.
+        let targetRef: object | undefined;
+        let targetEntry: PlanObservedWindow | undefined;
+        for (const entry of current.windows) {
+            if (
+                entry.id === operation.toWindow &&
+                entry.output === target.output &&
+                entry.workspace === target.workspace
+            ) {
+                targetRef = entry.ref;
+                targetEntry = entry;
+                break;
+            }
+        }
+        if (targetRef === undefined || targetEntry === undefined) {
+            this.failFlight(flightState, "stale-scope");
+            return;
+        }
+        // Exceptional targets never actuate: refuse before any write.
+        if (
+            targetEntry.fullscreen ||
+            targetEntry.maximized ||
+            targetEntry.floating === true ||
+            targetEntry.sticky === true
+        ) {
+            this.failFlight(flightState, "precondition-mismatch");
+            return;
+        }
+        // The planned focus leaf must match a geometry entry for the target
+        // window (no layout change, target is the remembered leaf).
+        let leafMatches = false;
+        for (const entry of planned.geometry) {
+            if (entry.window === operation.toWindow && entry.leaf === focus.leaf) {
+                leafMatches = true;
+                break;
+            }
+        }
+        if (!leafMatches) {
+            this.failFlight(flightState, "precondition-mismatch");
+            return;
+        }
+        let currentActive: object | null = null;
+        try {
+            currentActive = this.env.active();
+        } catch (error) {
+            void error;
+            currentActive = null;
+        }
+        if (currentActive !== targetRef) {
+            let focused = false;
+            try {
+                focused = this.env.setActive(targetRef) === true;
+            } catch (error) {
+                void error;
+                focused = false;
+            }
+            if (!focused) {
+                this.failFlight(flightState, "write-failed");
+                return;
+            }
+        }
+        if (isUniqueOwner(this.pinnedOwner)) {
+            this.knownOwner = this.pinnedOwner;
+        }
+        this.inFlight = false;
+        this.pending = null;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
+        this.diag(flightState.op, flightState.correlation, flightState.windowCount, "planned-applied");
+        this.finishFlight();
+    }
+
+    // Exact production R4 cross-output move gate: the mover, the captured
+    // source, the adjacent target with its current workspace, the commanded
+    // direction, the R4 rule, and the transfer capability. Returns true only
+    // when every fence passes; local R1/R2/R3 plans never satisfy it.
+    private isCrossMove(planned: PlannedReply, flightState: PendingFlight): boolean {
+        if (flightState.op !== "move" || flightState.background === true) {
+            return false;
+        }
+        const domains = flightState.snapshot.domains;
+        if (domains === undefined || domains.length !== 2) {
+            return false;
+        }
+        const operation = planned.operation;
+        if (operation === null || operation.op !== "move") {
+            return false;
+        }
+        const move = operation as PlanMoveOperation;
+        if (move.rule !== "R4" || move.capability !== "CrossOutputTransfer") {
+            return false;
+        }
+        if (move.direction !== "left" && move.direction !== "right") {
+            return false;
+        }
+        if (flightState.direction === null || move.direction !== flightState.direction) {
+            return false;
+        }
+        const source = domains[0] as PlanDomain;
+        const target = domains[1] as PlanDomain;
+        if (
+            move.sourceOutput !== source.output ||
+            move.sourceWorkspace !== source.workspace ||
+            move.targetOutput !== target.output ||
+            move.targetWorkspace !== target.workspace
+        ) {
+            return false;
+        }
+        if (move.window !== flightState.snapshot.focusedId) {
+            return false;
+        }
+        if (planned.preconditions === null || planned.preconditions.length !== 3) {
+            return false;
+        }
+        const expected = [
+            "focused-leaf-occupied-by-focused-window",
+            "source-root-membership-and-adjacent-same-workspace-output",
+            "adapter-must-verify-postconditions",
+        ];
+        for (let index = 0; index < expected.length; index += 1) {
+            if (planned.preconditions[index] !== expected[index]) {
+                return false;
+            }
+        }
+        if (planned.baseRevision === null) {
+            return false;
+        }
+        // Every desired entry must home to the source/target pair and the
+        // mover must be desired on the target.
+        let moverDesired = false;
+        for (const entry of planned.geometry) {
+            const onSource = entry.output === source.output && entry.workspace === source.workspace;
+            const onTarget = entry.output === target.output && entry.workspace === target.workspace;
+            if (!onSource && !onTarget) {
+                return false;
+            }
+            if (entry.window === move.window && onTarget) {
+                moverDesired = true;
+            }
+        }
+        if (!moverDesired) {
+            return false;
+        }
+        // The desired focus must follow the mover onto the target.
+        if (
+            planned.focus === null ||
+            planned.focus.domainOutput !== target.output ||
+            planned.focus.domainWorkspace !== target.workspace
+        ) {
+            return false;
+        }
+        return true;
+    }
+
+    // R4 native transfer plus ack/verify. Called once per staged R4 plan with
+    // the shared single-flight held: the dispatch timer is already cleared
+    // and a fresh whole-flight timer is armed below. Order is fixed:
+    // sendClientToScreen with the exact target Output object, mover desktops
+    // write with the exact target VirtualDesktop refs, planned geometries in
+    // canonical order, then active focus only after all output/membership/
+    // geometry readback proves, then accepted ack, then verified verify only
+    // after full desired observed proof. Any timeout, stale output/scope,
+    // owner loss, wrong output, write failure, or focus failure is terminal:
+    // one best-effort adapter-lost ack (when ack is still unbound) or no
+    // verify at all, never a replay.
+    private beginR4Transfer(
+        planned: PlannedReply,
+        flightState: PendingFlight,
+        current: PlanObserved,
+    ): void {
+        const operation = planned.operation as PlanMoveOperation;
+        const domains = flightState.snapshot.domains as ReadonlyArray<PlanDomain>;
+        const target = domains[1] as PlanDomain;
+        const correlation = flightState.correlation;
+        const windowCount = flightState.windowCount;
+        if (!crossOutputTransferSupported(this.env)) {
+            this.failFlight(flightState, "precondition-mismatch");
+            return;
+        }
+        if (planned.baseRevision === null) {
+            this.failFlight(flightState, "precondition-mismatch");
+            return;
+        }
+        const baseRevision = planned.baseRevision;
+        // Resolve every native target from the fresh observation only. The
+        // mover must still be homed on the source; exceptional movers never
+        // transfer.
+        const byRef = new Map<string, object>();
+        for (const entry of current.windows) {
+            byRef.set(entry.id, entry.ref);
+        }
+        let moverEntry: PlanObservedWindow | undefined;
+        for (const entry of current.windows) {
+            if (entry.id === operation.window) {
+                moverEntry = entry;
+                break;
+            }
+        }
+        if (
+            moverEntry === undefined ||
+            moverEntry.output !== operation.sourceOutput ||
+            moverEntry.workspace !== operation.sourceWorkspace ||
+            moverEntry.fullscreen ||
+            moverEntry.maximized ||
+            moverEntry.floating === true ||
+            moverEntry.sticky === true
+        ) {
+            this.failFlight(flightState, "precondition-mismatch");
+            return;
+        }
+        const moverRef = moverEntry.ref;
+        let targetOutputRef: object | null = null;
+        let targetDesktopRef: object | null = null;
+        try {
+            targetOutputRef = this.env.resolveOutput?.(target.output) ?? null;
+        } catch (error) {
+            void error;
+            targetOutputRef = null;
+        }
+        try {
+            targetDesktopRef = this.env.resolveDesktop?.(target.workspace) ?? null;
+        } catch (error) {
+            void error;
+            targetDesktopRef = null;
+        }
+        if (targetOutputRef === null || targetDesktopRef === null) {
+            this.failFlight(flightState, "stale-scope");
+            return;
+        }
+        // Whole-flight timer spans native transfer plus ack/verify.
+        const flight = this.activeToken;
+        const session = this.plannerSession;
+        try {
+            const cancel = this.env.scheduleOnce(PLAN_TIMEOUT_MS, () => this.onR4Timeout(flight, session));
+            this.cancelTimer = cancel;
+        } catch (error) {
+            void error;
+            this.failFlight(flightState, "timer-failed");
+            return;
+        }
+        const r4: R4Flight = {
+            flight,
+            session,
+            correlation,
+            baseRevision,
+            epoch: this.epoch,
+            op: flightState.op,
+            snapshot: flightState.snapshot,
+            planned,
+            moverId: operation.window,
+            moverRef,
+            targetOutput: target.output,
+            targetWorkspace: target.workspace,
+            targetOutputRef,
+            targetDesktopRef,
+            byRef,
+            direction: flightState.direction as PlanDirection,
+            acked: false,
+            followed: false,
+            outputSeen: false,
+            desktopsSeen: false,
+            geoPending: new Set<string>(),
+            detaches: [],
+            settled: false,
+        };
+        this.r4Flight = r4;
+        this.diag(flightState.op, correlation, windowCount, "r4-transfer-started");
+        // Bounded one-shot fences armed before any native write: mover
+        // outputChanged (old value re-read), mover desktopsChanged, and one
+        // frameGeometryChanged per window whose rect must change. Unchanged
+        // geometry never waits for a signal.
+        const changedIds = this.r4ChangedGeometryIds(planned, current);
+        let fenceOk = true;
+        try {
+            const detachOutput = this.env.subscribeMoverOutput?.(moverRef, (old) => this.onR4OutputEcho(old, flight, session));
+            if (detachOutput === null || detachOutput === undefined || typeof detachOutput !== "function") {
+                fenceOk = false;
+            } else {
+                r4.detaches.push(detachOutput);
+            }
+        } catch (error) {
+            void error;
+            fenceOk = false;
+        }
+        try {
+            const detachDesktops = this.env.subscribeMoverDesktops?.(moverRef, () => this.onR4DesktopsEcho(flight, session));
+            if (detachDesktops === null || detachDesktops === undefined || typeof detachDesktops !== "function") {
+                fenceOk = false;
+            } else {
+                r4.detaches.push(detachDesktops);
+            }
+        } catch (error) {
+            void error;
+            fenceOk = false;
+        }
+        if (changedIds.length > 0) {
+            for (const id of changedIds) {
+                const ref = byRef.get(id);
+                if (ref === undefined) {
+                    fenceOk = false;
+                    break;
+                }
+                const windowId = id;
+                try {
+                    const detachGeo = this.env.subscribeWindowGeometry?.(ref, () => this.onR4GeometryEcho(windowId, flight, session));
+                    if (detachGeo === null || detachGeo === undefined || typeof detachGeo !== "function") {
+                        fenceOk = false;
+                        break;
+                    }
+                    r4.detaches.push(detachGeo);
+                    r4.geoPending.add(windowId);
+                } catch (error) {
+                    void error;
+                    fenceOk = false;
+                    break;
+                }
+            }
+        }
+        if (!fenceOk) {
+            this.failR4Terminal("write-failed", true);
+            return;
+        }
+        // Native actuation in plan order: output transfer, desktop
+        // membership, then geometries. Any failure is terminal before ack.
+        let transferred = false;
+        try {
+            transferred = this.env.sendClientToScreen?.(moverRef, targetOutputRef) === true;
+        } catch (error) {
+            void error;
+            transferred = false;
+        }
+        if (!transferred) {
+            this.failR4Terminal("write-failed", true);
+            return;
+        }
+        let membershipWritten = false;
+        try {
+            membershipWritten = this.env.setDesktops?.(moverRef, [targetDesktopRef]) === true;
+        } catch (error) {
+            void error;
+            membershipWritten = false;
+        }
+        if (!membershipWritten) {
+            this.failR4Terminal("write-failed", true);
+            return;
+        }
+        const oldById = new Map<string, PlanRect>();
+        for (const entry of current.windows) {
+            oldById.set(entry.id, { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h });
+        }
+        const ordered = orderGeometryWrites(oldById, planned.geometry);
+        for (const entry of ordered) {
+            const ref = byRef.get(entry.window);
+            if (ref === undefined) {
+                this.failR4Terminal("write-failed", true);
+                return;
+            }
+            let written = false;
+            try {
+                written = this.env.setGeometry(ref, entry.rect) === true;
+            } catch (error) {
+                void error;
+                written = false;
+            }
+            const resourceClass = this.r4ResourceClass(current, entry.window);
+            if (!written) {
+                this.writeDiag(entry.window, resourceClass, "write-failed", entry.rect);
+                this.failR4Terminal("write-failed", true);
+                return;
+            }
+            this.writeDiag(entry.window, resourceClass, "written", entry.rect);
+        }
+        this.diag(flightState.op, correlation, windowCount, "r4-native-written");
+        // Synchronous fence callbacks may have consumed every echo while the
+        // writes ran. Resume only when all three proofs have initiated.
+        this.tryR4MaybeAck(flight, session);
+        if (this.r4Flight === r4 && !r4.settled) {
+            this.diag(flightState.op, correlation, windowCount, "r4-echo-waiting");
+        }
+    }
+
     private writeGeometries(
         planned: PlannedReply,
         flightState: PendingFlight,
         current: PlanObserved,
     ): void {
+        // Production cross-output routes: fenced before any native write.
+        if (flightState.op === "focus" && this.isCrossFocus(planned, flightState)) {
+            this.applyCrossFocus(planned, flightState, current);
+            return;
+        }
+        // Production R4 cross-output move: the first `planned` reply stages
+        // but never commits. Native transfer plus accepted ack plus verified
+        // verify complete it asynchronously; the shared single-flight stays
+        // held throughout with no replay.
+        if (flightState.op === "move" && this.isCrossMove(planned, flightState)) {
+            this.beginR4Transfer(planned, flightState, current);
+            return;
+        }
+        // A cross operation on a same-domain plan, or a cross-domain plan
+        // without its exact operation, never actuates: fail closed before
+        // any write. No looser alternate plan is accepted for either op:
+        // on a two-domain flight a local plan keeps focus in the source
+        // with no operation, and only isCrossFocus may target the adjacent
+        // domain.
+        if (flightState.op === "focus" || flightState.op === "move") {
+            const domains = flightState.snapshot.domains;
+            if (domains !== undefined && domains.length === 2) {
+                const source = domains[0] as PlanDomain;
+                const focusOnSource =
+                    planned.focus !== null &&
+                    planned.focus.domainOutput === source.output &&
+                    planned.focus.domainWorkspace === source.workspace;
+                if (!(focusOnSource && planned.operation === null)) {
+                    this.failFlight(flightState, "precondition-mismatch");
+                    return;
+                }
+            } else if (planned.operation !== null) {
+                this.failFlight(flightState, "precondition-mismatch");
+                return;
+            }
+        }
         const byRef = new Map<string, object>();
         const oldById = new Map<string, PlanRect>();
         const fullscreenById = new Set<string>();
@@ -3468,10 +4875,580 @@ export class PlanAdapter {
         this.finishFlight();
     }
 
+    // R4 helpers: bounded echo fence, native proof, ack/verify, terminal.
+    private r4ChangedGeometryIds(planned: PlannedReply, current: PlanObserved): string[] {
+        const freshById = new Map<string, PlanRect>();
+        for (const entry of current.windows) {
+            freshById.set(entry.id, entry.rect);
+        }
+        const changed: string[] = [];
+        for (const entry of planned.geometry) {
+            const fresh = freshById.get(entry.window);
+            if (fresh === undefined) {
+                continue;
+            }
+            if (fresh.x !== entry.rect.x || fresh.y !== entry.rect.y || fresh.w !== entry.rect.w || fresh.h !== entry.rect.h) {
+                changed.push(entry.window);
+            }
+        }
+        return changed;
+    }
+
+    private r4ResourceClass(current: PlanObserved, windowId: string): string {
+        for (const entry of current.windows) {
+            if (entry.id === windowId) {
+                return isOpaqueId(entry.resourceClass) ? entry.resourceClass : "unknown";
+            }
+        }
+        return "unknown";
+    }
+
+    private r4Current(): R4Flight | null {
+        const r4 = this.r4Flight;
+        if (r4 === null || r4.settled || !this.inFlight || r4.flight !== this.activeToken || r4.session !== this.plannerSession) {
+            return null;
+        }
+        return r4;
+    }
+
+    // Mover outputChanged echo: the signal carries the old output; the
+    // current value is always re-read for proof. A wrong-output read fails
+    // terminal without ack.
+    private onR4OutputEcho(old: unknown, flight: number, session: number): void {
+        void old;
+        const r4 = this.r4Current();
+        if (r4 === null || flight !== r4.flight || session !== r4.session || r4.acked) {
+            return;
+        }
+        let current: string | null = null;
+        try {
+            current = this.env.readOutputName?.(r4.moverRef) ?? null;
+        } catch (error) {
+            void error;
+            current = null;
+        }
+        if (current === null) {
+            this.failR4Terminal("stale-scope", true);
+            return;
+        }
+        if (current !== r4.targetOutput) {
+            this.failR4Terminal("wrong-output", true);
+            return;
+        }
+        r4.outputSeen = true;
+        this.diag(r4.op, r4.correlation, r4.planned.geometry.length, "r4-output-echo");
+        this.tryR4MaybeAck(flight, session);
+    }
+
+    private onR4DesktopsEcho(flight: number, session: number): void {
+        const r4 = this.r4Current();
+        if (r4 === null || flight !== r4.flight || session !== r4.session || r4.acked) {
+            return;
+        }
+        let ids: ReadonlyArray<string> | null = null;
+        try {
+            ids = this.env.readDesktopIds?.(r4.moverRef) ?? null;
+        } catch (error) {
+            void error;
+            ids = null;
+        }
+        if (ids === null) {
+            this.failR4Terminal("stale-scope", true);
+            return;
+        }
+        if (ids.length !== 1 || ids[0] !== r4.targetWorkspace) {
+            this.failR4Terminal("wrong-output", true);
+            return;
+        }
+        r4.desktopsSeen = true;
+        this.diag(r4.op, r4.correlation, r4.planned.geometry.length, "r4-desktops-echo");
+        this.tryR4MaybeAck(flight, session);
+    }
+
+    private onR4GeometryEcho(windowId: string, flight: number, session: number): void {
+        const r4 = this.r4Current();
+        if (r4 === null || flight !== r4.flight || session !== r4.session || r4.acked) {
+            return;
+        }
+        if (!r4.geoPending.has(windowId)) {
+            return;
+        }
+        r4.geoPending.delete(windowId);
+        this.diag(r4.op, r4.correlation, r4.planned.geometry.length, "r4-geometry-echo");
+        this.tryR4MaybeAck(flight, session);
+    }
+
+    // Follow is a confirmed partial native success: it needs output and exact
+    // desktop membership proof, but must not wait for an unrelated sibling's
+    // geometry. Ack/verify still require the complete desired geometry below.
+    private tryR4Follow(r4: R4Flight): boolean {
+        if (r4.followed) {
+            return true;
+        }
+        if (!r4.outputSeen || !r4.desktopsSeen) {
+            return true;
+        }
+        if (r4.epoch !== this.epoch || !this.r4MoverPlacementMatches(r4)) {
+            this.failR4Terminal("stale-scope", true);
+            return false;
+        }
+        let currentActive: object | null = null;
+        try {
+            currentActive = this.env.active();
+        } catch (error) {
+            void error;
+        }
+        if (currentActive !== r4.moverRef) {
+            let focused = false;
+            try {
+                focused = this.env.setActive(r4.moverRef) === true;
+            } catch (error) {
+                void error;
+            }
+            try {
+                currentActive = this.env.active();
+            } catch (error) {
+                void error;
+                currentActive = null;
+            }
+            if (!focused || currentActive !== r4.moverRef) {
+                this.failR4Terminal("focus-unconfirmed", true);
+                return false;
+            }
+        }
+        r4.followed = true;
+        return true;
+    }
+
+    // Ack only after every fence echo plus full native readback proof. Follow
+    // may already have completed from confirmed mover placement above.
+    private tryR4MaybeAck(flight: number, session: number): void {
+        const r4 = this.r4Current();
+        if (r4 === null || flight !== r4.flight || session !== r4.session || r4.acked || r4.settled) {
+            return;
+        }
+        if (!r4.outputSeen || !r4.desktopsSeen) {
+            return;
+        }
+        if (!this.tryR4Follow(r4) || r4.geoPending.size > 0) {
+            return;
+        }
+        if (r4.epoch !== this.epoch) {
+            this.failR4Terminal("stale-scope", true);
+            return;
+        }
+        if (!this.r4ProofMatches(r4)) {
+            this.failR4Terminal("post-observation-mismatch", true);
+            return;
+        }
+        r4.acked = true;
+        const payload = this.buildR4AckPayload(r4);
+        if (payload === null || payload.length > PLAN_MAX_REQUEST_BYTES) {
+            this.failR4Terminal("precondition-mismatch", false);
+            return;
+        }
+        this.diag(r4.op, r4.correlation, r4.planned.geometry.length, "r4-ack");
+        this.sendR4Request(payload, (reply) => this.onR4AckReply(reply, flight, session));
+    }
+
+    // Full desired observed proof against the retained plan: mover on the
+    // exact target output with exact single-target membership, and every
+    // desired window at its planned rectangle.
+    private r4ProofMatches(r4: R4Flight): boolean {
+        if (!this.r4MoverPlacementMatches(r4)) {
+            return false;
+        }
+        for (const entry of r4.planned.geometry) {
+            const ref = r4.byRef.get(entry.window);
+            if (ref === undefined) {
+                return false;
+            }
+            let rect: PlanRect | null = null;
+            try {
+                rect = this.env.readGeometry?.(ref) ?? null;
+            } catch (error) {
+                void error;
+                return false;
+            }
+            if (rect === null || rect.x !== entry.rect.x || rect.y !== entry.rect.y || rect.w !== entry.rect.w || rect.h !== entry.rect.h) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private r4MoverPlacementMatches(r4: R4Flight): boolean {
+        let output: string | null = null;
+        try {
+            output = this.env.readOutputName?.(r4.moverRef) ?? null;
+        } catch (error) {
+            void error;
+            return false;
+        }
+        if (output !== r4.targetOutput) {
+            return false;
+        }
+        let ids: ReadonlyArray<string> | null = null;
+        try {
+            ids = this.env.readDesktopIds?.(r4.moverRef) ?? null;
+        } catch (error) {
+            void error;
+            return false;
+        }
+        if (ids === null || ids.length !== 1 || ids[0] !== r4.targetWorkspace) {
+            return false;
+        }
+        return true;
+    }
+
+    // Post-observation windows carried by ack/verify: exactly the retained
+    // desired geometry (output/workspace/rect per window).
+    private r4PostWindows(r4: R4Flight): Array<Record<string, unknown>> {
+        return r4.planned.geometry.map((entry) => ({
+            window: entry.window,
+            output: entry.output,
+            workspace: entry.workspace,
+            rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
+        }));
+    }
+
+    private r4DomainsPayload(r4: R4Flight): Array<Record<string, unknown>> {
+        const domains = r4.snapshot.domains as ReadonlyArray<PlanDomain>;
+        return domains.map((entry) => ({
+            output: entry.output,
+            workspace: entry.workspace,
+            bounds: { x: entry.bounds.x, y: entry.bounds.y, w: entry.bounds.w, h: entry.bounds.h },
+            gap: entry.gap,
+            outer_gap: entry.outerGap,
+            adjacent: { ...(entry.adjacent as Record<string, string>) },
+        }));
+    }
+
+    private r4PostFingerprint(r4: R4Flight): number {
+        const domains = r4.snapshot.domains as ReadonlyArray<PlanDomain>;
+        return planDirectionalFingerprint(
+            domains,
+            "",
+            r4.planned.geometry.map((entry) => ({
+                window: entry.window,
+                output: entry.output,
+                workspace: entry.workspace,
+                rect: entry.rect,
+                floating: false,
+                fitExcluded: false,
+            })),
+        );
+    }
+
+    private buildR4AckPayload(r4: R4Flight): string | null {
+        const snapshot = r4.snapshot;
+        let payload = "";
+        try {
+            payload = JSON.stringify({
+                v: PLAN_CONTRACT_VERSION,
+                correlation_id: r4.correlation,
+                owner: this.owner,
+                generation: this.generation,
+                revision: r4.baseRevision,
+                fingerprint: this.r4PostFingerprint(r4),
+                domain: {
+                    output: snapshot.domainOutput,
+                    workspace: snapshot.domainWorkspace,
+                    bounds: {
+                        x: snapshot.domainBounds.x,
+                        y: snapshot.domainBounds.y,
+                        w: snapshot.domainBounds.w,
+                        h: snapshot.domainBounds.h,
+                    },
+                    gap: snapshot.domainGap,
+                    outer_gap: snapshot.domainOuterGap,
+                },
+                domains: this.r4DomainsPayload(r4),
+                focused_window: "",
+                windows: this.r4PostWindows(r4),
+                command: { op: "directional-move-ack", ack_outcome: "accepted" },
+            });
+        } catch (error) {
+            void error;
+            return null;
+        }
+        return payload;
+    }
+
+    private buildR4VerifyPayload(r4: R4Flight): string | null {
+        const snapshot = r4.snapshot;
+        let payload = "";
+        try {
+            payload = JSON.stringify({
+                v: PLAN_CONTRACT_VERSION,
+                correlation_id: r4.correlation,
+                owner: this.owner,
+                generation: this.generation,
+                revision: r4.baseRevision,
+                fingerprint: this.r4PostFingerprint(r4),
+                domain: {
+                    output: snapshot.domainOutput,
+                    workspace: snapshot.domainWorkspace,
+                    bounds: {
+                        x: snapshot.domainBounds.x,
+                        y: snapshot.domainBounds.y,
+                        w: snapshot.domainBounds.w,
+                        h: snapshot.domainBounds.h,
+                    },
+                    gap: snapshot.domainGap,
+                    outer_gap: snapshot.domainOuterGap,
+                },
+                domains: this.r4DomainsPayload(r4),
+                focused_window: "",
+                windows: this.r4PostWindows(r4),
+                command: {
+                    op: "directional-move-verify",
+                    verified: true,
+                    preconditions: r4.planned.rawPreconditions,
+                    operation: r4.planned.rawOperation,
+                },
+            });
+        } catch (error) {
+            void error;
+            return null;
+        }
+        return payload;
+    }
+
+    // Best-effort terminal adapter-lost ack to the still pinned owner before
+    // local teardown. Never the well-known name, never a retry, and a failed
+    // report never changes the failure behavior. Sent only while ack is still
+    // unbound; after ack the pending is Rust-bound and local teardown without
+    // verify is the only safe path.
+    private sendR4LostAck(r4: R4Flight): void {
+        if (r4.acked || !isUniqueOwner(this.pinnedOwner)) {
+            return;
+        }
+        const snapshot = r4.snapshot;
+        let payload = "";
+        try {
+            payload = JSON.stringify({
+                v: PLAN_CONTRACT_VERSION,
+                correlation_id: r4.correlation,
+                owner: this.owner,
+                generation: this.generation,
+                revision: r4.baseRevision,
+                fingerprint: this.r4PostFingerprint(r4),
+                domain: {
+                    output: snapshot.domainOutput,
+                    workspace: snapshot.domainWorkspace,
+                    bounds: {
+                        x: snapshot.domainBounds.x,
+                        y: snapshot.domainBounds.y,
+                        w: snapshot.domainBounds.w,
+                        h: snapshot.domainBounds.h,
+                    },
+                    gap: snapshot.domainGap,
+                    outer_gap: snapshot.domainOuterGap,
+                },
+                domains: this.r4DomainsPayload(r4),
+                focused_window: "",
+                windows: this.r4PostWindows(r4),
+                command: { op: "directional-move-ack", ack_outcome: "adapter-lost" },
+            });
+        } catch (error) {
+            void error;
+            return;
+        }
+        if (payload.length > PLAN_MAX_REQUEST_BYTES) {
+            return;
+        }
+        try {
+            const target = this.pinnedOwner as string;
+            this.env.callDbus(target, PLAN_OBJECT, PLAN_INTERFACE, PLAN_METHOD, payload, () => {});
+        } catch (error) {
+            void error;
+        }
+    }
+
+    private sendR4Request(payload: string, callback: (reply: unknown) => void): void {
+        const r4 = this.r4Current();
+        if (r4 === null || !isUniqueOwner(this.pinnedOwner)) {
+            this.failR4Terminal("owner-loss", false);
+            return;
+        }
+        this.callbackSeen = false;
+        try {
+            const target = this.pinnedOwner as string;
+            this.env.callDbus(target, PLAN_OBJECT, PLAN_INTERFACE, PLAN_METHOD, payload, callback);
+        } catch (error) {
+            void error;
+            this.failR4Terminal("owner-loss", false);
+        }
+    }
+
+    private onR4AckReply(reply: unknown, flight: number, session: number): void {
+        const r4 = this.r4Current();
+        if (r4 === null || flight !== r4.flight || session !== r4.session || !r4.acked || r4.settled) {
+            return;
+        }
+        if (this.callbackSeen) {
+            return;
+        }
+        this.callbackSeen = true;
+        if (typeof reply !== "string" || reply.length > PLAN_MAX_REPLY_BYTES) {
+            this.failR4Terminal("service-fault", false);
+            return;
+        }
+        let parsed: unknown = null;
+        try {
+            parsed = JSON.parse(reply);
+        } catch (error) {
+            void error;
+            this.failR4Terminal("service-fault", false);
+            return;
+        }
+        if (!isRecord(parsed) || parsed["v"] !== PLAN_CONTRACT_VERSION || parsed["correlation_id"] !== r4.correlation) {
+            this.failR4Terminal("service-fault", false);
+            return;
+        }
+        const outcome = parsed["outcome"];
+        if (outcome !== "acknowledged") {
+            this.failR4Terminal(outcome === "diverged" ? sanitizeKind(parsed["kind"]) : "service-fault", false);
+            return;
+        }
+        this.diag(r4.op, r4.correlation, r4.planned.geometry.length, "r4-acknowledged");
+        // Scope may have changed between ack and verify: rerun the full
+        // desired observed proof so stale data never reaches verify.
+        if (r4.epoch !== this.epoch || !this.r4ProofMatches(r4)) {
+            this.failR4Terminal("stale-scope", false);
+            return;
+        }
+        const payload = this.buildR4VerifyPayload(r4);
+        if (payload === null || payload.length > PLAN_MAX_REQUEST_BYTES) {
+            this.failR4Terminal("precondition-mismatch", false);
+            return;
+        }
+        this.diag(r4.op, r4.correlation, r4.planned.geometry.length, "r4-verify");
+        this.sendR4Request(payload, (verifyReply) => this.onR4VerifyReply(verifyReply, flight, session));
+    }
+
+    private onR4VerifyReply(reply: unknown, flight: number, session: number): void {
+        const r4 = this.r4Current();
+        if (r4 === null || flight !== r4.flight || session !== r4.session || !r4.acked || r4.settled) {
+            return;
+        }
+        if (this.callbackSeen) {
+            return;
+        }
+        this.callbackSeen = true;
+        this.clearTimer();
+        if (typeof reply !== "string" || reply.length > PLAN_MAX_REPLY_BYTES) {
+            this.failR4Terminal("service-fault", false);
+            return;
+        }
+        let parsed: unknown = null;
+        try {
+            parsed = JSON.parse(reply);
+        } catch (error) {
+            void error;
+            this.failR4Terminal("service-fault", false);
+            return;
+        }
+        if (!isRecord(parsed) || parsed["v"] !== PLAN_CONTRACT_VERSION || parsed["correlation_id"] !== r4.correlation) {
+            this.failR4Terminal("service-fault", false);
+            return;
+        }
+        if (parsed["outcome"] !== "committed") {
+            this.failR4Terminal(parsed["outcome"] === "diverged" ? sanitizeKind(parsed["kind"]) : "service-fault", false);
+            return;
+        }
+        const settled = r4;
+        settled.settled = true;
+        this.clearR4Flight();
+        if (isUniqueOwner(this.pinnedOwner)) {
+            this.knownOwner = this.pinnedOwner;
+        }
+        this.inFlight = false;
+        this.pending = null;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
+        this.diag(settled.op, settled.correlation, settled.planned.geometry.length, "planned-applied");
+        // Exactly one observational active-group refresh after the committed
+        // R4 boundary, mirroring the local geometry-plan edge.
+        try {
+            this.env.onPlannedApplied?.(settled.op);
+        } catch (error) {
+            void error;
+        }
+        this.finishFlight();
+        try {
+            this.requestResync();
+        } catch (error) {
+            void error;
+        }
+    }
+
+    private onR4Timeout(flight: number, session: number): void {
+        const r4 = this.r4Flight;
+        if (r4 === null || r4.settled || flight !== r4.flight || session !== r4.session || !this.inFlight) {
+            return;
+        }
+        this.failR4Terminal("timeout", true);
+    }
+
+    // Terminal R4 failure: exactly one best-effort adapter-lost ack while ack
+    // is still unbound, otherwise no verify at all. Never replays the
+    // command. Local teardown releases the single-flight; one resync after
+    // converges from fresh observation.
+    private failR4Terminal(outcome: string, sendLostAck: boolean): void {
+        const r4 = this.r4Flight;
+        if (r4 === null || r4.settled) {
+            return;
+        }
+        r4.settled = true;
+        if (sendLostAck && !r4.acked) {
+            try {
+                this.sendR4LostAck(r4);
+            } catch (error) {
+                void error;
+            }
+        }
+        const op = r4.op;
+        const correlation = r4.correlation;
+        const count = r4.planned.geometry.length;
+        this.clearR4Flight();
+        this.clearTimer();
+        this.inFlight = false;
+        this.pending = null;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
+        this.diag(op, correlation, count, outcome);
+        this.noteReconcileTerminal(op);
+        this.finishFlight();
+        try {
+            this.requestResync();
+        } catch (error) {
+            void error;
+        }
+    }
+
+    private clearR4Flight(): void {
+        const r4 = this.r4Flight;
+        this.r4Flight = null;
+        if (r4 !== null) {
+            for (const detach of r4.detaches) {
+                try {
+                    detach();
+                } catch (error) {
+                    void error;
+                }
+            }
+            r4.detaches.length = 0;
+            r4.geoPending.clear();
+        }
+    }
+
     private failFlight(flightState: PendingFlight, outcome: string): void {
         if (flightState.plannerSession !== this.plannerSession) {
             return;
         }
+        this.clearR4Flight();
         this.clearTimer();
         this.inFlight = false;
         this.pending = null;
@@ -3497,6 +5474,11 @@ export class PlanAdapter {
     // converge across successive flights without polling or new timers.
     private finishFlight(): void {
         if (!this.enabled) {
+            return;
+        }
+        // An R4 flight holds the single-flight across native/ack/verify: no
+        // deferred or hidden-domain command may interleave until it settles.
+        if (this.r4Flight !== null) {
             return;
         }
         // Do not let a deferred foreground or hidden-domain command race the

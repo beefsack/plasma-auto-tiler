@@ -1,4 +1,4 @@
-// Narrow KWin 6.7.4 scripting-surface subset, pinned to the KWin source
+// Narrow KWin 6.7.5 scripting-surface subset, pinned to the KWin source
 // fidelity reference recorded in
 // docs/changes/custom-tile-vertical-slice/research/type-provenance.md
 // (realized source tarball, sha256-23p9unGqyh5SGHM7gPkKmY2E4qs25NYtDj6gA3bFgC0=).
@@ -308,10 +308,10 @@ interface Workspace {
     // Read-write: src/scripting/workspace_wrapper.h declares the WRITE setter
     //     Q_PROPERTY(KWin::VirtualDesktop *currentDesktop READ currentDesktop
     //     WRITE setCurrentDesktop NOTIFY currentDesktopChanged)
-    // at pinned v6.7.4. Assigning switches the current virtual desktop.
+    // at pinned v6.7.5. Assigning switches the current virtual desktop.
     currentDesktop: VirtualDesktop | null;
-    // src/scripting/workspace_wrapper.h at pinned v6.7.4 source tarball
-    // sha256-23p9unGqyh5SGHM7gPkKmY2E4qs25NYtDj6gA3bFgC0=:
+    // src/scripting/workspace_wrapper.h at pinned v6.7.5 source tarball
+    // SHA-256 6baa910b732d93c48c90f9c1cc685cc93d0b8de0cdf138c24192c045bc3a48e2:
     //     Q_SCRIPTABLE void createDesktop(int position, const QString &name)
     //     const
     // Creates a desktop at the 1-based position and returns nothing. The
@@ -325,6 +325,11 @@ interface Workspace {
     //     Q_INVOKABLE void setCurrentDesktopForScreen(VirtualDesktop *desktop,
     //                                                 Output *output)
     setCurrentDesktopForScreen(desktop: VirtualDesktop, output: Output): void;
+    // KWin 6.7.5 src/scripting/workspace_wrapper.h:614 declares the public
+    // Q_SLOT `sendClientToScreen(KWin::Window *, KWin::LogicalOutput *)`.
+    // The call initiates transfer only; callers must prove the resulting output,
+    // desktop membership, geometry, and focus asynchronously before commit.
+    sendClientToScreen(client: Window, output: Output): void;
     // Writable: src/scripting/workspace_wrapper.h declares the WRITE setter
     //     Q_PROPERTY(KWin::Window *activeWindow READ activeWindow WRITE
     //     setActiveWindow NOTIFY windowActivated)

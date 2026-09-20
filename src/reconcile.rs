@@ -3251,6 +3251,8 @@ mod tests {
                 to_window: WindowId("win-b".to_owned()),
                 direction: Direction::Right,
                 route: vec![NodeId("b".to_owned())],
+                cross_source_output: None,
+                cross_source_workspace: None,
             },
         );
         assert_eq!(

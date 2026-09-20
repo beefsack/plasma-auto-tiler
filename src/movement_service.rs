@@ -348,6 +348,7 @@ fn operation_to_value(op: &crate::directional::MoveOperation) -> serde_json::Val
         O::CrossOutput {
             rule,
             target_output,
+            target_workspace,
             source_root_child_index,
             target,
         } => {
@@ -355,6 +356,7 @@ fn operation_to_value(op: &crate::directional::MoveOperation) -> serde_json::Val
                 "kind": "CrossOutput",
                 "rule": rule_str(*rule),
                 "target_output": target_output.0,
+                "target_workspace": target_workspace.0,
                 "source_root_child_index": source_root_child_index,
                 "target": match target {
                     CrossOutputTarget::Empty => "empty",
@@ -365,7 +367,17 @@ fn operation_to_value(op: &crate::directional::MoveOperation) -> serde_json::Val
     }
 }
 
-fn parse_operation(value: &serde_json::Value) -> Option<crate::directional::MoveOperation> {
+/// Parse a move operation body. The current wire shape carries
+/// `target_workspace`; the historical same-workspace shape omits it and is
+/// only accepted when the caller supplies the session's unambiguous source
+/// workspace at this exact boundary (legacy same-workspace R4 binds it).
+/// Without an available source workspace the legacy shape fails closed
+/// (never derived from `target_output`). `None` rejects before any
+/// plan/verify side effect.
+fn parse_operation(
+    value: &serde_json::Value,
+    source_workspace: Option<&str>,
+) -> Option<crate::directional::MoveOperation> {
     use crate::directional::MoveOperation as O;
     let obj = value.as_object()?;
     let kind = obj.get("kind")?.as_str()?;
@@ -502,13 +514,27 @@ fn parse_operation(value: &serde_json::Value) -> Option<crate::directional::Move
             })
         }
         "CrossOutput" => {
-            if !exact(&[
+            // Shared-contract compatibility only: the portable directional
+            // core now carries the adjacent target workspace. The historical
+            // same-workspace shape omits it and binds the caller-supplied
+            // source workspace; without one it fails closed here, never
+            // derived from `target_output`.
+            let legacy = exact(&[
                 "kind",
                 "rule",
                 "target_output",
                 "source_root_child_index",
                 "target",
-            ]) {
+            ]);
+            let current = exact(&[
+                "kind",
+                "rule",
+                "target_output",
+                "target_workspace",
+                "source_root_child_index",
+                "target",
+            ]);
+            if !legacy && !current {
                 return None;
             }
             let target = match obj.get("target")?.as_str()? {
@@ -516,9 +542,19 @@ fn parse_operation(value: &serde_json::Value) -> Option<crate::directional::Move
                 "occupied" => CrossOutputTarget::Occupied,
                 _ => return None,
             };
+            let target_workspace = if current {
+                WorkspaceId(opaque("target_workspace")?)
+            } else {
+                let ws = source_workspace?;
+                if !is_opaque_id(ws) {
+                    return None;
+                }
+                WorkspaceId(ws.to_owned())
+            };
             Some(O::CrossOutput {
                 rule,
                 target_output: OutputId(opaque("target_output")?),
+                target_workspace,
                 source_root_child_index: get_usize(obj, "source_root_child_index")?,
                 target,
             })
@@ -1757,7 +1793,21 @@ impl MovementService {
                 }
             }
         }
-        let Some(operation) = parse_operation(&request.verified_operation) else {
+        // Source workspace for legacy same-workspace operation bodies: the
+        // caller session's unambiguous workspace, or nothing (fail closed)
+        // when unseeded or multi-workspace.
+        let source_workspace: Option<String> = self.session.as_ref().and_then(|session| {
+            let mut workspaces = session.domains().iter().map(|d| d.workspace.0.clone());
+            let first = workspaces.next()?;
+            if workspaces.any(|w| w != first) {
+                None
+            } else {
+                Some(first)
+            }
+        });
+        let Some(operation) =
+            parse_operation(&request.verified_operation, source_workspace.as_deref())
+        else {
             return self.terminal_verify_diverge(request.correlation_id.clone());
         };
         let mut preconditions = Vec::with_capacity(request.verified_preconditions.len());

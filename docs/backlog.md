@@ -2,6 +2,20 @@
 
 Only meaningful pending or active work is listed.
 
+- P1 | Cross-output directional focus and movement live gate | Implemented
+  Meta+Left/Right focus and Meta+Shift+Left/Right movement across horizontally
+  adjacent outputs after local operations are exhausted. Targets use the other
+  output's current workspace and remembered focus; movement uses focused-leaf
+  or root insertion, preserving the user-tested COSMIC S20-S23 precedence.
+  Canonical per-domain state is retained without spatial reseeding. Native
+  transfer uses public `workspace.sendClientToScreen`; confirmed target output
+  and desktop membership permits one prompt follow, while complete geometry
+  and ack/verify gate commit. Rust tests, 805 KWin tests, typecheck, and build
+  pass. Next: user tests distinct current workspaces, focus crossing, moves into
+  occupied/empty targets, retained layouts, and follow. No live output transfer
+  was performed; native slot delivery and compositor timing remain unverified.
+  Up/Down local behavior and directional workspace cycling are unchanged.
+  [record](changes/cross-output-directional-focus-movement.md)
 - P1 | Native dev setup and lifecycle live gate | Explicit `just dev-native-setup`
   and `just dev-native-remove` now manage only the exact checkout-owned Plasma
   environment script. `just dev` preflights native discovery before startup,
@@ -13,10 +27,11 @@ Only meaningful pending or active work is listed.
   staging and dogfood compilation share the exact current-system KWin
   derivation/dev environment, independent of the portable devenv pin. Actual
   native build/staging against host KWin 6.7.5 and 27 native CTest cases pass;
-  shared lockfiles are unchanged. Next: user restarts the development session
-  for changed `devenv.nix`, logs out/in, then runs `just dev trace`. Matching
-  native binaries are already staged; no additional build is required first.
-  Native load/oracle/cleanup acceptance remains pending. Native rebuild
+  shared lockfiles are unchanged. User now reports "It's working perfectly now
+  and the active border is back too." This manually accepts the reported native
+  development startup result and visible active border; it does not establish
+  exact oracle protocol, cleanup, removal, or cross-host upgrade behavior.
+  Those checks remain pending. Native rebuild
   activation requires a fresh session; unload is not proof of library release.
   No agent host mutation occurred. Removal and dogfood coexistence refusal
   remain live-unverified.

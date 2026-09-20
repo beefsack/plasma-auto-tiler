@@ -111,6 +111,10 @@ Accepted real host compile proof (2026-09-20, current system):
   `just build-native-effect` staging route, and all 27 native CTest cases in
   the same host derivation environment. The staged active-border and
   drag-oracle libraries both link `libkwin.so.6` with a RUNPATH beginning
-  `/nix/store/78pbwkmy3kkp91lbp2w43p0hcl87cqb8-kwin-6.7.5/lib`; their plugin
-  IDs are respectively `plasma-auto-tiler-active-border` and
-  `plasma-auto-tiler-drag-oracle`.
+   `/nix/store/78pbwkmy3kkp91lbp2w43p0hcl87cqb8-kwin-6.7.5/lib`; their plugin
+   IDs are respectively `plasma-auto-tiler-active-border` and
+   `plasma-auto-tiler-drag-oracle`.
+- User manual acceptance (2026-09-20): "It's working perfectly now and the
+  active border is back too." This accepts the reported startup result and
+  visible active border only. It does not establish oracle protocol, cleanup,
+  metadata, removal, or cross-host upgrade behavior.

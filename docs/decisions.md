@@ -611,9 +611,23 @@ Historical implementation detail is recoverable in Git history.
   collapses its source tree, and focuses it in the target. A validated
   per-domain last-active leaf supplies COSMIC target admission; its absence
   uses target `map_to_tree` root/output-geometry fallback. Empty targets are a
-  lone root. Cross-output R4 remains deferred: the audited COSMIC boundary
-  path escalates `MoveFurther` to workspace/output actions and does not
-  establish the project's frozen local R4 transfer rule.
+  lone root. Approved 2026-09-20: exhausted default-Vertical
+  `Meta+Left`/`Meta+Right` R4 movement is the selected product behavior across
+  a horizontally adjacent output into that output's currently selected logical
+  workspace. Local R1/R2/R3 wins first; Up/Down, wrapping, and workspace
+  cycling remain excluded. Rust models target remembered-leaf/root insertion
+  and retains the existing owner, generation, revision, correlation,
+  single-pending, acknowledgement, verification, visibility, exception, and
+  fail-closed target fences. The active `DescribePlan` route delivers the
+  corresponding exhausted horizontal focus transfer with no layout or
+  membership writes. R4 uses KWin 6.7.5 public
+  `workspace.sendClientToScreen(window, output)` and exact desktop assignment,
+  but native writes initiate only: output, membership, geometry, and focus
+  readback fence the accepted acknowledgement and verified commit. The
+  transient pair is retained only through that transaction and then split back
+  into canonical per-domain sessions. Timeout, stale scope, wrong output,
+  failed write, identity loss, or partial proof terminate without replay or
+  commit. No live KWin output-switch acceptance is claimed.
 - A KWin fork or patch is rejected. The project must operate within existing
   KDE/Plasma/KWin. The Rust-engine/direct-geometry direction above is the
   selected replacement architecture; the bounded adapter remains active only

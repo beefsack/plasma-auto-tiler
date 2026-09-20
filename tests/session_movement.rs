@@ -1975,6 +1975,21 @@ fn adjacency_validation_strict() {
         )],
     );
     assert!(bad.is_err());
+    // Cross-workspace adjacency is now valid: the target is the adjacent
+    // output's currently selected logical workspace, not the same backing
+    // desktop index.
+    let ok = Session::new(
+        owner(),
+        generation(),
+        0,
+        7,
+        vec![
+            domain_with_adjacent("out-1", "ws-1", vec![(Direction::Right, "out-2")]),
+            domain_with_adjacent("out-2", "ws-2", vec![(Direction::Left, "out-1")]),
+        ],
+    );
+    assert!(ok.is_ok());
+    // Ambiguous duplicate output ids still fail closed.
     let bad = Session::new(
         owner(),
         generation(),
@@ -1983,6 +1998,7 @@ fn adjacency_validation_strict() {
         vec![
             domain_with_adjacent("out-1", "ws-1", vec![(Direction::Right, "out-2")]),
             domain_with_adjacent("out-2", "ws-2", vec![(Direction::Left, "out-1")]),
+            domain_with_adjacent("out-2", "ws-3", vec![(Direction::Left, "out-1")]),
         ],
     );
     assert!(bad.is_err());

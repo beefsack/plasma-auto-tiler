@@ -36,7 +36,7 @@ import {
     GROUP_HIGHLIGHT_SET_METHOD,
     startActiveGroupHighlight,
 } from "./active-group-highlight";
-import { PLAN_DBUS_SERVICE, PLAN_INTERFACE, PLAN_METHOD, PLAN_OBJECT, PLAN_SERVICE, PLAN_START_FLAGS, PLAN_START_METHOD, PlanAdapter, PlanDirection, PlanObserved, PlanResizeMode, planFingerprint } from "./plan-adapter";
+import { PLAN_DBUS_SERVICE, PLAN_INTERFACE, PLAN_METHOD, PLAN_OBJECT, PLAN_SERVICE, PLAN_START_FLAGS, PLAN_START_METHOD, PlanAdapter, PlanDirection, PlanDomain, PlanObserved, PlanResizeMode, DirectionalObservation, planDirectionalFingerprint, planFingerprint } from "./plan-adapter";
 import { PLAN_SOURCE_REV } from "./source-rev";
 import { connectSignal, readSignal } from "./signal-capability";
 import { KWIN_TRACE_ENABLED } from "./trace";
@@ -1664,6 +1664,398 @@ function observeNative(
     }
 }
 
+// Production directional observation for Left/Right focus/move (active
+// DescribePlan route only): source plus the horizontally reciprocal adjacent
+// output's current logical workspace (which may differ in workspace id),
+// bounded max two domains. Reuses only documented/project-used public
+// properties: `screens`, `currentDesktopForScreen`, `clientArea`,
+// `windowList`, `window.output.name`, `window.desktops`, `activeWindow`.
+// Exact edge-touch with positive overlap derives reciprocal Left/Right
+// adjacency; distinct workspace ids are allowed. The typed outcome keeps
+// local behavior for a confirmed no-adjacent condition only (`no-target`);
+// ambiguous, partial, or unreadable evidence is `invalid` and must refuse
+// before any local mutation. Up/Down never cross.
+export function observeDirectionalDomain(
+    liveWorkspace: unknown,
+    cache: Map<string, string>,
+    floatingIds: ReadonlySet<string>,
+    gaps: DomainGaps,
+    direction: string,
+    reportEligibility?: EligibilityReporter,
+): DirectionalObservation {
+    const invalid: DirectionalObservation = { status: "invalid", observed: null };
+    const noTarget: DirectionalObservation = { status: "no-target", observed: null };
+    try {
+        if (direction !== "left" && direction !== "right") {
+            return invalid;
+        }
+        const source = observeNative(liveWorkspace, cache, floatingIds, gaps, reportEligibility);
+        if (source === null || source.windows.length === 0) {
+            // No readable source: delegate to the single-domain path, which
+            // reports the observation failure accurately.
+            return noTarget;
+        }
+        if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
+            return invalid;
+        }
+        const surface = liveWorkspace as Record<string, unknown>;
+        const screens = decodeList(readProp(surface, "screens"), MAX_LIST);
+        if (screens === null || screens.length === 0 || screens.length > MAX_LIST) {
+            return invalid;
+        }
+        const currentFn = readProp(surface, "currentDesktopForScreen");
+        const areaFn = readProp(surface, "clientArea");
+        if (typeof currentFn !== "function" || typeof areaFn !== "function") {
+            return invalid;
+        }
+        interface ScreenBounds {
+            readonly ref: object;
+            readonly name: string;
+            readonly desktopRef: object;
+            readonly workspace: string;
+            readonly bounds: { x: number; y: number; w: number; h: number };
+        }
+        const entries: ScreenBounds[] = [];
+        for (const item of screens) {
+            if (typeof item !== "object" || item === null) {
+                return invalid;
+            }
+            const ref = item as object;
+            const nameRaw = readProp(ref, "name");
+            if (!isOpaqueId(nameRaw)) {
+                return invalid;
+            }
+            let desktop: unknown = undefined;
+            try {
+                desktop = Reflect.apply(
+                    currentFn as (...args: ReadonlyArray<never>) => unknown,
+                    surface,
+                    [ref],
+                );
+            } catch (error) {
+                void error;
+                return invalid;
+            }
+            if (typeof desktop !== "object" || desktop === null) {
+                return invalid;
+            }
+            const desktopRef = desktop as object;
+            const desktopIdRaw = readProp(desktopRef, "id");
+            if (!isOpaqueId(desktopIdRaw)) {
+                return invalid;
+            }
+            const bounds = readWorkAreaFor(surface, ref, desktopRef);
+            if (bounds === null) {
+                return invalid;
+            }
+            entries.push({
+                ref,
+                name: nameRaw as string,
+                desktopRef,
+                workspace: desktopIdRaw as string,
+                bounds,
+            });
+        }
+        const sourceEntry = entries.find((entry) => entry.name === source.domainOutput);
+        if (sourceEntry === undefined) {
+            return invalid;
+        }
+        // The source work area must match the source observation bounds;
+        // otherwise the screen set changed under us: fail closed.
+        if (
+            sourceEntry.bounds.x !== source.domainBounds.x ||
+            sourceEntry.bounds.y !== source.domainBounds.y ||
+            sourceEntry.bounds.w !== source.domainBounds.w ||
+            sourceEntry.bounds.h !== source.domainBounds.h ||
+            sourceEntry.workspace !== source.domainWorkspace
+        ) {
+            return invalid;
+        }
+        // Exact edge-touch with positive vertical overlap in the commanded
+        // direction. Ambiguous (multiple) or missing candidates fail closed.
+        const overlap = (
+            a: { y: number; h: number },
+            b: { y: number; h: number },
+        ): number => Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+        const candidates = entries.filter((entry) => {
+            if (entry.name === sourceEntry.name) {
+                return false;
+            }
+            if (direction === "left") {
+                return (
+                    entry.bounds.x + entry.bounds.w === sourceEntry.bounds.x &&
+                    overlap(entry.bounds, sourceEntry.bounds) > 0
+                );
+            }
+            return (
+                sourceEntry.bounds.x + sourceEntry.bounds.w === entry.bounds.x &&
+                overlap(entry.bounds, sourceEntry.bounds) > 0
+            );
+        });
+        // Zero candidates is a confirmed no-adjacent condition: the caller
+        // keeps local single-domain behavior. Multiple candidates are
+        // ambiguous and refuse.
+        if (candidates.length === 0) {
+            return noTarget;
+        }
+        if (candidates.length !== 1) {
+            return invalid;
+        }
+        const targetEntry = candidates[0] as ScreenBounds;
+        // Reciprocity check: the target's opposite edge must touch the
+        // source with positive overlap (symmetric by construction, but an
+        // unreadable intermediate screen set must not invent adjacency).
+        if (direction === "left") {
+            if (
+                targetEntry.bounds.x + targetEntry.bounds.w !== sourceEntry.bounds.x ||
+                overlap(targetEntry.bounds, sourceEntry.bounds) <= 0
+            ) {
+                return invalid;
+            }
+        } else if (
+            sourceEntry.bounds.x + sourceEntry.bounds.w !== targetEntry.bounds.x ||
+            overlap(targetEntry.bounds, sourceEntry.bounds) <= 0
+        ) {
+            return invalid;
+        }
+        // Collect the target domain's eligible windows with the exact
+        // observeNative eligibility (normal windows only, same output,
+        // desktop membership or sticky, normalized ids, quantized frames).
+        const lister = readProp(surface, "windowList");
+        if (typeof lister !== "function") {
+            return invalid;
+        }
+        let rawList: unknown = undefined;
+        try {
+            rawList = Reflect.apply(lister as (...args: ReadonlyArray<never>) => unknown, surface, []);
+        } catch (error) {
+            void error;
+            return invalid;
+        }
+        const windows = decodeList(rawList, MAX_LIST);
+        if (windows === null) {
+            return invalid;
+        }
+        const seen = new Set<string>();
+        for (const entry of source.windows) {
+            seen.add(entry.id);
+        }
+        interface TargetWindow {
+            readonly id: string;
+            readonly ref: object;
+            readonly rect: { x: number; y: number; w: number; h: number };
+            readonly fullscreen: boolean;
+            readonly maximized: boolean;
+            readonly floating: boolean;
+            readonly sticky: boolean;
+            readonly resourceClass: string;
+        }
+        const targetWindows: TargetWindow[] = [];
+        for (const item of windows) {
+            if (typeof item !== "object" || item === null) {
+                continue;
+            }
+            const ref = item as object;
+            if (readProp(ref, "normalWindow") !== true) {
+                continue;
+            }
+            const output = readProp(ref, "output");
+            if (typeof output !== "object" || output === null) {
+                continue;
+            }
+            if (readProp(output as object, "name") !== targetEntry.name) {
+                continue;
+            }
+            const allDesktops = readProp(ref, "onAllDesktops") === true;
+            const membership = decodeList(readProp(ref, "desktops"), MAX_DESKTOPS);
+            if (membership === null) {
+                return invalid;
+            }
+            let onDesktop = false;
+            for (const member of membership) {
+                if (member === targetEntry.desktopRef) {
+                    onDesktop = true;
+                    break;
+                }
+            }
+            if (!onDesktop && !allDesktops) {
+                continue;
+            }
+            const native = readNativeId(ref);
+            if (native === null) {
+                return invalid;
+            }
+            const id = internNativeId(cache, native);
+            if (seen.has(id)) {
+                return invalid;
+            }
+            seen.add(id);
+            const frame = readFrameRect(ref);
+            if (typeof frame === "string") {
+                // An unreadable target frame is invalid evidence, never a
+                // silently dropped window: downstream Rust would otherwise
+                // plan against a partial target.
+                return invalid;
+            }
+            targetWindows.push({
+                id,
+                ref,
+                rect: { x: frame.x, y: frame.y, w: frame.w, h: frame.h },
+                fullscreen: readProp(ref, "fullScreen") !== false,
+                maximized: readProp(ref, "maximizeMode") !== 0,
+                floating: floatingIds.has(id) || allDesktops,
+                sticky: allDesktops,
+                resourceClass: readResourceClass(ref),
+            });
+        }
+        const sourceAdjacent: Record<string, string> =
+            direction === "left" ? { left: targetEntry.name } : { right: targetEntry.name };
+        const targetAdjacent: Record<string, string> =
+            direction === "left" ? { right: sourceEntry.name } : { left: sourceEntry.name };
+        const domains: ReadonlyArray<PlanDomain> = Object.freeze([
+            Object.freeze({
+                output: source.domainOutput,
+                workspace: source.domainWorkspace,
+                bounds: { x: source.domainBounds.x, y: source.domainBounds.y, w: source.domainBounds.w, h: source.domainBounds.h },
+                gap: source.domainGap,
+                outerGap: source.domainOuterGap,
+                adjacent: Object.freeze(sourceAdjacent),
+            }),
+            Object.freeze({
+                output: targetEntry.name,
+                workspace: targetEntry.workspace,
+                bounds: { x: targetEntry.bounds.x, y: targetEntry.bounds.y, w: targetEntry.bounds.w, h: targetEntry.bounds.h },
+                gap: gaps.innerGap,
+                outerGap: gaps.outerGap,
+                adjacent: Object.freeze(targetAdjacent),
+            }),
+        ]);
+        const combinedWindows = Object.freeze([
+            ...source.windows,
+            ...targetWindows.map((entry) =>
+                Object.freeze({
+                    id: entry.id,
+                    ref: entry.ref,
+                    rect: Object.freeze({ x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h }),
+                    output: targetEntry.name,
+                    workspace: targetEntry.workspace,
+                    fullscreen: entry.fullscreen,
+                    maximized: entry.maximized,
+                    floating: entry.floating,
+                    sticky: entry.sticky,
+                    resourceClass: entry.resourceClass,
+                }),
+            ),
+        ]);
+        // Full-evidence fingerprint: the exact wire fields Rust re-derives
+        // (ordered domain primitives, focused id, every window with rect and
+        // exception flags), so an altered target rect/bounds/adjacency fails
+        // request validation upstream.
+        const fitExcluded = (floating: boolean, sticky: boolean, fullscreen: boolean, maximized: boolean): boolean =>
+            floating || sticky || fullscreen || maximized;
+        const fingerprintWindows = [
+            ...source.windows.map((entry) => ({
+                window: entry.id,
+                output: entry.output,
+                workspace: entry.workspace,
+                rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
+                floating: entry.floating === true,
+                fitExcluded: fitExcluded(
+                    entry.floating === true,
+                    entry.sticky === true,
+                    entry.fullscreen,
+                    entry.maximized,
+                ),
+            })),
+            ...targetWindows.map((entry) => ({
+                window: entry.id,
+                output: targetEntry.name,
+                workspace: targetEntry.workspace,
+                rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
+                floating: entry.floating,
+                fitExcluded: fitExcluded(entry.floating, entry.sticky, entry.fullscreen, entry.maximized),
+            })),
+        ];
+        const fingerprint = String(
+            planDirectionalFingerprint(domains, source.focusedId, fingerprintWindows),
+        );
+        const expectedFingerprint = fingerprint;
+        const capturedActive = source.activeRef;
+        const capturedSource = source;
+        const observed: PlanObserved = {
+            domainOutput: source.domainOutput,
+            domainWorkspace: source.domainWorkspace,
+            domainBounds: source.domainBounds,
+            domainGap: source.domainGap,
+            domainOuterGap: source.domainOuterGap,
+            focusedId: source.focusedId,
+            ...(source.activeExcluded === undefined ? {} : { activeExcluded: source.activeExcluded }),
+            domains,
+            windows: combinedWindows,
+            activeRef: source.activeRef,
+            fingerprint: expectedFingerprint,
+            revalidate: () => {
+                try {
+                    const fresh = observeDirectionalDomain(
+                        liveWorkspace,
+                        cache,
+                        floatingIds,
+                        gaps,
+                        direction,
+                        reportEligibility,
+                    );
+                    if (fresh.status !== "ready" || fresh.observed === null) {
+                        return false;
+                    }
+                    if (fresh.observed.fingerprint !== expectedFingerprint) {
+                        return false;
+                    }
+                    if (fresh.observed.activeRef !== capturedActive) {
+                        return false;
+                    }
+                    if (fresh.observed.windows.length !== combinedWindows.length) {
+                        return false;
+                    }
+                    for (const entry of combinedWindows) {
+                        let matched = false;
+                        for (const candidate of fresh.observed.windows) {
+                            if (candidate.id === entry.id) {
+                                matched = true;
+                                if (candidate.ref !== entry.ref) {
+                                    return false;
+                                }
+                                if (
+                                    candidate.rect.x !== entry.rect.x ||
+                                    candidate.rect.y !== entry.rect.y ||
+                                    candidate.rect.w !== entry.rect.w ||
+                                    candidate.rect.h !== entry.rect.h ||
+                                    candidate.output !== entry.output ||
+                                    candidate.workspace !== entry.workspace
+                                ) {
+                                    return false;
+                                }
+                                break;
+                            }
+                        }
+                        if (!matched) {
+                            return false;
+                        }
+                    }
+                    void capturedSource;
+                    return true;
+                } catch (error) {
+                    void error;
+                    return false;
+                }
+            },
+        };
+        return { status: "ready", observed };
+    } catch (error) {
+        void error;
+        return invalid;
+    }
+}
+
 // Explicit production activation; called once by src/entry.ts and directly
 // by focused tests with overrides. Returns a stop handle on success, null
 // fail-closed (silently: only the adapter's two bounded line shapes may be
@@ -2111,6 +2503,8 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         },
         observe: () => observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility),
         observeHidden: () => observeHiddenDomains(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility),
+        observeDirectional: (direction) =>
+            observeDirectionalDomain(liveWorkspace, nativeIds, floatingIds, domainGaps, direction, reportEligibility),
         clearMaximize: (target) => {
             try {
                 const method = readProp(target, "setMaximize");
@@ -2168,6 +2562,145 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 floatingIds.add(id);
             } else {
                 floatingIds.delete(id);
+            }
+        },
+        // Production R4 cross-output transfer: exact Output object plus exact
+        // target VirtualDesktop refs through public typed surfaces only.
+        // sendClientToScreen initiates transfer only; the adapter proves the
+        // resulting output, desktop membership, geometry, and focus
+        // asynchronously before ack/verify commit.
+        resolveOutput: (name) => {
+            try {
+                const screens = decodeList(readProp(surface, "screens"), MAX_LIST);
+                if (screens === null) {
+                    return null;
+                }
+                for (const item of screens) {
+                    if (typeof item === "object" && item !== null && readProp(item as object, "name") === name) {
+                        return item as object;
+                    }
+                }
+                return null;
+            } catch (error) {
+                void error;
+                return null;
+            }
+        },
+        resolveDesktop: (workspaceId) => {
+            try {
+                const desktops = decodeList(readProp(surface, "desktops"), MAX_DESKTOPS);
+                if (desktops === null) {
+                    return null;
+                }
+                for (const item of desktops) {
+                    if (typeof item === "object" && item !== null && readProp(item as object, "id") === workspaceId) {
+                        return item as object;
+                    }
+                }
+                return null;
+            } catch (error) {
+                void error;
+                return null;
+            }
+        },
+        sendClientToScreen: (mover, output) => {
+            try {
+                const send = readProp(surface, "sendClientToScreen");
+                if (typeof send !== "function") {
+                    return false;
+                }
+                Reflect.apply(send as (...args: ReadonlyArray<unknown>) => unknown, surface, [mover, output]);
+                return true;
+            } catch (error) {
+                void error;
+                return false;
+            }
+        },
+        setDesktops: (mover, desktops) => {
+            try {
+                const probe = connectSignal(readSignal(mover, "desktopsChanged"), () => {});
+                if (probe === null) {
+                    return false;
+                }
+                probe();
+                return Reflect.set(mover, "desktops", [...desktops]);
+            } catch (error) {
+                void error;
+                return false;
+            }
+        },
+        readOutputName: (ref) => {
+            try {
+                const output = readProp(ref, "output");
+                if (typeof output !== "object" || output === null) {
+                    return null;
+                }
+                const name = readProp(output as object, "name");
+                return isOpaqueId(name) ? (name as string) : null;
+            } catch (error) {
+                void error;
+                return null;
+            }
+        },
+        readDesktopIds: (ref) => {
+            try {
+                const membership = decodeList(readProp(ref, "desktops"), MAX_DESKTOPS);
+                if (membership === null) {
+                    return null;
+                }
+                const ids: string[] = [];
+                for (const member of membership) {
+                    if (typeof member !== "object" || member === null) {
+                        return null;
+                    }
+                    const id = readProp(member as object, "id");
+                    if (!isOpaqueId(id)) {
+                        return null;
+                    }
+                    ids.push(id as string);
+                }
+                return Object.freeze(ids);
+            } catch (error) {
+                void error;
+                return null;
+            }
+        },
+        readGeometry: (ref) => {
+            try {
+                const frame = readFrameRect(ref);
+                return typeof frame === "string" ? null : { x: frame.x, y: frame.y, w: frame.w, h: frame.h };
+            } catch (error) {
+                void error;
+                return null;
+            }
+        },
+        // Bounded R4 signal fences grounded in the documented notify
+        // signals: outputChanged carries the old output (re-read for the
+        // current value), desktopsChanged for membership, and
+        // frameGeometryChanged per changed window. One-shot: the adapter
+        // detaches after each echo and on every terminal path.
+        subscribeMoverOutput: (moverRef, handler) => {
+            try {
+                return connectSignal(readSignal(moverRef, "outputChanged"), handler);
+            } catch (error) {
+                void error;
+                return null;
+            }
+        },
+        subscribeMoverDesktops: (moverRef, handler) => {
+            try {
+                return connectSignal(readSignal(moverRef, "desktopsChanged"), handler);
+            } catch (error) {
+                void error;
+                return null;
+            }
+        },
+        subscribeWindowGeometry: (windowRef, handler) => {
+            try {
+                return connectSignal(readSignal(windowRef, "frameGeometryChanged"), handler);
+            } catch (error) {
+                void error;
+                return null;
             }
         },
         setActive: (target) => {

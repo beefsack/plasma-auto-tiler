@@ -102,11 +102,13 @@ pub const MAX_DOMAINS: usize = 16;
 
 /// Logical output domain: separate output/workspace scope with explicit
 /// portable bounds and gap for the deterministic projector, plus configured
-/// logical same-workspace output adjacency for R4 planning. Adjacency maps a
-/// portable [`Direction`] to a neighboring [`OutputId`] in the same workspace;
-/// targets resolve as `(target_output, self.workspace)` domain keys and are
-/// validated strictly reciprocal/known/non-self/same-workspace at
-/// [`Session::new`]. No platform enums or native data appear here.
+/// logical output adjacency for R4 planning. Adjacency maps a
+/// portable [`Direction`] to a neighboring [`OutputId`]; the target domain is
+/// the adjacent output's currently selected logical workspace (its domain
+/// workspace, which may differ from the source workspace). Targets resolve as
+/// `(target_output, target_workspace)` domain keys and are validated strictly
+/// reciprocal/known/non-self at [`Session::new`]. No platform enums or native
+/// data appear here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutputDomain {
     pub id: OutputId,
@@ -396,6 +398,39 @@ impl SessionNewError {
     }
 }
 
+/// Canonical pair assembly/split failure (pre-state, never divergence).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanonicalPairError {
+    MismatchedIdentity,
+    UnusableInput,
+    DomainMismatch,
+    DuplicateState,
+}
+
+impl CanonicalPairError {
+    /// Stable kind string.
+    #[must_use]
+    pub const fn kind(self) -> &'static str {
+        match self {
+            Self::MismatchedIdentity => "owner-generation-mismatch",
+            Self::UnusableInput => "unusable-input",
+            Self::DomainMismatch => "domain-mismatch",
+            Self::DuplicateState => "duplicate-state",
+        }
+    }
+
+    /// Fixed redacted message; never echoes input.
+    #[must_use]
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::MismatchedIdentity => "canonical sessions do not share owner and generation",
+            Self::UnusableInput => "canonical session is pending, dragging, or diverged",
+            Self::DomainMismatch => "canonical domain keys do not match the pair domains",
+            Self::DuplicateState => "canonical sessions share window or node identity",
+        }
+    }
+}
+
 /// Complete desired geometry for one affected tiled window.
 /// Domain-scoped: names the exact `(output, workspace)` domain plus leaf.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -620,6 +655,9 @@ pub struct Session {
     last_active: BTreeMap<DomainKey, NodeId>,
     exceptions: BTreeMap<WindowId, ExceptionRecord>,
     retained_float_geometry: BTreeMap<WindowId, Rect>,
+    // Only a transient canonical pair uses this. It restores target-local node
+    // identities after pair-wide planning, whose snapshot requires uniqueness.
+    canonical_pair_target_restore: BTreeMap<NodeId, NodeId>,
     reconciler: Reconciler,
     pending_desired: Option<PendingDesired>,
     drag: Option<DragState>,
@@ -679,6 +717,7 @@ impl Session {
             last_active: BTreeMap::new(),
             exceptions: BTreeMap::new(),
             retained_float_geometry: BTreeMap::new(),
+            canonical_pair_target_restore: BTreeMap::new(),
             reconciler,
             pending_desired: None,
             drag: None,
@@ -882,6 +921,459 @@ impl Session {
         }
         *self = backup;
         false
+    }
+
+    /// Build a temporary two-domain Session from one or two canonical
+    /// single-domain Sessions without reseeding.
+    ///
+    /// `source` maps to `pair_domains[0]` and `target` (when present) maps to
+    /// `pair_domains[1]` by exact `(output, workspace)` key match. Component
+    /// domains must be single, valid, non-adjacent, usable
+    /// (no divergence/pending/drag, valid topology) with matching
+    /// owner/generation. `pair_domains` must be exactly two valid domains with
+    /// reciprocal adjacency naming each other. Trees/shares, `WindowLink`
+    /// membership, focus stacks, last-active, exceptions (including
+    /// `floating_geometry`), retained float geometry, owner/generation, and
+    /// the unified accepted revision/fingerprint are transplanted verbatim; no
+    /// admission reseeds.
+    ///
+    /// Revision unification: the pair carries a single reconciler, so it seeds
+    /// with the maximum accepted revision of the inputs (and that input's
+    /// fingerprint; source wins ties). A target whose revision is lower
+    /// advances to the pair revision without topology change; split
+    /// propagates the pair's current revision/fingerprint to both outputs.
+    /// Pair focus is the source focus when present, else the target focus; the
+    /// other domain's focus survives in its focus-stack top and is restored by
+    /// [`Session::split_canonical_pair`]. Duplicate window/exception/retained
+    /// entries across inputs fail closed. Node ids are domain-scoped and may
+    /// therefore repeat across independently retained component trees. Never mutates
+    /// the inputs and never diverges.
+    pub fn paired_from_canonical(
+        source: &Session,
+        target: Option<&Session>,
+        pair_domains: Vec<OutputDomain>,
+    ) -> Result<Session, CanonicalPairError> {
+        if pair_domains.len() != 2
+            || !pair_domains.iter().all(|d| d.validate())
+            || pair_domains[0].key() == pair_domains[1].key()
+            || pair_domains[0].id == pair_domains[1].id
+            || !validate_adjacency(&pair_domains)
+            || !pair_domains[0]
+                .adjacent
+                .values()
+                .any(|v| v == &pair_domains[1].id)
+            || !pair_domains[1]
+                .adjacent
+                .values()
+                .any(|v| v == &pair_domains[0].id)
+        {
+            return Err(CanonicalPairError::DomainMismatch);
+        }
+        if !canonical_component_usable(source) || source.domains.len() != 1 {
+            return Err(canonical_component_error(source));
+        }
+        if !source.domains[0].adjacent.is_empty() {
+            return Err(CanonicalPairError::DomainMismatch);
+        }
+        if source.domains[0].key() != pair_domains[0].key() {
+            return Err(CanonicalPairError::DomainMismatch);
+        }
+        if let Some(target) = target {
+            if !canonical_component_usable(target) || target.domains.len() != 1 {
+                return Err(canonical_component_error(target));
+            }
+            if !target.domains[0].adjacent.is_empty() {
+                return Err(CanonicalPairError::DomainMismatch);
+            }
+            if target.domains[0].key() != pair_domains[1].key() {
+                return Err(CanonicalPairError::DomainMismatch);
+            }
+            if target.owner != source.owner || target.generation != source.generation {
+                return Err(CanonicalPairError::MismatchedIdentity);
+            }
+        }
+        if let Some(target) = target {
+            let mut seen_windows: BTreeSet<&WindowId> = BTreeSet::new();
+            for id in source.windows.keys().chain(source.exceptions.keys()) {
+                seen_windows.insert(id);
+            }
+            for id in target.windows.keys().chain(target.exceptions.keys()) {
+                if !seen_windows.insert(id) {
+                    return Err(CanonicalPairError::DuplicateState);
+                }
+            }
+            for id in source.windows.keys() {
+                if target.exceptions.contains_key(id) {
+                    return Err(CanonicalPairError::DuplicateState);
+                }
+            }
+            for id in target.windows.keys() {
+                if source.exceptions.contains_key(id) {
+                    return Err(CanonicalPairError::DuplicateState);
+                }
+            }
+            for id in source.retained_float_geometry.keys() {
+                if target.retained_float_geometry.contains_key(id) {
+                    return Err(CanonicalPairError::DuplicateState);
+                }
+            }
+        }
+        let (revision, fingerprint) = match target {
+            Some(target) if target.accepted_revision() > source.accepted_revision() => {
+                (target.accepted_revision(), target.accepted_fingerprint())
+            }
+            _ => (source.accepted_revision(), source.accepted_fingerprint()),
+        };
+        let mut pair = Session::new(
+            source.owner.clone(),
+            source.generation.clone(),
+            revision,
+            fingerprint,
+            pair_domains.clone(),
+        )
+        .map_err(|_| CanonicalPairError::DomainMismatch)?;
+        let source_key = source.domains[0].key();
+        let pair_source_key = pair_domains[0].key();
+        let pair_target_key = pair_domains[1].key();
+        let mut trees: BTreeMap<DomainKey, Option<Node>> = BTreeMap::new();
+        trees.insert(
+            pair_source_key.clone(),
+            source.trees.get(&source_key).cloned().flatten(),
+        );
+        if let Some(target) = target {
+            let target_key = target.domains[0].key();
+            trees.insert(
+                pair_target_key.clone(),
+                target.trees.get(&target_key).cloned().flatten(),
+            );
+        } else {
+            trees.insert(pair_target_key.clone(), None);
+        }
+        let mut windows = source.windows.clone();
+        let mut exceptions = source.exceptions.clone();
+        let mut retained = source.retained_float_geometry.clone();
+        let mut focus_stack = source.focus_stack.clone();
+        let mut last_active = source.last_active.clone();
+        // Remap per-domain focus bookkeeping from component keys to pair keys.
+        // Keys match by (output, workspace) here, but re-key explicitly so a
+        // caller-supplied pair with equal keys stays exact.
+        remap_domain_map(&mut focus_stack, &source_key, &pair_source_key);
+        remap_domain_map(&mut last_active, &source_key, &pair_source_key);
+        let mut focused_domain = source.focused_domain.clone();
+        if focused_domain.as_ref() == Some(&source_key) {
+            focused_domain = Some(pair_source_key.clone());
+        }
+        let mut focused_leaf = source.focused_leaf.clone();
+        let mut target_restore = BTreeMap::new();
+        if let Some(target) = target {
+            let target_key = target.domains[0].key();
+            let target_remap = pair_target_node_remap(source, target);
+            target_restore = target_remap
+                .iter()
+                .map(|(from, to)| (to.clone(), from.clone()))
+                .collect();
+            for (id, link) in &target.windows {
+                let mut link = link.clone();
+                remap_node_id(&mut link.leaf, &target_remap);
+                windows.insert(id.clone(), link);
+            }
+            for (id, record) in &target.exceptions {
+                exceptions.insert(id.clone(), record.clone());
+            }
+            for (id, rect) in &target.retained_float_geometry {
+                retained.insert(id.clone(), *rect);
+            }
+            for (key, leaves) in &target.focus_stack {
+                let remapped = if key == &target_key {
+                    pair_target_key.clone()
+                } else {
+                    key.clone()
+                };
+                let mut leaves = leaves.clone();
+                remap_node_ids(&mut leaves, &target_remap);
+                focus_stack.insert(remapped, leaves);
+            }
+            for (key, leaf) in &target.last_active {
+                let remapped = if key == &target_key {
+                    pair_target_key.clone()
+                } else {
+                    key.clone()
+                };
+                let mut leaf = leaf.clone();
+                remap_node_id(&mut leaf, &target_remap);
+                last_active.insert(remapped, leaf);
+            }
+            if focused_domain.is_none() {
+                focused_domain = target.focused_domain.as_ref().map(|d| {
+                    if d == &target_key {
+                        pair_target_key.clone()
+                    } else {
+                        d.clone()
+                    }
+                });
+                focused_leaf = target.focused_leaf.clone();
+                if let Some(leaf) = focused_leaf.as_mut() {
+                    remap_node_id(leaf, &target_remap);
+                }
+            }
+            let tree = trees.get_mut(&pair_target_key).expect("pair target tree");
+            remap_optional_tree(tree, &target_remap);
+        }
+        pair.trees = trees;
+        pair.windows = windows;
+        pair.focused_domain = focused_domain;
+        pair.focused_leaf = focused_leaf;
+        pair.focus_stack = focus_stack;
+        pair.last_active = last_active;
+        pair.exceptions = exceptions;
+        pair.retained_float_geometry = retained;
+        pair.canonical_pair_target_restore = target_restore;
+        if !pair.validate_current_topology() {
+            return Err(CanonicalPairError::DomainMismatch);
+        }
+        Ok(pair)
+    }
+
+    /// Split a committed two-domain pair back into canonical single-domain
+    /// Sessions without reseeding.
+    ///
+    /// Requires exactly two domains and no pending/drag/divergence. Each
+    /// output keeps its pair domain bounds/gap with adjacency stripped, its
+    /// exact tree/shares, homed `WindowLink`s, homed exceptions (including
+    /// `floating_geometry`), partitioned focus stack/last-active, and
+    /// partitioned retained float geometry. Both outputs inherit the pair's
+    /// current owner/generation/accepted revision/fingerprint (pair commits
+    /// advance both together). Focus for a domain is the pair global focus
+    /// when homed there, else that domain's focus-stack top when it resolves,
+    /// else `None`. Orphan retained entries (no known window) stay with the
+    /// source output so the union round-trips. The second output is `None`
+    /// when its domain holds no tree, no tiled windows, and no exceptions.
+    pub fn split_canonical_pair(&self) -> Result<(Session, Option<Session>), CanonicalPairError> {
+        if self.domains.len() != 2 {
+            return Err(CanonicalPairError::DomainMismatch);
+        }
+        if self.divergence().is_some()
+            || self.has_pending()
+            || self.has_pending_desired()
+            || self.has_drag()
+            || !self.validate_current_topology()
+        {
+            return Err(CanonicalPairError::UnusableInput);
+        }
+        let source_domain = OutputDomain {
+            id: self.domains[0].id.clone(),
+            workspace: self.domains[0].workspace.clone(),
+            bounds: self.domains[0].bounds,
+            gap: self.domains[0].gap,
+            adjacent: BTreeMap::new(),
+        };
+        let target_domain = OutputDomain {
+            id: self.domains[1].id.clone(),
+            workspace: self.domains[1].workspace.clone(),
+            bounds: self.domains[1].bounds,
+            gap: self.domains[1].gap,
+            adjacent: BTreeMap::new(),
+        };
+        let pair_source_key = self.domains[0].key();
+        let pair_target_key = self.domains[1].key();
+        let mut source = Session::new(
+            self.owner.clone(),
+            self.generation.clone(),
+            self.accepted_revision(),
+            self.accepted_fingerprint(),
+            vec![source_domain.clone()],
+        )
+        .map_err(|_| CanonicalPairError::DomainMismatch)?;
+        let mut target = Session::new(
+            self.owner.clone(),
+            self.generation.clone(),
+            self.accepted_revision(),
+            self.accepted_fingerprint(),
+            vec![target_domain.clone()],
+        )
+        .map_err(|_| CanonicalPairError::DomainMismatch)?;
+        let source_key = source_domain.key();
+        let target_key = target_domain.key();
+        let mut source_trees: BTreeMap<DomainKey, Option<Node>> = BTreeMap::new();
+        source_trees.insert(
+            source_key.clone(),
+            self.trees.get(&pair_source_key).cloned().flatten(),
+        );
+        let mut target_trees: BTreeMap<DomainKey, Option<Node>> = BTreeMap::new();
+        target_trees.insert(
+            target_key.clone(),
+            self.trees.get(&pair_target_key).cloned().flatten(),
+        );
+        let mut source_windows: BTreeMap<WindowId, WindowLink> = BTreeMap::new();
+        let mut target_windows: BTreeMap<WindowId, WindowLink> = BTreeMap::new();
+        for (id, link) in &self.windows {
+            if link.output == pair_source_key.output && link.workspace == pair_source_key.workspace
+            {
+                source_windows.insert(id.clone(), link.clone());
+            } else if link.output == pair_target_key.output
+                && link.workspace == pair_target_key.workspace
+            {
+                target_windows.insert(id.clone(), link.clone());
+            } else {
+                return Err(CanonicalPairError::DomainMismatch);
+            }
+        }
+        let restored_target_ids: BTreeSet<NodeId> = self
+            .canonical_pair_target_restore
+            .values()
+            .cloned()
+            .collect();
+        let mut moved_target_remap = BTreeMap::new();
+        let mut occupied = self.all_node_ids();
+        occupied.extend(restored_target_ids.iter().cloned());
+        for link in target_windows.values_mut() {
+            if !self.canonical_pair_target_restore.contains_key(&link.leaf)
+                && restored_target_ids.contains(&link.leaf)
+            {
+                let original = link.leaf.clone();
+                let mut index = 0u32;
+                loop {
+                    let candidate = NodeId(format!("pair-moved-{index}"));
+                    index += 1;
+                    if occupied.insert(candidate.clone()) {
+                        moved_target_remap.insert(original.clone(), candidate.clone());
+                        link.leaf = candidate;
+                        break;
+                    }
+                }
+            }
+        }
+        for link in target_windows.values_mut() {
+            remap_node_id(&mut link.leaf, &moved_target_remap);
+            remap_node_id(&mut link.leaf, &self.canonical_pair_target_restore);
+        }
+        let mut source_exceptions: BTreeMap<WindowId, ExceptionRecord> = BTreeMap::new();
+        let mut target_exceptions: BTreeMap<WindowId, ExceptionRecord> = BTreeMap::new();
+        for (id, record) in &self.exceptions {
+            if record.output == pair_source_key.output
+                && record.workspace == pair_source_key.workspace
+            {
+                source_exceptions.insert(id.clone(), record.clone());
+            } else if record.output == pair_target_key.output
+                && record.workspace == pair_target_key.workspace
+            {
+                target_exceptions.insert(id.clone(), record.clone());
+            } else {
+                return Err(CanonicalPairError::DomainMismatch);
+            }
+        }
+        let mut source_retained: BTreeMap<WindowId, Rect> = BTreeMap::new();
+        let mut target_retained: BTreeMap<WindowId, Rect> = BTreeMap::new();
+        for (id, rect) in &self.retained_float_geometry {
+            if source_windows.contains_key(id) || source_exceptions.contains_key(id) {
+                source_retained.insert(id.clone(), *rect);
+            } else if target_windows.contains_key(id) || target_exceptions.contains_key(id) {
+                target_retained.insert(id.clone(), *rect);
+            } else {
+                source_retained.insert(id.clone(), *rect);
+            }
+        }
+        source.trees = source_trees;
+        source.windows = source_windows;
+        source.exceptions = source_exceptions;
+        source.retained_float_geometry = source_retained;
+        target.trees = target_trees;
+        target.windows = target_windows;
+        target.exceptions = target_exceptions;
+        target.retained_float_geometry = target_retained;
+        remap_optional_tree(
+            target.trees.get_mut(&target_key).expect("target tree"),
+            &moved_target_remap,
+        );
+        remap_optional_tree(
+            target.trees.get_mut(&target_key).expect("target tree"),
+            &self.canonical_pair_target_restore,
+        );
+        if let Some(leaves) = self.focus_stack.get(&pair_source_key) {
+            source
+                .focus_stack
+                .insert(source_key.clone(), leaves.clone());
+        }
+        if let Some(leaf) = self.last_active.get(&pair_source_key) {
+            source.last_active.insert(source_key.clone(), leaf.clone());
+        }
+        if let Some(leaves) = self.focus_stack.get(&pair_target_key) {
+            let mut leaves = leaves.clone();
+            remap_node_ids(&mut leaves, &moved_target_remap);
+            remap_node_ids(&mut leaves, &self.canonical_pair_target_restore);
+            target.focus_stack.insert(target_key.clone(), leaves);
+        }
+        if let Some(leaf) = self.last_active.get(&pair_target_key) {
+            let mut leaf = leaf.clone();
+            remap_node_id(&mut leaf, &moved_target_remap);
+            remap_node_id(&mut leaf, &self.canonical_pair_target_restore);
+            target.last_active.insert(target_key.clone(), leaf);
+        }
+        let (source_focus, target_focus) =
+            self.split_pair_focus(&pair_source_key, &pair_target_key);
+        if let Some(leaf) = source_focus {
+            source.focused_domain = Some(source_key.clone());
+            source.focused_leaf = Some(leaf);
+        }
+        if let Some(leaf) = target_focus {
+            target.focused_domain = Some(target_key.clone());
+            let mut leaf = leaf;
+            remap_node_id(&mut leaf, &moved_target_remap);
+            remap_node_id(&mut leaf, &self.canonical_pair_target_restore);
+            target.focused_leaf = Some(leaf);
+        }
+        if !source.validate_current_topology() || !target.validate_current_topology() {
+            return Err(CanonicalPairError::DomainMismatch);
+        }
+        let target_empty = target.trees.get(&target_key).cloned().flatten().is_none()
+            && target.windows.is_empty()
+            && target.exceptions.is_empty();
+        if target_empty {
+            Ok((source, None))
+        } else {
+            Ok((source, Some(target)))
+        }
+    }
+
+    /// Pair-global focus resolved per output domain for
+    /// [`Session::split_canonical_pair`]: the global leaf when homed on that
+    /// domain, else that domain's focus-stack top when it still resolves.
+    fn split_pair_focus(
+        &self,
+        pair_source_key: &DomainKey,
+        pair_target_key: &DomainKey,
+    ) -> (Option<NodeId>, Option<NodeId>) {
+        let source_focus = if self.focused_domain.as_ref() == Some(pair_source_key) {
+            self.focused_leaf.clone()
+        } else {
+            self.focus_stack
+                .get(pair_source_key)
+                .and_then(|leaves| leaves.last().cloned())
+                .filter(|leaf| {
+                    self.focus_resolves(
+                        &Some(pair_source_key.clone()),
+                        &Some(leaf.clone()),
+                        &self.trees,
+                        &self.windows,
+                    )
+                })
+        };
+        let target_focus = if self.focused_domain.as_ref() == Some(pair_target_key) {
+            self.focused_leaf.clone()
+        } else {
+            self.focus_stack
+                .get(pair_target_key)
+                .and_then(|leaves| leaves.last().cloned())
+                .filter(|leaf| {
+                    self.focus_resolves(
+                        &Some(pair_target_key.clone()),
+                        &Some(leaf.clone()),
+                        &self.trees,
+                        &self.windows,
+                    )
+                })
+        };
+        (source_focus, target_focus)
     }
 
     /// Propose a complete fitted initial topology through the normal
@@ -2271,10 +2763,12 @@ impl Session {
         next
     }
 
-    /// Same-workspace directional snapshot for movement: source plus every
-    /// domain sharing the source workspace (adjacent or not), so the frozen
-    /// planner validates against unique outputs without cross-workspace leaks.
-    /// Window links cover tiled windows in those domains only.
+    /// Directional snapshot for movement: source plus every domain sharing
+    /// the source workspace (adjacent or not), plus directly adjacent target
+    /// domains on any workspace (the adjacent output's currently selected
+    /// logical workspace). The frozen planner validates against unique
+    /// outputs; ambiguous duplicate output ids fail closed via adjacency
+    /// validation. Window links cover tiled windows in those domains only.
     fn move_snapshot(&self, source: &DomainKey) -> Option<Snapshot> {
         use crate::directional::Output;
         let source_domain = self.domains.iter().find(|d| &d.key() == source)?;
@@ -2291,15 +2785,36 @@ impl Session {
                 adjacent: domain.adjacent.clone(),
             });
         }
+        // Adjacent targets on any workspace: exactly one domain per adjacent
+        // output id joins the snapshot when not already included.
+        for target_output in source_domain.adjacent.values() {
+            if outputs.iter().any(|o| &o.id == target_output) {
+                continue;
+            }
+            let mut matches = self.domains.iter().filter(|d| &d.id == target_output);
+            let Some(domain) = matches.next() else {
+                continue;
+            };
+            if matches.next().is_some() {
+                continue;
+            }
+            let tree = self.trees.get(&domain.key()).cloned().flatten();
+            outputs.push(Output {
+                id: domain.id.clone(),
+                workspace: domain.workspace.clone(),
+                tree,
+                adjacent: domain.adjacent.clone(),
+            });
+        }
         outputs.iter().find(|o| o.id == source.output)?;
         let mut windows = Vec::new();
         for link in self.windows.values() {
-            if link.workspace != source_domain.workspace {
-                continue;
-            }
-            // Only links whose output resolves to an included same-workspace
-            // domain participate; others would be stale.
-            if outputs.iter().any(|o| o.id == link.output) {
+            // Only links whose (output, workspace) resolves to an included
+            // snapshot output participate; others would be stale.
+            if outputs
+                .iter()
+                .any(|o| o.id == link.output && o.workspace == link.workspace)
+            {
                 windows.push(link.clone());
             }
         }
@@ -2313,11 +2828,13 @@ impl Session {
     /// focused tiled window in exactly `domain`; mismatch, unknown windows,
     /// or exception windows refuse without pending. The frozen
     /// `cosmic_v1::plan_move_with_capabilities` planner is invoked on a
-    /// same-workspace directional snapshot, then exactly its [`MovePlan`]
+    /// directional snapshot (source workspace plus adjacent targets on any
+    /// workspace), then exactly its [`MovePlan`]
     /// is applied mechanically to the desired topology via
     /// [`apply_move_operation`], which fail-closes against every frozen
     /// planner semantic field. R1-R3 affect only the source domain; R4
-    /// affects source plus the adjacent same-workspace target. The mover
+    /// affects source plus the adjacent target (the adjacent output's
+    /// currently selected logical workspace). The mover
     /// remains focused (for R4 the focus domain changes).
     ///
     /// Transactional like lifecycle: refusals and planner noops leave state
@@ -2423,6 +2940,22 @@ impl Session {
             }
         };
         let base_revision = session_observation.observation.revision;
+        // Target focused leaf for R4 occupied insertion: the target domain's
+        // valid last-focused tiled leaf, else root fallback in apply.
+        let target_focus = match &plan.operation {
+            MoveOperation::CrossOutput {
+                target_output,
+                target_workspace,
+                ..
+            } => {
+                let target_key = DomainKey {
+                    output: target_output.clone(),
+                    workspace: target_workspace.clone(),
+                };
+                self.remembered_leaf(&target_key)
+            }
+            _ => None,
+        };
         let Some((desired_trees, desired_windows, desired_focus_domain, desired_focus_leaf)) =
             apply_move_operation(
                 &self.trees,
@@ -2433,11 +2966,12 @@ impl Session {
                 direction,
                 &plan,
                 base_revision,
+                target_focus,
             )
         else {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         };
-        // Strict no cross-domain except source/adjacent R4 in same workspace.
+        // Strict no cross-domain except source/adjacent R4 target.
         if !move_touches_only_allowed(
             &self.trees,
             &desired_trees,
@@ -2458,10 +2992,14 @@ impl Session {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         }
         let affected: Vec<DomainKey> = match &plan.operation {
-            MoveOperation::CrossOutput { target_output, .. } => {
+            MoveOperation::CrossOutput {
+                target_output,
+                target_workspace,
+                ..
+            } => {
                 let target_key = DomainKey {
                     output: target_output.clone(),
-                    workspace: domain.workspace.clone(),
+                    workspace: target_workspace.clone(),
                 };
                 vec![domain.clone(), target_key]
             }
@@ -2691,6 +3229,8 @@ impl Session {
             to_window: target_window.clone(),
             direction,
             route,
+            cross_source_output: None,
+            cross_source_workspace: None,
         };
         let plan = FocusPlanContract::for_operation(intent, operation);
         let dispatch = match self.reconciler.propose_focus(
@@ -2768,6 +3308,222 @@ impl Session {
             }
             Err(other) => Err(other),
         }
+    }
+
+    /// Propose cross-output directional focus for an exhausted horizontal
+    /// edge (`Meta+Left`/`Meta+Right` only).
+    ///
+    /// Source COSMIC default Vertical layout output axis only: after local
+    /// [`crate::directional::plan_focus`] reports [`FocusPlan::Edge`] in
+    /// `direction`, focus crosses to the horizontally adjacent output's
+    /// currently selected logical workspace (its domain workspace, which may
+    /// differ from the source workspace), then to that domain's valid
+    /// last-focused tiled leaf/window. No layout/window mutation; only logical
+    /// focus moves on commit via [`Session::verify_focus`].
+    ///
+    /// Fail-closed before any native action or pending: missing adjacency,
+    /// ambiguous duplicate output ids, empty target, exceptional target
+    /// window, stale/nonreciprocal target links, changed targets, pending,
+    /// divergence, non-Left/Right directions, or a non-exhausted local edge
+    /// (local focus wins) refuse as [`RefusalKind::Unchanged`]/[`NotTiled`]/
+    /// [`PartialObservation`]/[`MalformedTopology`] with no plan and no
+    /// pending. `Up`/`Down` always refuse [`RefusalKind::Unchanged`] (current
+    /// local behavior preserved; no vertical crossing, no workspace cycling).
+    pub fn propose_cross_output_focus(
+        &mut self,
+        domain: &DomainKey,
+        window: &WindowId,
+        direction: Direction,
+        session_observation: &SessionObservation,
+        correlation_id: &CorrelationId,
+        capabilities: &FocusCapabilities,
+    ) -> Result<SessionFocusPlan, ProposeError> {
+        if let Some(reason) = self.reconciler.divergence() {
+            return Err(ProposeError::Diverged(reason));
+        }
+        if self.has_pending() {
+            return Err(ProposeError::PendingExists);
+        }
+        if self.drag.is_some() {
+            return Err(ProposeError::PendingExists);
+        }
+        if !matches!(direction, Direction::Left | Direction::Right) {
+            return Err(ProposeError::Refused(RefusalKind::Unchanged));
+        }
+        if self.domains.iter().find(|d| &d.key() == domain).is_none() {
+            return Err(ProposeError::Refused(RefusalKind::UnknownDomain));
+        }
+        if !self.validate_current_topology() {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        if window.0.is_empty() {
+            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
+        }
+        if session_observation.windows.len() > MAX_OBSERVED_WINDOWS
+            || !valid_observed_shapes(&session_observation.windows)
+        {
+            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
+        }
+        for entry in &session_observation.windows {
+            if self.domain_for(&entry.output, &entry.workspace).is_none() {
+                return Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch));
+            }
+        }
+        let known: BTreeSet<&WindowId> =
+            self.windows.keys().chain(self.exceptions.keys()).collect();
+        let observed_ids: BTreeSet<&WindowId> = session_observation
+            .windows
+            .iter()
+            .map(|w| &w.window)
+            .collect();
+        if observed_ids != known {
+            return Err(ProposeError::Refused(RefusalKind::PartialObservation));
+        }
+        if !self.observed_known_match(&session_observation.windows, None) {
+            return Err(ProposeError::Refused(RefusalKind::PartialObservation));
+        }
+        if !self.windows.contains_key(window) && !self.exceptions.contains_key(window) {
+            return Err(ProposeError::Refused(RefusalKind::UnknownWindow));
+        }
+        if self.exceptions.contains_key(window) {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        }
+        let (Some(focused_domain), Some(focused_leaf)) =
+            (self.focused_domain.clone(), self.focused_leaf.clone())
+        else {
+            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        };
+        if &focused_domain != domain {
+            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        }
+        let Some(focused_window) = self.focused_window_for(&focused_leaf, domain) else {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        };
+        if window != &focused_window {
+            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        }
+        // Local focus must be exhausted: any local target wins (no cross).
+        let Some(tree) = self.trees.get(domain).cloned().flatten() else {
+            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        };
+        let Some(focus_plan) = crate::directional::plan_focus(&tree, &focused_leaf, direction)
+        else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        };
+        if !matches!(focus_plan, FocusPlan::Edge) {
+            return Err(ProposeError::Refused(RefusalKind::Unchanged));
+        }
+        // Adjacent output in D; exactly one domain must own that output id
+        // (ambiguity fails closed).
+        let source_domain = self
+            .domains
+            .iter()
+            .find(|d| &d.key() == domain)
+            .cloned()
+            .expect("known");
+        let Some(target_output) = source_domain.adjacent.get(&direction).cloned() else {
+            return Err(ProposeError::Refused(RefusalKind::Unchanged));
+        };
+        let mut candidates = self.domains.iter().filter(|d| d.id == target_output);
+        let Some(target_domain) = candidates.next().cloned() else {
+            return Err(ProposeError::Refused(RefusalKind::Unchanged));
+        };
+        if candidates.next().is_some() {
+            return Err(ProposeError::Refused(RefusalKind::Unchanged));
+        }
+        // Reciprocal adjacency required.
+        if target_domain.adjacent.get(&opposite_direction(direction)) != Some(&domain.output) {
+            return Err(ProposeError::Refused(RefusalKind::Unchanged));
+        }
+        let target_key = target_domain.key();
+        // Target must be non-empty with a valid last-focused tiled leaf.
+        let Some(target_tree) = self.trees.get(&target_key).cloned().flatten() else {
+            return Err(ProposeError::Refused(RefusalKind::Unchanged));
+        };
+        let _ = target_tree;
+        let Some(target_leaf) = self.remembered_leaf(&target_key) else {
+            return Err(ProposeError::Refused(RefusalKind::Unchanged));
+        };
+        let Some(target_window) = self.focused_window_for(&target_leaf, &target_key) else {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        };
+        if self.exceptions.contains_key(&target_window) {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        }
+        if !capabilities.supports(crate::contract::FocusCapability::DirectionalFocus) {
+            return Err(ProposeError::Refused(RefusalKind::UnsupportedCapability));
+        }
+        // Complete geometry for source plus target must project before any
+        // pending is staged; failure refuses without pending.
+        let affected = vec![domain.clone(), target_key.clone()];
+        let desired_geometry =
+            project_affected_geometry(&self.domains, &self.trees, &self.windows, &affected)
+                .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
+        if !geometry_covers_affected(&desired_geometry, &self.windows, &affected) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        let intent = FocusIntent {
+            domain_output: domain.output.clone(),
+            domain_workspace: domain.workspace.clone(),
+            focused_leaf: focused_leaf.clone(),
+            focused_window: focused_window.clone(),
+            direction,
+        };
+        let operation = FocusOperation {
+            domain_output: target_key.output.clone(),
+            domain_workspace: target_key.workspace.clone(),
+            from_leaf: focused_leaf.clone(),
+            to_leaf: target_leaf.clone(),
+            from_window: focused_window.clone(),
+            to_window: target_window.clone(),
+            direction,
+            route: vec![target_leaf.clone()],
+            cross_source_output: Some(domain.output.clone()),
+            cross_source_workspace: Some(domain.workspace.clone()),
+        };
+        let plan = FocusPlanContract::for_operation(intent, operation);
+        let dispatch = match self.reconciler.propose_focus(
+            &plan,
+            &session_observation.observation,
+            correlation_id,
+            capabilities,
+        ) {
+            Ok(dispatch) => dispatch,
+            Err(crate::reconcile::ProposeError::PendingExists) => {
+                return Err(ProposeError::PendingExists);
+            }
+            Err(crate::reconcile::ProposeError::Diverged(reason)) => {
+                self.pending_desired = None;
+                self.drag = None;
+                return Err(ProposeError::Diverged(reason));
+            }
+        };
+        let desired_snapshot = self.snapshot_for(&self.trees, &self.windows);
+        self.pending_desired = Some(PendingDesired {
+            trees: self.trees.clone(),
+            windows: self.windows.clone(),
+            focused_domain: Some(target_key.clone()),
+            focused_leaf: Some(target_leaf.clone()),
+            last_active: self.updated_last_active(
+                &Some(target_key.clone()),
+                &Some(target_leaf.clone()),
+                &self.trees,
+                &self.windows,
+            ),
+            exceptions: self.exceptions.clone(),
+            retained_float_geometry: self.retained_float_geometry.clone(),
+        });
+        Ok(SessionFocusPlan {
+            dispatch,
+            focus_plan: FocusPlan::Focused {
+                leaf: target_leaf.clone(),
+                route: vec![target_leaf.clone()],
+            },
+            desired_snapshot,
+            desired_focus_domain: target_key,
+            desired_focus_leaf: target_leaf,
+            desired_geometry,
+        })
     }
 
     /// Propose COSMIC keyboard pixel resize for the selected exact
@@ -4002,27 +4758,114 @@ fn opposite_direction(direction: Direction) -> Direction {
     }
 }
 
+/// Canonical component usability for pair assembly: no divergence,
+/// pending, or drag plus a valid current topology.
+fn canonical_component_usable(session: &Session) -> bool {
+    session.divergence().is_none()
+        && !session.has_pending()
+        && !session.has_pending_desired()
+        && !session.has_drag()
+        && session.validate_current_topology()
+}
+
+/// Classify a canonical component failure without echoing input.
+fn canonical_component_error(session: &Session) -> CanonicalPairError {
+    if session.domains.len() != 1 {
+        return CanonicalPairError::DomainMismatch;
+    }
+    if session.divergence().is_some()
+        || session.has_pending()
+        || session.has_pending_desired()
+        || session.has_drag()
+        || !session.validate_current_topology()
+    {
+        return CanonicalPairError::UnusableInput;
+    }
+    CanonicalPairError::DomainMismatch
+}
+
+/// Re-key one per-domain map entry from a component key to its pair key.
+fn remap_domain_map<V>(map: &mut BTreeMap<DomainKey, V>, from: &DomainKey, to: &DomainKey) {
+    if from == to {
+        return;
+    }
+    if let Some(value) = map.remove(from) {
+        map.insert(to.clone(), value);
+    }
+}
+
+fn pair_target_node_remap(source: &Session, target: &Session) -> BTreeMap<NodeId, NodeId> {
+    let mut occupied = source.all_node_ids();
+    let mut mapping = BTreeMap::new();
+    for id in target.all_node_ids() {
+        let mut index = 0u32;
+        loop {
+            let candidate = NodeId(format!("pair-target-{index}"));
+            index += 1;
+            if occupied.insert(candidate.clone()) {
+                mapping.insert(id.clone(), candidate);
+                break;
+            }
+        }
+    }
+    mapping
+}
+
+fn remap_node_id(id: &mut NodeId, mapping: &BTreeMap<NodeId, NodeId>) {
+    if let Some(mapped) = mapping.get(id) {
+        *id = mapped.clone();
+    }
+}
+
+fn remap_node_ids(ids: &mut [NodeId], mapping: &BTreeMap<NodeId, NodeId>) {
+    for id in ids {
+        remap_node_id(id, mapping);
+    }
+}
+
+fn remap_optional_tree(tree: &mut Option<Node>, mapping: &BTreeMap<NodeId, NodeId>) {
+    if let Some(tree) = tree {
+        remap_tree_node_ids(tree, mapping);
+    }
+}
+
+fn remap_tree_node_ids(node: &mut Node, mapping: &BTreeMap<NodeId, NodeId>) {
+    match node {
+        Node::Leaf { id } => remap_node_id(id, mapping),
+        Node::Group { id, children, .. } => {
+            remap_node_id(id, mapping);
+            for child in children {
+                remap_tree_node_ids(child, mapping);
+            }
+        }
+    }
+}
+
 /// Strict adjacency validation: every target is known, non-self, same
 /// workspace (resolved as `(target_output, source_workspace)`), and strictly
 /// reciprocal via the opposite direction.
 fn validate_adjacency(domains: &[OutputDomain]) -> bool {
     use std::collections::BTreeMap;
-    let mut by_key: BTreeMap<(OutputId, WorkspaceId), &OutputDomain> = BTreeMap::new();
+    let mut by_output: BTreeMap<OutputId, Vec<&OutputDomain>> = BTreeMap::new();
     for domain in domains {
-        by_key.insert((domain.id.clone(), domain.workspace.clone()), domain);
+        by_output.entry(domain.id.clone()).or_default().push(domain);
     }
     for domain in domains {
         for (direction, target) in &domain.adjacent {
             if target.0.is_empty() || target == &domain.id {
                 return false;
             }
-            let Some(target_domain) = by_key.get(&(target.clone(), domain.workspace.clone()))
-            else {
+            // Cross-workspace allowed: exactly one domain must own the target
+            // output id (ambiguity fails closed). The target workspace is that
+            // domain's currently selected logical workspace, not the source
+            // workspace.
+            let Some(candidates) = by_output.get(target) else {
                 return false;
             };
-            if target_domain.workspace != domain.workspace {
+            if candidates.len() != 1 {
                 return false;
             }
+            let target_domain = candidates[0];
             let opposite = opposite_direction(*direction);
             match target_domain.adjacent.get(&opposite) {
                 Some(back) if back == &domain.id => {}
@@ -4202,6 +5045,7 @@ fn apply_move_operation(
     direction: Direction,
     plan: &MovePlan,
     base_revision: u64,
+    target_focus: Option<NodeId>,
 ) -> Option<AppliedMove> {
     use crate::directional::{EscapeContinuation, FocusedSide, Insertion, Rule};
     let operation = &plan.operation;
@@ -4780,6 +5624,7 @@ fn apply_move_operation(
         }
         MoveOperation::CrossOutput {
             target_output,
+            target_workspace,
             source_root_child_index,
             target,
             ..
@@ -4787,13 +5632,27 @@ fn apply_move_operation(
             use crate::directional::CrossOutputTarget;
             let target_key = DomainKey {
                 output: target_output.clone(),
-                workspace: source.workspace.clone(),
+                workspace: target_workspace.clone(),
             };
-            // Target must be a known same-workspace domain.
+            // Target must be a known domain (the adjacent output's currently
+            // selected logical workspace, which may differ from source).
             domains.iter().find(|d| d.key() == target_key)?;
-            // Adjacency must name this exact target in the requested direction.
+            if target_key == *source {
+                return None;
+            }
+            // Adjacency must name this exact target output in the requested
+            // direction, and the target must name the source back.
             let source_domain = domains.iter().find(|d| &d.key() == source)?;
             if source_domain.adjacent.get(&direction) != Some(target_output) {
+                return None;
+            }
+            let target_domain = domains.iter().find(|d| d.key() == target_key)?;
+            if target_domain.adjacent.get(&opposite_direction(direction)) != Some(&source.output) {
+                return None;
+            }
+            // Only Left/Right cross (Vertical layout output axis). Up/Down
+            // never reach here via the planner; fail closed if they do.
+            if !matches!(direction, Direction::Left | Direction::Right) {
                 return None;
             }
             let source_tree = desired_trees.get(source).cloned().flatten()?;
@@ -4825,7 +5684,11 @@ fn apply_move_operation(
             // Extract mover from source.
             let new_source = remove_leaf_from_tree(Some(source_tree), focused_leaf);
             desired_trees.insert(source.clone(), new_source);
-            // Attach to target.
+            // Attach to target: beside the target domain's valid focused leaf
+            // or as root. Source C-41 selects focused-leaf/root insertion for
+            // the multiwindow-target case; this complements S20/S22/S23 (whose
+            // single-leaf occupied targets cannot distinguish wrapping from
+            // focused insertion).
             let target_tree = desired_trees.get(&target_key).cloned().flatten();
             match target {
                 CrossOutputTarget::Empty => {
@@ -4836,28 +5699,56 @@ fn apply_move_operation(
                 }
                 CrossOutputTarget::Occupied => {
                     let existing = target_tree?;
+                    // Validate the supplied target focus: still a leaf in the
+                    // target tree and still linked there as a tiled window.
+                    let valid_target_focus = target_focus.as_ref().and_then(|leaf| {
+                        if !collect_leaves(&existing).contains(leaf) {
+                            return None;
+                        }
+                        desired_windows
+                            .values()
+                            .any(|l| {
+                                &l.leaf == leaf
+                                    && l.output == target_key.output
+                                    && l.workspace == target_key.workspace
+                            })
+                            .then(|| leaf.clone())
+                    });
                     let axis = Axis::for_direction(direction);
+                    let mover_first = step_for_direction(direction) == 1;
                     let new_id =
                         generate_move_group_id(focused_leaf, base_revision, "r4", &node_ids);
                     node_ids.insert(new_id.clone());
-                    // W nearest the source: positive directions first,
-                    // negative directions last.
-                    let combined = if step_for_direction(direction) == 1 {
-                        Node::Group {
-                            id: new_id,
+                    if let Some(focus_leaf) = valid_target_focus {
+                        let nested = nest_focused_ordered(
+                            existing,
+                            &focus_leaf,
+                            mover_leaf_node,
+                            new_id,
                             axis,
-                            children: vec![mover_leaf_node, existing],
-                            shares: crate::cosmic_v1::new_group_shares().to_vec(),
-                        }
+                            mover_first,
+                        )?;
+                        desired_trees.insert(target_key.clone(), Some(nested));
                     } else {
-                        Node::Group {
-                            id: new_id,
-                            axis,
-                            children: vec![existing, mover_leaf_node],
-                            shares: crate::cosmic_v1::new_group_shares().to_vec(),
-                        }
-                    };
-                    desired_trees.insert(target_key.clone(), Some(combined));
+                        // Root fallback: wrap the entire existing target with
+                        // W nearest the source.
+                        let combined = if mover_first {
+                            Node::Group {
+                                id: new_id,
+                                axis,
+                                children: vec![mover_leaf_node, existing],
+                                shares: crate::cosmic_v1::new_group_shares().to_vec(),
+                            }
+                        } else {
+                            Node::Group {
+                                id: new_id,
+                                axis,
+                                children: vec![existing, mover_leaf_node],
+                                shares: crate::cosmic_v1::new_group_shares().to_vec(),
+                            }
+                        };
+                        desired_trees.insert(target_key.clone(), Some(combined));
+                    }
                 }
             }
             // Mover link follows to the target domain; leaf identity kept.
@@ -5886,7 +6777,8 @@ fn geometry_covers_affected(
 }
 
 /// Strict domain isolation: only the source domain may change, except R4
-/// which may change exactly source plus its adjacent same-workspace target.
+/// which may change exactly source plus its adjacent target (the adjacent
+/// output's currently selected logical workspace, possibly cross-workspace).
 fn move_touches_only_allowed(
     before: &BTreeMap<DomainKey, Option<Node>>,
     after: &BTreeMap<DomainKey, Option<Node>>,
@@ -5906,10 +6798,14 @@ fn move_touches_only_allowed(
         return false;
     }
     match operation {
-        MoveOperation::CrossOutput { target_output, .. } => {
+        MoveOperation::CrossOutput {
+            target_output,
+            target_workspace,
+            ..
+        } => {
             let target = DomainKey {
                 output: target_output.clone(),
-                workspace: source.workspace.clone(),
+                workspace: target_workspace.clone(),
             };
             if domains.iter().find(|d| d.key() == target).is_none() {
                 return false;
@@ -6768,6 +7664,60 @@ fn subtree_contains(node: &Node, leaf: &NodeId) -> bool {
     }
 }
 
+fn nest_focused_ordered(
+    node: Node,
+    focused: &NodeId,
+    new_leaf: Node,
+    group_id: NodeId,
+    axis: Axis,
+    mover_first: bool,
+) -> Option<Node> {
+    match node {
+        Node::Leaf { id } if &id == focused => {
+            let children = if mover_first {
+                vec![new_leaf, Node::Leaf { id }]
+            } else {
+                vec![Node::Leaf { id }, new_leaf]
+            };
+            Some(Node::Group {
+                id: group_id,
+                axis,
+                children,
+                shares: crate::cosmic_v1::new_group_shares().to_vec(),
+            })
+        }
+        Node::Leaf { .. } => None,
+        Node::Group {
+            id,
+            axis: parent_axis,
+            children,
+            shares,
+        } => {
+            for (index, child) in children.iter().enumerate() {
+                if subtree_contains(child, focused) {
+                    let updated = nest_focused_ordered(
+                        child.clone(),
+                        focused,
+                        new_leaf.clone(),
+                        group_id.clone(),
+                        axis,
+                        mover_first,
+                    )?;
+                    let mut new_children = children.clone();
+                    new_children[index] = updated;
+                    return Some(Node::Group {
+                        id,
+                        axis: parent_axis,
+                        children: new_children,
+                        shares: shares.clone(),
+                    });
+                }
+            }
+            None
+        }
+    }
+}
+
 fn nest_focused_with_new(
     node: Node,
     focused: &NodeId,
@@ -6971,8 +7921,10 @@ fn validate_topology(
             return false;
         }
     }
-    let mut node_ids = BTreeSet::new();
     for domain in domains {
+        // Node identity is meaningful only within its logical domain. Two
+        // independently retained trees may use the same generated group id.
+        let mut node_ids = BTreeSet::new();
         if let Some(tree) = trees.get(&domain.key()).cloned().flatten()
             && !validate_node_shares(&tree, &mut node_ids)
         {
@@ -9303,9 +10255,14 @@ mod tests {
         // exceptions, and focus exactly as before.
         let source_domain = domain();
         let other = domain_two();
-        let mut session =
-            Session::new(owner(), generation(), 0, 7, vec![source_domain.clone(), other.clone()])
-                .expect("new");
+        let mut session = Session::new(
+            owner(),
+            generation(),
+            0,
+            7,
+            vec![source_domain.clone(), other.clone()],
+        )
+        .expect("new");
         let before_snapshot = session.snapshot();
         let before_revision = session.accepted_revision();
         let source_key = source_domain.key();
@@ -9321,33 +10278,59 @@ mod tests {
                 output: OutputId("out-9".to_owned()),
                 workspace: WorkspaceId("ws-other".to_owned()),
             },
-            Rect { x: 0, y: 0, w: 120, h: 80 },
+            Rect {
+                x: 0,
+                y: 0,
+                w: 120,
+                h: 80
+            },
             0,
         ));
         // Existing target collision.
         assert!(!session.relocate_domain(
             &source_key,
             &other_key,
-            Rect { x: 0, y: 0, w: 120, h: 80 },
+            Rect {
+                x: 0,
+                y: 0,
+                w: 120,
+                h: 80
+            },
             0,
         ));
         // Invalid gap and bounds.
         assert!(!session.relocate_domain(
             &source_key,
             &target,
-            Rect { x: 0, y: 0, w: 120, h: 80 },
+            Rect {
+                x: 0,
+                y: 0,
+                w: 120,
+                h: 80
+            },
             999,
         ));
         assert!(!session.relocate_domain(
             &source_key,
             &target,
-            Rect { x: 0, y: 0, w: 0, h: 80 },
+            Rect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 80
+            },
             0,
         ));
         // Unknown source.
         assert!(!session.relocate_domain(
-            &target, &source_key,
-            Rect { x: 0, y: 0, w: 120, h: 80 },
+            &target,
+            &source_key,
+            Rect {
+                x: 0,
+                y: 0,
+                w: 120,
+                h: 80
+            },
             0,
         ));
         assert_eq!(session.snapshot(), before_snapshot);
@@ -9357,11 +10340,657 @@ mod tests {
         assert!(session.relocate_domain(
             &source_key,
             &target,
-            Rect { x: 0, y: 0, w: 120, h: 80 },
+            Rect {
+                x: 0,
+                y: 0,
+                w: 120,
+                h: 80
+            },
             0,
         ));
         assert_eq!(session.accepted_revision(), before_revision);
         assert!(session.domains().iter().any(|d| d.key() == target));
         assert!(!session.domains().iter().any(|d| d.key() == source_key));
+    }
+
+    // ---- canonical pair slice ----
+
+    fn canon_domain(output: &str, workspace: &str) -> OutputDomain {
+        OutputDomain {
+            id: OutputId(output.to_owned()),
+            workspace: WorkspaceId(workspace.to_owned()),
+            bounds: Rect {
+                x: 0,
+                y: 0,
+                w: 120,
+                h: 80,
+            },
+            gap: 0,
+            adjacent: BTreeMap::new(),
+        }
+    }
+
+    fn pair_test_domains() -> Vec<OutputDomain> {
+        use crate::directional::Direction;
+        let mut source = canon_domain("out-1", "ws-1");
+        let mut target = canon_domain("out-2", "ws-1");
+        source.adjacent.insert(Direction::Right, target.id.clone());
+        target.adjacent.insert(Direction::Left, source.id.clone());
+        vec![source, target]
+    }
+
+    fn admit_in(
+        session: &mut Session,
+        window: &str,
+        output: &str,
+        workspace: &str,
+        horizontal: bool,
+    ) {
+        let rev = session.accepted_revision();
+        let window_id = WindowId(window.to_owned());
+        let mut windows = obs_windows(session);
+        windows.push(ObservedWindow {
+            window: window_id.clone(),
+            output: OutputId(output.to_owned()),
+            workspace: WorkspaceId(workspace.to_owned()),
+            floating: false,
+            fullscreen: false,
+            maximized: false,
+            sticky: false,
+        });
+        let bounds = if horizontal {
+            Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 50,
+            }
+        } else {
+            Rect {
+                x: 0,
+                y: 0,
+                w: 50,
+                h: 100,
+            }
+        };
+        let command = SessionCommand::Admit {
+            window: window_id,
+            output: OutputId(output.to_owned()),
+            workspace: WorkspaceId(workspace.to_owned()),
+            exceptions: ExceptionFlags::none(),
+            exception_behavior: None,
+            placement_bounds: bounds,
+        };
+        let observation = SessionObservation {
+            observation: Observation::new(owner(), generation(), rev, 100 + rev),
+            windows,
+        };
+        let correlation = corr(&format!("corr-admit-{window}"));
+        let plan = session
+            .propose(
+                &command,
+                &observation,
+                &correlation,
+                &LifecycleCapabilities::full(),
+            )
+            .expect("admit propose");
+        session
+            .acknowledge(&AdapterAck::new(
+                correlation.clone(),
+                owner(),
+                generation(),
+                rev,
+                AckOutcome::Accepted,
+            ))
+            .expect("admit ack");
+        session
+            .verify_lifecycle(&LifecyclePostObservation::new(
+                Observation::new(owner(), generation(), rev, 200 + rev),
+                correlation,
+                true,
+                plan.dispatch.preconditions.clone(),
+                plan.dispatch.operation.clone(),
+            ))
+            .expect("admit verify");
+    }
+
+    fn admit_exception_in(session: &mut Session, window: &str, output: &str, workspace: &str) {
+        let rev = session.accepted_revision();
+        let window_id = WindowId(window.to_owned());
+        let mut windows = obs_windows(session);
+        windows.push(ObservedWindow {
+            window: window_id.clone(),
+            output: OutputId(output.to_owned()),
+            workspace: WorkspaceId(workspace.to_owned()),
+            floating: true,
+            fullscreen: false,
+            maximized: false,
+            sticky: false,
+        });
+        let command = SessionCommand::Admit {
+            window: window_id,
+            output: OutputId(output.to_owned()),
+            workspace: WorkspaceId(workspace.to_owned()),
+            exceptions: ExceptionFlags {
+                floating: true,
+                fullscreen: false,
+                maximized: false,
+                sticky: false,
+            },
+            exception_behavior: Some(ExceptionBehavior::Defer),
+            placement_bounds: Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 50,
+            },
+        };
+        let observation = SessionObservation {
+            observation: Observation::new(owner(), generation(), rev, 100 + rev),
+            windows,
+        };
+        let correlation = corr(&format!("corr-admit-{window}"));
+        let plan = session
+            .propose(
+                &command,
+                &observation,
+                &correlation,
+                &LifecycleCapabilities::full(),
+            )
+            .expect("admit exception propose");
+        session
+            .acknowledge(&AdapterAck::new(
+                correlation.clone(),
+                owner(),
+                generation(),
+                rev,
+                AckOutcome::Accepted,
+            ))
+            .expect("admit exception ack");
+        session
+            .verify_lifecycle(&LifecyclePostObservation::new(
+                Observation::new(owner(), generation(), rev, 200 + rev),
+                correlation,
+                true,
+                plan.dispatch.preconditions.clone(),
+                plan.dispatch.operation.clone(),
+            ))
+            .expect("admit exception verify");
+    }
+
+    fn toggle_float_in(session: &mut Session, window: &str, rect: Option<Rect>, tag: &str) {
+        let rev = session.accepted_revision();
+        let window_id = WindowId(window.to_owned());
+        let observation = SessionObservation {
+            observation: Observation::new(owner(), generation(), rev, 100 + rev),
+            windows: obs_windows(session),
+        };
+        let correlation = corr(&format!("corr-float-{window}-{tag}"));
+        let plan = session
+            .propose(
+                &SessionCommand::ToggleFloat {
+                    window: window_id,
+                    float_geometry: rect,
+                },
+                &observation,
+                &correlation,
+                &LifecycleCapabilities::full(),
+            )
+            .expect("toggle propose");
+        session
+            .acknowledge(&AdapterAck::new(
+                correlation.clone(),
+                owner(),
+                generation(),
+                rev,
+                AckOutcome::Accepted,
+            ))
+            .expect("toggle ack");
+        session
+            .verify_lifecycle(&LifecyclePostObservation::new(
+                Observation::new(owner(), generation(), rev, 200 + rev),
+                correlation,
+                true,
+                plan.dispatch.preconditions.clone(),
+                plan.dispatch.operation.clone(),
+            ))
+            .expect("toggle verify");
+    }
+
+    fn tree_for(session: &Session, key: &DomainKey) -> Option<Node> {
+        session.trees.get(key).cloned().flatten()
+    }
+
+    fn windows_for(session: &Session, key: &DomainKey) -> Vec<WindowLink> {
+        let mut out: Vec<WindowLink> = session
+            .windows
+            .values()
+            .filter(|l| l.output == key.output && l.workspace == key.workspace)
+            .cloned()
+            .collect();
+        out.sort_by(|a, b| a.window.0.cmp(&b.window.0));
+        out
+    }
+
+    fn exceptions_for(session: &Session, key: &DomainKey) -> Vec<ExceptionRecord> {
+        let mut out: Vec<ExceptionRecord> = session
+            .exceptions
+            .values()
+            .filter(|r| r.output == key.output && r.workspace == key.workspace)
+            .cloned()
+            .collect();
+        out.sort_by(|a, b| a.window.0.cmp(&b.window.0));
+        out
+    }
+
+    fn retained_for(session: &Session, key: &DomainKey) -> Vec<(WindowId, Rect)> {
+        let mut out = Vec::new();
+        for (id, rect) in &session.retained_float_geometry {
+            let homed = session
+                .windows
+                .get(id)
+                .is_some_and(|l| l.output == key.output && l.workspace == key.workspace)
+                || session
+                    .exceptions
+                    .get(id)
+                    .is_some_and(|r| r.output == key.output && r.workspace == key.workspace);
+            if homed {
+                out.push((id.clone(), *rect));
+            }
+        }
+        out.sort_by(|a, b| a.0.0.cmp(&b.0.0));
+        out
+    }
+
+    #[test]
+    fn canonical_pair_round_trip_nested_unequal() {
+        // Source: nested deep tree plus a live float (geometry + retained),
+        // a retained-only tiled window (float then unfloat), and a deferred
+        // exception. Target: smaller flat tree plus its own float/exception.
+        let mut source = Session::new(
+            owner(),
+            generation(),
+            0,
+            7,
+            vec![canon_domain("out-1", "ws-1")],
+        )
+        .expect("source new");
+        admit_in(&mut source, "s-win-1", "out-1", "ws-1", true);
+        admit_in(&mut source, "s-win-2", "out-1", "ws-1", true);
+        admit_in(&mut source, "s-win-3", "out-1", "ws-1", false);
+        admit_in(&mut source, "s-win-4", "out-1", "ws-1", false);
+        admit_exception_in(&mut source, "s-defer-1", "out-1", "ws-1");
+        toggle_float_in(
+            &mut source,
+            "s-win-1",
+            Some(Rect {
+                x: 10,
+                y: 10,
+                w: 40,
+                h: 30,
+            }),
+            "to-float",
+        );
+        toggle_float_in(&mut source, "s-win-3", None, "to-float");
+        toggle_float_in(&mut source, "s-win-3", None, "back-tiled");
+        let mut target = Session::new(
+            owner(),
+            generation(),
+            0,
+            7,
+            vec![canon_domain("out-2", "ws-1")],
+        )
+        .expect("target new");
+        admit_in(&mut target, "t-win-1", "out-2", "ws-1", true);
+        admit_in(&mut target, "t-win-2", "out-2", "ws-1", true);
+        admit_exception_in(&mut target, "t-defer-1", "out-2", "ws-1");
+        toggle_float_in(
+            &mut target,
+            "t-win-1",
+            Some(Rect {
+                x: 5,
+                y: 5,
+                w: 50,
+                h: 40,
+            }),
+            "to-float",
+        );
+        assert_ne!(source.snapshot(), target.snapshot());
+        let source_key = DomainKey {
+            output: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+        };
+        let target_key = DomainKey {
+            output: OutputId("out-2".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+        };
+        // Source tree is nested (a group inside the root); target is flat.
+        assert!(matches!(
+            tree_for(&source, &source_key),
+            Some(Node::Group { .. })
+        ));
+        let pair_domains = pair_test_domains();
+        let pair =
+            Session::paired_from_canonical(&source, Some(&target), pair_domains).expect("pair");
+        assert_eq!(pair.domains().len(), 2);
+        assert_eq!(pair.owner(), source.owner());
+        assert_eq!(pair.generation(), source.generation());
+        assert_eq!(
+            pair.accepted_revision(),
+            source.accepted_revision().max(target.accepted_revision())
+        );
+        assert!(pair.divergence().is_none());
+        assert!(!pair.has_pending());
+        assert!(!pair.has_pending_desired());
+        assert!(!pair.has_drag());
+        // Source carries verbatim. The transient pair namespaces target node
+        // ids so independently fitted components remain globally addressable;
+        // split restores target-local ids exactly below.
+        assert_eq!(tree_for(&pair, &source_key), tree_for(&source, &source_key));
+        assert_eq!(
+            windows_for(&pair, &source_key),
+            windows_for(&source, &source_key)
+        );
+        // Split without further commits restores every domain-scoped state.
+        let (split_source, split_target) = pair.split_canonical_pair().expect("split");
+        let split_target = split_target.expect("target present");
+        for (before, after, key) in [
+            (&source, &split_source, &source_key),
+            (&target, &split_target, &target_key),
+        ] {
+            assert_eq!(
+                tree_for(after, key),
+                tree_for(before, key),
+                "tree round trip for {key:?}"
+            );
+            assert_eq!(
+                after.snapshot().windows.len(),
+                before.snapshot().windows.len()
+            );
+            assert_eq!(windows_for(after, key), windows_for(before, key));
+            assert_eq!(after.focus(), before.focus(), "focus for {key:?}");
+            assert_eq!(
+                after.focus_stack.get(key),
+                before.focus_stack.get(key),
+                "focus stack for {key:?}"
+            );
+            assert_eq!(
+                after.last_active.get(key),
+                before.last_active.get(key),
+                "last-active for {key:?}"
+            );
+            assert_eq!(
+                exceptions_for(after, key),
+                exceptions_for(before, key),
+                "exceptions for {key:?}"
+            );
+            for record in exceptions_for(after, key) {
+                assert_eq!(
+                    after.floating_geometry(&record.window),
+                    before.floating_geometry(&record.window),
+                    "floating geometry for {:?}",
+                    record.window
+                );
+            }
+            assert_eq!(
+                retained_for(after, key),
+                retained_for(before, key),
+                "retained geometry for {key:?}"
+            );
+            assert_eq!(after.owner(), before.owner());
+            assert_eq!(after.generation(), before.generation());
+            assert_eq!(after.accepted_revision(), pair.accepted_revision());
+            assert_eq!(after.accepted_fingerprint(), pair.accepted_fingerprint());
+        }
+        // Live float geometry and retained geometry survive the round trip.
+        assert_eq!(
+            split_source.floating_geometry(&WindowId("s-win-1".to_owned())),
+            source.floating_geometry(&WindowId("s-win-1".to_owned()))
+        );
+        assert!(
+            split_source
+                .retained_float_geometry(&WindowId("s-win-1".to_owned()))
+                .is_some()
+        );
+        assert!(
+            split_source
+                .retained_float_geometry(&WindowId("s-win-3".to_owned()))
+                .is_some()
+        );
+        assert_eq!(
+            split_target.floating_geometry(&WindowId("t-win-1".to_owned())),
+            target.floating_geometry(&WindowId("t-win-1".to_owned()))
+        );
+        // Canonical outputs carry no adjacency.
+        assert!(split_source.domains()[0].adjacent.is_empty());
+        assert!(split_target.domains()[0].adjacent.is_empty());
+        // Commit inside the pair (float one source tile), then split the
+        // committed pair: the floated window leaves the source tree with its
+        // geometry retained, and the target domain is untouched.
+        let mut committed = pair.clone();
+        toggle_float_in(
+            &mut committed,
+            "s-win-4",
+            Some(Rect {
+                x: 20,
+                y: 20,
+                w: 30,
+                h: 30,
+            }),
+            "pair-commit",
+        );
+        assert!(!committed.has_pending());
+        let (committed_source, committed_target) =
+            committed.split_canonical_pair().expect("split committed");
+        let committed_target = committed_target.expect("target present");
+        assert!(committed_source.is_exception(&WindowId("s-win-4".to_owned())));
+        assert_eq!(
+            committed_source.floating_geometry(&WindowId("s-win-4".to_owned())),
+            Some(Rect {
+                x: 20,
+                y: 20,
+                w: 30,
+                h: 30
+            })
+        );
+        assert_eq!(
+            committed_source.retained_float_geometry(&WindowId("s-win-4".to_owned())),
+            Some(Rect {
+                x: 20,
+                y: 20,
+                w: 30,
+                h: 30
+            })
+        );
+        assert_eq!(
+            tree_for(&committed_target, &target_key),
+            tree_for(&target, &target_key)
+        );
+        assert_eq!(
+            committed_source.accepted_revision(),
+            committed.accepted_revision()
+        );
+        assert_eq!(
+            committed_target.accepted_revision(),
+            committed.accepted_revision()
+        );
+    }
+
+    #[test]
+    fn canonical_pair_absent_target_splits_none() {
+        let mut source = Session::new(
+            owner(),
+            generation(),
+            0,
+            7,
+            vec![canon_domain("out-1", "ws-1")],
+        )
+        .expect("source new");
+        admit_in(&mut source, "s-win-1", "out-1", "ws-1", true);
+        admit_in(&mut source, "s-win-2", "out-1", "ws-1", false);
+        let pair =
+            Session::paired_from_canonical(&source, None, pair_test_domains()).expect("pair");
+        let target_key = DomainKey {
+            output: OutputId("out-2".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+        };
+        assert!(tree_for(&pair, &target_key).is_none());
+        let (split_source, split_target) = pair.split_canonical_pair().expect("split");
+        assert!(split_target.is_none());
+        let source_key = DomainKey {
+            output: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+        };
+        assert_eq!(
+            tree_for(&split_source, &source_key),
+            tree_for(&source, &source_key)
+        );
+        assert_eq!(split_source.focus(), source.focus());
+    }
+
+    #[test]
+    fn canonical_pair_fail_closed() {
+        let mut source = Session::new(
+            owner(),
+            generation(),
+            0,
+            7,
+            vec![canon_domain("out-1", "ws-1")],
+        )
+        .expect("source new");
+        admit_in(&mut source, "s-win-1", "out-1", "ws-1", true);
+        let mut target = Session::new(
+            owner(),
+            generation(),
+            0,
+            7,
+            vec![canon_domain("out-2", "ws-1")],
+        )
+        .expect("target new");
+        admit_in(&mut target, "t-win-1", "out-2", "ws-1", true);
+        // Owner/generation mismatch.
+        let other_owner = Session::new(
+            OwnerId::parse("owner-2").expect("valid"),
+            generation(),
+            0,
+            7,
+            vec![canon_domain("out-2", "ws-1")],
+        )
+        .expect("other new");
+        assert_eq!(
+            Session::paired_from_canonical(&source, Some(&other_owner), pair_test_domains())
+                .expect_err("owner mismatch"),
+            CanonicalPairError::MismatchedIdentity
+        );
+        // Duplicate window across inputs.
+        let mut dupe = Session::new(
+            owner(),
+            generation(),
+            0,
+            7,
+            vec![canon_domain("out-2", "ws-1")],
+        )
+        .expect("dupe new");
+        admit_in(&mut dupe, "s-win-1", "out-2", "ws-1", true);
+        assert_eq!(
+            Session::paired_from_canonical(&source, Some(&dupe), pair_test_domains())
+                .expect_err("duplicate"),
+            CanonicalPairError::DuplicateState
+        );
+        // Mismatched domain keys.
+        let wrong = vec![canon_domain("out-1", "ws-1"), canon_domain("out-9", "ws-1")];
+        assert_eq!(
+            Session::paired_from_canonical(&source, Some(&target), wrong)
+                .expect_err("domain mismatch"),
+            CanonicalPairError::DomainMismatch
+        );
+        // Non-single-domain input.
+        let two = Session::new(owner(), generation(), 0, 7, pair_test_domains()).expect("two");
+        assert_eq!(
+            Session::paired_from_canonical(&two, Some(&target), pair_test_domains())
+                .expect_err("non-single-domain"),
+            CanonicalPairError::DomainMismatch
+        );
+        // Pending input refuses.
+        let mut pending = source.clone();
+        let rev = pending.accepted_revision();
+        let mut windows = obs_windows(&pending);
+        windows.push(ObservedWindow {
+            window: WindowId("s-win-9".to_owned()),
+            output: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+            floating: false,
+            fullscreen: false,
+            maximized: false,
+            sticky: false,
+        });
+        pending
+            .propose(
+                &SessionCommand::Admit {
+                    window: WindowId("s-win-9".to_owned()),
+                    output: OutputId("out-1".to_owned()),
+                    workspace: WorkspaceId("ws-1".to_owned()),
+                    exceptions: ExceptionFlags::none(),
+                    exception_behavior: None,
+                    placement_bounds: Rect {
+                        x: 0,
+                        y: 0,
+                        w: 100,
+                        h: 50,
+                    },
+                },
+                &SessionObservation {
+                    observation: Observation::new(owner(), generation(), rev, 1),
+                    windows,
+                },
+                &corr("corr-pending-pair"),
+                &LifecycleCapabilities::full(),
+            )
+            .expect("pending propose");
+        assert_eq!(
+            Session::paired_from_canonical(&pending, Some(&target), pair_test_domains())
+                .expect_err("pending input"),
+            CanonicalPairError::UnusableInput
+        );
+        // Split refuses pending/drag/divergence on the pair.
+        let mut pair = Session::paired_from_canonical(&source, Some(&target), pair_test_domains())
+            .expect("pair");
+        let rev = pair.accepted_revision();
+        let mut windows = obs_windows(&pair);
+        windows.push(ObservedWindow {
+            window: WindowId("pair-win-9".to_owned()),
+            output: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+            floating: false,
+            fullscreen: false,
+            maximized: false,
+            sticky: false,
+        });
+        pair.propose(
+            &SessionCommand::Admit {
+                window: WindowId("pair-win-9".to_owned()),
+                output: OutputId("out-1".to_owned()),
+                workspace: WorkspaceId("ws-1".to_owned()),
+                exceptions: ExceptionFlags::none(),
+                exception_behavior: None,
+                placement_bounds: Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 50,
+                },
+            },
+            &SessionObservation {
+                observation: Observation::new(owner(), generation(), rev, 1),
+                windows,
+            },
+            &corr("corr-pair-pending"),
+            &LifecycleCapabilities::full(),
+        )
+        .expect("pair pending propose");
+        assert_eq!(
+            pair.split_canonical_pair().expect_err("pair pending"),
+            CanonicalPairError::UnusableInput
+        );
     }
 }
