@@ -86,6 +86,34 @@ Restore the documented COSMIC output-edge behavior for `Meta+Arrow` focus and
    or changed targets refuse before native action. This preserves S21's local
    perpendicular-wrap precedence and S20/S22/S23 crossing results.
 
+## Incident Correction
+
+- The user-reproduced trace at
+  `/run/user/1000/plasma-auto-tiler-dev.qQMfPr.log` proves the first rightward
+  R4 was planned and natively mutated (`p3`, lines 37-49): output and all three
+  changed geometries echoed, but no `r4-desktops-echo` arrived. The timeout sent
+  `directional-move-ack` with `adapter-lost` (lines 51-52 and 63), terminally
+  diverging the retained pair. The immediate, well-formed reverse `p7` then
+  correctly received `diverged/adapter-lost` before planning (lines 59-60,
+  then adapter service fault at 73-74). This was a permanently terminal state,
+  not an eligible reverse blocked by a legitimate live flight.
+- Both output domains in the outbound request use workspace
+  `45e11f71-14f9-44bf-98ec-aca62648c9b8` (line 37). Assigning that unchanged
+  desktop membership does not produce a KWin `desktopsChanged` notification,
+  while the old adapter required that echo even when exact membership readback
+  already proved it.
+- The adapter now marks the desktop fence observed only when the retained mover
+  snapshot was already on the exact target workspace and a fresh readback has
+  exactly that one desktop id. Output, geometry, focus, epoch, full proof,
+  acknowledgement, verification, correlation, and canonical-pair fences are
+  unchanged. Changed membership still requires `desktopsChanged`; this is not
+  a timeout recovery, retry, reseed, or proof relaxation.
+- Offline regressions prove the no-notify same-workspace transfer reaches
+  accepted ack, verify, and commit with one focus follow; changed membership
+  remains pending after output and geometry echoes until its desktop echo; and
+  a committed occupied-target transfer plans the immediate reverse R4 from the
+  retained target pair.
+
 ## Outcome
 
 - The active `DescribePlan` route validates complete two-domain evidence and
@@ -101,9 +129,14 @@ Restore the documented COSMIC output-edge behavior for `Meta+Arrow` focus and
   and commit, so an unsettled sibling cannot strand confirmed mover follow or
   relax the structural proof. It refuses/terminates on stale scope, timeout,
   wrong output, failed write, or incomplete proof, with no replay.
-- Offline verification completed 2026-09-20: `git diff --check`,
-  `cargo fmt --check`, `cargo test` (299 unit tests plus all integration
-  suites), `npm --prefix kwin run typecheck`, `npm --prefix kwin run test`
-  (805 passed, 0 failed), and `npm --prefix kwin run build` (496.0 kB bundle).
-- No live KWin/Plasma test was run; public-slot JavaScript callability and
-  rendered compositor behavior remain live-unverified.
+- Offline verification completed 2026-09-20: `cargo fmt --check`, `cargo test`
+  (299 unit tests plus all integration suites), `npm --prefix kwin run
+  typecheck`, `npm --prefix kwin run test` (807 passed, 0 failed), and `npm
+  --prefix kwin run build` (497.2 kB bundle).
+- The user manually confirmed the rightward native transfer rendered as
+  `left W1`, `right H[W2 W3]`; the trace also records its native writes. This
+  establishes public-slot invocation and compositor placement, but not ack,
+  verify, or commit because the unchanged-membership flight timed out.
+- The full corrected same-workspace outbound-and-immediate-reverse sequence
+  remains the required live acceptance boundary; no broader live correctness
+  claim is made.

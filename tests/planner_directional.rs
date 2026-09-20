@@ -1391,6 +1391,21 @@ fn r4_stages_pending_and_blocks_until_verify() {
         Some(left_domains_payload()),
     )));
     assert_eq!(revived["outcome"], "planned", "{revived}");
+
+    // The committed target pair remains canonical: its left-edge mover may
+    // immediately reverse across the same output boundary as a fresh R4.
+    let reverse = parse(&planner.evaluate(&request_with_domain(
+        "dir-pend-5",
+        "win-b",
+        post_windows_from_geometry(&geometry),
+        move_cmd("win-b", "left"),
+        source_domain(),
+        Some(domains_payload()),
+    )));
+    assert_eq!(reverse["outcome"], "planned", "{reverse}");
+    assert_eq!(reverse["detail"]["rule"], "R4", "{reverse}");
+    assert_eq!(reverse["operation"]["source_output"], "out-2", "{reverse}");
+    assert_eq!(reverse["operation"]["target_output"], "out-1", "{reverse}");
 }
 
 #[test]

@@ -10,10 +10,17 @@ Only meaningful pending or active work is listed.
   Canonical per-domain state is retained without spatial reseeding. Native
   transfer uses public `workspace.sendClientToScreen`; confirmed target output
   and desktop membership permits one prompt follow, while complete geometry
-  and ack/verify gate commit. Rust tests, 805 KWin tests, typecheck, and build
-  pass. Next: user tests distinct current workspaces, focus crossing, moves into
-  occupied/empty targets, retained layouts, and follow. No live output transfer
-  was performed; native slot delivery and compositor timing remain unverified.
+  and ack/verify gate commit. Rust tests, 807 KWin tests, typecheck, and build
+  pass. User manually observed one successful rightward transfer:
+  left `H[W1 W2]`, right `W3` became left `W1`, right `H[W2 W3]`.
+  Immediate leftward return of W2 then failed. Exact supplied log
+  `/run/user/1000/plasma-auto-tiler-dev.qQMfPr.log` shows unchanged desktop
+  membership produced no echo, so the outbound transfer timed out and diverged.
+  Static correction accepts fresh exact membership readback when the mover
+  already had the target desktop; changed membership still requires its echo.
+  Next: fresh `just dev trace`, repeat right then left, verifying both moves
+  complete. This accepts only the previously observed one-way movement, not
+  corrected transaction completion or general cross-output operation.
   Up/Down local behavior and directional workspace cycling are unchanged.
   [record](changes/cross-output-directional-focus-movement.md)
 - P1 | Native dev setup and lifecycle live gate | Explicit `just dev-native-setup`

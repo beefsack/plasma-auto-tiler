@@ -5027,6 +5027,23 @@ export class PlanAdapter {
         if (r4 === null || flight !== r4.flight || session !== r4.session || r4.acked || r4.settled) {
             return;
         }
+        // KWin does not notify an unchanged desktop assignment. Readback keeps
+        // same-workspace cross-output transfers from waiting for that absent echo.
+        const membershipWasUnchanged = r4.snapshot.windows.some(
+            (window) => window.id === r4.moverId && window.workspace === r4.targetWorkspace,
+        );
+        if (!r4.desktopsSeen && membershipWasUnchanged) {
+            let ids: ReadonlyArray<string> | null = null;
+            try {
+                ids = this.env.readDesktopIds?.(r4.moverRef) ?? null;
+            } catch (error) {
+                void error;
+            }
+            if (ids !== null && ids.length === 1 && ids[0] === r4.targetWorkspace) {
+                r4.desktopsSeen = true;
+                this.diag(r4.op, r4.correlation, r4.planned.geometry.length, "r4-desktops-readback");
+            }
+        }
         if (!r4.outputSeen || !r4.desktopsSeen) {
             return;
         }

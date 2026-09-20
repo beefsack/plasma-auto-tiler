@@ -232,7 +232,7 @@ function crossFocusReply(correlation: string): string {
     });
 }
 
-function crossMoveReply(correlation: string): string {
+function crossMoveReply(correlation: string, targetWorkspace = "ws-b"): string {
     return JSON.stringify({
         v: 1,
         correlation_id: correlation,
@@ -240,10 +240,10 @@ function crossMoveReply(correlation: string): string {
         base_revision: 2,
         detail: { kind: "move", rule: "R4", capability: "CrossOutputTransfer", direction: "right" },
         desired_geometry: [
-            { window: "win-a", leaf: "leaf-a", output: "out-2", workspace: "ws-b", rect: { x: 810, y: 10, w: 380, h: 580 } },
-            { window: "win-x", leaf: "leaf-x", output: "out-2", workspace: "ws-b", rect: { x: 1200, y: 10, w: 380, h: 580 } },
+            { window: "win-a", leaf: "leaf-a", output: "out-2", workspace: targetWorkspace, rect: { x: 810, y: 10, w: 380, h: 580 } },
+            { window: "win-x", leaf: "leaf-x", output: "out-2", workspace: targetWorkspace, rect: { x: 1200, y: 10, w: 380, h: 580 } },
         ],
-        desired_focus: { domain_output: "out-2", domain_workspace: "ws-b", leaf: "leaf-a" },
+        desired_focus: { domain_output: "out-2", domain_workspace: targetWorkspace, leaf: "leaf-a" },
         operation: {
             op: "move",
             rule: "R4",
@@ -254,7 +254,7 @@ function crossMoveReply(correlation: string): string {
             source_output: "out-1",
             source_workspace: "ws-a",
             target_output: "out-2",
-            target_workspace: "ws-b",
+            target_workspace: targetWorkspace,
             source_root_child_index: 0,
             target: "occupied",
         },
@@ -596,10 +596,10 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
         };
         env["setDesktops"] = (mover: object, refs: ReadonlyArray<object>): boolean => {
             native.sentMemberships.push({ mover, refs });
-            if (mover !== r.a || refs.length !== 1 || refs[0] !== native.wsB) {
+            if (mover !== r.a || refs.length !== 1 || (refs[0] !== native.wsA && refs[0] !== native.wsB)) {
                 return false;
             }
-            native.desktopsOfMover = ["ws-b"];
+            native.desktopsOfMover = [(refs[0] as { id: string }).id];
             return true;
         };
         env["readOutputName"] = (ref: object): string | null =>
@@ -650,15 +650,22 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
         return { mocks, native };
     }
 
-    function startR4(r: { a: object; b: object; x: object }): { mocks: Mocks; native: R4Native; adapter: PlanAdapter; correlation: string } {
+    function startR4(
+        r: { a: object; b: object; x: object },
+        targetWorkspace = "ws-b",
+    ): { mocks: Mocks; native: R4Native; adapter: PlanAdapter; correlation: string } {
         const { mocks, native } = r4Mocks(r);
+        mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
+            status: "ready",
+            observed: twoDomainObserved(r, { targetWorkspace }),
+        });
         const adapter = enable(mocks);
         adapter.requestMove("right");
         assert.equal(mocks.dbusCalls.length, 1);
         const body = payload(mocks, 0);
         assert.equal((body["command"] as Record<string, unknown>)["cross_output_transfer"], true);
         const correlation = body["correlation_id"] as string;
-        mocks.callbacks[0]?.(crossMoveReply(correlation));
+        mocks.callbacks[0]?.(crossMoveReply(correlation, targetWorkspace));
         return { mocks, native, adapter, correlation };
     }
 
@@ -744,6 +751,41 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
         assert.equal(adapter.isR4InFlight, false);
         assert.equal(adapter.isInFlight, false);
         assert.equal(mocks.dbusCalls.length, 3);
+    });
+
+    it("commits a same-workspace transfer when unchanged desktop membership has no echo", () => {
+        const r = refs();
+        const { mocks, native, adapter, correlation } = startR4(r, "ws-a");
+        assert.deepEqual(native.sentMemberships[0]?.refs, [native.wsA]);
+        assert.ok(mocks.logs.some((line) => line.includes("r4-desktops-readback")));
+        // This is the native no-op case: membership already proves exactly, so
+        // KWin need not emit desktopsChanged for the transfer to finish.
+        assert.equal(native.desktopsHandlers.length, 1);
+        native.outputHandlers.forEach((handler) => handler(native.out1));
+        native.geoHandlers.get("win-a")?.();
+        native.geoHandlers.get("win-x")?.();
+        assert.equal(mocks.actives.length, 1);
+        assert.equal(mocks.actives[0], r.a);
+        assert.equal(mocks.dbusCalls.length, 2);
+        const ack = ackPayload(mocks, 1);
+        assert.equal(ack["correlation_id"], correlation);
+        assert.deepEqual(ack["command"], { op: "directional-move-ack", ack_outcome: "accepted" });
+        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", base_revision: 2 }));
+        assert.equal(mocks.dbusCalls.length, 3);
+        mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 }));
+        assert.equal(adapter.isR4InFlight, false);
+        assert.equal(adapter.isInFlight, false);
+    });
+
+    it("still requires a desktop echo when membership changes", () => {
+        const r = refs();
+        const { mocks, native } = startR4(r);
+        native.outputHandlers.forEach((handler) => handler(native.out1));
+        native.geoHandlers.get("win-a")?.();
+        native.geoHandlers.get("win-x")?.();
+        assert.equal(mocks.dbusCalls.length, 1);
+        assert.equal(mocks.actives.length, 0);
+        assert.ok(!mocks.logs.some((line) => line.includes("r4-desktops-readback")));
     });
 
     it("fails terminal on wrong-output readback with adapter-lost ack and no verify", () => {
