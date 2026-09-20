@@ -35,6 +35,65 @@ case "$*" in
   *"GetConnectionUnixProcessID s :1.50"*)
     pid="$(cat "$state/owner-pid" 2>/dev/null || printf '4242')"
     printf '{"type":"u","data":[%s]}\n' "$pid" ;;
+  *"GetNameOwner s org.kde.KWin"*)
+    if [[ -f "$state/kwin-unowned" ]]; then
+      exit 1
+    fi
+    printf '{"type":"s","data":[":1.99"]}\n'
+    exit 0 ;;
+  *"GetConnectionUnixProcessID s :1.99"*)
+    pid="$(cat "$state/kwin-pid" 2>/dev/null || printf '5151')"
+    printf '{"type":"u","data":[%s]}\n' "$pid" ;;
+  *"isEffectSupported"*)
+    printf 'isEffectSupported %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
+    if [[ -f "$state/effect-supported-fail" ]]; then
+      exit 1
+    elif [[ -f "$state/effect-supported-malformed" ]]; then
+      printf '{"type":"b","data":[true,false]}\n'
+      exit 0
+    fi
+    if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then
+      printf '{"type":"b","data":[%s]}\n' "$(cat "$state/effect-border-supported" 2>/dev/null || printf 'true')"
+    else
+      printf '{"type":"b","data":[%s]}\n' "$(cat "$state/effect-oracle-supported" 2>/dev/null || printf 'true')"
+    fi ;;
+  *"isEffectLoaded"*)
+    printf 'isEffectLoaded %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
+    if [[ -f "$state/effect-loaded-fail" ]]; then
+      exit 1
+    elif [[ -f "$state/effect-loaded-malformed" ]]; then
+      printf '{"type":"b","data":[true,false]}\n'
+      exit 0
+    fi
+    if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then
+      printf '{"type":"b","data":[%s]}\n' "$(cat "$state/effect-border-loaded" 2>/dev/null || printf 'false')"
+    else
+      printf '{"type":"b","data":[%s]}\n' "$(cat "$state/effect-oracle-loaded" 2>/dev/null || printf 'false')"
+    fi ;;
+  *"unloadEffect"*)
+    printf 'unloadEffect %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
+    if [[ -f "$state/effect-unload-fail" ]]; then
+      exit 1
+    fi
+    if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then
+      printf 'false\n' > "$state/effect-border-loaded"
+    else
+      printf 'false\n' > "$state/effect-oracle-loaded"
+    fi
+    printf '{"type":"b","data":[true]}\n'
+    exit 0 ;;
+  *"loadEffect"*)
+    printf 'loadEffect %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
+    if [[ -f "$state/effect-load-fail" ]]; then
+      exit 1
+    fi
+    if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then
+      printf 'true\n' > "$state/effect-border-loaded"
+    else
+      printf 'true\n' > "$state/effect-oracle-loaded"
+    fi
+    printf '{"type":"b","data":[true]}\n'
+    exit 0 ;;
   *"isScriptLoaded"*)
     if [[ -f "$state/loaded-call-fail" ]]; then
       exit 1
@@ -177,6 +236,9 @@ state="${FAKE_STATE_DIR:?}"
 calllog="${FAKE_CALL_LOG:?}"
 if [[ "${1:-}" == "start" ]]; then
   printf 'start-test start TRACE=%s\n' "${PLASMA_AUTO_TILER_TRACE:-0}" >> "$calllog"
+  if [[ -f "$state/block-start" ]]; then
+    for _ in $(seq 1 100); do sleep 0.2; done
+  fi
   if [[ -f "$state/start-fails" ]]; then
     echo "fake start-test: simulated start failure" >&2
     exit 1
@@ -221,6 +283,9 @@ printf 'dogfood %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
 if [[ -f "${FAKE_STATE_DIR:?}/dogfood-fails" ]]; then
   echo "fake dogfood: simulated failure" >&2
   exit 1
+fi
+if [[ "${1:-}" == "disable" && -f "${FAKE_STATE_DIR:?}/block-dogfood-disable" ]]; then
+  for _ in $(seq 1 100); do sleep 0.2; done
 fi
 exit 0
 EOF
@@ -274,7 +339,13 @@ reset_state() {
   : > "$WORK/calls.log"
   : > "$OUTPUT"
   printf 'false\n' > "$WORK/state/loaded"
+  printf 'true\n' > "$WORK/state/effect-border-supported"
+  printf 'true\n' > "$WORK/state/effect-oracle-supported"
+  printf 'false\n' > "$WORK/state/effect-border-loaded"
+  printf 'false\n' > "$WORK/state/effect-oracle-loaded"
+  printf '5151\n' > "$WORK/state/kwin-pid"
   rm -f "$WORK/state/planner-owned" "$WORK/state/owner-pid" "$WORK/state/loaded-malformed" "$WORK/state/loaded-call-fail" "$WORK/state/start-fails" "$WORK/state/stop-fails" "$WORK/state/cargo-fails" "$WORK/state/npm-fails" "$WORK/state/cmake-fails"
+  rm -f "$WORK/state/kwin-unowned" "$WORK/state/effect-supported-fail" "$WORK/state/effect-supported-malformed" "$WORK/state/effect-loaded-fail" "$WORK/state/effect-loaded-malformed" "$WORK/state/effect-load-fail" "$WORK/state/effect-unload-fail"
   printf '// fake kwin bundle\n' > "$WORK/fake-kwin/contents/code/main.js"
   export FAKE_STATE_DIR="$WORK/state"
   export FAKE_CALL_LOG="$WORK/calls.log"
@@ -298,6 +369,8 @@ reset_state() {
   ln -sfn -- "$PLASMA_AUTO_TILER_BIN" "$PROC_ROOT/4242/exe"
   printf 'fake\0planner-service\0' > "$PROC_ROOT/4242/cmdline"
   printf '4242\n' > "$WORK/state/owner-pid"
+  mkdir -p "$PROC_ROOT/5151"
+  printf '5151 (kwin_wayland) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 777888\n' > "$PROC_ROOT/5151/stat"
 }
 
 make_planner_proc() {
@@ -414,6 +487,8 @@ assert_contains "build" "real justfile list build"
 assert_contains "build-rust" "real justfile list build-rust"
 assert_contains "build-kwin-script" "real justfile list build-kwin-script"
 assert_contains "build-native-effect" "real justfile list build-native-effect"
+assert_contains "dev-native-setup" "real justfile list dev-native-setup"
+assert_contains "dev-native-remove" "real justfile list dev-native-remove"
 
 run_just_real --dry-run dev-status
 check_exit 0 "real justfile dry-run dev-status"
@@ -754,6 +829,61 @@ assert_not_contains "[kwin]" "dev bring-up fail no kwin tail"
 assert_calls_missing "tail " "dev bring-up fail no tail call"
 assert_calls_missing "journalctl " "dev bring-up fail no journal call"
 
+# dev: early INT after owned native loads but before dev-on success unloads
+# only owned effects via the minimal early trap and never calls dev-off.
+# Border is preloaded (never owned); only the oracle load is owned. dev-on is
+# blocked inside dogfood disable (before ROLLBACK_ARMED) so the window is
+# deterministic and inner rollback cannot emit dev-off markers.
+reset_state
+set_controller false
+printf 'true\n' > "$WORK/state/effect-border-loaded"
+printf 'false\n' > "$WORK/state/effect-oracle-loaded"
+touch "$WORK/state/block-dogfood-disable"
+: > "$OUTPUT"
+run_just_async dev
+JUST_PID="$JUST_ASYNC_PID"
+READY=0
+for _ in $(seq 1 50); do
+  if grep -Fq "loadEffect" "$WORK/calls.log" 2>/dev/null && grep -Fq "dogfood disable" "$WORK/calls.log" 2>/dev/null; then READY=1; break; fi
+  if ! kill -0 "$JUST_PID" 2>/dev/null; then break; fi
+  sleep 0.2
+done
+if [[ "$READY" -ne 1 ]]; then
+  echo "FAIL [dev early INT setup missing owned load + blocked dev-on]" >&2
+  cat "$OUTPUT" >&2
+  cat "$WORK/calls.log" >&2
+  FAIL=$((FAIL + 1))
+  kill "$JUST_PID" 2>/dev/null || true
+  kill -KILL "$JUST_PID" 2>/dev/null || true
+  kill -KILL -- "-$JUST_PID" 2>/dev/null || true
+  set +e; wait "$JUST_PID" 2>/dev/null; set -e
+  EXIT=1
+else
+  kill -INT "$JUST_PID" 2>/dev/null || true
+  kill -INT -- "-$JUST_PID" 2>/dev/null || true
+  set +e
+  N=0
+  while kill -0 "$JUST_PID" 2>/dev/null; do
+    N=$((N + 1))
+    if [[ "$N" -gt 50 ]]; then kill -KILL "$JUST_PID" 2>/dev/null || true; kill -KILL -- "-$JUST_PID" 2>/dev/null || true; break; fi
+    sleep 0.2
+  done
+  wait "$JUST_PID" 2>/dev/null
+  EXIT=$?
+  set -e
+  check_exit 130 "dev early INT exit"
+  assert_calls_contain "loadEffect" "dev early INT owned load happened"
+  if grep -Eq "unloadEffect.*drag-oracle" "$WORK/calls.log"; then PASS=$((PASS + 1)); else echo "FAIL [dev early INT owned oracle unloaded]" >&2; cat "$WORK/calls.log" >&2; FAIL=$((FAIL + 1)); fi
+  if grep -Eq "unloadEffect.*active-border" "$WORK/calls.log"; then echo "FAIL [dev early INT preloaded border never unloaded]" >&2; cat "$WORK/calls.log" >&2; FAIL=$((FAIL + 1)); else PASS=$((PASS + 1)); fi
+  assert_calls_missing "start-test stop" "dev early INT never dev-off stop"
+  assert_calls_missing "dogfood enable" "dev early INT never dev-off enable"
+  assert_not_contains "bring-up via dev-on failed" "dev early INT trap path not failure branch"
+  assert_calls_missing "tail " "dev early INT no tail"
+  assert_calls_missing "journalctl " "dev early INT no journal"
+fi
+kill -KILL -- "-$JUST_PID" 2>/dev/null || true
+rm -f "$WORK/state/block-dogfood-disable" "$WORK/state/block-start"
+
 # dev: DOWN bring-up tails labeled logs then tears down via dev-off.
 reset_state
 set_controller false
@@ -771,7 +901,7 @@ assert_contains "[planner]" "dev down planner label"
 assert_contains "[kwin]" "dev down kwin label"
 assert_contains "plasma-auto-tiler:plan" "dev down kwin plugin line"
 assert_contains "[kwin] plasma-auto-tiler:route-diag:drag-pull action=dispatch" "dev down kwin route diagnostic line"
-assert_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin; plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login." "dev down native warning"
+assert_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login." "dev down native warning"
 assert_calls_contain "cargo " "dev down cargo build"
 assert_calls_contain "npm " "dev down npm build"
 assert_calls_contain "cmake " "dev down cmake build"
@@ -782,6 +912,11 @@ assert_calls_contain "tail " "dev down tail"
 assert_calls_contain "journalctl " "dev down journal"
 assert_calls_contain "start-test stop 7" "dev down teardown stop"
 assert_calls_contain "dogfood enable" "dev down teardown enable"
+assert_calls_contain "loadEffect" "dev down native load"
+assert_calls_contain "unloadEffect" "dev down native unload"
+assert_contains "transient" "dev down native transient"
+assert_contains "never hot-reloads a rebuilt binary" "dev down no hot reload promise"
+assert_contains "does not prove the library is unmapped" "dev down no unmapped claim"
 assert_contains "combined log:" "dev down combined log printed"
 # Build steps must precede any dev-on lifecycle mutation.
 CARGO_LINE="$(grep -n -F "cargo " "$WORK/calls.log" | head -n 1 | cut -d: -f1)"
@@ -850,6 +985,49 @@ assert_calls_missing "busctl " "native build no busctl"
 assert_calls_missing "journalctl " "native build no journal"
 assert_calls_missing "tail " "native build no tail"
 
+# Native staging replacement publishes a new inode via payload rm/mv and never
+# truncates the previously staged file: an already-open descriptor keeps the
+# old bytes (Linux unlink semantics) while the path exposes the new build.
+reset_state
+run_just build-native-effect
+check_exit 0 "native restage first exit"
+STAGE_BORDER="$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+if [[ -f "$STAGE_BORDER" ]]; then PASS=$((PASS + 1)); else echo "FAIL [restage first staged]" >&2; FAIL=$((FAIL + 1)); fi
+OLD_INODE="$(stat -c %i "$STAGE_BORDER")"
+OLD_CONTENT="$(cat "$STAGE_BORDER")"
+exec 9< "$STAGE_BORDER" || { echo "FAIL [restage open old fd]" >&2; FAIL=$((FAIL + 1)); }
+printf 'fake-effect-v2' > "$WORK/fake-native-build/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+run_just build-native-effect
+RESTAGE_EXIT="$EXIT"
+check_exit 0 "native restage second exit"
+EXIT="$RESTAGE_EXIT"
+NEW_INODE="$(stat -c %i "$STAGE_BORDER")"
+NEW_CONTENT="$(cat "$STAGE_BORDER")"
+FD_CONTENT="$(cat <&9)"
+exec 9<&- || true
+if [[ "$OLD_INODE" != "$NEW_INODE" ]]; then PASS=$((PASS + 1)); else echo "FAIL [restage new inode old=$OLD_INODE new=$NEW_INODE]" >&2; FAIL=$((FAIL + 1)); fi
+if [[ "$NEW_CONTENT" == "fake-effect-v2" ]]; then PASS=$((PASS + 1)); else echo "FAIL [restage new content got '$NEW_CONTENT']" >&2; FAIL=$((FAIL + 1)); fi
+if [[ "$FD_CONTENT" == "$OLD_CONTENT" ]]; then PASS=$((PASS + 1)); else echo "FAIL [restage open fd preserved old='$OLD_CONTENT' fd='$FD_CONTENT' new='$NEW_CONTENT']" >&2; FAIL=$((FAIL + 1)); fi
+if [[ "$FD_CONTENT" != "$NEW_CONTENT" ]]; then PASS=$((PASS + 1)); else echo "FAIL [restage open fd isolated from replacement]" >&2; FAIL=$((FAIL + 1)); fi
+
+# dev-native-setup reuses the same build-native-effect staging root: with an
+# isolated config it stages all three artifacts and writes the env script.
+reset_state
+export XDG_CONFIG_HOME="$WORK/fake-config"
+mkdir -p "$XDG_CONFIG_HOME"
+run_just dev-native-setup
+SETUP_EXIT="$EXIT"
+EXIT="$SETUP_EXIT"
+check_exit 0 "dev-native-setup exit"
+assert_calls_contain "cmake " "dev-native-setup runs native build"
+if [[ -f "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so" && -f "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so" && -f "$WORK/fake-native-stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev-native-setup 3 staged artifacts]" >&2; FAIL=$((FAIL + 1)); fi
+SETUP_ENV="$XDG_CONFIG_HOME/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+if [[ -f "$SETUP_ENV" ]] && grep -Fq "$WORK/fake-native-stage" "$SETUP_ENV"; then PASS=$((PASS + 1)); else echo "FAIL [dev-native-setup env script]" >&2; cat "$OUTPUT" >&2; FAIL=$((FAIL + 1)); fi
+assert_calls_missing "dogfood" "dev-native-setup no dogfood"
+assert_calls_missing "start-test" "dev-native-setup no start-test"
+assert_calls_missing "setsid" "dev-native-setup no setsid"
+unset XDG_CONFIG_HOME
+
 # dev DOWN with Rust build failure exits before dev-on lifecycle.
 reset_state
 set_controller false
@@ -857,11 +1035,13 @@ touch "$WORK/state/cargo-fails"
 run_just dev
 check_exit 1 "dev rust fail exit"
 assert_contains "build failed" "dev rust fail msg"
-assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin; plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login." "dev rust fail no warning"
+assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login." "dev rust fail no warning"
 assert_calls_contain "cargo " "dev rust fail cargo attempted"
 assert_calls_missing "dogfood disable" "dev rust fail no disable"
 assert_calls_missing "setsid" "dev rust fail no launch"
 assert_calls_missing "start-test start" "dev rust fail no start"
+assert_calls_missing "loadEffect" "dev rust fail no native load"
+assert_calls_missing "unloadEffect" "dev rust fail no native unload"
 assert_calls_missing "tail " "dev rust fail no tail"
 assert_calls_missing "journalctl " "dev rust fail no journal"
 
@@ -872,11 +1052,13 @@ touch "$WORK/state/npm-fails"
 run_just dev
 check_exit 1 "dev ts fail exit"
 assert_contains "build failed" "dev ts fail msg"
-assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin; plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login." "dev ts fail no warning"
+assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login." "dev ts fail no warning"
 assert_calls_contain "npm " "dev ts fail npm attempted"
 assert_calls_missing "dogfood disable" "dev ts fail no disable"
 assert_calls_missing "setsid" "dev ts fail no launch"
 assert_calls_missing "start-test start" "dev ts fail no start"
+assert_calls_missing "loadEffect" "dev ts fail no native load"
+assert_calls_missing "unloadEffect" "dev ts fail no native unload"
 assert_calls_missing "tail " "dev ts fail no tail"
 assert_calls_missing "journalctl " "dev ts fail no journal"
 
@@ -887,11 +1069,13 @@ touch "$WORK/state/cmake-fails"
 run_just dev
 check_exit 1 "dev native fail exit"
 assert_contains "build failed" "dev native fail msg"
-assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin; plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login." "dev native fail no warning"
+assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login." "dev native fail no warning"
 assert_calls_contain "cmake " "dev native fail cmake attempted"
 assert_calls_missing "dogfood disable" "dev native fail no disable"
 assert_calls_missing "setsid" "dev native fail no launch"
 assert_calls_missing "start-test start" "dev native fail no start"
+assert_calls_missing "loadEffect" "dev native fail no native load"
+assert_calls_missing "unloadEffect" "dev native fail no native unload"
 assert_calls_missing "tail " "dev native fail no tail"
 assert_calls_missing "journalctl " "dev native fail no journal"
 
@@ -936,6 +1120,7 @@ else
   check_exit 0 "dev SIGINT exit"
   assert_calls_contain "start-test stop 7" "dev SIGINT teardown stop"
   assert_calls_contain "dogfood enable" "dev SIGINT teardown enable"
+  assert_calls_contain "unloadEffect" "dev SIGINT teardown native unload"
   if [[ ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-log" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-planner-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-kwin-stream" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev SIGINT stream state removed]" >&2; FAIL=$((FAIL + 1)); fi
 fi
 unset FAKE_TAIL_FOLLOW_BLOCK
@@ -984,6 +1169,7 @@ else
   check_exit 1 "dev SIGINT teardown-fail exit"
   assert_calls_contain "start-test stop 7" "dev SIGINT teardown-fail stop"
   assert_calls_missing "dogfood enable" "dev SIGINT teardown-fail no enable"
+  assert_calls_contain "unloadEffect" "dev SIGINT teardown-fail native unload attempted"
 fi
 unset FAKE_TAIL_FOLLOW_BLOCK
 kill "$DEV_INT_FAIL_PID" 2>/dev/null || true

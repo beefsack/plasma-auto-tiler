@@ -1504,6 +1504,45 @@ assert_not_exists "$DATA/kwin/scripts/plasma-auto-tiler-kwin/metadata.json"
 assert_not_grep_file "cmake" "$WORK/cmake.log"
 assert_not_exists "$CONFIG/kwinrc"
 
+# effect-install: refuses a dev-owned env script and preserves it with no
+# staging or kwinrc side effects (the two paths cannot coexist at the shared path)
+reset_state
+EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+mkdir -p "$(dirname "$EFFECT_ENV_FILE")"
+printf "export QT_PLUGIN_PATH='/tmp/fake-target/kwin-native-effect-stage'\${QT_PLUGIN_PATH:+:\$QT_PLUGIN_PATH}\n" > "$EFFECT_ENV_FILE"
+cp "$EFFECT_ENV_FILE" "$WORK/dev-owned-env"
+run_script effect-install
+check_exit 1
+assert_contains "refusing to overwrite dev-owned native-effect env script"
+assert_contains "cannot coexist"
+assert_cmp "$WORK/dev-owned-env" "$EFFECT_ENV_FILE"
+assert_not_exists "$EFFECT_ROOT"
+assert_not_exists "$CONFIG/kwinrc"
+assert_count 0 "$(wc -l < "$WORK/cmake.log")" "cmake invocations when dev-owned refused"
+
+# effect-remove: refuses a dev-owned env script and preserves it
+reset_state
+EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+mkdir -p "$(dirname "$EFFECT_ENV_FILE")"
+printf "export QT_PLUGIN_PATH='/tmp/fake-target/kwin-native-effect-stage'\${QT_PLUGIN_PATH:+:\$QT_PLUGIN_PATH}\n" > "$EFFECT_ENV_FILE"
+cp "$EFFECT_ENV_FILE" "$WORK/dev-owned-env-remove"
+run_script effect-remove
+check_exit 1
+assert_contains "refusing to remove dev-owned native-effect env script"
+assert_cmp "$WORK/dev-owned-env-remove" "$EFFECT_ENV_FILE"
+
+# effect-status: a dev-owned env script reports stale, never current
+reset_state
+EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+mkdir -p "$(dirname "$EFFECT_ENV_FILE")"
+printf "export QT_PLUGIN_PATH='/tmp/fake-target/kwin-native-effect-stage'\${QT_PLUGIN_PATH:+:\$QT_PLUGIN_PATH}\n" > "$EFFECT_ENV_FILE"
+run_script effect-status
+check_exit 0
+assert_contains "[b] env script: stale - $EFFECT_ENV_FILE exists but its content is out of date"
+
 # static: native-effect plugin ID consistency across metadata.json,
 # CMakeLists.txt's kcoreaddons_add_plugin target name, and
 # dogfood-install.sh's EFFECT_PLUGIN_ID literal must all agree, and

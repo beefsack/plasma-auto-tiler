@@ -318,6 +318,37 @@ effect_env_file_contents() {
   printf 'export QT_PLUGIN_PATH="%s${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"\n' "$EFFECT_ROOT"
 }
 
+# The dev helper (scripts/dev-native-effect.sh, `just dev-native-setup`)
+# owns this same $EFFECT_ENV_FILE path with single-quoted
+# `export QT_PLUGIN_PATH='<stage>'...` content pointing at
+# target/kwin-native-effect-stage. The two delivery paths cannot coexist at
+# this path: dogfood must refuse dev-owned content and preserve it.
+effect_env_is_dev_owned() {
+  local file="$1"
+  [[ -f "$file" ]] || return 1
+  # Already dogfood-owned (raw bytes, including trailing newline) is not dev.
+  if cmp -s -- "$file" <(effect_env_file_contents) 2>/dev/null; then
+    return 1
+  fi
+  if grep -Fq "export QT_PLUGIN_PATH='" "$file" 2>/dev/null; then
+    return 0
+  fi
+  if grep -Fq "kwin-native-effect-stage" "$file" 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
+effect_env_refuse_dev_owned() {
+  local file="$1" action="$2"
+  if effect_env_is_dev_owned "$file"; then
+    echo "error: refusing to $action dev-owned native-effect env script: $file" >&2
+    echo "hint: it belongs to the dev delivery path (\`just dev-native-setup\` for target/kwin-native-effect-stage); dogfood effect-install/effect-remove and the dev helper cannot coexist at this shared path. Remove it manually only if you are certain, then re-run." >&2
+    return 0
+  fi
+  return 1
+}
+
 effect_install_rollback() {
   [[ "${install_cleanup_done:-0}" -eq 0 ]] || return 0
   install_cleanup_done=1
@@ -397,6 +428,9 @@ cmd_effect_install() {
   local cmake="$TOOL"
   require_tool KWRITECONFIG6_BIN kwriteconfig6
   local kwriteconfig="$TOOL"
+  if effect_env_refuse_dev_owned "$EFFECT_ENV_FILE" "overwrite"; then
+    exit 1
+  fi
   local effect_install_needs_boundary=0
   if [[ ! -e "$EFFECT_ENV_FILE" && ! -L "$EFFECT_ENV_FILE" ]]; then
     effect_install_needs_boundary=1
@@ -455,9 +489,10 @@ cmd_effect_install() {
     effect_install_abort "could not prepare native-effect staging payload"
   fi
   effect_install_check_signal
-  local desired
-  desired="$(effect_env_file_contents)"
-  printf '%s' "$desired" > "$install_transaction/env" || effect_install_abort "could not prepare native-effect environment script"
+  # Canonical env script always ends with exactly one trailing newline.
+  if ! effect_env_file_contents > "$install_transaction/env"; then
+    effect_install_abort "could not prepare native-effect environment script"
+  fi
   effect_install_check_signal
 
   if [[ -L "$KWINRC" || ( -e "$KWINRC" && ! -f "$KWINRC" ) ]]; then
@@ -494,6 +529,9 @@ cmd_effect_install() {
   effect_install_check_signal
 
   if [[ -e "$EFFECT_ENV_FILE" || -L "$EFFECT_ENV_FILE" ]]; then
+    if effect_env_refuse_dev_owned "$EFFECT_ENV_FILE" "overwrite"; then
+      effect_install_abort "refusing to overwrite dev-owned native-effect environment script: $EFFECT_ENV_FILE"
+    fi
     if [[ -L "$EFFECT_ENV_FILE" || ! -f "$EFFECT_ENV_FILE" ]] || ! mv -- "$EFFECT_ENV_FILE" "$install_env_backup"; then
       effect_install_abort "could not preserve existing native-effect environment script"
     fi
@@ -613,13 +651,12 @@ cmd_effect_status() {
     echo "    -> run 'effect-install' to build and stage it."
   fi
 
-  # [b] env script: exists and its content matches what effect-install would
-  # write today.
-  local b_ok="false" desired current=""
-  desired="$(effect_env_file_contents)"
+  # [b] env script: exists and its raw bytes match what effect-install would
+  # write today (including the canonical trailing newline; never via
+  # command-substitution comparison, which strips trailing newlines).
+  local b_ok="false"
   if [[ -f "$EFFECT_ENV_FILE" ]]; then
-    current="$(cat "$EFFECT_ENV_FILE")"
-    if [[ "$current" == "${desired%$'\n'}" ]]; then
+    if cmp -s -- "$EFFECT_ENV_FILE" <(effect_env_file_contents) 2>/dev/null; then
       b_ok="true"
       echo "[b] env script: yes - $EFFECT_ENV_FILE exists and its content is current"
     else
@@ -765,6 +802,9 @@ cmd_effect_remove() {
     echo "error: refusing to remove non-regular environment script: $EFFECT_ENV_FILE" >&2
     exit 1
   fi
+  if [[ "$has_env" -eq 1 ]] && effect_env_refuse_dev_owned "$EFFECT_ENV_FILE" "remove"; then
+    exit 1
+  fi
   if [[ "$has_legacy" -eq 1 && ! -f "$LEGACY_EFFECT_ENV_FILE" ]]; then
     echo "error: refusing to remove non-regular legacy environment entry: $LEGACY_EFFECT_ENV_FILE" >&2
     exit 1
@@ -888,6 +928,9 @@ cmd_effect_remove() {
     effect_remove_check_signal
   fi
   if [[ "$has_env" -eq 1 ]]; then
+    if effect_env_refuse_dev_owned "$EFFECT_ENV_FILE" "remove"; then
+      effect_remove_abort "refusing to remove dev-owned native-effect environment script: $EFFECT_ENV_FILE"
+    fi
     mv -- "$EFFECT_ENV_FILE" "$remove_transaction/env" || effect_remove_abort "could not stage native-effect environment script for removal"
     remove_env_moved=1
     effect_remove_check_signal

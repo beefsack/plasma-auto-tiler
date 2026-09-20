@@ -2,19 +2,24 @@
 
 Only meaningful pending or active work is listed.
 
-- P1 | Remaining native window alignment and oracle delivery | Ghostty's
+- P1 | Native dev setup and lifecycle live gate | Explicit `just dev-native-setup`
+  and `just dev-native-remove` now manage only the exact checkout-owned Plasma
+  environment script. `just dev` preflights native discovery before startup,
+  transiently loads project effects, and unloads only invocation-owned loads;
+  preloaded effects and persistent enabled settings are preserved. Isolated
+  setup, collision, lifecycle, interrupt, and new-inode staging checks pass.
+  Next: user runs setup, logs out/in, then verifies `just dev trace` discovery,
+  oracle operation, and cleanup. Native rebuild activation still requires a
+  fresh session; unload is not proof of library release. No host setup or native
+  lifecycle mutation was performed during implementation. Removal and dogfood
+  coexistence refusal remain live-unverified.
+  [record](changes/archive/native-dev-setup-lifecycle.md)
+- P1 | Remaining native window alignment | Ghostty's
   persistent short frame remains unresolved: a requested `2032x1092` became
   `1920x1036`, matching secondary usable size, while another primary Ghostty
   accepted the full size. Native per-window constraint or stale output-derived
   cap remains a hypothesis; primary 125%/secondary 100% scaling causality is
-  unproven. Authorized read-only current-session inspection confirms no
-  DragOracle owner and neither project effect discovered or loaded. Staged
-  oracle binary exists, but the documented project Plasma environment script
-  and oracle enable key are absent. This establishes the documented delivery
-  route is unconfigured and is a strong discovery-failure candidate; denied
-  current KWin environment access leaves alternate delivery unproven.
-  Next: obtain authorization for project delivery setup and explicit enable,
-  then user logout/login and discovery verification. No native mutation occurred.
+  unproven. Oracle delivery is tracked by the native dev lifecycle live gate.
   The interactive-resize fighting/drop correction is now manually accepted;
   prior output-jumping and startup-loop fixes remain manually accepted.
   [bounds fix](changes/multi-output-domain-bounds.md)

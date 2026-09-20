@@ -100,6 +100,18 @@ Historical implementation detail is recoverable in Git history.
   It must not coexist with a Nix-managed copy of the same KWin plugin IDs, must
    preserve exact normal-path restoration, and must not mutate system or
    unrelated state.
+- Dev native delivery uses an explicit one-time `just dev-native-setup` (and
+  matching `just dev-native-remove`) for this checkout's
+  `target/kwin-native-effect-stage` via the project-owned
+  `plasma-workspace/env` script, with robust quoting and exact-content
+  ownership only; no `kwinrc` writes and no durable receipt state. The dogfood
+  effect path and this dev path share the exact
+  `plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh` path and cannot
+  coexist there. `just dev`
+  preflights both effects before startup, transiently loads only
+  invocation-owned effects with KWin owner guards (preserving preloaded ones
+  in reverse-order teardown), and promises no hot reload; unload verification
+  never proves the library is unmapped.
 
 ## Linux Planner Activation
 

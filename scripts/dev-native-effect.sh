@@ -1,0 +1,470 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Dev-only native-effect delivery and transient lifecycle helper.
+#
+# setup/remove manage only the project-owned plasma-workspace env script that
+# delivers target/kwin-native-effect-stage via QT_PLUGIN_PATH after a user
+# logout/login. They never touch kwinrc, D-Bus, or a running KWin.
+#
+# preflight/load/unload perform transient D-Bus lifecycle against /Effects
+# with strict JSON parsing and KWin unique-owner/PID/start-tick guards. They never
+# write persisted enabled config and never claim a hot reload.
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="${PLASMA_AUTO_TILER_REPO_ROOT:-$DEFAULT_REPO_ROOT}"
+STAGE="${PLASMA_AUTO_TILER_NATIVE_STAGE:-$REPO_ROOT/target/kwin-native-effect-stage}"
+CONFIG_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}"
+ENV_FILE="$CONFIG_ROOT/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+PROC_ROOT="${PROC_ROOT:-/proc}"
+
+BORDER_EFFECT="plasma-auto-tiler-active-border"
+ORACLE_EFFECT="plasma-auto-tiler-drag-oracle"
+
+BORDER_SO="$STAGE/kwin/effects/plugins/$BORDER_EFFECT.so"
+ORACLE_SO="$STAGE/kwin/effects/plugins/$ORACLE_EFFECT.so"
+
+usage() {
+  cat <<'EOF'
+usage: dev-native-effect.sh <command>
+
+Commands:
+  setup      create the project-owned plasma-workspace env script for this
+             checkout's target/kwin-native-effect-stage (requires staged
+             effect .so files; run 'just build-native-effect' first).
+             Idempotent only when existing content exactly matches this
+             checkout; refuses symlinks, non-regular files, and unfamiliar
+             or alternate-checkout content. Never touches kwinrc or D-Bus.
+             Takes effect only after user logout/login (or a new session).
+  remove     delete only the exact project-owned env script above when its
+             content matches this checkout. Refuses symlinks, non-regular
+             files, and unfamiliar content. Never removes parent dirs.
+   preflight  query /Effects isEffectSupported/isEffectLoaded for both dev
+              effects with strict parsing and KWin owner capture. Read-only.
+   load <effect> --expect-owner <owner> --expect-pid <pid> --expect-start <tick>
+              transiently load one effect after verifying the KWin owner.
+   unload <effect> --expect-owner <owner> --expect-pid <pid> --expect-start <tick>
+              transiently unload one owned effect after verifying the owner.
+
+setup/remove never use D-Bus. preflight/load/unload never write config.
+EOF
+}
+
+# Single-quote escape for POSIX sh sourcing. Handles spaces and shell
+# metacharacters; the result is wrapped in single quotes by the caller.
+sq_escape() {
+  local s="$1"
+  s="${s//\'/\'\\\'\'}"
+  printf '%s' "$s"
+}
+
+expected_env_contents() {
+  local escaped
+  escaped="$(sq_escape "$STAGE")"
+  printf "export QT_PLUGIN_PATH='%s'\${QT_PLUGIN_PATH:+:\$QT_PLUGIN_PATH}\n" "$escaped"
+}
+
+cmd_setup() {
+  if [[ ! -f "$BORDER_SO" ]]; then
+    echo "error: staged border effect missing: $BORDER_SO; run 'just build-native-effect' first (inside 'devenv shell --impure')" >&2
+    exit 1
+  fi
+  if [[ ! -f "$ORACLE_SO" ]]; then
+    echo "error: staged drag-oracle effect missing: $ORACLE_SO; run 'just build-native-effect' first (inside 'devenv shell --impure')" >&2
+    exit 1
+  fi
+  if [[ -L "$ENV_FILE" ]]; then
+    echo "error: refusing to overwrite symlinked env script: $ENV_FILE" >&2
+    exit 1
+  fi
+  if [[ -e "$ENV_FILE" && ! -f "$ENV_FILE" ]]; then
+    echo "error: refusing to overwrite non-regular env script: $ENV_FILE" >&2
+    exit 1
+  fi
+  if [[ -f "$ENV_FILE" ]]; then
+    # Raw byte comparison (including the canonical trailing newline);
+    # never via command substitution, which strips trailing newlines.
+    if cmp -s -- "$ENV_FILE" <(expected_env_contents); then
+      echo "dev-native-setup: already current ($ENV_FILE)"
+      echo "note: a logout/login (or new session) is still required before KWin discovers the staged effects."
+      return 0
+    fi
+    echo "error: refusing to overwrite unfamiliar env script content: $ENV_FILE" >&2
+    echo "hint: inspect the file manually; it is not owned by this checkout's stage ($STAGE). Remove it manually only if you are certain, then re-run setup." >&2
+    exit 1
+  fi
+  mkdir -p -- "$(dirname -- "$ENV_FILE")" || {
+    echo "error: could not create env dir: $(dirname -- "$ENV_FILE")" >&2
+    exit 1
+  }
+  if [[ -L "$ENV_FILE" || -e "$ENV_FILE" ]]; then
+    echo "error: env script appeared during setup: $ENV_FILE; refusing" >&2
+    exit 1
+  fi
+  local tmp
+  tmp="$(mktemp "$(dirname -- "$ENV_FILE")/.60-plasma-auto-tiler-native-effect.XXXXXX")" || {
+    echo "error: could not create temp env script" >&2
+    exit 1
+  }
+  # Canonical content always ends with exactly one trailing newline.
+  expected_env_contents > "$tmp" || {
+    rm -f -- "$tmp"
+    echo "error: could not write temp env script" >&2
+    exit 1
+  }
+  chmod 0644 -- "$tmp" || {
+    rm -f -- "$tmp"
+    echo "error: could not secure temp env script" >&2
+    exit 1
+  }
+  # -T treats the destination as a normal file so a concurrently appeared
+  # directory is a failure, not a successful link inside that directory.
+  if ! ln -T -- "$tmp" "$ENV_FILE" 2>/dev/null; then
+    rm -f -- "$tmp"
+    echo "error: env script appeared during setup: $ENV_FILE; refusing (preserving existing file)" >&2
+    exit 1
+  fi
+  rm -f -- "$tmp"
+  echo "dev-native-setup: wrote $ENV_FILE"
+  echo "staged: $BORDER_SO"
+  echo "staged: $ORACLE_SO"
+  echo "note: log out and log back in (or start a new session) before KWin can discover the staged effects; setup never applies to the running KWin."
+}
+
+cmd_remove() {
+  if [[ ! -e "$ENV_FILE" && ! -L "$ENV_FILE" ]]; then
+    echo "dev-native-remove: nothing to do ($ENV_FILE not present)"
+    return 0
+  fi
+  if [[ -L "$ENV_FILE" ]]; then
+    echo "error: refusing to remove symlinked env script: $ENV_FILE" >&2
+    exit 1
+  fi
+  if [[ ! -f "$ENV_FILE" ]]; then
+    echo "error: refusing to remove non-regular env script: $ENV_FILE" >&2
+    exit 1
+  fi
+  # Raw byte comparison (including the canonical trailing newline);
+  # never via command substitution, which strips trailing newlines.
+  if ! cmp -s -- "$ENV_FILE" <(expected_env_contents); then
+    echo "error: refusing to remove unfamiliar env script content: $ENV_FILE" >&2
+    echo "hint: the file does not match this checkout's stage ($STAGE); it may belong to another checkout or was edited manually. Remove it manually only if you are certain." >&2
+    exit 1
+  fi
+  rm -f -- "$ENV_FILE" || {
+    echo "error: could not remove env script: $ENV_FILE" >&2
+    exit 1
+  }
+  echo "removed: $ENV_FILE"
+  echo "note: log out and log back in (or start a new session) for removal to take effect in KWin; removal never touches the running KWin and never removes parent directories."
+}
+
+strict_json_matches() {
+  local predicate="$1" value="$2"
+  jq -s -e "length == 1 and (.[0] | $predicate)" <<<"$value" >/dev/null 2>&1
+}
+
+kwin_owner_name() {
+  local owner_out owner
+  owner_out="$(busctl --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetNameOwner s org.kde.KWin 2>/dev/null)" || return 1
+  strict_json_matches '((keys | sort) == ["data","type"]) and (.type == "s") and ((.data | type) == "array") and ((.data | length) == 1) and ((.data[0] | type) == "string") and ((.data[0] | length) > 0)' "$owner_out" || return 1
+  owner="$(jq -r '.data[0]' <<<"$owner_out")"
+  [[ "$owner" =~ ^:[0-9]+\.[0-9]+$ ]] || return 1
+  printf '%s\n' "$owner"
+}
+
+kwin_pid_for_owner() {
+  local owner="$1" pid_out pid
+  [[ "$owner" =~ ^:[0-9]+\.[0-9]+$ ]] || return 1
+  pid_out="$(busctl --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetConnectionUnixProcessID s "$owner" 2>/dev/null)" || return 1
+  strict_json_matches '((keys | sort) == ["data","type"]) and (.type == "u") and ((.data | type) == "array") and ((.data | length) == 1) and ((.data[0] | type) == "number") and ((.data[0] | floor) == .data[0]) and (.data[0] > 0) and (.data[0] <= 4294967295)' "$pid_out" || return 1
+  pid="$(jq -r '.data[0]' <<<"$pid_out")"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  printf '%s\n' "$pid"
+}
+
+find_kwin_pid() {
+  local owner pid
+  if [[ $# -ge 1 && -n "${1:-}" ]]; then
+    owner="$1"
+  else
+    owner="$(kwin_owner_name)" || return 1
+  fi
+  pid="$(kwin_pid_for_owner "$owner")" || return 1
+  printf '%s\n' "$pid"
+}
+
+kwin_start_tick() {
+  local pid="$1" stat_line stat_pid rest
+  local -a fields=()
+  stat_line="$(<"$PROC_ROOT/$pid/stat")" || return 1
+  [[ "$stat_line" != *$'\n'* ]] || return 1
+  stat_pid="${stat_line%% *}"
+  [[ "$stat_pid" == "$pid" ]] || return 1
+  rest="${stat_line##*) }"
+  [[ "$rest" != "$stat_line" ]] || return 1
+  read -r -a fields <<<"$rest"
+  [[ "${#fields[@]}" -ge 20 && "${fields[0]:-}" =~ ^[A-Za-z]$ ]] || return 1
+  [[ "${fields[19]:-}" =~ ^[1-9][0-9]*$ ]] || return 1
+  printf '%s\n' "${fields[19]}"
+}
+
+effect_supported_word() {
+  local effect="$1" out
+  out="$(busctl --user --json=short call org.kde.KWin /Effects org.kde.kwin.Effects isEffectSupported s "$effect" 2>/dev/null)" || {
+    echo "error: isEffectSupported call failed for $effect" >&2
+    return 1
+  }
+  if ! strict_json_matches '((keys | sort) == ["data","type"]) and (.type == "b") and ((.data | type) == "array") and ((.data | length) == 1) and ((.data[0] | type) == "boolean")' "$out"; then
+    echo "error: unexpected isEffectSupported reply for $effect: $out" >&2
+    return 1
+  fi
+  if [[ "$(jq -r '.data[0]' <<<"$out")" == "true" ]]; then
+    printf 'true\n'
+  else
+    printf 'false\n'
+  fi
+}
+
+effect_loaded_word() {
+  local effect="$1" out
+  out="$(busctl --user --json=short call org.kde.KWin /Effects org.kde.kwin.Effects isEffectLoaded s "$effect" 2>/dev/null)" || {
+    echo "error: isEffectLoaded call failed for $effect" >&2
+    return 1
+  }
+  if ! strict_json_matches '((keys | sort) == ["data","type"]) and (.type == "b") and ((.data | type) == "array") and ((.data | length) == 1) and ((.data[0] | type) == "boolean")' "$out"; then
+    echo "error: unexpected isEffectLoaded reply for $effect: $out" >&2
+    return 1
+  fi
+  if [[ "$(jq -r '.data[0]' <<<"$out")" == "true" ]]; then
+    printf 'true\n'
+  else
+    printf 'false\n'
+  fi
+}
+
+verify_kwin_owner() {
+  local expect_owner="$1" expect_pid="$2" expect_start="$3" current_owner current_pid current_start
+  [[ "$expect_owner" =~ ^:[0-9]+\.[0-9]+$ ]] || {
+    echo "error: expected KWin owner is invalid: $expect_owner" >&2
+    return 1
+  }
+  [[ "$expect_pid" =~ ^[1-9][0-9]*$ ]] || {
+    echo "error: expected KWin pid is invalid: $expect_pid" >&2
+    return 1
+  }
+  [[ "$expect_start" =~ ^[1-9][0-9]*$ ]] || {
+    echo "error: expected KWin start identity is invalid: $expect_start" >&2
+    return 1
+  }
+  current_owner="$(kwin_owner_name 2>/dev/null || true)"
+  if [[ -z "$current_owner" ]]; then
+    echo "error: KWin owner is unavailable; refusing (expected owner $expect_owner pid $expect_pid)" >&2
+    return 1
+  fi
+  if [[ "$current_owner" != "$expect_owner" ]]; then
+    echo "error: KWin owner changed (expected owner $expect_owner, current $current_owner); refusing to mutate a new owner" >&2
+    return 1
+  fi
+  current_pid="$(kwin_pid_for_owner "$current_owner" 2>/dev/null || true)"
+  if [[ -z "$current_pid" ]]; then
+    echo "error: KWin owner is unavailable; refusing (expected pid $expect_pid)" >&2
+    return 1
+  fi
+  if [[ "$current_pid" != "$expect_pid" ]]; then
+    echo "error: KWin owner changed (expected pid $expect_pid, current $current_pid); refusing to mutate a new owner" >&2
+    return 1
+  fi
+  current_start="$(kwin_start_tick "$current_pid" 2>/dev/null || true)"
+  if [[ -z "$current_start" ]]; then
+    echo "error: KWin start identity unavailable for pid $current_pid; refusing" >&2
+    return 1
+  fi
+  if [[ "$current_start" != "$expect_start" ]]; then
+    echo "error: KWin start identity changed for pid $current_pid (expected $expect_start, current $current_start); refusing to mutate a new owner" >&2
+    return 1
+  fi
+}
+
+cmd_preflight() {
+  command -v busctl >/dev/null 2>&1 || {
+    echo "error: required tool 'busctl' not found in PATH; refusing" >&2
+    exit 1
+  }
+  command -v jq >/dev/null 2>&1 || {
+    echo "error: required tool 'jq' not found in PATH; refusing" >&2
+    exit 1
+  }
+  local kwin_owner kwin_pid kwin_start
+  kwin_owner="$(kwin_owner_name)" || {
+    echo "error: could not identify one KWin process (org.kde.KWin unowned or ambiguous); cannot preflight native effects" >&2
+    exit 1
+  }
+  kwin_pid="$(kwin_pid_for_owner "$kwin_owner")" || {
+    echo "error: could not identify one KWin process (org.kde.KWin unowned or ambiguous); cannot preflight native effects" >&2
+    exit 1
+  }
+  kwin_start="$(kwin_start_tick "$kwin_pid")" || {
+    echo "error: could not capture KWin PID/start identity for pid $kwin_pid; refusing" >&2
+    exit 1
+  }
+  local border_supported oracle_supported border_loaded oracle_loaded
+  border_supported="$(effect_supported_word "$BORDER_EFFECT")" || exit 1
+  oracle_supported="$(effect_supported_word "$ORACLE_EFFECT")" || exit 1
+  border_loaded="$(effect_loaded_word "$BORDER_EFFECT")" || exit 1
+  oracle_loaded="$(effect_loaded_word "$ORACLE_EFFECT")" || exit 1
+  printf 'kwin_owner=%s\n' "$kwin_owner"
+  printf 'kwin_pid=%s\n' "$kwin_pid"
+  printf 'kwin_start=%s\n' "$kwin_start"
+  printf 'effect %s supported=%s loaded=%s\n' "$BORDER_EFFECT" "$border_supported" "$border_loaded"
+  printf 'effect %s supported=%s loaded=%s\n' "$ORACLE_EFFECT" "$oracle_supported" "$oracle_loaded"
+  if [[ "$border_supported" != "true" || "$oracle_supported" != "true" ]]; then
+    echo "error: one or more dev native effects are unavailable to KWin (isEffectSupported: $BORDER_EFFECT=$border_supported, $ORACLE_EFFECT=$oracle_supported)" >&2
+    echo "hint: this result does not establish a session boundary and may indicate a plugin load, factory, or ABI failure, not only missing discovery." >&2
+    echo "hint: run 'just dev-native-setup', then log out and log back in (or start a new session), then re-run. If still unsupported after a new session with a current env script, check KWin plugin-loading diagnostics (journalctl --user -b) around $BORDER_EFFECT / $ORACLE_EFFECT." >&2
+    exit 2
+  fi
+}
+
+cmd_load() {
+  local effect="${1:-}" expect_owner="" expect_pid="" expect_start=""
+  shift || true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --expect-owner)
+        if [[ $# -lt 2 || -z "${2:-}" ]]; then
+          echo "error: --expect-owner requires a value (KWin unique owner, e.g. :1.99)" >&2
+          exit 1
+        fi
+        expect_owner="$2"; shift 2 ;;
+      --expect-pid)
+        if [[ $# -lt 2 || -z "${2:-}" ]]; then
+          echo "error: --expect-pid requires a value (KWin PID)" >&2
+          exit 1
+        fi
+        expect_pid="$2"; shift 2 ;;
+      --expect-start)
+        if [[ $# -lt 2 || -z "${2:-}" ]]; then
+          echo "error: --expect-start requires a value (KWin start tick)" >&2
+          exit 1
+        fi
+        expect_start="$2"; shift 2 ;;
+      *) echo "error: unknown load argument '$1'" >&2; exit 1 ;;
+    esac
+  done
+  if [[ "$effect" != "$BORDER_EFFECT" && "$effect" != "$ORACLE_EFFECT" ]]; then
+    echo "error: refusing to load unexpected effect '$effect' (expected $BORDER_EFFECT or $ORACLE_EFFECT)" >&2
+    exit 1
+  fi
+  verify_kwin_owner "$expect_owner" "$expect_pid" "$expect_start" || exit 1
+  if ! busctl --user --json=short call org.kde.KWin /Effects org.kde.kwin.Effects loadEffect s "$effect" >/dev/null 2>&1; then
+    echo "error: loadEffect call failed for $effect; native state is unresolved" >&2
+    exit 1
+  fi
+  verify_kwin_owner "$expect_owner" "$expect_pid" "$expect_start" || {
+    echo "error: KWin owner changed during loadEffect $effect; native state is unresolved" >&2
+    exit 1
+  }
+  local loaded
+  loaded="$(effect_loaded_word "$effect")" || {
+    echo "error: could not verify load state for $effect; native state is unresolved" >&2
+    exit 1
+  }
+  if [[ "$loaded" != "true" ]]; then
+    echo "error: loadEffect did not result in $effect being loaded; native state is unresolved" >&2
+    exit 1
+  fi
+  echo "loaded: $effect (transient; no persisted enabled change)"
+}
+
+cmd_unload() {
+  local effect="${1:-}" expect_owner="" expect_pid="" expect_start=""
+  shift || true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --expect-owner)
+        if [[ $# -lt 2 || -z "${2:-}" ]]; then
+          echo "error: --expect-owner requires a value (KWin unique owner, e.g. :1.99)" >&2
+          exit 1
+        fi
+        expect_owner="$2"; shift 2 ;;
+      --expect-pid)
+        if [[ $# -lt 2 || -z "${2:-}" ]]; then
+          echo "error: --expect-pid requires a value (KWin PID)" >&2
+          exit 1
+        fi
+        expect_pid="$2"; shift 2 ;;
+      --expect-start)
+        if [[ $# -lt 2 || -z "${2:-}" ]]; then
+          echo "error: --expect-start requires a value (KWin start tick)" >&2
+          exit 1
+        fi
+        expect_start="$2"; shift 2 ;;
+      *) echo "error: unknown unload argument '$1'" >&2; exit 1 ;;
+    esac
+  done
+  if [[ "$effect" != "$BORDER_EFFECT" && "$effect" != "$ORACLE_EFFECT" ]]; then
+    echo "error: refusing to unload unexpected effect '$effect' (expected $BORDER_EFFECT or $ORACLE_EFFECT)" >&2
+    exit 1
+  fi
+  verify_kwin_owner "$expect_owner" "$expect_pid" "$expect_start" || {
+    echo "error: refusing unload of $effect against a changed KWin owner; native state is unresolved" >&2
+    exit 1
+  }
+  if ! busctl --user --json=short call org.kde.KWin /Effects org.kde.kwin.Effects unloadEffect s "$effect" >/dev/null 2>&1; then
+    echo "error: unloadEffect call failed for $effect; native state is unresolved (do not retry unload; recover with logout/login)" >&2
+    exit 1
+  fi
+  verify_kwin_owner "$expect_owner" "$expect_pid" "$expect_start" || {
+    echo "error: KWin owner changed during unloadEffect $effect; native state is unresolved" >&2
+    exit 1
+  }
+  local loaded
+  loaded="$(effect_loaded_word "$effect")" || {
+    echo "error: could not verify unload state for $effect; native state is unresolved (do not retry unload; recover with logout/login)" >&2
+    exit 1
+  }
+  if [[ "$loaded" != "false" ]]; then
+    echo "error: unloadEffect did not result in $effect being unloaded; native state is unresolved (do not retry unload; recover with logout/login)" >&2
+    exit 1
+  fi
+  echo "unloaded: $effect (isEffectLoaded=false verified; this does not prove the library is unmapped; a new binary still requires logout/login)"
+}
+
+if [[ $# -eq 0 ]]; then
+  echo "error: missing command (setup, remove, preflight, load, unload)" >&2
+  usage >&2
+  exit 1
+fi
+
+case "${1:-}" in
+  --help|-h)
+    [[ $# -eq 1 ]] || { echo "error: '--help' takes no arguments" >&2; exit 1; }
+    usage
+    exit 0
+    ;;
+  setup)
+    [[ $# -eq 1 ]] || { echo "error: 'setup' takes no arguments" >&2; exit 1; }
+    cmd_setup
+    ;;
+  remove)
+    [[ $# -eq 1 ]] || { echo "error: 'remove' takes no arguments" >&2; exit 1; }
+    cmd_remove
+    ;;
+  preflight)
+    [[ $# -eq 1 ]] || { echo "error: 'preflight' takes no arguments" >&2; exit 1; }
+    cmd_preflight
+    ;;
+  load)
+    cmd_load "${@:2}"
+    ;;
+  unload)
+    cmd_unload "${@:2}"
+    ;;
+  *)
+    echo "error: unknown command '$1'" >&2
+    usage >&2
+    exit 1
+    ;;
+esac

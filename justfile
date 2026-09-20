@@ -872,27 +872,105 @@ dev mode="":
         exit 1
         ;;
     esac
-    # Full-solution build before any lifecycle mutation. Only DOWN reaches
-    # here; UP/SPLIT/UNKNOWN/bogus-mode already exited above.
+    # Native preflight before any build or startup mutation. Preserves prior
+    # effect state; unsupported/unavailable fails closed with setup +
+    # logout/login guidance. Ordinary transport/parse failures fail closed.
+    REPO_ROOT="{{ justfile_directory() }}"
+    NATIVE_HELPER="$REPO_ROOT/scripts/dev-native-effect.sh"
+    BORDER_EFFECT="plasma-auto-tiler-active-border"
+    ORACLE_EFFECT="plasma-auto-tiler-drag-oracle"
+    NATIVE_PREFLIGHT_OUT=""
+    NATIVE_PREFLIGHT_RC=0
+    NATIVE_PREFLIGHT_OUT="$(bash "$NATIVE_HELPER" preflight 2>&1)" || NATIVE_PREFLIGHT_RC=$?
+    printf '%s\n' "$NATIVE_PREFLIGHT_OUT"
+    if [[ "$NATIVE_PREFLIGHT_RC" -eq 2 ]]; then
+      echo "error: just dev: refusing: dev native effects are not discoverable; run 'just dev-native-setup', then log out and log back in (or start a new session), then re-run" >&2
+      exit 2
+    fi
+    if [[ "$NATIVE_PREFLIGHT_RC" -ne 0 ]]; then
+      echo "error: just dev: native preflight failed (exit $NATIVE_PREFLIGHT_RC); refusing bring-up; no dev lifecycle changes made" >&2
+      exit "$NATIVE_PREFLIGHT_RC"
+    fi
+    NATIVE_KWIN_OWNER="$(printf '%s\n' "$NATIVE_PREFLIGHT_OUT" | sed -n 's/^kwin_owner=//p' | head -n 1)"
+    NATIVE_KWIN_PID="$(printf '%s\n' "$NATIVE_PREFLIGHT_OUT" | sed -n 's/^kwin_pid=//p' | head -n 1)"
+    NATIVE_KWIN_START="$(printf '%s\n' "$NATIVE_PREFLIGHT_OUT" | sed -n 's/^kwin_start=//p' | head -n 1)"
+    [[ "$NATIVE_KWIN_OWNER" =~ ^:[0-9]+\.[0-9]+$ ]] || { echo "error: just dev: native preflight returned no valid KWin owner; refusing" >&2; exit 1; }
+    [[ "$NATIVE_KWIN_PID" =~ ^[1-9][0-9]*$ ]] || { echo "error: just dev: native preflight returned no valid KWin pid; refusing" >&2; exit 1; }
+    [[ "$NATIVE_KWIN_START" =~ ^[1-9][0-9]*$ ]] || { echo "error: just dev: native preflight returned no valid KWin start identity; refusing" >&2; exit 1; }
+    BORDER_PRELOADED="false"
+    ORACLE_PRELOADED="false"
+    BORDER_LINE="$(printf '%s\n' "$NATIVE_PREFLIGHT_OUT" | grep -F "effect $BORDER_EFFECT " | head -n 1 || true)"
+    ORACLE_LINE="$(printf '%s\n' "$NATIVE_PREFLIGHT_OUT" | grep -F "effect $ORACLE_EFFECT " | head -n 1 || true)"
+    [[ -n "$BORDER_LINE" && -n "$ORACLE_LINE" ]] || { echo "error: just dev: native preflight returned no usable effect state; refusing" >&2; exit 1; }
+    case "$BORDER_LINE" in *"loaded=true"*) BORDER_PRELOADED="true" ;; *"loaded=false"*) BORDER_PRELOADED="false" ;; *) echo "error: just dev: ambiguous border preflight line; refusing" >&2; exit 1 ;; esac
+    case "$ORACLE_LINE" in *"loaded=true"*) ORACLE_PRELOADED="true" ;; *"loaded=false"*) ORACLE_PRELOADED="false" ;; *) echo "error: just dev: ambiguous oracle preflight line; refusing" >&2; exit 1 ;; esac
+    # Never rebuild a loaded plugin in a way that claims the new binary is
+    # active: a loaded effect keeps its mapped library until logout/login.
+    # Skip the native stage when preloaded; otherwise build all components.
     JUST_BUILD_RC=0
-    just --justfile "$JUSTFILE" build || JUST_BUILD_RC=$?
-    if [[ "$JUST_BUILD_RC" -ne 0 ]]; then
-      echo "error: just dev: build failed (exit $JUST_BUILD_RC); refusing bring-up; no dev lifecycle changes made" >&2
-      exit "$JUST_BUILD_RC"
+    if [[ "$BORDER_PRELOADED" == "true" || "$ORACLE_PRELOADED" == "true" ]]; then
+      echo "warning: native effect already loaded (border preloaded=$BORDER_PRELOADED, oracle preloaded=$ORACLE_PRELOADED); skipping native rebuild so the loaded library is never overwritten. No hot reload is promised; a rebuilt binary still requires logout/login."
+      just --justfile "$JUSTFILE" build-rust || JUST_BUILD_RC=$?
+      if [[ "$JUST_BUILD_RC" -ne 0 ]]; then
+        echo "error: just dev: build-rust failed (exit $JUST_BUILD_RC); refusing bring-up; no dev lifecycle changes made" >&2
+        exit "$JUST_BUILD_RC"
+      fi
+      just --justfile "$JUSTFILE" build-kwin-script || JUST_BUILD_RC=$?
+      if [[ "$JUST_BUILD_RC" -ne 0 ]]; then
+        echo "error: just dev: build-kwin-script failed (exit $JUST_BUILD_RC); refusing bring-up; no dev lifecycle changes made" >&2
+        exit "$JUST_BUILD_RC"
+      fi
+    else
+      just --justfile "$JUSTFILE" build || JUST_BUILD_RC=$?
+      if [[ "$JUST_BUILD_RC" -ne 0 ]]; then
+        echo "error: just dev: build failed (exit $JUST_BUILD_RC); refusing bring-up; no dev lifecycle changes made" >&2
+        exit "$JUST_BUILD_RC"
+      fi
     fi
-    echo "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin; plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login."
-    # Bring-up composes the existing detached recipe. Its own fail-closed
-    # rollback owns failures here; no extra teardown is attempted on failure
-    # and no logs are tailed without success.
-    JUST_DEV_ON_RC=0
-    just --justfile "$JUSTFILE" dev-on || JUST_DEV_ON_RC=$?
-    if [[ "$JUST_DEV_ON_RC" -ne 0 ]]; then
-      echo "error: just dev: bring-up via dev-on failed (exit $JUST_DEV_ON_RC); no logs tailed; rollback handled by dev-on" >&2
-      exit "$JUST_DEV_ON_RC"
-    fi
-    # From here the session is UP via this command, so arm receipt-bound
-    # teardown for exit/Ctrl-C before touching logs.
+    echo "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login."
+    # Transiently load only effects this invocation owns (supported and not
+    # preloaded). Preloaded effects are preserved. No persisted enabled
+    # config is written. Owner identity (unique owner, pid, start) is pinned
+    # from preflight; a changed KWin owner is never mutated.
+    OWNED_LOADS=""
+    native_unload_owned_reverse() {
+      local rc=0 effect unload_rc
+      local -a stack=()
+      local item
+      for item in ${OWNED_LOADS:-}; do [[ -n "$item" ]] && stack+=("$item"); done
+      local i
+      for (( i=${#stack[@]}-1; i>=0; i-- )); do
+        effect="${stack[$i]}"
+        unload_rc=0
+        bash "$NATIVE_HELPER" unload "$effect" --expect-owner "$NATIVE_KWIN_OWNER" --expect-pid "$NATIVE_KWIN_PID" --expect-start "$NATIVE_KWIN_START" || unload_rc=$?
+        if [[ "$unload_rc" -ne 0 ]]; then
+          echo "error: just dev: failed to unload owned effect $effect; native state is unresolved (do not retry unload; recover with logout/login)" >&2
+          rc=1
+        fi
+      done
+      OWNED_LOADS=""
+      return "$rc"
+    }
+    native_load_one() {
+      local effect="$1" load_rc=0
+      bash "$NATIVE_HELPER" load "$effect" --expect-owner "$NATIVE_KWIN_OWNER" --expect-pid "$NATIVE_KWIN_PID" --expect-start "$NATIVE_KWIN_START" || load_rc=$?
+      if [[ "$load_rc" -ne 0 ]]; then
+        echo "error: just dev: failed to load effect $effect; unwinding owned loads in reverse" >&2
+        native_unload_owned_reverse || true
+        return "$load_rc"
+      fi
+      if [[ -z "$OWNED_LOADS" ]]; then
+        OWNED_LOADS="$effect"
+      else
+        OWNED_LOADS="$OWNED_LOADS $effect"
+      fi
+    }
+    # Full session teardown (dev-off + owned native unload in reverse).
+    # Defined before any native load. It is invoked only after observed
+    # dev-on success (see DEV_ON_OK handoff below), so it never calls
+    # dev-off before success.
     TEARDOWN_DONE=0
+    DEV_ON_OK=0
     INT_RECEIVED=0
     TAIL_PID=""
     JOURNAL_PID=""
@@ -906,6 +984,9 @@ dev mode="":
     KWIN_STREAM="$STATE_DIR/dev-kwin-stream"
     dev_cleanup() {
       local rc=$?
+      if [[ "${1:-}" != "" ]]; then
+        rc="$1"
+      fi
       trap - INT TERM EXIT
       set +e
       if [[ -n "${TAIL_PID:-}" ]]; then kill "$TAIL_PID" 2>/dev/null || true; fi
@@ -918,12 +999,23 @@ dev mode="":
         TEARDOWN_DONE=1
         just --justfile "$JUSTFILE" dev-off
         OFF_RC=$?
+        NATIVE_OFF_RC=0
+        if [[ -n "${OWNED_LOADS:-}" ]]; then
+          native_unload_owned_reverse || NATIVE_OFF_RC=$?
+        fi
         if [[ -n "${DEV_LOG:-}" ]]; then echo "combined log: $DEV_LOG"; fi
         rm -f -- "$STATE_DIR/dev-stream" "$STATE_DIR/dev-planner-stream" "$STATE_DIR/dev-kwin-stream" 2>/dev/null || true
+        if [[ "$NATIVE_OFF_RC" -ne 0 ]]; then
+          echo "error: just dev: owned native effect unload failed; native state is unresolved (do not retry unload; recover with logout/login)" >&2
+        fi
         if [[ "$OFF_RC" -ne 0 ]]; then
           echo "error: just dev: dev-off teardown failed (exit $OFF_RC)" >&2
           echo "error: just dev: teardown is unverified; do not retry unload. Recover with logout/login." >&2
           exit "$OFF_RC"
+        fi
+        if [[ "$NATIVE_OFF_RC" -ne 0 ]]; then
+          echo "error: just dev: teardown is unverified; do not retry unload. Recover with logout/login." >&2
+          exit "$NATIVE_OFF_RC"
         fi
         if [[ "${INT_RECEIVED:-0}" -eq 1 && "$rc" -eq 130 ]]; then
           rc=0
@@ -931,9 +1023,61 @@ dev mode="":
       fi
       exit "$rc"
     }
+    # Minimal native-only early cleanup for the narrow window from the first
+    # native load through dev-on success. State-aware: once DEV_ON_OK is set
+    # after observed dev-on success, it delegates to the full dev_cleanup so
+    # an INT/TERM/EXIT arriving before the sequential trap replacements below
+    # still tears down via dev-off. Early INT/TERM exit through this EXIT
+    # handler, so they route the same way. Never calls dev-off directly.
+    native_early_cleanup() {
+      local rc=$?
+      if [[ "${DEV_ON_OK:-0}" -eq 1 ]]; then
+        dev_cleanup "$rc"
+        exit "$rc"
+      fi
+      trap - EXIT INT TERM
+      native_unload_owned_reverse || true
+      exit "$rc"
+    }
+    trap native_early_cleanup EXIT
+    trap 'if [[ "${DEV_ON_OK:-0}" -eq 1 ]]; then INT_RECEIVED=1; fi; exit 130' INT
+    trap 'exit 143' TERM
+    if [[ "$BORDER_PRELOADED" == "false" ]]; then
+      native_load_one "$BORDER_EFFECT" || { echo "error: just dev: native load failed; no script/planner lifecycle started" >&2; exit 1; }
+    else
+      echo "just dev: preserving preloaded effect $BORDER_EFFECT (never unloaded by this session)"
+    fi
+    if [[ "$ORACLE_PRELOADED" == "false" ]]; then
+      native_load_one "$ORACLE_EFFECT" || { echo "error: just dev: native load failed; no script/planner lifecycle started" >&2; exit 1; }
+    else
+      echo "just dev: preserving preloaded effect $ORACLE_EFFECT (never unloaded by this session)"
+    fi
+    # Bring-up composes the existing detached recipe. Its own fail-closed
+    # rollback owns failures here; native owned loads are unwound on failure
+    # and no logs are tailed without success.
+    JUST_DEV_ON_RC=0
+    just --justfile "$JUSTFILE" dev-on || JUST_DEV_ON_RC=$?
+    if [[ "$JUST_DEV_ON_RC" -ne 0 ]]; then
+      echo "error: just dev: bring-up via dev-on failed (exit $JUST_DEV_ON_RC); unwinding owned native loads in reverse; no logs tailed; rollback handled by dev-on" >&2
+      native_unload_owned_reverse || true
+      exit "$JUST_DEV_ON_RC"
+    fi
+    # dev-on succeeded; publish the state-aware handoff before replacing
+    # traps. DEV_ON_OK routes the still-installed early handlers to full
+    # dev_cleanup, closing the interrupt window. The replacements below are
+    # sequential (one signal per trap builtin, not simultaneous); the flag,
+    # not replacement timing, provides correctness. The full handler was
+    # defined before any load and is only invoked after success, so dev-off
+    # is never called before success. One lifecycle structure, no durable recovery.
+    DEV_ON_OK=1
     trap dev_cleanup EXIT
     trap 'INT_RECEIVED=1; exit 130' INT
     trap 'exit 143' TERM
+    # From here the session is UP via this command; refresh stream paths
+    # (already initialized before loads) before touching logs.
+    DEV_FIFO="$STATE_DIR/dev-stream"
+    PLANNER_STREAM="$STATE_DIR/dev-planner-stream"
+    KWIN_STREAM="$STATE_DIR/dev-kwin-stream"
     [[ -f "$STATE_DIR/planner-log" ]] || { echo "error: just dev: missing planner log pointer ($STATE_DIR/planner-log)" >&2; exit 1; }
     PLANNER_LOG="$(cat "$STATE_DIR/planner-log")"
     [[ -n "$PLANNER_LOG" && -f "$PLANNER_LOG" && ! -L "$PLANNER_LOG" ]] || { echo "error: just dev: planner log missing or symlinked: ${PLANNER_LOG:-unknown}" >&2; exit 1; }
@@ -1033,6 +1177,20 @@ build-native-effect:
     echo "staged: $STAGE/kwin/effects/plugins/$DRAG_SO"
     echo "staged: $STAGE/kwin/effects/configs/$KCM_SO"
     echo "QT_PLUGIN_PATH=$STAGE"
+
+# One-time dev delivery setup: stage native effects, then write the project-owned plasma-workspace env script for this checkout. Takes effect only after user logout/login. Deliberate; never run by `just dev`.
+dev-native-setup: build-native-effect
+    #!/usr/bin/env bash
+    set -euo pipefail
+    REPO_ROOT="{{ justfile_directory() }}"
+    bash "$REPO_ROOT/scripts/dev-native-effect.sh" setup
+
+# Remove only the exact project-owned plasma-workspace env script for this checkout. Never removes parent dirs or touches the running KWin.
+dev-native-remove:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    REPO_ROOT="{{ justfile_directory() }}"
+    bash "$REPO_ROOT/scripts/dev-native-effect.sh" remove
 
 # Build the whole solution: Rust Planner + KWin script bundle + native effects (aggregate full build for just dev).
 build: build-rust build-kwin-script build-native-effect

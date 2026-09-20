@@ -444,34 +444,43 @@ session-boundary contract.
 Development-only alternative to `effect-install`. `just build-native-effect`
 stages both plugins at
 `target/kwin-native-effect-stage/kwin/effects/{plugins,configs}/` without
-touching KWin, D-Bus, config, or user paths. The setup below mutates host
-session delivery; it is documented, not run here, and remains pending live
-evidence.
+touching KWin, D-Bus, config, or user paths. One-time dev delivery uses the
+explicit setup below; it is documented, not run here, and remains pending
+live evidence.
 
 ```sh
-devenv shell --impure -- just build-native-effect
-REPO_ROOT="$(pwd -P)"
-CONFIG_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}"
-STAGE="$REPO_ROOT/target/kwin-native-effect-stage"
-mkdir -p "$CONFIG_ROOT/plasma-workspace/env"
-printf 'export QT_PLUGIN_PATH="%s${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"\n' "$STAGE" > "$CONFIG_ROOT/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
-kwriteconfig6 --file "$CONFIG_ROOT/kwinrc" --group Plugins --key plasma-auto-tiler-active-borderEnabled true
+devenv shell --impure -- just dev-native-setup
 ```
 
-Undo:
+`just dev-native-setup` builds/stages as necessary (via `build-native-effect`)
+then creates only the project-owned
+`$XDG_CONFIG_HOME/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh`
+for this checkout, with robust quoting for paths containing spaces or shell
+metacharacters. It prepends the stage to `QT_PLUGIN_PATH` while retaining any
+existing value, writes no `kwinrc` keys, uses no D-Bus, and is idempotent only
+for exact same expected content (unfamiliar files, symlinks, and
+alternate-checkout content are refused). Undo with:
 
 ```sh
-REPO_ROOT="$(pwd -P)"
-CONFIG_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}"
-rm -f "$CONFIG_ROOT/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
-kwriteconfig6 --file "$CONFIG_ROOT/kwinrc" --group Plugins --key plasma-auto-tiler-active-borderEnabled --delete
-rm -rf "$REPO_ROOT/target/kwin-native-effect-stage" "$REPO_ROOT/target/kwin-native-effect-build"
+just dev-native-remove
 ```
+
+`just dev-native-remove` deletes only that exact owned env script and never
+removes parent directories. Neither command touches the running KWin.
+
+The dogfood `effect-install`/`effect-remove` path and this dev path share the
+exact `$XDG_CONFIG_HOME/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh`
+path and cannot coexist there: dogfood refuses a dev-owned script and preserves
+it, and the dev helper refuses dogfood/alternate content.
 
 Log out and log back in after setup, and again after every effect rebuild.
-`just dev`, `just reload`, and controller reload cannot pick up a rebuilt
-native effect. Log out and log back in after undo too. With no OpenGL backend
-there is no border.
+`just dev` preflights both effects against `/Effects` before any startup
+action, transiently loads only effects it owns (preserving preloaded ones),
+and unloads owned loads in reverse on teardown with KWin owner guards; it
+writes no persisted native enabled config. `just dev`, `just reload`, and
+controller reload cannot pick up a rebuilt native effect, and unload
+verification never proves the library is unmapped. Log out and log back in
+after undo too. With no OpenGL backend there is no border.
 
 ### Building without Nix/devenv
 
