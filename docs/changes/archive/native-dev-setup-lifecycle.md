@@ -149,3 +149,18 @@
   Cachix rolling input with the former is a reproducible repo-owned correction,
   but changes the complete development package set and remains a scoped
   source-authority decision.
+
+## Interim Host Match (2026-09-20)
+
+- User-approved interim correction: `devenv.yaml` and `devenv.lock` now pin
+  the development Nixpkgs input directly to the host revision
+  `e554fab72f81915600f3f449b786fd9af40439a5`. This selects KWin 6.7.5 for
+  the configured native build dependencies and resolves the identified 6.7.4
+  factory-IID mismatch. `flake.lock` remains unchanged.
+- This is a temporary ABI-recovery measure, not a durable policy that the
+  development lock should follow the host. A better host-matched native
+  development build workflow remains unresolved and is not implemented here.
+- The user must exit and re-enter devenv before building with the new input,
+  then run `just build-native-effect`, log out and back in, and run
+  `just dev trace`. No native stage or session state changed during this lock
+  update.
