@@ -94,8 +94,12 @@ Only meaningful pending or active work is listed.
   failed flight instead of escaping and leaving it blocked until timeout;
   regressions cover stale callbacks and a later usable command. Typecheck and
   838 KWin tests/build pass. No uncertain-transaction recovery or replay is
-  selected. Next autonomous scope: inspect approved gap reload/application for
-  concrete offline-fixable discrepancies.
+  selected. Workspace sends now receive validated gap reloads; each in-flight
+  request/ack/verify retains its original pair while subsequent sends use the
+  latest values for both domains. Entry and transaction regressions pass with
+  typecheck and 845 KWin tests/build. No loss was found in Plan gap queueing or
+  native KCM reload-result handling. Next autonomous scope: inspect existing
+  persisted-but-unused settings for bounded implementation under approved intent.
   Other backlog work follows this focused scope.
 - P2 | Sticky ownership after adapter restart | In-memory prior float/tiled
   ownership is cleared on adapter re-enable, so an already-sticky window is

@@ -3947,6 +3947,11 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                     }
                     domainGaps = next;
                     try {
+                        workspaceSend.updateGaps({ innerGap: next.innerGap, outerGap: next.outerGap });
+                    } catch (error) {
+                        void error;
+                    }
+                    try {
                         log(
                             `plasma-auto-tiler:plan:config-reloaded innerGap=${String(next.innerGap)} outerGap=${String(next.outerGap)}`,
                         );

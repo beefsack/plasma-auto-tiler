@@ -4038,3 +4038,213 @@ describe("cosmic send-to-workspace timeout settlement diagnostics", () => {
         void seam;
     });
 });
+
+describe("cosmic send-to-workspace deliberate gap reload", () => {
+    function gapsOf(payload: string): { gap: unknown; outer_gap: unknown; targetGap: unknown; targetOuter: unknown } {
+        const parsed = parsePayload(payload);
+        const domain = parsed["domain"] as Record<string, unknown>;
+        const targetDomain = parsed["target_domain"] as Record<string, unknown>;
+        return {
+            gap: domain["gap"],
+            outer_gap: domain["outer_gap"],
+            targetGap: targetDomain["gap"],
+            targetOuter: targetDomain["outer_gap"],
+        };
+    }
+
+    function plannerPayloads(mocks: Mocks): string[] {
+        return mocks.dbusCalls
+            .filter((call) => call.method === WORKSPACE_SEND_METHOD)
+            .map((call) => call.payload);
+    }
+
+    function resetWorldForNextSend(mocks: Mocks): void {
+        for (const entry of mocks.world.windows) {
+            if (entry.id === "win-a") {
+                entry.workspace = "ws-1";
+                entry.rect = { x: 0, y: 0, w: 100, h: 100 };
+            } else if (entry.id === "win-b") {
+                entry.workspace = "ws-1";
+                entry.rect = { x: 100, y: 0, w: 100, h: 100 };
+            } else {
+                entry.workspace = "ws-2";
+                entry.rect = { x: 0, y: 0, w: 100, h: 100 };
+            }
+        }
+    }
+
+    it("updates subsequent requests to the validated pair in both domains", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env, { innerGap: 8, outerGap: 8 });
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        adapter.updateGaps({ innerGap: 12, outerGap: 14 });
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const requestPayload = mocks.dbusCalls[1]?.payload as string;
+        assert.deepEqual(gapsOf(requestPayload), { gap: 12, outer_gap: 14, targetGap: 12, targetOuter: 14 });
+        const correlation = parsePayload(requestPayload)["correlation_id"] as string;
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        const ackPayload = mocks.dbusCalls[2]?.payload as string;
+        assert.deepEqual(gapsOf(ackPayload), { gap: 12, outer_gap: 14, targetGap: 12, targetOuter: 14 });
+        mocks.callbacks[2]?.(ackReply(correlation));
+        const verifyPayload = mocks.dbusCalls[3]?.payload as string;
+        assert.deepEqual(gapsOf(verifyPayload), { gap: 12, outer_gap: 14, targetGap: 12, targetOuter: 14 });
+        mocks.callbacks[3]?.(committedReply(correlation));
+        assert.equal(adapter.isInFlight, false);
+        adapter.disable();
+    });
+
+    it("freezes the request-wait transaction when reload lands before the planned reply", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env, { innerGap: 8, outerGap: 8 });
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const requestPayload = mocks.dbusCalls[1]?.payload as string;
+        assert.deepEqual(gapsOf(requestPayload), { gap: 8, outer_gap: 8, targetGap: 8, targetOuter: 8 });
+        const correlation = parsePayload(requestPayload)["correlation_id"] as string;
+        adapter.updateGaps({ innerGap: 12, outerGap: 14 });
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        assert.deepEqual(gapsOf(mocks.dbusCalls[2]?.payload as string), {
+            gap: 8,
+            outer_gap: 8,
+            targetGap: 8,
+            targetOuter: 8,
+        });
+        mocks.callbacks[2]?.(ackReply(correlation));
+        assert.deepEqual(gapsOf(mocks.dbusCalls[3]?.payload as string), {
+            gap: 8,
+            outer_gap: 8,
+            targetGap: 8,
+            targetOuter: 8,
+        });
+        mocks.callbacks[3]?.(committedReply(correlation));
+        assert.equal(adapter.isInFlight, false);
+        resetWorldForNextSend(mocks);
+        assert.equal(adapter.requestSend("ws-2"), true);
+        const base = mocks.dbusCalls.length - 1;
+        mocks.callbacks[base]?.(":1.7");
+        assert.deepEqual(gapsOf(mocks.dbusCalls[base + 1]?.payload as string), {
+            gap: 12,
+            outer_gap: 14,
+            targetGap: 12,
+            targetOuter: 14,
+        });
+        adapter.disable();
+    });
+
+    it("freezes the ack-wait transaction when reload lands before the ack reply", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env, { innerGap: 8, outerGap: 8 });
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const requestPayload = mocks.dbusCalls[1]?.payload as string;
+        const correlation = parsePayload(requestPayload)["correlation_id"] as string;
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        assert.deepEqual(gapsOf(mocks.dbusCalls[2]?.payload as string), {
+            gap: 8,
+            outer_gap: 8,
+            targetGap: 8,
+            targetOuter: 8,
+        });
+        adapter.updateGaps({ innerGap: 12, outerGap: 14 });
+        mocks.callbacks[2]?.(ackReply(correlation));
+        assert.deepEqual(gapsOf(mocks.dbusCalls[3]?.payload as string), {
+            gap: 8,
+            outer_gap: 8,
+            targetGap: 8,
+            targetOuter: 8,
+        });
+        mocks.callbacks[3]?.(committedReply(correlation));
+        resetWorldForNextSend(mocks);
+        assert.equal(adapter.requestSend("ws-2"), true);
+        const base = mocks.dbusCalls.length - 1;
+        mocks.callbacks[base]?.(":1.7");
+        assert.deepEqual(gapsOf(mocks.dbusCalls[base + 1]?.payload as string), {
+            gap: 12,
+            outer_gap: 14,
+            targetGap: 12,
+            targetOuter: 14,
+        });
+        adapter.disable();
+    });
+
+    it("freezes the verify-wait transaction when reload lands before the committed reply", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env, { innerGap: 8, outerGap: 8 });
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const requestPayload = mocks.dbusCalls[1]?.payload as string;
+        const correlation = parsePayload(requestPayload)["correlation_id"] as string;
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        mocks.callbacks[2]?.(ackReply(correlation));
+        const verifyPayload = mocks.dbusCalls[3]?.payload as string;
+        assert.deepEqual(gapsOf(verifyPayload), { gap: 8, outer_gap: 8, targetGap: 8, targetOuter: 8 });
+        adapter.updateGaps({ innerGap: 12, outerGap: 14 });
+        mocks.callbacks[3]?.(committedReply(correlation));
+        assert.ok(plannerPayloads(mocks).every((payload) => gapsOf(payload).gap === 8));
+        resetWorldForNextSend(mocks);
+        assert.equal(adapter.requestSend("ws-2"), true);
+        const base = mocks.dbusCalls.length - 1;
+        mocks.callbacks[base]?.(":1.7");
+        assert.deepEqual(gapsOf(mocks.dbusCalls[base + 1]?.payload as string), {
+            gap: 12,
+            outer_gap: 14,
+            targetGap: 12,
+            targetOuter: 14,
+        });
+        adapter.disable();
+    });
+
+    it("uses the current validated pair after a pre-dispatch clean rejection", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env, { innerGap: 8, outerGap: 8 });
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        adapter.updateGaps({ innerGap: 12, outerGap: 14 });
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const requestPayload = mocks.dbusCalls[1]?.payload as string;
+        assert.deepEqual(gapsOf(requestPayload), { gap: 12, outer_gap: 14, targetGap: 12, targetOuter: 14 });
+        const correlation = parsePayload(requestPayload)["correlation_id"] as string;
+        mocks.callbacks[1]?.(
+            JSON.stringify({ v: WORKSPACE_SEND_CONTRACT_VERSION, correlation_id: correlation, outcome: "rejected", kind: "focus-mismatch" }),
+        );
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+        adapter.updateGaps({ innerGap: 4, outerGap: 6 });
+        assert.equal(adapter.requestSend("ws-2"), true);
+        const base = mocks.dbusCalls.length - 1;
+        mocks.callbacks[base]?.(":1.7");
+        assert.deepEqual(gapsOf(mocks.dbusCalls[base + 1]?.payload as string), {
+            gap: 4,
+            outer_gap: 6,
+            targetGap: 4,
+            targetOuter: 6,
+        });
+        adapter.disable();
+    });
+
+    it("normalizes invalid gap input without refusal", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env, { innerGap: 8, outerGap: 8 });
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        adapter.updateGaps({ innerGap: 999, outerGap: "bad" });
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        assert.deepEqual(gapsOf(mocks.dbusCalls[1]?.payload as string), {
+            gap: 8,
+            outer_gap: 8,
+            targetGap: 8,
+            targetOuter: 8,
+        });
+        adapter.disable();
+    });
+});

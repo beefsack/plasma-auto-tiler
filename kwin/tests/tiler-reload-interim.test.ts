@@ -432,3 +432,211 @@ describe("deliberate tiler reload behavior", () => {
         handle?.stop();
     });
 });
+
+describe("deliberate reload forwards gaps to subsequent workspace sends", () => {
+    function twoDesktopWorkspace(): Record<string, unknown> {
+        const output: Record<string, unknown> = { name: "out-1" };
+        const ws1: Record<string, unknown> = { id: "ws-1", x11DesktopNumber: 1 };
+        const ws2: Record<string, unknown> = { id: "ws-2", x11DesktopNumber: 2 };
+        const currentByOutput = new Map<object, unknown>([[output, ws1]]);
+        const makeWin = (id: string, desktop: unknown, x: number): Record<string, unknown> => {
+            const win: Record<string, unknown> = {
+                normalWindow: true,
+                managed: true,
+                minimized: false,
+                fullScreen: false,
+                maximizeMode: 0,
+                onAllDesktops: false,
+                internalId: id,
+                resourceClass: "test-app",
+                output,
+                desktops: [desktop],
+                frameGeometry: { x, y: 0, width: 100, height: 100 },
+                frameGeometryChanged: fakeSignal().signal,
+                fullScreenChanged: fakeSignal().signal,
+                maximizedChanged: fakeSignal().signal,
+                desktopsChanged: fakeSignal().signal,
+            };
+            win["setMaximize"] = (): void => {};
+            return win;
+        };
+        const winA = makeWin("win-a", ws1, 0);
+        const winB = makeWin("win-b", ws1, 100);
+        const winT = makeWin("win-t", ws2, 0);
+        void winT;
+        const workspace: Record<string, unknown> = {
+            screens: [output],
+            desktops: [ws1, ws2],
+            activeWindow: winA,
+            activeScreen: output,
+            windowList: (): unknown[] => [winA, winB, winT],
+            currentDesktopForScreen: (out: unknown): unknown => currentByOutput.get(out as object) ?? null,
+            currentDesktop: ws1,
+            clientArea: (): unknown => ({ x: 0, y: 0, width: 1200, height: 800 }),
+            windowAdded: fakeSignal().signal,
+            windowRemoved: fakeSignal().signal,
+            windowActivated: fakeSignal().signal,
+            screensChanged: fakeSignal().signal,
+            currentDesktopChanged: fakeSignal().signal,
+            desktopsChanged: fakeSignal().signal,
+        };
+        return workspace;
+    }
+
+    it("applies 8/8->12/14 to Plan and the next send source/target domains", () => {
+        let innerGap = 8;
+        let outerGap = 8;
+        const optionsChanged = fakeSignal();
+        const dbusCalls: Array<{ method: string; payload: string }> = [];
+        const callbacks: Array<(reply: unknown) => void> = [];
+        const timers: Array<{ delayMs: number; callback: () => void; cancelled: boolean }> = [];
+        const logs: string[] = [];
+        const handle = startPlanAdapterEntry({
+            workspace: twoDesktopWorkspace(),
+            options: { configChanged: optionsChanged.signal },
+            callDbus: (_service, _path, _iface, method, payload, callback): void => {
+                if (method === "NameHasOwner") {
+                    callback(true);
+                    return;
+                }
+                if (method === "GetNameOwner") {
+                    callback(":1.7");
+                    return;
+                }
+                if (method === "StartServiceByName") {
+                    callback(1);
+                    return;
+                }
+                dbusCalls.push({ method, payload });
+                callbacks.push(callback);
+            },
+            scheduleOnce: (delayMs: number, callback: () => void): (() => void) => {
+                const timer = { delayMs, callback, cancelled: false };
+                timers.push(timer);
+                return (): void => {
+                    timer.cancelled = true;
+                };
+            },
+            log: (message): void => {
+                logs.push(message);
+            },
+            owner: "owner-1",
+            generation: "gen-1",
+            registerShortcutFn: (): boolean => true,
+            readProfileFn: (): string => "cosmic",
+            readWorkspaceModeFn: (): string => "per-output-local",
+            readInnerGapFn: (): number => innerGap,
+            readOuterGapFn: (): number => outerGap,
+        });
+        assert.ok(handle !== null);
+        const fireDebounce = (): void => {
+            const pending = [...timers];
+            timers.length = 0;
+            for (const timer of pending) {
+                if (timer.cancelled) {
+                    continue;
+                }
+                if (timer.delayMs === 120) {
+                    timer.callback();
+                } else {
+                    timers.push(timer);
+                }
+            }
+            for (let index = 0; index < dbusCalls.length; index += 1) {
+                if (dbusCalls[index]?.method === "GetNameOwner") {
+                    callbacks[index]?.(":1.7");
+                }
+            }
+        };
+        const planPayloads = (): Array<Record<string, unknown>> =>
+            dbusCalls
+                .filter((call) => call.method === "DescribePlan")
+                .map((call) => JSON.parse(call.payload) as Record<string, unknown>)
+                .filter((payload) => (payload["command"] as Record<string, unknown>)["op"] !== "send-to-workspace");
+        const replied = new Set<number>();
+        const settlePlans = (): void => {
+            for (let round = 0; round < 8; round += 1) {
+                fireDebounce();
+                let progressed = false;
+                for (let index = 0; index < dbusCalls.length; index += 1) {
+                    if (replied.has(index)) {
+                        continue;
+                    }
+                    const call = dbusCalls[index];
+                    if (call === undefined || call.method !== "DescribePlan") {
+                        continue;
+                    }
+                    let payload: Record<string, unknown>;
+                    try {
+                        payload = JSON.parse(call.payload) as Record<string, unknown>;
+                    } catch {
+                        continue;
+                    }
+                    if ((payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace") {
+                        continue;
+                    }
+                    const windows = payload["windows"] as Array<Record<string, unknown>>;
+                    replied.add(index);
+                    callbacks[index]?.(
+                        JSON.stringify({
+                            v: 1,
+                            correlation_id: payload["correlation_id"],
+                            outcome: "planned",
+                            desired_geometry: windows.map((entry) => ({
+                                window: entry["window"],
+                                leaf: `leaf-${entry["window"] as string}`,
+                                output: entry["output"],
+                                workspace: entry["workspace"],
+                                rect: entry["rect"],
+                            })),
+                        }),
+                    );
+                    progressed = true;
+                }
+                if (!progressed) {
+                    break;
+                }
+            }
+        };
+        fireDebounce();
+        assert.ok(planPayloads().length >= 1);
+        const firstDomain = planPayloads()[0]?.["domain"] as Record<string, unknown>;
+        assert.equal(firstDomain["gap"], 8);
+        assert.equal(firstDomain["outer_gap"], 8);
+        settlePlans();
+        innerGap = 12;
+        outerGap = 14;
+        for (const fire of [...optionsChanged.handlers]) {
+            fire();
+        }
+        assert.ok(logs.some((line) => line === "plasma-auto-tiler:plan:config-reloaded innerGap=12 outerGap=14"));
+        settlePlans();
+        const planAfter = planPayloads();
+        const gapUpdate = planAfter.find(
+            (payload) => (payload["command"] as Record<string, unknown>)["op"] === "update-gaps",
+        ) as Record<string, unknown> | undefined;
+        assert.ok(gapUpdate !== undefined, `update-gaps expected, got ${JSON.stringify(planAfter.map((p) => (p["command"] as Record<string, unknown>)["op"]))}`);
+        assert.equal((gapUpdate["domain"] as Record<string, unknown>)["gap"], 12);
+        assert.equal((gapUpdate["domain"] as Record<string, unknown>)["outer_gap"], 14);
+        handle?.requestWorkspaceMove(2);
+        const sendPayloads = dbusCalls
+            .map((call) => {
+                try {
+                    return JSON.parse(call.payload) as Record<string, unknown>;
+                } catch {
+                    return null;
+                }
+            })
+            .filter(
+                (payload): payload is Record<string, unknown> =>
+                    payload !== null && (payload["command"] as Record<string, unknown>)?.["op"] === "send-to-workspace",
+            );
+        assert.ok(sendPayloads.length >= 1, `send-to-workspace expected, got ${dbusCalls.length} calls`);
+        const lastSend = sendPayloads[sendPayloads.length - 1] as Record<string, unknown>;
+        assert.equal((lastSend["domain"] as Record<string, unknown>)["gap"], 12);
+        assert.equal((lastSend["domain"] as Record<string, unknown>)["outer_gap"], 14);
+        assert.equal((lastSend["target_domain"] as Record<string, unknown>)["gap"], 12);
+        assert.equal((lastSend["target_domain"] as Record<string, unknown>)["outer_gap"], 14);
+        handle?.stop();
+    });
+});

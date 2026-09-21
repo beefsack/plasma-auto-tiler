@@ -800,6 +800,11 @@ interface WorkspacePendingFlight {
     readonly windowCount: number;
     readonly requestPayload: string;
     readonly targetDesktopRef: object | null;
+    // Dispatch-frozen validated gap pair for this transaction. Request, ack,
+    // and verify payloads for this correlation all carry exactly these
+    // values even when a deliberate reload updates subsequent requests.
+    readonly innerGap: number;
+    readonly outerGap: number;
     // Requested logical ordinal from the plan entry (0 permitted for the
     // trailing target, -1 when absent/invalid). Diagnostic only: never gates
     // request, commit, follow, or enablement.
@@ -865,11 +870,13 @@ export class WorkspaceSendAdapter {
     private startupEnabled = false;
     private owner = "";
     private generation = "";
-    // Startup-bound validated gap configuration: resolved once at
-    // construction, reused for every request builder. No reload or
-    // in-flight mutation.
-    private readonly innerGap: number;
-    private readonly outerGap: number;
+    // Validated gap configuration for subsequent requests: resolved at
+    // construction, then re-resolved only through updateGaps on the
+    // deliberate Options configChanged reload. Each dispatched flight
+    // freezes its own pair at request time so a reload during an active
+    // request never alters its ack/verify payloads.
+    private innerGap: number;
+    private outerGap: number;
     private inFlight = false;
     // A post-plan terminal result can leave native membership ahead of Rust's
     // committed domain. Keep Plan from adopting that uncommitted visible state.
@@ -920,6 +927,25 @@ export class WorkspaceSendAdapter {
         } else {
             this.innerGap = resolved.innerGap;
             this.outerGap = resolved.outerGap;
+        }
+    }
+
+    // Deliberate reload edge: adopt the already-validated configChanged pair
+    // for subsequent requests only. Established normalization applies;
+    // invalid input falls back via normalizeGap, never refuses. Never touches
+    // an active flight: its pair stays frozen in pending.
+    updateGaps(gaps?: WorkspaceSendGaps): void {
+        try {
+            if (gaps === undefined) {
+                const resolved = readDomainGaps();
+                this.innerGap = resolved.innerGap;
+                this.outerGap = resolved.outerGap;
+                return;
+            }
+            this.innerGap = normalizeGap(gaps.innerGap);
+            this.outerGap = normalizeGap(gaps.outerGap);
+        } catch (error) {
+            void error;
         }
     }
 
@@ -1086,7 +1112,9 @@ export class WorkspaceSendAdapter {
             return false;
         }
         const snapshot = snapshotOf(observed);
-        const payload = this.buildRequestPayload(observed, correlation);
+        const flightInnerGap = this.innerGap;
+        const flightOuterGap = this.outerGap;
+        const payload = this.buildRequestPayload(observed, correlation, flightInnerGap, flightOuterGap);
         if (payload === null || payload.length > WORKSPACE_SEND_MAX_REQUEST_BYTES) {
             this.refuse("payload-invalid");
             return false;
@@ -1102,6 +1130,8 @@ export class WorkspaceSendAdapter {
             observed.targetDesktopRef,
             payload,
             toDiagOrdinal(requestedOrdinal),
+            flightInnerGap,
+            flightOuterGap,
         );
         return this.inFlight;
     }
@@ -1120,7 +1150,12 @@ export class WorkspaceSendAdapter {
         return observed as WorkspaceSendObserved;
     }
 
-    private buildRequestPayload(observed: WorkspaceSendObserved, correlation: string): string | null {
+    private buildRequestPayload(
+        observed: WorkspaceSendObserved,
+        correlation: string,
+        innerGap: number,
+        outerGap: number,
+    ): string | null {
         const sourceWindows = observed.sourceWindows.map((entry) => ({
             window: entry.id,
             output: observed.sourceOutput,
@@ -1151,8 +1186,8 @@ export class WorkspaceSendAdapter {
                         w: observed.sourceBounds.w,
                         h: observed.sourceBounds.h,
                     },
-                    gap: this.innerGap,
-                    outer_gap: this.outerGap,
+                    gap: innerGap,
+                    outer_gap: outerGap,
                 },
                 target_domain: {
                     output: observed.targetOutput,
@@ -1163,8 +1198,8 @@ export class WorkspaceSendAdapter {
                         w: observed.targetBounds.w,
                         h: observed.targetBounds.h,
                     },
-                    gap: this.innerGap,
-                    outer_gap: this.outerGap,
+                    gap: innerGap,
+                    outer_gap: outerGap,
                 },
                 focused_window: observed.focusedId,
                 windows: sourceWindows,
@@ -1184,6 +1219,9 @@ export class WorkspaceSendAdapter {
     }
 
     private buildAckPayload(observed: WorkspaceSendObserved, correlation: string, revision: number): string | null {
+        const flight = this.pending;
+        const flightInnerGap = flight !== null && flight.correlation === correlation ? flight.innerGap : this.innerGap;
+        const flightOuterGap = flight !== null && flight.correlation === correlation ? flight.outerGap : this.outerGap;
         const sourceWindows = observed.sourceWindows.map((entry) => ({
             window: entry.id,
             output: observed.sourceOutput,
@@ -1214,8 +1252,8 @@ export class WorkspaceSendAdapter {
                         w: observed.sourceBounds.w,
                         h: observed.sourceBounds.h,
                     },
-                    gap: this.innerGap,
-                    outer_gap: this.outerGap,
+                    gap: flightInnerGap,
+                    outer_gap: flightOuterGap,
                 },
                 target_domain: {
                     output: observed.targetOutput,
@@ -1226,8 +1264,8 @@ export class WorkspaceSendAdapter {
                         w: observed.targetBounds.w,
                         h: observed.targetBounds.h,
                     },
-                    gap: this.innerGap,
-                    outer_gap: this.outerGap,
+                    gap: flightInnerGap,
+                    outer_gap: flightOuterGap,
                 },
                 focused_window: observed.focusedId,
                 windows: sourceWindows,
@@ -1246,6 +1284,11 @@ export class WorkspaceSendAdapter {
         if (pending === null || pending.preconditions === null || pending.operation === null) {
             return null;
         }
+        if (pending.correlation !== correlation) {
+            return null;
+        }
+        const flightInnerGap = pending.innerGap;
+        const flightOuterGap = pending.outerGap;
         const sourceWindows = observed.sourceWindows.map((entry) => ({
             window: entry.id,
             output: observed.sourceOutput,
@@ -1276,8 +1319,8 @@ export class WorkspaceSendAdapter {
                         w: observed.sourceBounds.w,
                         h: observed.sourceBounds.h,
                     },
-                    gap: this.innerGap,
-                    outer_gap: this.outerGap,
+                    gap: flightInnerGap,
+                    outer_gap: flightOuterGap,
                 },
                 target_domain: {
                     output: observed.targetOutput,
@@ -1288,8 +1331,8 @@ export class WorkspaceSendAdapter {
                         w: observed.targetBounds.w,
                         h: observed.targetBounds.h,
                     },
-                    gap: this.innerGap,
-                    outer_gap: this.outerGap,
+                    gap: flightInnerGap,
+                    outer_gap: flightOuterGap,
                 },
                 focused_window: observed.focusedId,
                 windows: sourceWindows,
@@ -1325,6 +1368,8 @@ export class WorkspaceSendAdapter {
         targetDesktopRef: object | null,
         payload: string,
         requestedOrdinal: number,
+        innerGap: number,
+        outerGap: number,
     ): void {
         this.inFlight = true;
         this.callbackSeen = false;
@@ -1341,6 +1386,8 @@ export class WorkspaceSendAdapter {
             requestPayload: payload,
             targetDesktopRef,
             requestedOrdinal,
+            innerGap,
+            outerGap,
             srcInSource: flags.srcInSource,
             srcInTarget: flags.srcInTarget,
             baseRevision: 0,
