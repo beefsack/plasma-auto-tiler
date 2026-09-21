@@ -9,6 +9,7 @@
 #include <QPointF>
 #include <QPointer>
 #include <QRectF>
+#include <QSet>
 #include <QString>
 
 namespace KWin
@@ -29,6 +30,7 @@ public:
 private:
     void reconfigure(ReconfigureFlags flags) override;
     void setTrackedWindow(EffectWindow *window);
+    void updateMaximizedState(EffectWindow *window, bool maximized);
     void updateBorder();
     void updateOutline();
     void paintScreen(const RenderTarget &renderTarget, const RenderViewport &viewport, int mask, const Region &deviceRegion, LogicalOutput *screen) override;
@@ -41,6 +43,7 @@ private:
     OutlinedBorderItem m_borderItem;
     OutlinedBorderItem m_groupItem;
     QPointer<EffectWindow> m_trackedWindow;
+    QSet<EffectWindow *> m_maximizedWindows;
     QObject *m_groupDbusObject = nullptr;
     // Pure group policy state lives in the std-only Rust staticlib; C++
     // holds it by value and forwards QString-to-UTF8 bytes plus POD

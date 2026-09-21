@@ -28,9 +28,14 @@ struct ActiveBorderState
     QRectF innerRect;
 };
 
-inline ActiveBorderState activeBorderState(bool hasWindow, const QRectF &frameGeometry, bool deleted, bool minimized, bool fullScreen)
+inline bool activeBorderIsMaximized(bool horizontal, bool vertical)
 {
-    if (!hasWindow || deleted || minimized || fullScreen) {
+    return horizontal || vertical;
+}
+
+inline ActiveBorderState activeBorderState(bool hasWindow, const QRectF &frameGeometry, bool deleted, bool minimized, bool fullScreen, bool maximized)
+{
+    if (!hasWindow || deleted || minimized || fullScreen || maximized) {
         return {false, QRectF()};
     }
     return {true, frameGeometry};

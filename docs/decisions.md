@@ -21,6 +21,10 @@ Historical implementation detail is recoverable in Git history.
   and `Use theme highlight color when available` override/theme behavior worked
   and is manually accepted. This is user visual/manual evidence, not
   automated/protocol/KWin-source evidence.
+- Approved 2026-09-21: hide the active-window border for fullscreen or any
+  native maximize axis, matching the adapter's nonzero maximize collapse. The
+  public KWin maximize transition signals update the border before and after
+  geometry changes; Rust-owned group-highlight policy is unchanged.
 - The outline never clips, reshapes, or changes window textures. Plasma 6.5+
   decoration-driven rounded corners remain the selected corner solution.
 - C++ is limited to platform-required public-API adapters and effects. Manual
@@ -683,8 +687,9 @@ Historical implementation detail is recoverable in Git history.
   never start the timer. Qualifying tiling changes during hold update the
   current visual without starting the timer; focus/domain changes during hold
   may update or clear valid state but never start a timed flash. Fullscreen
-  hides the group visual while the active border retains its existing
-  fullscreen/state behavior (precedent `activeborderlogic.h:31-37`).
+  hides both the group visual and active border. Any native maximize axis hides
+  the active border; group visibility retains its existing Rust-owned policy
+  (precedent `activeborderlogic.h:31-37`).
 - Held-before-first-public-signal source limitation: minimal state and no
   polling. Last modifier state is unknown until the first public
   `mouseChanged`; do not assume Meta held. The effect remains hidden for that

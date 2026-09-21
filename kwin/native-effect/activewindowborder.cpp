@@ -107,6 +107,7 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
         updateGroupVisibility();
     });
     connect(effects, &EffectsHandler::windowDeleted, this, [this](EffectWindow *window) {
+        m_maximizedWindows.remove(window);
         if (m_trackedWindow == window) {
             setTrackedWindow(nullptr);
             updateBorder();
@@ -173,12 +174,40 @@ void ActiveWindowBorderEffect::setTrackedWindow(EffectWindow *window)
         connect(m_trackedWindow, &EffectWindow::windowFrameGeometryChanged, this, &ActiveWindowBorderEffect::updateBorder);
         connect(m_trackedWindow, &EffectWindow::minimizedChanged, this, &ActiveWindowBorderEffect::updateBorder);
         connect(m_trackedWindow, &EffectWindow::windowFullScreenChanged, this, &ActiveWindowBorderEffect::updateBorder);
+        connect(m_trackedWindow, &EffectWindow::windowMaximizedStateAboutToChange, this,
+            [this](EffectWindow *changed, bool horizontal, bool vertical) {
+                // KWin supplies the target state before geometry changes. Hide
+                // before entering maximize, but defer restoration until the
+                // changed signal so the border uses the restored frame.
+                if (activeBorderIsMaximized(horizontal, vertical)) {
+                    updateMaximizedState(changed, true);
+                }
+            });
+        connect(m_trackedWindow, &EffectWindow::windowMaximizedStateChanged, this,
+            [this](EffectWindow *changed, bool horizontal, bool vertical) {
+                updateMaximizedState(changed, activeBorderIsMaximized(horizontal, vertical));
+            });
         // Own active tracked signals update group visibility immediately so
         // fullscreen/minimized transitions hide while Meta is held without
         // waiting for pointer movement. Allowed effect conventions only: no
         // polling, timers, interception, or extra rendering.
         connect(m_trackedWindow, &EffectWindow::minimizedChanged, this, &ActiveWindowBorderEffect::updateGroupVisibility);
         connect(m_trackedWindow, &EffectWindow::windowFullScreenChanged, this, &ActiveWindowBorderEffect::updateGroupVisibility);
+    }
+}
+
+void ActiveWindowBorderEffect::updateMaximizedState(EffectWindow *window, bool maximized)
+{
+    if (window == nullptr) {
+        return;
+    }
+    if (maximized) {
+        m_maximizedWindows.insert(window);
+    } else {
+        m_maximizedWindows.remove(window);
+    }
+    if (m_trackedWindow == window) {
+        updateBorder();
     }
 }
 
@@ -194,7 +223,8 @@ void ActiveWindowBorderEffect::updateBorder()
         window ? static_cast<QRectF>(window->frameGeometry()) : QRectF(),
         window ? window->isDeleted() : false,
         window ? window->isMinimized() : false,
-        window ? window->isFullScreen() : false);
+        window ? window->isFullScreen() : false,
+        window ? m_maximizedWindows.contains(window) : false);
     const qreal gap = ActiveBorderConfig::borderGap();
     m_borderItem.setInnerRect(activeBorderInnerRect(state.innerRect, gap));
     m_borderItem.setVisible(state.visible);

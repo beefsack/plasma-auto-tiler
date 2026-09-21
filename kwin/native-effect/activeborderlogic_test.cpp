@@ -24,7 +24,7 @@ void check(bool condition, const char *expression, const char *file, int line)
 void eligibleWindowUsesFrameGeometryAsInnerRect()
 {
     const QRectF frame(10.0, 20.0, 320.0, 200.0);
-    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, false, false, false);
+    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, false, false, false, false);
     CHECK(state.visible);
     CHECK(state.innerRect == frame);
 }
@@ -32,7 +32,7 @@ void eligibleWindowUsesFrameGeometryAsInnerRect()
 void missingWindowIsNotVisible()
 {
     const QRectF frame(0.0, 0.0, 100.0, 100.0);
-    const KWin::ActiveBorderState state = KWin::activeBorderState(false, frame, false, false, false);
+    const KWin::ActiveBorderState state = KWin::activeBorderState(false, frame, false, false, false, false);
     CHECK(!state.visible);
     CHECK(state.innerRect == QRectF());
 }
@@ -40,22 +40,40 @@ void missingWindowIsNotVisible()
 void deletedWindowIsNotVisible()
 {
     const QRectF frame(0.0, 0.0, 100.0, 100.0);
-    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, true, false, false);
+    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, true, false, false, false);
     CHECK(!state.visible);
 }
 
 void minimizedWindowIsNotVisible()
 {
     const QRectF frame(0.0, 0.0, 100.0, 100.0);
-    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, false, true, false);
+    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, false, true, false, false);
     CHECK(!state.visible);
 }
 
 void fullScreenWindowIsNotVisible()
 {
     const QRectF frame(0.0, 0.0, 1920.0, 1080.0);
-    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, false, false, true);
+    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, false, false, true, false);
     CHECK(!state.visible);
+}
+
+void maximizedWindowIsNotVisibleAndRestores()
+{
+    const QRectF frame(0.0, 0.0, 1920.0, 1080.0);
+    const KWin::ActiveBorderState maximized = KWin::activeBorderState(true, frame, false, false, false, true);
+    const KWin::ActiveBorderState restored = KWin::activeBorderState(true, frame, false, false, false, false);
+    CHECK(!maximized.visible);
+    CHECK(restored.visible);
+    CHECK(restored.innerRect == frame);
+}
+
+void partialMaximizeStatesAreMaximized()
+{
+    CHECK(!KWin::activeBorderIsMaximized(false, false));
+    CHECK(KWin::activeBorderIsMaximized(true, false));
+    CHECK(KWin::activeBorderIsMaximized(false, true));
+    CHECK(KWin::activeBorderIsMaximized(true, true));
 }
 
 void invalidThemeColorUsesConfiguredFallback()
@@ -105,7 +123,7 @@ void positiveGapExpandsInnerRect()
 void gapAppliesToVisibleBorderState()
 {
     const QRectF frame(0.0, 0.0, 100.0, 100.0);
-    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, false, false, false);
+    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, false, false, false, false);
     CHECK(state.visible);
     CHECK(KWin::activeBorderInnerRect(state.innerRect, 2.0) == QRectF(-2.0, -2.0, 104.0, 104.0));
 }
@@ -119,6 +137,8 @@ int main()
     deletedWindowIsNotVisible();
     minimizedWindowIsNotVisible();
     fullScreenWindowIsNotVisible();
+    maximizedWindowIsNotVisibleAndRestores();
+    partialMaximizeStatesAreMaximized();
     invalidThemeColorUsesConfiguredFallback();
     transparentThemeColorUsesConfiguredFallback();
     usableThemeColorWinsOverConfiguredFallback();
