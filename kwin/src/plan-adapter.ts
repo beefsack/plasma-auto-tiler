@@ -2358,6 +2358,100 @@ export class PlanAdapter {
         });
     }
 
+    // Bounded sticky focus retention: the exact toggled window stays
+    // active across the native all-desktops write. Single synchronous
+    // setActive only when the fresh observation still contains the toggled
+    // id; stale ids never actuate and a failed write only logs. No timer,
+    // retry, desktop switch, or later-focus fighting.
+    private retainStickyFocus(target: PlanObservedWindow): boolean {
+        const resourceClass = isOpaqueId(target.resourceClass) ? target.resourceClass : "unknown";
+        let resolvedRef: object | undefined = target.ref;
+        try {
+            const fresh = this.freshObserved();
+            if (fresh !== null) {
+                let found: object | undefined;
+                for (const entry of fresh.windows) {
+                    if (entry.id === target.id) {
+                        found = entry.ref;
+                        break;
+                    }
+                }
+                if (found === undefined) {
+                    this.logToken(`${LOG_PREFIX}:sticky-focus-stale window=${target.id} resource_class=${resourceClass}`);
+                    return false;
+                }
+                resolvedRef = found;
+            }
+        } catch (error) {
+            void error;
+        }
+        if (resolvedRef === undefined) {
+            this.logToken(`${LOG_PREFIX}:sticky-focus-stale window=${target.id} resource_class=${resourceClass}`);
+            return false;
+        }
+        let currentActive: object | null = null;
+        try {
+            currentActive = this.env.active();
+        } catch (error) {
+            void error;
+            currentActive = null;
+        }
+        if (currentActive === resolvedRef) {
+            this.logToken(`${LOG_PREFIX}:sticky-focus-retained window=${target.id} resource_class=${resourceClass}`);
+            return true;
+        }
+        let focused = false;
+        try {
+            focused = this.env.setActive(resolvedRef) === true;
+        } catch (error) {
+            void error;
+            focused = false;
+        }
+        if (!focused) {
+            this.logToken(`${LOG_PREFIX}:sticky-focus-failed window=${target.id} resource_class=${resourceClass}`);
+            return false;
+        }
+        this.logToken(`${LOG_PREFIX}:sticky-focus-retained window=${target.id} resource_class=${resourceClass}`);
+        return true;
+    }
+
+    // Bounded float focus retention for toggle-float flights: the exact
+    // toggled window stays active on entry and exit. Rust desired_focus is
+    // tiled bookkeeping for survivors and must never natively activate a
+    // sibling. Single synchronous setActive from the fresh observation only;
+    // stale ids fail closed and failed writes fail the flight. No timer,
+    // retry, desktop switch, MRU, or later-focus fighting.
+    private retainFloatFocus(windowId: string, targetRef: object | undefined, resourceClass: string): boolean {
+        if (targetRef === undefined) {
+            this.logToken(`${LOG_PREFIX}:float-focus-stale window=${windowId} resource_class=${resourceClass}`);
+            return false;
+        }
+        let currentActive: object | null = null;
+        try {
+            currentActive = this.env.active();
+        } catch (error) {
+            void error;
+            currentActive = null;
+        }
+        if (currentActive === targetRef) {
+            this.logToken(`${LOG_PREFIX}:float-focus-retained window=${windowId} resource_class=${resourceClass}`);
+            return true;
+        }
+        let focused = false;
+        try {
+            focused = this.env.setActive(targetRef) === true;
+        } catch (error) {
+            void error;
+            focused = false;
+        }
+        if (!focused) {
+            this.logToken(`${LOG_PREFIX}:float-focus-failed window=${windowId} resource_class=${resourceClass}`);
+            return false;
+        }
+        this.logToken(`${LOG_PREFIX}:float-focus-retained window=${windowId} resource_class=${resourceClass}`);
+        return true;
+    }
+
     private issueSticky(target: PlanObservedWindow, allDesktops: boolean, previousFloating: boolean): void {
         const resourceClass = isOpaqueId(target.resourceClass) ? target.resourceClass : "unknown";
         if (this.stickyAttempts.get(target.ref) === allDesktops) {
@@ -2378,6 +2472,7 @@ export class PlanAdapter {
             void error;
         }
         this.logToken(`${LOG_PREFIX}:sticky-toggle window=${target.id} resource_class=${resourceClass} target=${allDesktops ? "all-desktops" : "current-desktop"} outcome=${outcome}`);
+        this.retainStickyFocus(target);
         if (this.stickyEcho !== null) {
             this.stickyEcho = null;
             this.logToken(`${LOG_PREFIX}:sticky-echo-cleared-no-signal`);
@@ -4982,12 +5077,31 @@ export class PlanAdapter {
                 }
                 this.issueSticky(target, true, sticky.previousFloating);
             }
+            // Toggle-float flights never actuate Rust desired_focus: it is
+            // tiled survivor bookkeeping and would activate a sibling. Retain
+            // the exact toggled window instead, from the fresh observation
+            // only. Stale ids fail closed; a failed native write fails the
+            // flight. No timer, retry, desktop switch, or later focus write.
+            const floatTransition = flightState.floatTarget;
+            if (floatTransition !== null) {
+                const floatRef = byRef.get(floatTransition.window);
+                if (floatRef === undefined) {
+                    this.logToken(`${LOG_PREFIX}:float-focus-stale window=${floatTransition.window} resource_class=${resourceClassById.get(floatTransition.window) ?? "unknown"}`);
+                    this.failFlight(flightState, "stale-scope");
+                    return;
+                }
+                if (!this.retainFloatFocus(floatTransition.window, floatRef, resourceClassById.get(floatTransition.window) ?? "unknown")) {
+                    this.failFlight(flightState, "write-failed");
+                    return;
+                }
+            }
         }
         const focus = planned.focus;
         // Hidden-domain flights never route focus: the anchor focusedId is a
         // structural placeholder, and applying it would steal native focus and
-        // switch desktop visibility.
-        if (focus !== null && flightState.background !== true) {
+        // switch desktop visibility. Toggle-float flights retain the exact
+        // toggled window above and never actuate survivor bookkeeping focus.
+        if (focus !== null && flightState.background !== true && flightState.op !== "toggle-float") {
             let focusWindow: string | null = null;
             for (const entry of planned.geometry) {
                 if (entry.leaf === focus.leaf) {

@@ -3004,7 +3004,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 // KWin, so this new action is visible in Settings but cannot
                 // receive Meta+G until the user resolves that conflict there.
                 try {
-                    log("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-float sequence=Meta+G holder_component=kwin holder_action=Grid_View");
+                    log("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-float sequence=Meta+G holder_component=kwin holder_action=Grid View");
                 } catch (error) {
                     void error;
                 }

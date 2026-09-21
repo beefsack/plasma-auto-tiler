@@ -164,7 +164,8 @@ describe("native KCM static contract", () => {
         assert.match(logic, /activeBorderColor\(const QColor &themeColor, const QColor &fallbackColor, bool useThemeColor\)/);
         assert.match(logic, /useThemeColor && themeColor\.isValid/);
         assert.match(logic, /QRectF activeBorderInnerRect\(/);
-        assert.match(effect, /setInnerRect\(activeBorderInnerRect\(state\.innerRect, gap\)\)/);
+        assert.match(effect, /const QRectF innerRect = activeBorderInnerRect\(state\.innerRect, gap\)/);
+        assert.match(effect, /setInnerRect\(window \? window->windowItem\(\)->mapFromScene\(innerRect\) : RectF\(\)\)/);
         assert.match(effect, /setVisible\(state\.visible\)/);
         assert.match(effect, /addRepaintFull\(\)/);
     });

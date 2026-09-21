@@ -349,7 +349,11 @@ Historical implementation detail is recoverable in Git history.
   registers `Meta+G` without changing Grid View's record. KGlobalAccel permits
   both active records but dispatches the lower serial holder, so startup emits
   `shortcut-dispatch-shadowed` until the user applies the exact reversible KCM
-  override. `Meta+Shift+G` toggles sticky floating: tiled members float first,
+  override. Explicit normal and sticky float toggles retain the exact toggled
+  window: the adapter never actuates Rust survivor-focus bookkeeping and
+  performs at most one synchronous native focus retention with stale/failure
+  safety and no timer, retry, desktop switch, or later-focus fighting.
+  `Meta+Shift+G` toggles sticky floating: tiled members float first,
   then set `Window.onAllDesktops=true` without changing current visibility or
   focus. KWin represents all-desktops as an empty membership list; sticky-off
   assigns the current desktop, restores prior floating placement there, or for
@@ -724,19 +728,14 @@ Historical implementation detail is recoverable in Git history.
   polling. Last modifier state is unknown until the first public
   `mouseChanged`; do not assume Meta held. The effect remains hidden for that
   missed initial-held edge.
-- Renderer: a separate group outline coexists with the active border via the
-  second `OutlinedBorderItem` above (multiple items technically coexist per
-  `decorationitem.h:110`, `outlinedborderitem.cpp:49-98`). No simple supported
-  backdrop route within selected renderer/C++ restrictions was established;
-  custom scene/rendering would broaden scope, so use the user-permitted
-  second-outline fallback. `Workspacescene`
-  renders background then stacking windows then overlay
-  (`src/scene/workspacescene.cpp:710-763`); `BackgroundEffectItem` is
-  non-rendering (`backgroundeffectitem.h:17-21`); effect overlays are above
-  windows, can cover unrelated windows/panels, and occlusion culls background
-  before it. Below-window custom drawing/scene items needing excluded
-  shader/GL/QPainter/texture or scene-restriction work remain unselected. No
-  broad new scene mechanism is authorized. COSMIC `cosmic-tiling-mod.rs:5459-5535`
+- Renderer: the active `OutlinedBorderItem` is a negative-z child of its
+  target `EffectWindow::windowItem()`; KWin's public `Item::setParentItem()`
+  and `mapFromScene()` keep its geometry window-local. The target texture and
+  later-stacked windows therefore occlude it through the normal item-tree and
+  workspace stacking passes (`itemrenderer_opengl.cpp:181-188,328-334`,
+  `workspacescene.cpp:710-723`). The temporary group outline remains a
+  screen-wide overlay because it is not tied to one window. No custom
+  scene/rendering mechanism is selected. COSMIC `cosmic-tiling-mod.rs:5459-5535`
   renders group backdrops through its compositor-owned `BackdropShader`
   render-element path (checkout/revision unverified; source-content comparison
   only, no parity claim).

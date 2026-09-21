@@ -46,8 +46,13 @@ describe("active-group native static contract", () => {
         assert.match(effectImpl, /m_groupItem\.setOutline\(/);
         assert.match(effectImpl, /m_groupItem\.setInnerRect\(/);
         assert.match(effectImpl, /m_groupItem\.setVisible\(/);
-        // Existing active-border semantics are preserved verbatim.
-        assert.match(effectImpl, /m_borderItem\.setInnerRect\(activeBorderInnerRect\(state\.innerRect, gap\)\)/);
+        // The active border is local to its target, below target contents and
+        // later-stacked windows rather than a global overlay.
+        assert.match(effectImpl, /m_borderItem\.setZ\(-1\)/);
+        assert.match(effectImpl, /m_borderItem\.setParentItem\(m_trackedWindow->windowItem\(\)\)/);
+        assert.match(effectImpl, /m_borderItem\.setParentItem\(effects->scene\(\)->overlayItem\(\)\)/);
+        assert.match(effectImpl, /const QRectF innerRect = activeBorderInnerRect\(state\.innerRect, gap\)/);
+        assert.match(effectImpl, /m_borderItem\.setInnerRect\(window \? window->windowItem\(\)->mapFromScene\(innerRect\) : RectF\(\)\)/);
         assert.match(effectImpl, /m_borderItem\.setVisible\(state\.visible\)/);
     });
 

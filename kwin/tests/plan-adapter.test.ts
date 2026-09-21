@@ -2108,6 +2108,170 @@ describe("plan adapter sticky and maximize toggles", () => {
     });
 });
 
+describe("plan adapter float focus retention", () => {
+    it("retains the exact toggled window on normal float entry instead of activating the Rust survivor focus", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.observeImpl = () => makeObserved(refs, { resourceClasses: { "win-a": "ghostty" } });
+        const adapter = enableAdapter(mocks);
+        adapter.requestFloat();
+        const payload = plannerPayload(mocks, 0);
+        assert.deepEqual(payload["command"], { op: "toggle-float", window: "win-a" });
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: payload["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [{ window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            desired_focus: { domain_output: "out-1", domain_workspace: "ws-1", leaf: "win-b-leaf" },
+            float_geometry: { window: "win-a", rect: { x: 240, y: 160, w: 720, h: 480 } },
+        }));
+        assert.deepEqual(mocks.floatingCalls, [{ id: "win-a", floating: true }]);
+        assert.deepEqual(mocks.actives, [], "float entry must not activate the survivor");
+        assert.ok(mocks.logs.some((line) => line.includes("float-focus-retained window=win-a")), "retention must be logged");
+        assert.equal(mocks.desktopsWrites.length, 0, "float entry writes no desktop membership");
+    });
+
+    it("retains the exact toggled window on normal float exit (unfloat)", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let floating = true;
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": floating }, resourceClasses: { "win-a": "ghostty" } });
+        const adapter = enableAdapter(mocks);
+        adapter.requestFloat();
+        const payload = plannerPayload(mocks, 0);
+        assert.deepEqual(payload["command"], { op: "toggle-float", window: "win-a", float_rect: { x: 0, y: 0, w: 100, h: 100 } });
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: payload["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [
+                { window: "win-a", leaf: "win-a-leaf", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                { window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } },
+            ],
+            desired_focus: { domain_output: "out-1", domain_workspace: "ws-1", leaf: "win-a-leaf" },
+        }));
+        floating = false;
+        assert.deepEqual(mocks.floatingCalls, [{ id: "win-a", floating: false }]);
+        assert.deepEqual(mocks.actives, [], "unfloat keeps the toggled window without extra activation");
+        assert.ok(mocks.logs.some((line) => line.includes("float-focus-retained window=win-a")));
+    });
+
+    it("retains the exact toggled window on tiled-to-sticky entry instead of activating the survivor", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let floating = false;
+        let sticky = false;
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": floating }, sticky: { "win-a": sticky }, resourceClasses: { "win-a": "firefox" } });
+        mocks.desktopToggleImpl = (target, allDesktops) => {
+            assert.equal(target, refs.a);
+            sticky = allDesktops;
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestSticky();
+        const payload = plannerPayload(mocks, 0);
+        assert.deepEqual(payload["command"], { op: "toggle-float", window: "win-a" });
+        floating = true;
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: payload["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [{ window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            desired_focus: { domain_output: "out-1", domain_workspace: "ws-1", leaf: "win-b-leaf" },
+            float_geometry: { window: "win-a", rect: { x: 100, y: 100, w: 600, h: 400 } },
+        }));
+        assert.deepEqual(mocks.floatingCalls, [{ id: "win-a", floating: true }]);
+        assert.deepEqual(mocks.desktopToggles, [{ target: refs.a, allDesktops: true }]);
+        assert.deepEqual(mocks.actives, [], "sticky entry must not activate the survivor");
+        assert.ok(mocks.logs.some((line) => line.includes("float-focus-retained window=win-a")));
+        assert.ok(mocks.logs.some((line) => line.includes("sticky-focus-retained window=win-a")));
+        assert.equal(mocks.desktopsWrites.length, 0, "sticky entry writes no desktop membership");
+        assert.equal(mocks.dbusCalls.length, 1, "sticky entry issues no follow-up planner commands");
+    });
+
+    it("retains the exact toggled window across float-to-sticky-to-float native toggles with no planner commands", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let sticky = false;
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": true }, sticky: { "win-a": sticky }, resourceClasses: { "win-a": "firefox" } });
+        mocks.desktopToggleImpl = (_target, allDesktops) => {
+            sticky = allDesktops;
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestSticky();
+        adapter.requestSticky();
+        assert.equal(mocks.dbusCalls.length, 0, "prior floating sticky never enters the tile tree");
+        assert.deepEqual(mocks.desktopToggles, [{ target: refs.a, allDesktops: true }, { target: refs.a, allDesktops: false }]);
+        assert.deepEqual(mocks.actives, [], "native sticky toggles keep the exact window without activation");
+        assert.equal(mocks.logs.filter((line) => line.includes("sticky-focus-retained window=win-a")).length, 2);
+    });
+
+    it("fails a float entry flight when native focus retention fails, without retry or desktop switch", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.observeImpl = () => makeObserved(refs, { resourceClasses: { "win-a": "ghostty" } });
+        mocks.activeImpl = () => refs.b;
+        (mocks.env as { setActive: (target: object) => boolean }).setActive = (target: object): boolean => {
+            mocks.actives.push(target);
+            return false;
+        };
+        const adapter = enableAdapter(mocks);
+        const timersBefore = mocks.timers.length;
+        adapter.requestFloat();
+        const payload = plannerPayload(mocks, 0);
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: payload["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [{ window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            desired_focus: { domain_output: "out-1", domain_workspace: "ws-1", leaf: "win-b-leaf" },
+            float_geometry: { window: "win-a", rect: { x: 240, y: 160, w: 720, h: 480 } },
+        }));
+        assert.deepEqual(mocks.actives, [refs.a], "exactly one bounded retention attempt on the toggled window");
+        assert.ok(mocks.logs.some((line) => line.includes("float-focus-failed window=win-a")));
+        assert.ok(mocks.logs.some((line) => line.includes("outcome=write-failed")), "flight fails write-failed");
+        assert.equal(mocks.desktopsWrites.length, 0, "no desktop membership write on focus failure");
+        assert.equal(mocks.timers.length, timersBefore + 1, "no retry timer beyond the dispatch timeout");
+        assert.equal(adapter.isInFlight, false, "flight is terminal");
+    });
+
+    it("logs sticky-focus-stale without activating when the toggled window disappears", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let calls = 0;
+        const full = (): PlanObserved => makeObserved(refs, { floating: { "win-a": true }, resourceClasses: { "win-a": "firefox" } });
+        mocks.observeImpl = (): PlanObserved | null => {
+            calls += 1;
+            if (calls === 1) {
+                return full();
+            }
+            return {
+                domainOutput: "out-1",
+                domainWorkspace: "ws-1",
+                domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
+                domainGap: 0,
+                domainOuterGap: 0,
+                focusedId: "win-b",
+                windows: Object.freeze([
+                    Object.freeze({ id: "win-b", ref: refs.b, rect: { x: 600, y: 0, w: 600, h: 800 }, output: "out-1", workspace: "ws-1", fullscreen: false, maximized: false, floating: false, sticky: false, resourceClass: "unknown" }),
+                ]),
+                activeRef: refs.b,
+                fingerprint: "fp-stale",
+                revalidate: () => true,
+            };
+        };
+        mocks.desktopToggleImpl = (_target, _allDesktops) => "invoked";
+        const adapter = enableAdapter(mocks);
+        adapter.requestSticky();
+        assert.deepEqual(mocks.desktopToggles, [{ target: refs.a, allDesktops: true }]);
+        assert.deepEqual(mocks.actives, [], "stale toggled window is never activated");
+        assert.ok(mocks.logs.some((line) => line.includes("sticky-focus-stale window=win-a")));
+    });
+});
+
 describe("plan adapter fullscreen toggle", () => {
     it("toggles the focused window fullscreen on and back off with one native write each", () => {
         const refs = makeRefs();
@@ -2395,7 +2559,7 @@ describe("plan entry live observation and shortcuts", () => {
         assert.ok(actions.includes("plasma-auto-tiler-toggle-sticky"));
         assert.ok(actions.includes("plasma-auto-tiler-toggle-maximize"));
         assert.ok(actions.includes("plasma-auto-tiler-toggle-fullscreen"));
-        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-float sequence=Meta+G holder_component=kwin holder_action=Grid_View"));
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-float sequence=Meta+G holder_component=kwin holder_action=Grid View"));
         assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-maximize sequence=Meta+M holder_component=kwin holder_action=KrohnkiteMonocleLayout"));
         assert.ok(!mocks.logs.some((line) => line.includes("plasma-auto-tiler-toggle-fullscreen") && line.includes("shadowed")), "Meta+F11 has no conflicting holder");
         const focus = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-focus-left") as {

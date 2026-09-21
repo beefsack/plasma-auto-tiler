@@ -7,6 +7,7 @@
 
 #include <effect/effecthandler.h>
 #include <scene/workspacescene.h>
+#include <scene/windowitem.h>
 
 #include <QByteArray>
 #include <QColor>
@@ -93,7 +94,9 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
         return;
     }
 
-    m_borderItem.setParentItem(effects->scene()->overlayItem());
+    // Keep the active outline in the target window subtree so higher windows
+    // occlude it normally instead of treating it as a screen-wide overlay.
+    m_borderItem.setZ(-1);
     m_groupItem.setParentItem(effects->scene()->overlayItem());
     m_groupItem.setVisible(false);
 
@@ -194,6 +197,7 @@ void ActiveWindowBorderEffect::setTrackedWindow(EffectWindow *window)
     }
     m_trackedWindow = window;
     if (m_trackedWindow) {
+        m_borderItem.setParentItem(m_trackedWindow->windowItem());
         connect(m_trackedWindow, &EffectWindow::windowFrameGeometryChanged, this, &ActiveWindowBorderEffect::updateBorder);
         connect(m_trackedWindow, &EffectWindow::minimizedChanged, this, &ActiveWindowBorderEffect::updateBorder);
         connect(m_trackedWindow, &EffectWindow::windowFullScreenChanged, this, &ActiveWindowBorderEffect::updateBorder);
@@ -203,6 +207,8 @@ void ActiveWindowBorderEffect::setTrackedWindow(EffectWindow *window)
         // polling, timers, interception, or extra rendering.
         connect(m_trackedWindow, &EffectWindow::minimizedChanged, this, &ActiveWindowBorderEffect::updateGroupVisibility);
         connect(m_trackedWindow, &EffectWindow::windowFullScreenChanged, this, &ActiveWindowBorderEffect::updateGroupVisibility);
+    } else {
+        m_borderItem.setParentItem(effects->scene()->overlayItem());
     }
 }
 
@@ -271,7 +277,8 @@ void ActiveWindowBorderEffect::updateBorder()
         window ? window->isFullScreen() : false,
         window ? m_maximizedWindows.contains(window) : false);
     const qreal gap = ActiveBorderConfig::borderGap();
-    m_borderItem.setInnerRect(activeBorderInnerRect(state.innerRect, gap));
+    const QRectF innerRect = activeBorderInnerRect(state.innerRect, gap);
+    m_borderItem.setInnerRect(window ? window->windowItem()->mapFromScene(innerRect) : RectF());
     m_borderItem.setVisible(state.visible);
     effects->addRepaintFull();
 }
