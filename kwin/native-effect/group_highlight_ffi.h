@@ -58,9 +58,11 @@ int32_t group_highlight_clear(GroupHighlightState *state);
 // Pure focus-identity match: both sides non-empty and byte-equal.
 uint8_t group_highlight_focus_matches(
     const uint8_t *focused, size_t focusedLen, const uint8_t *active, size_t activeLen);
-// Pure focus eligibility from POD observer flags.
-uint8_t group_highlight_focus_eligible(
-    uint8_t hasWindow, uint8_t deleted, uint8_t minimized, uint8_t fullscreen, uint8_t hidden);
+// Pure focus eligibility from POD observer flags. The trailing maximized
+// flag collapses any native H/V/full maximize (matching
+// activeBorderIsMaximized); fullscreen stays suppressed independently.
+uint8_t group_highlight_focus_eligible(uint8_t hasWindow, uint8_t deleted, uint8_t minimized, uint8_t fullscreen,
+    uint8_t hidden, uint8_t maximized);
 // Visibility gate reading the display flag from state plus POD observer
 // flags. Returns 1 visible, 0 hidden, -1 on null state.
 int32_t group_highlight_is_visible(const GroupHighlightState *state, uint8_t metaHeld,

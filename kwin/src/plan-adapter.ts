@@ -604,6 +604,7 @@ export interface PlanAdapterEnv {
     ) => DirectionalObservation | PlanObserved | null;
     readonly clearMaximize: (target: object) => MaximizeClearOutcome;
     readonly setMaximize?: (target: object, maximized: boolean) => NativeStateWriteOutcome;
+    readonly setFullscreen?: (target: object, fullscreen: boolean) => NativeStateWriteOutcome;
     readonly setAllDesktops?: (target: object, allDesktops: boolean) => NativeStateWriteOutcome;
     readonly setGeometry: (target: object, rect: PlanRect) => boolean;
     readonly setFloating?: (id: string, floating: boolean) => void;
@@ -2239,6 +2240,49 @@ export class PlanAdapter {
             this.maximizeToggleEcho = null;
             this.logToken(`${LOG_PREFIX}:maximize-toggle-echo-cleared-no-signal`);
         }
+    }
+
+    requestFullscreen(): void {
+        if (!this.enabled) {
+            this.logToken(`${LOG_PREFIX}:fullscreen-refused-disabled`);
+            return;
+        }
+        if (this.blockedBySend()) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-fullscreen`);
+            return;
+        }
+        if (this.r4Flight !== null) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-fullscreen`);
+            return;
+        }
+        if (this.inFlight) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-fullscreen`);
+            return;
+        }
+        const observed = this.freshObserved();
+        if (observed === null) {
+            this.logToken(`${LOG_PREFIX}:fullscreen-refused-observe`);
+            return;
+        }
+        const target = observed.windows.find((entry) => entry.id === observed.focusedId);
+        if (target === undefined) {
+            this.logToken(`${LOG_PREFIX}:fullscreen-refused-observe`);
+            return;
+        }
+        const resourceClass = isOpaqueId(target.resourceClass) ? target.resourceClass : "unknown";
+        // Project-owned toggle only: KWin keeps cover-and-restore. No
+        // geometry, move, float, desktop, focus, or topology command is
+        // issued; the existing fullScreenChanged observation drives planner
+        // isolation on enter/exit without any echo fence here.
+        const wanted = !target.fullscreen;
+        this.logToken(`${LOG_PREFIX}:fullscreen-toggle window=${target.id} resource_class=${resourceClass} target=${wanted ? "fullscreen" : "restored"} outcome=issued`);
+        let outcome: NativeStateWriteOutcome = "threw";
+        try {
+            outcome = this.env.setFullscreen === undefined ? "missing" : this.env.setFullscreen(target.ref, wanted);
+        } catch (error) {
+            void error;
+        }
+        this.logToken(`${LOG_PREFIX}:fullscreen-toggle window=${target.id} resource_class=${resourceClass} target=${wanted ? "fullscreen" : "restored"} outcome=${outcome}`);
     }
 
     requestSticky(): void {

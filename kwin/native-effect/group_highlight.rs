@@ -864,8 +864,15 @@ pub fn focus_matches(focused_window: &[u8], active_window: &[u8]) -> bool {
     focused_window == active_window
 }
 
-pub fn focus_eligible(has_window: bool, deleted: bool, minimized: bool, fullscreen: bool, hidden: bool) -> bool {
-    has_window && !deleted && !minimized && !fullscreen && !hidden
+pub fn focus_eligible(
+    has_window: bool,
+    deleted: bool,
+    minimized: bool,
+    fullscreen: bool,
+    hidden: bool,
+    maximized: bool,
+) -> bool {
+    has_window && !deleted && !minimized && !fullscreen && !hidden && !maximized
 }
 
 pub fn should_show(has_group: bool, meta_held: bool, first_signal_seen: bool, focus_ok: bool, endpoint_usable: bool) -> bool {
@@ -988,6 +995,7 @@ pub extern "C" fn group_highlight_focus_eligible(
     minimized: u8,
     fullscreen: u8,
     hidden: u8,
+    maximized: u8,
 ) -> u8 {
     match std::panic::catch_unwind(|| {
         u8::from(focus_eligible(
@@ -996,6 +1004,7 @@ pub extern "C" fn group_highlight_focus_eligible(
             minimized != 0,
             fullscreen != 0,
             hidden != 0,
+            maximized != 0,
         ))
     }) {
         Ok(value) => value,
@@ -1279,12 +1288,14 @@ mod tests {
 
     #[test]
     fn eligibility_and_visibility_gates() {
-        assert!(focus_eligible(true, false, false, false, false));
-        assert!(!focus_eligible(false, false, false, false, false));
-        assert!(!focus_eligible(true, true, false, false, false));
-        assert!(!focus_eligible(true, false, true, false, false));
-        assert!(!focus_eligible(true, false, false, true, false));
-        assert!(!focus_eligible(true, false, false, false, true));
+        assert!(focus_eligible(true, false, false, false, false, false));
+        assert!(!focus_eligible(false, false, false, false, false, false));
+        assert!(!focus_eligible(true, true, false, false, false, false));
+        assert!(!focus_eligible(true, false, true, false, false, false));
+        assert!(!focus_eligible(true, false, false, true, false, false));
+        assert!(!focus_eligible(true, false, false, false, true, false));
+        assert!(!focus_eligible(true, false, false, false, false, true));
+        assert!(!focus_eligible(true, false, false, true, false, true));
         assert!(!should_show(true, true, false, true, true));
         assert!(!should_show(true, false, true, true, true));
         assert!(!should_show(false, true, true, true, true));

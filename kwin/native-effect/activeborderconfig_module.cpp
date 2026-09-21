@@ -331,7 +331,9 @@ void ActiveBorderConfigModule::runShortcutApply()
                                QStringLiteral("Assign focus-right to Meta+L and move Lock Session to Meta+Esc; assign "
                                               "resize-outwards-up to Meta+Alt+K clearing Switch to Next Keyboard "
                                               "Layout; assign resize-outwards-right to Meta+Alt+L clearing Switch to "
-                                              "Last-Used Keyboard Layout?"))) {
+                                              "Last-Used Keyboard Layout; assign toggle-float to Meta+G clearing "
+                                              "Grid View; assign toggle-maximize to Meta+M clearing Krohnkite "
+                                              "Monocle Layout?"))) {
         return;
     }
     if (m_shortcutStore == nullptr || m_shortcutJournal == nullptr) {
@@ -352,9 +354,11 @@ void ActiveBorderConfigModule::runShortcutApply()
 void ActiveBorderConfigModule::runShortcutRevert()
 {
     if (!confirmShortcutAction(QStringLiteral("Revert Shortcuts"),
-                               QStringLiteral("Restore the recorded 3-row bindings (focus-right/Lock Session, "
+                               QStringLiteral("Restore the recorded bindings (focus-right/Lock Session, "
                                               "resize-outwards-up/Switch to Next, resize-outwards-right/Switch to "
-                                              "Last-Used)? Externally edited bindings stay untouched."))) {
+                                              "Last-Used, plus toggle-float/Grid View and toggle-maximize/Monocle "
+                                              "when the journal manages five rows)? Externally edited bindings stay "
+                                              "untouched."))) {
         return;
     }
     if (m_shortcutStore == nullptr || m_shortcutJournal == nullptr) {
@@ -436,7 +440,11 @@ void ActiveBorderConfigModule::refreshShortcutState()
     const ShortcutTuple *nextCurrent = nullptr;
     const ShortcutTuple *rightCurrent = nullptr;
     const ShortcutTuple *lastCurrent = nullptr;
-    int matches[6] = {0, 0, 0, 0, 0, 0};
+    const ShortcutTuple *floatCurrent = nullptr;
+    const ShortcutTuple *gridViewCurrent = nullptr;
+    const ShortcutTuple *maximizeCurrent = nullptr;
+    const ShortcutTuple *monocleCurrent = nullptr;
+    int matches[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     for (const ShortcutTuple &tuple : tuples) {
         if (tuple.component == shortcutFocusComponent() && tuple.action == shortcutFocusAction()) {
             ++matches[0];
@@ -456,11 +464,25 @@ void ActiveBorderConfigModule::refreshShortcutState()
         } else if (tuple.component == shortcutSwitchLastComponent() && tuple.action == shortcutSwitchLastAction()) {
             ++matches[5];
             lastCurrent = &tuple;
+        } else if (tuple.component == shortcutFloatComponent() && tuple.action == shortcutFloatAction()) {
+            ++matches[6];
+            floatCurrent = &tuple;
+        } else if (tuple.component == shortcutGridViewComponent() && tuple.action == shortcutGridViewAction()) {
+            ++matches[7];
+            gridViewCurrent = &tuple;
+        } else if (tuple.component == shortcutMaximizeComponent() && tuple.action == shortcutMaximizeAction()) {
+            ++matches[8];
+            maximizeCurrent = &tuple;
+        } else if (tuple.component == shortcutMonocleComponent() && tuple.action == shortcutMonocleAction()) {
+            ++matches[9];
+            monocleCurrent = &tuple;
         }
     }
     if (matches[0] != 1 || matches[1] != 1 || matches[2] != 1 || matches[3] != 1 || matches[4] != 1 || matches[5] != 1
-        || focusCurrent == nullptr || lockCurrent == nullptr || upCurrent == nullptr || nextCurrent == nullptr
-        || rightCurrent == nullptr || lastCurrent == nullptr) {
+        || matches[6] != 1 || matches[7] != 1 || matches[8] != 1 || matches[9] != 1 || focusCurrent == nullptr
+        || lockCurrent == nullptr || upCurrent == nullptr || nextCurrent == nullptr || rightCurrent == nullptr
+        || lastCurrent == nullptr || floatCurrent == nullptr || gridViewCurrent == nullptr
+        || maximizeCurrent == nullptr || monocleCurrent == nullptr) {
         m_shortcutStatus = QStringLiteral("Shortcut state unavailable: allowlisted bindings are missing.");
         updateShortcutPresentation(false);
         return;
@@ -476,7 +498,7 @@ void ActiveBorderConfigModule::refreshShortcutState()
         }
     }
     // Authoritative keyed foreign-occupancy gate for Meta+L, Meta+Esc,
-    // Meta+Alt+K, and Meta+Alt+L, never tuple enumeration. Typed outcome
+    // Meta+Alt+K, Meta+Alt+L, Meta+G, and Meta+M, never tuple enumeration. Typed outcome
     // keeps Conflict vs unavailable semantics without substring matching.
     // The explicit System Monitor `_launch` Meta+Esc holder is user-authorized.
     {
@@ -502,8 +524,16 @@ void ActiveBorderConfigModule::refreshShortcutState()
     if (journalValid && journal.phase == shortcutJournalPhaseComplete()) {
         if (focusCurrent->active == journal.focus.post && lockCurrent->active == journal.lock.post
             && upCurrent->active == journal.resizeUp.post && nextCurrent->active == journal.switchNext.post
-            && rightCurrent->active == journal.resizeRight.post && lastCurrent->active == journal.switchLast.post) {
-            m_shortcutStatus = QStringLiteral("Shortcuts applied (journal complete, 3 rows).");
+            && rightCurrent->active == journal.resizeRight.post && lastCurrent->active == journal.switchLast.post
+            && (journal.schema == shortcutJournalSchemaV2()
+                || (floatCurrent->active == journal.floatToggle.post && gridViewCurrent->active == journal.gridView.post
+                    && maximizeCurrent->active == journal.maximizeToggle.post
+                    && monocleCurrent->active == journal.monocle.post))) {
+            // A v2 journal manages only the original three rows; it never
+            // claims Grid View or Monocle state.
+            m_shortcutStatus = journal.schema == shortcutJournalSchemaV2()
+                ? QStringLiteral("Shortcuts applied (journal complete, 3 rows: Grid View and Monocle unmanaged).")
+                : QStringLiteral("Shortcuts applied (journal complete, 5 rows).");
         } else {
             m_shortcutStatus = QStringLiteral("Shortcuts drifted after apply-complete; live bindings differ from the recorded post image.");
         }
@@ -519,18 +549,28 @@ void ActiveBorderConfigModule::refreshShortcutState()
     const bool lastClear = lastCurrent->active.isEmpty();
     const bool nextAtPre = nextCurrent->active == ShortcutReconciler::switchNextExpectedPre();
     const bool lastAtPre = lastCurrent->active == ShortcutReconciler::switchLastExpectedPre();
-    if (focusAtPost && !lockHasMetaL && lockHasMetaEsc && upAtPost && nextClear && rightAtPost && lastClear) {
-        m_shortcutStatus = QStringLiteral("Shortcuts applied (3 rows): focus-right owns Meta+L, Lock Session owns "
-                                          "Meta+Esc, resize-outwards-up owns Meta+Alt+K, Switch to Next cleared, "
-                                          "resize-outwards-right owns Meta+Alt+L, Switch to Last-Used cleared.");
+    const bool floatAtPost = floatCurrent->active == ShortcutReconciler::floatPostKeys();
+    const bool gridClear = gridViewCurrent->active.isEmpty();
+    const bool maximizeAtPost = maximizeCurrent->active == ShortcutReconciler::maximizePostKeys();
+    const bool monocleClear = monocleCurrent->active.isEmpty();
+    const bool gridAtPre = gridViewCurrent->active == ShortcutReconciler::gridViewExpectedPre();
+    const bool monocleAtPre = monocleCurrent->active == ShortcutReconciler::monocleExpectedPre();
+    if (focusAtPost && !lockHasMetaL && lockHasMetaEsc && upAtPost && nextClear && rightAtPost && lastClear && floatAtPost
+        && gridClear && maximizeAtPost && monocleClear) {
+        m_shortcutStatus = QStringLiteral("Shortcuts applied (5 rows): focus-right owns Meta+L, Lock Session owns "
+                                           "Meta+Esc, resize-outwards-up owns Meta+Alt+K, Switch to Next cleared, "
+                                           "resize-outwards-right owns Meta+Alt+L, Switch to Last-Used cleared, "
+                                           "toggle-float owns Meta+G, Grid View cleared, toggle-maximize owns Meta+M, "
+                                           "Monocle cleared.");
         updateShortcutPresentation(false);
         return;
     }
-    if (!focusAtPost && lockHasMetaL && nextAtPre && lastAtPre) {
-        m_shortcutStatus = QStringLiteral("Ready (3 rows): Apply will assign focus-right to Meta+L and move Lock "
-                                          "Session to Meta+Esc; assign resize-outwards-up to Meta+Alt+K clearing "
-                                          "Switch to Next; assign resize-outwards-right to Meta+Alt+L clearing Switch "
-                                          "to Last-Used.");
+    if (!focusAtPost && lockHasMetaL && nextAtPre && lastAtPre && gridAtPre && monocleAtPre) {
+        m_shortcutStatus = QStringLiteral("Ready (5 rows): Apply will assign focus-right to Meta+L and move Lock "
+                                           "Session to Meta+Esc; assign resize-outwards-up to Meta+Alt+K clearing "
+                                           "Switch to Next; assign resize-outwards-right to Meta+Alt+L clearing Switch "
+                                           "to Last-Used; assign toggle-float to Meta+G clearing Grid View; assign "
+                                           "toggle-maximize to Meta+M clearing Monocle.");
         updateShortcutPresentation(false);
         return;
     }

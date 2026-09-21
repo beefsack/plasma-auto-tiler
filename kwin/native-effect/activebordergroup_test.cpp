@@ -219,12 +219,14 @@ void statusClassifiesReceiptsWithoutMutation()
 
 void suppressedFocusStates()
 {
-    CHECK(group_highlight_focus_eligible(1, 0, 0, 0, 0) != 0);
-    CHECK(group_highlight_focus_eligible(0, 0, 0, 0, 0) == 0);
-    CHECK(group_highlight_focus_eligible(1, 1, 0, 0, 0) == 0);
-    CHECK(group_highlight_focus_eligible(1, 0, 1, 0, 0) == 0);
-    CHECK(group_highlight_focus_eligible(1, 0, 0, 1, 0) == 0);
-    CHECK(group_highlight_focus_eligible(1, 0, 0, 0, 1) == 0);
+    CHECK(group_highlight_focus_eligible(1, 0, 0, 0, 0, 0) != 0);
+    CHECK(group_highlight_focus_eligible(0, 0, 0, 0, 0, 0) == 0);
+    CHECK(group_highlight_focus_eligible(1, 1, 0, 0, 0, 0) == 0);
+    CHECK(group_highlight_focus_eligible(1, 0, 1, 0, 0, 0) == 0);
+    CHECK(group_highlight_focus_eligible(1, 0, 0, 1, 0, 0) == 0);
+    CHECK(group_highlight_focus_eligible(1, 0, 0, 0, 1, 0) == 0);
+    CHECK(group_highlight_focus_eligible(1, 0, 0, 0, 0, 1) == 0);
+    CHECK(group_highlight_focus_eligible(1, 0, 0, 1, 0, 1) == 0);
 }
 
 void modifierVisibilityRequiresFirstSignalAndMetaAndEligibility()

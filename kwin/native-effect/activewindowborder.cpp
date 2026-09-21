@@ -107,6 +107,7 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
         updateGroupVisibility();
     });
     connect(effects, &EffectsHandler::windowDeleted, this, [this](EffectWindow *window) {
+        unsubscribeMaximize(window);
         m_maximizedWindows.remove(window);
         if (m_trackedWindow == window) {
             setTrackedWindow(nullptr);
@@ -117,10 +118,22 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
     // Fullscreen/minimized/hidden/deleted transitions must hide immediately
     // while Meta is held without pointer movement: the tracked-window
     // signals below plus windowActivated/windowDeleted drive visibility.
-    connect(effects, &EffectsHandler::windowClosed, this, [this](EffectWindow *) {
+    connect(effects, &EffectsHandler::windowClosed, this, [this](EffectWindow *window) {
+        unsubscribeMaximize(window);
+        m_maximizedWindows.remove(window);
         updateGroupVisibility();
     });
     connect(effects, &EffectsHandler::mouseChanged, this, &ActiveWindowBorderEffect::onMouseChanged);
+    // Global maximize tracking: transitions for every window while the
+    // effect is loaded, not only the tracked one, so a window maximized
+    // while inactive is already known when later activated. Windows already
+    // maximized before effect load emit no transition and stay unknown.
+    for (EffectWindow *window : effects->stackingOrder()) {
+        subscribeMaximize(window);
+    }
+    connect(effects, &EffectsHandler::windowAdded, this, [this](EffectWindow *window) {
+        subscribeMaximize(window);
+    });
 
     setTrackedWindow(effects->activeWindow());
     updateBorder();
@@ -167,26 +180,23 @@ void ActiveWindowBorderEffect::setTrackedWindow(EffectWindow *window)
         return;
     }
     if (m_trackedWindow) {
-        disconnect(m_trackedWindow, nullptr, this, nullptr);
+        // Disconnect only the tracked-window signals. Global maximize
+        // subscriptions stay connected across tracked switches.
+        disconnect(m_trackedWindow, &EffectWindow::windowFrameGeometryChanged, this,
+            &ActiveWindowBorderEffect::updateBorder);
+        disconnect(m_trackedWindow, &EffectWindow::minimizedChanged, this, &ActiveWindowBorderEffect::updateBorder);
+        disconnect(m_trackedWindow, &EffectWindow::windowFullScreenChanged, this,
+            &ActiveWindowBorderEffect::updateBorder);
+        disconnect(m_trackedWindow, &EffectWindow::minimizedChanged, this,
+            &ActiveWindowBorderEffect::updateGroupVisibility);
+        disconnect(m_trackedWindow, &EffectWindow::windowFullScreenChanged, this,
+            &ActiveWindowBorderEffect::updateGroupVisibility);
     }
     m_trackedWindow = window;
     if (m_trackedWindow) {
         connect(m_trackedWindow, &EffectWindow::windowFrameGeometryChanged, this, &ActiveWindowBorderEffect::updateBorder);
         connect(m_trackedWindow, &EffectWindow::minimizedChanged, this, &ActiveWindowBorderEffect::updateBorder);
         connect(m_trackedWindow, &EffectWindow::windowFullScreenChanged, this, &ActiveWindowBorderEffect::updateBorder);
-        connect(m_trackedWindow, &EffectWindow::windowMaximizedStateAboutToChange, this,
-            [this](EffectWindow *changed, bool horizontal, bool vertical) {
-                // KWin supplies the target state before geometry changes. Hide
-                // before entering maximize, but defer restoration until the
-                // changed signal so the border uses the restored frame.
-                if (activeBorderIsMaximized(horizontal, vertical)) {
-                    updateMaximizedState(changed, true);
-                }
-            });
-        connect(m_trackedWindow, &EffectWindow::windowMaximizedStateChanged, this,
-            [this](EffectWindow *changed, bool horizontal, bool vertical) {
-                updateMaximizedState(changed, activeBorderIsMaximized(horizontal, vertical));
-            });
         // Own active tracked signals update group visibility immediately so
         // fullscreen/minimized transitions hide while Meta is held without
         // waiting for pointer movement. Allowed effect conventions only: no
@@ -194,6 +204,36 @@ void ActiveWindowBorderEffect::setTrackedWindow(EffectWindow *window)
         connect(m_trackedWindow, &EffectWindow::minimizedChanged, this, &ActiveWindowBorderEffect::updateGroupVisibility);
         connect(m_trackedWindow, &EffectWindow::windowFullScreenChanged, this, &ActiveWindowBorderEffect::updateGroupVisibility);
     }
+}
+
+void ActiveWindowBorderEffect::subscribeMaximize(EffectWindow *window)
+{
+    if (window == nullptr || m_maximizeSubscribed.contains(window)) {
+        return;
+    }
+    m_maximizeSubscribed.insert(window);
+    connect(window, &EffectWindow::windowMaximizedStateAboutToChange, this,
+        [this](EffectWindow *changed, bool horizontal, bool vertical) {
+            // KWin supplies the target state before geometry changes. Hide
+            // before entering maximize, but defer restoration until the
+            // changed signal so the border uses the restored frame.
+            if (activeBorderIsMaximized(horizontal, vertical)) {
+                updateMaximizedState(changed, true);
+            }
+        });
+    connect(window, &EffectWindow::windowMaximizedStateChanged, this,
+        [this](EffectWindow *changed, bool horizontal, bool vertical) {
+            updateMaximizedState(changed, activeBorderIsMaximized(horizontal, vertical));
+        });
+}
+
+void ActiveWindowBorderEffect::unsubscribeMaximize(EffectWindow *window)
+{
+    if (window == nullptr || !m_maximizeSubscribed.remove(window)) {
+        return;
+    }
+    disconnect(window, &EffectWindow::windowMaximizedStateAboutToChange, this, nullptr);
+    disconnect(window, &EffectWindow::windowMaximizedStateChanged, this, nullptr);
 }
 
 void ActiveWindowBorderEffect::updateMaximizedState(EffectWindow *window, bool maximized)
@@ -208,6 +248,11 @@ void ActiveWindowBorderEffect::updateMaximizedState(EffectWindow *window, bool m
     }
     if (m_trackedWindow == window) {
         updateBorder();
+        // A displayed Meta-held group must hide immediately on entering
+        // maximize and may only return after the restore transition; the
+        // focus-eligibility gate above keeps a maximized-before-Meta window
+        // from ever showing it.
+        updateGroupVisibility();
     }
 }
 
@@ -316,7 +361,8 @@ bool ActiveWindowBorderEffect::isGroupFocusEligible() const
         return false;
     }
     return group_highlight_focus_eligible(1, window->isDeleted() ? 1 : 0, window->isMinimized() ? 1 : 0,
-               window->isFullScreen() ? 1 : 0, window->isHidden() ? 1 : 0)
+               window->isFullScreen() ? 1 : 0, window->isHidden() ? 1 : 0,
+               m_maximizedWindows.contains(window) ? 1 : 0)
         != 0;
 }
 

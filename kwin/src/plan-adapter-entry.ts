@@ -100,6 +100,7 @@ export interface PlanEntryHandle {
     readonly requestFloat: () => void;
     readonly requestSticky: () => void;
     readonly requestMaximize: () => void;
+    readonly requestFullscreen: () => void;
     readonly requestWorkspaceSelect: (index: unknown) => void;
     readonly requestWorkspaceMove: (index: unknown) => void;
 }
@@ -108,7 +109,7 @@ export interface PlanShortcutRow {
     readonly action: string;
     readonly text: string;
     readonly sequence: string;
-    readonly op: "focus" | "move" | "resize" | "float" | "sticky" | "maximize";
+    readonly op: "focus" | "move" | "resize" | "float" | "sticky" | "maximize" | "fullscreen";
     readonly direction: PlanDirection | null;
     readonly mode: PlanResizeMode | null;
 }
@@ -369,6 +370,14 @@ export function planShortcutCatalog(profile: unknown): ReadonlyArray<PlanShortcu
             text: "Toggle maximize window",
             sequence: "Meta+M",
             op: "maximize",
+            direction: null,
+            mode: null,
+        },
+        {
+            action: "plasma-auto-tiler-toggle-fullscreen",
+            text: "Toggle fullscreen window",
+            sequence: "Meta+F11",
+            op: "fullscreen",
             direction: null,
             mode: null,
         },
@@ -2553,6 +2562,17 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 return "threw";
             }
         },
+        setFullscreen: (target, fullscreen) => {
+            try {
+                if (readProp(target, "fullScreen") === undefined) {
+                    return "missing";
+                }
+                return Reflect.set(target, "fullScreen", fullscreen) ? "invoked" : "threw";
+            } catch (error) {
+                void error;
+                return "threw";
+            }
+        },
         setAllDesktops: (target, allDesktops) => {
             try {
                 const probe = connectSignal(readSignal(target, "desktopsChanged"), () => {});
@@ -2917,7 +2937,9 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                           ? registerFn(action, text, sequence, () => adapter.requestSticky())
                           : op === "maximize"
                             ? registerFn(action, text, sequence, () => adapter.requestMaximize())
-                            : registerFn(action, text, sequence, () => adapter.requestFocus(direction));
+                            : op === "fullscreen"
+                              ? registerFn(action, text, sequence, () => adapter.requestFullscreen())
+                              : registerFn(action, text, sequence, () => adapter.requestFocus(direction));
             if (ok !== true) {
                 try {
                     log(`plasma-auto-tiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
@@ -3953,6 +3975,13 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         requestMaximize: () => {
             try {
                 adapter.requestMaximize();
+            } catch (error) {
+                void error;
+            }
+        },
+        requestFullscreen: () => {
+            try {
+                adapter.requestFullscreen();
             } catch (error) {
                 void error;
             }

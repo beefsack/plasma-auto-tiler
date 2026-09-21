@@ -67,6 +67,7 @@ function makeObserved(
     opts: {
         focused?: object;
         rects?: Record<string, { x: number; y: number; w: number; h: number }>;
+        workspaces?: Record<string, string>;
         fullscreen?: Record<string, boolean>;
         maximized?: Record<string, boolean>;
         floating?: Record<string, boolean>;
@@ -82,14 +83,15 @@ function makeObserved(
     const focused = opts.focused ?? refs.a;
     const rect = (id: string): { x: number; y: number; w: number; h: number } =>
         opts.rects?.[id] ?? { x: 0, y: 0, w: 100, h: 100 };
+    const workspace = (id: string): string => opts.workspaces?.[id] ?? "ws-1";
     const isFullscreen = (id: string): boolean => opts.fullscreen?.[id] === true;
     const isMaximized = (id: string): boolean => opts.maximized?.[id] === true;
     const isFloating = (id: string): boolean => opts.floating?.[id] === true;
     const isSticky = (id: string): boolean => opts.sticky?.[id] === true;
     const resourceClass = (id: string): string => opts.resourceClasses?.[id] ?? "unknown";
     const windows = Object.freeze([
-        Object.freeze({ id: "win-a", ref: refs.a, rect: rect("win-a"), output: "out-1", workspace: "ws-1", fullscreen: isFullscreen("win-a"), maximized: isMaximized("win-a"), floating: isFloating("win-a"), sticky: isSticky("win-a"), resourceClass: resourceClass("win-a") }),
-        Object.freeze({ id: "win-b", ref: refs.b, rect: rect("win-b"), output: "out-1", workspace: "ws-1", fullscreen: isFullscreen("win-b"), maximized: isMaximized("win-b"), floating: isFloating("win-b"), sticky: isSticky("win-b"), resourceClass: resourceClass("win-b") }),
+        Object.freeze({ id: "win-a", ref: refs.a, rect: rect("win-a"), output: "out-1", workspace: workspace("win-a"), fullscreen: isFullscreen("win-a"), maximized: isMaximized("win-a"), floating: isFloating("win-a"), sticky: isSticky("win-a"), resourceClass: resourceClass("win-a") }),
+        Object.freeze({ id: "win-b", ref: refs.b, rect: rect("win-b"), output: "out-1", workspace: workspace("win-b"), fullscreen: isFullscreen("win-b"), maximized: isMaximized("win-b"), floating: isFloating("win-b"), sticky: isSticky("win-b"), resourceClass: resourceClass("win-b") }),
     ]);
     return {
         domainOutput: "out-1",
@@ -113,8 +115,10 @@ interface Mocks {
     readonly subscribes: Array<{ kind: string; handler: (target?: object) => void }>;
     readonly geometries: Array<{ target: object; rect: { x: number; y: number; w: number; h: number } }>;
     readonly actives: object[];
+    readonly desktopsWrites: Array<{ mover: object; desktops: ReadonlyArray<object> }>;
     readonly maximizeClears: object[];
     readonly maximizeToggles: Array<{ target: object; maximized: boolean }>;
+    readonly fullscreenToggles: Array<{ target: object; fullscreen: boolean }>;
     readonly desktopToggles: Array<{ target: object; allDesktops: boolean }>;
     readonly floatingCalls: Array<{ id: string; floating: boolean }>;
     observeImpl: () => PlanObserved | null;
@@ -122,6 +126,7 @@ interface Mocks {
     geometryImpl: (target: object, rect: { x: number; y: number; w: number; h: number }) => boolean;
     maximizeClearImpl: (target: object) => MaximizeClearOutcome;
     maximizeToggleImpl: (target: object, maximized: boolean) => MaximizeClearOutcome;
+    fullscreenToggleImpl: (target: object, fullscreen: boolean) => MaximizeClearOutcome;
     desktopToggleImpl: (target: object, allDesktops: boolean) => MaximizeClearOutcome;
     env: PlanAdapterEnv;
 }
@@ -135,8 +140,10 @@ function mockEnv(refs: { a: object; b: object; c: object }): Mocks {
         subscribes: [],
         geometries: [],
         actives: [],
+        desktopsWrites: [],
         maximizeClears: [],
         maximizeToggles: [],
+        fullscreenToggles: [],
         desktopToggles: [],
         floatingCalls: [],
         observeImpl: () => makeObserved(refs, { focused: refs.a }),
@@ -144,6 +151,7 @@ function mockEnv(refs: { a: object; b: object; c: object }): Mocks {
         geometryImpl: (_target: object, _rect: { x: number; y: number; w: number; h: number }): boolean => true,
         maximizeClearImpl: (_target: object): MaximizeClearOutcome => "invoked",
         maximizeToggleImpl: (_target: object, _maximized: boolean): MaximizeClearOutcome => "invoked",
+        fullscreenToggleImpl: (_target: object, _fullscreen: boolean): MaximizeClearOutcome => "invoked",
         desktopToggleImpl: (_target: object, _allDesktops: boolean): MaximizeClearOutcome => "invoked",
         env: null as unknown as PlanAdapterEnv,
     };
@@ -187,6 +195,10 @@ function mockEnv(refs: { a: object; b: object; c: object }): Mocks {
             state.maximizeToggles.push({ target, maximized });
             return state.maximizeToggleImpl(target, maximized);
         },
+        setFullscreen: (target, fullscreen): MaximizeClearOutcome => {
+            state.fullscreenToggles.push({ target, fullscreen });
+            return state.fullscreenToggleImpl(target, fullscreen);
+        },
         setAllDesktops: (target, allDesktops): MaximizeClearOutcome => {
             state.desktopToggles.push({ target, allDesktops });
             return state.desktopToggleImpl(target, allDesktops);
@@ -200,6 +212,10 @@ function mockEnv(refs: { a: object; b: object; c: object }): Mocks {
         },
         setActive: (target): boolean => {
             state.actives.push(target);
+            return true;
+        },
+        setDesktops: (mover, desktops): boolean => {
+            state.desktopsWrites.push({ mover, desktops });
             return true;
         },
         active: (): object | null => state.activeImpl(),
@@ -1779,6 +1795,58 @@ describe("plan adapter sticky and maximize toggles", () => {
         assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-echo-consumed"));
     });
 
+    it("keeps sticky-on within its domain with no desktop, focus, or rehome writes", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        // A cross-workspace observation is not a plannable foreground domain:
+        // the sticky path fails closed instead of planning across workspaces.
+        mocks.observeImpl = () => makeObserved(refs, { workspaces: { "win-b": "ws-2" } });
+        const adapter = enableAdapter(mocks);
+        adapter.requestSticky();
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-refused-observe"));
+        assert.equal(mocks.dbusCalls.length, 0);
+        assert.equal(mocks.desktopToggles.length, 0);
+        // Same-domain sticky-on for the tiled focused window.
+        let sticky = false;
+        mocks.observeImpl = () => makeObserved(refs, { sticky: { "win-a": sticky }, resourceClasses: { "win-a": "ghostty" } });
+        mocks.desktopToggleImpl = (target, allDesktops) => {
+            assert.equal(target, refs.a);
+            sticky = allDesktops;
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        adapter.requestSticky();
+        // Exactly one planner command whose snapshot preserves the dispatch
+        // domain, the focused window homing, and the sibling workspace.
+        assert.equal(mocks.dbusCalls.length, 1);
+        const payload = plannerPayload(mocks, 0);
+        assert.deepEqual(payload["command"], { op: "toggle-float", window: "win-a" });
+        const domain = payload["domain"] as Record<string, unknown>;
+        assert.equal(domain["output"], "out-1");
+        assert.equal(domain["workspace"], "ws-1");
+        assert.equal(payload["focused_window"], "win-a");
+        const windows = payload["windows"] as Array<Record<string, unknown>>;
+        const byWindow = new Map(windows.map((entry) => [entry["window"], entry]));
+        assert.deepEqual([byWindow.get("win-a")?.["output"], byWindow.get("win-a")?.["workspace"]], ["out-1", "ws-1"]);
+        assert.deepEqual([byWindow.get("win-b")?.["output"], byWindow.get("win-b")?.["workspace"]], ["out-1", "ws-1"]);
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: payload["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [{ window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 100, h: 100 } }],
+            float_geometry: { window: "win-a", rect: { x: 240, y: 160, w: 720, h: 480 } },
+        }));
+        // Only the intended transitions: float placement plus setAllDesktops.
+        assert.deepEqual(mocks.floatingCalls, [{ id: "win-a", floating: true }]);
+        assert.deepEqual(mocks.desktopToggles, [{ target: refs.a, allDesktops: true }]);
+        assert.equal(mocks.geometries.length, 1, "no sibling geometry move occurs");
+        assert.deepEqual(mocks.geometries[0], { target: refs.a, rect: { x: 240, y: 160, w: 720, h: 480 } });
+        assert.equal(mocks.actives.length, 0, "sticky-on changes no focus");
+        assert.equal(mocks.desktopsWrites.length, 0, "sticky-on writes no desktop membership");
+        assert.equal(mocks.dbusCalls.length, 1, "sticky-on issues no follow-up planner commands");
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-echo-consumed"));
+    });
+
     it("keeps an already floating sticky member floating and makes a deliberate maximize block float", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
@@ -1816,6 +1884,49 @@ describe("plan adapter sticky and maximize toggles", () => {
         assert.equal(mocks.maximizeToggles.length, 1);
         assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:maximize-toggle-echo-cleared-no-signal"));
         assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:maximize-refused-attempted window=win-a resource_class=unknown"));
+    });
+});
+
+describe("plan adapter fullscreen toggle", () => {
+    it("toggles the focused window fullscreen on and back off with one native write each", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let fullscreen = false;
+        mocks.observeImpl = () => makeObserved(refs, { fullscreen: { "win-a": fullscreen }, resourceClasses: { "win-a": "ghostty" } });
+        mocks.fullscreenToggleImpl = (target, value) => {
+            assert.equal(target, refs.a);
+            fullscreen = value;
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestFullscreen();
+        adapter.requestFullscreen();
+        assert.deepEqual(mocks.fullscreenToggles, [{ target: refs.a, fullscreen: true }, { target: refs.a, fullscreen: false }]);
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:fullscreen-toggle window=win-a resource_class=ghostty target=fullscreen outcome=invoked"));
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:fullscreen-toggle window=win-a resource_class=ghostty target=restored outcome=invoked"));
+        assert.equal(mocks.dbusCalls.length, 0, "fullscreen toggle issues no planner commands");
+        assert.equal(mocks.geometries.length, 0, "fullscreen toggle writes no geometry");
+        assert.equal(mocks.actives.length, 0, "fullscreen toggle changes no focus");
+        assert.equal(mocks.desktopToggles.length, 0, "fullscreen toggle changes no desktops");
+        assert.equal(mocks.floatingCalls.length, 0, "fullscreen toggle changes no float state");
+    });
+
+    it("refuses without observation and reports a throwing seam without planner commands", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.observeImpl = () => null;
+        const adapter = enableAdapter(mocks);
+        adapter.requestFullscreen();
+        assert.equal(mocks.fullscreenToggles.length, 0);
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:fullscreen-refused-observe"));
+        mocks.observeImpl = () => makeObserved(refs, { resourceClasses: { "win-a": "firefox" } });
+        mocks.fullscreenToggleImpl = (): MaximizeClearOutcome => {
+            throw new Error("native write threw");
+        };
+        adapter.requestFullscreen();
+        assert.equal(mocks.fullscreenToggles.length, 1);
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:fullscreen-toggle window=win-a resource_class=firefox target=fullscreen outcome=threw"));
+        assert.equal(mocks.dbusCalls.length, 0);
     });
 });
 
@@ -2048,9 +2159,9 @@ describe("plan entry live observation and shortcuts", () => {
         const world = fakeWorld();
         const { handle, mocks } = startEntry(world);
         assert.ok(handle !== null);
-        assert.equal(mocks.shortcuts.length, 61);
+        assert.equal(mocks.shortcuts.length, 62);
         const actions = mocks.shortcuts.map((row) => row.action);
-        assert.equal(new Set(actions).size, 61);
+        assert.equal(new Set(actions).size, 62);
         assert.ok(actions.includes("plasma-auto-tiler-focus-left"));
         assert.ok(actions.includes("plasma-auto-tiler-focus-right-arrow"));
         assert.ok(actions.includes("plasma-auto-tiler-move-up"));
@@ -2060,8 +2171,10 @@ describe("plan entry live observation and shortcuts", () => {
         assert.ok(actions.includes("plasma-auto-tiler-toggle-float"));
         assert.ok(actions.includes("plasma-auto-tiler-toggle-sticky"));
         assert.ok(actions.includes("plasma-auto-tiler-toggle-maximize"));
+        assert.ok(actions.includes("plasma-auto-tiler-toggle-fullscreen"));
         assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-float sequence=Meta+G holder_component=kwin holder_action=Grid_View"));
         assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-maximize sequence=Meta+M holder_component=kwin holder_action=KrohnkiteMonocleLayout"));
+        assert.ok(!mocks.logs.some((line) => line.includes("plasma-auto-tiler-toggle-fullscreen") && line.includes("shadowed")), "Meta+F11 has no conflicting holder");
         const focus = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-focus-left") as {
             callback: () => void;
         };
@@ -2149,8 +2262,7 @@ describe("plan entry live observation and shortcuts", () => {
         handle?.stop();
     });
 
-    it("refuses float on fullscreen and maximized targets without native writes", () => {
-        for (const [property, value, token] of [
+        it("refuses float on fullscreen and maximized targets without native writes", () => {        for (const [property, value, token] of [
             ["fullScreen", true, "plasma-auto-tiler:plan:float-refused-fullscreen"],
             ["maximizeMode", 3, "plasma-auto-tiler:plan:float-refused-maximize"],
         ] as const) {
@@ -2168,10 +2280,31 @@ describe("plan entry live observation and shortcuts", () => {
         }
     });
 
+    it("toggles native fullscreen through the Meta+F11 callback without planner commands", () => {
+        const world = fakeWorld();
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        const row = mocks.shortcuts.find((entry) => entry.action === "plasma-auto-tiler-toggle-fullscreen") as {
+            sequence: string;
+            callback: () => void;
+        };
+        assert.equal(row.sequence, "Meta+F11");
+        const active = world.wins[0] as Record<string, unknown>;
+        row.callback();
+        assert.equal(active["fullScreen"], true);
+        assert.equal(mocks.dbusCalls.length, 0);
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:fullscreen-toggle window=win-a resource_class=test-app target=fullscreen outcome=invoked"));
+        row.callback();
+        assert.equal(active["fullScreen"], false);
+        assert.equal(mocks.dbusCalls.length, 0);
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:fullscreen-toggle window=win-a resource_class=test-app target=restored outcome=invoked"));
+        handle?.stop();
+    });
+
     it("maps catalog rows to parameterized focus, move, and resize commands", () => {
         for (const profile of ["cosmic", "hyprland", "bspwm", "unknown"]) {
             const catalog = planShortcutCatalog(profile);
-            assert.equal(catalog.length, 31);
+            assert.equal(catalog.length, 32);
             const byAction = new Map(catalog.map((row) => [row.action, row]));
             assert.equal(byAction.get("plasma-auto-tiler-focus-up")?.direction, "up");
             assert.equal(byAction.get("plasma-auto-tiler-focus-up")?.op, "focus");
@@ -2187,6 +2320,9 @@ describe("plan entry live observation and shortcuts", () => {
             });
             assert.equal(byAction.get("plasma-auto-tiler-toggle-sticky")?.sequence, "Meta+Shift+G");
             assert.equal(byAction.get("plasma-auto-tiler-toggle-maximize")?.sequence, "Meta+M");
+            assert.deepEqual(byAction.get("plasma-auto-tiler-toggle-fullscreen"), {
+                action: "plasma-auto-tiler-toggle-fullscreen", text: "Toggle fullscreen window", sequence: "Meta+F11", op: "fullscreen", direction: null, mode: null,
+            });
         }
     });
 
@@ -2279,13 +2415,14 @@ describe("plan entry live observation and shortcuts", () => {
             for (const row of catalog) {
                 assert.ok(!row.action.includes("workspace"), `${profile}:${row.action}`);
                 assert.ok(!/Meta(\+Shift)?\+\d/.test(row.sequence), `${profile}:${row.action}:${row.sequence}`);
-                assert.ok(!/Meta\+\S*\d/.test(row.sequence), `${profile}:${row.action}:${row.sequence}`);
+                // F11 is the project fullscreen toggle, not a workspace digit chord.
+                assert.ok(!/Meta\+\S*\d/.test(row.sequence) || row.sequence === "Meta+F11", `${profile}:${row.action}:${row.sequence}`);
             }
         }
         const live = startEntry(fakeWorld());
         assert.ok(live.handle !== null);
         const byAction = new Map(live.mocks.shortcuts.map((row) => [row.action, row]));
-        assert.equal(live.mocks.shortcuts.length, 61);
+        assert.equal(live.mocks.shortcuts.length, 62);
         for (let index = 1; index <= 9; index += 1) {
             assert.equal(byAction.get(`plasma-auto-tiler-workspace-${String(index)}`)?.sequence, `Meta+${String(index)}`);
             assert.equal(byAction.get(`plasma-auto-tiler-move-workspace-${String(index)}`)?.sequence, `Meta+Shift+${String(index)}`);
@@ -2443,7 +2580,7 @@ describe("plan entry live observation and shortcuts", () => {
             },
         });
         assert.ok(handle !== null);
-        assert.equal(attempts.length, 61);
+        assert.equal(attempts.length, 62);
         assert.ok(attempts.includes("plasma-auto-tiler-focus-right-arrow"));
         assert.ok(attempts.includes("plasma-auto-tiler-resize-inwards-right-arrow"));
         const line = mocks.logs.find((entry) => entry.includes("shortcut-failed"));

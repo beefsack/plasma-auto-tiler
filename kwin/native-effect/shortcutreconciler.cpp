@@ -481,6 +481,12 @@ const QList<ShortcutConflictRow> &shortcutConflictTable()
         {shortcutResizeRightComponent(), shortcutResizeRightAction(), {SHORTCUT_META_ALT_L},
           shortcutSwitchLastComponent(), shortcutSwitchLastAction(), {SHORTCUT_META_ALT_L},
           shortcutResolutionClear(), {}, {}, {}},
+        {shortcutFloatComponent(), shortcutFloatAction(), {SHORTCUT_META_G},
+          shortcutGridViewComponent(), shortcutGridViewAction(), {SHORTCUT_META_G},
+          shortcutResolutionClear(), {}, {}, {}},
+        {shortcutMaximizeComponent(), shortcutMaximizeAction(), {SHORTCUT_META_M},
+          shortcutMonocleComponent(), shortcutMonocleAction(), {SHORTCUT_META_M},
+          shortcutResolutionClear(), {}, {}, {}},
     };
     return table;
 }
@@ -515,6 +521,10 @@ QList<int> ShortcutReconciler::resizeUpPostKeys() { return shortcutConflictTable
 QList<int> ShortcutReconciler::resizeRightPostKeys() { return shortcutConflictTable().at(2).projectPost; }
 QList<int> ShortcutReconciler::switchNextExpectedPre() { return shortcutConflictTable().at(1).foreignExpectedPre; }
 QList<int> ShortcutReconciler::switchLastExpectedPre() { return shortcutConflictTable().at(2).foreignExpectedPre; }
+QList<int> ShortcutReconciler::floatPostKeys() { return shortcutConflictTable().at(3).projectPost; }
+QList<int> ShortcutReconciler::gridViewExpectedPre() { return shortcutConflictTable().at(3).foreignExpectedPre; }
+QList<int> ShortcutReconciler::maximizePostKeys() { return shortcutConflictTable().at(4).projectPost; }
+QList<int> ShortcutReconciler::monocleExpectedPre() { return shortcutConflictTable().at(4).foreignExpectedPre; }
 QList<int> ShortcutReconciler::dedupKeys(const QList<int> &keys)
 {
     QList<int> deduped;
@@ -903,7 +913,8 @@ bool ShortcutReconciler::parseAllComponentsReply(QDBusMessage::MessageType reply
 
 QList<int> ShortcutReconciler::relevantConflictKeys()
 {
-    return {SHORTCUT_META_L, SHORTCUT_META_ESC, SHORTCUT_META_ALT_K, SHORTCUT_META_ALT_L};
+    return {SHORTCUT_META_L, SHORTCUT_META_ESC, SHORTCUT_META_ALT_K, SHORTCUT_META_ALT_L, SHORTCUT_META_G,
+            SHORTCUT_META_M};
 }
 
 QString ShortcutReconciler::keyDisplayName(int key)
@@ -919,6 +930,12 @@ QString ShortcutReconciler::keyDisplayName(int key)
     }
     if (key == SHORTCUT_META_ALT_L) {
         return QStringLiteral("Meta+Alt+L");
+    }
+    if (key == SHORTCUT_META_G) {
+        return QStringLiteral("Meta+G");
+    }
+    if (key == SHORTCUT_META_M) {
+        return QStringLiteral("Meta+M");
     }
     return QStringLiteral("key %1").arg(key);
 }
@@ -1279,7 +1296,7 @@ bool ShortcutReconciler::journalPathSafe(const QString &path, QString *error)
 bool ShortcutReconciler::journalRolesValid(const ShortcutJournal &journal)
 {
     const QList<ShortcutConflictRow> &table = shortcutConflictTable();
-    if (table.size() != 3) {
+    if (table.size() != 5) {
         return false;
     }
     if (journal.focus.component != table.at(0).projectComponent || journal.focus.action != table.at(0).projectAction
@@ -1291,15 +1308,37 @@ bool ShortcutReconciler::journalRolesValid(const ShortcutJournal &journal)
         || journal.switchLast.action != table.at(2).foreignAction) {
         return false;
     }
-    return journal.row0Kind == table.at(0).resolution && journal.row1Kind == table.at(1).resolution
-        && journal.row2Kind == table.at(2).resolution;
+    if (journal.row0Kind != table.at(0).resolution || journal.row1Kind != table.at(1).resolution
+        || journal.row2Kind != table.at(2).resolution) {
+        return false;
+    }
+    if (journal.schema == shortcutJournalSchemaV2()) {
+        // v2 journals carry only the original three rows; rows 3-4 are
+        // never read or assumed here.
+        return true;
+    }
+    if (journal.floatToggle.component != table.at(3).projectComponent
+        || journal.floatToggle.action != table.at(3).projectAction || journal.gridView.component != table.at(3).foreignComponent
+        || journal.gridView.action != table.at(3).foreignAction || journal.maximizeToggle.component != table.at(4).projectComponent
+        || journal.maximizeToggle.action != table.at(4).projectAction || journal.monocle.component != table.at(4).foreignComponent
+        || journal.monocle.action != table.at(4).foreignAction) {
+        return false;
+    }
+    return journal.row3Kind == table.at(3).resolution && journal.row4Kind == table.at(4).resolution;
 }
 
 bool ShortcutReconciler::journalPostsValid(const ShortcutJournal &journal)
 {
-    return journal.focus.post == focusPostKeys() && journal.lock.post == lockPostFor(journal.lock.pre)
-        && journal.resizeUp.post == resizeUpPostKeys() && journal.switchNext.post.isEmpty()
-        && journal.resizeRight.post == resizeRightPostKeys() && journal.switchLast.post.isEmpty();
+    if (journal.focus.post != focusPostKeys() || journal.lock.post != lockPostFor(journal.lock.pre)
+        || journal.resizeUp.post != resizeUpPostKeys() || !journal.switchNext.post.isEmpty()
+        || journal.resizeRight.post != resizeRightPostKeys() || !journal.switchLast.post.isEmpty()) {
+        return false;
+    }
+    if (journal.schema == shortcutJournalSchemaV2()) {
+        return true;
+    }
+    return journal.floatToggle.post == floatPostKeys() && journal.gridView.post.isEmpty()
+        && journal.maximizeToggle.post == maximizePostKeys() && journal.monocle.post.isEmpty();
 }
 
 bool KGlobalAccelStore::checkSetterContract(QString *error)
@@ -1840,21 +1879,28 @@ bool KConfigFileJournal::load(ShortcutJournal *journal, QString *error) const
     loaded.row0Kind = group.readEntry(QStringLiteral("Row0Kind"), QString());
     loaded.row1Kind = group.readEntry(QStringLiteral("Row1Kind"), QString());
     loaded.row2Kind = group.readEntry(QStringLiteral("Row2Kind"), QString());
+    loaded.row3Kind = group.readEntry(QStringLiteral("Row3Kind"), QString());
+    loaded.row4Kind = group.readEntry(QStringLiteral("Row4Kind"), QString());
     if (!readJournalEntry(group, QStringLiteral("Focus"), &loaded.focus, error)
         || !readJournalEntry(group, QStringLiteral("Lock"), &loaded.lock, error)
         || !readJournalEntry(group, QStringLiteral("ResizeUp"), &loaded.resizeUp, error)
         || !readJournalEntry(group, QStringLiteral("SwitchNext"), &loaded.switchNext, error)
         || !readJournalEntry(group, QStringLiteral("ResizeRight"), &loaded.resizeRight, error)
-        || !readJournalEntry(group, QStringLiteral("SwitchLast"), &loaded.switchLast, error)) {
+        || !readJournalEntry(group, QStringLiteral("SwitchLast"), &loaded.switchLast, error)
+        || !readJournalEntry(group, QStringLiteral("FloatToggle"), &loaded.floatToggle, error)
+        || !readJournalEntry(group, QStringLiteral("GridView"), &loaded.gridView, error)
+        || !readJournalEntry(group, QStringLiteral("MaximizeToggle"), &loaded.maximizeToggle, error)
+        || !readJournalEntry(group, QStringLiteral("Monocle"), &loaded.monocle, error)) {
         return false;
     }
     if (loaded.schema == QStringLiteral("shortcut-override-v1")) {
         if (error) {
-            *error = QStringLiteral("journal schema version v1 is unsupported; expected shortcut-override-v2 (upgrade required, no migration)");
+            *error = QStringLiteral("journal schema version v1 is unsupported; expected shortcut-override-v3 (upgrade required, no migration)");
         }
         return false;
     }
-    if (loaded.schema != shortcutJournalSchema()) {
+    const bool isV2 = loaded.schema == shortcutJournalSchemaV2();
+    if (!isV2 && loaded.schema != shortcutJournalSchema()) {
         if (error) {
             *error = QStringLiteral("journal schema is unknown");
         }
@@ -1874,6 +1920,17 @@ bool KConfigFileJournal::load(ShortcutJournal *journal, QString *error) const
             *error = QStringLiteral("journal entries are outside the exact allowlist");
         }
         return false;
+    }
+    if (!isV2) {
+        // v3 journals always carry rows 3-4; v2 journals never do and their
+        // (empty) new-row fields are ignored, never assumed.
+        if (!journalEntryValid(loaded.floatToggle) || !journalEntryValid(loaded.gridView)
+            || !journalEntryValid(loaded.maximizeToggle) || !journalEntryValid(loaded.monocle)) {
+            if (error) {
+                *error = QStringLiteral("journal entries are outside the exact allowlist");
+            }
+            return false;
+        }
     }
     // Exact ordered roles: table order plus resolution kinds.
     if (!ShortcutReconciler::journalRolesValid(loaded)) {
@@ -1920,7 +1977,8 @@ bool KConfigFileJournal::persist(const ShortcutJournal &journal, QString *error)
         }
         return false;
     }
-    if (journal.schema != shortcutJournalSchema() || !journalEntryValid(journal.focus) || !journalEntryValid(journal.lock)
+    const bool persistV2 = journal.schema == shortcutJournalSchemaV2();
+    if ((!persistV2 && journal.schema != shortcutJournalSchema()) || !journalEntryValid(journal.focus) || !journalEntryValid(journal.lock)
         || !journalEntryValid(journal.resizeUp) || !journalEntryValid(journal.switchNext)
         || !journalEntryValid(journal.resizeRight) || !journalEntryValid(journal.switchLast)
         || !ShortcutReconciler::journalRolesValid(journal)) {
@@ -1928,6 +1986,17 @@ bool KConfigFileJournal::persist(const ShortcutJournal &journal, QString *error)
             *error = QStringLiteral("refusing to persist a journal outside the exact allowlist");
         }
         return false;
+    }
+    if (!persistV2) {
+        // v3 journals always carry rows 3-4; v2 persists keep only the
+        // original three rows (new-row fields persist empty and inert).
+        if (!journalEntryValid(journal.floatToggle) || !journalEntryValid(journal.gridView)
+            || !journalEntryValid(journal.maximizeToggle) || !journalEntryValid(journal.monocle)) {
+            if (error) {
+                *error = QStringLiteral("refusing to persist a journal outside the exact allowlist");
+            }
+            return false;
+        }
     }
     if (!ShortcutReconciler::journalPathSafe(m_filePath, error)) {
         return false;
@@ -1949,9 +2018,15 @@ bool KConfigFileJournal::persist(const ShortcutJournal &journal, QString *error)
         writeJournalEntry(group, QStringLiteral("SwitchNext"), journal.switchNext);
         writeJournalEntry(group, QStringLiteral("ResizeRight"), journal.resizeRight);
         writeJournalEntry(group, QStringLiteral("SwitchLast"), journal.switchLast);
+        writeJournalEntry(group, QStringLiteral("FloatToggle"), journal.floatToggle);
+        writeJournalEntry(group, QStringLiteral("GridView"), journal.gridView);
+        writeJournalEntry(group, QStringLiteral("MaximizeToggle"), journal.maximizeToggle);
+        writeJournalEntry(group, QStringLiteral("Monocle"), journal.monocle);
         group.writeEntry(QStringLiteral("Row0Kind"), journal.row0Kind);
         group.writeEntry(QStringLiteral("Row1Kind"), journal.row1Kind);
         group.writeEntry(QStringLiteral("Row2Kind"), journal.row2Kind);
+        group.writeEntry(QStringLiteral("Row3Kind"), journal.row3Kind);
+        group.writeEntry(QStringLiteral("Row4Kind"), journal.row4Kind);
         config.sync();
     }
     // Private owner-safe permissions without weakening KConfig durability
@@ -1980,8 +2055,17 @@ bool KConfigFileJournal::persist(const ShortcutJournal &journal, QString *error)
         || readback.resizeRight.action != journal.resizeRight.action || readback.resizeRight.pre != journal.resizeRight.pre
         || readback.resizeRight.post != journal.resizeRight.post || readback.switchLast.component != journal.switchLast.component
         || readback.switchLast.action != journal.switchLast.action || readback.switchLast.pre != journal.switchLast.pre
-        || readback.switchLast.post != journal.switchLast.post || readback.row0Kind != journal.row0Kind
-        || readback.row1Kind != journal.row1Kind || readback.row2Kind != journal.row2Kind) {
+        || readback.switchLast.post != journal.switchLast.post || readback.floatToggle.component != journal.floatToggle.component
+        || readback.floatToggle.action != journal.floatToggle.action || readback.floatToggle.pre != journal.floatToggle.pre
+        || readback.floatToggle.post != journal.floatToggle.post || readback.gridView.component != journal.gridView.component
+        || readback.gridView.action != journal.gridView.action || readback.gridView.pre != journal.gridView.pre
+        || readback.gridView.post != journal.gridView.post || readback.maximizeToggle.component != journal.maximizeToggle.component
+        || readback.maximizeToggle.action != journal.maximizeToggle.action || readback.maximizeToggle.pre != journal.maximizeToggle.pre
+        || readback.maximizeToggle.post != journal.maximizeToggle.post || readback.monocle.component != journal.monocle.component
+        || readback.monocle.action != journal.monocle.action || readback.monocle.pre != journal.monocle.pre
+        || readback.monocle.post != journal.monocle.post || readback.row0Kind != journal.row0Kind
+        || readback.row1Kind != journal.row1Kind || readback.row2Kind != journal.row2Kind
+        || readback.row3Kind != journal.row3Kind || readback.row4Kind != journal.row4Kind) {
         if (error) {
             *error = QStringLiteral("journal readback mismatch");
         }
@@ -2085,6 +2169,10 @@ ShortcutApplyResult ShortcutReconciler::apply()
     ShortcutTuple switchNextCurrent;
     ShortcutTuple resizeRightCurrent;
     ShortcutTuple switchLastCurrent;
+    ShortcutTuple floatCurrent;
+    ShortcutTuple gridViewCurrent;
+    ShortcutTuple maximizeCurrent;
+    ShortcutTuple monocleCurrent;
     if (!findAllowlisted(tuples, shortcutFocusComponent(), shortcutFocusAction(), &focusCurrent, &error)) {
         result.error = error;
         return result;
@@ -2099,13 +2187,18 @@ ShortcutApplyResult ShortcutReconciler::apply()
         || !findAllowlisted(tuples, shortcutResizeRightComponent(), shortcutResizeRightAction(), &resizeRightCurrent,
                             &error)
         || !findAllowlisted(tuples, shortcutSwitchLastComponent(), shortcutSwitchLastAction(), &switchLastCurrent,
-                            &error)) {
+                            &error)
+        || !findAllowlisted(tuples, shortcutFloatComponent(), shortcutFloatAction(), &floatCurrent, &error)
+        || !findAllowlisted(tuples, shortcutGridViewComponent(), shortcutGridViewAction(), &gridViewCurrent, &error)
+        || !findAllowlisted(tuples, shortcutMaximizeComponent(), shortcutMaximizeAction(), &maximizeCurrent, &error)
+        || !findAllowlisted(tuples, shortcutMonocleComponent(), shortcutMonocleAction(), &monocleCurrent, &error)) {
         result.error = error;
         return result;
     }
     if (!keysValid(focusCurrent.active) || !keysValid(lockCurrent.active) || !keysValid(resizeUpCurrent.active)
         || !keysValid(switchNextCurrent.active) || !keysValid(resizeRightCurrent.active)
-        || !keysValid(switchLastCurrent.active)) {
+        || !keysValid(switchLastCurrent.active) || !keysValid(floatCurrent.active) || !keysValid(gridViewCurrent.active)
+        || !keysValid(maximizeCurrent.active) || !keysValid(monocleCurrent.active)) {
         result.error = QStringLiteral("allowlisted tuple is unbounded");
         return result;
     }
@@ -2136,6 +2229,8 @@ ShortcutApplyResult ShortcutReconciler::apply()
     const QList<int> lockPost = lockPostFor(lockCurrent.active);
     const QList<int> resizeUpPost = resizeUpPostKeys();
     const QList<int> resizeRightPost = resizeRightPostKeys();
+    const QList<int> floatPost = floatPostKeys();
+    const QList<int> maximizePost = maximizePostKeys();
     const bool focusNeeds = focusCurrent.active != focusPost;
     const bool lockHadMetaL = lockCurrent.active.contains(SHORTCUT_META_L);
     const bool lockHasMetaEsc = lockCurrent.active.contains(SHORTCUT_META_ESC);
@@ -2145,7 +2240,7 @@ ShortcutApplyResult ShortcutReconciler::apply()
         return result;
     }
     if (usedWrites() > SHORTCUT_MAX_WRITES) {
-        result.error = QStringLiteral("tuple writes exceed the exact six writes max");
+        result.error = QStringLiteral("tuple writes exceed the exact ten writes max");
         return result;
     }
 
@@ -2162,11 +2257,35 @@ ShortcutApplyResult ShortcutReconciler::apply()
             result.writes = usedWrites();
             return result;
         }
+        if (journal.schema == shortcutJournalSchemaV2()) {
+            // Adopt a persisted v2 journal into v3 from live state: the
+            // three recorded rows are carried over untouched and the two
+            // new rows are built from current live bindings (pre = live,
+            // post = table image), never assumed. Persist before any write.
+            journal.floatToggle = {shortcutFloatComponent(), shortcutFloatAction(), floatCurrent.active, floatPost};
+            journal.gridView = {shortcutGridViewComponent(), shortcutGridViewAction(), gridViewCurrent.active,
+                                QList<int>{}};
+            journal.maximizeToggle = {shortcutMaximizeComponent(), shortcutMaximizeAction(), maximizeCurrent.active,
+                                      maximizePost};
+            journal.monocle = {shortcutMonocleComponent(), shortcutMonocleAction(), monocleCurrent.active,
+                               QList<int>{}};
+            journal.row3Kind = shortcutResolutionClear();
+            journal.row4Kind = shortcutResolutionClear();
+            journal.schema = shortcutJournalSchema();
+            if (!m_journal->persist(journal, &error)) {
+                result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
+                result.writes = usedWrites();
+                return result;
+            }
+        }
         if (journal.phase == shortcutJournalPhaseComplete()) {
             if (focusCurrent.active == journal.focus.post && lockCurrent.active == journal.lock.post
                 && resizeUpCurrent.active == journal.resizeUp.post && switchNextCurrent.active == journal.switchNext.post
                 && resizeRightCurrent.active == journal.resizeRight.post
-                && switchLastCurrent.active == journal.switchLast.post) {
+                && switchLastCurrent.active == journal.switchLast.post
+                && floatCurrent.active == journal.floatToggle.post && gridViewCurrent.active == journal.gridView.post
+                && maximizeCurrent.active == journal.maximizeToggle.post
+                && monocleCurrent.active == journal.monocle.post) {
                 // Stale unique names are volatile across a crashed KCM or
                 // service lifetime: same UID rebinds to the verified current
                 // owner before returning success.
@@ -2204,7 +2323,16 @@ ShortcutApplyResult ShortcutReconciler::apply()
                 || resizeRightCurrent.active == journal.resizeRight.post;
             const bool lastKnown = switchLastCurrent.active == journal.switchLast.pre
                 || switchLastCurrent.active == journal.switchLast.post;
-            if (!known || !lockKnown || !upKnown || !nextKnown || !rightKnown || !lastKnown) {
+            const bool floatKnown = floatCurrent.active == journal.floatToggle.pre
+                || floatCurrent.active == journal.floatToggle.post;
+            const bool gridKnown = gridViewCurrent.active == journal.gridView.pre
+                || gridViewCurrent.active == journal.gridView.post;
+            const bool maximizeKnown = maximizeCurrent.active == journal.maximizeToggle.pre
+                || maximizeCurrent.active == journal.maximizeToggle.post;
+            const bool monocleKnown = monocleCurrent.active == journal.monocle.pre
+                || monocleCurrent.active == journal.monocle.post;
+            if (!known || !lockKnown || !upKnown || !nextKnown || !rightKnown || !lastKnown || !floatKnown || !gridKnown
+                || !maximizeKnown || !monocleKnown) {
                 result.error = QStringLiteral("current state matches neither the recorded pre nor post image");
                 result.writes = usedWrites();
                 return result;
@@ -2240,6 +2368,16 @@ ShortcutApplyResult ShortcutReconciler::apply()
                                .arg(shortcutSwitchLastComponent(), shortcutSwitchLastAction());
             return result;
         }
+        if (gridViewCurrent.active != gridViewExpectedPre()) {
+            result.error = QStringLiteral("refusing to apply: %1/%2 preimage is not exactly Meta+G")
+                               .arg(shortcutGridViewComponent(), shortcutGridViewAction());
+            return result;
+        }
+        if (monocleCurrent.active != monocleExpectedPre()) {
+            result.error = QStringLiteral("refusing to apply: %1/%2 preimage is not exactly Meta+M")
+                               .arg(shortcutMonocleComponent(), shortcutMonocleAction());
+            return result;
+        }
         journal.schema = shortcutJournalSchema();
         journal.phase = shortcutJournalPhasePending();
         journal.owner = owner;
@@ -2253,9 +2391,17 @@ ShortcutApplyResult ShortcutReconciler::apply()
                                resizeRightPost};
         journal.switchLast = {shortcutSwitchLastComponent(), shortcutSwitchLastAction(), switchLastCurrent.active,
                               QList<int>{}};
+        journal.floatToggle = {shortcutFloatComponent(), shortcutFloatAction(), floatCurrent.active, floatPost};
+        journal.gridView = {shortcutGridViewComponent(), shortcutGridViewAction(), gridViewCurrent.active,
+                            QList<int>{}};
+        journal.maximizeToggle = {shortcutMaximizeComponent(), shortcutMaximizeAction(), maximizeCurrent.active,
+                                  maximizePost};
+        journal.monocle = {shortcutMonocleComponent(), shortcutMonocleAction(), monocleCurrent.active, QList<int>{}};
         journal.row0Kind = shortcutResolutionRelocate();
         journal.row1Kind = shortcutResolutionClear();
         journal.row2Kind = shortcutResolutionClear();
+        journal.row3Kind = shortcutResolutionClear();
+        journal.row4Kind = shortcutResolutionClear();
         if (!m_journal->persist(journal, &error)) {
             result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
             return result;
@@ -2383,7 +2529,7 @@ ShortcutApplyResult ShortcutReconciler::apply()
         }
     }
 
-    // Rows 1-2 ordered: project then foreign(clear) per row, resumable.
+    // Rows 1-4 ordered: project then foreign(clear) per row, resumable.
     if (journal.phase == shortcutJournalPhasePending()
         && (resizeUpCurrent.active != journal.resizeUp.post || switchNextCurrent.active != journal.switchNext.post
             || resizeRightCurrent.active != journal.resizeRight.post
@@ -2395,9 +2541,10 @@ ShortcutApplyResult ShortcutReconciler::apply()
         }
     }
     {
-        ShortcutJournalEntry *projs[2] = {&journal.resizeUp, &journal.resizeRight};
-        ShortcutJournalEntry *fors[2] = {&journal.switchNext, &journal.switchLast};
-        for (int r = 0; r < 2; ++r) {
+        ShortcutJournalEntry *projs[4] = {&journal.resizeUp, &journal.resizeRight, &journal.floatToggle,
+                                          &journal.maximizeToggle};
+        ShortcutJournalEntry *fors[4] = {&journal.switchNext, &journal.switchLast, &journal.gridView, &journal.monocle};
+        for (int r = 0; r < 4; ++r) {
             QList<ShortcutTuple> cur;
             if (!m_store->readAll(&cur, &error)) {
                 result.error = error;
@@ -2508,13 +2655,21 @@ ShortcutApplyResult ShortcutReconciler::apply()
     ShortcutTuple nextFinal;
     ShortcutTuple rightFinal;
     ShortcutTuple lastFinal;
+    ShortcutTuple floatFinal;
+    ShortcutTuple gridViewFinal;
+    ShortcutTuple maximizeFinal;
+    ShortcutTuple monocleFinal;
     if (!findAllowlisted(finalTuples, shortcutFocusComponent(), shortcutFocusAction(), &focusFinal, &error)
         || !findAllowlisted(finalTuples, shortcutLockComponent(), shortcutLockAction(), &lockFinal, &error)
         || !findAllowlisted(finalTuples, shortcutResizeUpComponent(), shortcutResizeUpAction(), &upFinal, &error)
         || !findAllowlisted(finalTuples, shortcutSwitchNextComponent(), shortcutSwitchNextAction(), &nextFinal, &error)
         || !findAllowlisted(finalTuples, shortcutResizeRightComponent(), shortcutResizeRightAction(), &rightFinal,
                             &error)
-        || !findAllowlisted(finalTuples, shortcutSwitchLastComponent(), shortcutSwitchLastAction(), &lastFinal,
+        || !findAllowlisted(finalTuples, shortcutSwitchLastComponent(), shortcutSwitchLastAction(), &lastFinal, &error)
+        || !findAllowlisted(finalTuples, shortcutFloatComponent(), shortcutFloatAction(), &floatFinal, &error)
+        || !findAllowlisted(finalTuples, shortcutGridViewComponent(), shortcutGridViewAction(), &gridViewFinal, &error)
+        || !findAllowlisted(finalTuples, shortcutMaximizeComponent(), shortcutMaximizeAction(), &maximizeFinal, &error)
+        || !findAllowlisted(finalTuples, shortcutMonocleComponent(), shortcutMonocleAction(), &monocleFinal,
                             &error)) {
         result.error = error;
         result.writes = usedWrites();
@@ -2522,13 +2677,15 @@ ShortcutApplyResult ShortcutReconciler::apply()
     }
     if (focusFinal.active != journal.focus.post || lockFinal.active != journal.lock.post
         || upFinal.active != journal.resizeUp.post || nextFinal.active != journal.switchNext.post
-        || rightFinal.active != journal.resizeRight.post || lastFinal.active != journal.switchLast.post) {
+        || rightFinal.active != journal.resizeRight.post || lastFinal.active != journal.switchLast.post
+        || floatFinal.active != journal.floatToggle.post || gridViewFinal.active != journal.gridView.post
+        || maximizeFinal.active != journal.maximizeToggle.post || monocleFinal.active != journal.monocle.post) {
         result.error = QStringLiteral("finish-apply verification failed: live state drifted from the recorded post image");
         result.writes = usedWrites();
         return result;
     }
     if (usedWrites() > SHORTCUT_MAX_WRITES) {
-        result.error = QStringLiteral("tuple writes exceed the exact six writes max");
+        result.error = QStringLiteral("tuple writes exceed the exact ten writes max");
         return result;
     }
     if (!checkOwner(&error)) {
@@ -2607,6 +2764,10 @@ ShortcutRevertResult ShortcutReconciler::revert()
     ShortcutTuple nextCurrent;
     ShortcutTuple rightCurrent;
     ShortcutTuple lastCurrent;
+    ShortcutTuple floatCurrent;
+    ShortcutTuple gridViewCurrent;
+    ShortcutTuple maximizeCurrent;
+    ShortcutTuple monocleCurrent;
     if (!findAllowlisted(tuples, shortcutFocusComponent(), shortcutFocusAction(), &focusCurrent, &error)
         || !findAllowlisted(tuples, shortcutLockComponent(), shortcutLockAction(), &lockCurrent, &error)
         || !findAllowlisted(tuples, shortcutResizeUpComponent(), shortcutResizeUpAction(), &upCurrent, &error)
@@ -2616,6 +2777,18 @@ ShortcutRevertResult ShortcutReconciler::revert()
         || !findAllowlisted(tuples, shortcutSwitchLastComponent(), shortcutSwitchLastAction(), &lastCurrent, &error)) {
         result.error = error;
         return result;
+    }
+    // v2 journals revert only the original three rows; rows 3-4 live in v3
+    // journals and are resolved here only for those.
+    const bool revertV2 = journal.schema == shortcutJournalSchemaV2();
+    if (!revertV2) {
+        if (!findAllowlisted(tuples, shortcutFloatComponent(), shortcutFloatAction(), &floatCurrent, &error)
+            || !findAllowlisted(tuples, shortcutGridViewComponent(), shortcutGridViewAction(), &gridViewCurrent, &error)
+            || !findAllowlisted(tuples, shortcutMaximizeComponent(), shortcutMaximizeAction(), &maximizeCurrent, &error)
+            || !findAllowlisted(tuples, shortcutMonocleComponent(), shortcutMonocleAction(), &monocleCurrent, &error)) {
+            result.error = error;
+            return result;
+        }
     }
     // Stale-owner recovery for Restore: same UID with a different old unique
     // name rebinds to the verified current owner and persists before any
@@ -2635,15 +2808,23 @@ ShortcutRevertResult ShortcutReconciler::revert()
     }
 
     // Reverse ordered restore: only currently owned postimages, scoped.
-    ShortcutJournalEntry *ordered[6] = {&journal.focus, &journal.lock, &journal.resizeUp, &journal.switchNext,
-                                        &journal.resizeRight, &journal.switchLast};
-    QList<int> currents[6] = {focusCurrent.active, lockCurrent.active, upCurrent.active,
-                              nextCurrent.active, rightCurrent.active, lastCurrent.active};
-    bool owned[6] = {false, false, false, false, false, false};
-    for (int i = 0; i < 6; ++i) {
+    // v3 restores rows 4-3 before rows 2-0 (reverse of apply order); v2
+    // restores exactly the original six entries.
+    const int entryCount = revertV2 ? 6 : 10;
+    ShortcutJournalEntry *ordered[10] = {&journal.focus, &journal.lock, &journal.resizeUp, &journal.switchNext,
+                                         &journal.resizeRight, &journal.switchLast, &journal.floatToggle,
+                                         &journal.gridView, &journal.maximizeToggle, &journal.monocle};
+    QList<int> currents[10] = {focusCurrent.active, lockCurrent.active, upCurrent.active,
+                               nextCurrent.active, rightCurrent.active, lastCurrent.active,
+                               revertV2 ? QList<int>() : floatCurrent.active,
+                               revertV2 ? QList<int>() : gridViewCurrent.active,
+                               revertV2 ? QList<int>() : maximizeCurrent.active,
+                               revertV2 ? QList<int>() : monocleCurrent.active};
+    bool owned[10] = {false, false, false, false, false, false, false, false, false, false};
+    for (int i = 0; i < entryCount; ++i) {
         owned[i] = ordered[i]->pre != ordered[i]->post && currents[i] == ordered[i]->post;
     }
-    for (int idx = 5; idx >= 0; --idx) {
+    for (int idx = entryCount - 1; idx >= 0; --idx) {
         if (!owned[idx]) {
             continue;
         }
@@ -2692,7 +2873,7 @@ ShortcutRevertResult ShortcutReconciler::revert()
 
     result.writes = usedWrites();
     if (result.writes > SHORTCUT_MAX_WRITES) {
-        result.error = QStringLiteral("tuple writes exceed the exact six writes max");
+        result.error = QStringLiteral("tuple writes exceed the exact ten writes max");
         return result;
     }
 
@@ -2701,8 +2882,8 @@ ShortcutRevertResult ShortcutReconciler::revert()
         result.error = error;
         return result;
     }
-    ShortcutTuple finals[6];
-    for (int i = 0; i < 6; ++i) {
+    ShortcutTuple finals[10];
+    for (int i = 0; i < entryCount; ++i) {
         if (!findAllowlisted(finalTuples, ordered[i]->component, ordered[i]->action, &finals[i], &error)) {
             result.error = error;
             return result;
@@ -2722,7 +2903,7 @@ ShortcutRevertResult ShortcutReconciler::revert()
     }
 
     bool allAtPre = true;
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < entryCount; ++i) {
         if (finals[i].active != ordered[i]->pre) {
             allAtPre = false;
             break;

@@ -30,6 +30,8 @@ public:
 private:
     void reconfigure(ReconfigureFlags flags) override;
     void setTrackedWindow(EffectWindow *window);
+    void subscribeMaximize(EffectWindow *window);
+    void unsubscribeMaximize(EffectWindow *window);
     void updateMaximizedState(EffectWindow *window, bool maximized);
     void updateBorder();
     void updateOutline();
@@ -44,6 +46,7 @@ private:
     OutlinedBorderItem m_groupItem;
     QPointer<EffectWindow> m_trackedWindow;
     QSet<EffectWindow *> m_maximizedWindows;
+    QSet<EffectWindow *> m_maximizeSubscribed;
     QObject *m_groupDbusObject = nullptr;
     // Pure group policy state lives in the std-only Rust staticlib; C++
     // holds it by value and forwards QString-to-UTF8 bytes plus POD

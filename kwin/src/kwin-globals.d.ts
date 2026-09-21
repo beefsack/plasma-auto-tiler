@@ -159,9 +159,10 @@ interface Window {
     onAllDesktops: boolean;
     // Read-write in the official KWin scripting API (KWin::Window -> Read-write
     // Properties -> `bool fullScreen`; https://develop.kde.org/docs/plasma/kwin/api/).
-    // Declared read-only here: the controller observes fullscreen but never
-    // writes it (cover-and-restore is KWin-owned).
-    readonly fullScreen: boolean;
+    // Declared writable here only for the explicit project fullscreen
+    // toggle through the guarded boundary seam; observation paths read it
+    // and cover-and-restore stays KWin-owned.
+    fullScreen: boolean;
     // Read-only in the KWin scripting API: `KWin::Window.maximizeMode`
     // (Q_PROPERTY `KWin::MaximizeMode maximizeMode READ maximizeMode NOTIFY
     // maximizedChanged`, window.h; a read-only `KWin::MaximizeMode` enum:

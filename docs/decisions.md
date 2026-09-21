@@ -24,7 +24,14 @@ Historical implementation detail is recoverable in Git history.
 - Approved 2026-09-21: hide the active-window border for fullscreen or any
   native maximize axis, matching the adapter's nonzero maximize collapse. The
   public KWin maximize transition signals update the border before and after
-  geometry changes; Rust-owned group-highlight policy is unchanged.
+  geometry changes. The user manually accepted active-border suppression on
+  2026-09-21 and additionally requires the Meta-held group outline to hide
+  while maximized: neither outline may be visible.
+- Public effect observation covers every window from effect load and later
+  additions. KWin exposes maximize transitions but no initial EffectWindow
+  maximize getter, so a window already maximized before effect load remains an
+  unclassifiable pre-load edge; no polling, private API, geometry heuristic, or
+  default-hide fallback is selected.
 - The outline never clips, reshapes, or changes window textures. Plasma 6.5+
   decoration-driven rounded corners remain the selected corner solution.
 - C++ is limited to platform-required public-API adapters and effects. Manual
@@ -341,12 +348,14 @@ Historical implementation detail is recoverable in Git history.
   with `float-refused-fullscreen` and `float-refused-maximize`. The controller
   registers `Meta+G` without changing Grid View's record. KGlobalAccel permits
   both active records but dispatches the lower serial holder, so startup emits
-  `shortcut-dispatch-shadowed` until the user resolves that conflict in System
-  Settings. `Meta+Shift+G` toggles sticky floating: tiled members float first,
-  then set `Window.onAllDesktops=true`; sticky-off restores prior floating
-  placement or, for prior tiled members, fresh admission rather than an old
-  slot. The native write has one exact-reference `desktopsChanged` echo fence,
-  with no retry, timeout, fallback, or polling.
+  `shortcut-dispatch-shadowed` until the user applies the exact reversible KCM
+  override. `Meta+Shift+G` toggles sticky floating: tiled members float first,
+  then set `Window.onAllDesktops=true` without changing current visibility or
+  focus. KWin represents all-desktops as an empty membership list; sticky-off
+  assigns the current desktop, restores prior floating placement there, or for
+  prior tiled members fresh-admits there rather than restoring an old slot. The
+  native write has one exact-reference `desktopsChanged` echo fence, with no
+  retry, timeout, fallback, or polling.
 - The selected fresh-admission behavior follows `pop-os/cosmic-comp`
   `81cd5fdbaa41c3973369ae85bccf829137836e20` source content:
   `data/keybindings.ron:83-92` binds Super+G to `ToggleWindowFloating`;
@@ -356,7 +365,10 @@ Historical implementation detail is recoverable in Git history.
   `map_to_tree`. The supplied checkout has no Git metadata, so the exact commit
   identity could not be independently verified there.
 - Maximize (`Meta+M`) is workspace-local. Fullscreen (`Meta+F11`) is separate:
-  it is never tiled, resized, or reflowed, and preserves the tree for restore.
+  the focused observed window toggles KWin's public `Window.fullScreen`
+  property, while KWin keeps cover-and-restore ownership. The member retains
+  its tree allocation, receives no geometry write while fullscreen, and
+  restores that allocation on exit.
 - Maximize isolation mirrors fullscreen, authorized 2026-09-14. A nonzero KWin
   `maximizeMode` (1 vertical, 2 horizontal, 3 full) is collapsed to one adapter
   boolean; no horizontal or vertical maximize concept enters the Rust engine or
@@ -392,7 +404,7 @@ Historical implementation detail is recoverable in Git history.
   so a deliberate post-admission maximize is never affected by admission-time
   clearing. Current read-only enumeration found `kwin/KrohnkiteMonocleLayout`
   on `Meta+M`; registration preserves that record and emits the shadowed-
-  delivery diagnostic until the user resolves it.
+  delivery diagnostic until the user applies the exact reversible KCM override.
 - H/V maximize is deliberately not modeled in the engine. Source:
   `pop-os/cosmic-comp` `81cd5fdbaa41c3973369ae85bccf829137836e20`
   `Shell::maximize_request` `src/shell/mod.rs:4393-4431` records
@@ -516,6 +528,13 @@ Historical implementation detail is recoverable in Git history.
 
 ## Shortcuts
 
+- Approved 2026-09-21: clear Grid View's `Meta+G` and Krohnkite Monocle's
+  `Meta+M` through reversible Apply/Revert overrides. The user grants standing
+  authorization, until revoked, to clear other exact project-required shortcut
+  conflicts. Each action must have an exact identified conflict and recorded
+  preimage for restoration. This does not authorize relocation chords, broad
+  shortcut deletion, unverified actions, changes to ownership/readback
+  requirements, or startup mutation.
 - The initial release supports standard US keyboards and preserves hardcoded
   shifted aliases. Layout detection, omission, opt-in configuration, migration,
   and KGlobalAccel reconciliation are deferred.
@@ -543,6 +562,12 @@ Historical implementation detail is recoverable in Git history.
   `kwin/plasma-auto-tiler-resize-outwards-right` taking `Meta+Alt+L` by clearing
   `KDE Keyboard Layout Switcher/Switch to Last-Used Keyboard Layout` from exact
   preimage `Meta+Alt+L`.
+- Table row 4 is `kwin/plasma-auto-tiler-toggle-float` taking `Meta+G` by
+  clearing `kwin/Grid View` from exact preimage `Meta+G`. Row 5 is
+  `kwin/plasma-auto-tiler-toggle-maximize` taking `Meta+M` by clearing
+  `kwin/KrohnkiteMonocleLayout` from exact preimage `Meta+M`. New five-row
+  journals record all preimages; existing three-row journals remain strictly
+  resumable and revertible without claiming the two new rows.
 - KCM table override/recovery has focused static coverage; ordinary Settings
   Apply never mutates shortcuts. The private project journal records each
   resolution kind and exact prior keys. One user-run Finish Apply completed the
@@ -686,10 +711,9 @@ Historical implementation detail is recoverable in Git history.
   automatically when Meta is not held. Focus, resize, and general geometry
   never start the timer. Qualifying tiling changes during hold update the
   current visual without starting the timer; focus/domain changes during hold
-  may update or clear valid state but never start a timed flash. Fullscreen
-  hides both the group visual and active border. Any native maximize axis hides
-  the active border; group visibility retains its existing Rust-owned policy
-  (precedent `activeborderlogic.h:31-37`).
+  may update or clear valid state but never start a timed flash. Fullscreen or
+  any native maximize axis hides both the group visual and active border,
+  including while Meta is held. Rust owns the group visibility policy.
 - Held-before-first-public-signal source limitation: minimal state and no
   polling. Last modifier state is unknown until the first public
   `mouseChanged`; do not assume Meta held. The effect remains hidden for that

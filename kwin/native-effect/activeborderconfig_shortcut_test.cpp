@@ -36,6 +36,8 @@ constexpr int META_L = 268435532;
 constexpr int META_ESC = 285212672;
 constexpr int META_ALT_K = 402653259;
 constexpr int META_ALT_L = 402653260;
+constexpr int META_G = 268435527;
+constexpr int META_M = 268435533;
 
 ShortcutTuple makeTuple(const QString &component, const QString &action, const QList<int> &active)
 {
@@ -267,11 +269,12 @@ public:
         // Mirror the real KConfig backend load validation.
         if (stored.schema == QStringLiteral("shortcut-override-v1")) {
             if (error) {
-                *error = QStringLiteral("journal schema version v1 is unsupported; expected shortcut-override-v2 (upgrade required, no migration)");
+                *error = QStringLiteral("journal schema version v1 is unsupported; expected shortcut-override-v3 (upgrade required, no migration)");
             }
             return false;
         }
-        if (stored.schema != shortcutJournalSchema()) {
+        const bool isV2 = stored.schema == shortcutJournalSchemaV2();
+        if (!isV2 && stored.schema != shortcutJournalSchema()) {
             if (error) {
                 *error = QStringLiteral("journal schema is unknown");
             }
@@ -314,6 +317,19 @@ public:
                     return false;
                 }
             }
+            if (!isV2) {
+                const ShortcutJournalEntry extra[4] = {stored.floatToggle, stored.gridView, stored.maximizeToggle,
+                                                       stored.monocle};
+                for (const auto &e : extra) {
+                    if (!ShortcutReconciler::keysValid(e.pre) || !ShortcutReconciler::keysValid(e.post)
+                        || !ShortcutReconciler::isAllowlisted(e.component, e.action)) {
+                        if (error) {
+                            *error = QStringLiteral("journal entries are outside the exact allowlist");
+                        }
+                        return false;
+                    }
+                }
+            }
         }
         if (journal) {
             *journal = stored;
@@ -325,11 +341,12 @@ public:
     {
         if (journal.schema == QStringLiteral("shortcut-override-v1")) {
             if (error) {
-                *error = QStringLiteral("journal schema version v1 is unsupported; expected shortcut-override-v2 (upgrade required, no migration)");
+                *error = QStringLiteral("journal schema version v1 is unsupported; expected shortcut-override-v3 (upgrade required, no migration)");
             }
             return false;
         }
-        if (journal.schema != shortcutJournalSchema()) {
+        const bool persistV2 = journal.schema == shortcutJournalSchemaV2();
+        if (!persistV2 && journal.schema != shortcutJournalSchema()) {
             if (error) {
                 *error = QStringLiteral("journal schema is unknown");
             }
@@ -372,16 +389,31 @@ public:
                     return false;
                 }
             }
+            if (!persistV2) {
+                const ShortcutJournalEntry extra[4] = {journal.floatToggle, journal.gridView,
+                                                       journal.maximizeToggle, journal.monocle};
+                for (const auto &e : extra) {
+                    if (!ShortcutReconciler::keysValid(e.pre) || !ShortcutReconciler::keysValid(e.post)
+                        || !ShortcutReconciler::isAllowlisted(e.component, e.action)) {
+                        if (error) {
+                            *error = QStringLiteral("refusing to persist a journal outside the exact allowlist");
+                        }
+                        return false;
+                    }
+                }
+            }
         }
         stored = journal;
         present = true;
         ++persists;
         const ShortcutJournal readback = stored;
-        const ShortcutJournalEntry exp[6] = {journal.focus, journal.lock, journal.resizeUp, journal.switchNext,
-                                             journal.resizeRight, journal.switchLast};
-        const ShortcutJournalEntry got[6] = {readback.focus, readback.lock, readback.resizeUp, readback.switchNext,
-                                             readback.resizeRight, readback.switchLast};
-        for (int i = 0; i < 6; ++i) {
+        const ShortcutJournalEntry exp[10] = {journal.focus, journal.lock, journal.resizeUp, journal.switchNext,
+                                              journal.resizeRight, journal.switchLast, journal.floatToggle,
+                                              journal.gridView, journal.maximizeToggle, journal.monocle};
+        const ShortcutJournalEntry got[10] = {readback.focus, readback.lock, readback.resizeUp, readback.switchNext,
+                                              readback.resizeRight, readback.switchLast, readback.floatToggle,
+                                              readback.gridView, readback.maximizeToggle, readback.monocle};
+        for (int i = 0; i < 10; ++i) {
             if (got[i].component != exp[i].component || got[i].action != exp[i].action || got[i].pre != exp[i].pre
                 || got[i].post != exp[i].post) {
                 if (error) {
@@ -392,7 +424,8 @@ public:
         }
         if (readback.schema != journal.schema || readback.phase != journal.phase || readback.owner != journal.owner
             || readback.uid != journal.uid || readback.row0Kind != journal.row0Kind || readback.row1Kind != journal.row1Kind
-            || readback.row2Kind != journal.row2Kind) {
+            || readback.row2Kind != journal.row2Kind || readback.row3Kind != journal.row3Kind
+            || readback.row4Kind != journal.row4Kind) {
             if (error) {
                 *error = QStringLiteral("journal readback mismatch");
             }
@@ -429,6 +462,10 @@ void seedReady6(FakeShortcutStore &store, const QList<int> &focusPre, const QLis
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-right"), QList<int>{8}),
         makeTuple(QStringLiteral("KDE Keyboard Layout Switcher"), QStringLiteral("Switch to Last-Used Keyboard Layout"),
                   QList<int>{META_ALT_L}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-float"), QList<int>{META_G}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("Grid View"), QList<int>{META_G}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-maximize"), QList<int>{META_M}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("KrohnkiteMonocleLayout"), QList<int>{META_M}),
     };
 }
 
@@ -438,9 +475,15 @@ void fillResizeReady(ShortcutJournal &journal, const QList<int> &upPre, const QL
     journal.switchNext = {shortcutSwitchNextComponent(), shortcutSwitchNextAction(), {META_ALT_K}, {}};
     journal.resizeRight = {shortcutResizeRightComponent(), shortcutResizeRightAction(), rightPre, {META_ALT_L}};
     journal.switchLast = {shortcutSwitchLastComponent(), shortcutSwitchLastAction(), {META_ALT_L}, {}};
+    journal.floatToggle = {shortcutFloatComponent(), shortcutFloatAction(), {META_G}, {META_G}};
+    journal.gridView = {shortcutGridViewComponent(), shortcutGridViewAction(), {META_G}, {}};
+    journal.maximizeToggle = {shortcutMaximizeComponent(), shortcutMaximizeAction(), {META_M}, {META_M}};
+    journal.monocle = {shortcutMonocleComponent(), shortcutMonocleAction(), {META_M}, {}};
     journal.row0Kind = shortcutResolutionRelocate();
     journal.row1Kind = shortcutResolutionClear();
     journal.row2Kind = shortcutResolutionClear();
+    journal.row3Kind = shortcutResolutionClear();
+    journal.row4Kind = shortcutResolutionClear();
 }
 
 void seedReady(FakeShortcutStore &store)
@@ -591,8 +634,8 @@ void recoveryVisibilityAndRouting()
         CHECK(module.shortcutStatusText().contains(QStringLiteral("Interrupted")));
         const int writesBefore = store.writeLog.size();
         module.requestShortcutFinishApply();
-        CHECK(store.writeLog.size() == writesBefore + 5);
-        CHECK(store.writeLog.last().action == QStringLiteral("Switch to Last-Used Keyboard Layout"));
+        CHECK(store.writeLog.size() == writesBefore + 7);
+        CHECK(store.writeLog.last().action == QStringLiteral("KrohnkiteMonocleLayout"));
         CHECK(module.shortcutErrorText().isEmpty());
         CHECK(!module.isShortcutFinishApplyVisible());
         CHECK(!module.isShortcutRestoreVisible());
@@ -642,7 +685,7 @@ void confirmationGatesEveryMutation()
     allow = true;
     module.requestShortcutApply();
     CHECK(confirms == 2);
-    CHECK(store.writeLog.size() == 6);
+    CHECK(store.writeLog.size() == 8);
     CHECK(journal.hasJournal());
     allow = false;
     const int writesBeforeRevert = store.writeLog.size();
@@ -690,7 +733,9 @@ void stateAndErrorPresentation()
         module.setShortcutStores(&store, &journal);
         module.load();
         CHECK(module.shortcutStatusText().contains(QStringLiteral("Ready")));
-        CHECK(module.shortcutStatusText().contains(QStringLiteral("3 rows")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("5 rows")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("Grid View")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("Monocle")));
         CHECK(module.shortcutStatusText().contains(QStringLiteral("resize-outwards-up")));
         CHECK(module.shortcutErrorText().isEmpty());
         QLabel *status = labelByName(module, "shortcutStatusLabel");
@@ -740,7 +785,7 @@ void stateAndErrorPresentation()
         module.requestShortcutApply();
         CHECK(module.shortcutErrorText().isEmpty());
         CHECK(module.shortcutStatusText().contains(QStringLiteral("applied")));
-        CHECK(module.shortcutStatusText().contains(QStringLiteral("3 rows")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("5 rows")));
         for (ShortcutTuple &tuple : store.tuples) {
             if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
                 tuple.active = QList<int>{111};
@@ -879,7 +924,7 @@ void keyedSystemMonitorStatusAccepted()
     CHECK(!module.shortcutStatusText().contains(QStringLiteral("Conflict")));
     CHECK(module.shortcutStatusText().contains(QStringLiteral("Ready")));
     module.requestShortcutApply();
-    CHECK(store.writeLog.size() == 6);
+    CHECK(store.writeLog.size() == 8);
     CHECK(journal.hasJournal());
     CHECK(module.shortcutErrorText().isEmpty());
     for (const auto &record : store.writeLog) {
@@ -906,6 +951,58 @@ void keyedTransportFailureShowsUnavailable()
     CHECK(!journal.hasJournal());
     CHECK(!module.shortcutErrorText().contains(QStringLiteral("Conflict")));
     CHECK(module.shortcutErrorText().contains(QStringLiteral("unavailable")) || module.shortcutErrorText().contains(QStringLiteral("globalShortcutsByKey")));
+}
+
+void v2JournalStatusStaysThreeRows()
+{
+    // A persisted v2 complete journal is revealed as its original three-row
+    // state: it never claims Grid View or Monocle management.
+    FakeShortcutStore store;
+    seedReady(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
+            tuple.active = QList<int>{META_L};
+        }
+        if (tuple.action == QStringLiteral("Lock Session")) {
+            tuple.active = QList<int>{META_ESC};
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-resize-outwards-up")) {
+            tuple.active = QList<int>{META_ALT_K};
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-resize-outwards-right")) {
+            tuple.active = QList<int>{META_ALT_L};
+        }
+        if (tuple.action.contains(QStringLiteral("Keyboard Layout"))) {
+            tuple.active = QList<int>{};
+        }
+    }
+    FakeJournal journal;
+    ShortcutJournal v2;
+    v2.schema = shortcutJournalSchemaV2();
+    v2.phase = shortcutJournalPhaseComplete();
+    v2.owner = QStringLiteral(":1.20");
+    v2.uid = static_cast<uint>(::geteuid());
+    v2.focus = {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{419430420},
+                QList<int>{META_L}};
+    v2.lock = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L},
+               QList<int>{META_ESC}};
+    v2.resizeUp = {shortcutResizeUpComponent(), shortcutResizeUpAction(), QList<int>{7}, {META_ALT_K}};
+    v2.switchNext = {shortcutSwitchNextComponent(), shortcutSwitchNextAction(), {META_ALT_K}, {}};
+    v2.resizeRight = {shortcutResizeRightComponent(), shortcutResizeRightAction(), QList<int>{8}, {META_ALT_L}};
+    v2.switchLast = {shortcutSwitchLastComponent(), shortcutSwitchLastAction(), {META_ALT_L}, {}};
+    v2.row0Kind = shortcutResolutionRelocate();
+    v2.row1Kind = shortcutResolutionClear();
+    v2.row2Kind = shortcutResolutionClear();
+    QString persistError;
+    CHECK(journal.persist(v2, &persistError));
+    ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
+    module.setShortcutStores(&store, &journal);
+    module.load();
+    CHECK(module.shortcutStatusText().contains(QStringLiteral("journal complete, 3 rows")));
+    CHECK(module.shortcutStatusText().contains(QStringLiteral("unmanaged")));
+    CHECK(!module.shortcutStatusText().contains(QStringLiteral("5 rows")));
+    CHECK(module.shortcutErrorText().isEmpty());
 }
 
 } // namespace
@@ -940,6 +1037,7 @@ int main(int argc, char **argv)
     } else if (scenario == QStringLiteral("state")) {
         stateAndErrorPresentation();
         completeJournalStatusComparesExactPostimages();
+        v2JournalStatusStaysThreeRows();
         unrelatedChordConflictStatus();
         keyedDesktopOnlyConflictStatus();
         keyedSystemMonitorStatusAccepted();

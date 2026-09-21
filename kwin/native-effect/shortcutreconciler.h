@@ -25,6 +25,10 @@ const QDBusArgument &operator>>(const QDBusArgument &argument, QSet<QKeySequence
 //     KDE Keyboard Layout Switcher/Switch to Next Keyboard Layout cleared
 //   row 2 clear: kwin/plasma-auto-tiler-resize-outwards-right -> Meta+Alt+L;
 //     KDE Keyboard Layout Switcher/Switch to Last-Used Keyboard Layout cleared
+//   row 3 clear: kwin/plasma-auto-tiler-toggle-float -> Meta+G;
+//     kwin/Grid View cleared
+//   row 4 clear: kwin/plasma-auto-tiler-toggle-maximize -> Meta+M;
+//     kwin/KrohnkiteMonocleLayout cleared
 //
 // Uses only the KGlobalAccel D-Bus APIs proven on live Plasma 6.7.4:
 //   org.kde.kglobalaccel /kglobalaccel org.kde.KGlobalAccel
@@ -44,12 +48,14 @@ inline constexpr int SHORTCUT_META_L = 268435532; // Meta+L (Qt Meta | Key_L)
 inline constexpr int SHORTCUT_META_ESC = 285212672; // Meta+Esc (Qt Meta | Key_Escape)
 inline constexpr int SHORTCUT_META_ALT_K = 402653259; // Meta+Alt+K catalog resize-outwards-up
 inline constexpr int SHORTCUT_META_ALT_L = 402653260; // Meta+Alt+L catalog resize-outwards-right
+inline constexpr int SHORTCUT_META_G = 268435527; // Meta+G catalog toggle-float
+inline constexpr int SHORTCUT_META_M = 268435533; // Meta+M catalog toggle-maximize
 inline constexpr uint SHORTCUT_SET_FLAGS = 6; // SetPresent|NoAutoloading
 inline constexpr int SHORTCUT_MAX_KEYS_PER_TUPLE = 16;
 inline constexpr int SHORTCUT_MAX_TUPLES = 16384;
 inline constexpr int SHORTCUT_MAX_STRING_LEN = 256;
 inline constexpr int SHORTCUT_MAX_KEY_VALUE = 536870911;
-inline constexpr int SHORTCUT_MAX_WRITES = 6;
+inline constexpr int SHORTCUT_MAX_WRITES = 10;
 
 inline const QString &shortcutService()
 {
@@ -139,9 +145,26 @@ inline const QString &shortcutSwitchNextComponent() { static const QString v = Q
 inline const QString &shortcutSwitchNextAction() { static const QString v = QStringLiteral("Switch to Next Keyboard Layout"); return v; }
 inline const QString &shortcutSwitchLastComponent() { static const QString v = QStringLiteral("KDE Keyboard Layout Switcher"); return v; }
 inline const QString &shortcutSwitchLastAction() { static const QString v = QStringLiteral("Switch to Last-Used Keyboard Layout"); return v; }
+inline const QString &shortcutFloatComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutFloatAction() { static const QString v = QStringLiteral("plasma-auto-tiler-toggle-float"); return v; }
+inline const QString &shortcutGridViewComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutGridViewAction() { static const QString v = QStringLiteral("Grid View"); return v; }
+inline const QString &shortcutMaximizeComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutMaximizeAction() { static const QString v = QStringLiteral("plasma-auto-tiler-toggle-maximize"); return v; }
+inline const QString &shortcutMonocleComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutMonocleAction() { static const QString v = QStringLiteral("KrohnkiteMonocleLayout"); return v; }
 inline const QString &shortcutResolutionRelocate() { static const QString v = QStringLiteral("relocate"); return v; }
 inline const QString &shortcutResolutionClear() { static const QString v = QStringLiteral("clear"); return v; }
 inline const QString &shortcutJournalSchema()
+{
+    static const QString value = QStringLiteral("shortcut-override-v3");
+    return value;
+}
+// Persisted predecessor schema: v2 journals carry only the original three
+// rows. They remain loadable, resumable, and revertible for those rows;
+// apply() upgrades a v2 journal to v3 from live state before touching the
+// new rows. Never assumed to contain rows 3-4.
+inline const QString &shortcutJournalSchemaV2()
 {
     static const QString value = QStringLiteral("shortcut-override-v2");
     return value;
@@ -196,9 +219,17 @@ struct ShortcutJournal
     ShortcutJournalEntry switchNext;
     ShortcutJournalEntry resizeRight;
     ShortcutJournalEntry switchLast;
+    // Rows 3-4 (v3 only): empty identity/keys in a v2 journal and never
+    // read there. v3 journals always carry all five rows.
+    ShortcutJournalEntry floatToggle;
+    ShortcutJournalEntry gridView;
+    ShortcutJournalEntry maximizeToggle;
+    ShortcutJournalEntry monocle;
     QString row0Kind;
     QString row1Kind;
     QString row2Kind;
+    QString row3Kind;
+    QString row4Kind;
 };
 
 struct ShortcutConflictRow
@@ -381,6 +412,10 @@ public:
     static QList<int> resizeRightPostKeys();
     static QList<int> switchNextExpectedPre();
     static QList<int> switchLastExpectedPre();
+    static QList<int> floatPostKeys();
+    static QList<int> gridViewExpectedPre();
+    static QList<int> maximizePostKeys();
+    static QList<int> monocleExpectedPre();
     static QList<int> dedupKeys(const QList<int> &keys);
     static bool keysValid(const QList<int> &keys);
     static bool stringValid(const QString &value);
