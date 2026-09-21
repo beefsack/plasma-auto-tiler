@@ -5073,7 +5073,14 @@ export class PlanAdapter {
                     this.failFlight(flightState, "write-failed");
                     return;
                 }
-                if (!this.env.setGeometry(target, floatGeometry.rect)) {
+                let written = false;
+                try {
+                    written = this.env.setGeometry(target, floatGeometry.rect) === true;
+                } catch (error) {
+                    void error;
+                    written = false;
+                }
+                if (!written) {
                     this.restoreKeepAbove(transition.window, resourceClassById.get(transition.window) ?? "unknown");
                     this.writeDiag(transition.window, resourceClassById.get(transition.window) ?? "unknown", "float-write-failed", floatGeometry.rect);
                     this.failFlight(flightState, "write-failed");

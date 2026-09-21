@@ -2238,6 +2238,104 @@ describe("plan adapter float focus retention", () => {
         assert.equal(adapter.isInFlight, false, "flight is terminal");
     });
 
+    it("retires a throwing float geometry write, restores normal stacking, and accepts a later command", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let keepAbove = false;
+        let throwGeometry = true;
+        mocks.keepAboveReadImpl = () => keepAbove;
+        mocks.keepAboveToggleImpl = (_target, value) => {
+            keepAbove = value;
+            return "invoked";
+        };
+        mocks.geometryImpl = (target) => {
+            if (target === refs.a && throwGeometry) {
+                throw new Error("native geometry write threw");
+            }
+            return true;
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestFloat();
+        const first = plannerPayload(mocks, 0);
+        const firstReply = JSON.stringify({
+            v: 1,
+            correlation_id: first["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [{ window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            float_geometry: { window: "win-a", rect: { x: 240, y: 160, w: 720, h: 480 } },
+        });
+        assert.doesNotThrow(() => mocks.callbacks[0]?.(firstReply));
+        assert.deepEqual(mocks.keepAboveToggles, [
+            { target: refs.a, keepAbove: true },
+            { target: refs.a, keepAbove: false },
+        ]);
+        assert.equal(keepAbove, false, "normal preimage is restored after the thrown write");
+        assert.equal(adapter.isInFlight, false, "failed write releases the flight fence");
+        assert.ok(mocks.timers.every((timer) => timer.cancelled), "failed write cancels the flight deadline");
+        assert.ok(mocks.logs.some((line) => line.includes("disposition=float-write-failed")));
+        assert.ok(mocks.logs.some((line) => line.includes("outcome=write-failed")));
+        const writesAfterFailure = mocks.geometries.length;
+        mocks.callbacks[0]?.(firstReply);
+        assert.equal(mocks.geometries.length, writesAfterFailure, "stale callback cannot apply a later write");
+
+        throwGeometry = false;
+        adapter.requestFloat();
+        const second = plannerPayload(mocks, 1);
+        mocks.callbacks[1]?.(JSON.stringify({
+            v: 1,
+            correlation_id: second["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [{ window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            float_geometry: { window: "win-a", rect: { x: 240, y: 160, w: 720, h: 480 } },
+        }));
+        assert.equal(adapter.isInFlight, false, "later valid command settles normally");
+        assert.deepEqual(mocks.floatingCalls, [{ id: "win-a", floating: true }]);
+    });
+
+    it("restores a keep-below stacking preimage after a throwing float geometry write", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let keepAbove = false;
+        let keepBelow = true;
+        mocks.keepAboveReadImpl = () => keepAbove;
+        mocks.keepBelowReadImpl = () => keepBelow;
+        mocks.keepAboveToggleImpl = (_target, value) => {
+            keepAbove = value;
+            if (value) {
+                keepBelow = false;
+            }
+            return "invoked";
+        };
+        mocks.keepBelowToggleImpl = (_target, value) => {
+            keepBelow = value;
+            if (value) {
+                keepAbove = false;
+            }
+            return "invoked";
+        };
+        mocks.geometryImpl = (target) => {
+            if (target === refs.a) {
+                throw new Error("native geometry write threw");
+            }
+            return true;
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestFloat();
+        const payload = plannerPayload(mocks, 0);
+        assert.doesNotThrow(() => mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: payload["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [{ window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            float_geometry: { window: "win-a", rect: { x: 240, y: 160, w: 720, h: 480 } },
+        })));
+        assert.deepEqual(mocks.keepAboveToggles, [{ target: refs.a, keepAbove: true }]);
+        assert.deepEqual(mocks.keepBelowToggles, [{ target: refs.a, keepBelow: true }]);
+        assert.equal(keepAbove, false);
+        assert.equal(keepBelow, true, "keep-below preimage is restored after the thrown write");
+        assert.equal(adapter.isInFlight, false);
+    });
+
     it("logs sticky-focus-stale without activating when the toggled window disappears", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);

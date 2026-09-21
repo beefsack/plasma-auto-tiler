@@ -89,11 +89,19 @@ Only meaningful pending or active work is listed.
   cannot repeat settlement. Regressions cover original deadline preservation,
   stale/new-flight isolation, and one deferred admission after settlement.
   Directional tests (32), full KWin tests (836), typecheck, and build pass.
-  Background admission review found no concrete defect. Next autonomous scope:
-  inspect normal/sticky float native-failure consistency and related callback
-  guards for concrete offline-fixable defects. No uncertain-transaction recovery
-  or replay is selected.
+  Background admission and same-output callback reviews found no concrete defect.
+  Float geometry-write exceptions now restore prior stacking and release the
+  failed flight instead of escaping and leaving it blocked until timeout;
+  regressions cover stale callbacks and a later usable command. Typecheck and
+  838 KWin tests/build pass. No uncertain-transaction recovery or replay is
+  selected. Next autonomous scope: inspect approved gap reload/application for
+  concrete offline-fixable discrepancies.
   Other backlog work follows this focused scope.
+- P2 | Sticky ownership after adapter restart | In-memory prior float/tiled
+  ownership is cleared on adapter re-enable, so an already-sticky window is
+  refused as untracked. Select explicit adoption/unstick semantics before changing
+  this behavior; current native observation cannot recover the historical origin.
+  No new restart-persistent mapping or external-window ownership is selected.
 - P2 | Unified Plasma Auto Tiler settings entry | User asks whether the current
   Desktop Effects entries `Active Window Border` and `Drag Oracle (Slice 1)` can
   present one `Plasma Auto Tiler` entry. KWin 6.7.5 hides internal scripted effects
