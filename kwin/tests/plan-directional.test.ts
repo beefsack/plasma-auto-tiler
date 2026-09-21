@@ -901,6 +901,242 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
         assert.equal(mocks.dbusCalls.length, 2);
         void adapter;
     });
+
+    it("drops duplicate planned during ack and verify waiting without restarting native transfer", () => {
+        const r = refs();
+        const { mocks, native, adapter, correlation } = startR4(r);
+        const plannedReply = crossMoveReply(correlation);
+        const timersAfterStart = mocks.timers.length;
+        const wholeFlightDeadline = mocks.timers[timersAfterStart - 1];
+        const transfersAfterStart = native.sentTransfers.length;
+        const membershipsAfterStart = native.sentMemberships.length;
+        const geometriesAfterStart = mocks.geometries.length;
+        assert.equal(mocks.dbusCalls.length, 1);
+        // Duplicate planned while echoes are still pending: no restart.
+        mocks.callbacks[0]?.(plannedReply);
+        assert.equal(native.sentTransfers.length, transfersAfterStart);
+        assert.equal(native.sentMemberships.length, membershipsAfterStart);
+        assert.equal(mocks.geometries.length, geometriesAfterStart);
+        assert.equal(mocks.dbusCalls.length, 1);
+        assert.equal(mocks.timers.length, timersAfterStart);
+        assert.equal(wholeFlightDeadline?.cancelled, false);
+        assert.equal(adapter.isR4InFlight, true);
+        // Drive to bound ack.
+        native.outputHandlers.forEach((handler) => handler(native.out1));
+        native.desktopsHandlers.forEach((handler) => handler());
+        native.geoHandlers.get("win-a")?.();
+        native.geoHandlers.get("win-x")?.();
+        assert.equal(mocks.dbusCalls.length, 2);
+        // Duplicate planned while ack is bound but ack reply pending.
+        mocks.callbacks[0]?.(plannedReply);
+        assert.equal(native.sentTransfers.length, transfersAfterStart);
+        assert.equal(mocks.dbusCalls.length, 2);
+        assert.equal(mocks.actives.length, 1);
+        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", base_revision: 2 }));
+        assert.equal(mocks.dbusCalls.length, 3);
+        // Duplicate planned while verify is pending: still no restart and the
+        // original whole-flight timer still governs (no new timer).
+        mocks.callbacks[0]?.(plannedReply);
+        assert.equal(native.sentTransfers.length, transfersAfterStart);
+        assert.equal(mocks.dbusCalls.length, 3);
+        assert.equal(mocks.timers.length, timersAfterStart);
+        assert.equal(wholeFlightDeadline?.cancelled, false);
+        mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 }));
+        assert.equal(adapter.isR4InFlight, false);
+        assert.equal(adapter.isInFlight, false);
+        assert.ok(mocks.logs.some((line) => line.includes("planned-applied")));
+    });
+
+    it("consumes R4 ack once and never issues duplicate verify", () => {
+        const r = refs();
+        const { mocks, native, adapter, correlation } = startR4(r);
+        native.outputHandlers.forEach((handler) => handler(native.out1));
+        native.desktopsHandlers.forEach((handler) => handler());
+        native.geoHandlers.get("win-a")?.();
+        native.geoHandlers.get("win-x")?.();
+        assert.equal(mocks.dbusCalls.length, 2);
+        const ackReply = JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", base_revision: 2 });
+        mocks.callbacks[1]?.(ackReply);
+        assert.equal(mocks.dbusCalls.length, 3);
+        // Duplicate ack before verify completes: no second verify, no second follow.
+        mocks.callbacks[1]?.(ackReply);
+        assert.equal(mocks.dbusCalls.length, 3);
+        assert.equal(mocks.actives.length, 1);
+        assert.equal(native.sentTransfers.length, 1);
+        // Duplicate ack after the verify transition still issues nothing.
+        mocks.callbacks[1]?.(ackReply);
+        assert.equal(mocks.dbusCalls.length, 3);
+        mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 }));
+        assert.equal(adapter.isR4InFlight, false);
+        const appliedAfter = mocks.logs.filter((line) => line.includes("planned-applied")).length;
+        assert.equal(appliedAfter, 1);
+        // Late ack after completion never replays verify or settle.
+        mocks.callbacks[1]?.(ackReply);
+        assert.equal(mocks.dbusCalls.length, 3);
+        assert.equal(mocks.logs.filter((line) => line.includes("planned-applied")).length, 1);
+    });
+
+    it("drops stale and duplicate verify after completion without second settle", () => {
+        const r = refs();
+        const { mocks, native, adapter, correlation } = startR4(r);
+        native.outputHandlers.forEach((handler) => handler(native.out1));
+        native.desktopsHandlers.forEach((handler) => handler());
+        native.geoHandlers.get("win-a")?.();
+        native.geoHandlers.get("win-x")?.();
+        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", base_revision: 2 }));
+        const verifyReply = JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 });
+        mocks.callbacks[2]?.(verifyReply);
+        assert.equal(adapter.isR4InFlight, false);
+        assert.equal(mocks.dbusCalls.length, 3);
+        const appliedAfter = mocks.logs.filter((line) => line.includes("planned-applied")).length;
+        const activesAfter = mocks.actives.length;
+        const geometriesAfter = mocks.geometries.length;
+        // Duplicate verify after completion: no second settle/admit.
+        mocks.callbacks[2]?.(verifyReply);
+        assert.equal(mocks.dbusCalls.length, 3);
+        assert.equal(mocks.logs.filter((line) => line.includes("planned-applied")).length, appliedAfter);
+        assert.equal(mocks.actives.length, activesAfter);
+        assert.equal(mocks.geometries.length, geometriesAfter);
+        // Newer flight starts from idle with a fresh correlation.
+        adapter.requestMove("right");
+        assert.equal(mocks.dbusCalls.length, 4);
+        const nextBody = payload(mocks, 3);
+        const nextCorrelation = nextBody["correlation_id"] as string;
+        assert.notEqual(nextCorrelation, correlation);
+        // Stale old verify cannot consume the newer flight guard.
+        mocks.callbacks[2]?.(verifyReply);
+        assert.equal(mocks.dbusCalls.length, 4);
+        assert.equal(adapter.isR4InFlight, false);
+        assert.equal(adapter.isInFlight, true);
+        void native;
+    });
+
+    it("requires an issued verify before consuming verify without blocking the live flight", () => {
+        const r = refs();
+        const { mocks, native, adapter, correlation } = startR4(r);
+        native.outputHandlers.forEach((handler) => handler(native.out1));
+        native.desktopsHandlers.forEach((handler) => handler());
+        native.geoHandlers.get("win-a")?.();
+        native.geoHandlers.get("win-x")?.();
+        assert.equal(mocks.dbusCalls.length, 2);
+        const state = adapter as unknown as {
+            r4Flight: { flight: number; session: number; verifyRequested: boolean; verifyReplySeen: boolean } | null;
+            onR4VerifyReply: (reply: unknown, flight: number, session: number) => void;
+        };
+        assert.notEqual(state.r4Flight, null);
+        assert.equal(state.r4Flight?.verifyRequested, false);
+        // Out-of-order verify with exact flight/session before verify is
+        // issued: dropped without consuming the verify guard.
+        const earlyVerify = JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 });
+        state.onR4VerifyReply(earlyVerify, state.r4Flight?.flight as number, state.r4Flight?.session as number);
+        assert.equal(mocks.dbusCalls.length, 2);
+        assert.equal(adapter.isR4InFlight, true);
+        assert.equal(state.r4Flight?.verifyReplySeen, false);
+        assert.equal(state.r4Flight?.verifyRequested, false);
+        // The live flight still completes exactly once once verify is issued.
+        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", base_revision: 2 }));
+        assert.equal(mocks.dbusCalls.length, 3);
+        assert.equal(state.r4Flight?.verifyRequested, true);
+        mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 }));
+        assert.equal(adapter.isR4InFlight, false);
+        assert.equal(mocks.dbusCalls.length, 3);
+        assert.equal(mocks.logs.filter((line) => line.includes("planned-applied")).length, 1);
+    });
+
+    it("processes deferred admission exactly once after settle once send protection releases", () => {
+        const r = refs();
+        const { mocks, native } = r4Mocks(r);
+        let sendActive = false;
+        (mocks.env as unknown as Record<string, unknown>)["isSendActive"] = (): boolean => sendActive;
+        let applied = 0;
+        (mocks.env as unknown as Record<string, unknown>)["onPlannedApplied"] = (): void => {
+            applied += 1;
+        };
+        mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
+            status: "ready",
+            observed: twoDomainObserved(r),
+        });
+        const adapter = enable(mocks);
+        adapter.requestMove("right");
+        const correlation = payload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(crossMoveReply(correlation));
+        assert.equal(adapter.isR4InFlight, true);
+        // A new foreground window appears while the R4 flight holds the
+        // single-flight. Lifecycle resync attempts cannot interleave: the R4
+        // fence drops signals and no admission dispatches mid-flight.
+        mocks.observeImpl = (): PlanObserved | null => {
+            const full = twoDomainObserved(r, {
+                aRect: { x: 10, y: 10, w: 100, h: 80 },
+                bRect: { x: 400, y: 10, w: 100, h: 80 },
+                xRect: { x: 810, y: 10, w: 100, h: 80 },
+            });
+            const { domains: _domains, ...source } = full;
+            return {
+                ...source,
+                windows: Object.freeze(source.windows.filter((entry) => entry.output === "out-1")),
+            };
+        };
+        adapter.requestResync();
+        assert.equal(mocks.dbusCalls.length, 1);
+        native.outputHandlers.forEach((handler) => handler(native.out1));
+        native.desktopsHandlers.forEach((handler) => handler());
+        native.geoHandlers.get("win-a")?.();
+        native.geoHandlers.get("win-x")?.();
+        assert.equal(mocks.dbusCalls.length, 2);
+        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", base_revision: 2 }));
+        assert.equal(mocks.dbusCalls.length, 3);
+        // Workspace send becomes pending before the exact successful settle.
+        sendActive = true;
+        mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 }));
+        assert.equal(adapter.isR4InFlight, false);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(applied, 1);
+        // The post-settle resync observes the queued new window but stays
+        // protected while send is active.
+        const debounceWhileBlocked = mocks.timers.filter((entry) => entry.delayMs === 120 && !entry.cancelled);
+        for (const entry of debounceWhileBlocked) {
+            entry.callback();
+        }
+        assert.equal(mocks.dbusCalls.length, 3);
+        // Releasing protection admits the queued new window exactly once.
+        sendActive = false;
+        adapter.requestResync();
+        const pending = mocks.timers.filter((entry) => entry.delayMs === 120 && !entry.cancelled);
+        assert.ok(pending.length > 0);
+        pending[pending.length - 1]?.callback();
+        assert.equal(mocks.dbusCalls.length, 4);
+        const admission = payload(mocks, 3);
+        assert.equal((admission["command"] as Record<string, unknown>)["op"], "admit");
+        const admitted = (admission["windows"] as Array<Record<string, unknown>>).map((entry) => entry["window"] as string);
+        assert.ok(admitted.includes("win-b"), `queued win-b admitted, got ${JSON.stringify(admitted)}`);
+        assert.ok(admitted.includes("win-a"), `admission retains win-a, got ${JSON.stringify(admitted)}`);
+        // Completing the queued admission converges once with no replay.
+        const admissionCorrelation = admission["correlation_id"] as string;
+        mocks.callbacks[3]?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: admissionCorrelation,
+                outcome: "planned",
+                desired_geometry: [
+                    { window: "win-a", leaf: "leaf-a", output: "out-1", workspace: "ws-a", rect: { x: 10, y: 10, w: 100, h: 80 } },
+                    { window: "win-b", leaf: "leaf-b", output: "out-1", workspace: "ws-a", rect: { x: 400, y: 10, w: 100, h: 80 } },
+                ],
+            }),
+        );
+        assert.equal(applied, 2);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.dbusCalls.length, 4);
+        // A fresh resync after convergence never redispatches.
+        const timersBeforeTrailing = mocks.timers.length;
+        adapter.requestResync();
+        const freshTrailing = mocks.timers
+            .slice(timersBeforeTrailing)
+            .filter((entry) => entry.delayMs === 120 && !entry.cancelled);
+        for (const entry of freshTrailing) {
+            entry.callback();
+        }
+        assert.equal(mocks.dbusCalls.length, 4);
+    });
 });
 
 describe("observeDirectionalDomain (active route observation)", () => {

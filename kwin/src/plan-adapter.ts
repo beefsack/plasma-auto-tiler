@@ -1556,6 +1556,17 @@ interface R4Flight {
     geoPending: Set<string>;
     detaches: Array<() => void>;
     settled: boolean;
+    // Bounded duplicate-callback fences: the original `planned` reply stays
+    // bound to the shared `callbackSeen`, while R4 ack and verify each bind
+    // to their own exact flight/session/phase flag. A stale callback with a
+    // mismatched flight/session returns before touching the live flags, and
+    // a duplicate with matching flight/session is dropped by the consumed
+    // flag without restarting native transfer, resetting the timer, or
+    // issuing a second verify/settle. Verify additionally requires an issued
+    // verify request so an out-of-order verify can never consume the guard.
+    ackReplySeen: boolean;
+    verifyRequested: boolean;
+    verifyReplySeen: boolean;
 }
 
 interface AutoIntent {
@@ -4159,6 +4170,12 @@ export class PlanAdapter {
         if (!this.inFlight || flight !== this.activeToken || session !== this.plannerSession || this.callbackSeen) {
             return;
         }
+        // A live R4 flight owns the single-flight across native/ack/verify.
+        // A duplicate `planned` must never restart native transfer, overwrite
+        // `r4Flight`, or reset the whole-flight timer.
+        if (this.r4Flight !== null) {
+            return;
+        }
         const flightState = this.pending;
         if (flightState === null || flightState.plannerSession !== session || this.activationStep !== 5) {
             return;
@@ -4775,6 +4792,9 @@ export class PlanAdapter {
             geoPending: new Set<string>(),
             detaches: [],
             settled: false,
+            ackReplySeen: false,
+            verifyRequested: false,
+            verifyReplySeen: false,
         };
         this.r4Flight = r4;
         this.diag(flightState.op, correlation, windowCount, "r4-transfer-started");
@@ -5712,7 +5732,9 @@ export class PlanAdapter {
             this.failR4Terminal("owner-loss", false);
             return;
         }
-        this.callbackSeen = false;
+        // The original `planned` guard (`callbackSeen`) stays consumed across
+        // the whole R4 flight so a duplicate planned reply can never restart
+        // native transfer. Ack/verify bind to their own `r4` flags below.
         try {
             const target = this.pinnedOwner as string;
             this.env.callDbus(target, PLAN_OBJECT, PLAN_INTERFACE, PLAN_METHOD, payload, callback);
@@ -5727,10 +5749,10 @@ export class PlanAdapter {
         if (r4 === null || flight !== r4.flight || session !== r4.session || !r4.acked || r4.settled) {
             return;
         }
-        if (this.callbackSeen) {
+        if (r4.ackReplySeen) {
             return;
         }
-        this.callbackSeen = true;
+        r4.ackReplySeen = true;
         if (typeof reply !== "string" || reply.length > PLAN_MAX_REPLY_BYTES) {
             this.failR4Terminal("service-fault", false);
             return;
@@ -5765,18 +5787,20 @@ export class PlanAdapter {
             return;
         }
         this.diag(r4.op, r4.correlation, r4.planned.geometry.length, "r4-verify");
+        r4.verifyRequested = true;
+        r4.verifyReplySeen = false;
         this.sendR4Request(payload, (verifyReply) => this.onR4VerifyReply(verifyReply, flight, session));
     }
 
     private onR4VerifyReply(reply: unknown, flight: number, session: number): void {
         const r4 = this.r4Current();
-        if (r4 === null || flight !== r4.flight || session !== r4.session || !r4.acked || r4.settled) {
+        if (r4 === null || flight !== r4.flight || session !== r4.session || !r4.acked || !r4.verifyRequested || r4.settled) {
             return;
         }
-        if (this.callbackSeen) {
+        if (r4.verifyReplySeen) {
             return;
         }
-        this.callbackSeen = true;
+        r4.verifyReplySeen = true;
         this.clearTimer();
         if (typeof reply !== "string" || reply.length > PLAN_MAX_REPLY_BYTES) {
             this.failR4Terminal("service-fault", false);

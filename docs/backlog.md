@@ -84,9 +84,15 @@ Only meaningful pending or active work is listed.
   occlude it. Group outline remains a scene overlay; the screenshot alone does
   not distinguish the two. Host native build, 26 native tests, and 7 renderer
   static checks pass. User fresh-session visual occlusion test remains pending.
-  Autonomous source/offline work next: review transaction-lifetime cleanup across
-  directional output moves and background admissions, fixing concrete related
-  defects without selecting uncertain-transaction recovery or replay semantics.
+  R4 replies now use phase-specific one-shot guards: duplicate planned replies
+  cannot restart native transfer, and duplicate acknowledgements/verifications
+  cannot repeat settlement. Regressions cover original deadline preservation,
+  stale/new-flight isolation, and one deferred admission after settlement.
+  Directional tests (32), full KWin tests (836), typecheck, and build pass.
+  Background admission review found no concrete defect. Next autonomous scope:
+  inspect normal/sticky float native-failure consistency and related callback
+  guards for concrete offline-fixable defects. No uncertain-transaction recovery
+  or replay is selected.
   Other backlog work follows this focused scope.
 - P2 | Unified Plasma Auto Tiler settings entry | User asks whether the current
   Desktop Effects entries `Active Window Border` and `Drag Oracle (Slice 1)` can
