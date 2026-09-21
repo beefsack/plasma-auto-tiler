@@ -116,8 +116,9 @@ Historical implementation detail is recoverable in Git history.
   host KWin derivation is the native development authority.
   `scripts/nix-host-kwin-build.sh` resolves
   `/run/current-system/sw/bin/kwin_wayland` to its exact derivation and
-  matching `dev` output and builds inside `nix develop <host-drv>` with only
-  explicit `/nix/store` rustc injected and `-DKWin_DIR=<resolved-dev>/lib/cmake/KWin`;
+  matching `dev` output, explicitly realizes that exact output, and builds
+   inside `nix develop <host-drv>` with only explicit `/nix/store` rustc
+   injected and `-DKWin_DIR=<resolved-dev>/lib/cmake/KWin`;
   legacy pinned CMake dirs never drive or leak. `just build-native-effect`
   and dogfood `effect-install` route through that builder with
   identity-keyed build dirs and fail closed on missing provenance. The former

@@ -68,7 +68,7 @@ exit 0
 EOF
   chmod +x "$HOST_NATIVE_BIN/cmake"
 
-  # Fake nix: hermetic provenance + develop that EXECUTES the inner bash
+  # Fake nix: hermetic provenance + build/develop that EXECUTES the inner bash
   # script with host-native cmake on PATH. Controlled via state dir and
   # FAKE_* env. Logs every invocation; captures leaked pinned env.
   cat > "$FAKE_BIN/nix" <<'EOF'
@@ -115,8 +115,8 @@ if [[ "${1:-}" == "derivation" ]]; then
   fi
   if [[ -f "$state/nix-no-dev-output" ]]; then
     printf '{"derivations":{"%s":{"outputs":{"out":{"path":"%s"}}}}}\n' "${FAKE_DRV:?}" "${FAKE_STORE_PATH:?}"
-    exit 0
-  fi
+  exit 0
+fi
   if [[ -f "$state/nix-legacy-schema" ]]; then
     printf '{"%s":{"outputs":{"out":{"path":"%s"},"dev":{"path":"%s"}}}}\n' "${FAKE_DRV:?}" "${FAKE_STORE_PATH:?}" "${FAKE_DEV_OUT:?}"
     exit 0
@@ -127,6 +127,18 @@ if [[ "${1:-}" == "derivation" ]]; then
   drv_key="$(basename "${FAKE_DRV:?}")"
   dev_rel="$(basename "${FAKE_DEV_OUT:?}")"
   printf '{"derivations":{"%s":{"env":{"dev":"%s"},"outputs":{"dev":{"path":"%s"}}}}}\n' "$drv_key" "${FAKE_DEV_OUT:?}" "$dev_rel"
+    exit 0
+  fi
+if [[ "${1:-}" == "build" ]]; then
+  if [[ -f "$state/nix-build-fail" ]]; then
+    echo "fake nix: simulated build failure" >&2
+    exit 1
+  fi
+  [[ "${2:-}" == "${FAKE_DRV:?}^dev" ]] || { echo "fake nix: expected exact dev output" >&2; exit 2; }
+  if [[ ! -f "$state/nix-build-no-config" ]]; then
+    mkdir -p "${FAKE_DEV_OUT:?}/lib/cmake/KWin"
+    printf '# realized KWinConfig\n' > "${FAKE_DEV_OUT:?}/lib/cmake/KWin/KWinConfig.cmake"
+  fi
   exit 0
 fi
 if [[ "${1:-}" == "develop" ]]; then
@@ -140,14 +152,6 @@ if [[ "${1:-}" == "develop" ]]; then
   drv_arg="${1:-}"; shift || true
   [[ "${1:-}" == "--command" ]] || { echo "fake nix: expected --command" >&2; exit 2; }
   shift
-  # Inner argv tail: _ <injected> <src> <bdir> <kwin_dir>. If the test marks
-  # nix-realize-dev, realize KWinConfig before exec (simulates Nix realizing
-  # the dev output inside the dev shell for an otherwise unrealized output).
-  kwin_dir="${@: -1}"
-  if [[ -f "$state/nix-realize-dev" && -n "$kwin_dir" ]]; then
-    mkdir -p "$kwin_dir"
-    printf '# realized KWinConfig\n' > "$kwin_dir/KWinConfig.cmake"
-  fi
   # Simulate the host dev shell: host-native cmake first on PATH, then exec
   # the inner bash script so host cmake (not outer) runs for real.
   export PATH="${FAKE_HOST_NATIVE_BIN:?}:$PATH"
@@ -299,7 +303,8 @@ make_fake_tools
 mkdir -p "$WORK/repo/target"
 setup_provenance
 
-# --help documents resolve/build, metadata-only resolve, host cmake, no dry-run.
+# --help documents resolve/build, metadata-only resolve, exact dev realization,
+# host cmake, and no dry-run.
 reset_state
 run_builder --help
 check_exit 0 "help exit"
@@ -307,6 +312,7 @@ assert_contains "usage: nix-host-kwin-build.sh" "help usage"
 assert_contains "resolve" "help resolve"
 assert_contains "Proves derivation metadata only" "help metadata-only"
 assert_contains "nix develop" "help develop cost"
+assert_contains "nix build <host-drv>^dev --no-link" "help exact dev realization"
 assert_contains "nix build --dry-run" "help no auto dry-run"
 assert_contains "RUSTC_BIN" "help rustc"
 assert_contains "expected-identity" "help expected-identity"
@@ -434,6 +440,7 @@ EXIT=$?
 set -e
 check_exit 0 "build ok host cmake"
 assert_nix_log_contains "develop $FAKE_DRV --command" "build uses host drv dev shell"
+assert_nix_log_contains "build $FAKE_DRV^dev --no-link" "build realizes exact dev output"
 assert_nix_log_contains "$STORE_ROOT/hash-rustc/bin" "build injects rustc store dir"
 assert_nix_log_missing "/tmp/pinned-kwin-cmake" "build strips pinned cmake dir"
 assert_nix_log_missing "/tmp/pinned-dogfood" "build strips dogfood pinned dir"
@@ -507,9 +514,10 @@ else
 fi
 unset FAKE_BUILD_DIR
 
-# build: missing KWinConfig inside the dev shell fails closed (no fallback).
+# build: a realized dev output without KWinConfig fails closed (no fallback).
 reset_state
 rm "$FAKE_DEV_OUT/lib/cmake/KWin/KWinConfig.cmake"
+touch "$WORK/state/nix-build-no-config"
 export FAKE_BUILD_DIR="$WORK/build-missing-config"
 set +e
 env "PATH=$FAKE_BIN:$PATH" \
@@ -529,10 +537,9 @@ assert_contains "inside host dev shell" "build missing KWinConfig inside msg"
 printf '# fake KWinConfig\n' > "$FAKE_DEV_OUT/lib/cmake/KWin/KWinConfig.cmake"
 unset FAKE_BUILD_DIR
 
-# build: unrealized dev succeeds when Nix realizes it inside develop.
+# build: unrealized dev succeeds when the explicit exact-output build realizes it.
 reset_state
 rm "$FAKE_DEV_OUT/lib/cmake/KWin/KWinConfig.cmake"
-touch "$WORK/state/nix-realize-dev"
 export FAKE_BUILD_DIR="$WORK/build-unrealized"
 set +e
 env "PATH=$FAKE_BIN:$PATH" \
@@ -548,15 +555,16 @@ EXIT=$?
 set -e
 check_exit 0 "build unrealized dev success"
 assert_host_cmake_log_contains "host-cmake -S" "unrealized build ran host cmake after realize"
+assert_nix_log_contains "build $FAKE_DRV^dev --no-link" "unrealized build realizes exact dev output"
 if [[ -f "$FAKE_DEV_OUT/lib/cmake/KWin/KWinConfig.cmake" ]]; then
   PASS=$((PASS + 1))
 else
-  echo "FAIL [unrealized dev realized]: fake develop did not realize KWinConfig" >&2
+  echo "FAIL [unrealized dev realized]: exact dev build did not realize KWinConfig" >&2
   FAIL=$((FAIL + 1))
 fi
 unset FAKE_BUILD_DIR
 
-# build: --expected-identity disagreement fails before develop.
+# build: --expected-identity disagreement fails before realization/develop.
 reset_state
 set +e
 env "PATH=$FAKE_BIN:$PATH" \
@@ -573,6 +581,7 @@ set -e
 check_exit 1 "build identity mismatch"
 assert_contains "host identity changed" "build identity mismatch msg"
 assert_nix_log_missing "develop" "identity mismatch never develops"
+assert_nix_log_missing "build" "identity mismatch never realizes"
 
 # build: portable rustc outside the store fails closed.
 reset_state
@@ -591,6 +600,27 @@ EXIT=$?
 set -e
 check_exit 1 "build impure rustc"
 assert_contains "is not under" "build impure rustc msg"
+
+# build: exact dev realization failure fails closed before develop.
+reset_state
+export FAKE_BUILD_DIR="$WORK/build-dev-realize-fail"
+touch "$WORK/state/nix-build-fail"
+set +e
+env "PATH=$FAKE_BIN:$PATH" \
+  "NIX_BIN=$FAKE_BIN/nix" "JQ_BIN=$REAL_JQ" \
+  "RUSTC_BIN=$STORE_ROOT/hash-rustc/bin/rustc" \
+  "PLASMA_AUTO_TILER_HOST_KWIN_BIN=$HOST_BIN_DIR/kwin_wayland" \
+  "PLASMA_AUTO_TILER_STORE_ROOT=$STORE_ROOT" "PLASMA_AUTO_TILER_REPO_ROOT=$WORK/repo" \
+  "FAKE_STATE_DIR=$WORK/state" "FAKE_NIX_LOG=$NIX_LOG" \
+  "FAKE_HOST_NATIVE_BIN=$HOST_NATIVE_BIN" "FAKE_HOST_CMAKE_LOG=$HOST_CMAKE_LOG" \
+  "FAKE_DRV=$FAKE_DRV" "FAKE_STORE_PATH=$FAKE_STORE_PATH" "FAKE_DEV_OUT=$FAKE_DEV_OUT" \
+  "$BASH_PATH" "$BUILDER" build --source "$WORK/src" --build-dir "$FAKE_BUILD_DIR" >"$OUTPUT" 2>&1
+EXIT=$?
+set -e
+check_exit 1 "build exact dev realization failure"
+assert_contains "could not realize exact dev output" "build exact dev realization msg"
+assert_nix_log_missing "develop" "exact dev realization failure never develops"
+unset FAKE_BUILD_DIR
 
 # build: nix develop failure fails closed with no fallback.
 reset_state

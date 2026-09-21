@@ -134,9 +134,9 @@ DOGFOOD_KWIN_NOT_RUNNING (force the "process not found" branch).
 Native effect compilation is host-matched via
 scripts/nix-host-kwin-build.sh, which resolves the exact current-system
 KWin derivation dev output (read-only `resolve` proves derivation metadata
-only; KWinConfig is validated inside `nix develop <host-drv>` where Nix has
-realized it) and builds inside `nix develop <host-drv>` with only explicit
-rustc from /nix/store (cmake comes from the host dev shell); it never uses
+only; it explicitly realizes that exact output before validating KWinConfig
+and building inside `nix develop <host-drv>` with only explicit rustc from
+/nix/store (cmake comes from the host dev shell); it never uses
 a pinned KWin CMake dir nor outer cmake/cargo.
 
 install and uninstall never touch KWin configuration; enable, disable, and

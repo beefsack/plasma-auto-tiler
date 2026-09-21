@@ -68,21 +68,22 @@ Accepted real host compile proof (2026-09-20, current system):
   staging uses `target/kwin-native-host-<identity>-build` with stage fixed
   at `target/kwin-native-effect-stage`; dogfood uses
   `<transaction>/host-<identity>-build`; `--expected-identity` pins caller
-  resolve to build resolve. Build runs only
-  `nix develop <host-drv> --command bash -c 'cmake -S ... -B ... -DKWin_DIR=<resolved-dev>/lib/cmake/KWin -DBUILD_TESTING=OFF; cmake --build ...'`
+  resolve to build resolve. Build first runs
+  `nix build <host-drv>^dev --no-link` to realize the exact selected output,
+  then runs `nix develop <host-drv> --command bash -c 'cmake -S ... -B ... -DKWin_DIR=<resolved-dev>/lib/cmake/KWin -DBUILD_TESTING=OFF; cmake --build ...'`
   with explicit `/nix/store` rustc bin dir on `PATH`; outer cmake/cargo
   never required or injected; cmake must resolve host-native inside the dev
   shell; legacy `PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR` /
   `DOGFOOD_KWIN_DEV_CMAKE_DIR` / `CMAKE_BIN` / `CARGO_BIN` are stripped
-  outer and inner; `KWinConfig.cmake` is required inside the dev shell where
-  Nix has realized the dev output.
+  outer and inner; `KWinConfig.cmake` is required inside the dev shell after
+  Nix has realized the exact dev output.
 - Behavior/workflow: `resolve` first (read-only provenance, metadata only);
   then optional manual `nix build --dry-run <dev>` for cost inspection
   (never run automatically by the builder); then `just build-native-effect`
-  (staging) or dogfood `effect-install`. First-use `nix develop` may realize
-  the host dev closure (download/store cost, potentially minutes) paid once
-  via that single realizing command. Offline/missing provenance fails clear
-  with `error:` and no fallback or shared-lock rewrite. No hot reload:
+  (staging) or dogfood `effect-install`. First-use exact dev-output
+  realization may download its closure before the host development shell runs.
+  Offline/missing provenance fails clear with `error:` and no fallback or
+  shared-lock rewrite. No hot reload:
   `just dev` promises no hot reload; unload verification never proves the
   library is unmapped; native rebuild activation requires a fresh session.
 - Dependencies removed from `devenv.nix`: `cmake`, `ninja`, `pkg-config`,

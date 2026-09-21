@@ -16,13 +16,15 @@ set -euo pipefail
 # No nixpkgs version guessing, no store-name version parsing, no fallback
 # to a pinned package set.
 #
-# Build runs in the original host derivation dev shell:
+# Build first realizes the exact selected dev output, then runs in the original
+# host derivation dev shell:
+#   nix build <host-drv>^dev --no-link
 #   nix develop <host-drv> --command bash -c 'cmake configure + build'
 # with only validated portable rustc injected by explicit /nix/store bin
 # dir and explicit -DKWin_DIR=<dev>/lib/cmake/KWin. Outer cmake/cargo are
 # never required and never injected: cmake must resolve within the original
 # host `nix develop <drv>` environment. The inner shell requires the exact
-# KWinConfig.cmake from the selected dev output (where Nix has realized it)
+# KWinConfig.cmake from the selected realized dev output
 # before configure, and asserts the inner cmake is host-native (not an
 # injected pinned cmake) while rustc resolves from the explicit injected path.
 # The legacy PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR (and DOGFOOD_KWIN_DEV_CMAKE_DIR)
@@ -34,15 +36,12 @@ set -euo pipefail
 #   `resolve` is read-only: filesystem checks plus
 #   `nix path-info --derivation` and `nix derivation show` only. It never
 #   realizes a store path and is safe to run for inspection.
-#   `build` runs exactly one realizing command,
-#   `nix develop <drv> --command ...`, which may realize the host dev
-#   closure on first use (download/store cost, potentially minutes).
-#   The builder deliberately does NOT run an extra
-#   `nix build --dry-run` automatically on every compile: that would be a
-#   second Nix command with different semantics and additional cost on
-#   every build. Run `resolve` first to inspect provenance without cost;
-#   then `build` to pay the one-time dev-closure cost via `nix develop`
-#   itself.
+#   `build` first runs `nix build <drv>^dev --no-link` to realize the exact
+#   selected dev output, then `nix develop <drv> --command ...` to compile in
+#   the original host environment. The builder deliberately does NOT run
+#   `nix build --dry-run` automatically on every compile. Run `resolve` first
+#   to inspect provenance without cost; then `build` to pay the one-time
+#   dev-output closure cost.
 #
 # Identity keying: build directories embed a safe host package identity
 # derived opaquely from the derivation basename (sanitized, no version
@@ -97,6 +96,7 @@ Commands:
     Resolve (as above), fail if --expected-identity disagrees with the
     freshly resolved host identity (host changed; no fallback), then run
     exactly:
+      nix build <host-drv>^dev --no-link
       nix develop <host-drv> --command bash -c 'cmake -S ... -B ... \
         -DKWin_DIR=<resolved-dev>/lib/cmake/KWin -DBUILD_TESTING=OFF; \
         cmake --build ...'
@@ -104,11 +104,11 @@ Commands:
     bin dir. Outer cmake/cargo are never required and never injected; cmake
     must resolve within the original host `nix develop <drv>` environment
     (asserted host-native, not an injected pinned cmake). Inside that
-    environment, the exact KWinConfig.cmake from the selected dev output is
-    required before configure, where Nix has realized it. The legacy
+    environment, the exact KWinConfig.cmake from the selected realized dev
+    output is required before configure. The legacy
     PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR / DOGFOOD_KWIN_DEV_CMAKE_DIR are
-    stripped and never passed to cmake. First use may realize the host dev
-    closure (network/store cost).
+    stripped and never passed to cmake. First use may realize the selected dev
+    output closure (network/store cost).
 
   --help  show this help and exit
 
@@ -122,8 +122,9 @@ Environment (test-only overrides; production defaults are NixOS paths):
     not needed). There is no CMAKE_BIN/CARGO_BIN: outer cmake/cargo are
     unsupported and ignored.
 
-Cost: `resolve` never realizes; `build` pays the `nix develop` closure
-cost once. No automatic `nix build --dry-run` is run on any path.
+Cost: `resolve` never realizes; `build` realizes the exact dev output with
+`nix build <host-drv>^dev --no-link`, then compiles in `nix develop <host-drv>`.
+No automatic `nix build --dry-run` is run on any path.
 EOF
 }
 
@@ -164,8 +165,8 @@ canonicalize() {
 # RES_KWIN_CONFIG RES_IDENTITY RES_DEFAULT_BUILD_DIR RES_DEFAULT_STAGE_DIR
 # NOTE: kwin_cmake_dir/kwin_config are metadata-selected only; resolve does
 # not require the files to exist (unrealized dev output must remain
-# buildable). Build validates KWinConfig inside `nix develop` where Nix has
-# realized it.
+# buildable). Build realizes the output before validating KWinConfig inside
+# `nix develop`.
 do_resolve() {
   local host_bin="$1" store_root="$2" repo_root="$3"
   local nix_bin="$4" jq_bin="$5"
@@ -411,12 +412,19 @@ cmd_build() {
   echo "host package: $RES_IDENTITY ($RES_DRV)" >&2
   echo "dev output (metadata-selected): $RES_DEV_OUT" >&2
 
+  # Realize the exact selected output before entering the original host dev
+  # shell. `nix develop <drv>` alone does not necessarily realize split outputs.
+  if ! "$nix_bin" build "$RES_DRV^dev" --no-link; then
+    echo "error: could not realize exact dev output: $RES_DEV_OUT (nix build $RES_DRV^dev failed); refusing (no fallback attempted)" >&2
+    exit 1
+  fi
+
   # Build inside the ORIGINAL host derivation dev shell. Valid Nix CLI:
   # `nix develop <drv> --command <cmd> <args...>`. Strip the legacy pinned
   # env (and any outer CMAKE_BIN/CARGO_BIN) from the outer environment and
   # again inside the shell; cmake resolves from the host dev shell itself
   # and receives only the resolved -DKWin_DIR. KWinConfig is required inside
-  # where Nix has realized the dev output.
+  # after the exact dev output has been realized.
   if ! env -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN \
     "$nix_bin" develop "$RES_DRV" --command bash -c '
       set -euo pipefail
