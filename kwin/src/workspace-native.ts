@@ -434,8 +434,37 @@ export class WorkspaceNativeAdapter {
     // mapping list missed them. Primed at enable, refreshed after each
     // displacement pass; never records historical geometry.
     private readonly lastKnownByKey = new Map<string, string[]>();
+    // Bounded transaction-lifetime retention for an in-flight planned
+    // workspace-send: while the send adapter holds a bound plan awaiting
+    // ack/verify, its pending source/target ids must not be pruned even when
+    // empty and non-visible after follow. Provider-owned (usually the send
+    // adapter's pendingWorkspaces); empty means no retention. Never history,
+    // never geometry, cleared automatically when the flight settles.
+    private retentionProvider: (() => ReadonlyArray<string>) | null = null;
 
     constructor(private readonly env: WorkspaceNativeEnv) {}
+
+    setRetentionProvider(provider: (() => ReadonlyArray<string>) | null): void {
+        this.retentionProvider = provider;
+    }
+
+    private isTransactionRetained(id: string): boolean {
+        const provider = this.retentionProvider;
+        if (provider === null) {
+            return false;
+        }
+        try {
+            const ids = provider();
+            for (const candidate of ids) {
+                if (candidate === id) {
+                    return true;
+                }
+            }
+        } catch (error) {
+            void error;
+        }
+        return false;
+    }
 
     get isEnabled(): boolean {
         return this.enabled;
@@ -1756,7 +1785,7 @@ export class WorkspaceNativeAdapter {
     }
 
     private removeManagedTerminalLocal(id: string, visible: Set<string>): boolean {
-        if (visible.has(id)) {
+        if (visible.has(id) || this.isTransactionRetained(id)) {
             return false;
         }
         const live = this.liveOrdered();
@@ -1793,7 +1822,7 @@ export class WorkspaceNativeAdapter {
     }
 
     private removeManagedTerminalGlobal(id: string, visible: Set<string>): boolean {
-        if (visible.has(id)) {
+        if (visible.has(id) || this.isTransactionRetained(id)) {
             return false;
         }
         const live = this.liveOrdered();
@@ -1825,7 +1854,7 @@ export class WorkspaceNativeAdapter {
     }
 
     private removeManagedTerminalShared(id: string, visible: Set<string>): boolean {
-        if (visible.has(id)) {
+        if (visible.has(id) || this.isTransactionRetained(id)) {
             return false;
         }
         const live = this.liveOrdered();
@@ -2426,7 +2455,7 @@ export class WorkspaceNativeAdapter {
     }
 
     private removeOwnedEmpty(id: string, visible: Set<string>): boolean {
-        if (!this.owned.has(id) || visible.has(id)) {
+        if (!this.owned.has(id) || visible.has(id) || this.isTransactionRetained(id)) {
             return false;
         }
         const live = this.liveOrdered();
@@ -2463,7 +2492,7 @@ export class WorkspaceNativeAdapter {
     }
 
     private removeOwnedEmptyGlobal(id: string, visible: Set<string>): boolean {
-        if (!this.owned.has(id) || visible.has(id)) {
+        if (!this.owned.has(id) || visible.has(id) || this.isTransactionRetained(id)) {
             return false;
         }
         const live = this.liveOrdered();
@@ -2495,7 +2524,7 @@ export class WorkspaceNativeAdapter {
     }
 
     private removeOwnedEmptyShared(id: string, visible: Set<string>): boolean {
-        if (!this.owned.has(id) || visible.has(id)) {
+        if (!this.owned.has(id) || visible.has(id) || this.isTransactionRetained(id)) {
             return false;
         }
         const live = this.liveOrdered();

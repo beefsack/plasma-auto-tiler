@@ -26,12 +26,27 @@ Only meaningful pending or active work is listed.
   and session-restored maximise admission require separate evidence.
   User now manually accepts `Meta+F11` and `Meta+M`. Current active shortcut
   records still assign `Meta+G` to both Grid View and project float; the user sees
-  the overview. `Meta+Shift+G` has only the project sticky action. Next: user uses
-  KCM Apply Shortcuts and restarts the development script, then tests floating.
+  the overview. `Meta+Shift+G` has only the project sticky action. After logout/
+  login the user saw the updated dialog mentioning `Meta+G` and applied it, but
+  overview still wins. Another newly opened window neither tiled nor moved to
+  another workspace. `/run/user/1000/plasma-auto-tiler-dev.l1R1hl.log` shows
+  source-workspace removal during a confirmed native send/follow, followed by
+  stale-revision and blocked admission. Source/target cleanup now retains planned
+  in-flight workspaces through acknowledgement/verification; regression reproduces
+  the old failure and verifies release after settlement. A separate hermetic
+  regression confirms completed v2 shortcut journals incorrectly demanded new
+  v3-row postimages before applying them; migration now resumes from verified
+  existing state and preserves Revert. Exact host journal remains unverified.
+  Checks pass: 825 KWin tests, typecheck/build, 4 workspace-send Rust tests, and
+  27 native tests. Next: deploy the native KCM fix in a fresh session, use
+  `Active Window Border` -> `Apply Shortcuts`, start fresh `just dev trace`, and
+  retest float plus workspace send/new-window admission. This prevents the traced
+  pruning failure; it does not recover an already uncertain live transaction.
   Normal/sticky floating now sets native keepAbove, verifies the exclusive
   above/below pair, and restores prior stacking on unfloat or owned cleanup.
   Typecheck, 116 focused adapter tests, and script build pass; live acceptance
-  remains pending. No native rebuild/session boundary is needed for this change.
+  remains pending. The keepAbove change alone needs no native session boundary;
+  the later shortcut journal correction does.
   Sticky pager appearance needs user confirmation; no duplicate shortcut or
   sticky occupancy in trailing-empty handling was found. Ghostty fullscreen
   becomes maximised after workspace return; narrow source review found no cause,
@@ -46,6 +61,12 @@ Only meaningful pending or active work is listed.
   Navigation and
   movement while maximised await the user's COSMIC comparison; no suppression
   policy is selected. Other backlog work follows this focused scope.
+- P2 | Unified Plasma Auto Tiler settings entry | User asks whether the current
+  Desktop Effects entries `Active Window Border` and `Drag Oracle (Slice 1)` can
+  present one `Plasma Auto Tiler` entry. KWin 6.7.5 hides internal scripted effects
+  but not native effects via metadata. Combining the native helper into one
+  branded effect is the identified in-project route; runtime plugin consolidation
+  remains unselected. The tiling script appears separately under KWin Scripts.
 - P1 | Local movement height mismatch and stalled commands | User reproduced
   the stall without crossing outputs: O1 `H[W1 V[W2 W3]]`, O2 `W4`, with
   W1/W3 Ghostty, W2 Kate, W4 Firefox. Moving W3 right produced local

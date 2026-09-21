@@ -958,6 +958,19 @@ export class WorkspaceSendAdapter {
         return pending.acked ? "verify" : "ack";
     }
 
+    // Bounded transaction identities for native cleanup ordering: the exact
+    // pending source/target workspace ids, present only while a valid plan is
+    // bound (post-plan, pre-commit/terminal). Empty before a plan or after
+    // the flight settles, so retention is strictly transaction-lifetime.
+    // Primitive ids only, never refs or history.
+    get pendingWorkspaces(): ReadonlyArray<string> {
+        const pending = this.pending;
+        if (!this.inFlight || pending === null || pending.planned === null) {
+            return Object.freeze([]);
+        }
+        return Object.freeze([pending.snapshot.sourceWorkspace, pending.snapshot.targetWorkspace]);
+    }
+
     enable(auth: WorkspaceSendEnableAuth): boolean {
         if (this.enabled || this.startupEnabled) {
             return false;

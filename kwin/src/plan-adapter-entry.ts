@@ -3285,6 +3285,16 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // or reset correlation sequence) stays fail-closed. No normal workspace
     // shortcut may restore it.
     workspaceSendRef = workspaceSend;
+    // Bounded transaction-lifetime ordering: while the send holds a bound
+    // plan awaiting ack/verify, the native cleanup must not prune its exact
+    // pending source/target ids even when empty and non-visible after follow.
+    // Provider-read per cleanup, so settle (commit/terminal clears pending)
+    // restores normal pruning with no extra state.
+    try {
+        workspaceNative.setRetentionProvider(() => workspaceSend.pendingWorkspaces);
+    } catch (error) {
+        void error;
+    }
     try {
         workspaceSend.enable({ owner: overrides.owner, generation: overrides.generation });
     } catch (error) {

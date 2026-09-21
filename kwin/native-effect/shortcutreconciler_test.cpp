@@ -3741,6 +3741,174 @@ void fillV2Ready(ShortcutJournal &journal)
     journal.row2Kind = shortcutResolutionClear();
 }
 
+void fillV2Completed(ShortcutJournal &journal)
+{
+    fillV2Ready(journal);
+    journal.phase = shortcutJournalPhaseComplete();
+    journal.focus = {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"),
+                     QList<int>{419430420}, QList<int>{META_L}};
+    journal.lock = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L},
+                    QList<int>{META_ESC}};
+    journal.resizeUp = {shortcutResizeUpComponent(), shortcutResizeUpAction(), QList<int>{7}, {META_ALT_K}};
+    journal.switchNext = {shortcutSwitchNextComponent(), shortcutSwitchNextAction(), {META_ALT_K}, {}};
+    journal.resizeRight = {shortcutResizeRightComponent(), shortcutResizeRightAction(), QList<int>{8}, {META_ALT_L}};
+    journal.switchLast = {shortcutSwitchLastComponent(), shortcutSwitchLastAction(), {META_ALT_L}, {}};
+}
+
+void seedV2CompletedLive(FakeShortcutStore &store)
+{
+    seedReady6(store, QList<int>{META_L}, QList<int>{META_ESC});
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-resize-outwards-up")) {
+            tuple.active = QList<int>{META_ALT_K};
+        }
+        if (tuple.action == QStringLiteral("Switch to Next Keyboard Layout")) {
+            tuple.active = QList<int>{};
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-resize-outwards-right")) {
+            tuple.active = QList<int>{META_ALT_L};
+        }
+        if (tuple.action == QStringLiteral("Switch to Last-Used Keyboard Layout")) {
+            tuple.active = QList<int>{};
+        }
+    }
+}
+
+void v2CompletedUpgradeAppliesNewRows()
+{
+    // Legitimate completed v2: rows 0-2 at old postimage, Grid/Monocle at
+    // live preimages. Must upgrade preserving old rows/pres and clear only
+    // the two newly authorized foreign chords, then revert restores all.
+    FakeShortcutStore store;
+    seedV2CompletedLive(store);
+    FakeJournal journal;
+    ShortcutJournal v2;
+    fillV2Completed(v2);
+    journal.present = true;
+    journal.stored = v2;
+    const ShortcutApplyResult result = ShortcutReconciler(&store, &journal).apply();
+    CHECK(result.ok);
+    CHECK(result.writes == 2);
+    CHECK(journal.present);
+    CHECK(journal.stored.schema == shortcutJournalSchema());
+    CHECK(journal.stored.phase == shortcutJournalPhaseComplete());
+    CHECK(journal.stored.focus.pre == (QList<int>{419430420}));
+    CHECK(journal.stored.focus.post == (QList<int>{META_L}));
+    CHECK(journal.stored.lock.pre == (QList<int>{META_L}));
+    CHECK(journal.stored.lock.post == (QList<int>{META_ESC}));
+    CHECK(journal.stored.resizeUp.pre == (QList<int>{7}));
+    CHECK(journal.stored.switchNext.pre == (QList<int>{META_ALT_K}));
+    CHECK(journal.stored.resizeRight.pre == (QList<int>{8}));
+    CHECK(journal.stored.switchLast.pre == (QList<int>{META_ALT_L}));
+    CHECK(journal.stored.gridView.pre == (QList<int>{META_G}));
+    CHECK(journal.stored.gridView.post.isEmpty());
+    CHECK(journal.stored.monocle.pre == (QList<int>{META_M}));
+    CHECK(journal.stored.monocle.post.isEmpty());
+    CHECK(store.writeLog.size() == 2);
+    if (store.writeLog.size() == 2) {
+        CHECK(store.writeLog.at(0).action == QStringLiteral("Grid View"));
+        CHECK(store.writeLog.at(0).keys.isEmpty());
+        CHECK(store.writeLog.at(1).action == QStringLiteral("KrohnkiteMonocleLayout"));
+        CHECK(store.writeLog.at(1).keys.isEmpty());
+    }
+    const ShortcutRevertResult reverted = ShortcutReconciler(&store, &journal).revert();
+    CHECK(reverted.ok);
+    CHECK(reverted.journalRemoved);
+    CHECK(!journal.present);
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
+            CHECK(tuple.active == (QList<int>{419430420}));
+        }
+        if (tuple.action == QStringLiteral("Grid View")) {
+            CHECK(tuple.active == (QList<int>{META_G}));
+        }
+        if (tuple.action == QStringLiteral("KrohnkiteMonocleLayout")) {
+            CHECK(tuple.active == (QList<int>{META_M}));
+        }
+    }
+}
+
+void v2CompletedUpgradeDriftRefusesWithoutUpgrade()
+{
+    // Old-row drift: focus away from both pre and post. Must fail closed
+    // with zero writes and leave the v2 journal un-upgraded.
+    {
+        FakeShortcutStore store;
+        seedV2CompletedLive(store);
+        for (ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
+                tuple.active = QList<int>{111};
+            }
+        }
+        FakeJournal journal;
+        ShortcutJournal v2;
+        fillV2Completed(v2);
+        journal.present = true;
+        journal.stored = v2;
+        const ShortcutApplyResult result = ShortcutReconciler(&store, &journal).apply();
+        CHECK(!result.ok);
+        CHECK(store.writeLog.isEmpty());
+        CHECK(result.writes == 0);
+        CHECK(journal.present);
+        CHECK(journal.stored.schema == shortcutJournalSchemaV2());
+        CHECK(journal.stored.phase == shortcutJournalPhaseComplete());
+        CHECK(journal.stored.focus.pre == (QList<int>{419430420}));
+    }
+    // New-row drift: Grid View away from both pre and post. Must fail with
+    // the Meta+G preimage error, zero writes, no upgrade.
+    {
+        FakeShortcutStore store;
+        seedV2CompletedLive(store);
+        for (ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("Grid View")) {
+                tuple.active = QList<int>{999};
+            }
+        }
+        FakeJournal journal;
+        ShortcutJournal v2;
+        fillV2Completed(v2);
+        journal.present = true;
+        journal.stored = v2;
+        const ShortcutApplyResult result = ShortcutReconciler(&store, &journal).apply();
+        CHECK(!result.ok);
+        CHECK(result.error.contains(QStringLiteral("Meta+G")));
+        CHECK(store.writeLog.isEmpty());
+        CHECK(result.writes == 0);
+        CHECK(journal.present);
+        CHECK(journal.stored.schema == shortcutJournalSchemaV2());
+    }
+}
+
+void v2CompletedUpgradeInterruptedResumes()
+{
+    // Interrupted upgrade: first new-row write fails after the upgrade
+    // persist. Journal must be a resumable v3 focus-applied image preserving
+    // old pres; a second apply completes and revert restores.
+    FakeShortcutStore store;
+    seedV2CompletedLive(store);
+    store.failNextWrite = true;
+    FakeJournal journal;
+    ShortcutJournal v2;
+    fillV2Completed(v2);
+    journal.present = true;
+    journal.stored = v2;
+    const ShortcutApplyResult interrupted = ShortcutReconciler(&store, &journal).apply();
+    CHECK(!interrupted.ok);
+    CHECK(journal.present);
+    CHECK(journal.stored.schema == shortcutJournalSchema());
+    CHECK(journal.stored.phase == shortcutJournalPhaseFocusApplied());
+    CHECK(journal.stored.focus.pre == (QList<int>{419430420}));
+    CHECK(journal.stored.gridView.pre == (QList<int>{META_G}));
+    CHECK(journal.stored.monocle.pre == (QList<int>{META_M}));
+    const ShortcutApplyResult resumed = ShortcutReconciler(&store, &journal).apply();
+    CHECK(resumed.ok);
+    CHECK(journal.stored.phase == shortcutJournalPhaseComplete());
+    const ShortcutRevertResult reverted = ShortcutReconciler(&store, &journal).revert();
+    CHECK(reverted.ok);
+    CHECK(reverted.journalRemoved);
+    CHECK(!journal.present);
+}
+
 void v2JournalUpgradeAndRevertCompat()
 {
     // A persisted v2 pending journal resumes its three rows, upgrades to v3
@@ -3917,6 +4085,9 @@ int main(int argc, char **argv)
         schemaV1UpgradeExplicit();
         corruptPostFailsAllLoadedPaths();
         v2JournalUpgradeAndRevertCompat();
+        v2CompletedUpgradeAppliesNewRows();
+        v2CompletedUpgradeDriftRefusesWithoutUpgrade();
+        v2CompletedUpgradeInterruptedResumes();
     }
     if (scenario != QStringLiteral("all") && scenario != QStringLiteral("success") && scenario != QStringLiteral("conflict")
         && scenario != QStringLiteral("malformed") && scenario != QStringLiteral("owner") && scenario != QStringLiteral("recovery")

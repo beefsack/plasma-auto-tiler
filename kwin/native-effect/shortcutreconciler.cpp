@@ -2262,20 +2262,76 @@ ShortcutApplyResult ShortcutReconciler::apply()
             // three recorded rows are carried over untouched and the two
             // new rows are built from current live bindings (pre = live,
             // post = table image), never assumed. Persist before any write.
-            journal.floatToggle = {shortcutFloatComponent(), shortcutFloatAction(), floatCurrent.active, floatPost};
-            journal.gridView = {shortcutGridViewComponent(), shortcutGridViewAction(), gridViewCurrent.active,
-                                QList<int>{}};
-            journal.maximizeToggle = {shortcutMaximizeComponent(), shortcutMaximizeAction(), maximizeCurrent.active,
-                                      maximizePost};
-            journal.monocle = {shortcutMonocleComponent(), shortcutMonocleAction(), monocleCurrent.active,
-                               QList<int>{}};
-            journal.row3Kind = shortcutResolutionClear();
-            journal.row4Kind = shortcutResolutionClear();
-            journal.schema = shortcutJournalSchema();
-            if (!m_journal->persist(journal, &error)) {
-                result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
-                result.writes = usedWrites();
-                return result;
+            // Completed v2 journals need a bounded upgrade: the old rows are
+            // already applied while the new foreign chords are still live
+            // preimages, so persisting the upgrade as complete would demand
+            // the new postimage before the newly authorized rows are
+            // applied. Demote only the legitimate completed upgrade to
+            // focus-applied so the new rows resume; genuine drift fails
+            // closed here without persisting any upgrade.
+            const bool completingUpgrade = journal.phase == shortcutJournalPhaseComplete();
+            if (completingUpgrade) {
+                const bool oldAtPost = focusCurrent.active == journal.focus.post
+                    && lockCurrent.active == journal.lock.post
+                    && resizeUpCurrent.active == journal.resizeUp.post
+                    && switchNextCurrent.active == journal.switchNext.post
+                    && resizeRightCurrent.active == journal.resizeRight.post
+                    && switchLastCurrent.active == journal.switchLast.post;
+                if (!oldAtPost) {
+                    result.error = QStringLiteral("state drifted after apply-complete; revert before re-applying");
+                    result.writes = usedWrites();
+                    return result;
+                }
+                const bool gridKnown = gridViewCurrent.active == gridViewExpectedPre()
+                    || gridViewCurrent.active.isEmpty();
+                const bool monocleKnown = monocleCurrent.active == monocleExpectedPre()
+                    || monocleCurrent.active.isEmpty();
+                if (!gridKnown) {
+                    result.error = QStringLiteral("refusing to apply: %1/%2 preimage is not exactly Meta+G")
+                                       .arg(shortcutGridViewComponent(), shortcutGridViewAction());
+                    result.writes = usedWrites();
+                    return result;
+                }
+                if (!monocleKnown) {
+                    result.error = QStringLiteral("refusing to apply: %1/%2 preimage is not exactly Meta+M")
+                                       .arg(shortcutMonocleComponent(), shortcutMonocleAction());
+                    result.writes = usedWrites();
+                    return result;
+                }
+                journal.floatToggle = {shortcutFloatComponent(), shortcutFloatAction(), floatCurrent.active,
+                                       floatPost};
+                journal.gridView = {shortcutGridViewComponent(), shortcutGridViewAction(),
+                                    gridViewCurrent.active, QList<int>{}};
+                journal.maximizeToggle = {shortcutMaximizeComponent(), shortcutMaximizeAction(),
+                                          maximizeCurrent.active, maximizePost};
+                journal.monocle = {shortcutMonocleComponent(), shortcutMonocleAction(), monocleCurrent.active,
+                                   QList<int>{}};
+                journal.row3Kind = shortcutResolutionClear();
+                journal.row4Kind = shortcutResolutionClear();
+                journal.schema = shortcutJournalSchema();
+                journal.phase = shortcutJournalPhaseFocusApplied();
+                if (!m_journal->persist(journal, &error)) {
+                    result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
+                    result.writes = usedWrites();
+                    return result;
+                }
+            } else {
+                journal.floatToggle = {shortcutFloatComponent(), shortcutFloatAction(), floatCurrent.active,
+                                       floatPost};
+                journal.gridView = {shortcutGridViewComponent(), shortcutGridViewAction(),
+                                    gridViewCurrent.active, QList<int>{}};
+                journal.maximizeToggle = {shortcutMaximizeComponent(), shortcutMaximizeAction(),
+                                          maximizeCurrent.active, maximizePost};
+                journal.monocle = {shortcutMonocleComponent(), shortcutMonocleAction(), monocleCurrent.active,
+                                   QList<int>{}};
+                journal.row3Kind = shortcutResolutionClear();
+                journal.row4Kind = shortcutResolutionClear();
+                journal.schema = shortcutJournalSchema();
+                if (!m_journal->persist(journal, &error)) {
+                    result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
+                    result.writes = usedWrites();
+                    return result;
+                }
             }
         }
         if (journal.phase == shortcutJournalPhaseComplete()) {
