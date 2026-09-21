@@ -157,6 +157,14 @@ interface Window {
     // Properties -> `bool onAllDesktops`. Written only through the guarded
     // boundary seam for sticky floating.
     onAllDesktops: boolean;
+    // Read-write: src/window.h Q_PROPERTY `bool keepAbove READ keepAbove WRITE
+    // setKeepAbove NOTIFY keepAboveChanged`. The float adapter records and
+    // restores the prior value around its intentional floating state.
+    keepAbove: boolean;
+    // Read-write: src/window.h Q_PROPERTY `bool keepBelow READ keepBelow WRITE
+    // setKeepBelow NOTIFY keepBelowChanged`. KWin maintains keep-above/below
+    // exclusivity; the float adapter restores an initial keep-below state.
+    keepBelow: boolean;
     // Read-write in the official KWin scripting API (KWin::Window -> Read-write
     // Properties -> `bool fullScreen`; https://develop.kde.org/docs/plasma/kwin/api/).
     // Declared writable here only for the explicit project fullscreen

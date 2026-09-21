@@ -2,6 +2,50 @@
 
 Only meaningful pending or active work is listed.
 
+- P0 | Immediate single-output focus: fullscreen, maximise, float, sticky float |
+  User-selected next scope on the laptop. Verify shortcut delivery, entry/exit,
+  retained tiling restoration for fullscreen/maximise, floating placement and
+  fresh admission on unfloat, and sticky visibility across workspaces with
+  correct sticky-off behavior. Include fullscreen residual cost and maximise
+  admission checks tracked below. Diagnose and fix concrete defects within the
+  approved behavior; physical checks remain user-owned. User manually confirms
+  maximise and normal active-border suppression work; Firefox's native F11
+  fullscreen also hides the border. Added the missing project `Meta+F11` toggle,
+  reversible KCM clears for Grid View `Meta+G` and Krohnkite Monocle `Meta+M`,
+  and maximise suppression for the Meta-held group outline. Existing three-row
+  shortcut journals remain recoverable. Typecheck, 815 KWin tests, script/native
+  builds, and 26 native CTest cases pass. The other agent's changes were docs
+  only and were reviewed. Native public maximize signals now track all windows,
+  but cannot classify a window already maximised before effect load. The
+  no-border invariant remains incomplete for that startup edge; default-hidden
+  rendering until script state confirmation is a pending design choice.
+  Sticky float uses native all-desktops semantics (empty native desktop list);
+  sticky-off selects the current desktop. Static review and regression establish
+  no explicit workspace switch on sticky-on, but the user's workspace 1 to 4
+  jump remains unexplained and needs an exact attempt trace. Fullscreen cost
+  and session-restored maximise admission require separate evidence.
+  User now manually accepts `Meta+F11` and `Meta+M`. Current active shortcut
+  records still assign `Meta+G` to both Grid View and project float; the user sees
+  the overview. `Meta+Shift+G` has only the project sticky action. Next: user uses
+  KCM Apply Shortcuts and restarts the development script, then tests floating.
+  Normal/sticky floating now sets native keepAbove, verifies the exclusive
+  above/below pair, and restores prior stacking on unfloat or owned cleanup.
+  Typecheck, 116 focused adapter tests, and script build pass; live acceptance
+  remains pending. No native rebuild/session boundary is needed for this change.
+  Sticky pager appearance needs user confirmation; no duplicate shortcut or
+  sticky occupancy in trailing-empty handling was found. Ghostty fullscreen
+  becomes maximised after workspace return; narrow source review found no cause,
+  and no native-fighting workaround was added.
+  The initial-border-state choice remains pending.
+  Krohnkite is absent from
+  dotfiles declarations and user KPackages and disabled in `kwinrc`; its shortcut
+  record remains, while system-package/runtime presence is not established.
+  User approved explicit Apply/Revert clearing of Grid View's `Meta+G` and
+  Krohnkite Monocle's `Meta+M`, plus standing authorisation to clear other
+  project-required shortcut conflicts through that reversible mechanism.
+  Navigation and
+  movement while maximised await the user's COSMIC comparison; no suppression
+  policy is selected. Other backlog work follows this focused scope.
 - P1 | Local movement height mismatch and stalled commands | User reproduced
   the stall without crossing outputs: O1 `H[W1 V[W2 W3]]`, O2 `W4`, with
   W1/W3 Ghostty, W2 Kate, W4 Firefox. Moving W3 right produced local
@@ -70,7 +114,10 @@ Only meaningful pending or active work is listed.
   and the active border is back too." This manually accepts the reported native
   development startup result and visible active border; it does not establish
   exact oracle protocol, cleanup, removal, or cross-host upgrade behavior.
-  Those checks remain pending. Native rebuild
+  Laptop follow-up: after the exact host `dev` output realization fix, the user
+  completed setup, build, logout/login, and reports it is working on a single
+  output. This manually accepts startup on that laptop; oracle protocol,
+  cleanup, removal, and cross-host upgrade checks remain pending. Native rebuild
   activation requires a fresh session; unload is not proof of library release.
   No agent host mutation occurred. Removal and dogfood coexistence refusal
   remain live-unverified.

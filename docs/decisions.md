@@ -356,6 +356,12 @@ Historical implementation detail is recoverable in Git history.
   prior tiled members fresh-admits there rather than restoring an old slot. The
   native write has one exact-reference `desktopsChanged` echo fence, with no
   retry, timeout, fallback, or polling.
+- Intentional normal and sticky floating request KWin's public `keepAbove=true`.
+  KWin owns the normal keep-above/keep-below exclusive transition. The adapter
+  records the prior pair and restores a project-cleared `keepBelow` (or prior
+  `keepAbove=false`) before unfloat, fresh tiled admission, or controller
+  disable; a pre-existing keep-above setting remains untouched. A missing,
+  refused, or unverifiable native write fails the transition without a retry.
 - The selected fresh-admission behavior follows `pop-os/cosmic-comp`
   `81cd5fdbaa41c3973369ae85bccf829137836e20` source content:
   `data/keybindings.ron:83-92` binds Super+G to `ToggleWindowFloating`;

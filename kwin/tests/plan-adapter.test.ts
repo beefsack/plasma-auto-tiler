@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { describe, it } from "node:test";
 
 import {
+    KeepAboveWriteOutcome,
     MaximizeClearOutcome,
     PLAN_CONTRACT_VERSION,
     PLAN_DEBOUNCE_MS,
@@ -120,6 +121,8 @@ interface Mocks {
     readonly maximizeToggles: Array<{ target: object; maximized: boolean }>;
     readonly fullscreenToggles: Array<{ target: object; fullscreen: boolean }>;
     readonly desktopToggles: Array<{ target: object; allDesktops: boolean }>;
+    readonly keepAboveToggles: Array<{ target: object; keepAbove: boolean }>;
+    readonly keepBelowToggles: Array<{ target: object; keepBelow: boolean }>;
     readonly floatingCalls: Array<{ id: string; floating: boolean }>;
     observeImpl: () => PlanObserved | null;
     activeImpl: () => object | null;
@@ -128,6 +131,10 @@ interface Mocks {
     maximizeToggleImpl: (target: object, maximized: boolean) => MaximizeClearOutcome;
     fullscreenToggleImpl: (target: object, fullscreen: boolean) => MaximizeClearOutcome;
     desktopToggleImpl: (target: object, allDesktops: boolean) => MaximizeClearOutcome;
+    keepAboveReadImpl: (target: object) => boolean | null;
+    keepAboveToggleImpl: (target: object, keepAbove: boolean) => KeepAboveWriteOutcome;
+    keepBelowReadImpl: (target: object) => boolean | null;
+    keepBelowToggleImpl: (target: object, keepBelow: boolean) => KeepAboveWriteOutcome;
     env: PlanAdapterEnv;
 }
 
@@ -145,6 +152,8 @@ function mockEnv(refs: { a: object; b: object; c: object }): Mocks {
         maximizeToggles: [],
         fullscreenToggles: [],
         desktopToggles: [],
+        keepAboveToggles: [],
+        keepBelowToggles: [],
         floatingCalls: [],
         observeImpl: () => makeObserved(refs, { focused: refs.a }),
         activeImpl: () => refs.a,
@@ -153,6 +162,10 @@ function mockEnv(refs: { a: object; b: object; c: object }): Mocks {
         maximizeToggleImpl: (_target: object, _maximized: boolean): MaximizeClearOutcome => "invoked",
         fullscreenToggleImpl: (_target: object, _fullscreen: boolean): MaximizeClearOutcome => "invoked",
         desktopToggleImpl: (_target: object, _allDesktops: boolean): MaximizeClearOutcome => "invoked",
+        keepAboveReadImpl: (_target: object): boolean | null => false,
+        keepAboveToggleImpl: (_target: object, _keepAbove: boolean): KeepAboveWriteOutcome => "invoked",
+        keepBelowReadImpl: (_target: object): boolean | null => false,
+        keepBelowToggleImpl: (_target: object, _keepBelow: boolean): KeepAboveWriteOutcome => "invoked",
         env: null as unknown as PlanAdapterEnv,
     };
     const env: PlanAdapterEnv = {
@@ -202,6 +215,16 @@ function mockEnv(refs: { a: object; b: object; c: object }): Mocks {
         setAllDesktops: (target, allDesktops): MaximizeClearOutcome => {
             state.desktopToggles.push({ target, allDesktops });
             return state.desktopToggleImpl(target, allDesktops);
+        },
+        readKeepAbove: (target): boolean | null => state.keepAboveReadImpl(target),
+        readKeepBelow: (target): boolean | null => state.keepBelowReadImpl(target),
+        setKeepAbove: (target, keepAbove): KeepAboveWriteOutcome => {
+            state.keepAboveToggles.push({ target, keepAbove });
+            return state.keepAboveToggleImpl(target, keepAbove);
+        },
+        setKeepBelow: (target, keepBelow): KeepAboveWriteOutcome => {
+            state.keepBelowToggles.push({ target, keepBelow });
+            return state.keepBelowToggleImpl(target, keepBelow);
         },
         setGeometry: (target, rect): boolean => {
             state.geometries.push({ target, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h } });
@@ -1131,6 +1154,141 @@ describe("plan adapter explicit-only floating", () => {
         assert.deepEqual(mocks.floatingCalls, [{ id: "win-a", floating: true }]);
         assert.ok(mocks.logs.some((line) => line.includes("float-written")));
     });
+
+    it("keeps an intentional float above and restores only its project-owned prior state", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let floating = false;
+        let keepAbove = false;
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": floating }, resourceClasses: { "win-a": "ghostty" } });
+        mocks.keepAboveReadImpl = (target) => target === refs.a ? keepAbove : null;
+        mocks.keepAboveToggleImpl = (target, value) => {
+            assert.equal(target, refs.a);
+            keepAbove = value;
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestFloat();
+        const floatPayload = plannerPayload(mocks, 0);
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: floatPayload["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [{ window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            float_geometry: { window: "win-a", rect: { x: 240, y: 160, w: 720, h: 480 } },
+        }));
+        floating = true;
+        assert.deepEqual(mocks.keepAboveToggles, [{ target: refs.a, keepAbove: true }]);
+
+        adapter.requestFloat();
+        const unfloatPayload = plannerPayload(mocks, 1);
+        mocks.callbacks[1]?.(plannedReply(
+            unfloatPayload["correlation_id"] as string,
+            [
+                { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+            ],
+            "win-a-leaf",
+        ));
+        assert.deepEqual(mocks.keepAboveToggles, [
+            { target: refs.a, keepAbove: true },
+            { target: refs.a, keepAbove: false },
+        ]);
+    });
+
+    it("uses KWin's normal above transition and restores an initial keep-below state", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let floating = false;
+        let keepAbove = false;
+        let keepBelow = true;
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": floating } });
+        mocks.keepAboveReadImpl = () => keepAbove;
+        mocks.keepBelowReadImpl = () => keepBelow;
+        mocks.keepAboveToggleImpl = (_target, value) => {
+            keepAbove = value;
+            if (value) {
+                keepBelow = false;
+            }
+            return "invoked";
+        };
+        mocks.keepBelowToggleImpl = (_target, value) => {
+            keepBelow = value;
+            if (value) {
+                keepAbove = false;
+            }
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestFloat();
+        const floatPayload = plannerPayload(mocks, 0);
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: floatPayload["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [{ window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            float_geometry: { window: "win-a", rect: { x: 240, y: 160, w: 720, h: 480 } },
+        }));
+        floating = true;
+        adapter.requestFloat();
+        const unfloatPayload = plannerPayload(mocks, 1);
+        mocks.callbacks[1]?.(plannedReply(
+            unfloatPayload["correlation_id"] as string,
+            [
+                { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+            ],
+            "win-a-leaf",
+        ));
+        assert.deepEqual(mocks.keepAboveToggles, [{ target: refs.a, keepAbove: true }]);
+        assert.deepEqual(mocks.keepBelowToggles, [{ target: refs.a, keepBelow: true }]);
+    });
+
+    it("refuses a float when KWin cannot confirm keep-above ownership", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.keepAboveToggleImpl = () => "refused";
+        const adapter = enableAdapter(mocks);
+        adapter.requestFloat();
+        const payload = plannerPayload(mocks, 0);
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: payload["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [{ window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            float_geometry: { window: "win-a", rect: { x: 240, y: 160, w: 720, h: 480 } },
+        }));
+        assert.deepEqual(mocks.floatingCalls, []);
+        assert.ok(mocks.geometries.every((entry) => entry.target !== refs.a));
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:keep-above window=win-a resource_class=unknown target=above outcome=refused"));
+    });
+
+    it("restores keep-above if float geometry cannot be written", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let keepAbove = false;
+        mocks.keepAboveReadImpl = () => keepAbove;
+        mocks.keepAboveToggleImpl = (_target, value) => {
+            keepAbove = value;
+            return "invoked";
+        };
+        mocks.geometryImpl = (target) => target !== refs.a;
+        const adapter = enableAdapter(mocks);
+        adapter.requestFloat();
+        const payload = plannerPayload(mocks, 0);
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: payload["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [{ window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            float_geometry: { window: "win-a", rect: { x: 240, y: 160, w: 720, h: 480 } },
+        }));
+        assert.deepEqual(mocks.keepAboveToggles, [
+            { target: refs.a, keepAbove: true },
+            { target: refs.a, keepAbove: false },
+        ]);
+        assert.deepEqual(mocks.floatingCalls, []);
+    });
 });
 
 describe("plan adapter client self-resize reconcile", () => {
@@ -1795,6 +1953,69 @@ describe("plan adapter sticky and maximize toggles", () => {
         assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-echo-consumed"));
     });
 
+    it("keeps sticky floats above, retains above on return to a prior float, and restores before fresh tiled admission", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let floating = false;
+        let sticky = false;
+        let keepAbove = false;
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": floating }, sticky: { "win-a": sticky } });
+        mocks.keepAboveReadImpl = (target) => target === refs.a ? keepAbove : null;
+        mocks.keepAboveToggleImpl = (target, value) => {
+            assert.equal(target, refs.a);
+            keepAbove = value;
+            return "invoked";
+        };
+        mocks.desktopToggleImpl = (target, allDesktops) => {
+            assert.equal(target, refs.a);
+            sticky = allDesktops;
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+
+        adapter.requestSticky();
+        const floatPayload = plannerPayload(mocks, 0);
+        floating = true;
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: floatPayload["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [{ window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            float_geometry: { window: "win-a", rect: { x: 100, y: 100, w: 600, h: 400 } },
+        }));
+        assert.deepEqual(mocks.keepAboveToggles, [{ target: refs.a, keepAbove: true }]);
+
+        adapter.requestSticky();
+        assert.deepEqual(mocks.keepAboveToggles, [
+            { target: refs.a, keepAbove: true },
+            { target: refs.a, keepAbove: false },
+        ]);
+        assert.equal(mocks.dbusCalls.length, 2, "sticky-off restores before fresh tiled admission");
+    });
+
+    it("preserves keep-above when sticky returns to a prior normal float", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let sticky = false;
+        let keepAbove = true;
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": true }, sticky: { "win-a": sticky } });
+        mocks.keepAboveReadImpl = () => keepAbove;
+        mocks.keepAboveToggleImpl = (_target, value) => {
+            keepAbove = value;
+            return "invoked";
+        };
+        mocks.desktopToggleImpl = (_target, allDesktops) => {
+            sticky = allDesktops;
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestSticky();
+        adapter.requestSticky();
+        assert.deepEqual(mocks.keepAboveToggles, []);
+    });
+
     it("keeps sticky-on within its domain with no desktop, focus, or rehome writes", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
@@ -2056,6 +2277,8 @@ function fakeWorld(): FakeWorld {
             maximizeMode: 0,
             desktopsChanged: desktopsChanged.signal,
             onAllDesktops: false,
+            keepAbove: false,
+            keepBelow: false,
         };
         win["setMaximize"] = (vertically: unknown, horizontally: unknown): void => {
             if (vertically !== false || horizontally !== false) {

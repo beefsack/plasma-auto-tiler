@@ -2586,6 +2586,58 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 return "threw";
             }
         },
+        readKeepAbove: (target) => {
+            try {
+                const value = readProp(target, "keepAbove");
+                return typeof value === "boolean" ? value : null;
+            } catch (error) {
+                void error;
+                return null;
+            }
+        },
+        readKeepBelow: (target) => {
+            try {
+                const value = readProp(target, "keepBelow");
+                return typeof value === "boolean" ? value : null;
+            } catch (error) {
+                void error;
+                return null;
+            }
+        },
+        setKeepAbove: (target, keepAbove) => {
+            try {
+                const current = readProp(target, "keepAbove");
+                const below = readProp(target, "keepBelow");
+                if (typeof current !== "boolean" || typeof below !== "boolean") {
+                    return "missing";
+                }
+                if (!Reflect.set(target, "keepAbove", keepAbove)) {
+                    return "threw";
+                }
+                const actualAbove = readProp(target, "keepAbove");
+                const actualBelow = readProp(target, "keepBelow");
+                return actualAbove === keepAbove && (!keepAbove || actualBelow === false) ? "invoked" : "refused";
+            } catch (error) {
+                void error;
+                return "threw";
+            }
+        },
+        setKeepBelow: (target, keepBelow) => {
+            try {
+                if (typeof readProp(target, "keepBelow") !== "boolean") {
+                    return "missing";
+                }
+                if (!Reflect.set(target, "keepBelow", keepBelow)) {
+                    return "threw";
+                }
+                const actualAbove = readProp(target, "keepAbove");
+                const actualBelow = readProp(target, "keepBelow");
+                return actualBelow === keepBelow && (!keepBelow || actualAbove === false) ? "invoked" : "refused";
+            } catch (error) {
+                void error;
+                return "threw";
+            }
+        },
         setGeometry: (target, rect) => {
             try {
                 return Reflect.set(target, "frameGeometry", {

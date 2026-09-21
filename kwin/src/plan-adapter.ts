@@ -87,6 +87,7 @@ export type PlanSignal = "added" | "removed" | "activated" | "geometry" | "scope
 export type PlanOp = "admit" | "remove" | "move" | "focus" | "resize" | "reconcile" | "update-gaps" | "pointer-resize" | "toggle-float";
 export type NativeStateWriteOutcome = "invoked" | "missing" | "threw";
 export type MaximizeClearOutcome = NativeStateWriteOutcome;
+export type KeepAboveWriteOutcome = NativeStateWriteOutcome | "refused";
 
 export interface PlanRect {
     readonly x: number;
@@ -606,6 +607,10 @@ export interface PlanAdapterEnv {
     readonly setMaximize?: (target: object, maximized: boolean) => NativeStateWriteOutcome;
     readonly setFullscreen?: (target: object, fullscreen: boolean) => NativeStateWriteOutcome;
     readonly setAllDesktops?: (target: object, allDesktops: boolean) => NativeStateWriteOutcome;
+    readonly readKeepAbove?: (target: object) => boolean | null;
+    readonly readKeepBelow?: (target: object) => boolean | null;
+    readonly setKeepAbove?: (target: object, keepAbove: boolean) => KeepAboveWriteOutcome;
+    readonly setKeepBelow?: (target: object, keepBelow: boolean) => KeepAboveWriteOutcome;
     readonly setGeometry: (target: object, rect: PlanRect) => boolean;
     readonly setFloating?: (id: string, floating: boolean) => void;
     readonly setActive: (target: object) => boolean;
@@ -1660,6 +1665,9 @@ export class PlanAdapter {
     private maximizeToggleEcho: { ref: object; id: string; resourceClass: string } | null = null;
     private stickyEcho: { ref: object; id: string; resourceClass: string; allDesktops: boolean; previousFloating: boolean } | null = null;
     private stickyPreviousFloating = new Map<string, boolean>();
+    // The native setters own mutual exclusivity. Retain only the prior pair so
+    // a project float can restore an initial keep-below choice exactly.
+    private keepAbovePrevious = new Map<string, { ref: object; above: boolean; below: boolean }>();
     private maximizeToggleAttempts = new Map<object, boolean>();
     private stickyAttempts = new Map<object, boolean>();
     // Owner-pinned Planner transport plus confirmed-loss recovery. The
@@ -1751,6 +1759,7 @@ export class PlanAdapter {
         this.maximizeToggleEcho = null;
         this.stickyEcho = null;
         this.stickyPreviousFloating.clear();
+        this.keepAbovePrevious.clear();
         this.maximizeToggleAttempts.clear();
         this.stickyAttempts.clear();
         this.pinnedOwner = null;
@@ -1768,6 +1777,7 @@ export class PlanAdapter {
             return;
         }
         this.enabled = false;
+        this.restoreAllKeepAbove();
         this.inFlight = false;
         this.pending = null;
         this.clearR4Flight();
@@ -1784,6 +1794,7 @@ export class PlanAdapter {
         this.maximizeToggleEcho = null;
         this.stickyEcho = null;
         this.stickyPreviousFloating.clear();
+        this.keepAbovePrevious.clear();
         this.maximizeToggleAttempts.clear();
         this.stickyAttempts.clear();
         this.pinnedOwner = null;
@@ -2353,6 +2364,9 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:sticky-refused-attempted window=${target.id} resource_class=${resourceClass}`);
             return;
         }
+        if (allDesktops && !this.ensureKeepAbove(target.ref, target.id, resourceClass)) {
+            return;
+        }
         this.stickyAttempts.set(target.ref, allDesktops);
         this.stickyEcho = { ref: target.ref, id: target.id, resourceClass, allDesktops, previousFloating };
         this.logToken(`${LOG_PREFIX}:sticky-toggle window=${target.id} resource_class=${resourceClass} target=${allDesktops ? "all-desktops" : "current-desktop"} outcome=issued`);
@@ -2367,6 +2381,105 @@ export class PlanAdapter {
         if (this.stickyEcho !== null) {
             this.stickyEcho = null;
             this.logToken(`${LOG_PREFIX}:sticky-echo-cleared-no-signal`);
+        }
+    }
+
+    private ensureKeepAbove(target: object, id: string, resourceClass: string): boolean {
+        let above: boolean | null = null;
+        let below: boolean | null = null;
+        try {
+            above = this.env.readKeepAbove === undefined ? null : this.env.readKeepAbove(target);
+            below = this.env.readKeepBelow === undefined ? null : this.env.readKeepBelow(target);
+        } catch (error) {
+            void error;
+        }
+        if (above === null || below === null) {
+            this.logToken(`${LOG_PREFIX}:keep-above window=${id} resource_class=${resourceClass} target=above outcome=missing`);
+            return false;
+        }
+        const prior = this.keepAbovePrevious.get(id);
+        if (prior === undefined) {
+            this.keepAbovePrevious.set(id, { ref: target, above, below });
+        }
+        if (above) {
+            return true;
+        }
+        let outcome: KeepAboveWriteOutcome = "threw";
+        try {
+            outcome = this.env.setKeepAbove === undefined ? "missing" : this.env.setKeepAbove(target, true);
+        } catch (error) {
+            void error;
+        }
+        this.logToken(`${LOG_PREFIX}:keep-above window=${id} resource_class=${resourceClass} target=above outcome=${outcome}`);
+        if (outcome !== "invoked") {
+            if (prior === undefined) {
+                this.keepAbovePrevious.delete(id);
+            }
+            return false;
+        }
+        return true;
+    }
+
+    private restoreKeepAbove(id: string, resourceClass: string): boolean {
+        const prior = this.keepAbovePrevious.get(id);
+        if (prior === undefined) {
+            return true;
+        }
+        let above: boolean | null = null;
+        let below: boolean | null = null;
+        try {
+            above = this.env.readKeepAbove === undefined ? null : this.env.readKeepAbove(prior.ref);
+            below = this.env.readKeepBelow === undefined ? null : this.env.readKeepBelow(prior.ref);
+        } catch (error) {
+            void error;
+        }
+        if (above === null || below === null) {
+            this.logToken(`${LOG_PREFIX}:keep-above window=${id} resource_class=${resourceClass} target=restore outcome=missing`);
+            return false;
+        }
+        if (prior.above) {
+            this.keepAbovePrevious.delete(id);
+            return true;
+        }
+        if (prior.below) {
+            if (below && !above) {
+                this.keepAbovePrevious.delete(id);
+                return true;
+            }
+            let outcome: KeepAboveWriteOutcome = "threw";
+            try {
+                outcome = this.env.setKeepBelow === undefined ? "missing" : this.env.setKeepBelow(prior.ref, true);
+            } catch (error) {
+                void error;
+            }
+            this.logToken(`${LOG_PREFIX}:keep-above window=${id} resource_class=${resourceClass} target=restore-below outcome=${outcome}`);
+            if (outcome !== "invoked") {
+                return false;
+            }
+            this.keepAbovePrevious.delete(id);
+            return true;
+        }
+        if (!above) {
+            this.keepAbovePrevious.delete(id);
+            return true;
+        }
+        let outcome: KeepAboveWriteOutcome = "threw";
+        try {
+            outcome = this.env.setKeepAbove === undefined ? "missing" : this.env.setKeepAbove(prior.ref, false);
+        } catch (error) {
+            void error;
+        }
+        this.logToken(`${LOG_PREFIX}:keep-above window=${id} resource_class=${resourceClass} target=restore outcome=${outcome}`);
+        if (outcome !== "invoked") {
+            return false;
+        }
+        this.keepAbovePrevious.delete(id);
+        return true;
+    }
+
+    private restoreAllKeepAbove(): void {
+        for (const [id] of this.keepAbovePrevious) {
+            this.restoreKeepAbove(id, "unknown");
         }
     }
 
@@ -2581,6 +2694,9 @@ export class PlanAdapter {
                 if (!echo.allDesktops) {
                     this.stickyPreviousFloating.delete(echo.id);
                     if (!echo.previousFloating) {
+                        if (!this.restoreKeepAbove(echo.id, echo.resourceClass)) {
+                            return;
+                        }
                         this.requestFloat();
                     }
                 }
@@ -2747,6 +2863,7 @@ export class PlanAdapter {
         for (const entry of previous.windows) {
             if (!after.has(entry.id)) {
                 this.maximizeAdmissionAttempts.delete(entry.id);
+                this.keepAbovePrevious.delete(entry.id);
                 try {
                     this.env.noteRemoved?.(entry.id);
                 } catch (error) {
@@ -4832,14 +4949,28 @@ export class PlanAdapter {
             if (transition !== null && transition.floating) {
                 const floatGeometry = planned.floatGeometry;
                 const target = byRef.get(transition.window);
-                if (floatGeometry === null || target === undefined || !this.env.setGeometry(target, floatGeometry.rect)) {
+                if (floatGeometry === null || target === undefined) {
                     this.writeDiag(transition.window, resourceClassById.get(transition.window) ?? "unknown", "float-write-failed", floatGeometry?.rect ?? { x: 0, y: 0, w: 1, h: 1 });
+                    this.failFlight(flightState, "write-failed");
+                    return;
+                }
+                if (!this.ensureKeepAbove(target, transition.window, resourceClassById.get(transition.window) ?? "unknown")) {
+                    this.failFlight(flightState, "write-failed");
+                    return;
+                }
+                if (!this.env.setGeometry(target, floatGeometry.rect)) {
+                    this.restoreKeepAbove(transition.window, resourceClassById.get(transition.window) ?? "unknown");
+                    this.writeDiag(transition.window, resourceClassById.get(transition.window) ?? "unknown", "float-write-failed", floatGeometry.rect);
                     this.failFlight(flightState, "write-failed");
                     return;
                 }
                 this.writeDiag(transition.window, resourceClassById.get(transition.window) ?? "unknown", "float-written", floatGeometry.rect);
                 try { this.env.setFloating?.(transition.window, true); } catch (error) { void error; this.failFlight(flightState, "write-failed"); return; }
             } else if (transition !== null) {
+                if (!this.restoreKeepAbove(transition.window, resourceClassById.get(transition.window) ?? "unknown")) {
+                    this.failFlight(flightState, "write-failed");
+                    return;
+                }
                 try { this.env.setFloating?.(transition.window, false); } catch (error) { void error; this.failFlight(flightState, "write-failed"); return; }
             }
             const sticky = flightState.stickyTarget;
@@ -4944,6 +5075,7 @@ export class PlanAdapter {
                 }
                 if (flightState.removed !== null) {
                     this.maximizeAdmissionAttempts.delete(flightState.removed);
+                    this.keepAbovePrevious.delete(flightState.removed);
                     try {
                         this.env.noteRemoved?.(flightState.removed);
                     } catch (error) {
