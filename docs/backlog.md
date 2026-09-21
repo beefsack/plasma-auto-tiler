@@ -24,9 +24,9 @@ Only meaningful pending or active work is listed.
   no explicit workspace switch on sticky-on, but the user's workspace 1 to 4
   jump remains unexplained and needs an exact attempt trace. Fullscreen cost
   and session-restored maximise admission require separate evidence.
-  User now manually accepts `Meta+F11` and `Meta+M`. Current active shortcut
-  records still assign `Meta+G` to both Grid View and project float; the user sees
-  the overview. `Meta+Shift+G` has only the project sticky action. After logout/
+  User manually accepts `Meta+F11` and `Meta+M`. Earlier active shortcut records
+  assigned `Meta+G` to both Grid View and project float; the user saw the overview.
+  `Meta+Shift+G` had only the project sticky action. After logout/
   login the user saw the updated dialog mentioning `Meta+G` and applied it, but
   overview still wins. Another newly opened window neither tiled nor moved to
   another workspace. `/run/user/1000/plasma-auto-tiler-dev.l1R1hl.log` shows
@@ -63,8 +63,8 @@ Only meaningful pending or active work is listed.
   policy is selected. User manually accepts sticky float. Both float toggles now
   retain native focus on the exact toggled window and skip tiled-survivor focus;
   831 KWin tests and typecheck pass, with physical acceptance pending.
-  `Meta+G` still opens overview: current active Grid View conflict remains, and
-  exact `~/.config/kcmshell6/shortcut-override-journalrc` is still completed v2
+  The earlier `Meta+G` overview investigation found an active Grid View conflict,
+  and exact `~/.config/kcmshell6/shortcut-override-journalrc` was completed v2
   with only three rows. User supplied the blocking error: `Shortcuts differ from
   allowed image` and `Refusing to apply: KDE Layout Keyboard Switcher/Switch to
   next keyboard layout preimage is not exactly Meta+Alt+K`. User requests
@@ -98,8 +98,19 @@ Only meaningful pending or active work is listed.
   request/ack/verify retains its original pair while subsequent sends use the
   latest values for both domains. Entry and transaction regressions pass with
   typecheck and 845 KWin tests/build. No loss was found in Plan gap queueing or
-  native KCM reload-result handling. Next autonomous scope: inspect existing
-  persisted-but-unused settings for bounded implementation under approved intent.
+  native KCM reload-result handling. The unused-settings audit found unresolved
+  algorithm, admission, preview, mapping, and shortcut lifecycle choices.
+  Latest user report accepts floating usability, with navigation policy awaiting
+  COSMIC comparison, but float/unfloat appeared to stop tiling. Exact trace
+  `/run/user/1000/plasma-auto-tiler-dev.SiVOOr.log` shows successful float p5 and
+  later admissions before reconcile p9 rejects three tiled plus one floating
+  member as malformed-topology. Retained reconcile/gap-update validation now
+  compares projected geometry with tiled leaves rather than all known exceptions.
+  Regression covers float, later admissions, moved-float reconciliation, fresh
+  unfloat admission, removal, and later convergence. All Rust tests and cargo
+  check pass; the later p12 stale/remove-side mismatch remains fail-closed.
+  Next: restart `just dev trace` and repeat the float/move/open/unfloat/tiling
+  sequence. No native rebuild or Plasma session boundary is needed for this fix.
   Other backlog work follows this focused scope.
 - P2 | Sticky ownership after adapter restart | In-memory prior float/tiled
   ownership is cleared on adapter re-enable, so an already-sticky window is

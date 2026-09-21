@@ -4150,7 +4150,11 @@ impl Planner {
                 .then(a.workspace.0.cmp(&b.workspace.0))
                 .then(a.leaf.0.cmp(&b.leaf.0))
         });
-        if geometry.len() != known.len() {
+        // Geometry covers tiled leaves only; floating/fullscreen/maximized
+        // exceptions remain membership (known/observed) but are never
+        // projected. Comparing against known (tiled plus exceptions) would
+        // reject every reconcile with an intentional float as malformed.
+        if geometry.len() != leaf_to_window.len() {
             restore_on_reject!();
             return rejected(
                 cid,
@@ -4355,7 +4359,9 @@ impl Planner {
                 .then(a.workspace.0.cmp(&b.workspace.0))
                 .then(a.leaf.0.cmp(&b.leaf.0))
         });
-        if geometry.len() != known.len() {
+        // Same tiled-only projection as reconcile: exceptions stay in
+        // known/observed membership but never appear in geometry.
+        if geometry.len() != leaf_to_window.len() {
             return rejected(
                 cid,
                 RefusalKind::MalformedTopology.as_str(),
@@ -6238,6 +6244,195 @@ mod tests {
             refloated["float_geometry"]["rect"],
             serde_json::json!({"x": 300, "y": 200, "w": 500, "h": 400})
         );
+    }
+
+    #[test]
+    fn retained_float_admits_then_moved_reconcile_then_unfloat() {
+        // Exact-float incident: p5 float removes the tile and retains
+        // placement, later tiled admissions proceed around the exception, a
+        // native float move arrives as reconcile, unfloat freshly admits, and
+        // a later tiling command still plans. Membership stays canonical and
+        // incomplete observations still refuse fail-closed.
+        fn float_request(
+            correlation: &str,
+            focused: &str,
+            windows: &[(&str, i32, i32, i32, i32, bool)],
+            command: serde_json::Value,
+        ) -> String {
+            let entries: Vec<serde_json::Value> = windows
+                .iter()
+                .map(|(window, x, y, w, h, floating)| {
+                    let mut entry = serde_json::json!({
+                        "window": window,
+                        "output": "out-1",
+                        "workspace": "ws-1",
+                        "rect": {"x": x, "y": y, "w": w, "h": h},
+                    });
+                    if *floating {
+                        entry["floating"] = serde_json::Value::Bool(true);
+                        entry["fit_excluded"] = serde_json::Value::Bool(true);
+                    }
+                    entry
+                })
+                .collect();
+            serde_json::json!({
+                "v": 1,
+                "correlation_id": correlation,
+                "owner": "owner-1",
+                "generation": "gen-1",
+                "revision": 0,
+                "fingerprint": 7,
+                "domain": {
+                    "output": "out-1",
+                    "workspace": "ws-1",
+                    "bounds": {"x": 0, "y": 0, "w": 1200, "h": 800},
+                    "gap": 0,
+                    "outer_gap": 0,
+                },
+                "focused_window": focused,
+                "windows": entries,
+                "command": command,
+            })
+            .to_string()
+        }
+
+        let mut planner = Planner::new();
+        // Two tiled admissions seed the domain.
+        for (correlation, focused, windows, command) in [
+            (
+                "float-seq-1",
+                "win-1",
+                vec![("win-1", 0, 0, 100, 80, false)],
+                serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
+            ),
+            (
+                "float-seq-2",
+                "win-2",
+                vec![
+                    ("win-1", 0, 0, 100, 80, false),
+                    ("win-2", 200, 0, 100, 80, false),
+                ],
+                serde_json::json!({"op": "admit", "window": "win-2", "output": "out-1", "workspace": "ws-1"}),
+            ),
+        ] {
+            let reply = parse_reply(&planner.evaluate(&float_request(
+                correlation, focused, &windows, command,
+            )));
+            assert_eq!(reply["outcome"], "planned", "{reply}");
+        }
+        // p5 analogue: float removes the tile, retains placement, survivors stay tiled.
+        let floated = parse_reply(&planner.evaluate(&float_request(
+            "float-seq-3",
+            "win-2",
+            &[("win-1", 0, 0, 100, 80, false), ("win-2", 200, 0, 100, 80, false)],
+            serde_json::json!({"op": "toggle-float", "window": "win-2"}),
+        )));
+        assert_eq!(floated["outcome"], "planned", "{floated}");
+        assert_geometry_covers(&floated, &["win-1"]);
+        assert_eq!(floated["float_geometry"]["window"], "win-2");
+        // Later tiled admissions proceed around the retained exception.
+        let admitted3 = parse_reply(&planner.evaluate(&float_request(
+            "float-seq-4",
+            "win-3",
+            &[
+                ("win-1", 0, 0, 100, 80, false),
+                ("win-2", 240, 160, 720, 480, true),
+                ("win-3", 400, 0, 100, 80, false),
+            ],
+            serde_json::json!({"op": "admit", "window": "win-3", "output": "out-1", "workspace": "ws-1"}),
+        )));
+        assert_eq!(admitted3["outcome"], "planned", "{admitted3}");
+        assert_geometry_covers(&admitted3, &["win-1", "win-3"]);
+        let admitted4 = parse_reply(&planner.evaluate(&float_request(
+            "float-seq-5",
+            "win-4",
+            &[
+                ("win-1", 0, 0, 100, 80, false),
+                ("win-2", 240, 160, 720, 480, true),
+                ("win-3", 400, 0, 100, 80, false),
+                ("win-4", 600, 0, 100, 80, false),
+            ],
+            serde_json::json!({"op": "admit", "window": "win-4", "output": "out-1", "workspace": "ws-1"}),
+        )));
+        assert_eq!(admitted4["outcome"], "planned", "{admitted4}");
+        assert_geometry_covers(&admitted4, &["win-1", "win-3", "win-4"]);
+        let before = geometry_by_window(&admitted4);
+        // Native float movement arrives as reconcile with a drifted float rect.
+        // The retained tiled allocation must project unchanged, not reject as
+        // malformed-topology merely because an exception is present.
+        let reconciled = parse_reply(&planner.evaluate(&float_request(
+            "float-seq-6",
+            "win-1",
+            &[
+                ("win-1", 0, 0, 100, 80, false),
+                ("win-2", 100, 300, 720, 480, true),
+                ("win-3", 400, 0, 100, 80, false),
+                ("win-4", 600, 0, 100, 80, false),
+            ],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(reconciled["outcome"], "planned", "{reconciled}");
+        assert_eq!(reconciled["detail"]["kind"], "reconcile", "{reconciled}");
+        assert_geometry_covers(&reconciled, &["win-1", "win-3", "win-4"]);
+        assert_eq!(
+            geometry_by_window(&reconciled),
+            before,
+            "{reconciled} vs {admitted4}"
+        );
+        // Unfloat freshly admits the exception back to tiled.
+        let untiled = parse_reply(&planner.evaluate(&float_request(
+            "float-seq-7",
+            "win-2",
+            &[
+                ("win-1", 0, 0, 100, 80, false),
+                ("win-2", 100, 300, 720, 480, true),
+                ("win-3", 400, 0, 100, 80, false),
+                ("win-4", 600, 0, 100, 80, false),
+            ],
+            serde_json::json!({"op": "toggle-float", "window": "win-2"}),
+        )));
+        assert_eq!(untiled["outcome"], "planned", "{untiled}");
+        assert_eq!(untiled["float_geometry"], serde_json::Value::Null);
+        assert_geometry_covers(&untiled, &["win-1", "win-2", "win-3", "win-4"]);
+        // A later tiling command still plans on the reunited topology.
+        let removed = parse_reply(&planner.evaluate(&float_request(
+            "float-seq-8",
+            "win-1",
+            &[
+                ("win-1", 0, 0, 100, 80, false),
+                ("win-2", 200, 0, 100, 80, false),
+                ("win-3", 400, 0, 100, 80, false),
+                ("win-4", 600, 0, 100, 80, false),
+            ],
+            serde_json::json!({"op": "remove", "window": "win-4"}),
+        )));
+        assert_eq!(removed["outcome"], "planned", "{removed}");
+        assert_geometry_covers(&removed, &["win-1", "win-2", "win-3"]);
+        // Stale/failure handling stays fail-closed: an incomplete observation
+        // refuses, then the complete observation still reconciles.
+        let partial = parse_reply(&planner.evaluate(&float_request(
+            "float-seq-9",
+            "win-1",
+            &[
+                ("win-1", 0, 0, 100, 80, false),
+                ("win-2", 200, 0, 100, 80, false),
+            ],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(partial["outcome"], "rejected", "{partial}");
+        assert_eq!(partial["kind"], "partial-observation", "{partial}");
+        let converged = parse_reply(&planner.evaluate(&float_request(
+            "float-seq-10",
+            "win-1",
+            &[
+                ("win-1", 0, 0, 100, 80, false),
+                ("win-2", 200, 0, 100, 80, false),
+                ("win-3", 400, 0, 100, 80, false),
+            ],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(converged["outcome"], "planned", "{converged}");
+        assert_geometry_covers(&converged, &["win-1", "win-2", "win-3"]);
     }
 
     /// Admit request with explicit domain bounds and per-window rects, so
