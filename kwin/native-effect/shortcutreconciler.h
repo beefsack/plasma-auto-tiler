@@ -4,10 +4,13 @@
 #include <QDBusMessage>
 #include <QKeySequence>
 #include <QList>
+#include <QLoggingCategory>
 #include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVariant>
+
+#include <functional>
 
 // Exact (ai)/a(ai) framing for QKeySequence/QSet<QKeySequence>> matching the
 // KF6 KGlobalAccel encoding: each sequence is a struct holding exactly four
@@ -315,6 +318,74 @@ struct ShortcutApplyResult
     int writes = 0;
 };
 
+// Explicit confirmed override for compiled clear-row foreign mismatches
+// only (rows 1-4 foreign clear targets). Produced by previewForceApply and
+// consumed by applyForced; never constructed from arbitrary UI input. The
+// confirmed actuals are system-observed live baselines adopted as journal
+// preimages so Revert restores them.
+struct ShortcutForceMismatch
+{
+    QString component;
+    QString action;
+    QList<int> expectedPre;
+    QList<int> actual;
+    QList<int> post;
+};
+
+enum class ShortcutForceContext
+{
+    Fresh,
+    V2Upgrade
+};
+
+struct ShortcutForcePreview
+{
+    bool forceable = false;
+    QString error;
+    ShortcutForceContext context = ShortcutForceContext::Fresh;
+    QList<ShortcutForceMismatch> mismatches;
+    // Upgrade-context snapshot: the persisted v2 old-row image the preview
+    // was taken against, for stale revalidation before writes.
+    ShortcutJournalEntry focusPre;
+    ShortcutJournalEntry lockPre;
+    ShortcutJournalEntry resizeUpPre;
+    ShortcutJournalEntry switchNextPre;
+    ShortcutJournalEntry resizeRightPre;
+    ShortcutJournalEntry switchLastPre;
+    QString journalSchema;
+    QString journalPhase;
+    QString journalOwner;
+    // Full bounded preflight image. Force accepts only this exact live image,
+    // not merely the rows that initially needed adoption.
+    QString owner;
+    uint uid = 0;
+    QList<QList<int>> liveImages;
+};
+
+struct ShortcutForceApplyResult
+{
+    bool ok = false;
+    QString error;
+    int writes = 0;
+};
+
+// Bounded structured diagnostics through QLoggingCategory
+// "plasmaautotiler.shortcut" (visible in the kcmshell6/System Settings
+// journal). Only safe fields are ever logged: operation, stage, outcome,
+// allowlisted component/action identity, key images, schema, phase, and the
+// journal selector (canonical/legacy, never full paths). Logging never
+// affects behavior: the sink is void, exceptions are swallowed, and no
+// caller branches on logging.
+using ShortcutLogSink = std::function<void(QtMsgType, const QString &)>;
+class ShortcutDiag
+{
+public:
+    static void setSink(ShortcutLogSink sink);
+    static void resetSink();
+    static void log(QtMsgType type, const char *operation, const char *stage, const char *outcome,
+                    const QString &detail);
+};
+
 struct ShortcutRevertResult
 {
     bool ok = false;
@@ -346,9 +417,20 @@ class JournalStore
 public:
     virtual ~JournalStore() = default;
     virtual bool hasJournal() const = 0;
+    virtual bool hasExistingPath() const
+    {
+        return hasJournal();
+    }
     virtual bool load(ShortcutJournal *journal, QString *error) const = 0;
     virtual bool persist(const ShortcutJournal &journal, QString *error) = 0;
     virtual bool remove(QString *error) = 0;
+    // Read-only discovery check. Real file stores distinguish an absent path
+    // from an unsafe existing path before a confirmed migration operation.
+    virtual bool validateDiscovery(QString *error) const
+    {
+        Q_UNUSED(error);
+        return true;
+    }
 };
 
 // Real D-Bus backend using QDBus with the exact observed contract.
@@ -390,9 +472,11 @@ class KConfigFileJournal : public JournalStore
 public:
     explicit KConfigFileJournal(const QString &filePath);
     bool hasJournal() const override;
+    bool hasExistingPath() const override;
     bool load(ShortcutJournal *journal, QString *error) const override;
     bool persist(const ShortcutJournal &journal, QString *error) override;
     bool remove(QString *error) override;
+    bool validateDiscovery(QString *error) const override;
 
 private:
     QString m_filePath;
@@ -402,8 +486,24 @@ class ShortcutReconciler
 {
 public:
     ShortcutReconciler(ShortcutStore *store, JournalStore *journal);
+    // Optional legacy journal source for the single explicit kcmshell6-host
+    // migration. Never owned. Migration runs only at the start of a
+    // confirmed mutation operation (apply, applyForced, revert),
+    // immediately before reconciliation; construction, refresh, and force
+    // preview never migrate and never write config.
+    void setLegacyJournal(JournalStore *legacy);
     ShortcutApplyResult apply();
     ShortcutRevertResult revert();
+    // Read-only force preview: full preflight plus the exact compiled
+    // clear-row foreign mismatches. Never forceable when any store, journal,
+    // ownership, transport, or parsing check fails, when a v3/resumable
+    // journal already governs, or when the only refusals are non-clear-row.
+    ShortcutForcePreview previewForceApply();
+    // Confirmed force: revalidates the preview snapshot against fresh live
+    // state (stale snapshots fail closed with zero writes) then applies with
+    // the confirmed actuals adopted as preimages for exactly the confirmed
+    // rows. All other gates stay enforced.
+    ShortcutForceApplyResult applyForced(const ShortcutForcePreview &confirmed);
 
     static bool isAllowlisted(const QString &component, const QString &action);
     static QList<int> focusPostKeys();
@@ -464,6 +564,9 @@ public:
     // Defect B keyed conflict detection (authoritative, not enumeration).
     static QList<int> relevantConflictKeys();
     static QString keyDisplayName(int key);
+    // Bounded safe key-list image for diagnostics/preview: "none" for empty,
+    // otherwise comma-joined ints. Only ever called with validated key lists.
+    static QString keysDisplay(const QList<int> &keys);
     static bool isAuthorizedDisplacement(int key, const QString &component, const QString &action);
     static bool parseGlobalShortcutsByKeyReply(QDBusMessage::MessageType replyType, const QString &replySignature,
                                                const QList<QVariant> &replyArgs,
@@ -525,13 +628,66 @@ public:
 private:
     ShortcutStore *m_store = nullptr;
     JournalStore *m_journal = nullptr;
+    JournalStore *m_legacyJournal = nullptr;
+
+    struct LiveSnapshot
+    {
+        QString owner;
+        uint uid = 0;
+        ShortcutTuple focus;
+        ShortcutTuple lock;
+        ShortcutTuple resizeUp;
+        ShortcutTuple switchNext;
+        ShortcutTuple resizeRight;
+        ShortcutTuple switchLast;
+        ShortcutTuple floatToggle;
+        ShortcutTuple gridView;
+        ShortcutTuple maximizeToggle;
+        ShortcutTuple monocle;
+    };
+    // Shared read prologue for apply and force preview: setter contract,
+    // owner, tuple enumeration with allowlist resolution, key bounds,
+    // unrelated structural validation, and keyed occupancy. Zero writes.
+    bool collectLiveSnapshot(LiveSnapshot *snapshot, QString *error);
+    // Deferred legacy migration through the store seam (no paths, no scans):
+    // canonical present wins, legacy absent is a no-op, otherwise the exact
+    // legacy journal is copied (undo history preserved) after load-validity
+    // and UID checks. Any failure fails closed with no canonical write.
+    // Called only by confirmed mutation entry points, never by preview.
+    bool ensureLegacyMigrated(QString *error);
+    // Read-only effective journal for previews: canonical when present, else
+    // the legacy content without migrating. Zero writes on every path.
+    bool loadEffectiveJournal(ShortcutJournal *journal, bool *haveJournal, QString *error);
+    static bool isForcedClearRow(const ShortcutForcePreview *forced, const QString &component, const QString &action,
+                                 const QList<int> &live);
+    ShortcutApplyResult applyImpl(const ShortcutForcePreview *forced);
+    ShortcutForcePreview computeForcePreview();
 };
 
 // Live backend factories for KCM integration. The KCM calls only these and
 // the allowlisted reconciler API; no other identities are exposed here.
 ShortcutStore *createLiveShortcutStore();
 JournalStore *createLiveShortcutJournal(const QString &filePath);
+// Host-independent canonical journal path (GenericConfigLocation,
+// project-owned). Replaces the former host-dependent AppConfigLocation path
+// so one journal is shared by kcmshell6 and System Settings hosts.
 QString defaultShortcutJournalPath();
+// Single explicit legacy location: the known kcmshell6-host journal. The
+// only migration source; never a scan.
+QString legacyShortcutJournalPath();
+
+struct JournalMigrationResult
+{
+    bool ok = false;
+    bool migrated = false;
+    QString error;
+};
+// Explicit canonical/explicit-legacy migration (no scans): canonical present
+// wins and legacy is ignored; canonical absent with legacy present copies the
+// exact legacy journal (undo history preserved) after safety/validity
+// checks; absent/absent is a no-op. Unsafe, malformed, foreign-UID, or
+// otherwise unloadable legacy fails closed with no canonical write.
+JournalMigrationResult migrateLegacyShortcutJournal(const QString &canonicalPath, const QString &legacyPath);
 
 } // namespace KWin
 Q_DECLARE_METATYPE(KWin::ShortcutMatchType)

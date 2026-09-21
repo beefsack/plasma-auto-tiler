@@ -381,6 +381,18 @@ public:
     bool present = false;
     ShortcutJournal stored;
     int persists = 0;
+    bool discoverySafe = true;
+
+    bool validateDiscovery(QString *error) const override
+    {
+        if (discoverySafe) {
+            return true;
+        }
+        if (error) {
+            *error = QStringLiteral("journal path must not be a symlink");
+        }
+        return false;
+    }
 
     bool hasJournal() const override
     {
@@ -3999,8 +4011,875 @@ void v2JournalUpgradeAndRevertCompat()
     }
 }
 
-} // namespace
+// Supplied incident: completed v2 journals exist while live clear rows are
+// already at postimage, but the host-dependent journal was silently missed
+// so a fresh Apply refused the cleared preimage. Fresh rows already at
+// postimage are normal idempotent state: adopted with pre == post, no
+// write, no force, and third images still refuse.
+void freshClearRowsAtPostSucceedNormally()
+{
+    FakeShortcutStore store;
+    seedReady6(store, QList<int>{1}, QList<int>{META_L});
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Switch to Next Keyboard Layout")
+            || tuple.action == QStringLiteral("Switch to Last-Used Keyboard Layout")) {
+            tuple.active = QList<int>{};
+        }
+    }
+    FakeJournal journal;
+    ShortcutReconciler reconciler(&store, &journal);
+    const ShortcutApplyResult result = reconciler.apply();
+    CHECK(result.ok);
+    CHECK(result.writes == 6);
+    CHECK(journal.present);
+    CHECK(journal.stored.switchNext.pre.isEmpty());
+    CHECK(journal.stored.switchNext.post.isEmpty());
+    CHECK(journal.stored.switchLast.pre.isEmpty());
+    CHECK(journal.stored.switchLast.post.isEmpty());
+    const ShortcutRevertResult reverted = ShortcutReconciler(&store, &journal).revert();
+    CHECK(reverted.ok);
+    CHECK(reverted.journalRemoved);
+    CHECK(!journal.present);
+    CHECK(reverted.writes == 6);
+    // Rows adopted already at postimage have pre == post: Revert is a no-op
+    // for them and restores the project rows.
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Switch to Next Keyboard Layout")) {
+            CHECK(tuple.active.isEmpty());
+        }
+        if (tuple.action == QStringLiteral("Switch to Last-Used Keyboard Layout")) {
+            CHECK(tuple.active.isEmpty());
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-resize-outwards-up")) {
+            CHECK(tuple.active == QList<int>{7});
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-resize-outwards-right")) {
+            CHECK(tuple.active == QList<int>{8});
+        }
+    }
+}
 
+// Supplied completed-v2 row mismatch as nonoverridable drift: a completed
+// v2 journal whose old row no longer matches either image refuses without
+// upgrade, without writes, and without a force preview.
+void completedV2OldRowMismatchRefusesDrift()
+{
+    FakeShortcutStore store;
+    seedV2CompletedLive(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Switch to Next Keyboard Layout")) {
+            tuple.active = QList<int>{999};
+        }
+    }
+    FakeJournal journal;
+    ShortcutJournal v2;
+    fillV2Completed(v2);
+    journal.present = true;
+    journal.stored = v2;
+    const ShortcutApplyResult result = ShortcutReconciler(&store, &journal).apply();
+    CHECK(!result.ok);
+    CHECK(result.error.contains(QStringLiteral("drifted")));
+    CHECK(store.writeLog.isEmpty());
+    CHECK(result.writes == 0);
+    CHECK(journal.present);
+    CHECK(journal.stored.schema == shortcutJournalSchemaV2());
+    const ShortcutForcePreview preview = ShortcutReconciler(&store, &journal).previewForceApply();
+    CHECK(!preview.forceable);
+    CHECK(preview.error.contains(QStringLiteral("drifted")));
+}
+
+void writeIniFile(const QString &path, const QByteArray &contents)
+{
+    CHECK(QDir().mkpath(QFileInfo(path).dir().path()));
+    QFile file(path);
+    CHECK(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    CHECK(file.write(contents) == contents.size());
+    file.close();
+    CHECK(QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner));
+}
+
+// Canonical/explicit-legacy migration normal path: the known kcmshell6
+// completed-v2 journal is copied exactly (undo history preserved), then the
+// reconciler upgrades it through the normal v2 path.
+void legacyMigrationNormalPath()
+{
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const QString canonical = dir.path() + QStringLiteral("/canonical/shortcut-override-journalrc");
+    const QString legacy = dir.path() + QStringLiteral("/legacy/shortcut-override-journalrc");
+    ShortcutJournal v2;
+    fillV2Completed(v2);
+    QString error;
+    {
+        KConfigFileJournal legacyJournal(legacy);
+        CHECK(legacyJournal.persist(v2, &error));
+    }
+    const JournalMigrationResult migrated = migrateLegacyShortcutJournal(canonical, legacy);
+    CHECK(migrated.ok);
+    CHECK(migrated.migrated);
+    CHECK(migrated.error.isEmpty());
+    // Original undo history preserved exactly; legacy retained.
+    {
+        KConfigFileJournal canonicalJournal(canonical);
+        CHECK(canonicalJournal.hasJournal());
+        ShortcutJournal loaded;
+        CHECK(canonicalJournal.load(&loaded, &error));
+        CHECK(loaded.schema == v2.schema);
+        CHECK(loaded.phase == v2.phase);
+        CHECK(loaded.owner == v2.owner);
+        CHECK(loaded.uid == v2.uid);
+        CHECK(loaded.focus.pre == v2.focus.pre);
+        CHECK(loaded.lock.pre == v2.lock.pre);
+        CHECK(loaded.resizeUp.pre == v2.resizeUp.pre);
+        CHECK(loaded.switchNext.pre == v2.switchNext.pre);
+        CHECK(loaded.resizeRight.pre == v2.resizeRight.pre);
+        CHECK(loaded.switchLast.pre == v2.switchLast.pre);
+        CHECK(loaded.row0Kind == v2.row0Kind);
+        CHECK(loaded.row1Kind == v2.row1Kind);
+        CHECK(loaded.row2Kind == v2.row2Kind);
+        CHECK(QFile::exists(legacy));
+    }
+    // End to end through the normal upgrade: old pres kept, new rows clear.
+    {
+        FakeShortcutStore store;
+        seedV2CompletedLive(store);
+        KConfigFileJournal canonicalJournal(canonical);
+        const ShortcutApplyResult result = ShortcutReconciler(&store, &canonicalJournal).apply();
+        CHECK(result.ok);
+        CHECK(result.writes == 2);
+        ShortcutJournal loaded;
+        CHECK(canonicalJournal.load(&loaded, &error));
+        CHECK(loaded.schema == shortcutJournalSchema());
+        CHECK(loaded.phase == shortcutJournalPhaseComplete());
+        CHECK(loaded.focus.pre == v2.focus.pre);
+        CHECK(loaded.gridView.pre == (QList<int>{META_G}));
+    }
+}
+
+void legacyMigrationFailClosed()
+{
+    // Both absent is a no-op.
+    {
+        QTemporaryDir dir;
+        CHECK(dir.isValid());
+        const JournalMigrationResult result = migrateLegacyShortcutJournal(
+            dir.path() + QStringLiteral("/c/journalrc"), dir.path() + QStringLiteral("/l/journalrc"));
+        CHECK(result.ok);
+        CHECK(!result.migrated);
+    }
+    // Empty paths fail closed.
+    {
+        CHECK(!migrateLegacyShortcutJournal(QString(), QStringLiteral("/l/journalrc")).ok);
+        CHECK(!migrateLegacyShortcutJournal(QStringLiteral("/c/journalrc"), QString()).ok);
+    }
+    // Malformed legacy fails closed with no canonical write.
+    {
+        QTemporaryDir dir;
+        CHECK(dir.isValid());
+        const QString canonical = dir.path() + QStringLiteral("/c/journalrc");
+        const QString legacy = dir.path() + QStringLiteral("/l/journalrc");
+        writeIniFile(legacy, "[ShortcutOverride]\nSchemaVersion=bogus-schema\nPhase=apply-pending\n");
+        const JournalMigrationResult result = migrateLegacyShortcutJournal(canonical, legacy);
+        CHECK(!result.ok);
+        CHECK(!result.migrated);
+        CHECK(result.error.contains(QStringLiteral("malformed")));
+        CHECK(!QFile::exists(canonical));
+    }
+    // Symlink legacy fails closed as unsafe.
+    {
+        QTemporaryDir dir;
+        CHECK(dir.isValid());
+        const QString canonical = dir.path() + QStringLiteral("/c/journalrc");
+        const QString target = dir.path() + QStringLiteral("/realrc");
+        writeIniFile(target, "[ShortcutOverride]\nSchemaVersion=shortcut-override-v2\nPhase=apply-complete\n");
+        const QString legacy = dir.path() + QStringLiteral("/linkrc");
+        CHECK(QFile::link(target, legacy));
+        const JournalMigrationResult result = migrateLegacyShortcutJournal(canonical, legacy);
+        CHECK(!result.ok);
+        CHECK(result.error.contains(QStringLiteral("unsafe")));
+        CHECK(!QFile::exists(canonical));
+    }
+    // An existing malformed canonical file is preserved, never replaced by
+    // a legacy copy as a way to bypass incomplete recovery state.
+    {
+        QTemporaryDir dir;
+        CHECK(dir.isValid());
+        const QString canonical = dir.path() + QStringLiteral("/c/journalrc");
+        const QString legacy = dir.path() + QStringLiteral("/l/journalrc");
+        writeIniFile(canonical, "[ShortcutOverride]\nPhase=apply-pending\n");
+        ShortcutJournal v2;
+        fillV2Completed(v2);
+        QString error;
+        KConfigFileJournal legacyJournal(legacy);
+        CHECK(legacyJournal.persist(v2, &error));
+        const JournalMigrationResult result = migrateLegacyShortcutJournal(canonical, legacy);
+        CHECK(!result.ok);
+        CHECK(result.error.contains(QStringLiteral("canonical shortcut journal is malformed")));
+        QFile canonicalFile(canonical);
+        CHECK(canonicalFile.open(QIODevice::ReadOnly));
+        CHECK(canonicalFile.readAll() == QByteArray("[ShortcutOverride]\nPhase=apply-pending\n"));
+    }
+    // Non-private legacy fails closed as unsafe.
+    {
+        QTemporaryDir dir;
+        CHECK(dir.isValid());
+        const QString canonical = dir.path() + QStringLiteral("/c/journalrc");
+        const QString legacy = dir.path() + QStringLiteral("/l/journalrc");
+        ShortcutJournal v2;
+        fillV2Completed(v2);
+        QString error;
+        KConfigFileJournal legacyJournal(legacy);
+        CHECK(legacyJournal.persist(v2, &error));
+        CHECK(QFile::setPermissions(
+            legacy, QFile::ReadOwner | QFile::WriteOwner | QFile::ReadGroup | QFile::ReadOther));
+        const JournalMigrationResult result = migrateLegacyShortcutJournal(canonical, legacy);
+        CHECK(!result.ok);
+        CHECK(result.error.contains(QStringLiteral("unsafe")));
+        CHECK(!QFile::exists(canonical));
+    }
+    // Canonical present wins; legacy never overwrites it.
+    {
+        QTemporaryDir dir;
+        CHECK(dir.isValid());
+        const QString canonical = dir.path() + QStringLiteral("/c/journalrc");
+        const QString legacy = dir.path() + QStringLiteral("/l/journalrc");
+        ShortcutJournal v2;
+        fillV2Completed(v2);
+        QString error;
+        KConfigFileJournal legacyJournal(legacy);
+        CHECK(legacyJournal.persist(v2, &error));
+        ShortcutJournal v3;
+        v3.schema = shortcutJournalSchema();
+        v3.phase = shortcutJournalPhaseComplete();
+        v3.owner = QStringLiteral(":1.20");
+        v3.uid = static_cast<uint>(::geteuid());
+        v3.focus = {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"),
+                    QList<int>{419430420}, QList<int>{META_L}};
+        v3.lock = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L},
+                   QList<int>{META_ESC}};
+        fillResizeReady(v3, QList<int>{7}, QList<int>{8});
+        KConfigFileJournal canonicalJournal(canonical);
+        CHECK(canonicalJournal.persist(v3, &error));
+        const JournalMigrationResult result = migrateLegacyShortcutJournal(canonical, legacy);
+        CHECK(result.ok);
+        CHECK(!result.migrated);
+        ShortcutJournal loaded;
+        CHECK(canonicalJournal.load(&loaded, &error));
+        CHECK(loaded.schema == shortcutJournalSchema());
+        CHECK(loaded.focus.pre == (QList<int>{419430420}));
+    }
+}
+
+// Store-seam deferred migration: the reconciler migrates a legacy journal
+// at the start of a confirmed Apply (never at preview), then resumes the
+// normal v2 upgrade with old preimages preserved.
+void legacyStoreMigrationOnApply()
+{
+    FakeShortcutStore store;
+    seedV2CompletedLive(store);
+    FakeJournal journal;
+    FakeJournal legacyJournal;
+    ShortcutJournal v2;
+    fillV2Completed(v2);
+    legacyJournal.present = true;
+    legacyJournal.stored = v2;
+    ShortcutReconciler reconciler(&store, &journal);
+    reconciler.setLegacyJournal(&legacyJournal);
+    const ShortcutApplyResult result = reconciler.apply();
+    CHECK(result.ok);
+    CHECK(result.writes == 2);
+    CHECK(journal.present);
+    CHECK(journal.stored.schema == shortcutJournalSchema());
+    CHECK(journal.stored.phase == shortcutJournalPhaseComplete());
+    CHECK(journal.stored.focus.pre == v2.focus.pre);
+    CHECK(journal.stored.lock.pre == v2.lock.pre);
+    CHECK(journal.stored.gridView.pre == (QList<int>{META_G}));
+    CHECK(legacyJournal.persists == 0);
+}
+
+// Store-seam preview stays read-only: with a legacy journal present the
+// preview reports the accurate upgrade context while writing nothing on
+// either journal.
+void legacyStorePreviewReadsWithoutMigrating()
+{
+    FakeShortcutStore store;
+    seedV2CompletedLive(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Grid View")) {
+            tuple.active = QList<int>{999};
+        }
+    }
+    FakeJournal journal;
+    FakeJournal legacyJournal;
+    ShortcutJournal v2;
+    fillV2Completed(v2);
+    legacyJournal.present = true;
+    legacyJournal.stored = v2;
+    ShortcutReconciler reconciler(&store, &journal);
+    reconciler.setLegacyJournal(&legacyJournal);
+    const ShortcutForcePreview preview = reconciler.previewForceApply();
+    CHECK(preview.forceable);
+    CHECK(preview.context == ShortcutForceContext::V2Upgrade);
+    CHECK(preview.mismatches.size() == 1);
+    CHECK(!journal.hasJournal());
+    CHECK(journal.persists == 0);
+    CHECK(legacyJournal.persists == 0);
+}
+
+// Store-seam migration failures fail a confirmed Apply closed: the exact
+// load error surfaces with zero store writes and zero canonical writes.
+void legacyStoreMigrationFailureFailClosed()
+{
+    {
+        FakeShortcutStore store;
+        seedV2CompletedLive(store);
+        FakeJournal journal;
+        FakeJournal legacyJournal;
+        legacyJournal.present = true;
+        legacyJournal.stored.schema = QStringLiteral("shortcut-override-v1");
+        legacyJournal.stored.phase = shortcutJournalPhasePending();
+        legacyJournal.stored.owner = QStringLiteral(":1.20");
+        legacyJournal.stored.uid = static_cast<uint>(::geteuid());
+        ShortcutReconciler reconciler(&store, &journal);
+        reconciler.setLegacyJournal(&legacyJournal);
+        const ShortcutApplyResult result = reconciler.apply();
+        CHECK(!result.ok);
+        CHECK(result.error.contains(QStringLiteral("upgrade required, no migration")));
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.hasJournal());
+        CHECK(journal.persists == 0);
+    }
+    // Foreign-UID legacy fails closed even though it loads.
+    {
+        FakeShortcutStore store;
+        seedV2CompletedLive(store);
+        FakeJournal journal;
+        FakeJournal legacyJournal;
+        ShortcutJournal v2;
+        fillV2Completed(v2);
+        v2.uid = static_cast<uint>(::geteuid() + 1);
+        legacyJournal.present = true;
+        legacyJournal.stored = v2;
+        ShortcutReconciler reconciler(&store, &journal);
+        reconciler.setLegacyJournal(&legacyJournal);
+        const ShortcutApplyResult result = reconciler.apply();
+        CHECK(!result.ok);
+        CHECK(result.error.contains(QStringLiteral("foreign UID")));
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.hasJournal());
+        CHECK(journal.persists == 0);
+    }
+    // An unsafe legacy path is not treated as absent. No mutation may bypass
+    // its recovery state.
+    {
+        FakeShortcutStore store;
+        seedV2CompletedLive(store);
+        FakeJournal journal;
+        FakeJournal legacyJournal;
+        legacyJournal.discoverySafe = false;
+        ShortcutReconciler reconciler(&store, &journal);
+        reconciler.setLegacyJournal(&legacyJournal);
+        const ShortcutApplyResult result = reconciler.apply();
+        CHECK(!result.ok);
+        CHECK(result.error.contains(QStringLiteral("unsafe")));
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.hasJournal());
+        CHECK(journal.persists == 0);
+    }
+}
+
+// Canonical present wins through the store seam too: the legacy journal is
+// never read for content and never written.
+void legacyStoreCanonicalWins()
+{
+    FakeShortcutStore store;
+    seedReady6(store, QList<int>{META_L}, QList<int>{META_ESC});
+    FakeJournal journal;
+    const ShortcutApplyResult first = ShortcutReconciler(&store, &journal).apply();
+    CHECK(first.ok);
+    const int persistsAfterFirst = journal.persists;
+    FakeJournal legacyJournal;
+    ShortcutJournal v2;
+    fillV2Completed(v2);
+    legacyJournal.present = true;
+    legacyJournal.stored = v2;
+    ShortcutReconciler reconciler(&store, &journal);
+    reconciler.setLegacyJournal(&legacyJournal);
+    const ShortcutApplyResult second = reconciler.apply();
+    CHECK(second.ok);
+    CHECK(journal.stored.schema == shortcutJournalSchema());
+    CHECK(legacyJournal.persists == 0);
+    CHECK(journal.persists == persistsAfterFirst);
+}
+
+void seedForceMismatch(FakeShortcutStore &store)
+{
+    seedReady6(store, QList<int>{1}, QList<int>{META_L});
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Switch to Next Keyboard Layout")) {
+            tuple.active = QList<int>{999};
+        }
+    }
+}
+
+// Force accept + revert: the confirmed actual is adopted as the journal
+// preimage and restored by Revert; all other rows keep original pres.
+void forceFreshAcceptAndRevert()
+{
+    FakeShortcutStore store;
+    seedForceMismatch(store);
+    FakeJournal journal;
+    const ShortcutApplyResult refused = ShortcutReconciler(&store, &journal).apply();
+    CHECK(!refused.ok);
+    CHECK(refused.error.contains(QStringLiteral("Meta+Alt+K")));
+    CHECK(store.writeLog.isEmpty());
+    CHECK(!journal.present);
+    const ShortcutForcePreview preview = ShortcutReconciler(&store, &journal).previewForceApply();
+    CHECK(preview.forceable);
+    CHECK(preview.context == ShortcutForceContext::Fresh);
+    CHECK(preview.mismatches.size() == 1);
+    if (preview.mismatches.size() == 1) {
+        CHECK(preview.mismatches.at(0).component == shortcutSwitchNextComponent());
+        CHECK(preview.mismatches.at(0).action == shortcutSwitchNextAction());
+        CHECK(preview.mismatches.at(0).expectedPre == (QList<int>{META_ALT_K}));
+        CHECK(preview.mismatches.at(0).actual == (QList<int>{999}));
+        CHECK(preview.mismatches.at(0).post.isEmpty());
+    }
+    const ShortcutForceApplyResult forced = ShortcutReconciler(&store, &journal).applyForced(preview);
+    CHECK(forced.ok);
+    CHECK(journal.present);
+    CHECK(journal.stored.schema == shortcutJournalSchema());
+    CHECK(journal.stored.phase == shortcutJournalPhaseComplete());
+    CHECK(journal.stored.switchNext.pre == (QList<int>{999}));
+    CHECK(journal.stored.switchNext.post.isEmpty());
+    CHECK(journal.stored.focus.pre == (QList<int>{1}));
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Switch to Next Keyboard Layout")) {
+            CHECK(tuple.active.isEmpty());
+        }
+    }
+    const ShortcutRevertResult reverted = ShortcutReconciler(&store, &journal).revert();
+    CHECK(reverted.ok);
+    CHECK(reverted.journalRemoved);
+    CHECK(!journal.present);
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Switch to Next Keyboard Layout")) {
+            CHECK(tuple.active == (QList<int>{999}));
+        }
+        if (tuple.action == QStringLiteral("Switch to Last-Used Keyboard Layout")) {
+            CHECK(tuple.active == (QList<int>{META_ALT_L}));
+        }
+    }
+}
+
+// Force with empty-adjacent and multiple keys: multi-key actuals on two
+// rows are adopted and restored exactly.
+void forceFreshMultipleKeysMultipleRows()
+{
+    FakeShortcutStore store;
+    seedReady6(store, QList<int>{1}, QList<int>{META_L});
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Switch to Next Keyboard Layout")) {
+            tuple.active = QList<int>{999, 1000};
+        }
+        if (tuple.action == QStringLiteral("KrohnkiteMonocleLayout")) {
+            tuple.active = QList<int>{1001, 1002};
+        }
+    }
+    FakeJournal journal;
+    const ShortcutForcePreview preview = ShortcutReconciler(&store, &journal).previewForceApply();
+    CHECK(preview.forceable);
+    CHECK(preview.mismatches.size() == 2);
+    const ShortcutForceApplyResult forced = ShortcutReconciler(&store, &journal).applyForced(preview);
+    CHECK(forced.ok);
+    CHECK(journal.stored.switchNext.pre == (QList<int>{999, 1000}));
+    CHECK(journal.stored.monocle.pre == (QList<int>{1001, 1002}));
+    const ShortcutRevertResult reverted = ShortcutReconciler(&store, &journal).revert();
+    CHECK(reverted.ok);
+    CHECK(reverted.journalRemoved);
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Switch to Next Keyboard Layout")) {
+            CHECK(tuple.active == (QList<int>{999, 1000}));
+        }
+        if (tuple.action == QStringLiteral("KrohnkiteMonocleLayout")) {
+            CHECK(tuple.active == (QList<int>{1001, 1002}));
+        }
+    }
+}
+
+// Stale confirmed snapshot: live changes after preview fail closed with
+// zero writes and no journal, never forcing the old image.
+void forceStaleSnapshotFailsZeroWrites()
+{
+    {
+        FakeShortcutStore store;
+        seedForceMismatch(store);
+        FakeJournal journal;
+        const ShortcutForcePreview preview = ShortcutReconciler(&store, &journal).previewForceApply();
+        CHECK(preview.forceable);
+        for (ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("Switch to Next Keyboard Layout")) {
+                tuple.active = QList<int>{1001};
+            }
+        }
+        const ShortcutForceApplyResult stale = ShortcutReconciler(&store, &journal).applyForced(preview);
+        CHECK(!stale.ok);
+        CHECK(stale.error.contains(QStringLiteral("stale")));
+        CHECK(stale.writes == 0);
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+    }
+    // A newly appeared second mismatch is likewise stale.
+    {
+        FakeShortcutStore store;
+        seedForceMismatch(store);
+        FakeJournal journal;
+        const ShortcutForcePreview preview = ShortcutReconciler(&store, &journal).previewForceApply();
+        CHECK(preview.forceable);
+        CHECK(preview.mismatches.size() == 1);
+        for (ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("Grid View")) {
+                tuple.active = QList<int>{1002};
+            }
+        }
+        const ShortcutForceApplyResult stale = ShortcutReconciler(&store, &journal).applyForced(preview);
+        CHECK(!stale.ok);
+        CHECK(stale.error.contains(QStringLiteral("stale")));
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+    }
+    // A non-mismatched row changing from its expected preimage to postimage
+    // is still a stale full snapshot, not a silently adopted baseline.
+    {
+        FakeShortcutStore store;
+        seedForceMismatch(store);
+        FakeJournal journal;
+        const ShortcutForcePreview preview = ShortcutReconciler(&store, &journal).previewForceApply();
+        CHECK(preview.forceable);
+        for (ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("Grid View")) {
+                tuple.active.clear();
+            }
+        }
+        const ShortcutForceApplyResult stale = ShortcutReconciler(&store, &journal).applyForced(preview);
+        CHECK(!stale.ok);
+        CHECK(stale.error.contains(QStringLiteral("stale")));
+        CHECK(stale.writes == 0);
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+    }
+    // Forged previews fail closed: unknown identities and rewritten actuals
+    // are never adopted.
+    {
+        FakeShortcutStore store;
+        seedForceMismatch(store);
+        FakeJournal journal;
+        ShortcutForcePreview forged = ShortcutReconciler(&store, &journal).previewForceApply();
+        CHECK(forged.forceable);
+        forged.mismatches[0].component = QStringLiteral("kwin");
+        forged.mismatches[0].action = QStringLiteral("other-action");
+        const ShortcutForceApplyResult result = ShortcutReconciler(&store, &journal).applyForced(forged);
+        CHECK(!result.ok);
+        CHECK(result.error.contains(QStringLiteral("allowlist")));
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+    }
+    {
+        FakeShortcutStore store;
+        seedForceMismatch(store);
+        FakeJournal journal;
+        ShortcutForcePreview forged = ShortcutReconciler(&store, &journal).previewForceApply();
+        CHECK(forged.forceable);
+        forged.mismatches[0].actual = QList<int>{1003};
+        const ShortcutForceApplyResult result = ShortcutReconciler(&store, &journal).applyForced(forged);
+        CHECK(!result.ok);
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+    }
+    // An unconsumed empty preview never applies.
+    {
+        FakeShortcutStore store;
+        seedForceMismatch(store);
+        FakeJournal journal;
+        const ShortcutForceApplyResult result =
+            ShortcutReconciler(&store, &journal).applyForced(ShortcutForcePreview());
+        CHECK(!result.ok);
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+    }
+}
+
+// Interrupted forced recovery: the forced journal persists with adopted
+// pres, a normal resume completes it, and Revert restores adopted actuals.
+void forceInterruptedRecovery()
+{
+    FakeShortcutStore store;
+    seedForceMismatch(store);
+    store.failNextWrite = true;
+    FakeJournal journal;
+    const ShortcutForcePreview preview = ShortcutReconciler(&store, &journal).previewForceApply();
+    CHECK(preview.forceable);
+    const ShortcutForceApplyResult interrupted = ShortcutReconciler(&store, &journal).applyForced(preview);
+    CHECK(!interrupted.ok);
+    CHECK(journal.present);
+    CHECK(journal.stored.schema == shortcutJournalSchema());
+    CHECK(journal.stored.switchNext.pre == (QList<int>{999}));
+    const ShortcutApplyResult resumed = ShortcutReconciler(&store, &journal).apply();
+    CHECK(resumed.ok);
+    CHECK(journal.stored.phase == shortcutJournalPhaseComplete());
+    const ShortcutRevertResult reverted = ShortcutReconciler(&store, &journal).revert();
+    CHECK(reverted.ok);
+    CHECK(reverted.journalRemoved);
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Switch to Next Keyboard Layout")) {
+            CHECK(tuple.active == (QList<int>{999}));
+        }
+    }
+}
+
+// Upgrade-context force: completed v2 with a new-row third image adopts
+// only the new actuals while old pres stay original; Revert restores both.
+void forceUpgradeAcceptAndRevert()
+{
+    FakeShortcutStore store;
+    seedV2CompletedLive(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Grid View")) {
+            tuple.active = QList<int>{999};
+        }
+    }
+    FakeJournal journal;
+    ShortcutJournal v2;
+    fillV2Completed(v2);
+    journal.present = true;
+    journal.stored = v2;
+    const ShortcutForcePreview preview = ShortcutReconciler(&store, &journal).previewForceApply();
+    CHECK(preview.forceable);
+    CHECK(preview.context == ShortcutForceContext::V2Upgrade);
+    CHECK(preview.mismatches.size() == 1);
+    if (preview.mismatches.size() == 1) {
+        CHECK(preview.mismatches.at(0).action == QStringLiteral("Grid View"));
+        CHECK(preview.mismatches.at(0).actual == (QList<int>{999}));
+    }
+    const ShortcutForceApplyResult forced = ShortcutReconciler(&store, &journal).applyForced(preview);
+    CHECK(forced.ok);
+    CHECK(forced.writes == 2);
+    CHECK(journal.stored.schema == shortcutJournalSchema());
+    CHECK(journal.stored.focus.pre == v2.focus.pre);
+    CHECK(journal.stored.lock.pre == v2.lock.pre);
+    CHECK(journal.stored.gridView.pre == (QList<int>{999}));
+    CHECK(journal.stored.monocle.pre == (QList<int>{META_M}));
+    const ShortcutRevertResult reverted = ShortcutReconciler(&store, &journal).revert();
+    CHECK(reverted.ok);
+    CHECK(reverted.journalRemoved);
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Grid View")) {
+            CHECK(tuple.active == (QList<int>{999}));
+        }
+        if (tuple.action == QStringLiteral("KrohnkiteMonocleLayout")) {
+            CHECK(tuple.active == (QList<int>{META_M}));
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
+            CHECK(tuple.active == v2.focus.pre);
+        }
+    }
+}
+
+// Upgrade-context stale journal: recorded old pres changing after preview
+// fail the confirmation as stale with zero writes.
+void forceUpgradeStaleJournalFails()
+{
+    FakeShortcutStore store;
+    seedV2CompletedLive(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Grid View")) {
+            tuple.active = QList<int>{999};
+        }
+    }
+    FakeJournal journal;
+    ShortcutJournal v2;
+    fillV2Completed(v2);
+    journal.present = true;
+    journal.stored = v2;
+    const ShortcutForcePreview preview = ShortcutReconciler(&store, &journal).previewForceApply();
+    CHECK(preview.forceable);
+    journal.stored.focus.pre = QList<int>{111};
+    const ShortcutForceApplyResult stale = ShortcutReconciler(&store, &journal).applyForced(preview);
+    CHECK(!stale.ok);
+    CHECK(stale.error.contains(QStringLiteral("stale")));
+    CHECK(stale.writes == 0);
+    CHECK(store.writeLog.isEmpty());
+}
+
+// Nonoverridable errors: store, ownership, transport, parsing, lock,
+// governed-journal, and drift refusals never produce a force preview, and
+// their errors match the normal apply refusal.
+void forceNonoverridableErrors()
+{
+    auto checkRefusal = [](FakeShortcutStore &store, FakeJournal &journal, const char *token) {
+        const ShortcutApplyResult applyResult = ShortcutReconciler(&store, &journal).apply();
+        CHECK(!applyResult.ok);
+        const ShortcutForcePreview preview = ShortcutReconciler(&store, &journal).previewForceApply();
+        CHECK(!preview.forceable);
+        CHECK(preview.error == applyResult.error);
+        CHECK(preview.error.contains(QString::fromUtf8(token)));
+        CHECK(store.writeLog.isEmpty());
+    };
+    {
+        FakeShortcutStore store;
+        seedForceMismatch(store);
+        store.tuples.append(makeTuple(QStringLiteral("kwin"), QStringLiteral("other-action"), QList<int>{META_ESC}));
+        FakeJournal journal;
+        checkRefusal(store, journal, "Meta+Esc");
+        CHECK(!journal.present);
+    }
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{1}, QList<int>{42});
+        FakeJournal journal;
+        checkRefusal(store, journal, "Meta+L");
+    }
+    {
+        FakeShortcutStore store;
+        seedForceMismatch(store);
+        store.malformedRead = true;
+        FakeJournal journal;
+        checkRefusal(store, journal, "allShortcutInfos");
+    }
+    // One-shot transport control: re-arm between apply and preview so both
+    // observe the same failure.
+    {
+        FakeShortcutStore store;
+        seedForceMismatch(store);
+        FakeJournal journal;
+        store.failByKey = true;
+        const ShortcutApplyResult applyResult = ShortcutReconciler(&store, &journal).apply();
+        CHECK(!applyResult.ok);
+        CHECK(applyResult.error.contains(QStringLiteral("globalShortcutsByKey")));
+        store.failByKey = true;
+        const ShortcutForcePreview preview = ShortcutReconciler(&store, &journal).previewForceApply();
+        CHECK(!preview.forceable);
+        CHECK(preview.error == applyResult.error);
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+    }
+    // Governed v3 complete journal with drift: finish/revert owns recovery.
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+        FakeJournal journal;
+        CHECK(ShortcutReconciler(&store, &journal).apply().ok);
+        for (ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
+                tuple.active = QList<int>{111};
+            }
+        }
+        const ShortcutForcePreview preview = ShortcutReconciler(&store, &journal).previewForceApply();
+        CHECK(!preview.forceable);
+        CHECK(preview.error.contains(QStringLiteral("finish or revert")));
+        CHECK(journal.present);
+    }
+    // v1 schema journals never preview.
+    {
+        FakeShortcutStore store;
+        seedForceMismatch(store);
+        FakeJournal journal;
+        ShortcutJournal bad;
+        bad.schema = QStringLiteral("shortcut-override-v1");
+        bad.phase = shortcutJournalPhasePending();
+        bad.owner = QStringLiteral(":1.20");
+        bad.uid = static_cast<uint>(::geteuid());
+        bad.focus = {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1},
+                     QList<int>{META_L}};
+        bad.lock = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L},
+                    QList<int>{META_ESC}};
+        fillResizeReady(bad, QList<int>{7}, QList<int>{8});
+        journal.present = true;
+        journal.stored = bad;
+        checkRefusal(store, journal, "upgrade");
+    }
+}
+
+// Structured diagnostics: operations, stages, and outcomes are logged with
+// safe fields only, through the injectable sink; logging never affects
+// behavior, even when the sink throws.
+void diagSinkCapturesOperations()
+{
+    FakeShortcutStore store;
+    seedReady6(store, QList<int>{1}, QList<int>{META_L});
+    FakeJournal journal;
+    QStringList messages;
+    ShortcutDiag::setSink([&](QtMsgType, const QString &message) {
+        messages.append(message);
+    });
+    CHECK(ShortcutReconciler(&store, &journal).apply().ok);
+    CHECK(ShortcutReconciler(&store, &journal).revert().ok);
+    seedForceMismatch(store);
+    const ShortcutForcePreview preview = ShortcutReconciler(&store, &journal).previewForceApply();
+    CHECK(preview.forceable);
+    CHECK(ShortcutReconciler(&store, &journal).applyForced(preview).ok);
+    ShortcutDiag::resetSink();
+    bool sawApplyStart = false;
+    bool sawApplyFinish = false;
+    bool sawRevert = false;
+    bool sawForcePreview = false;
+    for (const QString &message : messages) {
+        CHECK(message.contains(QStringLiteral("op=")));
+        CHECK(message.contains(QStringLiteral("stage=")));
+        CHECK(message.contains(QStringLiteral("outcome=")));
+        CHECK(message.contains(QStringLiteral("plasmaautotiler.shortcut")));
+        CHECK(!message.contains(QStringLiteral("/home")));
+        CHECK(!message.contains(QStringLiteral(".config")));
+        if (message.contains(QStringLiteral("op=apply"))
+            && message.contains(QStringLiteral("stage=start"))) {
+            sawApplyStart = true;
+        }
+        if (message.contains(QStringLiteral("op=apply"))
+            && message.contains(QStringLiteral("stage=finish"))
+            && message.contains(QStringLiteral("outcome=ok"))) {
+            sawApplyFinish = true;
+        }
+        if (message.contains(QStringLiteral("op=revert"))) {
+            sawRevert = true;
+        }
+        if (message.contains(QStringLiteral("op=force-preview"))) {
+            sawForcePreview = true;
+        }
+    }
+    CHECK(sawApplyStart);
+    CHECK(sawApplyFinish);
+    CHECK(sawRevert);
+    CHECK(sawForcePreview);
+}
+
+void diagPrefixAndForeignDataAreSafe()
+{
+    QString message;
+    ShortcutDiag::setSink([&](QtMsgType, const QString &captured) {
+        message = captured;
+    });
+    ShortcutDiag::log(QtWarningMsg, "apply", "preflight", "refused",
+                      QStringLiteral("Meta+G claimed by org.example.foreign/Untrusted Action"));
+    ShortcutDiag::resetSink();
+    CHECK(message.startsWith(QStringLiteral("plasmaautotiler.shortcut op=apply stage=preflight outcome=refused")));
+    CHECK(message.contains(QStringLiteral("reason=key-conflict")));
+    CHECK(!message.contains(QStringLiteral("org.example.foreign")));
+}
+
+void diagThrowingSinkPreservesBehavior()
+{
+    FakeShortcutStore store;
+    seedReady6(store, QList<int>{1}, QList<int>{META_L});
+    FakeJournal journal;
+    ShortcutDiag::setSink([](QtMsgType, const QString &) {
+        throw 1;
+    });
+    CHECK(ShortcutReconciler(&store, &journal).apply().ok);
+    ShortcutDiag::resetSink();
+    CHECK(ShortcutReconciler(&store, &journal).revert().ok);
+}
+
+} // namespace
 
 int main(int argc, char **argv)
 {
@@ -4014,6 +4893,7 @@ int main(int argc, char **argv)
         duplicateMetaEscDeduped();
         exactTwoWriteLimit();
         newClearRowsApplySuccessAndRevert();
+        freshClearRowsAtPostSucceedNormally();
     }
     if (scenario == QStringLiteral("all") || scenario == QStringLiteral("conflict")) {
         metaEscConflictRefusesWithoutJournalOrMutation();
@@ -4088,10 +4968,32 @@ int main(int argc, char **argv)
         v2CompletedUpgradeAppliesNewRows();
         v2CompletedUpgradeDriftRefusesWithoutUpgrade();
         v2CompletedUpgradeInterruptedResumes();
+        completedV2OldRowMismatchRefusesDrift();
+        legacyMigrationNormalPath();
+        legacyMigrationFailClosed();
+        legacyStoreMigrationOnApply();
+        legacyStorePreviewReadsWithoutMigrating();
+        legacyStoreMigrationFailureFailClosed();
+        legacyStoreCanonicalWins();
+    }
+    if (scenario == QStringLiteral("all") || scenario == QStringLiteral("force")) {
+        forceFreshAcceptAndRevert();
+        forceFreshMultipleKeysMultipleRows();
+        forceStaleSnapshotFailsZeroWrites();
+        forceInterruptedRecovery();
+        forceUpgradeAcceptAndRevert();
+        forceUpgradeStaleJournalFails();
+        forceNonoverridableErrors();
+    }
+    if (scenario == QStringLiteral("all") || scenario == QStringLiteral("diag")) {
+        diagSinkCapturesOperations();
+        diagPrefixAndForeignDataAreSafe();
+        diagThrowingSinkPreservesBehavior();
     }
     if (scenario != QStringLiteral("all") && scenario != QStringLiteral("success") && scenario != QStringLiteral("conflict")
         && scenario != QStringLiteral("malformed") && scenario != QStringLiteral("owner") && scenario != QStringLiteral("recovery")
-        && scenario != QStringLiteral("external") && scenario != QStringLiteral("journal")) {
+        && scenario != QStringLiteral("external") && scenario != QStringLiteral("journal")
+        && scenario != QStringLiteral("force") && scenario != QStringLiteral("diag")) {
         std::fprintf(stderr, "unknown scenario: %s\n", argv[1]);
         return EXIT_FAILURE;
     }

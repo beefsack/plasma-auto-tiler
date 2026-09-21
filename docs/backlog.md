@@ -65,15 +65,28 @@ Only meaningful pending or active work is listed.
   831 KWin tests and typecheck pass, with physical acceptance pending.
   `Meta+G` still opens overview: current active Grid View conflict remains, and
   exact `~/.config/kcmshell6/shortcut-override-journalrc` is still completed v2
-  with only three rows. The current migration regression passes. Needed next:
-  exact `Apply Shortcuts` status/error to distinguish older loaded KCM from
-  failure before v3 journal persistence; no claim that Apply was omitted.
+  with only three rows. User supplied the blocking error: `Shortcuts differ from
+  allowed image` and `Refusing to apply: KDE Layout Keyboard Switcher/Switch to
+  next keyboard layout preimage is not exactly Meta+Alt+K`. User requests
+  inspectable failure logs and an explicit Force Apply confirmation instead of
+  flat rejection. Both are implemented: clear-row Force previews/revalidates the
+  exact live image and retains reversible preimages; default-visible structured
+  logs use `plasmaautotiler.shortcut op=`. Journal discovery is now independent
+  of the KCM host at `~/.config/plasma-auto-tiler/shortcut-override-journalrc`,
+  with bounded migration from the exact legacy kcmshell6 path. The old
+  host-dependent path explains a possible fresh-preimage refusal, but the prior
+  process's actual lookup is not proven. Host-native 31-test suite, stale Force
+  terminal-log regression, and native build pass. Next: user fresh-session KCM
+  Apply/Force/Revert acceptance; diagnostics are available through the user journal.
   Screenshot `~/Pictures/Screenshots/Screenshot_20260921_205252.png` shows outline
   overlap. The active border now parents to the target WindowItem at negative z
   through public KWin APIs, preserving outside-frame outline while higher windows
   occlude it. Group outline remains a scene overlay; the screenshot alone does
   not distinguish the two. Host native build, 26 native tests, and 7 renderer
   static checks pass. User fresh-session visual occlusion test remains pending.
+  Autonomous source/offline work next: review transaction-lifetime cleanup across
+  directional output moves and background admissions, fixing concrete related
+  defects without selecting uncertain-transaction recovery or replay semantics.
   Other backlog work follows this focused scope.
 - P2 | Unified Plasma Auto Tiler settings entry | User asks whether the current
   Desktop Effects entries `Active Window Border` and `Drag Oracle (Slice 1)` can

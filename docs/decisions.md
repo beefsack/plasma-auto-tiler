@@ -583,6 +583,32 @@ Historical implementation detail is recoverable in Git history.
   resolution kind and exact prior keys. One user-run Finish Apply completed the
   three-row postimage; Revert, Restore, Lock Session physical checks, and
   physical resize checks remain unproven.
+- The project journal is host-independent at
+  `~/.config/plasma-auto-tiler/shortcut-override-journalrc`, shared by every
+  KCM host. The single explicit legacy source is the known kcmshell6-host
+  journal at `~/.config/kcmshell6/shortcut-override-journalrc`; it migrates by
+   exact copy (undo history preserved) after safety and validity checks, and
+   fails closed when unsafe, malformed, or foreign. A safe canonical journal
+   wins over legacy; directory scans are never
+  used. Migration runs only after an already-confirmed mutation operation
+  (Apply, Force Apply, Finish Apply, Revert, Restore), immediately before
+  reconciliation; opening, refreshing, previewing, or cancelling never
+  writes config. A clear row already at its postimage (empty) is normal idempotent
+  state and applies without force; any other unexpected value still refuses.
+- Confirmed Force Apply is approved only for exact compiled clear-row foreign
+  mismatches: preview lists each row with its found value, proposed clear, and
+  paired project assignment/chord from the compiled table. Force revalidates
+  the complete confirmed managed live image, journal image, and owner before
+  any write (stale snapshots abort with zero writes), adopts exactly the
+  confirmed actuals as journal preimages for those rows only, and Revert
+  restores the adopted values. Force never accepts arbitrary actions or keys
+  and never bypasses store, journal, ownership, or transport/parsing checks.
+- Shortcut operations emit bounded structured diagnostics on
+  `plasmaautotiler.shortcut` (operation, stage, outcome, allowlisted
+  identity, key images, schema, phase, journal selector only). Query with
+   `journalctl --user --no-pager -g "plasmaautotiler.shortcut op="`.
+   Operational warnings and info are enabled by default; the logging rule adds
+   debug-only records. Logging never affects behavior.
 
 ## Planner Unauthorized Reply Correlation
 

@@ -32,6 +32,10 @@ KCM Apply alone resolves only the closed compiled-in rows.
 - Row 3: `kwin` / `plasma-auto-tiler-resize-outwards-right` takes
   `Meta+Alt+L`; `KDE Keyboard Layout Switcher` / `Switch to Last-Used Keyboard
   Layout` clears from the exact preimage `Meta+Alt+L`.
+- Row 4: `kwin` / `plasma-auto-tiler-toggle-float` takes `Meta+G`; `kwin` /
+  `Grid View` clears from the exact preimage `Meta+G`.
+- Row 5: `kwin` / `plasma-auto-tiler-toggle-maximize` takes `Meta+M`; `kwin` /
+  `KrohnkiteMonocleLayout` clears from the exact preimage `Meta+M`.
 - Whole-table preflight fails closed for any unexpected row preimage or target
   conflict, before journal creation or mutation.
 - Every KGlobalAccel reply-validation failure emits one bounded, non-reflective
@@ -54,8 +58,8 @@ KCM Apply alone resolves only the closed compiled-in rows.
 
 - Static-only complete: KCM Apply/Revert with Finish Apply/Restore recovery,
   confirmation-gated mutations, ordinary Settings Apply without shortcut
-  mutation, ordered six-write Apply, ownership-scoped Revert, and private
-  project journal.
+  mutation, ordered v3 ten-write Apply (v2 remains six-write), ownership-scoped
+  Revert, and private project journal.
 - Focused static coverage in `shortcutreconciler_test.cpp` (Apply order,
   `Meta+Esc` refusal without mutation, partial-write resume, setter `a(ai)`
   reply decoding, stale-owner recovery, external-edit handling, journal/path
@@ -209,8 +213,74 @@ KCM Apply alone resolves only the closed compiled-in rows.
   `SchemaVersion=shortcut-override-v2`. Rows 2-3 are written live for the first
   time but their physical chords are untested.
 
-## Diagnostic Token Map
+- Host-independent journal with explicit legacy migration: source inspection
+  shows the former `QStandardPaths::AppConfigLocation` path was host-dependent.
+  That makes a completed `kcmshell6` journal (`~/.config/kcmshell6/
+  shortcut-override-journalrc`) a source-proven explanation for the reported
+  fresh-preimage refusal, but no retained prior-host process record proves the
+  journal was missing in that process. The canonical path is
+  now `~/.config/plasma-auto-tiler/shortcut-override-journalrc`
+  (`GenericConfigLocation`, project-owned). The single explicit legacy source
+  is the known kcmshell6 file; migration copies it exactly (schema, phase,
+  owner, every pre/post image) after path-safety, load-validity, and UID
+  checks, and fails closed when unsafe, malformed, foreign, or
+  unpersistable. Canonical present wins; absent/absent is a no-op. No
+  directory scan exists. Migration runs only after an already-confirmed
+  mutation operation (Apply, Force Apply, Finish Apply, Revert, Restore),
+  immediately before reconciliation; opening, refreshing, previewing, or
+  cancelling never writes config. A failed migration fails that operation
+  closed with zero writes.
+- Clear rows already at postimage are normal: a fresh Apply accepts a foreign
+  clear target that is already empty (adopted with pre == post, no write, no
+  force). Only a genuine third image refuses or needs Force. Revert of such
+  rows is a no-op; project rows still restore.
+- Confirmed Force Apply for exact compiled clear-row foreign mismatches
+  only. A refused Apply with only such mismatches raises a preview
+  (`Force Apply`/`Cancel` buttons plus, per row, the foreign found value,
+  the proposed clear, and the paired project assignment and chord from the
+  compiled table). Force confirms, then revalidates the confirmed snapshot against fresh
+  full live preflight image before any write: any changed managed binding,
+  journal image, owner, or store/journal/transport failure aborts with zero
+  writes. Adopted rows record exactly the confirmed actuals as preimages;
+  all other rows keep original pres, and existing journal rows are never
+  rewritten. Revert restores adopted actuals for forced rows and original
+  pres elsewhere, with unchanged partial Finish/Revert semantics. No
+  arbitrary action or key input exists; relocate rows, project rows, governed
+  v3 journals, drift, conflicts, and malformed/ownership failures are never
+  overridable.
+- Bounded structured diagnostics on `QLoggingCategory`
+  `plasmaautotiler.shortcut`: operations (`apply`, `finish-apply`,
+  `force-apply`, `force-preview`, `revert`, `restore`, `migrate`) log stages
+  and outcomes with
+  allowlisted component/action identity, key images, schema, phase, and the
+  journal selector (`canonical`/`legacy`, never full paths) only. The sink is
+  injectable for hermetic tests; logging is void, exception-safe, and never
+  gates behavior. Operational `info`/`warning` outcomes are visible by default;
+  query with `journalctl --user --no-pager -g "plasmaautotiler.shortcut op="`.
+  `QT_LOGGING_RULES="plasmaautotiler.shortcut.debug=true"` additionally enables
+  debug-only start and no-op records.
+- Verification for this correction: fresh postimage adoption (6 writes,
+  pre == post rows revert as no-ops), completed-v2 old-row mismatch as
+  nonoverridable drift, legacy migration normal path end to end through the
+  v2 upgrade, migration fail-closed (unsafe symlink/non-private paths,
+  malformed canonical preservation, canonical-wins, empty paths), deferred
+  store-seam migration (open/refresh/
+  preview/cancel write nothing; confirmed Apply migrates, preserves undo,
+  and reverts; unloadable and foreign-UID legacies fail closed; canonical
+  wins), force accept/revert (single, multi-key,
+  multi-row, v2-upgrade with old-pres preserved), force cancel (button and
+  declined confirmation, zero mutation), stale live and stale journal
+  full managed snapshots (including an unrelated pre-to-post change, zero
+  writes), interrupted forced recovery through normal resume,
+  forged/empty confirmations, the full nonoverridable set, KCM force
+  preview/accept/cancel/revert UI with paired project text, KCM deferred
+  migration (open/refresh/preview/cancel zero-write; confirmed Apply
+  migrates and reverts; migration failure fails closed), and
+  sink-captured category-prefixed operation logs with foreign occupants
+  redacted, plus a throwing sink preserving behavior.
+  Native CTest passes 31/31 (15 shortcut cases). No live mutation was run.
 
+## Diagnostic Token Map
 All details below are static ASCII text. `Shortcut state unavailable:` is the
 KCM wrapper; no token includes foreign reply values.
 
@@ -275,6 +345,21 @@ holder action`, `too many holder active keys`, `negative holder active key`,
 `oversized holder active key`, `too many holder default keys`, `negative holder
 default key`, and `oversized holder default key`, each prefixed by `unexpected
 globalShortcutsByKey reply: `.
+
+Migration and Force Apply add these bounded tokens (no foreign reply data):
+
+| Token | Producing condition |
+| --- | --- |
+| `canonical shortcut journal path is unavailable` | Canonical config base is empty or not absolute. |
+| `legacy shortcut journal is unsafe; refusing migration` | Legacy path is a symlink, non-regular, non-private, or has an unsafe parent. |
+| `legacy shortcut journal is malformed; refusing migration` | Legacy file exists but fails journal load validation. |
+| `legacy shortcut journal has a foreign UID; refusing migration` | Legacy journal UID differs from the current UID. |
+| `legacy shortcut journal migration failed; refusing migration` | Exact legacy copy failed to persist with readback. |
+| `no forced override applies: live state needs no clear-row adoption` | Preview with no third-image clear-row mismatch. |
+| `journal present; finish or revert before forcing` | Preview against a governed v3 or pending-v2 journal. |
+| `confirmed force image is stale; re-preview before forcing` | Live state or journal image changed after preview. |
+| `forced override is outside the exact allowlist` | Forged, duplicate, unbounded, or non-clear-row confirmation. |
+| `no confirmed forced override to apply` | Force invoked without a forceable preview. |
 
 ## Next Action
 

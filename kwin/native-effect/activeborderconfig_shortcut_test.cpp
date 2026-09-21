@@ -5,6 +5,9 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QLabel>
 #include <QMimeData>
 #include <QPushButton>
@@ -489,6 +492,52 @@ void fillResizeReady(ShortcutJournal &journal, const QList<int> &upPre, const QL
 void seedReady(FakeShortcutStore &store)
 {
     seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+}
+
+// Completed-v2 legacy journal: the known kcmshell6-host image, seeded
+// through the same validation a real backend enforces.
+void seedCompletedV2LegacyJournal(FakeJournal &journal)
+{
+    ShortcutJournal v2;
+    v2.schema = shortcutJournalSchemaV2();
+    v2.phase = shortcutJournalPhaseComplete();
+    v2.owner = QStringLiteral(":1.20");
+    v2.uid = static_cast<uint>(::geteuid());
+    v2.focus = {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{419430420},
+                QList<int>{META_L}};
+    v2.lock = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L},
+               QList<int>{META_ESC}};
+    v2.resizeUp = {shortcutResizeUpComponent(), shortcutResizeUpAction(), QList<int>{7}, {META_ALT_K}};
+    v2.switchNext = {shortcutSwitchNextComponent(), shortcutSwitchNextAction(), {META_ALT_K}, {}};
+    v2.resizeRight = {shortcutResizeRightComponent(), shortcutResizeRightAction(), QList<int>{8}, {META_ALT_L}};
+    v2.switchLast = {shortcutSwitchLastComponent(), shortcutSwitchLastAction(), {META_ALT_L}, {}};
+    v2.row0Kind = shortcutResolutionRelocate();
+    v2.row1Kind = shortcutResolutionClear();
+    v2.row2Kind = shortcutResolutionClear();
+    QString error;
+    CHECK(journal.persist(v2, &error));
+    journal.persists = 0;
+}
+
+// Live bindings exactly at the completed-v2 postimage with the new rows at
+// preimage: the legitimate upgrade resume state.
+void seedV2CompletedLive6(FakeShortcutStore &store)
+{
+    seedReady6(store, QList<int>{META_L}, QList<int>{META_ESC});
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-resize-outwards-up")) {
+            tuple.active = QList<int>{META_ALT_K};
+        }
+        if (tuple.action == QStringLiteral("Switch to Next Keyboard Layout")) {
+            tuple.active = QList<int>{};
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-resize-outwards-right")) {
+            tuple.active = QList<int>{META_ALT_L};
+        }
+        if (tuple.action == QStringLiteral("Switch to Last-Used Keyboard Layout")) {
+            tuple.active = QList<int>{};
+        }
+    }
 }
 
 void seedPartialJournal(FakeJournal &journal)
@@ -1005,6 +1054,257 @@ void v2JournalStatusStaysThreeRows()
     CHECK(module.shortcutErrorText().isEmpty());
 }
 
+void forcePreviewAcceptCancelRevert()
+{
+    FakeShortcutStore store;
+    seedReady(store);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Grid View")) {
+            tuple.active = QList<int>{999};
+        }
+    }
+    FakeJournal journal;
+    ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    int confirms = 0;
+    bool allow = true;
+    module.setShortcutConfirmHandler([&](const QString &title, const QString &text) {
+        ++confirms;
+        CHECK(!title.isEmpty());
+        CHECK(!text.isEmpty());
+        return allow;
+    });
+    module.setShortcutStores(&store, &journal);
+    module.load();
+    CHECK(!module.isShortcutForceApplyVisible());
+    CHECK(!module.isShortcutForceCancelVisible());
+    // Normal apply refuses the third image with zero mutation and raises
+    // the exact preview with Force Apply/Cancel. Raising the preview writes
+    // no journal.
+    module.requestShortcutApply();
+    CHECK(confirms == 1);
+    CHECK(store.writeLog.isEmpty());
+    CHECK(!journal.hasJournal());
+    CHECK(journal.persists == 0);
+    CHECK(module.shortcutErrorText().contains(QStringLiteral("Meta+G")));
+    CHECK(module.isShortcutForceApplyVisible());
+    CHECK(module.isShortcutForceCancelVisible());
+    CHECK(module.shortcutForcePreviewText().contains(QStringLiteral("Grid View")));
+    CHECK(module.shortcutForcePreviewText().contains(QStringLiteral("999")));
+    CHECK(module.shortcutForcePreviewText().contains(QStringLiteral("Paired project assignment")));
+    CHECK(module.shortcutForcePreviewText().contains(QStringLiteral("plasma-auto-tiler-toggle-float")));
+    CHECK(module.shortcutForcePreviewText().contains(QStringLiteral("268435527")));
+    CHECK(module.shortcutForcePreviewText().contains(QStringLiteral("will clear to none")));
+    QLabel *preview = module.widget()->findChild<QLabel *>(QStringLiteral("shortcutForcePreviewLabel"));
+    CHECK(preview != nullptr);
+    if (preview) {
+        CHECK(preview->text() == module.shortcutForcePreviewText());
+        CHECK(!preview->isHidden());
+    }
+    // Cancel clears the preview with no mutation, no confirmation, and no
+    // journal write.
+    module.requestShortcutForceCancel();
+    CHECK(confirms == 1);
+    CHECK(store.writeLog.isEmpty());
+    CHECK(!journal.hasJournal());
+    CHECK(journal.persists == 0);
+    CHECK(!module.isShortcutForceApplyVisible());
+    CHECK(!module.isShortcutForceCancelVisible());
+    // Preview again, decline at the Force confirmation: retained, unmutated.
+    module.requestShortcutApply();
+    CHECK(confirms == 2);
+    CHECK(module.isShortcutForceApplyVisible());
+    allow = false;
+    module.requestShortcutForceApply();
+    CHECK(confirms == 3);
+    CHECK(store.writeLog.isEmpty());
+    CHECK(!journal.hasJournal());
+    CHECK(module.isShortcutForceApplyVisible());
+    // Accept: revalidation passes, the adopted actual clears, Revert
+    // restores exactly the adopted value.
+    allow = true;
+    module.requestShortcutForceApply();
+    CHECK(confirms == 4);
+    CHECK(module.shortcutErrorText().isEmpty());
+    CHECK(journal.hasJournal());
+    CHECK(!module.isShortcutForceApplyVisible());
+    CHECK(!module.isShortcutForceCancelVisible());
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Grid View")) {
+            CHECK(tuple.active.isEmpty());
+        }
+    }
+    module.requestShortcutRevert();
+    CHECK(confirms == 5);
+    CHECK(module.shortcutErrorText().isEmpty());
+    CHECK(!journal.hasJournal());
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Grid View")) {
+            CHECK(tuple.active == (QList<int>{999}));
+        }
+    }
+}
+
+void legacyMigrationDeferredFromOpen()
+{
+    // A known legacy completed-v2 journal is never touched by opening the
+    // KCM, loading it, or refreshing state: zero writes on both journals,
+    // no migration error, no legacy text in the status.
+    FakeShortcutStore store;
+    seedReady(store);
+    FakeJournal journal;
+    FakeJournal legacyJournal;
+    seedCompletedV2LegacyJournal(legacyJournal);
+    CHECK(legacyJournal.hasJournal());
+    ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    int confirms = 0;
+    module.setShortcutConfirmHandler([&](const QString &, const QString &) {
+        ++confirms;
+        return true;
+    });
+    module.setShortcutStores(&store, &journal, &legacyJournal);
+    module.load();
+    module.refreshShortcutState();
+    CHECK(journal.persists == 0);
+    CHECK(!journal.hasJournal());
+    CHECK(legacyJournal.persists == 0);
+    CHECK(legacyJournal.hasJournal());
+    CHECK(!QFile::exists(legacyShortcutJournalPath()));
+    CHECK(!QFile::exists(defaultShortcutJournalPath()));
+    CHECK(module.shortcutErrorText().isEmpty());
+    CHECK(!module.shortcutStatusText().contains(QStringLiteral("legacy")));
+    CHECK(module.shortcutStatusText().contains(QStringLiteral("drifted after apply-complete")));
+    CHECK(confirms == 0);
+    CHECK(store.writeLog.isEmpty());
+}
+
+void legacyMigrationOnConfirmedApply()
+{
+    // A confirmed Apply migrates the known legacy completed-v2 journal and
+    // then resumes the normal upgrade: old preimages preserved, new rows
+    // cleared, Revert restores everything.
+    FakeShortcutStore store;
+    seedV2CompletedLive6(store);
+    FakeJournal journal;
+    FakeJournal legacyJournal;
+    seedCompletedV2LegacyJournal(legacyJournal);
+    ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    int confirms = 0;
+    module.setShortcutConfirmHandler([&](const QString &, const QString &) {
+        ++confirms;
+        return true;
+    });
+    module.setShortcutStores(&store, &journal, &legacyJournal);
+    module.load();
+    CHECK(journal.persists == 0);
+    module.requestShortcutApply();
+    CHECK(confirms == 1);
+    CHECK(module.shortcutErrorText().isEmpty());
+    CHECK(journal.hasJournal());
+    CHECK(journal.stored.schema == shortcutJournalSchema());
+    CHECK(journal.stored.phase == shortcutJournalPhaseComplete());
+    CHECK(journal.stored.focus.pre == (QList<int>{419430420}));
+    CHECK(journal.stored.lock.pre == (QList<int>{META_L}));
+    CHECK(journal.stored.gridView.pre == (QList<int>{META_G}));
+    CHECK(journal.stored.monocle.pre == (QList<int>{META_M}));
+    CHECK(legacyJournal.persists == 0);
+    CHECK(store.writeLog.size() == 2);
+    module.requestShortcutRevert();
+    CHECK(confirms == 2);
+    CHECK(module.shortcutErrorText().isEmpty());
+    CHECK(!journal.hasJournal());
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
+            CHECK(tuple.active == (QList<int>{419430420}));
+        }
+        if (tuple.action == QStringLiteral("Grid View")) {
+            CHECK(tuple.active == (QList<int>{META_G}));
+        }
+        if (tuple.action == QStringLiteral("KrohnkiteMonocleLayout")) {
+            CHECK(tuple.active == (QList<int>{META_M}));
+        }
+    }
+}
+
+void legacyMigrationFailureFailClosed()
+{
+    // An unloadable legacy journal fails a confirmed Apply closed: the
+    // exact load error surfaces, with zero store writes and zero canonical
+    // writes.
+    FakeShortcutStore store;
+    seedV2CompletedLive6(store);
+    FakeJournal journal;
+    FakeJournal legacyJournal;
+    legacyJournal.present = true;
+    legacyJournal.stored.schema = QStringLiteral("shortcut-override-v1");
+    legacyJournal.stored.phase = shortcutJournalPhasePending();
+    legacyJournal.stored.owner = QStringLiteral(":1.20");
+    legacyJournal.stored.uid = static_cast<uint>(::geteuid());
+    ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    int confirms = 0;
+    module.setShortcutConfirmHandler([&](const QString &, const QString &) {
+        ++confirms;
+        return true;
+    });
+    module.setShortcutStores(&store, &journal, &legacyJournal);
+    module.load();
+    CHECK(journal.persists == 0);
+    module.requestShortcutApply();
+    CHECK(confirms == 1);
+    CHECK(store.writeLog.isEmpty());
+    CHECK(!journal.hasJournal());
+    CHECK(journal.persists == 0);
+    CHECK(module.shortcutErrorText().contains(QStringLiteral("upgrade required, no migration")));
+    CHECK(!module.isShortcutForceApplyVisible());
+}
+
+void terminalFailureLogIncludesReason()
+{
+    FakeShortcutStore store;
+    seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Grid View")) {
+            tuple.active = QList<int>{999};
+        }
+    }
+    FakeJournal journal;
+    ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    module.setShortcutConfirmHandler([](const QString &, const QString &) {
+        return true;
+    });
+    module.setShortcutStores(&store, &journal);
+    module.load();
+    QStringList messages;
+    ShortcutDiag::setSink([&](QtMsgType, const QString &message) {
+        messages.append(message);
+    });
+    module.requestShortcutApply();
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Grid View")) {
+            tuple.active = QList<int>{1000};
+        }
+    }
+    module.requestShortcutForceApply();
+    ShortcutDiag::resetSink();
+    bool sawTerminalFailure = false;
+    bool sawStaleForceFailure = false;
+    for (const QString &message : messages) {
+        if (message.contains(QStringLiteral("plasmaautotiler.shortcut op=apply stage=result outcome=failed"))
+            && message.contains(QStringLiteral("reason=refusing to apply: kwin/Grid View"))
+            && message.contains(QStringLiteral("writes=0"))) {
+            sawTerminalFailure = true;
+        }
+        if (message.contains(QStringLiteral("plasmaautotiler.shortcut op=force-apply stage=result outcome=failed"))
+            && message.contains(QStringLiteral("reason=confirmed force image is stale"))
+            && message.contains(QStringLiteral("writes=0"))) {
+            sawStaleForceFailure = true;
+        }
+    }
+    CHECK(sawTerminalFailure);
+    CHECK(sawStaleForceFailure);
+    CHECK(store.writeLog.isEmpty());
+    CHECK(!journal.hasJournal());
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -1023,7 +1323,7 @@ int main(int argc, char **argv)
     app.clipboard()->setMimeData(new QMimeData);
 
     if (argc != 2) {
-        std::fprintf(stderr, "usage: %s ordinary|recovery|confirm|state\n", argv[0]);
+        std::fprintf(stderr, "usage: %s ordinary|recovery|confirm|state|force|migration\n", argv[0]);
         return EXIT_FAILURE;
     }
 
@@ -1034,6 +1334,13 @@ int main(int argc, char **argv)
         recoveryVisibilityAndRouting();
     } else if (scenario == QStringLiteral("confirm")) {
         confirmationGatesEveryMutation();
+    } else if (scenario == QStringLiteral("force")) {
+        forcePreviewAcceptCancelRevert();
+        terminalFailureLogIncludesReason();
+    } else if (scenario == QStringLiteral("migration")) {
+        legacyMigrationDeferredFromOpen();
+        legacyMigrationOnConfirmedApply();
+        legacyMigrationFailureFailClosed();
     } else if (scenario == QStringLiteral("state")) {
         stateAndErrorPresentation();
         completeJournalStatusComparesExactPostimages();

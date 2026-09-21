@@ -82,12 +82,20 @@ ActiveBorderConfigModule::ActiveBorderConfigModule(QObject *parent, const KPlugi
     connect(m_ui.outerGapSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, &ActiveBorderConfigModule::updateScriptState);
 
     m_shortcutStore = createLiveShortcutStore();
+    // Canonical host-independent journal plus the single explicit legacy
+    // source. Constructing the backends writes nothing; legacy-to-canonical
+    // migration runs only inside already-confirmed mutation operations,
+    // immediately before reconciliation. Opening, refreshing, previewing,
+    // or cancelling never writes config.
     m_shortcutJournal = createLiveShortcutJournal(defaultShortcutJournalPath());
+    m_shortcutLegacyJournal = createLiveShortcutJournal(legacyShortcutJournalPath());
     m_ownsShortcutStores = true;
     connect(m_ui.shortcutApplyButton, &QPushButton::clicked, this, &ActiveBorderConfigModule::requestShortcutApply);
     connect(m_ui.shortcutRevertButton, &QPushButton::clicked, this, &ActiveBorderConfigModule::requestShortcutRevert);
     connect(m_ui.shortcutFinishApplyButton, &QPushButton::clicked, this, &ActiveBorderConfigModule::requestShortcutFinishApply);
     connect(m_ui.shortcutRestoreButton, &QPushButton::clicked, this, &ActiveBorderConfigModule::requestShortcutRestore);
+    connect(m_ui.shortcutForceApplyButton, &QPushButton::clicked, this, &ActiveBorderConfigModule::requestShortcutForceApply);
+    connect(m_ui.shortcutForceCancelButton, &QPushButton::clicked, this, &ActiveBorderConfigModule::requestShortcutForceCancel);
     connect(m_ui.tilerReloadButton, &QPushButton::clicked, this, &ActiveBorderConfigModule::requestTilerReload);
     refreshShortcutState();
     m_tilerReloadRequired = false;
@@ -102,6 +110,7 @@ ActiveBorderConfigModule::~ActiveBorderConfigModule()
     if (m_ownsShortcutStores) {
         delete m_shortcutStore;
         delete m_shortcutJournal;
+        delete m_shortcutLegacyJournal;
     }
 }
 
@@ -172,15 +181,21 @@ bool ActiveBorderConfigModule::requestScriptReconfigure()
         QDBusMessage::createMethodCall(scriptService(), scriptPath(), scriptInterface(), scriptMethod()));
 }
 
-void ActiveBorderConfigModule::setShortcutStores(ShortcutStore *store, JournalStore *journal)
+void ActiveBorderConfigModule::setShortcutStores(ShortcutStore *store, JournalStore *journal,
+                                                 JournalStore *legacyJournal)
 {
     if (m_ownsShortcutStores) {
         delete m_shortcutStore;
         delete m_shortcutJournal;
+        delete m_shortcutLegacyJournal;
+        m_shortcutStore = nullptr;
+        m_shortcutJournal = nullptr;
+        m_shortcutLegacyJournal = nullptr;
         m_ownsShortcutStores = false;
     }
     m_shortcutStore = store;
     m_shortcutJournal = journal;
+    m_shortcutLegacyJournal = legacyJournal;
     refreshShortcutState();
 }
 
@@ -199,6 +214,11 @@ QString ActiveBorderConfigModule::shortcutErrorText() const
     return m_shortcutError;
 }
 
+QString ActiveBorderConfigModule::shortcutForcePreviewText() const
+{
+    return m_forcePreviewText;
+}
+
 bool ActiveBorderConfigModule::isShortcutFinishApplyVisible() const
 {
     return m_ui.shortcutFinishApplyButton != nullptr && !m_ui.shortcutFinishApplyButton->isHidden();
@@ -207,6 +227,16 @@ bool ActiveBorderConfigModule::isShortcutFinishApplyVisible() const
 bool ActiveBorderConfigModule::isShortcutRestoreVisible() const
 {
     return m_ui.shortcutRestoreButton != nullptr && !m_ui.shortcutRestoreButton->isHidden();
+}
+
+bool ActiveBorderConfigModule::isShortcutForceApplyVisible() const
+{
+    return m_ui.shortcutForceApplyButton != nullptr && !m_ui.shortcutForceApplyButton->isHidden();
+}
+
+bool ActiveBorderConfigModule::isShortcutForceCancelVisible() const
+{
+    return m_ui.shortcutForceCancelButton != nullptr && !m_ui.shortcutForceCancelButton->isHidden();
 }
 
 QString ActiveBorderConfigModule::tilerReloadStatusText() const
@@ -307,25 +337,106 @@ bool ActiveBorderConfigModule::confirmShortcutAction(const QString &title, const
 
 void ActiveBorderConfigModule::requestShortcutApply()
 {
-    runShortcutApply();
+    runShortcutApply("apply");
 }
 
 void ActiveBorderConfigModule::requestShortcutFinishApply()
 {
-    runShortcutApply();
+    runShortcutApply("finish-apply");
 }
 
 void ActiveBorderConfigModule::requestShortcutRevert()
 {
-    runShortcutRevert();
+    runShortcutRevert("revert");
 }
 
 void ActiveBorderConfigModule::requestShortcutRestore()
 {
-    runShortcutRevert();
+    runShortcutRevert("restore");
 }
 
-void ActiveBorderConfigModule::runShortcutApply()
+void ActiveBorderConfigModule::requestShortcutForceApply()
+{
+    // Never force without a pending exact preview.
+    if (!m_forcePreviewValid || !m_forcePreview.forceable) {
+        return;
+    }
+    if (!confirmShortcutAction(QStringLiteral("Force Apply Shortcuts"), m_forcePreviewText)) {
+        return;
+    }
+    if (m_shortcutStore == nullptr || m_shortcutJournal == nullptr) {
+        m_shortcutError = QStringLiteral("reconciler is not configured");
+        ShortcutDiag::log(QtWarningMsg, "force-apply", "result", "failed",
+                          QStringLiteral("reason=reconciler-unconfigured writes=0"));
+        updateShortcutPresentation(false);
+        return;
+    }
+    ShortcutReconciler reconciler(m_shortcutStore, m_shortcutJournal);
+    reconciler.setLegacyJournal(m_shortcutLegacyJournal);
+    // applyForced revalidates the confirmed snapshot against fresh live
+    // state before any write; stale snapshots fail with zero writes.
+    const ShortcutForceApplyResult result = reconciler.applyForced(m_forcePreview);
+    if (result.ok) {
+        m_shortcutError.clear();
+    } else {
+        m_shortcutError = result.error.isEmpty() ? QStringLiteral("Force Apply failed") : result.error;
+    }
+    ShortcutDiag::log(result.ok ? QtInfoMsg : QtWarningMsg, "force-apply", "result",
+                      result.ok ? "ok" : "failed",
+                      result.ok ? QStringLiteral("writes=%1").arg(result.writes)
+                                : QStringLiteral("reason=%1 writes=%2").arg(result.error).arg(result.writes));
+    // A consumed or stale confirmation never persists: the next Force needs
+    // a fresh preview.
+    clearForcePreview();
+    refreshShortcutState();
+}
+
+void ActiveBorderConfigModule::requestShortcutForceCancel()
+{
+    if (!m_forcePreviewValid) {
+        return;
+    }
+    ShortcutDiag::log(QtDebugMsg, "force-preview", "cancel", "cancelled", QStringLiteral("rows=preview"));
+    clearForcePreview();
+    refreshShortcutState();
+}
+
+void ActiveBorderConfigModule::clearForcePreview()
+{
+    m_forcePreview = ShortcutForcePreview();
+    m_forcePreviewValid = false;
+    m_forcePreviewText.clear();
+}
+
+QString ActiveBorderConfigModule::buildForcePreviewText(const ShortcutForcePreview &preview)
+{
+    QStringList lines;
+    lines.append(QStringLiteral("Force Apply will clear %1 unexpected binding(s) and record each current value "
+                                "for Revert. Revalidation runs again after confirmation; stale state aborts "
+                                "without writes.")
+                     .arg(preview.mismatches.size()));
+    for (const ShortcutForceMismatch &mismatch : preview.mismatches) {
+        QString line = QStringLiteral("- %1/%2: found %3; will clear to %4 and record %3 for Revert.")
+                           .arg(mismatch.component, mismatch.action,
+                                ShortcutReconciler::keysDisplay(mismatch.actual),
+                                ShortcutReconciler::keysDisplay(mismatch.post));
+        // Paired project assignment comes only from the compiled
+        // conflict-resolution table, keyed by the exact foreign identity;
+        // anything outside the table renders foreign-only, never invented.
+        for (const ShortcutConflictRow &row : shortcutConflictTable()) {
+            if (row.foreignComponent == mismatch.component && row.foreignAction == mismatch.action) {
+                line += QStringLiteral(" Paired project assignment: %1/%2 takes %3.")
+                            .arg(row.projectComponent, row.projectAction,
+                                 ShortcutReconciler::keysDisplay(row.projectPost));
+                break;
+            }
+        }
+        lines.append(line);
+    }
+    return lines.join(QStringLiteral("\n"));
+}
+
+void ActiveBorderConfigModule::runShortcutApply(const char *operation)
 {
     if (!confirmShortcutAction(QStringLiteral("Apply Shortcuts"),
                                QStringLiteral("Assign focus-right to Meta+L and move Lock Session to Meta+Esc; assign "
@@ -338,20 +449,37 @@ void ActiveBorderConfigModule::runShortcutApply()
     }
     if (m_shortcutStore == nullptr || m_shortcutJournal == nullptr) {
         m_shortcutError = QStringLiteral("reconciler is not configured");
+        ShortcutDiag::log(QtWarningMsg, operation, "result", "failed",
+                          QStringLiteral("reason=reconciler-unconfigured writes=0"));
         updateShortcutPresentation(false);
         return;
     }
     ShortcutReconciler reconciler(m_shortcutStore, m_shortcutJournal);
+    reconciler.setLegacyJournal(m_shortcutLegacyJournal);
     const ShortcutApplyResult result = reconciler.apply();
     if (result.ok) {
         m_shortcutError.clear();
+        clearForcePreview();
     } else {
         m_shortcutError = result.error.isEmpty() ? QStringLiteral("Apply failed") : result.error;
+        // Explicit Force preview only for exact compiled clear-row foreign
+        // mismatches; every other refusal clears any pending preview.
+        const ShortcutForcePreview preview = reconciler.previewForceApply();
+        if (preview.forceable) {
+            m_forcePreview = preview;
+            m_forcePreviewValid = true;
+            m_forcePreviewText = buildForcePreviewText(preview);
+        } else {
+            clearForcePreview();
+        }
     }
+    ShortcutDiag::log(result.ok ? QtInfoMsg : QtWarningMsg, operation, "result", result.ok ? "ok" : "failed",
+                      result.ok ? QStringLiteral("writes=%1").arg(result.writes)
+                                : QStringLiteral("reason=%1 writes=%2").arg(result.error).arg(result.writes));
     refreshShortcutState();
 }
 
-void ActiveBorderConfigModule::runShortcutRevert()
+void ActiveBorderConfigModule::runShortcutRevert(const char *operation)
 {
     if (!confirmShortcutAction(QStringLiteral("Revert Shortcuts"),
                                QStringLiteral("Restore the recorded bindings (focus-right/Lock Session, "
@@ -363,10 +491,13 @@ void ActiveBorderConfigModule::runShortcutRevert()
     }
     if (m_shortcutStore == nullptr || m_shortcutJournal == nullptr) {
         m_shortcutError = QStringLiteral("reconciler is not configured");
+        ShortcutDiag::log(QtWarningMsg, operation, "result", "failed",
+                          QStringLiteral("reason=reconciler-unconfigured writes=0"));
         updateShortcutPresentation(false);
         return;
     }
     ShortcutReconciler reconciler(m_shortcutStore, m_shortcutJournal);
+    reconciler.setLegacyJournal(m_shortcutLegacyJournal);
     const ShortcutRevertResult result = reconciler.revert();
     if (result.ok && result.untouched.isEmpty()) {
         m_shortcutError.clear();
@@ -377,6 +508,12 @@ void ActiveBorderConfigModule::runShortcutRevert()
     } else {
         m_shortcutError = result.error.isEmpty() ? QStringLiteral("Revert failed") : result.error;
     }
+    ShortcutDiag::log(result.ok ? QtInfoMsg : QtWarningMsg, operation, "result", result.ok ? "ok" : "failed",
+                      result.ok ? QStringLiteral("writes=%1 untouched=%2").arg(result.writes).arg(result.untouched.size())
+                                : QStringLiteral("reason=%1 writes=%2 untouched=%3")
+                                      .arg(result.error)
+                                      .arg(result.writes)
+                                      .arg(result.untouched.size()));
     refreshShortcutState();
 }
 
@@ -388,11 +525,21 @@ void ActiveBorderConfigModule::updateShortcutPresentation(bool interrupted)
     if (m_ui.shortcutErrorLabel != nullptr) {
         m_ui.shortcutErrorLabel->setText(m_shortcutError);
     }
+    if (m_ui.shortcutForcePreviewLabel != nullptr) {
+        m_ui.shortcutForcePreviewLabel->setText(m_forcePreviewText);
+        m_ui.shortcutForcePreviewLabel->setVisible(m_forcePreviewValid);
+    }
     if (m_ui.shortcutFinishApplyButton != nullptr) {
         m_ui.shortcutFinishApplyButton->setVisible(interrupted);
     }
     if (m_ui.shortcutRestoreButton != nullptr) {
         m_ui.shortcutRestoreButton->setVisible(interrupted);
+    }
+    if (m_ui.shortcutForceApplyButton != nullptr) {
+        m_ui.shortcutForceApplyButton->setVisible(m_forcePreviewValid);
+    }
+    if (m_ui.shortcutForceCancelButton != nullptr) {
+        m_ui.shortcutForceCancelButton->setVisible(m_forcePreviewValid);
     }
 }
 
@@ -405,11 +552,37 @@ void ActiveBorderConfigModule::refreshShortcutState()
         return;
     }
     QString error;
-    const bool haveJournal = m_shortcutJournal->hasJournal();
+    if (!m_shortcutJournal->validateDiscovery(&error)) {
+        m_shortcutStatus = QStringLiteral("Shortcut state unavailable: canonical shortcut journal is unsafe.");
+        updateShortcutPresentation(false);
+        return;
+    }
+    bool haveJournal = m_shortcutJournal->hasJournal();
+    if (!haveJournal && m_shortcutJournal->hasExistingPath()) {
+        m_shortcutStatus = QStringLiteral("Shortcut state unavailable: canonical shortcut journal is malformed.");
+        updateShortcutPresentation(false);
+        return;
+    }
+    const JournalStore *displayJournal = m_shortcutJournal;
+    if (!haveJournal && m_shortcutLegacyJournal != nullptr) {
+        if (!m_shortcutLegacyJournal->validateDiscovery(&error)) {
+            m_shortcutStatus = QStringLiteral("Shortcut state unavailable: legacy shortcut journal is unsafe.");
+            updateShortcutPresentation(false);
+            return;
+        }
+        if (m_shortcutLegacyJournal->hasJournal()) {
+            haveJournal = true;
+            displayJournal = m_shortcutLegacyJournal;
+        } else if (m_shortcutLegacyJournal->hasExistingPath()) {
+            m_shortcutStatus = QStringLiteral("Shortcut state unavailable: legacy shortcut journal is malformed.");
+            updateShortcutPresentation(false);
+            return;
+        }
+    }
     ShortcutJournal journal;
     bool journalValid = false;
     if (haveJournal) {
-        if (!m_shortcutJournal->load(&journal, &error)) {
+        if (!displayJournal->load(&journal, &error)) {
             m_shortcutStatus = QStringLiteral("Shortcut state unavailable: %1").arg(error);
             updateShortcutPresentation(false);
             return;
@@ -646,6 +819,7 @@ void ActiveBorderConfigModule::load()
         {QStringLiteral("outerGap"), outerGap},
     };
     updateScriptState();
+    clearForcePreview();
     refreshShortcutState();
     m_tilerReloadRequired = false;
     m_tilerRestartRequired = false;

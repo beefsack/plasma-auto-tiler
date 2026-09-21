@@ -8,58 +8,53 @@ only under the separately authorized live gate. No agent participates in any
 step. Use physical keys only: D-Bus `invokeShortcut` does not prove xkb delivery.
 
 The KCM has one whole-table `Apply Shortcuts`, not a row-selective Apply. Apply
-necessarily reconciles all three conflict rows (six managed action records, not
-six rows). Phase 1 observes row 1 only; do not test rows 2-3 until Phase 2, and
+necessarily reconciles all five conflict rows (ten managed action records, not
+ten rows). Completed v2 journals retain their original three-row scope until a
+confirmed Apply upgrades them. Phase 1 observes row 1 only; do not test rows 2-5 until Phase 2, and
 Revert after Phase 1 before proceeding.
 
 ## KCM Status Vocabulary
 
-This is the status-label vocabulary at
-`kwin/native-effect/activeborderconfig_module.cpp:274-412` at HEAD. Capture
+This is the status-label vocabulary in
+`kwin/native-effect/activeborderconfig_module.cpp`'s `refreshShortcutState()`.
+Capture
 the `Shortcuts` group status label VERBATIM as the first instruction immediately
 after Apply, before retrying, closing the dialog, or anything else. Do not
-paraphrase. The separate error label can contain the reconciler result
-(`activeborderconfig_module.cpp:203-225`); preserve it too if displayed.
+paraphrase. The separate error label can contain the reconciler result; preserve
+it too if displayed.
 
 - `Shortcut state unavailable: reconciler is not configured.`
-  (`activeborderconfig_module.cpp:274`)
-- `Shortcut state unavailable: %1` - dynamic wrapper at
-  `activeborderconfig_module.cpp:284,291,298,304,363`. It covers journal-load,
-  setter-contract, owner, read-all, and keyed-occupancy unavailable detail. The
-  `:363` site is the unavailable branch of the same keyed gate as `Conflict` at
-  `:361`. KGlobalAccel malformed-reply details are now static bounded tokens,
+- `Shortcut state unavailable: %1` - dynamic wrapper for journal-load,
+  setter-contract, owner, read-all, and keyed-occupancy unavailable detail.
+  KGlobalAccel malformed-reply details are static bounded tokens,
   including `unexpected allShortcutInfos reply: empty action`, `...: oversized
   friendly`, and `...: wrong signature`; the complete token map is in
   [Shortcut Override](changes/shortcut-override.md#diagnostic-token-map).
   Record the full rendered string; it identifies the exact refusing condition
   and never includes foreign reply data.
 - `Shortcut state unavailable: allowlisted bindings are missing.`
-  (`activeborderconfig_module.cpp:339`)
 - `Shortcut state unavailable: unrelated tuple is unbounded.`
-  (`activeborderconfig_module.cpp:348`)
-- `Conflict: %1. Apply is refused.` (`activeborderconfig_module.cpp:361`) -
+- `Conflict: %1. Apply is refused.` -
   preflight refusal. Performs no write; see "Preflight Refusal" below. This is
   legitimate and safe, not a test failure.
-- `Interrupted apply found (phase %1). Finish Apply or Restore.`
-  (`activeborderconfig_module.cpp:372`) -
+- `Interrupted apply found (phase %1). Finish Apply or Restore.` -
   interrupted phase; `%1` is the journal phase (e.g. apply-pending,
   focus-applied). Only then are `Finish Apply` and `Restore` visible.
-- `Shortcuts applied (journal complete, 3 rows).`
-  (`activeborderconfig_module.cpp:381`) - full applied, journal-complete image
-  matches.
+- `Shortcuts applied (journal complete, 3 rows: Grid View and Monocle unmanaged).`
+  - completed legacy v2 image; its three original rows match and it makes no
+  claim about rows 4-5.
+- `Shortcuts applied (journal complete, 5 rows).`
+  - completed v3 image; all five rows match.
 - `Shortcuts drifted after apply-complete; live bindings differ from the recorded post image.`
-  (`activeborderconfig_module.cpp:383`)
-- `Shortcuts applied (3 rows): focus-right owns Meta+L, Lock Session owns Meta+Esc, resize-outwards-up owns Meta+Alt+K, Switch to Next cleared, resize-outwards-right owns Meta+Alt+L, Switch to Last-Used cleared.`
-  (`activeborderconfig_module.cpp:398-400`) - applied live image without a
-  matching complete journal.
-- `Ready (3 rows): Apply will assign focus-right to Meta+L and move Lock Session to Meta+Esc; assign resize-outwards-up to Meta+Alt+K clearing Switch to Next; assign resize-outwards-right to Meta+Alt+L clearing Switch to Last-Used.`
-  (`activeborderconfig_module.cpp:405-408`) - ready long string.
+- `Shortcuts applied (5 rows): focus-right owns Meta+L, Lock Session owns Meta+Esc, resize-outwards-up owns Meta+Alt+K, Switch to Next cleared, resize-outwards-right owns Meta+Alt+L, Switch to Last-Used cleared, toggle-float owns Meta+G, Grid View cleared, toggle-maximize owns Meta+M, Monocle cleared.`
+  - applied live image without a matching complete journal.
+- `Ready (5 rows): Apply will assign focus-right to Meta+L and move Lock Session to Meta+Esc; assign resize-outwards-up to Meta+Alt+K clearing Switch to Next; assign resize-outwards-right to Meta+Alt+L clearing Switch to Last-Used; assign toggle-float to Meta+G clearing Grid View; assign toggle-maximize to Meta+M clearing Monocle.`
+  - ready long string.
 - `Shortcuts differ from the allowed image.`
-  (`activeborderconfig_module.cpp:412`) - catch-all divergence.
+  - catch-all divergence.
 
-Apply confirmation (`activeborderconfig_module.cpp:205-209`) is titled `Apply
-Shortcuts` and names all three rows. Revert confirmation
-(`activeborderconfig_module.cpp:229-233`) is titled `Revert Shortcuts` and says
+Apply confirmation is titled `Apply Shortcuts` and names all five rows. Revert
+confirmation is titled `Revert Shortcuts` and says
 external edits stay untouched. Ordinary Settings Apply never changes shortcuts.
 
 ## Preconditions And Baseline
@@ -80,6 +75,10 @@ grep -n -F -e '[kwin]' -e '[ksmserver]' -e '[KDE Keyboard Layout Switcher]' \
   -e 'plasma-auto-tiler-focus-right=' \
   -e 'plasma-auto-tiler-resize-outwards-up=' \
   -e 'plasma-auto-tiler-resize-outwards-right=' \
+  -e 'plasma-auto-tiler-toggle-float=' \
+  -e 'Grid View=' \
+  -e 'plasma-auto-tiler-toggle-maximize=' \
+  -e 'KrohnkiteMonocleLayout=' \
   -e 'Lock Session=' \
   -e 'Switch to Next Keyboard Layout=' \
   -e 'Switch to Last-Used Keyboard Layout=' "$CONFIG"
@@ -90,18 +89,29 @@ kreadconfig6 --file kglobalshortcutsrc --group kwin --key plasma-auto-tiler-resi
 kreadconfig6 --file kglobalshortcutsrc --group ksmserver --key 'Lock Session'
 kreadconfig6 --file kglobalshortcutsrc --group 'KDE Keyboard Layout Switcher' --key 'Switch to Next Keyboard Layout'
 kreadconfig6 --file kglobalshortcutsrc --group 'KDE Keyboard Layout Switcher' --key 'Switch to Last-Used Keyboard Layout'
+kreadconfig6 --file kglobalshortcutsrc --group kwin --key plasma-auto-tiler-toggle-float
+kreadconfig6 --file kglobalshortcutsrc --group kwin --key 'Grid View'
+kreadconfig6 --file kglobalshortcutsrc --group kwin --key plasma-auto-tiler-toggle-maximize
+kreadconfig6 --file kglobalshortcutsrc --group kwin --key KrohnkiteMonocleLayout
 ```
 
-3. Locate the private journal read-only. Its verified filename is
-   `shortcut-override-journalrc`, with group `[ShortcutOverride]` and schema
-   `shortcut-override-v2`. Source uses the KCM process's
-   `QStandardPaths::AppConfigLocation`, so the exact host directory is
-   intentionally not guessed. This command discovers it if it already exists:
+3. Locate the private journal read-only. The canonical file is
+   `~/.config/plasma-auto-tiler/shortcut-override-journalrc` with group
+   `[ShortcutOverride]` and schema `shortcut-override-v3` (completed v2
+   journals remain loadable). The single explicit legacy source is
+   `~/.config/kcmshell6/shortcut-override-journalrc`; the KCM migrates it by
+   exact copy only after an already-confirmed mutation (Apply, Force Apply,
+   Finish Apply, Revert, Restore), immediately before reconciliation.
+   Opening, refreshing, previewing, or cancelling never writes config. Check
+   only these two exact source-known paths (with `XDG_CONFIG_HOME` fallback);
+   never scan the config tree:
 
 ```sh
-JOURNAL="$(grep -rl -m1 -F 'SchemaVersion=shortcut-override-v2' "${XDG_CONFIG_HOME:-$HOME/.config}" 2>/dev/null || true)"
-printf 'JOURNAL=%s\n' "$JOURNAL"
-test -z "$JOURNAL" || { stat -c 'size=%s mtime=%y' "$JOURNAL"; sha256sum "$JOURNAL"; grep -n -F -e '[ShortcutOverride]' -e 'SchemaVersion=' -e 'Phase=' "$JOURNAL"; }
+CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+CANONICAL="$CONFIG_HOME/plasma-auto-tiler/shortcut-override-journalrc"
+LEGACY="$CONFIG_HOME/kcmshell6/shortcut-override-journalrc"
+stat -c '%n size=%s mtime=%y' "$CANONICAL" "$LEGACY"
+grep -n -F -e '[ShortcutOverride]' -e 'SchemaVersion=' -e 'Phase=' "$CANONICAL" "$LEGACY"
 ```
 
 4. A nonempty `JOURNAL` is a possible project journal, not proof of its state.
@@ -120,7 +130,7 @@ kcmshell6 kwin/effects/configs/plasma-auto-tiler-active-border_config
 
    The graphical route is System Settings `Desktop Effects`; the direct command
    above is the verified project KCM route. In its `Shortcuts` group, the ready
-   long string (`Ready (3 rows): ...`) is valid. `Shortcuts differ from the
+    long string (`Ready (5 rows): ...`) is valid. `Shortcuts differ from the
    allowed image.` is also valid when the baseline already gives focus-right
    `Meta+L` while Lock Session still has it. A `Conflict:` / `Shortcut state
    unavailable:` preflight status is also valid and means Apply is refused
@@ -129,8 +139,9 @@ kcmshell6 kwin/effects/configs/plasma-auto-tiler-active-border_config
 
 ## Override Scope
 
-Three compiled-in conflict rows at `kwin/native-effect/shortcutreconciler.cpp:322-334`
-(six managed action records: three project actions plus three foreign actions):
+Five compiled-in conflict rows in `shortcutConflictTable()` in
+`kwin/native-effect/shortcutreconciler.cpp`
+(ten managed action records: five project actions plus five foreign actions):
 
 - Row 1: focus-right (`kwin` / `plasma-auto-tiler-focus-right`) takes `Meta+L`;
   Lock Session (`ksmserver` / `Lock Session`) moves its `Meta+L` to `Meta+Esc`.
@@ -141,12 +152,17 @@ Three compiled-in conflict rows at `kwin/native-effect/shortcutreconciler.cpp:32
   `plasma-auto-tiler-resize-outwards-right`) takes `Meta+Alt+L`; Switch to Last
   (`KDE Keyboard Layout Switcher` / `Switch to Last-Used Keyboard Layout`) is
   cleared.
+- Row 4: toggle-float (`kwin` / `plasma-auto-tiler-toggle-float`) takes
+  `Meta+G`; Grid View (`kwin` / `Grid View`) is cleared.
+- Row 5: toggle-maximize (`kwin` / `plasma-auto-tiler-toggle-maximize`) takes
+  `Meta+M`; Krohnkite Monocle (`kwin` / `KrohnkiteMonocleLayout`) is cleared.
 
 Rows 2-3 were written by the first successful Finish Apply: both Switcher
-actions are cleared in the confirmed postimage. Their physical resize chords
-remain untested. The same postimage confirms project actions at `Meta+L`,
-`Meta+Alt+K`, and `Meta+Alt+L`; Lock Session contains `Meta+Esc` and no
-`Meta+L`; and `Meta+Esc` has no other claimant in the config output.
+actions are cleared in the confirmed v2 postimage. Their physical resize chords
+remain untested. Rows 4-5 are v3-only and need user-run verification. The v2
+postimage confirms project actions at `Meta+L`, `Meta+Alt+K`, and `Meta+Alt+L`;
+Lock Session contains `Meta+Esc` and no `Meta+L`; and `Meta+Esc` has no other
+claimant in the config output.
 
 ## Preflight Refusal
 
@@ -166,6 +182,29 @@ byte-identity and journal absence. Do not retry Apply, do not run Revert or
 Restore, do not run manual restoration. A refused preflight with no mutation
 needs no restore.
 
+## Force Apply (Clear-Row Mismatches Only)
+
+When a refused Apply is caused only by unexpected values on compiled
+clear-row foreign targets, the KCM shows a preview listing each row with its
+found value, proposed clear, and paired project assignment, plus `Force Apply`
+and `Cancel` buttons. `Cancel`
+does nothing. `Force Apply` asks once more, then revalidates the previewed
+state before any write; changed state aborts with no mutation.
+
+1. Preserve the VERBATIM preview text. Force only the previewed rows: never
+   accept an unexpected extra row or value.
+2. After `Force Apply`, require the applied postimage and keep the combined
+   log path, exactly as in Phase 1 step 3.
+3. Click `Revert Shortcuts` and require the entire baseline ledger: forced
+   rows restore the previewed found values, all other rows restore the
+   baseline ledger.
+4. For inspectable failure detail, query
+   `journalctl --user --no-pager -g "plasmaautotiler.shortcut op="`. Operational
+   warnings and info are enabled by default; set
+   `QT_LOGGING_RULES="plasmaautotiler.shortcut.debug=true"` only to include
+   debug start/no-op records. Log lines carry `op=`, `stage=`, and `outcome=`
+   fields with allowlisted identities and key images only.
+
 ## Intended System Monitor Impact
 
 After a successful Apply, `Meta+Esc` will no longer open System Monitor because
@@ -183,22 +222,23 @@ onto Lock Session without rebinding System Monitor itself
 ## Phase 1 - Row 1 Observation
 
 1. Click `Apply Shortcuts`. The confirmation is titled `Apply Shortcuts` and
-   names all three rows: focus-right/Lock Session, resize-outwards-up/Switch to
-   Next, and resize-outwards-right/Switch to Last-Used. Select `Yes` only if it
-   matches the baseline ledger.
+   names all five rows: focus-right/Lock Session, resize-outwards-up/Switch to
+   Next, resize-outwards-right/Switch to Last-Used, toggle-float/Grid View, and
+   toggle-maximize/Monocle. Select `Yes` only if it matches the baseline ledger.
 2. Capture the status VERBATIM immediately, before anything else.
    - If it is a preflight `Conflict:` / `Shortcut state unavailable:`, follow
      "Preflight Refusal" above. Stop; this run is complete as a safe refusal.
-   - Otherwise expect `Shortcuts applied (journal complete, 3 rows).` or the
-     equivalent full applied long string spelling out that focus-right owns
-     `Meta+L`, Lock Session owns `Meta+Esc`, and both Switcher actions are
-     cleared. Any other unexpected status goes to "Failures"; do not retry.
-3. Re-run the six `kreadconfig6` commands plus the `grep` and `awk` commands
+   - Otherwise expect `Shortcuts applied (journal complete, 5 rows).` or the
+     equivalent full applied long string spelling out all five rows. Any other
+     unexpected status goes to "Failures"; do not retry.
+3. Re-run the ten `kreadconfig6` commands plus the `grep` and `awk` commands
    from the baseline. Find and record the now-created journal with the `JOURNAL` command.
    It must show the project actions at `Meta+L`, `Meta+Alt+K`, and `Meta+Alt+L`;
    Lock Session must contain `Meta+Esc` and no `Meta+L`; the two Switcher actions
-   must be empty. Record every non-`Meta+L` Lock Session key in its displayed
-   order. `Meta+Esc` must have no other claimant in the config output.
+   must be empty. Grid View and Krohnkite Monocle must be empty; toggle-float
+   and toggle-maximize must own `Meta+G` and `Meta+M`. Record every non-`Meta+L`
+   Lock Session key in its displayed order. `Meta+Esc` must have no other
+   claimant in the config output.
 4. With the left test window focused, physically press `Meta+L`. PASS: focus
    moves right without locking the session.
 5. Physically press `Meta+Esc`. This is intentionally part of the test. PASS:
@@ -213,7 +253,7 @@ onto Lock Session without rebinding System Monitor itself
 
 1. In the `Shortcuts` group click `Revert Shortcuts`. The confirmation is titled
    `Revert Shortcuts` and says external edits stay untouched. Select `Yes`.
-2. Re-run every baseline command. PASS: all six allowlisted records, every
+2. Re-run every baseline command. PASS: all ten allowlisted records, every
    `Meta+Esc` line, the `kglobalshortcutsrc` hash, and journal state match the
    ledger. The journal must be absent. The captured mtime is provenance only and
    may legitimately differ after a content-exact restore.
@@ -234,22 +274,23 @@ naming the journal phase (for example, `phase apply-pending` or
 
 1. `Finish Apply` is live-proven once. The observed status was `Interrupted
    apply found (phase focus-applied). Finish Apply or Restore.`; after the user
-   chose `Finish Apply`, it was `Shortcuts applied (journal complete, 3 rows).`
-   The complete three-row postimage was confirmed, and physical `Meta+L` moved
-   focus right. This does not prove the Lock Session checks or Revert.
+   chose `Finish Apply`, it was `Shortcuts applied (journal complete, 3 rows: Grid
+   View and Monocle unmanaged).` The complete legacy three-row postimage was
+   confirmed, and physical `Meta+L` moved focus right. This does not prove the
+   Lock Session checks, Revert, or v3 rows.
 2. `Restore` remains unexecuted. It would repeat the Revert confirmation; PASS
-   would require all six allowlisted entries equal their recorded preimage and
+   would require every journal-managed allowlisted entry equal its recorded preimage and
    the journal absent. Do not induce an interruption to test it.
 
 ## Phase 2 - Clear Rows
 
 Run this only after the remaining Phase 1 locking checks and Revert pass.
-Rows 2-3 are written live but physically unproven; treat physical success here
-as first evidence.
+Rows 2-5 need physical or direct KCM confirmation; treat success here as first
+evidence.
 
 1. Apply again through `Apply Shortcuts` and its same confirmation. Capture the
    status VERBATIM first; a preflight refusal ends this run per "Preflight
-   Refusal". Otherwise confirm the complete three-row postimage and keep the
+   Refusal". Otherwise confirm the complete five-row postimage and keep the
    combined log path.
 2. Arrange the three disposable windows as the normal `H[A,V[B,C]]` shape: a
    left pane `A`, and a right column with top `B` and bottom `C`. Keep focus on
@@ -309,8 +350,8 @@ If that route is unavailable, open the verified system Shortcuts module:
 systemsettings kcm_keys
 ```
 
-Restore only these exact component/action records (six managed records across
-three rows) from the baseline ledger, then save through that module and rerun
+Restore only these exact component/action records (ten managed records across
+five rows) from the baseline ledger, then save through that module and rerun
 all baseline commands until they match:
 
 | Component | Action | Restore value |
@@ -321,6 +362,10 @@ all baseline commands until they match:
 | `KDE Keyboard Layout Switcher` | `Switch to Next Keyboard Layout` | captured preimage |
 | `kwin` | `plasma-auto-tiler-resize-outwards-right` | captured preimage, including absent/empty |
 | `KDE Keyboard Layout Switcher` | `Switch to Last-Used Keyboard Layout` | captured preimage |
+| `kwin` | `plasma-auto-tiler-toggle-float` | captured preimage, including absent/empty |
+| `kwin` | `Grid View` | captured preimage |
+| `kwin` | `plasma-auto-tiler-toggle-maximize` | captured preimage, including absent/empty |
+| `kwin` | `KrohnkiteMonocleLayout` | captured preimage |
 
 The exact in-module control labels for editing a specific entry are unverified
 without launching that KCM, so do not assume a button name: select only the

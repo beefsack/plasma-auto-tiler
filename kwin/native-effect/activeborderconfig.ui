@@ -293,8 +293,18 @@
          </property>
         </widget>
        </item>
-       <item>
-        <layout class="QHBoxLayout" name="shortcutButtonLayout">
+        <item>
+         <widget class="QLabel" name="shortcutForcePreviewLabel">
+          <property name="text">
+           <string></string>
+          </property>
+          <property name="wordWrap">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="shortcutButtonLayout">
          <item>
           <widget class="QPushButton" name="shortcutApplyButton">
            <property name="text">
@@ -316,20 +326,34 @@
            </property>
           </widget>
          </item>
-         <item>
-          <widget class="QPushButton" name="shortcutRestoreButton">
-           <property name="text">
-            <string>Restore</string>
-           </property>
-          </widget>
-         </item>
-        </layout>
-       </item>
-       <item>
-        <widget class="QLabel" name="shortcutDescription">
-         <property name="text">
-          <string>Focus-right takes Meta+L; Apply moves Lock Session to Meta+Esc. Settings Apply never changes shortcuts; use these buttons with confirmation. Finish Apply and Restore appear only for an interrupted apply.</string>
-         </property>
+          <item>
+           <widget class="QPushButton" name="shortcutRestoreButton">
+            <property name="text">
+             <string>Restore</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="shortcutForceApplyButton">
+            <property name="text">
+             <string>Force Apply</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="shortcutForceCancelButton">
+            <property name="text">
+             <string>Cancel</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <widget class="QLabel" name="shortcutDescription">
+          <property name="text">
+           <string>Focus-right takes Meta+L; Apply moves Lock Session to Meta+Esc. Settings Apply never changes shortcuts; use these buttons with confirmation. Finish Apply and Restore appear only for an interrupted apply. Force Apply and Cancel appear only for a confirmed clear-row mismatch preview.</string>
+          </property>
          <property name="wordWrap">
           <bool>true</bool>
          </property>
