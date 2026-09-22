@@ -1365,6 +1365,195 @@ describe("plan/send P0 coordination through production wiring", () => {
 
         handle?.stop();
     });
+
+    it("committed trailing send prunes the vacated source on settlement without extra navigation", () => {
+        const world = makeWorld();
+        const ws1 = world.desktops[0] as FakeDesktop;
+        const ws2 = world.desktops[1] as FakeDesktop;
+        const ws3: FakeDesktop = { id: "ws-3", x11DesktopNumber: 3 };
+        const ws4: FakeDesktop = { id: "ws-4", x11DesktopNumber: 4 };
+        world.desktops.push(ws3, ws4);
+        world.workspace["desktops"] = world.desktops;
+        const winSignals = new Map<string, { desktops: FakeSignal; geometry: FakeSignal }>();
+        const mkWin = (id: string, desktop: FakeDesktop): FakeWindow => {
+            const d = fakeSignal();
+            const g = fakeSignal();
+            winSignals.set(id, { desktops: d, geometry: g });
+            const win = {
+                normalWindow: true,
+                managed: true,
+                minimized: false,
+                fullScreen: false,
+                maximizeMode: 0,
+                onAllDesktops: false,
+                internalId: id,
+                resourceClass: "test-app",
+                output: world.outputs[0] as FakeOutput,
+                desktops: [desktop],
+                frameGeometry: { x: 0, y: 0, width: 100, height: 100 },
+                desktopsChanged: d.signal,
+                frameGeometryChanged: g.signal,
+                moveResizedChanged: fakeSignal().signal,
+                fullScreenChanged: fakeSignal().signal,
+                maximizedChanged: fakeSignal().signal,
+            } as unknown as FakeWindow;
+            world.wins.push(win);
+            return win;
+        };
+        mkWin("win-1", ws1);
+        const mover = mkWin("win-mover", ws2);
+        mkWin("win-3", ws3);
+        world.workspace["activeWindow"] = mover;
+        world.currentByOutput.set(world.outputs[0] as FakeOutput, ws2);
+        world.workspace["currentDesktop"] = ws2;
+
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        const settleAllPlans = (): void => {
+            for (let round = 0; round < 12; round += 1) {
+                drainOwners(mocks);
+                const dbusBefore = mocks.dbusCalls.length;
+                for (const call of planCalls(mocks)) {
+                    const payload = call.payload;
+                    const command = payload["command"] as Record<string, unknown>;
+                    const windows = payload["windows"] as Array<Record<string, unknown>>;
+                    const removed = command["op"] === "remove" ? (command["window"] as string) : null;
+                    const geometry = windows
+                        .filter((entry) => entry["floating"] !== true && entry["window"] !== removed)
+                        .map((entry) => ({
+                            window: entry["window"],
+                            leaf: `leaf-${entry["window"] as string}`,
+                            output: entry["output"],
+                            workspace: entry["workspace"],
+                            rect: entry["rect"],
+                        }));
+                    mocks.callbacks[call.index]?.(
+                        JSON.stringify({
+                            v: 1,
+                            correlation_id: payload["correlation_id"],
+                            outcome: "planned",
+                            desired_geometry: geometry,
+                        }),
+                    );
+                }
+                drainOwners(mocks);
+                if (mocks.dbusCalls.length === dbusBefore) {
+                    break;
+                }
+            }
+        };
+        runDebounce(mocks);
+        settleAllPlans();
+        const planAfterSettle = planCalls(mocks).length;
+
+        handle?.requestWorkspaceMove(0);
+        drainOwners(mocks);
+        const requests = sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace");
+        assert.equal(requests.length, 1, "Meta+Shift+0-equivalent index 0 must start one send");
+        const sendPayload = requests[0]?.payload as Record<string, unknown>;
+        const correlation = sendPayload["correlation_id"] as string;
+        assert.equal((sendPayload["command"] as Record<string, unknown>)["target_workspace"], "ws-4");
+        assert.equal((sendPayload["domain"] as Record<string, unknown>)["workspace"], "ws-2");
+
+        mocks.callbacks[requests[0]?.index as number]?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: correlation,
+                outcome: "planned",
+                kind: "send-to-workspace",
+                base_revision: 0,
+                desired_geometry: [
+                    { window: "win-mover", leaf: "leaf-win-mover", output: "out-1", workspace: "ws-4", rect: { x: 0, y: 0, w: 1200, h: 800 } },
+                ],
+                desired_focus: { domain_output: "out-1", domain_workspace: "ws-4", leaf: "leaf-win-mover" },
+                preconditions: ["window-observed", "desired-topology-valid", "adapter-must-verify-postconditions"],
+                operation: {
+                    op: "move-tiled",
+                    window: "win-mover",
+                    leaf: "leaf-win-mover",
+                    source_output: "out-1",
+                    source_workspace: "ws-2",
+                    target_output: "out-1",
+                    target_workspace: "ws-4",
+                },
+            }),
+        );
+        assert.ok((mover.desktops as FakeDesktop[]).some((d) => d.id === "ws-4"), "mover membership write applied");
+        assert.equal(world.currentByOutput.get(world.outputs[0] as FakeOutput), ws4, "native follow reaches reused trailing target");
+        assert.equal(world.workspace["activeWindow"], mover, "native follow focuses mover");
+        assert.equal(
+            sendCalls(mocks).filter((c) => {
+                const cmd = c.payload["command"] as Record<string, unknown>;
+                return cmd["op"] === "send-to-workspace-ack" && cmd["ack_outcome"] === "accepted";
+            }).length,
+            0,
+            "accepted ack must wait for echoes",
+        );
+        assert.ok(world.desktops.some((d) => d.id === "ws-2"), "source remains present through planned/native-follow");
+
+        fire(world.signals.desktopsChanged);
+        assert.ok(world.desktops.some((d) => d.id === "ws-2"), "retained source survives mid-flight lifecycle with retention held");
+        assert.equal(world.desktops.length, 5, "trailing empty 5 appended while source retained");
+        const trailing = world.desktops[world.desktops.length - 1] as FakeDesktop;
+        assert.notEqual(trailing.id, "ws-2");
+
+        for (const [, sigs] of winSignals) {
+            fire(sigs.desktops);
+        }
+        for (const [, sigs] of winSignals) {
+            fire(sigs.geometry);
+        }
+        const ackCalls = sendCalls(mocks).filter((c) => {
+            const cmd = c.payload["command"] as Record<string, unknown>;
+            return cmd["op"] === "send-to-workspace-ack" && cmd["ack_outcome"] === "accepted";
+        });
+        assert.equal(ackCalls.length, 1, "accepted ack after echoes");
+        assert.ok(world.desktops.some((d) => d.id === "ws-2"), "source remains present through ack");
+        mocks.callbacks[ackCalls[0]?.index as number]?.(
+            JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", kind: "send-to-workspace", base_revision: 0 }),
+        );
+        const verifyCalls = sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace-verify");
+        assert.equal(verifyCalls.length, 1, "verify after ack");
+        assert.ok(world.desktops.some((d) => d.id === "ws-2"), "source remains present through verify");
+        const verifyIndex = verifyCalls[0]?.index as number;
+        mocks.callbacks[verifyIndex]?.(
+            JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", kind: "send-to-workspace", base_revision: 1 }),
+        );
+        assert.ok(mocks.logs.some((l) => l.includes(`correlation=${correlation}`) && l.includes("outcome=committed")), mocks.logs.join("\n"));
+        assert.ok(!world.desktops.some((d) => d.id === "ws-2"), "committed settlement prunes vacated source 2");
+        assert.ok(world.desktops.some((d) => d.id === "ws-4"), "target 4 survives settlement");
+        assert.equal(world.desktops.length, 4, "one trailing empty remains after source prune");
+        assert.equal(world.currentByOutput.get(world.outputs[0] as FakeOutput), ws4, "settlement preserves target current without navigation");
+        assert.equal(world.workspace["activeWindow"], mover, "settlement preserves mover focus");
+        assert.equal(
+            mocks.logs.filter((l) => l.includes("workspace-cleanup-removed:ws-2")).length,
+            1,
+            `exactly one source cleanup:\n${mocks.logs.join("\n")}`,
+        );
+
+        mocks.callbacks[verifyIndex]?.(
+            JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", kind: "send-to-workspace", base_revision: 1 }),
+        );
+        assert.equal(
+            mocks.logs.filter((l) => l.includes("workspace-cleanup-removed:ws-2")).length,
+            1,
+            "duplicate committed callback must not repeat cleanup",
+        );
+        assert.equal(world.currentByOutput.get(world.outputs[0] as FakeOutput), ws4, "duplicate must not refollow");
+        assert.equal(world.workspace["activeWindow"], mover, "duplicate must not refocus");
+
+        const planBeforeResync = planCalls(mocks).length;
+        assert.equal(planBeforeResync, planAfterSettle, "no Plan dispatch before debounced resync");
+        runDebounce(mocks);
+        assert.equal(planCalls(mocks).length, planBeforeResync + 1, "exactly one coalesced Plan resync after commit");
+        settleAllPlans();
+        runDebounce(mocks);
+        assert.ok(!world.desktops.some((d) => d.id === "ws-2"), "deferred admission must not race removed source back");
+        assert.equal(world.currentByOutput.get(world.outputs[0] as FakeOutput), ws4, "deferred admission preserves target current");
+        assert.equal(world.workspace["activeWindow"], mover, "deferred admission preserves mover focus");
+
+        handle?.stop();
+    });
 });
 
 describe("production Planner activation bridge", () => {

@@ -3128,6 +3128,13 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             } catch (error) {
                 void error;
             }
+            // The send adapter releases source/target retention before this
+            // committed-only callback, so lifecycle cleanup may now prune it.
+            try {
+                workspaceNative.handleTopologySignal();
+            } catch (error) {
+                void error;
+            }
         },
         setGeometry: (target, rect) => {
             try {

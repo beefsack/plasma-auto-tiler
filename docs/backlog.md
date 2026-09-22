@@ -15,8 +15,15 @@ Only meaningful pending or active work is listed.
   through restart, then removes it after navigation while preserving occupied
   five and trailing six. Per-output minimum, occupancy, any-output visibility,
   displacement, transaction retention, and unmapped protections pass offline.
-  Typecheck and all 878 KWin tests pass. Next: user restarts the development script
-  and verifies the original close-window/navigate-away sequence.
+  User reports solid behavior after deployment, but sending the lone window from
+  two to trailing four leaves empty two until another navigation. Follow-time
+  cleanup correctly held the pending source; successful commit released retention
+  without scheduling native cleanup. Commit now requests native reconciliation
+  after release; uncertain/failure paths stay unchanged. Regression proves two
+  survives verification, five becomes trailing empty, and commit removes two
+  without changing target visibility/focus or waiting for navigation. Typecheck
+  and all 879 KWin tests pass. Next: user restarts the development script and
+  repeats the `Meta+Shift+0` send/follow sequence.
 - P1 | Initial border state confirmation live gate | Implemented default-hidden
   visibility with exact active-window identity, effect-instance epoch, ordered
   script observations, and native maximise veto. Missing/stale state stays hidden;
