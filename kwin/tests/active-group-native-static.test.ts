@@ -19,10 +19,14 @@ function countMatches(body: string, pattern: RegExp): number {
 
 describe("active-group native static contract", () => {
     it("exposes setter, clear, and a read-only status query through the effect-owned endpoint", () => {
-        assert.equal(countMatches(effectImpl, /Q_SCRIPTABLE/g), 3);
+        assert.equal(countMatches(effectImpl, /Q_SCRIPTABLE/g), 7);
         assert.match(effectImpl, /SetGroupHighlight/);
         assert.match(effectImpl, /ClearGroupHighlight/);
         assert.match(effectImpl, /GetGroupHighlightStatus/);
+        assert.match(effectImpl, /SetInitialMaximizeState/);
+        assert.match(effectImpl, /ClearInitialMaximizeState/);
+        assert.match(effectImpl, /GetInitialMaximizeEpoch/);
+        assert.match(effectImpl, /LastVerdict/);
         assert.match(effectHeader, /groupHighlightStatus\(\) const/);
         assert.match(effectImpl, /Q_CLASSINFO\("D-Bus Interface", "org\.plasmaautotiler\.ActiveBorder1"\)/);
         assert.match(effectImpl, /QDBusConnection::sessionBus/);
@@ -53,7 +57,8 @@ describe("active-group native static contract", () => {
         assert.match(effectImpl, /m_borderItem\.setParentItem\(effects->scene\(\)->overlayItem\(\)\)/);
         assert.match(effectImpl, /const QRectF innerRect = activeBorderInnerRect\(state\.innerRect, gap\)/);
         assert.match(effectImpl, /m_borderItem\.setInnerRect\(window \? window->windowItem\(\)->mapFromScene\(innerRect\) : RectF\(\)\)/);
-        assert.match(effectImpl, /m_borderItem\.setVisible\(state\.visible\)/);
+        assert.match(effectImpl, /const bool visible = state\.visible && initialOk/);
+        assert.match(effectImpl, /m_borderItem\.setVisible\(visible\)/);
     });
 
     it("gates group visibility on passive Meta observation with unknown-before-first-signal invisible", () => {
@@ -72,6 +77,28 @@ describe("active-group native static contract", () => {
         assert.match(effectImpl, /updateGroupVisibility/);
     });
 
+    it("hides both borders until the exact current window confirms normal", () => {
+        assert.match(effectHeader, /InitialMaximizeState m_initialState/);
+        assert.match(effectHeader, /QString m_initialEpoch/);
+        assert.match(effectHeader, /initialMaximizeEpoch\(\) const/);
+        assert.match(effectImpl, /initial_maximize_state_init/);
+        assert.match(effectImpl, /initial_maximize_apply/);
+        assert.match(effectImpl, /initial_maximize_clear/);
+        assert.match(effectImpl, /initial_maximize_is_confirmed/);
+        assert.match(effectImpl, /initial_maximize_allows_display/);
+        assert.match(effectImpl, /QUuid::createUuid/);
+        assert.match(effectImpl, /m_initialEpoch/);
+        assert.match(logic, /activeBorderInitialGate/);
+        // Script state never mutates native maximize tracking.
+        assert.doesNotMatch(effectImpl, /m_maximizedWindows\.insert\(.*initial/i);
+        // No Qt JSON parsing: strict POD arrives through the Rust staticlib.
+        assert.doesNotMatch(effectImpl, /QJsonDocument/);
+        assert.match(ffi, /InitialMaximizeState/);
+        assert.match(ffi, /initial_maximize_apply/);
+        assert.match(rust, /active_window/);
+        assert.match(rust, /maximize_mode/);
+    });
+
     it("binds focus, clears on activation, and fails closed on endpoint loss", () => {
         // Accepted payload focused_window binds to the live active internalId.
         assert.match(effectImpl, /internalId/);
@@ -81,6 +108,8 @@ describe("active-group native static contract", () => {
         // Focus activation clears immediately before async refresh.
         assert.match(effectImpl, /windowActivated/);
         assert.match(effectImpl, /clearGroupHighlight/);
+        // Deleted/closed tracked windows clear initial authority as well.
+        assert.match(effectImpl, /clearInitialGate/);
         // Registration failure fails closed with no retry.
         assert.match(effectHeader, /m_groupDbusAvailable/);
         assert.match(effectImpl, /m_groupDbusAvailable/);
@@ -145,16 +174,77 @@ describe("active-group native static contract", () => {
         assert.match(cmake, /GROUP_LOGIC/);
         assert.match(cmake, /GROUP_FFI/);
         assert.match(cmake, /GROUP_RUST/);
+        assert.match(cmake, /DRAG_HEADER/);
+        assert.match(cmake, /DRAG_IMPL/);
+        assert.match(cmake, /DRAG_FFI/);
+        assert.match(cmake, /DRAG_RUST/);
+        assert.match(cmake, /validate-unified-lifecycle\.cmake/);
         assert.match(validator, /GROUP_HEADER/);
         assert.match(validator, /GROUP_IMPL/);
         assert.match(validator, /GROUP_LOGIC/);
         assert.match(validator, /SetGroupHighlight/);
         assert.match(validator, /ClearGroupHighlight/);
+        assert.match(validator, /SetInitialMaximizeState/);
+        assert.match(validator, /ClearInitialMaximizeState/);
+        assert.match(validator, /GetInitialMaximizeEpoch/);
+        assert.match(validator, /LastVerdict/);
+        assert.match(validator, /initial_maximize_apply/);
         assert.match(validator, /mouseChanged/);
         assert.match(validator, /MetaModifier/);
         assert.match(validator, /OutlinedBorderItem/);
         assert.match(validator, /group_highlight_focus_matches/);
         assert.match(validator, /group_highlight_is_visible/);
         assert.match(validator, /m_groupDbusAvailable/);
+    });
+
+    it("folds the drag oracle into the survivor with one shared lifecycle and no second plugin", () => {
+        // Oracle D-Bus endpoint and LastVerdict contract survive unchanged.
+        assert.match(effectImpl, /Q_CLASSINFO\("D-Bus Interface", "org\.plasmaautotiler\.DragOracle1"\)/);
+        assert.match(effectImpl, /registerService\(QStringLiteral\("org\.plasmaautotiler\.DragOracle"\)\)/);
+        assert.match(effectImpl, /registerObject\(QStringLiteral\("\/org\/plasmaautotiler\/DragOracle"\)/);
+        assert.match(effectImpl, /unregisterObject\(QStringLiteral\("\/org\/plasmaautotiler\/DragOracle"\)\)/);
+        assert.match(effectImpl, /unregisterService\(QStringLiteral\("org\.plasmaautotiler\.DragOracle"\)\)/);
+        // Copied verdict before the D-Bus return; never a borrowed view.
+        assert.match(effectImpl, /drag_oracle_last_copy/);
+        assert.doesNotMatch(effectImpl, /drag_oracle_last\(/);
+        assert.match(effectImpl, /drag_oracle_record/);
+        // Exactly one shared hookup set: single stacking-order pass and one
+        // windowAdded/closed/deleted connection each driving both maximize
+        // tracking and oracle start/finish state.
+        assert.equal(countMatches(effectImpl, /stackingOrder/g), 1);
+        assert.equal(countMatches(effectImpl, /EffectsHandler::windowAdded/g), 1);
+        assert.equal(countMatches(effectImpl, /EffectsHandler::windowClosed/g), 1);
+        assert.equal(countMatches(effectImpl, /EffectsHandler::windowDeleted/g), 1);
+        assert.match(effectImpl, /attachOracleWindow/);
+        assert.match(effectImpl, /forgetOracleWindow/);
+        assert.match(effectImpl, /onOracleDragStart/);
+        assert.match(effectImpl, /onOracleDragFinish/);
+        assert.match(effectImpl, /windowStartUserMovedResized/);
+        assert.match(effectImpl, /windowFinishUserMovedResized/);
+        assert.match(effectImpl, /moveResizeGeometry/);
+        assert.match(effectImpl, /oracleMoveResizeRect/);
+        // The original observer was rendering-independent. The survivor must
+        // attach it before the active-border-only OpenGL early return.
+        const oracleSetup = effectImpl.indexOf("m_oracleDbusObject =");
+        assert.ok(oracleSetup >= 0);
+        assert.ok(effectImpl.indexOf("attachOracleWindow(window);", oracleSetup) < effectImpl.indexOf("m_borderItem.setZ(-1)", oracleSetup));
+        // No second plugin effect or factory.
+        assert.doesNotMatch(effectImpl, /DragOracleEffect/);
+        assert.doesNotMatch(effectImpl, /dragoracle-metadata\.json/);
+        assert.doesNotMatch(effectImpl, /plasma-auto-tiler-drag-oracle/);
+        assert.doesNotMatch(effectHeader, /DragOracleEffect/);
+        assert.match(effectHeader, /m_oracleDbusObject/);
+        assert.match(effectHeader, /m_oracleStartRects/);
+        assert.match(effectHeader, /drag_oracle_ffi\.h/);
+        // Rendering untouched: still exactly two outlines.
+        assert.equal(countMatches(effectHeader, /OutlinedBorderItem/g), 2);
+        // Oracle Rust FFI and pull protocol surface stay intact.
+        const oracleFfi = read("native-effect/drag_oracle_ffi.h");
+        const oracleRust = read("native-effect/drag_oracle.rs");
+        assert.match(oracleFfi, /DragOracleRect/);
+        assert.match(oracleFfi, /drag_oracle_record/);
+        assert.match(oracleFfi, /drag_oracle_last_copy/);
+        assert.match(oracleRust, /drag_oracle_last_copy/);
+        assert.match(oracleRust, /correlation/);
     });
 });

@@ -5,25 +5,6 @@
                           http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
     <kcfgfile name=""/>
     <group name="">
-        <entry name="tilingAlgorithm" type="Enum">
-            <label>The preset the automatic takeover applies when it adopts a scope</label>
-            <default>dwindle</default>
-            <choices>
-                <choice name="columns" value="columns"/>
-                <choice name="rows" value="rows"/>
-                <choice name="balanced-grid" value="balanced-grid"/>
-                <choice name="dwindle" value="dwindle"/>
-            </choices>
-        </entry>
-        <entry name="automaticSplitTarget" type="Enum">
-            <label>The occupied leaf a newly opened window is automatically tiled into</label>
-            <default>dwindle</default>
-            <choices>
-                <choice name="dwindle" value="dwindle"/>
-                <choice name="largest" value="largest"/>
-                <choice name="active" value="active"/>
-            </choices>
-        </entry>
         <entry name="workspaceMode" type="Enum">
             <label>The multi-output workspace model</label>
             <default>per-output-local</default>
@@ -41,10 +22,6 @@
                 <choice name="hyprland" value="hyprland"/>
                 <choice name="bspwm" value="bspwm"/>
             </choices>
-        </entry>
-        <entry name="dropOutlinePreview" type="Bool">
-            <label>Show a destination outline while dragging a tiled window</label>
-            <default>false</default>
         </entry>
         <entry name="innerGap" type="Int">
             <label>Gap between tiled windows</label>

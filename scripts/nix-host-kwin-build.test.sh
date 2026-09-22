@@ -59,7 +59,6 @@ if [[ -n "$build_dir" ]]; then
     *"--build"*)
       mkdir -p "$build_dir/bin/kwin/effects/plugins" "$build_dir/bin/kwin/effects/configs"
       printf 'fake-so\n' > "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-      printf 'fake-drag\n' > "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
       printf 'fake-kcm\n' > "$build_dir/bin/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
       ;;
   esac

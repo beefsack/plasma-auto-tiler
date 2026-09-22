@@ -1,13 +1,16 @@
 #pragma once
 
+#include "drag_oracle_ffi.h"
 #include "group_highlight_ffi.h"
 
 #include <effect/effect.h>
 #include <effect/effectwindow.h>
 #include <scene/outlinedborderitem.h>
 
+#include <QHash>
 #include <QPointF>
 #include <QPointer>
+#include <QRect>
 #include <QRectF>
 #include <QSet>
 #include <QString>
@@ -26,12 +29,19 @@ public:
     void applyGroupHighlight(const QString &payload);
     void clearGroupHighlight();
     QString groupHighlightStatus() const;
+    void applyInitialMaximizeState(const QString &payload);
+    void clearInitialMaximizeState(const QString &payload);
+    QString initialMaximizeEpoch() const;
 
 private:
     void reconfigure(ReconfigureFlags flags) override;
     void setTrackedWindow(EffectWindow *window);
     void subscribeMaximize(EffectWindow *window);
     void unsubscribeMaximize(EffectWindow *window);
+    void attachOracleWindow(EffectWindow *window);
+    void forgetOracleWindow(EffectWindow *window);
+    void onOracleDragStart(EffectWindow *window);
+    void onOracleDragFinish(EffectWindow *window);
     void updateMaximizedState(EffectWindow *window, bool maximized);
     void updateBorder();
     void updateOutline();
@@ -48,10 +58,27 @@ private:
     QSet<EffectWindow *> m_maximizedWindows;
     QSet<EffectWindow *> m_maximizeSubscribed;
     QObject *m_groupDbusObject = nullptr;
+    // Slice 1 drag oracle folded into this surviving effect: inert read-only
+    // observer state only (start rects plus the D-Bus object). The verdict
+    // policy lives in the std-only Rust staticlib behind the POD C ABI.
+    QObject *m_oracleDbusObject = nullptr;
+    QHash<EffectWindow *, QRect> m_oracleStartRects;
+    QSet<EffectWindow *> m_oracleAttached;
     // Pure group policy state lives in the std-only Rust staticlib; C++
     // holds it by value and forwards QString-to-UTF8 bytes plus POD
     // observer flags. Rendering reads the POD rect back out.
     GroupHighlightState m_groupState{};
+    // Hide-until-confirmed initial maximize gate, same staticlib pattern.
+    // Never mutates m_maximizedWindows: native transition signals stay
+    // authoritative and override any delayed script zero. m_initialEpoch is
+    // minted once per effect instance; every handoff payload generation must
+    // equal it exactly, so an old script generation can never authorize a
+    // new effect.
+    InitialMaximizeState m_initialState{};
+    QString m_initialEpoch;
+    void handleInitialPayload(const QString &payload);
+    void clearInitialGate();
+    bool isInitialConfirmedNormal() const;
     bool m_groupVisible = false;
     bool m_metaHeld = false;
     bool m_firstMouseSeen = false;

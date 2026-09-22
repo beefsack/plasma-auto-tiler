@@ -1,8 +1,8 @@
 {
     "KPlugin": {
         "Id": "plasma-auto-tiler-active-border",
-        "Name": "Active Window Border",
-        "Description": "Draws a configurable border around the active window.",
+        "Name": "Plasma Auto Tiler",
+        "Description": "Plasma Auto Tiler active border with group overlay and drag oracle.",
         "EnabledByDefault": false,
         "Icon": "preferences-system-windows",
         "License": "GPL-2.0-or-later"

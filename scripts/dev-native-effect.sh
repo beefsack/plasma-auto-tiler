@@ -20,10 +20,8 @@ ENV_FILE="$CONFIG_ROOT/plasma-workspace/env/60-plasma-auto-tiler-native-effect.s
 PROC_ROOT="${PROC_ROOT:-/proc}"
 
 BORDER_EFFECT="plasma-auto-tiler-active-border"
-ORACLE_EFFECT="plasma-auto-tiler-drag-oracle"
 
 BORDER_SO="$STAGE/kwin/effects/plugins/$BORDER_EFFECT.so"
-ORACLE_SO="$STAGE/kwin/effects/plugins/$ORACLE_EFFECT.so"
 
 usage() {
   cat <<'EOF'
@@ -37,11 +35,11 @@ Commands:
              checkout; refuses symlinks, non-regular files, and unfamiliar
              or alternate-checkout content. Never touches kwinrc or D-Bus.
              Takes effect only after user logout/login (or a new session).
-  remove     delete only the exact project-owned env script above when its
-             content matches this checkout. Refuses symlinks, non-regular
-             files, and unfamiliar content. Never removes parent dirs.
-   preflight  query /Effects isEffectSupported/isEffectLoaded for both dev
-              effects with strict parsing and KWin owner capture. Read-only.
+   remove     delete only the exact project-owned env script above when its
+              content matches this checkout. Refuses symlinks, non-regular
+              files, and unfamiliar content. Never removes parent dirs.
+    preflight  query /Effects isEffectSupported/isEffectLoaded for the dev
+               effect with strict parsing and KWin owner capture. Read-only.
    load <effect> --expect-owner <owner> --expect-pid <pid> --expect-start <tick>
               transiently load one effect after verifying the KWin owner.
    unload <effect> --expect-owner <owner> --expect-pid <pid> --expect-start <tick>
@@ -68,10 +66,6 @@ expected_env_contents() {
 cmd_setup() {
   if [[ ! -f "$BORDER_SO" ]]; then
     echo "error: staged border effect missing: $BORDER_SO; run 'just build-native-effect' first (inside 'devenv shell --impure')" >&2
-    exit 1
-  fi
-  if [[ ! -f "$ORACLE_SO" ]]; then
-    echo "error: staged drag-oracle effect missing: $ORACLE_SO; run 'just build-native-effect' first (inside 'devenv shell --impure')" >&2
     exit 1
   fi
   if [[ -L "$ENV_FILE" ]]; then
@@ -128,8 +122,7 @@ cmd_setup() {
   rm -f -- "$tmp"
   echo "dev-native-setup: wrote $ENV_FILE"
   echo "staged: $BORDER_SO"
-  echo "staged: $ORACLE_SO"
-  echo "note: log out and log back in (or start a new session) before KWin can discover the staged effects; setup never applies to the running KWin."
+  echo "note: log out and log back in (or start a new session) before KWin can discover the staged effect; setup never applies to the running KWin."
 }
 
 cmd_remove() {
@@ -248,20 +241,17 @@ effect_loaded_word() {
 # Nix host, the running KWin package path supplies the corresponding version.
 # This is only a diagnostic: an unrecognized layout leaves preflight generic.
 native_abi_skew_hint() {
-  local status runtime_bin runtime_version border_iid oracle_iid border_version oracle_version
-  [[ -f "$BORDER_SO" && -f "$ORACLE_SO" ]] || return 1
+  local status runtime_bin runtime_version border_iid border_version
+  [[ -f "$BORDER_SO" ]] || return 1
   status="$(busctl --user status org.kde.KWin 2>/dev/null)" || return 1
   runtime_bin="$(sed -n 's/^CommandLine=\([^[:space:]]*\).*$/\1/p' <<<"$status")"
   [[ "$runtime_bin" =~ ^/nix/store/[^/]+-kwin-([0-9]+\.[0-9]+\.[0-9]+)/bin/kwin_wayland$ ]] || return 1
   runtime_version="${BASH_REMATCH[1]}"
   border_iid="$(LC_ALL=C grep -aoE 'org\.kde\.kwin\.EffectPluginFactory[0-9]+\.[0-9]+\.[0-9]+' "$BORDER_SO" 2>/dev/null | sort -u)"
-  oracle_iid="$(LC_ALL=C grep -aoE 'org\.kde\.kwin\.EffectPluginFactory[0-9]+\.[0-9]+\.[0-9]+' "$ORACLE_SO" 2>/dev/null | sort -u)"
   [[ "$border_iid" =~ ^org\.kde\.kwin\.EffectPluginFactory([0-9]+\.[0-9]+\.[0-9]+)$ ]] || return 1
   border_version="${BASH_REMATCH[1]}"
-  [[ "$oracle_iid" =~ ^org\.kde\.kwin\.EffectPluginFactory([0-9]+\.[0-9]+\.[0-9]+)$ ]] || return 1
-  oracle_version="${BASH_REMATCH[1]}"
-  [[ "$border_version" != "$runtime_version" || "$oracle_version" != "$runtime_version" ]] || return 1
-  echo "hint: staged native effect ABI differs from running KWin (active-border=$border_version, drag-oracle=$oracle_version, KWin=$runtime_version); rebuild the stage with a matching KWin development package, then start a new Plasma session. Setup alone cannot resolve this ABI mismatch." >&2
+  [[ "$border_version" != "$runtime_version" ]] || return 1
+  echo "hint: staged native effect ABI differs from running KWin (active-border=$border_version, KWin=$runtime_version); rebuild the stage with a matching KWin development package, then start a new Plasma session. Setup alone cannot resolve this ABI mismatch." >&2
 }
 
 verify_kwin_owner() {
@@ -329,21 +319,18 @@ cmd_preflight() {
     echo "error: could not capture KWin PID/start identity for pid $kwin_pid; refusing" >&2
     exit 1
   }
-  local border_supported oracle_supported border_loaded oracle_loaded
+  local border_supported border_loaded
   border_supported="$(effect_supported_word "$BORDER_EFFECT")" || exit 1
-  oracle_supported="$(effect_supported_word "$ORACLE_EFFECT")" || exit 1
   border_loaded="$(effect_loaded_word "$BORDER_EFFECT")" || exit 1
-  oracle_loaded="$(effect_loaded_word "$ORACLE_EFFECT")" || exit 1
   printf 'kwin_owner=%s\n' "$kwin_owner"
   printf 'kwin_pid=%s\n' "$kwin_pid"
   printf 'kwin_start=%s\n' "$kwin_start"
   printf 'effect %s supported=%s loaded=%s\n' "$BORDER_EFFECT" "$border_supported" "$border_loaded"
-  printf 'effect %s supported=%s loaded=%s\n' "$ORACLE_EFFECT" "$oracle_supported" "$oracle_loaded"
-  if [[ "$border_supported" != "true" || "$oracle_supported" != "true" ]]; then
-    echo "error: one or more dev native effects are unavailable to KWin (isEffectSupported: $BORDER_EFFECT=$border_supported, $ORACLE_EFFECT=$oracle_supported)" >&2
+  if [[ "$border_supported" != "true" ]]; then
+    echo "error: the dev native effect is unavailable to KWin (isEffectSupported: $BORDER_EFFECT=$border_supported)" >&2
     echo "hint: this result does not establish a session boundary and may indicate a plugin load, factory, or ABI failure, not only missing discovery." >&2
     if ! native_abi_skew_hint; then
-      echo "hint: run 'just dev-native-setup', then log out and log back in (or start a new session), then re-run. If still unsupported after a new session with a current env script, check KWin plugin-loading diagnostics (journalctl --user -b) around $BORDER_EFFECT / $ORACLE_EFFECT." >&2
+      echo "hint: run 'just dev-native-setup', then log out and log back in (or start a new session), then re-run. If still unsupported after a new session with a current env script, check KWin plugin-loading diagnostics (journalctl --user -b) around $BORDER_EFFECT." >&2
     fi
     exit 2
   fi
@@ -375,8 +362,8 @@ cmd_load() {
       *) echo "error: unknown load argument '$1'" >&2; exit 1 ;;
     esac
   done
-  if [[ "$effect" != "$BORDER_EFFECT" && "$effect" != "$ORACLE_EFFECT" ]]; then
-    echo "error: refusing to load unexpected effect '$effect' (expected $BORDER_EFFECT or $ORACLE_EFFECT)" >&2
+  if [[ "$effect" != "$BORDER_EFFECT" ]]; then
+    echo "error: refusing to load unexpected effect '$effect' (expected $BORDER_EFFECT)" >&2
     exit 1
   fi
   verify_kwin_owner "$expect_owner" "$expect_pid" "$expect_start" || exit 1
@@ -426,8 +413,8 @@ cmd_unload() {
       *) echo "error: unknown unload argument '$1'" >&2; exit 1 ;;
     esac
   done
-  if [[ "$effect" != "$BORDER_EFFECT" && "$effect" != "$ORACLE_EFFECT" ]]; then
-    echo "error: refusing to unload unexpected effect '$effect' (expected $BORDER_EFFECT or $ORACLE_EFFECT)" >&2
+  if [[ "$effect" != "$BORDER_EFFECT" ]]; then
+    echo "error: refusing to unload unexpected effect '$effect' (expected $BORDER_EFFECT)" >&2
     exit 1
   fi
   verify_kwin_owner "$expect_owner" "$expect_pid" "$expect_start" || {

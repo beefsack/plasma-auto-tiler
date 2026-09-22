@@ -75,13 +75,11 @@ private:
 
     ::Ui::ActiveBorderConfig m_ui;
     QVariantMap m_loadedScriptValues;
-    bool m_loadedDropOutlinePreviewRawValid = true;
     bool m_loadedInnerGapRawValid = true;
     bool m_loadedOuterGapRawValid = true;
     bool m_effectReconfigurePending = false;
     bool m_tilerReloadRequired = false;
     bool m_tilerRestartRequired = false;
-    bool m_tilerUnconsumedPending = false;
     QString m_tilerReloadStatus;
     ShortcutStore *m_shortcutStore = nullptr;
     JournalStore *m_shortcutJournal = nullptr;

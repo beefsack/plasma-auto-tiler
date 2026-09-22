@@ -1328,11 +1328,11 @@ describe("four-desktop terminal-run send with bounded fence", () => {
         assert.ok((winM.desktops as unknown[]).includes(ws2), "mover membership in target");
         assert.ok(world.desktops.some((entry) => entry.id === "ws-4"), "still no retirement before post-follow cleanup");
         fireMoverEcho(winM as object);
-        assert.ok(!world.desktops.some((entry) => entry.id === "ws-4"), "preexisting terminal empty 4 removed only after follow to 2");
+        assert.ok(world.desktops.some((entry) => entry.id === "ws-4"), "preexisting unowned terminal empty 4 preserved under owned-only policy");
         assert.ok(world.desktops.some((entry) => entry.id === "ws-3"), "empty source 3 retained as trailing");
         assert.ok(world.desktops.some((entry) => entry.id === "ws-1"), "occupied ws-1 with fullscreen/maximized survives");
         assert.ok(world.desktops.some((entry) => entry.id === "ws-2"), "current target survives");
-        assert.equal(world.desktops.length, 3);
+        assert.equal(world.desktops.length, 4);
         handle.requestWorkspaceMove(3);
         mocks.callbacks[mocks.callbacks.length - 1]?.(":1.7");
         const request2 = mocks.dbusCalls.filter((call) => call.payload.includes("\"op\":\"send-to-workspace\""))[1];
@@ -1403,8 +1403,8 @@ describe("global-unique and shared preexisting terminal collapse", () => {
         const after = ids(world);
         assert.ok(after.includes("ws-1"), "occupied head survives");
         assert.ok(after.includes("ws-2"), "first terminal empty retained");
-        assert.ok(!after.includes("ws-3") && !after.includes("ws-4"), `later empties removed: ${after.join(",")}`);
-        assert.equal(world.desktops.length, 2, "floor of two global desktops");
+        assert.ok(after.includes("ws-3") && after.includes("ws-4"), `preexisting unowned empties preserved: ${after.join(",")}`);
+        assert.equal(world.desktops.length, 4, "owned-only policy preserves unowned");
         adapter.disable();
 
         const gated = fakeWorld("global-unique", ["out-1"], ["ws-1", "ws-2", "ws-3", "ws-4"]);
@@ -1421,7 +1421,7 @@ describe("global-unique and shared preexisting terminal collapse", () => {
         second.handleTopologySignal();
         const collapsed = ids(gworld);
         assert.ok(collapsed.includes("ws-1") && collapsed.includes("ws-2"), `first retained after nonvisible: ${collapsed.join(",")}`);
-        assert.ok(!collapsed.includes("ws-3") && !collapsed.includes("ws-4"), `later removed after nonvisible: ${collapsed.join(",")}`);
+        assert.ok(collapsed.includes("ws-3") && collapsed.includes("ws-4"), `unowned later preserved after nonvisible: ${collapsed.join(",")}`);
         second.disable();
     });
 
@@ -1438,7 +1438,7 @@ describe("global-unique and shared preexisting terminal collapse", () => {
         const after = ids(gworld);
         assert.ok(after.includes("ws-2"), `empty gap preserved: ${after.join(",")}`);
         assert.ok(after.includes("ws-4"), `first terminal empty retained: ${after.join(",")}`);
-        assert.ok(!after.includes("ws-5"), `only literal-last extra removed: ${after.join(",")}`);
+        assert.ok(after.includes("ws-5"), `preexisting unowned literal-last preserved: ${after.join(",")}`);
         assert.ok(after.includes("ws-1") && after.includes("ws-3"), "occupied members survive");
         adapter.disable();
 
@@ -1471,7 +1471,7 @@ describe("global-unique and shared preexisting terminal collapse", () => {
         addWindow(sworld, "win-sticky", sws4, { onAllDesktops: true });
         const { adapter: shandle } = startNative(sworld, "global-unique");
         shandle.handleTopologySignal();
-        assert.ok(!ids(sworld).includes("ws-4"), "sticky-only terminal still collapses to one trailing");
+        assert.ok(ids(sworld).includes("ws-4"), "sticky-only unowned terminal preserved");
         assert.ok(ids(sworld).includes("ws-2"), "first terminal retained");
         shandle.disable();
 
@@ -1496,8 +1496,8 @@ describe("global-unique and shared preexisting terminal collapse", () => {
         adapter.handleTopologySignal();
         const after = ids(world);
         assert.ok(after.includes("ws-1") && after.includes("ws-2"), `first retained: ${after.join(",")}`);
-        assert.ok(!after.includes("ws-3") && !after.includes("ws-4"), `later removed: ${after.join(",")}`);
-        assert.equal(world.desktops.length, 2);
+        assert.ok(after.includes("ws-3") && after.includes("ws-4"), `preexisting unowned later preserved: ${after.join(",")}`);
+        assert.equal(world.desktops.length, 4);
         adapter.disable();
 
         const gated = fakeWorld("shared", ["out-1"], ["ws-1", "ws-2", "ws-3", "ws-4"]);
@@ -1513,7 +1513,7 @@ describe("global-unique and shared preexisting terminal collapse", () => {
         setCurrent(gworld, gws1);
         second.handleTopologySignal();
         const collapsed = ids(gworld);
-        assert.ok(!collapsed.includes("ws-3") && !collapsed.includes("ws-4"), `later removed after nonvisible: ${collapsed.join(",")}`);
+        assert.ok(collapsed.includes("ws-3") && collapsed.includes("ws-4"), `unowned later preserved after nonvisible: ${collapsed.join(",")}`);
         second.disable();
     });
 
@@ -1530,7 +1530,7 @@ describe("global-unique and shared preexisting terminal collapse", () => {
         const after = ids(gworld);
         assert.ok(after.includes("ws-2"), `empty gap preserved: ${after.join(",")}`);
         assert.ok(after.includes("ws-4"), "first terminal retained");
-        assert.ok(!after.includes("ws-5"), "literal-last extra removed");
+        assert.ok(after.includes("ws-5"), "preexisting unowned literal-last preserved");
         adapter.disable();
 
         for (const kind of ["fullscreen", "maximized", "tiled"] as const) {

@@ -331,6 +331,16 @@ if [[ "${1:-}" == "derivation" ]]; then
   printf '{"derivations":{"%s":{"env":{"dev":"%s"},"outputs":{"out":{"path":"%s"},"dev":{"path":"%s"}}}}}\n' "${FAKE_DRV:?}" "${FAKE_DEV_OUT:?}" "${FAKE_STORE_PATH:?}" "${FAKE_DEV_OUT:?}"
   exit 0
 fi
+if [[ "${1:-}" == "build" ]]; then
+  if [[ -f "$state/nix-build-fail" ]]; then
+    echo "fake nix: simulated exact dev realization failure" >&2
+    exit 1
+  fi
+  [[ "${2:-}" == "${FAKE_DRV:?}^dev" ]] || { echo "fake nix: expected exact dev output" >&2; exit 2; }
+  mkdir -p "${FAKE_DEV_OUT:?}/lib/cmake/KWin"
+  printf '# realized KWinConfig\n' > "${FAKE_DEV_OUT:?}/lib/cmake/KWin/KWinConfig.cmake"
+  exit 0
+fi
 if [[ "${1:-}" == "develop" ]]; then
   if [[ -f "$state/nix-develop-fail" ]]; then
     echo "fake nix: simulated develop failure" >&2
@@ -1043,6 +1053,125 @@ assert_cmp "$WORK/env-first.sh" "$EFFECT_ENV_FILE"
 assert_count 1 "$(grep -c QT_PLUGIN_PATH "$EFFECT_ENV_FILE")" "QT_PLUGIN_PATH lines in env script after re-run"
 assert_count 1 "$(grep -c '^plasma-auto-tiler-active-borderEnabled=' "$CONFIG/kwinrc")" "plasma-auto-tiler-active-borderEnabled lines in kwinrc after re-run"
 assert_not_contains "logout/login"
+
+# effect-install: staging publishes only the survivor .so plus the KCM; no
+# standalone oracle artifact remains under the project-owned staging root.
+reset_state
+run_script effect-install
+check_exit 0
+EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
+assert_not_exists "$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
+assert_find_count 1 "$EFFECT_ROOT/kwin/effects/plugins" "files in the staged native plugin namespace after consolidation" -mindepth 1 -maxdepth 1 -type f
+assert_find_count 2 "$EFFECT_ROOT/kwin/effects" "files in the complete staged native namespace after consolidation" -type f
+
+# effect-install migration truth table: exact legacy "true" enables the
+# survivor and then sets the legacy oracle key false; other keys are
+# preserved and nothing else is deleted.
+reset_state
+EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
+mkdir -p "$CONFIG"
+printf '[Plugins]\nplasma-auto-tiler-drag-oracleEnabled=true\nplasma-auto-tiler-active-borderEnabled=false\nunrelated=true\n' > "$CONFIG/kwinrc"
+run_script effect-install
+check_exit 0
+assert_contains "kwinrc: plasma-auto-tiler-drag-oracleEnabled set to false"
+assert_grep_file "plasma-auto-tiler-active-borderEnabled=true" "$CONFIG/kwinrc"
+assert_grep_file "plasma-auto-tiler-drag-oracleEnabled=false" "$CONFIG/kwinrc"
+assert_grep_file "unrelated=true" "$CONFIG/kwinrc"
+assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-active-borderEnabled true" "$WORK/tools.log"
+assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-drag-oracleEnabled false" "$WORK/tools.log"
+
+# effect-install migration truth table: legacy "false" is left untouched.
+reset_state
+mkdir -p "$CONFIG"
+printf '[Plugins]\nplasma-auto-tiler-drag-oracleEnabled=false\nunrelated=true\n' > "$CONFIG/kwinrc"
+run_script effect-install
+check_exit 0
+assert_not_contains "plasma-auto-tiler-drag-oracleEnabled set to false"
+assert_grep_file "plasma-auto-tiler-drag-oracleEnabled=false" "$CONFIG/kwinrc"
+assert_grep_file "plasma-auto-tiler-active-borderEnabled=true" "$CONFIG/kwinrc"
+assert_grep_file "unrelated=true" "$CONFIG/kwinrc"
+assert_not_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-drag-oracleEnabled" "$WORK/tools.log"
+
+# effect-install migration truth table: absent legacy key is left absent.
+reset_state
+mkdir -p "$CONFIG"
+printf '[Plugins]\nunrelated=true\n' > "$CONFIG/kwinrc"
+run_script effect-install
+check_exit 0
+assert_not_contains "plasma-auto-tiler-drag-oracleEnabled set to false"
+assert_grep_file "plasma-auto-tiler-active-borderEnabled=true" "$CONFIG/kwinrc"
+assert_grep_file "unrelated=true" "$CONFIG/kwinrc"
+assert_not_grep_file "plasma-auto-tiler-drag-oracleEnabled=" "$CONFIG/kwinrc"
+assert_not_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-drag-oracleEnabled" "$WORK/tools.log"
+
+# effect-install migration truth table: non-exact legacy value is left
+# untouched (only the exact string "true" migrates).
+reset_state
+mkdir -p "$CONFIG"
+printf '[Plugins]\nplasma-auto-tiler-drag-oracleEnabled=True\nunrelated=true\n' > "$CONFIG/kwinrc"
+run_script effect-install
+check_exit 0
+assert_not_contains "plasma-auto-tiler-drag-oracleEnabled set to false"
+assert_grep_file "plasma-auto-tiler-drag-oracleEnabled=True" "$CONFIG/kwinrc"
+assert_grep_file "plasma-auto-tiler-active-borderEnabled=true" "$CONFIG/kwinrc"
+assert_not_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-drag-oracleEnabled" "$WORK/tools.log"
+
+# effect-install migration rollback: SIGTERM after migration restores the
+# exact pre-existing survivor and legacy values plus unrelated keys.
+reset_state
+EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
+EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+mkdir -p "$(dirname "$EFFECT_STAGED_SO")" "$(dirname "$EFFECT_ENV_FILE")"
+printf 'previous-so\n' > "$EFFECT_STAGED_SO"
+printf 'previous-env\n' > "$EFFECT_ENV_FILE"
+printf '[Plugins]\nplasma-auto-tiler-active-borderEnabled=false\nplasma-auto-tiler-drag-oracleEnabled=true\nunrelated=true\n' > "$CONFIG/kwinrc"
+cp "$CONFIG/kwinrc" "$WORK/migration-old-kwinrc"
+touch "$WORK/state/signal-on-move"
+FAKE_MOVE_SIGNAL_MATCH="$EFFECT_ROOT"
+FAKE_MOVE_SIGNAL=TERM
+FAKE_MOVE_SIGNAL_WHAT=destination
+TEST_PATH="$FAKE_BIN/bin:$PATH"
+run_script effect-install
+check_exit 143
+assert_contains "error: interrupted by SIGTERM"
+assert_not_contains "rollback failed"
+assert_cmp "$WORK/migration-old-kwinrc" "$CONFIG/kwinrc"
+assert_grep_file "plasma-auto-tiler-active-borderEnabled=false" "$CONFIG/kwinrc"
+assert_grep_file "plasma-auto-tiler-drag-oracleEnabled=true" "$CONFIG/kwinrc"
+assert_grep_file "unrelated=true" "$CONFIG/kwinrc"
+
+# effect-install migration: kreadconfig6 failure fails closed before any
+# staging or kwinrc mutation.
+reset_state
+mkdir -p "$CONFIG"
+printf '[Plugins]\nplasma-auto-tiler-drag-oracleEnabled=true\n' > "$CONFIG/kwinrc"
+touch "$WORK/state/kread-fail"
+run_script effect-install
+check_exit 1
+assert_grep_file "plasma-auto-tiler-drag-oracleEnabled=true" "$CONFIG/kwinrc"
+assert_not_grep_file "^plasma-auto-tiler-active-borderEnabled=" "$CONFIG/kwinrc"
+assert_not_exists "$DATA/plasma-auto-tiler-native-effect"
+
+# static: the legacy oracle key literal exists exactly once and is never
+# derived, deleted, or applied outside the transactional effect-install.
+if [[ "$(grep -c 'LEGACY_ORACLE_CONFIG_KEY="plasma-auto-tiler-drag-oracleEnabled"' "$SCRIPT")" -eq 1 ]]; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: scripts/dogfood-install.sh must define LEGACY_ORACLE_CONFIG_KEY exactly once" >&2
+  FAIL=$((FAIL + 1))
+fi
+if grep -Fq -- '--delete' "$SCRIPT" && grep -Fq 'EFFECT_CONFIG_KEY' "$SCRIPT"; then
+  if grep -n 'LEGACY_ORACLE_CONFIG_KEY' "$SCRIPT" | grep -Fq -- '--delete'; then
+    echo "FAIL: the legacy oracle key must never be deleted" >&2
+    FAIL=$((FAIL + 1))
+  else
+    PASS=$((PASS + 1))
+  fi
+else
+  echo "FAIL: could not verify legacy oracle key deletion policy" >&2
+  FAIL=$((FAIL + 1))
+fi
 
 # effect-install: SIGTERM during replacement publication restores the exact
 # pre-existing root, environment script, and kwinrc state

@@ -61,30 +61,9 @@ add_custom_command(
 )
 add_custom_target(plasma-auto-tiler-group-highlight-rs DEPENDS "${GROUP_HIGHLIGHT_STATICLIB}")
 
-kcoreaddons_add_plugin(plasma-auto-tiler-active-border
-    INSTALL_NAMESPACE "kwin/effects/plugins"
-    SOURCES
-        activewindowborder.h
-        activewindowborder.cpp
-        group_highlight_ffi.h
-        ${config_SOURCES}
-)
-add_dependencies(plasma-auto-tiler-active-border plasma-auto-tiler-group-highlight-rs)
-target_link_libraries(plasma-auto-tiler-active-border PRIVATE
-    "${GROUP_HIGHLIGHT_STATICLIB}"
-    Threads::Threads
-    ${CMAKE_DL_LIBS}
-    KWin::kwin
-    KF6::ConfigCore
-    KF6::ConfigGui
-    KF6::ColorScheme
-    Qt6::Core
-    Qt6::Gui
-)
-target_compile_options(plasma-auto-tiler-active-border PRIVATE -Wall -Wextra -Werror)
-
 # Slice 1 drag/final-geometry oracle: std-only Rust source compiled hermetically
-# by rustc invoked from CMake. No Cargo, no crates, no network.
+# by rustc invoked from CMake, folded into the surviving active-border effect
+# below. No Cargo, no crates, no network, no second effect plugin.
 set(DRAG_ORACLE_STATICLIB "${CMAKE_CURRENT_BINARY_DIR}/libdrag_oracle.a")
 add_custom_command(
     OUTPUT "${DRAG_ORACLE_STATICLIB}"
@@ -100,23 +79,30 @@ add_custom_command(
 )
 add_custom_target(plasma-auto-tiler-drag-oracle-rs DEPENDS "${DRAG_ORACLE_STATICLIB}")
 
-kcoreaddons_add_plugin(plasma-auto-tiler-drag-oracle
+kcoreaddons_add_plugin(plasma-auto-tiler-active-border
     INSTALL_NAMESPACE "kwin/effects/plugins"
     SOURCES
-        dragoracle.h
-        dragoracle.cpp
+        activewindowborder.h
+        activewindowborder.cpp
+        drag_oracle_ffi.h
+        group_highlight_ffi.h
+        ${config_SOURCES}
 )
-add_dependencies(plasma-auto-tiler-drag-oracle plasma-auto-tiler-drag-oracle-rs)
-target_link_libraries(plasma-auto-tiler-drag-oracle PRIVATE
+add_dependencies(plasma-auto-tiler-active-border plasma-auto-tiler-group-highlight-rs plasma-auto-tiler-drag-oracle-rs)
+target_link_libraries(plasma-auto-tiler-active-border PRIVATE
+    "${GROUP_HIGHLIGHT_STATICLIB}"
     "${DRAG_ORACLE_STATICLIB}"
     Threads::Threads
     ${CMAKE_DL_LIBS}
     KWin::kwin
+    KF6::ConfigCore
+    KF6::ConfigGui
+    KF6::ColorScheme
     Qt6::Core
     Qt6::Gui
     Qt6::DBus
 )
-target_compile_options(plasma-auto-tiler-drag-oracle PRIVATE -Wall -Wextra -Werror)
+target_compile_options(plasma-auto-tiler-active-border PRIVATE -Wall -Wextra -Werror)
 
 set(kcm_SOURCES
     activeborderconfig_module.cpp
@@ -200,12 +186,6 @@ if(BUILD_TESTING)
     )
     target_compile_options(plasma-auto-tiler-active-border-kcm-config-test PRIVATE -Wall -Wextra -Werror)
 
-    add_test(NAME native-effect-kcm-config-malformed
-        COMMAND plasma-auto-tiler-active-border-kcm-config-test malformed)
-    add_test(NAME native-effect-kcm-config-valid
-        COMMAND plasma-auto-tiler-active-border-kcm-config-test valid)
-    add_test(NAME native-effect-kcm-config-missing
-        COMMAND plasma-auto-tiler-active-border-kcm-config-test missing)
     add_test(NAME native-effect-kcm-dbus
         COMMAND plasma-auto-tiler-active-border-kcm-config-test dbus)
     add_test(NAME native-effect-kcm-hotapply
@@ -219,9 +199,6 @@ if(BUILD_TESTING)
     add_test(NAME native-effect-kcm-tiler-reload
         COMMAND plasma-auto-tiler-active-border-kcm-config-test reload)
     set_tests_properties(
-        native-effect-kcm-config-malformed
-        native-effect-kcm-config-valid
-        native-effect-kcm-config-missing
         native-effect-kcm-dbus
         native-effect-kcm-hotapply
         native-effect-kcm-border
@@ -335,18 +312,19 @@ if(BUILD_TESTING)
             -DGROUP_TEST=${CMAKE_CURRENT_SOURCE_DIR}/activebordergroup_test.cpp
             -DGROUP_FFI=${CMAKE_CURRENT_SOURCE_DIR}/group_highlight_ffi.h
             -DGROUP_RUST=${CMAKE_CURRENT_SOURCE_DIR}/group_highlight.rs
+            -DDRAG_HEADER=${CMAKE_CURRENT_SOURCE_DIR}/activewindowborder.h
+            -DDRAG_IMPL=${CMAKE_CURRENT_SOURCE_DIR}/activewindowborder.cpp
+            -DDRAG_FFI=${CMAKE_CURRENT_SOURCE_DIR}/drag_oracle_ffi.h
+            -DDRAG_RUST=${CMAKE_CURRENT_SOURCE_DIR}/drag_oracle.rs
             -DEXPECTED_PLUGIN_ID=plasma-auto-tiler-active-border
             -P ${CMAKE_CURRENT_SOURCE_DIR}/validate-metadata.cmake)
 
-    add_test(NAME native-effect-drag-oracle-validation
+    add_test(NAME native-effect-unified-lifecycle
         COMMAND ${CMAKE_COMMAND}
-            -DDRAG_METADATA_FILE=${CMAKE_CURRENT_SOURCE_DIR}/dragoracle-metadata.json
-            -DDRAG_SOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/dragoracle.h
-            -DDRAG_IMPL_FILE=${CMAKE_CURRENT_SOURCE_DIR}/dragoracle.cpp
-            -DDRAG_FFI_FILE=${CMAKE_CURRENT_SOURCE_DIR}/drag_oracle_ffi.h
-            -DDRAG_RUST_FILE=${CMAKE_CURRENT_SOURCE_DIR}/drag_oracle.rs
-            -DEXPECTED_PLUGIN_ID=plasma-auto-tiler-drag-oracle
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/validate-dragoracle.cmake)
+            -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/activewindowborder.cpp
+            -DHEADER_FILE=${CMAKE_CURRENT_SOURCE_DIR}/activewindowborder.h
+            -DCMAKE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/validate-unified-lifecycle.cmake)
 
     # Targeted Rust oracle unit tests: rustc --test on the std-only source.
     add_custom_command(

@@ -878,7 +878,6 @@ dev mode="":
     REPO_ROOT="{{ justfile_directory() }}"
     NATIVE_HELPER="$REPO_ROOT/scripts/dev-native-effect.sh"
     BORDER_EFFECT="plasma-auto-tiler-active-border"
-    ORACLE_EFFECT="plasma-auto-tiler-drag-oracle"
     NATIVE_PREFLIGHT_OUT=""
     NATIVE_PREFLIGHT_RC=0
     NATIVE_PREFLIGHT_OUT="$(bash "$NATIVE_HELPER" preflight 2>&1)" || NATIVE_PREFLIGHT_RC=$?
@@ -898,18 +897,15 @@ dev mode="":
     [[ "$NATIVE_KWIN_PID" =~ ^[1-9][0-9]*$ ]] || { echo "error: just dev: native preflight returned no valid KWin pid; refusing" >&2; exit 1; }
     [[ "$NATIVE_KWIN_START" =~ ^[1-9][0-9]*$ ]] || { echo "error: just dev: native preflight returned no valid KWin start identity; refusing" >&2; exit 1; }
     BORDER_PRELOADED="false"
-    ORACLE_PRELOADED="false"
     BORDER_LINE="$(printf '%s\n' "$NATIVE_PREFLIGHT_OUT" | grep -F "effect $BORDER_EFFECT " | head -n 1 || true)"
-    ORACLE_LINE="$(printf '%s\n' "$NATIVE_PREFLIGHT_OUT" | grep -F "effect $ORACLE_EFFECT " | head -n 1 || true)"
-    [[ -n "$BORDER_LINE" && -n "$ORACLE_LINE" ]] || { echo "error: just dev: native preflight returned no usable effect state; refusing" >&2; exit 1; }
+    [[ -n "$BORDER_LINE" ]] || { echo "error: just dev: native preflight returned no usable effect state; refusing" >&2; exit 1; }
     case "$BORDER_LINE" in *"loaded=true"*) BORDER_PRELOADED="true" ;; *"loaded=false"*) BORDER_PRELOADED="false" ;; *) echo "error: just dev: ambiguous border preflight line; refusing" >&2; exit 1 ;; esac
-    case "$ORACLE_LINE" in *"loaded=true"*) ORACLE_PRELOADED="true" ;; *"loaded=false"*) ORACLE_PRELOADED="false" ;; *) echo "error: just dev: ambiguous oracle preflight line; refusing" >&2; exit 1 ;; esac
     # Never rebuild a loaded plugin in a way that claims the new binary is
     # active: a loaded effect keeps its mapped library until logout/login.
     # Skip the native stage when preloaded; otherwise build all components.
     JUST_BUILD_RC=0
-    if [[ "$BORDER_PRELOADED" == "true" || "$ORACLE_PRELOADED" == "true" ]]; then
-      echo "warning: native effect already loaded (border preloaded=$BORDER_PRELOADED, oracle preloaded=$ORACLE_PRELOADED); skipping native rebuild so the loaded library is never overwritten. No hot reload is promised; a rebuilt binary still requires logout/login."
+    if [[ "$BORDER_PRELOADED" == "true" ]]; then
+      echo "warning: native effect already loaded (border preloaded=$BORDER_PRELOADED); skipping native rebuild so the loaded library is never overwritten. No hot reload is promised; a rebuilt binary still requires logout/login."
       just --justfile "$JUSTFILE" build-rust || JUST_BUILD_RC=$?
       if [[ "$JUST_BUILD_RC" -ne 0 ]]; then
         echo "error: just dev: build-rust failed (exit $JUST_BUILD_RC); refusing bring-up; no dev lifecycle changes made" >&2
@@ -927,7 +923,7 @@ dev mode="":
         exit "$JUST_BUILD_RC"
       fi
     fi
-    echo "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login."
+    echo "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so remains stale until logout/login."
     # Transiently load only effects this invocation owns (supported and not
     # preloaded). Preloaded effects are preserved. No persisted enabled
     # config is written. Owner identity (unique owner, pid, start) is pinned
@@ -1047,11 +1043,6 @@ dev mode="":
     else
       echo "just dev: preserving preloaded effect $BORDER_EFFECT (never unloaded by this session)"
     fi
-    if [[ "$ORACLE_PRELOADED" == "false" ]]; then
-      native_load_one "$ORACLE_EFFECT" || { echo "error: just dev: native load failed; no script/planner lifecycle started" >&2; exit 1; }
-    else
-      echo "just dev: preserving preloaded effect $ORACLE_EFFECT (never unloaded by this session)"
-    fi
     # Bring-up composes the existing detached recipe. Its own fail-closed
     # rollback owns failures here; native owned loads are unwound on failure
     # and no logs are tailed without success.
@@ -1133,7 +1124,7 @@ build-kwin-script:
     npm --prefix "$KWIN_DIR" run build || { echo "error: npm run build failed for $KWIN_DIR" >&2; exit 1; }
     [[ -f "$BUNDLE" ]] || { echo "error: KWin bundle missing after build: $BUNDLE" >&2; exit 1; }
 
-# Build the native active-border + drag-oracle effects + KCM against the exact host KWin derivation dev output via scripts/nix-host-kwin-build.sh and stage all three .so files under target/ for QT_PLUGIN_PATH use. No KWin, D-Bus, loading, config, user/system-path, or live actions (subset build, static only).
+# Build the native Plasma Auto Tiler effect + KCM against the exact host KWin derivation dev output via scripts/nix-host-kwin-build.sh and stage both .so files under target/ for QT_PLUGIN_PATH use. No KWin, D-Bus, loading, config, user/system-path, or live actions (subset build, static only).
 build-native-effect:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1141,7 +1132,6 @@ build-native-effect:
     SOURCE_DIR="$REPO_ROOT/kwin/native-effect"
     TARGET_DIR="$REPO_ROOT/target"
     EFFECT_SO="plasma-auto-tiler-active-border.so"
-    DRAG_SO="plasma-auto-tiler-drag-oracle.so"
     KCM_SO="plasma-auto-tiler-active-border_config.so"
     BUILDER="$REPO_ROOT/scripts/nix-host-kwin-build.sh"
     [[ -x "$BUILDER" ]] || { echo "error: host-matched builder missing or not executable: $BUILDER" >&2; exit 1; }
@@ -1155,29 +1145,23 @@ build-native-effect:
     STAGE="${PLASMA_AUTO_TILER_NATIVE_STAGE:-$REPO_ROOT/target/kwin-native-effect-stage}"
     env -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN bash "$BUILDER" build --source "$SOURCE_DIR" --build-dir "$BUILD_DIR" --expected-identity "$IDENTITY" || { echo "error: host-matched native build failed for $SOURCE_DIR" >&2; exit 1; }
     BUILT_SO="$BUILD_DIR/bin/kwin/effects/plugins/$EFFECT_SO"
-    BUILT_DRAG="$BUILD_DIR/bin/kwin/effects/plugins/$DRAG_SO"
     BUILT_KCM="$BUILD_DIR/bin/kwin/effects/configs/$KCM_SO"
     [[ -f "$BUILT_SO" ]] || { echo "error: effect .so not found after build: $BUILT_SO" >&2; exit 1; }
-    [[ -f "$BUILT_DRAG" ]] || { echo "error: drag-oracle .so not found after build: $BUILT_DRAG" >&2; exit 1; }
     [[ -f "$BUILT_KCM" ]] || { echo "error: KCM .so not found after build: $BUILT_KCM" >&2; exit 1; }
     PAYLOAD="$(mktemp -d "$TARGET_DIR/.kwin-native-effect-stage.XXXXXX")" || { echo "error: could not create staging transaction directory under $TARGET_DIR" >&2; exit 1; }
     cleanup() { [[ -n "${PAYLOAD:-}" && -d "${PAYLOAD:-}" ]] && rm -rf -- "$PAYLOAD"; }
     trap cleanup EXIT
     install -Dm0644 "$BUILT_SO" "$PAYLOAD/kwin/effects/plugins/$EFFECT_SO" || { echo "error: could not stage effect .so" >&2; exit 1; }
-    install -Dm0644 "$BUILT_DRAG" "$PAYLOAD/kwin/effects/plugins/$DRAG_SO" || { echo "error: could not stage drag-oracle .so" >&2; exit 1; }
     install -Dm0644 "$BUILT_KCM" "$PAYLOAD/kwin/effects/configs/$KCM_SO" || { echo "error: could not stage KCM .so" >&2; exit 1; }
     [[ -f "$PAYLOAD/kwin/effects/plugins/$EFFECT_SO" ]] || { echo "error: staged effect .so missing: $PAYLOAD/kwin/effects/plugins/$EFFECT_SO" >&2; exit 1; }
-    [[ -f "$PAYLOAD/kwin/effects/plugins/$DRAG_SO" ]] || { echo "error: staged drag-oracle .so missing: $PAYLOAD/kwin/effects/plugins/$DRAG_SO" >&2; exit 1; }
     [[ -f "$PAYLOAD/kwin/effects/configs/$KCM_SO" ]] || { echo "error: staged KCM .so missing: $PAYLOAD/kwin/effects/configs/$KCM_SO" >&2; exit 1; }
     rm -rf -- "$STAGE" || { echo "error: could not remove stale staging root: $STAGE" >&2; exit 1; }
     mv -- "$PAYLOAD" "$STAGE" || { echo "error: could not publish staging root: $STAGE" >&2; exit 1; }
     PAYLOAD=""
     trap - EXIT
     [[ -f "$STAGE/kwin/effects/plugins/$EFFECT_SO" ]] || { echo "error: staged effect .so missing: $STAGE/kwin/effects/plugins/$EFFECT_SO" >&2; exit 1; }
-    [[ -f "$STAGE/kwin/effects/plugins/$DRAG_SO" ]] || { echo "error: staged drag-oracle .so missing: $STAGE/kwin/effects/plugins/$DRAG_SO" >&2; exit 1; }
     [[ -f "$STAGE/kwin/effects/configs/$KCM_SO" ]] || { echo "error: staged KCM .so missing: $STAGE/kwin/effects/configs/$KCM_SO" >&2; exit 1; }
     echo "staged: $STAGE/kwin/effects/plugins/$EFFECT_SO"
-    echo "staged: $STAGE/kwin/effects/plugins/$DRAG_SO"
     echo "staged: $STAGE/kwin/effects/configs/$KCM_SO"
     echo "QT_PLUGIN_PATH=$STAGE"
 

@@ -22,11 +22,8 @@ const logic = read("native-effect/activeborderlogic.h");
 const ui = read("native-effect/activeborderconfig.ui");
 
 const SCRIPT_SETTINGS = {
-    tilingAlgorithm: { type: "Enum", defaultValue: "dwindle" },
-    automaticSplitTarget: { type: "Enum", defaultValue: "dwindle" },
     workspaceMode: { type: "Enum", defaultValue: "per-output-local" },
     shortcutProfile: { type: "Enum", defaultValue: "cosmic" },
-    dropOutlinePreview: { type: "Bool", defaultValue: "false" },
     innerGap: { type: "Int", defaultValue: "8" },
     outerGap: { type: "Int", defaultValue: "8" },
 } as const;
@@ -77,9 +74,48 @@ describe("native KCM static contract", () => {
         assert.match(cmake, /activeborderconfig_module\.json/);
         assert.ok(cmake.includes("add_test(NAME native-effect-metadata-factory-validation"));
         assert.ok(cmake.includes("-P ${CMAKE_CURRENT_SOURCE_DIR}/validate-metadata.cmake"));
+        assert.ok(cmake.includes("add_test(NAME native-effect-unified-lifecycle"));
+        assert.ok(cmake.includes("validate-unified-lifecycle.cmake"));
     });
 
-    it("keeps the seven script keys and defaults identical between schema and native KCM", () => {
+    it("brands the surviving effect Plasma Auto Tiler and keeps exactly one effect plugin", () => {
+        const effectMetadata = nativeMetadata as {
+            KPlugin: { Id: string; Name: string; Description: string; EnabledByDefault: boolean };
+        };
+        assert.equal(effectMetadata.KPlugin.Name, "Plasma Auto Tiler");
+        assert.notEqual(effectMetadata.KPlugin.Description, "");
+        assert.match(effectMetadata.KPlugin.Description, /Plasma Auto Tiler/);
+        assert.equal(kcmMetadata.KPlugin.Name, "Plasma Auto Tiler");
+        // Exactly one effect plugin target plus the KCM config target; the
+        // standalone drag-oracle effect, factory, metadata, and validation
+        // script are gone while the oracle Rust test target stays.
+        assert.equal(
+            (cmake.match(/INSTALL_NAMESPACE "kwin\/effects\/plugins"/g) ?? []).length,
+            1,
+        );
+        assert.ok(cmake.includes("drag_oracle_ffi.h"));
+        assert.ok(cmake.includes("plasma-auto-tiler-drag-oracle-rs"));
+        assert.ok(cmake.includes("native-effect-drag-oracle-rs"));
+        for (const residue of [
+            "dragoracle.h",
+            "dragoracle.cpp",
+            "dragoracle-metadata.json",
+            "validate-dragoracle.cmake",
+            "native-effect-drag-oracle-validation",
+            "kcoreaddons_add_plugin(plasma-auto-tiler-drag-oracle",
+        ]) {
+            assert.ok(!cmake.includes(residue), `expected no CMake residue: ${residue}`);
+        }
+        for (const residue of [
+            "DragOracleEffect",
+            "dragoracle-metadata.json",
+            "plasma-auto-tiler-drag-oracle",
+        ]) {
+            assert.ok(!effect.includes(residue), `expected no survivor residue: ${residue}`);
+        }
+    });
+
+    it("keeps the four supported script keys and defaults identical between schema and native KCM", () => {
         assert.deepEqual(schemaEntries(), SCRIPT_SETTINGS);
         assert.match(kcfg, /<group name="Effect-plasma-auto-tiler-active-border">/);
 
@@ -107,26 +143,20 @@ describe("native KCM static contract", () => {
             assert.match(module, new RegExp(`${key}SpinBox->value\\(\\)`));
         }
 
-        assert.match(module, /tilingAlgorithmCombo->findData\(QStringLiteral\("dwindle"\)\)/);
-        assert.match(module, /automaticSplitTargetCombo->findData\(QStringLiteral\("dwindle"\)\)/);
         assert.match(module, /workspaceModeCombo->findData\(QStringLiteral\("per-output-local"\)\)/);
         assert.match(module, /shortcutProfileCombo->findData\(QStringLiteral\("cosmic"\)\)/);
         assert.doesNotMatch(module, /engineAuthorityModeCombo/);
-        assert.match(module, /dropOutlinePreviewCheckBox->setChecked\(false\)/);
+        assert.doesNotMatch(module, /tilingAlgorithm|automaticSplitTarget|dropOutlinePreview/);
         assert.match(module, /innerGapSpinBox->setValue\(8\)/);
         assert.match(module, /outerGapSpinBox->setValue\(8\)/);
     });
 
-    it("reads and writes script settings only through the script config group and falls back invalid tiling to dwindle", () => {
+    it("reads and writes supported script settings only through the script config group", () => {
         assert.equal((module.match(/Script-plasma-auto-tiler-kwin/g) ?? []).length, 2);
         assert.doesNotMatch(module, /Effect-plasma-auto-tiler-kwin/);
-        assert.match(
-            module,
-            /const QString tilingAlgorithm = group\.readEntry\(QStringLiteral\("tilingAlgorithm"\), QStringLiteral\("dwindle"\)\)/,
-        );
-        assert.match(module, /select\(m_ui\.tilingAlgorithmCombo, tilingAlgorithm, QStringLiteral\("dwindle"\)\)/);
-        assert.match(module, /const QString tilingAlgorithm = group\.readEntry\(QStringLiteral\("tilingAlgorithm"\), QStringLiteral\("dwindle"\)\)/);
-        assert.match(module, /\{QStringLiteral\("tilingAlgorithm"\), tilingAlgorithm\}/);
+        assert.match(module, /const QString workspaceMode = group\.readEntry\(QStringLiteral\("workspaceMode"\), QStringLiteral\("per-output-local"\)\)/);
+        assert.match(module, /select\(m_ui\.workspaceModeCombo, workspaceMode, QStringLiteral\("per-output-local"\)\)/);
+        assert.doesNotMatch(module, /tilingAlgorithm|automaticSplitTarget|dropOutlinePreview/);
     });
 
     it("does not expose global shortcut mutation APIs", () => {
@@ -166,7 +196,8 @@ describe("native KCM static contract", () => {
         assert.match(logic, /QRectF activeBorderInnerRect\(/);
         assert.match(effect, /const QRectF innerRect = activeBorderInnerRect\(state\.innerRect, gap\)/);
         assert.match(effect, /setInnerRect\(window \? window->windowItem\(\)->mapFromScene\(innerRect\) : RectF\(\)\)/);
-        assert.match(effect, /setVisible\(state\.visible\)/);
+        assert.match(effect, /const bool visible = state\.visible && initialOk/);
+        assert.match(effect, /setVisible\(visible\)/);
         assert.match(effect, /addRepaintFull\(\)/);
     });
 
@@ -176,15 +207,12 @@ describe("native KCM static contract", () => {
         assert.doesNotMatch(module, /rust-development/);
     });
 
-    it("tracks manually managed script controls without rewriting untouched keys", () => {
+    it("tracks supported script controls without rewriting untouched keys", () => {
         assert.match(module, /unmanagedWidgetChangeState\(/);
         assert.match(module, /unmanagedWidgetDefaultState\(/);
         assert.match(module, /const bool borderChanged = managedWidgetChangeState\(\)/);
-        assert.match(module, /const QString dropOutlinePreviewRaw = group\.readEntry\(QStringLiteral\("dropOutlinePreview"\), QString\(\)\)/);
-        assert.match(module, /m_loadedDropOutlinePreviewRawValid = !group\.hasKey\(QStringLiteral\("dropOutlinePreview"\)\)/);
         assert.doesNotMatch(module, /setNeedsSave\(false\)/);
-        assert.match(module, /if \(!m_loadedDropOutlinePreviewRawValid \|\| !m_loadedInnerGapRawValid \|\| !m_loadedOuterGapRawValid \|\| current != m_loadedScriptValues\)/);
-        assert.match(module, /if \(!m_loadedDropOutlinePreviewRawValid \|\| current\.value\(QStringLiteral\("dropOutlinePreview"\)\) != m_loadedScriptValues/);
+        assert.match(module, /if \(!m_loadedInnerGapRawValid \|\| !m_loadedOuterGapRawValid \|\| current != m_loadedScriptValues\)/);
         assert.match(module, /if \(!m_loadedInnerGapRawValid \|\| current\.value\(QStringLiteral\("innerGap"\)\) != m_loadedScriptValues/);
         assert.match(module, /if \(!m_loadedOuterGapRawValid \|\| current\.value\(QStringLiteral\("outerGap"\)\) != m_loadedScriptValues/);
         assert.match(module, /m_loadedScriptValues = \{/);
@@ -192,8 +220,6 @@ describe("native KCM static contract", () => {
 
     it("associates every labeled native control with its buddy", () => {
         for (const [label, control] of [
-            ["label_tilingAlgorithm", "tilingAlgorithmCombo"],
-            ["label_automaticSplitTarget", "automaticSplitTargetCombo"],
             ["label_workspaceMode", "workspaceModeCombo"],
             ["label_shortcutProfile", "shortcutProfileCombo"],
             ["label_innerGap", "innerGapSpinBox"],
@@ -224,7 +250,7 @@ describe("native KCM static contract", () => {
         assert.doesNotMatch(ui, /engine authority[^.]*apply immediately/i);
         assert.doesNotMatch(ui, /engine authority[^.]*takes effect immediately/i);
         assert.match(ui, /startup settings require a session restart/i);
-        assert.match(ui, /unconsumed settings have no running effect/i);
+        assert.doesNotMatch(ui, /unconsumed settings have no running effect/i);
         assert.match(ui, /Gap settings can reload/i);
         assert.match(ui, /Saving gaps marks a reload as required/i);
         assert.doesNotMatch(ui, /Other script settings require a script reload or session restart\./);

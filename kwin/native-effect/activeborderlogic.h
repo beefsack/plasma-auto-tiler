@@ -41,4 +41,13 @@ inline ActiveBorderState activeBorderState(bool hasWindow, const QRectF &frameGe
     return {true, frameGeometry};
 }
 
+// Hide-until-confirmed initial gate for both native borders. The script must
+// confirm the exact current active window is normal (maximize_mode 0); an
+// unknown startup, unavailable endpoint, fullscreen, or any native maximize
+// keeps both borders hidden even when a delayed script zero is on record.
+inline bool activeBorderInitialGate(bool confirmedNormal, bool fullScreen, bool nativeMaximized, bool endpointUsable)
+{
+    return confirmedNormal && !fullScreen && !nativeMaximized && endpointUsable;
+}
+
 } // namespace KWin

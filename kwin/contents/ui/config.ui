@@ -3,61 +3,34 @@
  <class>ConfigModule</class>
  <widget class="QWidget" name="ConfigModule">
   <layout class="QFormLayout" name="formLayout">
-   <item row="0" column="0">
-    <widget class="QLabel" name="label_tilingAlgorithm">
-     <property name="text">
-      <string>The preset the automatic takeover applies when it adopts a scope</string>
-     </property>
-    </widget>
-   </item>
-   <item row="0" column="1">
-    <widget class="QComboBox" name="kcfg_tilingAlgorithm"/>
-   </item>
-   <item row="1" column="0">
-    <widget class="QLabel" name="label_automaticSplitTarget">
-     <property name="text">
-      <string>The occupied leaf a newly opened window is automatically tiled into</string>
-     </property>
-    </widget>
-   </item>
-   <item row="1" column="1">
-    <widget class="QComboBox" name="kcfg_automaticSplitTarget"/>
-   </item>
-   <item row="2" column="0">
+    <item row="0" column="0">
     <widget class="QLabel" name="label_workspaceMode">
      <property name="text">
       <string>The multi-output workspace model</string>
      </property>
     </widget>
    </item>
-   <item row="2" column="1">
+    <item row="0" column="1">
     <widget class="QComboBox" name="kcfg_workspaceMode"/>
    </item>
-   <item row="3" column="0">
+    <item row="1" column="0">
     <widget class="QLabel" name="label_shortcutProfile">
      <property name="text">
       <string>The startup shortcut profile</string>
      </property>
     </widget>
    </item>
-    <item row="3" column="1">
+     <item row="1" column="1">
      <widget class="QComboBox" name="kcfg_shortcutProfile"/>
     </item>
-     <item row="4" column="0" colspan="2">
-      <widget class="QCheckBox" name="kcfg_dropOutlinePreview">
-       <property name="text">
-        <string>Show a destination outline while dragging a tiled window</string>
-       </property>
-      </widget>
-     </item>
-     <item row="5" column="0">
+      <item row="2" column="0">
       <widget class="QLabel" name="label_innerGap">
        <property name="text">
         <string>Gap between tiled windows</string>
        </property>
       </widget>
      </item>
-     <item row="5" column="1">
+      <item row="2" column="1">
       <widget class="QSpinBox" name="kcfg_innerGap">
        <property name="minimum">
         <number>0</number>
@@ -70,14 +43,14 @@
        </property>
       </widget>
      </item>
-     <item row="6" column="0">
+      <item row="3" column="0">
       <widget class="QLabel" name="label_outerGap">
        <property name="text">
         <string>Gap between tiled windows and the work area edge</string>
        </property>
       </widget>
      </item>
-     <item row="6" column="1">
+      <item row="3" column="1">
       <widget class="QSpinBox" name="kcfg_outerGap">
        <property name="minimum">
         <number>0</number>

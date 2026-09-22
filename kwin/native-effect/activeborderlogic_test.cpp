@@ -128,6 +128,28 @@ void gapAppliesToVisibleBorderState()
     CHECK(KWin::activeBorderInnerRect(state.innerRect, 2.0) == QRectF(-2.0, -2.0, 104.0, 104.0));
 }
 
+void initialGateStartupUnknownStaysHidden()
+{
+    // No script confirmation yet: both borders hidden even when the native
+    // window itself is eligible.
+    CHECK(!KWin::activeBorderInitialGate(false, false, false, true));
+    CHECK(!KWin::activeBorderInitialGate(false, false, false, false));
+}
+
+void initialGateNormalZeroShowsOnlyWhenUsable()
+{
+    CHECK(KWin::activeBorderInitialGate(true, false, false, true));
+    CHECK(!KWin::activeBorderInitialGate(true, false, false, false));
+}
+
+void initialGateFullscreenAndAnyMaximizeSuppress()
+{
+    CHECK(!KWin::activeBorderInitialGate(true, true, false, true));
+    // A delayed script zero cannot override a live native maximize signal.
+    CHECK(!KWin::activeBorderInitialGate(true, false, true, true));
+    CHECK(!KWin::activeBorderInitialGate(true, true, true, true));
+}
+
 } // namespace
 
 int main()
@@ -146,6 +168,9 @@ int main()
     zeroGapKeepsFrameAsInnerRect();
     positiveGapExpandsInnerRect();
     gapAppliesToVisibleBorderState();
+    initialGateStartupUnknownStaysHidden();
+    initialGateNormalZeroShowsOnlyWhenUsable();
+    initialGateFullscreenAndAnyMaximizeSuppress();
 
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);

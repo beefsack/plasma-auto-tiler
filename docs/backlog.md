@@ -2,6 +2,23 @@
 
 Only meaningful pending or active work is listed.
 
+- P0 | Invisible empty workspace cleanup | User reports five occupied workspaces
+  plus a sixth trailing empty; after closing the only window on workspace four
+  and navigating away, four remains. Remove empty non-final workspaces once
+  invisible on every output, retain the trailing empty, and keep at least two
+  logical workspaces per output. Preserve occupied, transaction-pinned, and
+  unrelated/unmapped desktops. Explicit-owned cleanup and the per-output floor
+  are implemented with 7 focused regressions and full TypeScript coverage.
+  Auto-mapped preexisting desktops are currently not owned: decide whether they
+  may also be pruned. The reported workspace-four case is not yet claimed fixed
+  if it was present before adapter startup. Occupancy, any-output visibility,
+  displacement, and transaction retention remain protected.
+- P1 | Initial border state confirmation live gate | Implemented default-hidden
+  visibility with exact active-window identity, effect-instance epoch, ordered
+  script observations, and native maximise veto. Missing/stale state stays hidden;
+  fullscreen/any maximise suppress both outlines. Effect activation after script
+  startup waits for the next focus/maximise publication without polling.
+  Rust/native/TypeScript checks pass; user fresh-session visual acceptance remains.
 - P0 | Immediate single-output focus: fullscreen, maximise, float, sticky float |
   User-selected next scope on the laptop. Verify shortcut delivery, entry/exit,
   retained tiling restoration for fullscreen/maximise, floating placement and
@@ -17,8 +34,8 @@ Only meaningful pending or active work is listed.
   builds, and 26 native CTest cases pass. The other agent's changes were docs
   only and were reviewed. Native public maximize signals now track all windows,
   but cannot classify a window already maximised before effect load. The
-  no-border invariant remains incomplete for that startup edge; default-hidden
-  rendering until script state confirmation is a pending design choice.
+  initial observation now comes from the approved script-confirmation gate,
+  remaining hidden until confirmed rather than guessing native state.
   Sticky float uses native all-desktops semantics (empty native desktop list);
   sticky-off selects the current desktop. Static review and regression establish
   no explicit workspace switch on sticky-on, but the user's workspace 1 to 4
@@ -51,7 +68,7 @@ Only meaningful pending or active work is listed.
   sticky occupancy in trailing-empty handling was found. Ghostty fullscreen
   becomes maximised after workspace return; narrow source review found no cause,
   and no native-fighting workaround was added.
-  The initial-border-state choice remains pending.
+  Initial-border-state implementation is tracked above.
   Krohnkite is absent from
   dotfiles declarations and user KPackages and disabled in `kwinrc`; its shortcut
   record remains, while system-package/runtime presence is not established.
@@ -98,8 +115,11 @@ Only meaningful pending or active work is listed.
   request/ack/verify retains its original pair while subsequent sends use the
   latest values for both domains. Entry and transaction regressions pass with
   typecheck and 845 KWin tests/build. No loss was found in Plan gap queueing or
-  native KCM reload-result handling. The unused-settings audit found unresolved
-  algorithm, admission, preview, mapping, and shortcut lifecycle choices.
+  native KCM reload-result handling. The three ineffective algorithm, automatic
+  split-target, and drop-preview controls have now been removed from both settings
+  UIs, schema, and KCM persistence as approved. Existing legacy values are left
+  untouched; supported settings remain. Mapping and shortcut lifecycle choices
+  remain separate.
   Latest user report accepts floating usability, with navigation policy awaiting
   COSMIC comparison, but float/unfloat appeared to stop tiling. Exact trace
   `/run/user/1000/plasma-auto-tiler-dev.SiVOOr.log` shows successful float p5 and
@@ -109,20 +129,27 @@ Only meaningful pending or active work is listed.
   Regression covers float, later admissions, moved-float reconciliation, fresh
   unfloat admission, removal, and later convergence. All Rust tests and cargo
   check pass; the later p12 stale/remove-side mismatch remains fail-closed.
-  Next: restart `just dev trace` and repeat the float/move/open/unfloat/tiling
-  sequence. No native rebuild or Plasma session boundary is needed for this fix.
+  User retested and confirms the float/unfloat tiling stall is fixed. Normal
+  float, sticky float, fullscreen, and maximise now have reported manual
+  usability acceptance. Navigation semantics await the user's COSMIC comparison;
+  remaining startup, recovery, settings, and rendering decisions are tracked
+  separately below and above.
   Other backlog work follows this focused scope.
-- P2 | Sticky ownership after adapter restart | In-memory prior float/tiled
-  ownership is cleared on adapter re-enable, so an already-sticky window is
-  refused as untracked. Select explicit adoption/unstick semantics before changing
-  this behavior; current native observation cannot recover the historical origin.
-  No new restart-persistent mapping or external-window ownership is selected.
-- P2 | Unified Plasma Auto Tiler settings entry | User asks whether the current
-  Desktop Effects entries `Active Window Border` and `Drag Oracle (Slice 1)` can
-  present one `Plasma Auto Tiler` entry. KWin 6.7.5 hides internal scripted effects
-  but not native effects via metadata. Combining the native helper into one
-  branded effect is the identified in-project route; runtime plugin consolidation
-  remains unselected. The tiling script appears separately under KWin Scripts.
+- P1 | Sticky adoption live gate | Already-sticky eligible normal windows with
+  proven all-desktops membership now unstick as normal floats on the current
+  workspace, retaining placement/focus/above; a subsequent float toggle tiles
+  them. Known tiled origins retain fresh-admission behavior. Offline tests pass;
+  user restart/re-enable acceptance remains pending. No old origin is inferred.
+- P1 | Unified Plasma Auto Tiler native delivery live gate | One surviving
+  `plasma-auto-tiler-active-border` plugin/KCM is branded `Plasma Auto Tiler` and
+  hosts both borders and the drag oracle with existing public endpoints. The
+  standalone oracle artifact is retired; dev/dogfood/packaging use one plugin.
+  Dogfood preserves its existing survivor-enable behavior and clears only exact
+  legacy oracle-enabled true; oracle-only packaged users require project
+  activation before the next session. Dev remains transient, without kwinrc
+  writes. Supported configuration survives. TypeScript (878), native (28), host
+  native build, and four hermetic shell suites pass. Fresh-session discovery and
+  rendering/oracle acceptance remain user-owned; the script entry stays separate.
 - P1 | Local movement height mismatch and stalled commands | User reproduced
   the stall without crossing outputs: O1 `H[W1 V[W2 W3]]`, O2 `W4`, with
   W1/W3 Ghostty, W2 Kate, W4 Firefox. Moving W3 right produced local
@@ -256,11 +283,6 @@ Only meaningful pending or active work is listed.
   post-admission isolation. A real KWin 6.7.4 session must establish that a
   session-restored maximized application restores, tiles, and cannot form an
   application re-maximize loop. No live result is claimed.
-- P1 | Float/maximize shortcut physical delivery live gate | `Meta+G` and
-  `Meta+M` actions register without changing Grid View or Krohnkite records.
-  Read-only enumeration found both held, so KGlobalAccel serial dispatch
-  shadows them until the user resolves each in System Settings. Verify physical
-  delivery after that manual resolution; `Meta+Shift+G` has no observed holder.
 - P1 | Output hotplug domain lifecycle | Preserve displaced layouts as separate
   workspaces on a remaining monitor; alternative handling may be configurable
   later. Visibility follows the active window's location at disconnect; with no

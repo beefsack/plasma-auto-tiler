@@ -55,7 +55,7 @@ case "$*" in
     if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then
       printf '{"type":"b","data":[%s]}\n' "$(cat "$state/effect-border-supported" 2>/dev/null || printf 'true')"
     else
-      printf '{"type":"b","data":[%s]}\n' "$(cat "$state/effect-oracle-supported" 2>/dev/null || printf 'true')"
+      exit 1
     fi ;;
   *"isEffectLoaded"*)
     printf 'isEffectLoaded %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
@@ -68,18 +68,17 @@ case "$*" in
     if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then
       printf '{"type":"b","data":[%s]}\n' "$(cat "$state/effect-border-loaded" 2>/dev/null || printf 'false')"
     else
-      printf '{"type":"b","data":[%s]}\n' "$(cat "$state/effect-oracle-loaded" 2>/dev/null || printf 'false')"
+      exit 1
     fi ;;
   *"unloadEffect"*)
     printf 'unloadEffect %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
     if [[ -f "$state/effect-unload-fail" ]]; then
       exit 1
     fi
-    if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then
-      printf 'false\n' > "$state/effect-border-loaded"
-    else
-      printf 'false\n' > "$state/effect-oracle-loaded"
+    if [[ "$*" != *"plasma-auto-tiler-active-border"* ]]; then
+      exit 1
     fi
+    printf 'false\n' > "$state/effect-border-loaded"
     printf '{"type":"b","data":[true]}\n'
     exit 0 ;;
   *"loadEffect"*)
@@ -87,11 +86,10 @@ case "$*" in
     if [[ -f "$state/effect-load-fail" ]]; then
       exit 1
     fi
-    if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then
-      printf 'true\n' > "$state/effect-border-loaded"
-    else
-      printf 'true\n' > "$state/effect-oracle-loaded"
+    if [[ "$*" != *"plasma-auto-tiler-active-border"* ]]; then
+      exit 1
     fi
+    printf 'true\n' > "$state/effect-border-loaded"
     printf '{"type":"b","data":[true]}\n'
     exit 0 ;;
   *"isScriptLoaded"*)
@@ -170,7 +168,6 @@ fi
 if [[ -n "$build_dir" ]]; then
   mkdir -p "$build_dir/bin/kwin/effects/plugins" "$build_dir/bin/kwin/effects/configs"
   [[ -f "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so" ]] || printf 'fake-effect' > "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-  [[ -f "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so" ]] || printf 'fake-drag' > "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
   [[ -f "$build_dir/bin/kwin/effects/configs/plasma-auto-tiler-active-border_config.so" ]] || printf 'fake-kcm' > "$build_dir/bin/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
 fi
 exit 0
@@ -245,6 +242,12 @@ if [[ "${1:-}" == "path-info" ]]; then
 fi
 if [[ "${1:-}" == "derivation" ]]; then
   printf '{"%s":{"outputs":{"out":{"path":"%s"},"dev":{"path":"%s"}}}}\n' "${FAKE_DRV:?}" "${FAKE_STORE_PATH:?}" "${FAKE_DEV_OUT:?}"
+  exit 0
+fi
+if [[ "${1:-}" == "build" ]]; then
+  [[ "${2:-}" == "${FAKE_DRV:?}^dev" ]] || { echo "fake nix: expected exact dev output" >&2; exit 2; }
+  mkdir -p "${FAKE_DEV_OUT:?}/lib/cmake/KWin"
+  printf '# realized KWinConfig\n' > "${FAKE_DEV_OUT:?}/lib/cmake/KWin/KWinConfig.cmake"
   exit 0
 fi
 if [[ "${1:-}" == "develop" ]]; then
@@ -387,9 +390,7 @@ reset_state() {
   : > "$OUTPUT"
   printf 'false\n' > "$WORK/state/loaded"
   printf 'true\n' > "$WORK/state/effect-border-supported"
-  printf 'true\n' > "$WORK/state/effect-oracle-supported"
   printf 'false\n' > "$WORK/state/effect-border-loaded"
-  printf 'false\n' > "$WORK/state/effect-oracle-loaded"
   printf '5151\n' > "$WORK/state/kwin-pid"
   rm -f "$WORK/state/planner-owned" "$WORK/state/owner-pid" "$WORK/state/loaded-malformed" "$WORK/state/loaded-call-fail" "$WORK/state/start-fails" "$WORK/state/stop-fails" "$WORK/state/cargo-fails" "$WORK/state/npm-fails" "$WORK/state/cmake-fails"
   rm -f "$WORK/state/kwin-unowned" "$WORK/state/effect-supported-fail" "$WORK/state/effect-supported-malformed" "$WORK/state/effect-loaded-fail" "$WORK/state/effect-loaded-malformed" "$WORK/state/effect-load-fail" "$WORK/state/effect-unload-fail"
@@ -884,15 +885,14 @@ assert_not_contains "[kwin]" "dev bring-up fail no kwin tail"
 assert_calls_missing "tail " "dev bring-up fail no tail call"
 assert_calls_missing "journalctl " "dev bring-up fail no journal call"
 
-# dev: early INT after owned native loads but before dev-on success unloads
-# only owned effects via the minimal early trap and never calls dev-off.
-# Border is preloaded (never owned); only the oracle load is owned. dev-on is
+# dev: early INT after the owned survivor load but before dev-on success
+# unloads the owned effect via the minimal early trap and never calls dev-off.
+# Nothing is preloaded, so the single border load is owned. dev-on is
 # blocked inside dogfood disable (before ROLLBACK_ARMED) so the window is
 # deterministic and inner rollback cannot emit dev-off markers.
 reset_state
 set_controller false
-printf 'true\n' > "$WORK/state/effect-border-loaded"
-printf 'false\n' > "$WORK/state/effect-oracle-loaded"
+printf 'false\n' > "$WORK/state/effect-border-loaded"
 touch "$WORK/state/block-dogfood-disable"
 : > "$OUTPUT"
 run_just_async dev
@@ -928,8 +928,8 @@ else
   set -e
   check_exit 130 "dev early INT exit"
   assert_calls_contain "loadEffect" "dev early INT owned load happened"
-  if grep -Eq "unloadEffect.*drag-oracle" "$WORK/calls.log"; then PASS=$((PASS + 1)); else echo "FAIL [dev early INT owned oracle unloaded]" >&2; cat "$WORK/calls.log" >&2; FAIL=$((FAIL + 1)); fi
-  if grep -Eq "unloadEffect.*active-border" "$WORK/calls.log"; then echo "FAIL [dev early INT preloaded border never unloaded]" >&2; cat "$WORK/calls.log" >&2; FAIL=$((FAIL + 1)); else PASS=$((PASS + 1)); fi
+  if grep -Eq "unloadEffect.*active-border" "$WORK/calls.log"; then PASS=$((PASS + 1)); else echo "FAIL [dev early INT owned border unloaded]" >&2; cat "$WORK/calls.log" >&2; FAIL=$((FAIL + 1)); fi
+  if grep -Eq "unloadEffect.*drag-oracle" "$WORK/calls.log"; then echo "FAIL [dev early INT no oracle traffic]" >&2; cat "$WORK/calls.log" >&2; FAIL=$((FAIL + 1)); else PASS=$((PASS + 1)); fi
   assert_calls_missing "start-test stop" "dev early INT never dev-off stop"
   assert_calls_missing "dogfood enable" "dev early INT never dev-off enable"
   assert_not_contains "bring-up via dev-on failed" "dev early INT trap path not failure branch"
@@ -956,7 +956,7 @@ assert_contains "[planner]" "dev down planner label"
 assert_contains "[kwin]" "dev down kwin label"
 assert_contains "plasma-auto-tiler:plan" "dev down kwin plugin line"
 assert_contains "[kwin] plasma-auto-tiler:route-diag:drag-pull action=dispatch" "dev down kwin route diagnostic line"
-assert_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login." "dev down native warning"
+assert_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so remains stale until logout/login." "dev down native warning"
 assert_calls_contain "cargo " "dev down cargo build"
 assert_calls_contain "npm " "dev down npm build"
 assert_calls_contain "cmake " "dev down cmake build"
@@ -1016,7 +1016,8 @@ check_exit 0 "isolated build exit"
 assert_calls_contain "cargo " "isolated build cargo"
 assert_calls_contain "npm " "isolated build npm"
 assert_calls_contain "cmake " "isolated build cmake"
-if [[ -f "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so" && -f "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so" && -f "$WORK/fake-native-stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [isolated build 3 staged artifacts]" >&2; FAIL=$((FAIL + 1)); fi
+if [[ -f "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so" && -f "$WORK/fake-native-stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [isolated build 2 staged artifacts]" >&2; FAIL=$((FAIL + 1)); fi
+if [[ ! -e "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [isolated build no oracle artifact]" >&2; FAIL=$((FAIL + 1)); fi
 assert_calls_missing "dogfood" "isolated build no dogfood"
 assert_calls_missing "start-test" "isolated build no start-test"
 assert_calls_missing "setsid" "isolated build no setsid"
@@ -1027,10 +1028,10 @@ reset_state
 run_just build-native-effect
 check_exit 0 "native build exit"
 assert_contains "plasma-auto-tiler-active-border.so" "native build effect msg"
-assert_contains "plasma-auto-tiler-drag-oracle.so" "native build drag msg"
+assert_not_contains "plasma-auto-tiler-drag-oracle.so" "native build no drag msg"
 assert_contains "plasma-auto-tiler-active-border_config.so" "native build kcm msg"
 if [[ -f "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [native staged effect]" >&2; FAIL=$((FAIL + 1)); fi
-if [[ -f "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [native staged drag]" >&2; FAIL=$((FAIL + 1)); fi
+if [[ ! -e "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [native no staged drag]" >&2; FAIL=$((FAIL + 1)); fi
 if [[ -f "$WORK/fake-native-stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [native staged kcm]" >&2; FAIL=$((FAIL + 1)); fi
 assert_calls_contain "cmake " "native build cmake"
 assert_calls_missing "dogfood" "native build no dogfood"
@@ -1075,7 +1076,8 @@ SETUP_EXIT="$EXIT"
 EXIT="$SETUP_EXIT"
 check_exit 0 "dev-native-setup exit"
 assert_calls_contain "cmake " "dev-native-setup runs native build"
-if [[ -f "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so" && -f "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so" && -f "$WORK/fake-native-stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev-native-setup 3 staged artifacts]" >&2; FAIL=$((FAIL + 1)); fi
+if [[ -f "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so" && -f "$WORK/fake-native-stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev-native-setup 2 staged artifacts]" >&2; FAIL=$((FAIL + 1)); fi
+if [[ ! -e "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev-native-setup no oracle artifact]" >&2; FAIL=$((FAIL + 1)); fi
 SETUP_ENV="$XDG_CONFIG_HOME/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
 if [[ -f "$SETUP_ENV" ]] && grep -Fq "$WORK/fake-native-stage" "$SETUP_ENV"; then PASS=$((PASS + 1)); else echo "FAIL [dev-native-setup env script]" >&2; cat "$OUTPUT" >&2; FAIL=$((FAIL + 1)); fi
 assert_calls_missing "dogfood" "dev-native-setup no dogfood"
@@ -1090,7 +1092,7 @@ touch "$WORK/state/cargo-fails"
 run_just dev
 check_exit 1 "dev rust fail exit"
 assert_contains "build failed" "dev rust fail msg"
-assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login." "dev rust fail no warning"
+assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so remains stale until logout/login." "dev rust fail no warning"
 assert_calls_contain "cargo " "dev rust fail cargo attempted"
 assert_calls_missing "dogfood disable" "dev rust fail no disable"
 assert_calls_missing "setsid" "dev rust fail no launch"
@@ -1107,7 +1109,7 @@ touch "$WORK/state/npm-fails"
 run_just dev
 check_exit 1 "dev ts fail exit"
 assert_contains "build failed" "dev ts fail msg"
-assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login." "dev ts fail no warning"
+assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so remains stale until logout/login." "dev ts fail no warning"
 assert_calls_contain "npm " "dev ts fail npm attempted"
 assert_calls_missing "dogfood disable" "dev ts fail no disable"
 assert_calls_missing "setsid" "dev ts fail no launch"
@@ -1124,7 +1126,7 @@ touch "$WORK/state/cmake-fails"
 run_just dev
 check_exit 1 "dev native fail exit"
 assert_contains "build failed" "dev native fail msg"
-assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login." "dev native fail no warning"
+assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so remains stale until logout/login." "dev native fail no warning"
 assert_calls_contain "cmake " "dev native fail cmake attempted"
 assert_calls_missing "dogfood disable" "dev native fail no disable"
 assert_calls_missing "setsid" "dev native fail no launch"

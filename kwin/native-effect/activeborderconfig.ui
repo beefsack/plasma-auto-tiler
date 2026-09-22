@@ -9,33 +9,7 @@
       <string>Plasma Auto Tiler</string>
      </property>
      <layout class="QFormLayout" name="scriptFormLayout">
-      <item row="0" column="0">
-        <widget class="QLabel" name="label_tilingAlgorithm">
-         <property name="buddy">
-          <cstring>tilingAlgorithmCombo</cstring>
-         </property>
-        <property name="text">
-         <string>The preset the automatic takeover applies when it adopts a scope</string>
-        </property>
-       </widget>
-      </item>
-      <item row="0" column="1">
-       <widget class="QComboBox" name="tilingAlgorithmCombo"/>
-      </item>
-      <item row="1" column="0">
-        <widget class="QLabel" name="label_automaticSplitTarget">
-         <property name="buddy">
-          <cstring>automaticSplitTargetCombo</cstring>
-         </property>
-        <property name="text">
-         <string>The occupied leaf a newly opened window is automatically tiled into</string>
-        </property>
-       </widget>
-      </item>
-      <item row="1" column="1">
-       <widget class="QComboBox" name="automaticSplitTargetCombo"/>
-      </item>
-      <item row="2" column="0">
+       <item row="0" column="0">
         <widget class="QLabel" name="label_workspaceMode">
          <property name="buddy">
           <cstring>workspaceModeCombo</cstring>
@@ -45,10 +19,10 @@
         </property>
        </widget>
       </item>
-      <item row="2" column="1">
+       <item row="0" column="1">
        <widget class="QComboBox" name="workspaceModeCombo"/>
       </item>
-      <item row="3" column="0">
+       <item row="1" column="0">
         <widget class="QLabel" name="label_shortcutProfile">
          <property name="buddy">
           <cstring>shortcutProfileCombo</cstring>
@@ -58,17 +32,10 @@
         </property>
        </widget>
       </item>
-       <item row="3" column="1">
+        <item row="1" column="1">
         <widget class="QComboBox" name="shortcutProfileCombo"/>
        </item>
-       <item row="4" column="0" colspan="2">
-       <widget class="QCheckBox" name="dropOutlinePreviewCheckBox">
-        <property name="text">
-         <string>Show a destination outline while dragging a tiled window</string>
-        </property>
-       </widget>
-      </item>
-      <item row="5" column="0">
+       <item row="2" column="0">
         <widget class="QLabel" name="label_innerGap">
          <property name="buddy">
           <cstring>innerGapSpinBox</cstring>
@@ -78,7 +45,7 @@
         </property>
        </widget>
       </item>
-      <item row="5" column="1">
+       <item row="2" column="1">
        <widget class="QSpinBox" name="innerGapSpinBox">
         <property name="minimum">
          <number>0</number>
@@ -94,7 +61,7 @@
         </property>
        </widget>
       </item>
-      <item row="6" column="0">
+       <item row="3" column="0">
         <widget class="QLabel" name="label_outerGap">
          <property name="buddy">
           <cstring>outerGapSpinBox</cstring>
@@ -104,7 +71,7 @@
         </property>
        </widget>
       </item>
-      <item row="6" column="1">
+       <item row="3" column="1">
        <widget class="QSpinBox" name="outerGapSpinBox">
         <property name="minimum">
          <number>0</number>
@@ -221,7 +188,7 @@
        <item row="5" column="0" colspan="2">
         <widget class="QLabel" name="borderDescription">
          <property name="text">
-              <string>When enabled, the border uses the current theme highlight color when available and the configured color is the fallback. When disabled, the configured color is always used. Border changes apply immediately through the KWin effect reconfigure. Gap settings can reload; startup settings require a session restart; unconsumed settings have no running effect.</string>
+               <string>When enabled, the border uses the current theme highlight color when available and the configured color is the fallback. When disabled, the configured color is always used. Border changes apply immediately through the KWin effect reconfigure. Gap settings can reload; startup settings require a session restart.</string>
         </property>
         <property name="wordWrap">
          <bool>true</bool>
@@ -257,7 +224,7 @@
        <item>
         <widget class="QLabel" name="tilerReloadDescription">
          <property name="text">
-            <string>Gap settings are saved to kwinrc. Session restart is the guaranteed pickup mechanism for gaps and startup settings. Saving gaps marks a reload as required; startup settings require a session restart; unconsumed settings have no running effect. Reload sends one typed KWin reconfigure request; the send is unconfirmed and never claims the running tiler applied the settings. This never changes shortcuts.</string>
+             <string>Gap settings are saved to kwinrc. Session restart is the guaranteed pickup mechanism for gaps and startup settings. Saving gaps marks a reload as required; startup settings require a session restart. Reload sends one typed KWin reconfigure request; the send is unconfirmed and never claims the running tiler applied the settings. This never changes shortcuts.</string>
          </property>
          <property name="wordWrap">
           <bool>true</bool>

@@ -32,31 +32,21 @@ describe("production bundle compatibility", () => {
         const metadata = readFileSync("metadata.json", "utf8");
         const schema = readFileSync("contents/config/main.xml", "utf8");
         assert.doesNotMatch(metadata, /"X-KDE-ConfigModule"/);
-        assert.match(schema, /<entry name="tilingAlgorithm" type="Enum">/);
-        assert.match(schema, /<entry name="automaticSplitTarget" type="Enum">/);
         assert.match(schema, /<entry name="workspaceMode" type="Enum">/);
         assert.match(schema, /<entry name="shortcutProfile" type="Enum">/);
-        assert.match(schema, /<entry name="dropOutlinePreview" type="Bool">/);
         assert.match(schema, /<entry name="innerGap" type="Int">/);
         assert.match(schema, /<entry name="outerGap" type="Int">/);
+        assert.doesNotMatch(schema, /tilingAlgorithm|automaticSplitTarget|dropOutlinePreview/);
         assert.doesNotMatch(schema, /engineAuthorityMode/);
     });
 
     it("declares the startup defaults in the KConfigXT schema", () => {
         const schema = readFileSync("contents/config/main.xml", "utf8");
-        assert.match(schema, /<default>dwindle<\/default>/);
         assert.match(schema, /<default>per-output-local<\/default>/);
         assert.match(schema, /<default>cosmic<\/default>/);
-        assert.match(schema, /<entry name="dropOutlinePreview" type="Bool">[\s\S]*?<default>false<\/default>/);
         assert.match(schema, /<entry name="innerGap" type="Int">[\s\S]*?<default>8<\/default>[\s\S]*?<min>0<\/min>[\s\S]*?<max>64<\/max>/);
         assert.match(schema, /<entry name="outerGap" type="Int">[\s\S]*?<default>8<\/default>[\s\S]*?<min>0<\/min>[\s\S]*?<max>64<\/max>/);
         assert.doesNotMatch(schema, /engineAuthorityMode/);
-        for (const preset of ["columns", "rows", "balanced-grid", "dwindle"]) {
-            assert.match(schema, new RegExp(`<choice name="${preset}" value="${preset}"\\/>`));
-        }
-        for (const target of ["dwindle", "largest", "active"]) {
-            assert.match(schema, new RegExp(`<choice name="${target}" value="${target}"\\/>`));
-        }
         for (const mode of ["per-output-local", "global-unique", "shared"]) {
             assert.match(schema, new RegExp(`<choice name="${mode}" value="${mode}"\\/>`));
         }
@@ -68,12 +58,12 @@ describe("production bundle compatibility", () => {
     it("declares the standard KCM UI with kcfg-bound controls", () => {
         const ui = readFileSync("contents/ui/config.ui", "utf8");
         assert.match(ui, /<widget class="QWidget"/);
-        for (const entry of ["tilingAlgorithm", "automaticSplitTarget", "workspaceMode", "shortcutProfile"]) {
+        for (const entry of ["workspaceMode", "shortcutProfile"]) {
             assert.match(ui, new RegExp(`name="kcfg_${entry}"`));
         }
-        assert.match(ui, /<widget class="QCheckBox" name="kcfg_dropOutlinePreview">/);
         assert.match(ui, /<widget class="QSpinBox" name="kcfg_innerGap">/);
         assert.match(ui, /<widget class="QSpinBox" name="kcfg_outerGap">/);
+        assert.doesNotMatch(ui, /tilingAlgorithm|automaticSplitTarget|dropOutlinePreview/);
         assert.doesNotMatch(ui, /engineAuthorityMode/);
     });
 

@@ -36,6 +36,15 @@ import {
     GROUP_HIGHLIGHT_SET_METHOD,
     startActiveGroupHighlight,
 } from "./active-group-highlight";
+import {
+    INITIAL_MAXIMIZE_CLEAR_METHOD,
+    INITIAL_MAXIMIZE_EPOCH_METHOD,
+    INITIAL_MAXIMIZE_INTERFACE,
+    INITIAL_MAXIMIZE_OBJECT,
+    INITIAL_MAXIMIZE_SERVICE,
+    INITIAL_MAXIMIZE_SET_METHOD,
+    startInitialMaximize,
+} from "./active-border-initial";
 import { PLAN_DBUS_SERVICE, PLAN_INTERFACE, PLAN_METHOD, PLAN_OBJECT, PLAN_SERVICE, PLAN_START_FLAGS, PLAN_START_METHOD, PlanAdapter, PlanDirection, PlanDomain, PlanObserved, PlanResizeMode, DirectionalObservation, PlanWindowConstraints, planDirectionalFingerprint, planFingerprint } from "./plan-adapter";
 import { PLAN_SOURCE_REV } from "./source-rev";
 import { connectSignal, readSignal } from "./signal-capability";
@@ -50,6 +59,21 @@ import {
     WorkspaceSendObserved,
     workspaceFingerprint as workspaceSendFingerprint,
 } from "./workspace-send-adapter";
+
+// Module-scope grab of the raw KWin script `callDBus` global for the
+// zero-argument effect epoch getter. Resolved here (not inside
+// startPlanAdapterEntry, where the local wrapped `callDbus` shadows the
+// global) so the getter call carries exactly one trailing callback and no
+// payload argument. Null when the global is unavailable (tests/native-only).
+function rawEffectCallDbus(): ((...args: ReadonlyArray<unknown>) => void) | null {
+    try {
+        const candidate: unknown = callDBus;
+        return typeof candidate === "function" ? (candidate as (...args: ReadonlyArray<unknown>) => void) : null;
+    } catch (error) {
+        void error;
+        return null;
+    }
+}
 
 export interface PlanEntryOverrides {
     readonly workspace?: unknown;
@@ -75,6 +99,7 @@ export interface PlanEntryOverrides {
         method: string,
         ...args: ReadonlyArray<unknown>
     ) => void;
+    readonly initialEpochCallDbus?: (callback: (reply: unknown) => void) => void;
     readonly scheduleOnce?: (delayMs: number, callback: () => void) => () => void;
     readonly log?: (message: string) => void;
     readonly owner?: unknown;
@@ -2326,6 +2351,11 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             return null;
         }
     };
+    // Initial handoff stop slot, set once the narrow active-window publisher
+    // starts. A later-added eligible window lacking maximizedChanged disables
+    // the Plan adapter; the initial gate must clear there too so a stale
+    // normal confirmation cannot authorize.
+    let initialStopSlot: (() => void) | null = null;
     // Native state writes require their exact notify signal. Unlike fullscreen,
     // a missing signal cannot leave a state-write fence blind.
     const subWindowRequiredSignal = (
@@ -2440,6 +2470,12 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                     } catch (error) {
                         void error;
                     }
+                    try {
+                        initialStopSlot?.();
+                    } catch (error) {
+                        void error;
+                    }
+                    initialStopSlot = null;
                     return;
                 }
                 handler();
@@ -3924,6 +3960,107 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     } catch (error) {
         void error;
     }
+    // Initial active-border maximize handoff: narrow public active-window
+    // publisher over the same effect-owned endpoint (Set/ClearInitial...
+    // methods plus the GetInitialMaximizeEpoch getter). The payload
+    // generation carries the effect-issued epoch fetched asynchronously
+    // before any publish; Plan/group generation is never touched. Publishes
+    // at startup, on active focus changes, and on the focused window's
+    // maximizedChanged with exactly one per-window binding. Group ordering
+    // stays independent; this handoff carries its own per-epoch revision.
+    // Never fails enable: without confirmation both borders stay hidden.
+    let initialStop: (() => void) | null = null;
+    try {
+        const ownerRaw = overrides.owner;
+        if (typeof ownerRaw === "string") {
+            let effectCall = overrides.highlightCallDbus;
+            if (effectCall === undefined) {
+                try {
+                    const native: unknown = callDBus;
+                    if (typeof native === "function") {
+                        const bound = native as (...args: ReadonlyArray<unknown>) => void;
+                        effectCall = (service, path, iface, method, ...args) => {
+                            bound(service, path, iface, method, ...args);
+                        };
+                    }
+                } catch (error) {
+                    void error;
+                }
+            }
+            let epochFetch = overrides.initialEpochCallDbus;
+            if (epochFetch === undefined) {
+                const raw = rawEffectCallDbus();
+                if (raw !== null) {
+                    const boundRaw = raw;
+                    epochFetch = (callback) => {
+                        boundRaw(
+                            INITIAL_MAXIMIZE_SERVICE,
+                            INITIAL_MAXIMIZE_OBJECT,
+                            INITIAL_MAXIMIZE_INTERFACE,
+                            INITIAL_MAXIMIZE_EPOCH_METHOD,
+                            callback,
+                        );
+                    };
+                }
+            }
+            if (effectCall !== undefined && epochFetch !== undefined) {
+                const effect = effectCall;
+                const fetch = epochFetch;
+                const initial = startInitialMaximize({
+                    owner: ownerRaw,
+                    getActiveWindow: () => {
+                        try {
+                            return (liveWorkspace as { activeWindow: unknown }).activeWindow ?? null;
+                        } catch (error) {
+                            void error;
+                            return null;
+                        }
+                    },
+                    setInitial: (payload) => {
+                        effect(
+                            INITIAL_MAXIMIZE_SERVICE,
+                            INITIAL_MAXIMIZE_OBJECT,
+                            INITIAL_MAXIMIZE_INTERFACE,
+                            INITIAL_MAXIMIZE_SET_METHOD,
+                            payload,
+                        );
+                    },
+                    clearInitial: (payload) => {
+                        effect(
+                            INITIAL_MAXIMIZE_SERVICE,
+                            INITIAL_MAXIMIZE_OBJECT,
+                            INITIAL_MAXIMIZE_INTERFACE,
+                            INITIAL_MAXIMIZE_CLEAR_METHOD,
+                            payload,
+                        );
+                    },
+                    fetchEpoch: fetch,
+                    subscribeFocus: (handler) => sub("windowActivated", handler),
+                    subscribeWindowMaximized: (ref, handler) => {
+                        try {
+                            return connectSignal(readSignal(ref, "maximizedChanged"), handler);
+                        } catch (error) {
+                            void error;
+                            return null;
+                        }
+                    },
+                    log,
+                });
+                if (initial !== null) {
+                    initialStop = () => {
+                        try {
+                            initial.stop();
+                        } catch (error) {
+                            void error;
+                        }
+                    };
+                    initialStopSlot = initialStop;
+                }
+            }
+        }
+    } catch (error) {
+        void error;
+    }
     let optionsConfigDetach: (() => void) | null = null;
     try {
         const optionsGlobal: unknown =
@@ -3999,6 +4136,10 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             }
             if (highlightStop !== null) {
                 try { highlightStop(); } catch (error) { void error; }
+            }
+            if (initialStop !== null) {
+                try { initialStop(); } catch (error) { void error; }
+                initialStopSlot = null;
             }
             if (optionsConfigDetach !== null) {
                 try { optionsConfigDetach(); } catch (error) { void error; }

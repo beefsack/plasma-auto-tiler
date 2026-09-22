@@ -1,6 +1,7 @@
 #include "activewindowborder.h"
 #include "activeborderconfig.h"
 #include "activeborderlogic.h"
+#include "drag_oracle_ffi.h"
 
 #include <KColorScheme>
 #include <KSharedConfig>
@@ -8,6 +9,7 @@
 #include <effect/effecthandler.h>
 #include <scene/workspacescene.h>
 #include <scene/windowitem.h>
+#include <window.h>
 
 #include <QByteArray>
 #include <QColor>
@@ -15,6 +17,7 @@
 #include <QPalette>
 #include <QUuid>
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -49,6 +52,22 @@ public Q_SLOTS:
             m_effect->clearGroupHighlight();
         }
     }
+    Q_SCRIPTABLE void SetInitialMaximizeState(const QString &payload)
+    {
+        if (m_effect) {
+            m_effect->applyInitialMaximizeState(payload);
+        }
+    }
+    Q_SCRIPTABLE void ClearInitialMaximizeState(const QString &payload)
+    {
+        if (m_effect) {
+            m_effect->clearInitialMaximizeState(payload);
+        }
+    }
+    Q_SCRIPTABLE QString GetInitialMaximizeEpoch()
+    {
+        return m_effect ? m_effect->initialMaximizeEpoch() : QString();
+    }
     Q_SCRIPTABLE QString GetGroupHighlightStatus()
     {
         return m_effect ? m_effect->groupHighlightStatus() : QStringLiteral("v=1;rx=0;ok=0;parse_rej=0;focus_mm=0;stale=0;clr=0;has=0;ord=0;first=0;meta=0;foc=0;ep=0;gl=0;vis=0");
@@ -57,6 +76,55 @@ public Q_SLOTS:
 private:
     ActiveWindowBorderEffect *m_effect = nullptr;
 };
+
+class LastVerdictObject : public QObject
+{
+    Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "org.plasmaautotiler.DragOracle1")
+
+public:
+    using QObject::QObject;
+
+public Q_SLOTS:
+    Q_SCRIPTABLE QString LastVerdict() const
+    {
+        // Copy the verdict before the D-Bus return so the reply never borrows
+        // the oracle's process-static storage across threads or reentrancy.
+        uint8_t copy[1024];
+        const size_t taken = drag_oracle_last_copy(copy, sizeof(copy));
+        if (taken == 0 || taken > sizeof(copy)) {
+            return QStringLiteral("{\"v\":1,\"cancelled\":true,\"finalRect\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1},\"windowIdentity\":\"\",\"correlation\":\"drag-0\",\"reason\":\"oracle-unavailable\"}");
+        }
+        return QString::fromUtf8(reinterpret_cast<const char *>(copy), static_cast<int>(taken));
+    }
+};
+
+DragOracleRect toOraclePod(const QRect &rect)
+{
+    DragOracleRect out{};
+    out.x = rect.x();
+    out.y = rect.y();
+    out.w = rect.width();
+    out.h = rect.height();
+    return out;
+}
+
+QRect quantizedOracleRect(const RectF &geometry)
+{
+    return QRect(static_cast<int>(std::lround(geometry.x())), static_cast<int>(std::lround(geometry.y())),
+        static_cast<int>(std::lround(geometry.width())), static_cast<int>(std::lround(geometry.height())));
+}
+
+QRect oracleMoveResizeRect(EffectWindow *window)
+{
+    if (window == nullptr) {
+        return QRect();
+    }
+    if (Window *inner = window->window()) {
+        return quantizedOracleRect(inner->moveResizeGeometry());
+    }
+    return QRect();
+}
 
 } // namespace
 
@@ -70,6 +138,11 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
 
     m_groupDbusObject = new GroupHighlightObject(this, this);
     group_highlight_state_init(&m_groupState);
+    initial_maximize_state_init(&m_initialState);
+    // Fresh bounded epoch per effect instance from public Qt facilities: a
+    // QUuid without braces is lowercase hex plus dashes, which fits the
+    // strict generation alphabet. Old script generations can never equal it.
+    m_initialEpoch = QUuid::createUuid().toString(QUuid::WithoutBraces);
     // Fail closed with no false endpoint expectation and no live retry: the
     // group stays unavailable/clear unless both the well-known service and
     // object register. Visibility and apply paths gate on this flag.
@@ -88,7 +161,64 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
     m_groupDbusAvailable = groupRegistered;
     if (!m_groupDbusAvailable) {
         group_highlight_clear(&m_groupState);
+        initial_maximize_clear(&m_initialState);
     }
+
+    // Folded Slice 1 drag oracle endpoint: registered independently of the
+    // ActiveBorder endpoint outcome, so one registration failure never hides
+    // the other service. No retry, no polling.
+    m_oracleDbusObject = new LastVerdictObject(this);
+    if (bus.isConnected()) {
+        const bool oracleServiceOk = bus.registerService(QStringLiteral("org.plasmaautotiler.DragOracle"));
+        const bool oracleObjectOk = bus.registerObject(QStringLiteral("/org/plasmaautotiler/DragOracle"), m_oracleDbusObject,
+            QDBusConnection::ExportScriptableContents);
+        if (!(oracleServiceOk && oracleObjectOk)) {
+            bus.unregisterObject(QStringLiteral("/org/plasmaautotiler/DragOracle"));
+            bus.unregisterService(QStringLiteral("org.plasmaautotiler.DragOracle"));
+        }
+    }
+
+    // Oracle observation is independent of rendering. Keep this one shared
+    // lifecycle hookup set active even when the border cannot render.
+    connect(effects, &EffectsHandler::windowDeleted, this, [this](EffectWindow *window) {
+        unsubscribeMaximize(window);
+        forgetOracleWindow(window);
+        m_maximizedWindows.remove(window);
+        if (!m_isOpenGL) {
+            return;
+        }
+        // A deleted tracked/active window clears initial authority: its
+        // confirmation must never authorize a later window.
+        clearInitialGate();
+        if (m_trackedWindow == window) {
+            setTrackedWindow(nullptr);
+        }
+        updateBorder();
+        updateGroupVisibility();
+    });
+    connect(effects, &EffectsHandler::windowClosed, this, [this](EffectWindow *window) {
+        unsubscribeMaximize(window);
+        forgetOracleWindow(window);
+        m_maximizedWindows.remove(window);
+        if (!m_isOpenGL) {
+            return;
+        }
+        // A closed active window clears initial authority immediately.
+        clearInitialGate();
+        updateBorder();
+        updateGroupVisibility();
+    });
+    // Global maximize tracking and the folded oracle observe every window,
+    // including when the active border cannot render. Windows already
+    // maximized before effect load emit no transition and stay unknown.
+    for (EffectWindow *window : effects->stackingOrder()) {
+        subscribeMaximize(window);
+        attachOracleWindow(window);
+    }
+    connect(effects, &EffectsHandler::windowAdded, this, [this](EffectWindow *window) {
+        subscribeMaximize(window);
+        attachOracleWindow(window);
+    });
 
     if (!m_isOpenGL) {
         return;
@@ -103,40 +233,15 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
     connect(effects, &EffectsHandler::windowActivated, this, [this](EffectWindow *) {
         // Focus activation clears the old group immediately before any
         // asynchronous script refresh, so no stale group renders under the
-        // new active focus while Meta is held.
+        // new active focus while Meta is held. The initial gate clears too:
+        // the new window stays hidden until its own normal confirmation.
         clearGroupHighlight();
+        clearInitialGate();
         setTrackedWindow(effects->activeWindow());
         updateBorder();
         updateGroupVisibility();
     });
-    connect(effects, &EffectsHandler::windowDeleted, this, [this](EffectWindow *window) {
-        unsubscribeMaximize(window);
-        m_maximizedWindows.remove(window);
-        if (m_trackedWindow == window) {
-            setTrackedWindow(nullptr);
-            updateBorder();
-        }
-        updateGroupVisibility();
-    });
-    // Fullscreen/minimized/hidden/deleted transitions must hide immediately
-    // while Meta is held without pointer movement: the tracked-window
-    // signals below plus windowActivated/windowDeleted drive visibility.
-    connect(effects, &EffectsHandler::windowClosed, this, [this](EffectWindow *window) {
-        unsubscribeMaximize(window);
-        m_maximizedWindows.remove(window);
-        updateGroupVisibility();
-    });
     connect(effects, &EffectsHandler::mouseChanged, this, &ActiveWindowBorderEffect::onMouseChanged);
-    // Global maximize tracking: transitions for every window while the
-    // effect is loaded, not only the tracked one, so a window maximized
-    // while inactive is already known when later activated. Windows already
-    // maximized before effect load emit no transition and stay unknown.
-    for (EffectWindow *window : effects->stackingOrder()) {
-        subscribeMaximize(window);
-    }
-    connect(effects, &EffectsHandler::windowAdded, this, [this](EffectWindow *window) {
-        subscribeMaximize(window);
-    });
 
     setTrackedWindow(effects->activeWindow());
     updateBorder();
@@ -146,6 +251,8 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
 ActiveWindowBorderEffect::~ActiveWindowBorderEffect()
 {
     QDBusConnection bus = QDBusConnection::sessionBus();
+    bus.unregisterObject(QStringLiteral("/org/plasmaautotiler/DragOracle"));
+    bus.unregisterService(QStringLiteral("org.plasmaautotiler.DragOracle"));
     bus.unregisterObject(QStringLiteral("/org/plasmaautotiler/ActiveBorder"));
     bus.unregisterService(QStringLiteral("org.plasmaautotiler.ActiveBorder"));
 }
@@ -242,6 +349,49 @@ void ActiveWindowBorderEffect::unsubscribeMaximize(EffectWindow *window)
     disconnect(window, &EffectWindow::windowMaximizedStateChanged, this, nullptr);
 }
 
+void ActiveWindowBorderEffect::attachOracleWindow(EffectWindow *window)
+{
+    if (window == nullptr || m_oracleAttached.contains(window)) {
+        return;
+    }
+    m_oracleAttached.insert(window);
+    connect(window, &EffectWindow::windowStartUserMovedResized, this, [this](EffectWindow *moved) {
+        onOracleDragStart(moved);
+    });
+    connect(window, &EffectWindow::windowFinishUserMovedResized, this, [this](EffectWindow *moved) {
+        onOracleDragFinish(moved);
+    });
+}
+
+void ActiveWindowBorderEffect::forgetOracleWindow(EffectWindow *window)
+{
+    if (window == nullptr) {
+        return;
+    }
+    m_oracleStartRects.remove(window);
+    m_oracleAttached.remove(window);
+}
+
+void ActiveWindowBorderEffect::onOracleDragStart(EffectWindow *window)
+{
+    if (window == nullptr || window->isDeleted()) {
+        return;
+    }
+    m_oracleStartRects.insert(window, oracleMoveResizeRect(window));
+}
+
+void ActiveWindowBorderEffect::onOracleDragFinish(EffectWindow *window)
+{
+    if (window == nullptr || window->isDeleted()) {
+        return;
+    }
+    const QRect finalRect = oracleMoveResizeRect(window);
+    const QRect startRect = m_oracleStartRects.take(window);
+    const QByteArray identity = window->internalId().toString(QUuid::WithoutBraces).toUtf8();
+    drag_oracle_record(toOraclePod(startRect), toOraclePod(finalRect), reinterpret_cast<const uint8_t *>(identity.constData()),
+        static_cast<size_t>(identity.size()));
+}
+
 void ActiveWindowBorderEffect::updateMaximizedState(EffectWindow *window, bool maximized)
 {
     if (window == nullptr) {
@@ -262,6 +412,73 @@ void ActiveWindowBorderEffect::updateMaximizedState(EffectWindow *window, bool m
     }
 }
 
+void ActiveWindowBorderEffect::applyInitialMaximizeState(const QString &payload)
+{
+    handleInitialPayload(payload);
+}
+
+void ActiveWindowBorderEffect::clearInitialMaximizeState(const QString &payload)
+{
+    // The clear shape carries its own bounded JSON (active_window null);
+    // route it through the same strict gate so malformed clears also hide.
+    handleInitialPayload(payload);
+}
+
+QString ActiveWindowBorderEffect::initialMaximizeEpoch() const
+{
+    return m_initialEpoch;
+}
+
+void ActiveWindowBorderEffect::handleInitialPayload(const QString &payload)
+{
+    // Unavailable endpoint never authorizes: fail closed.
+    if (!m_groupDbusAvailable) {
+        clearInitialGate();
+        updateBorder();
+        updateGroupVisibility();
+        return;
+    }
+    // QObject/D-Bus boundary: QString payload, exact live native active
+    // identity, and the live per-instance epoch to UTF-8 bytes. Epoch,
+    // ordering, and identity policy lives in Rust. Script state never
+    // mutates m_maximizedWindows here.
+    const QByteArray payloadBytes = payload.toUtf8();
+    EffectWindow *active = effects->activeWindow();
+    QByteArray activeBytes;
+    if (active != nullptr) {
+        activeBytes = active->internalId().toString(QUuid::WithoutBraces).toUtf8();
+    }
+    const QByteArray epochBytes = m_initialEpoch.toUtf8();
+    const bool hadConfirmed = m_initialState.confirmed_normal != 0;
+    const uint8_t *payloadPtr = payloadBytes.isEmpty() ? nullptr : reinterpret_cast<const uint8_t *>(payloadBytes.constData());
+    const uint8_t *activePtr = activeBytes.isEmpty() ? nullptr : reinterpret_cast<const uint8_t *>(activeBytes.constData());
+    const uint8_t *epochPtr = epochBytes.isEmpty() ? nullptr : reinterpret_cast<const uint8_t *>(epochBytes.constData());
+    const int32_t code = initial_maximize_apply(&m_initialState, payloadPtr, static_cast<size_t>(payloadBytes.size()), activePtr,
+        static_cast<size_t>(activeBytes.size()), epochPtr, static_cast<size_t>(epochBytes.size()));
+    if (code == 2) {
+        // Stale/out-of-order cannot authorize the current window: preserve.
+        return;
+    }
+    updateBorder();
+    updateGroupVisibility();
+    if ((m_initialState.confirmed_normal != 0) != hadConfirmed && m_isOpenGL) {
+        effects->addRepaintFull();
+    } else if (m_isOpenGL) {
+        effects->addRepaintFull();
+    }
+}
+
+void ActiveWindowBorderEffect::clearInitialGate()
+{
+    // Rust preserves the order within the stream; only the gate hides.
+    initial_maximize_clear(&m_initialState);
+}
+
+bool ActiveWindowBorderEffect::isInitialConfirmedNormal() const
+{
+    return initial_maximize_is_confirmed(&m_initialState) != 0;
+}
+
 void ActiveWindowBorderEffect::updateBorder()
 {
     if (!m_isOpenGL) {
@@ -269,17 +486,27 @@ void ActiveWindowBorderEffect::updateBorder()
     }
 
     EffectWindow *window = effects->activeWindow();
+    const bool nativeMaximized = window ? m_maximizedWindows.contains(window) : false;
+    const bool fullScreen = window ? window->isFullScreen() : false;
     const ActiveBorderState state = activeBorderState(
         window != nullptr,
         window ? static_cast<QRectF>(window->frameGeometry()) : QRectF(),
         window ? window->isDeleted() : false,
         window ? window->isMinimized() : false,
-        window ? window->isFullScreen() : false,
-        window ? m_maximizedWindows.contains(window) : false);
+        fullScreen,
+        nativeMaximized);
+    // Hide-until-confirmed: the exact current window must hold a valid
+    // script normal confirmation. A delayed script zero never overrides a
+    // live native maximize/fullscreen signal. Policy lives in Rust; the
+    // header inline mirrors the same truth table for offline unit tests.
+    const bool initialOk = initial_maximize_allows_display(isInitialConfirmedNormal() ? 1 : 0, fullScreen ? 1 : 0,
+                               nativeMaximized ? 1 : 0, m_groupDbusAvailable ? 1 : 0)
+        != 0;
+    const bool visible = state.visible && initialOk;
     const qreal gap = ActiveBorderConfig::borderGap();
     const QRectF innerRect = activeBorderInnerRect(state.innerRect, gap);
     m_borderItem.setInnerRect(window ? window->windowItem()->mapFromScene(innerRect) : RectF());
-    m_borderItem.setVisible(state.visible);
+    m_borderItem.setVisible(visible);
     effects->addRepaintFull();
 }
 
@@ -396,9 +623,18 @@ void ActiveWindowBorderEffect::updateGroupVisibility()
     // immediately via the tracked-signal connections above). Member validity
     // is never derived native-side: only the carried union bounds render.
     // Policy lives in Rust; C++ supplies POD observer flags and renders.
-    const bool show = group_highlight_is_visible(&m_groupState, m_metaHeld ? 1 : 0, m_firstMouseSeen ? 1 : 0,
-                          isGroupFocusEligible() ? 1 : 0, m_groupDbusAvailable ? 1 : 0)
+    // Both borders additionally require the initial normal confirmation for
+    // the exact current window; the group stream stays independently ordered.
+    const bool groupShow = group_highlight_is_visible(&m_groupState, m_metaHeld ? 1 : 0, m_firstMouseSeen ? 1 : 0,
+                               isGroupFocusEligible() ? 1 : 0, m_groupDbusAvailable ? 1 : 0)
         == 1;
+    EffectWindow *active = effects->activeWindow();
+    const bool nativeMaximized = active ? m_maximizedWindows.contains(active) : true;
+    const bool fullScreen = active ? active->isFullScreen() : true;
+    const bool initialOk = initial_maximize_allows_display(isInitialConfirmedNormal() ? 1 : 0, fullScreen ? 1 : 0,
+                               nativeMaximized ? 1 : 0, m_groupDbusAvailable ? 1 : 0)
+        != 0;
+    const bool show = groupShow && initialOk;
     if (show != m_groupVisible) {
         m_groupVisible = show;
         m_groupItem.setVisible(show);

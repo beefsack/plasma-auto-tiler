@@ -2108,6 +2108,259 @@ describe("plan adapter sticky and maximize toggles", () => {
     });
 });
 
+describe("plan adapter sticky adoption", () => {
+    it("adopts an already-sticky window as prior float: unstick preserves geometry and focus without planner, later float tiles", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        (mocks.env as { readDesktopIds?: (target: object) => ReadonlyArray<string> | null }).readDesktopIds = () => [];
+        let sticky = true;
+        let floating = true;
+        const rect = { x: 100, y: 100, w: 600, h: 400 };
+        mocks.observeImpl = () => makeObserved(refs, {
+            floating: { "win-a": floating },
+            sticky: { "win-a": sticky },
+            rects: { "win-a": rect, "win-b": { x: 0, y: 0, w: 100, h: 100 } },
+            resourceClasses: { "win-a": "firefox" },
+        });
+        mocks.desktopToggleImpl = (target, allDesktops) => {
+            assert.equal(target, refs.a);
+            sticky = allDesktops;
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestSticky();
+        assert.ok(mocks.logs.some((line) => line.includes("sticky-adopted window=win-a")), "unknown origin is adopted");
+        assert.deepEqual(mocks.desktopToggles, [{ target: refs.a, allDesktops: false }]);
+        assert.equal(mocks.dbusCalls.length, 0, "adopted unstick claims no planner admission");
+        assert.equal(mocks.geometries.length, 0, "adopted unstick preserves native geometry");
+        assert.equal(mocks.desktopsWrites.length, 0, "adopted unstick switches no workspace");
+        assert.deepEqual(mocks.floatingCalls, [{ id: "win-a", floating: true }], "adopted unstick leaves a normal float");
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-echo-consumed"));
+        assert.ok(mocks.logs.some((line) => line.includes("sticky-focus-retained window=win-a")));
+        sticky = false;
+        adapter.requestFloat();
+        assert.equal(mocks.dbusCalls.length, 1, "later ordinary float toggle tiles the adopted float");
+        assert.deepEqual(plannerPayload(mocks, 0)["command"], { op: "toggle-float", window: "win-a", float_rect: { x: 100, y: 100, w: 600, h: 400 } });
+    });
+
+    it("adopts after disable and re-enable without planner admission", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        (mocks.env as { readDesktopIds?: (target: object) => ReadonlyArray<string> | null }).readDesktopIds = () => [];
+        let sticky = false;
+        mocks.observeImpl = () => makeObserved(refs, { sticky: { "win-a": sticky } });
+        mocks.desktopToggleImpl = (_target, allDesktops) => {
+            sticky = allDesktops;
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.disable();
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        sticky = true;
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": true }, sticky: { "win-a": sticky } });
+        adapter.requestSticky();
+        assert.ok(mocks.logs.some((line) => line.includes("sticky-adopted window=win-a")));
+        assert.deepEqual(mocks.desktopToggles, [{ target: refs.a, allDesktops: false }]);
+        assert.equal(mocks.dbusCalls.length, 0, "re-enabled unstick claims no planner admission");
+        assert.deepEqual(mocks.floatingCalls, [{ id: "win-a", floating: true }]);
+    });
+
+    it("unstick after a current-desktop change keeps geometry and focus with no workspace switch", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        (mocks.env as { readDesktopIds?: (target: object) => ReadonlyArray<string> | null }).readDesktopIds = () => [];
+        const rect = { x: 110, y: 120, w: 640, h: 420 };
+        const stickyObserved = (workspace: string): PlanObserved => ({
+            domainOutput: "out-1",
+            domainWorkspace: workspace,
+            domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
+            domainGap: 8,
+            domainOuterGap: 8,
+            focusedId: "win-a",
+            windows: Object.freeze([
+                Object.freeze({ id: "win-a", ref: refs.a, rect, output: "out-1", workspace, fullscreen: false, maximized: false, floating: true, sticky: true, resourceClass: "ghostty" }),
+                Object.freeze({ id: "win-b", ref: refs.b, rect: { x: 0, y: 0, w: 100, h: 100 }, output: "out-1", workspace, fullscreen: false, maximized: false, floating: false, sticky: false, resourceClass: "unknown" }),
+            ]),
+            activeRef: refs.a,
+            fingerprint: `fp-${workspace}`,
+            revalidate: () => true,
+        });
+        let workspace = "ws-1";
+        let sticky = true;
+        mocks.observeImpl = () => stickyObserved(workspace);
+        mocks.desktopToggleImpl = (target, allDesktops) => {
+            assert.equal(target, refs.a);
+            sticky = allDesktops;
+            void sticky;
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        workspace = "ws-2";
+        adapter.requestSticky();
+        assert.ok(mocks.logs.some((line) => line.includes("sticky-adopted window=win-a")));
+        assert.equal(mocks.dbusCalls.length, 0);
+        assert.equal(mocks.geometries.length, 0, "desktop change never rewrites geometry");
+        assert.equal(mocks.desktopsWrites.length, 0, "native assignment owns the current desktop; no explicit switch");
+        assert.deepEqual(mocks.floatingCalls, [{ id: "win-a", floating: true }]);
+        assert.ok(mocks.logs.some((line) => line.includes("sticky-focus-retained window=win-a")));
+    });
+
+    it("keeps known tiled fresh-admit and known float stays-float behavior", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let floating = false;
+        let sticky = false;
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": floating }, sticky: { "win-a": sticky } });
+        mocks.desktopToggleImpl = (_target, allDesktops) => {
+            sticky = allDesktops;
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestSticky();
+        const tiledPayload = plannerPayload(mocks, 0);
+        floating = true;
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: tiledPayload["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [{ window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            float_geometry: { window: "win-a", rect: { x: 100, y: 100, w: 600, h: 400 } },
+        }));
+        adapter.requestSticky();
+        assert.equal(mocks.dbusCalls.length, 2, "known tiled origin fresh-admits on sticky-off");
+        assert.deepEqual(plannerPayload(mocks, 1)["command"], { op: "toggle-float", window: "win-a", float_rect: { x: 0, y: 0, w: 100, h: 100 } });
+
+        const refs2 = makeRefs();
+        const mocks2 = mockEnv(refs2);
+        let sticky2 = false;
+        mocks2.observeImpl = () => makeObserved(refs2, { floating: { "win-a": true }, sticky: { "win-a": sticky2 } });
+        mocks2.desktopToggleImpl = (_target, allDesktops) => {
+            sticky2 = allDesktops;
+            fire(mocks2, "desktops", refs2.a);
+            return "invoked";
+        };
+        const adapter2 = enableAdapter(mocks2);
+        adapter2.requestSticky();
+        adapter2.requestSticky();
+        assert.equal(mocks2.dbusCalls.length, 0, "known float origin never enters the tile tree");
+        assert.deepEqual(mocks2.desktopToggles, [{ target: refs2.a, allDesktops: true }, { target: refs2.a, allDesktops: false }]);
+    });
+
+    it("a throwing sticky-off keeps canonical tracking and a later retry succeeds without replay", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        (mocks.env as { readDesktopIds?: (target: object) => ReadonlyArray<string> | null }).readDesktopIds = () => [];
+        let sticky = true;
+        let fail = true;
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": true }, sticky: { "win-a": sticky } });
+        mocks.desktopToggleImpl = (target, allDesktops) => {
+            assert.equal(target, refs.a);
+            if (fail) {
+                return "threw";
+            }
+            sticky = allDesktops;
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestSticky();
+        assert.ok(mocks.logs.some((line) => line.includes("sticky-adopted window=win-a")));
+        assert.ok(mocks.logs.some((line) => line.includes("target=current-desktop") && line.includes("outcome=threw")));
+        assert.equal(mocks.floatingCalls.length, 0, "failed unstick fabricates no float tracking");
+        assert.equal(mocks.dbusCalls.length, 0, "failed unstick replays no planner command");
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.desktopToggles.length, 1, "failed attempt issued exactly one native write with no automatic retry");
+        fail = false;
+        adapter.requestSticky();
+        assert.equal(mocks.desktopToggles.length, 2, "one later explicit retry writes once more");
+        assert.deepEqual(mocks.floatingCalls, [{ id: "win-a", floating: true }]);
+        assert.equal(mocks.dbusCalls.length, 0);
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-echo-consumed"));
+    });
+
+    it("a stale desktops echo for another window never fabricates unstick", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        (mocks.env as { readDesktopIds?: (target: object) => ReadonlyArray<string> | null }).readDesktopIds = () => [];
+        let sticky = true;
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": true }, sticky: { "win-a": sticky } });
+        mocks.desktopToggleImpl = (target, allDesktops) => {
+            assert.equal(target, refs.a);
+            sticky = allDesktops;
+            fire(mocks, "desktops", refs.b);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestSticky();
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-echo-mismatched"));
+        assert.equal(mocks.floatingCalls.length, 0, "stale echo marks no float");
+        assert.equal(mocks.dbusCalls.length, 0, "stale echo dispatches no planner admission");
+        assert.equal(sticky, false, "native write itself is not rolled back by the test double");
+    });
+
+    it("an untracked sticky window with no desktop-list reader stays refused without writes", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        assert.equal((mocks.env as { readDesktopIds?: unknown }).readDesktopIds, undefined);
+        mocks.observeImpl = () => makeObserved(refs, {
+            floating: { "win-a": true },
+            sticky: { "win-a": true },
+            resourceClasses: { "win-a": "firefox" },
+        });
+        const adapter = enableAdapter(mocks);
+        adapter.requestSticky();
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-refused-untracked window=win-a resource_class=firefox"));
+        assert.equal(mocks.desktopToggles.length, 0, "no native desktop write without empty-list proof");
+        assert.equal(mocks.dbusCalls.length, 0, "no planner call without adoption");
+        assert.equal(mocks.floatingCalls.length, 0, "no float canonical mark without adoption");
+        assert.equal(mocks.geometries.length, 0);
+    });
+
+    it("adopted sticky still refuses fullscreen, maximize, and missing native identity", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.observeImpl = () => makeObserved(refs, { fullscreen: { "win-a": true }, sticky: { "win-a": true } });
+        const adapter = enableAdapter(mocks);
+        adapter.requestSticky();
+        assert.ok(mocks.logs.some((line) => line.includes("sticky-refused-fullscreen")));
+        assert.equal(mocks.desktopToggles.length, 0);
+        mocks.observeImpl = () => makeObserved(refs, { maximized: { "win-a": true }, sticky: { "win-a": true } });
+        adapter.requestSticky();
+        assert.ok(mocks.logs.some((line) => line.includes("sticky-refused-maximize")));
+        assert.equal(mocks.desktopToggles.length, 0);
+        mocks.observeImpl = () => null;
+        adapter.requestSticky();
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-refused-observe"));
+    });
+
+    it("adopts an already-sticky native window at entry startup with an empty desktop list", () => {
+        const world = fakeWorld();
+        const winA = world.wins[0] as Record<string, unknown>;
+        const before = winA["frameGeometry"];
+        winA["onAllDesktops"] = true;
+        winA["desktops"] = [];
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        const dbusBefore = mocks.dbusCalls.length;
+        handle?.requestSticky();
+        assert.ok(mocks.logs.some((line) => line.includes("sticky-adopted")), "entry startup sticky is adopted");
+        assert.equal(winA["onAllDesktops"], false, "sticky-off assigns the current desktop natively");
+        assert.deepEqual(winA["frameGeometry"], before, "adopted unstick preserves native placement");
+        assert.equal(world.workspace["activeWindow"], winA, "adopted unstick keeps exact focus");
+        assert.equal(mocks.dbusCalls.length, dbusBefore, "adopted unstick claims no planner admission");
+        winA["desktops"] = [world.desktop];
+        handle?.requestFloat();
+        assert.equal(mocks.dbusCalls.length, dbusBefore + 1, "later ordinary float toggle tiles the adopted float");
+        const payload = JSON.parse(mocks.dbusCalls[dbusBefore]?.payload as string) as Record<string, unknown>;
+        assert.deepEqual((payload["command"] as Record<string, unknown>)["op"], "toggle-float");
+        handle?.stop();
+    });
+});
+
 describe("plan adapter float focus retention", () => {
     it("retains the exact toggled window on normal float entry instead of activating the Rust survivor focus", () => {
         const refs = makeRefs();

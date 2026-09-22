@@ -31,6 +31,15 @@ EFFECT_PLUGIN_ID="plasma-auto-tiler-active-border"
 # Derived from EFFECT_PLUGIN_ID so there is one place this identifier is
 # spelled out, not two.
 EFFECT_CONFIG_KEY="${EFFECT_PLUGIN_ID}Enabled"
+LEGACY_ORACLE_CONFIG_KEY="plasma-auto-tiler-drag-oracleEnabled"
+# Retired standalone Slice 1 drag-oracle effect's kwinrc key. The oracle is
+# folded into EFFECT_PLUGIN_ID; effect-install migrates only the exact legacy
+# value "true" (enable survivor, then set this key false) inside its own
+# transaction. Any other value (including absent) is left untouched, and no
+# other path performs migration: with only the legacy effect enabled and no
+# migration run before session startup, the user must run the project
+# activation path (effect-install/setup) and start a new session. No startup
+# daemon, script, or config sweep migrates this key.
 # Host-matched native builder (scripts/nix-host-kwin-build.sh) owns all
 # KWin CMake resolution. The legacy pinned PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR
 # / DOGFOOD_KWIN_DEV_CMAKE_DIR path never drives or leaks into effect-install.
@@ -97,7 +106,19 @@ Commands:
                   [Plugins] plasma-auto-tiler-active-borderEnabled=true to
                   kwinrc so the effect persists across future session starts
                   once discovered (does not reconfigure KWin or use D-Bus);
-                  idempotent
+                  idempotent. The staging transaction publishes only the
+                  survivor effect .so plus the KCM, so a stale staged
+                  plasma-auto-tiler-drag-oracle.so under the project-owned
+                  staging root is eliminated by atomic replacement (external
+                  or system plugin paths are never touched). When kwinrc
+                  [Plugins] plasma-auto-tiler-drag-oracleEnabled is exactly
+                  "true", effect-install enables the survivor and then sets
+                  that legacy key to false; any other legacy value (including
+                  absent) is left untouched. No automatic migration happens
+                  outside effect-install: with only the legacy effect enabled
+                  and no migration run before session startup, run the project
+                  activation path (effect-install or setup) and start a new
+                  session.
   effect-reload   query D-Bus for effect support; if supported, unload and
                    reload the effect live; if unsupported, reports the
                    ambiguous unavailable state and exits non-zero without
@@ -431,6 +452,8 @@ effect_install_abort() {
 cmd_effect_install() {
   require_tool KWRITECONFIG6_BIN kwriteconfig6
   local kwriteconfig="$TOOL"
+  require_tool KREADCONFIG6_BIN kreadconfig6
+  local kreadconfig="$TOOL"
   [[ -x "$BUILDER" ]] || {
     echo "error: host-matched builder missing or not executable: $BUILDER" >&2
     exit 1
@@ -532,6 +555,29 @@ cmd_effect_install() {
   fi
   effect_install_check_signal
 
+  # Retired standalone oracle migration, transactional and exact-match only:
+  # when the legacy key is exactly "true", the survivor is already enabled by
+  # the probe above, so set the legacy key false. Any other value (including
+  # absent) is left untouched and no other key is deleted. The kwinrc snapshot
+  # above restores exact values on rollback. Never touches plugin files.
+  local legacy_oracle_value="__plasma_auto_tiler_key_absent__"
+  legacy_oracle_value="$( "$kreadconfig" --file "$KWINRC" --group Plugins --key "$LEGACY_ORACLE_CONFIG_KEY" --default "__plasma_auto_tiler_key_absent__" )" || {
+    effect_install_abort "kreadconfig6 failed to read $LEGACY_ORACLE_CONFIG_KEY from $KWINRC"
+  }
+  effect_install_check_signal
+  local legacy_oracle_migrated=0
+  if [[ "$legacy_oracle_value" == "true" ]]; then
+    if ! "$kwriteconfig" --file "$KWINRC" --group Plugins --key "$EFFECT_CONFIG_KEY" true; then
+      effect_install_abort "kwriteconfig6 failed to set $EFFECT_CONFIG_KEY=true in $KWINRC"
+    fi
+    effect_install_check_signal
+    if ! "$kwriteconfig" --file "$KWINRC" --group Plugins --key "$LEGACY_ORACLE_CONFIG_KEY" false; then
+      effect_install_abort "kwriteconfig6 failed to set $LEGACY_ORACLE_CONFIG_KEY=false in $KWINRC"
+    fi
+    effect_install_check_signal
+    legacy_oracle_migrated=1
+  fi
+
   if [[ -e "$EFFECT_ROOT" || -L "$EFFECT_ROOT" ]]; then
     if [[ -L "$EFFECT_ROOT" || ! -d "$EFFECT_ROOT" ]] || ! mv -- "$EFFECT_ROOT" "$install_root_backup"; then
       effect_install_abort "could not preserve existing native-effect staging root"
@@ -571,6 +617,9 @@ cmd_effect_install() {
   echo "staged: $EFFECT_STAGED_SO"
   echo "env script: $EFFECT_ENV_FILE"
   echo "kwinrc: $EFFECT_CONFIG_KEY set to true (persists across future session starts once the effect is discovered by KWin; this does not itself trigger a live D-Bus load - use 'effect-reload' for that)"
+  if [[ "$legacy_oracle_migrated" -eq 1 ]]; then
+    echo "kwinrc: $LEGACY_ORACLE_CONFIG_KEY set to false (migrated from the retired standalone oracle to the surviving effect)"
+  fi
   if [[ "$effect_install_needs_boundary" -eq 1 ]]; then
     echo "note: a logout/login (or new session) is required before the effect is discovered by KWin."
   fi

@@ -32,6 +32,25 @@ Historical implementation detail is recoverable in Git history.
   maximize getter, so a window already maximized before effect load remains an
   unclassifiable pre-load edge; no polling, private API, geometry heuristic, or
   default-hide fallback is selected.
+- Approved hide-until-confirmed initial handoff: both native borders stay
+  hidden until a valid current script confirmation says the exact active
+  native window is normal (`maximize_mode: 0`) over the effect-owned
+  ActiveBorder endpoint (`SetInitialMaximizeState`/`ClearInitialMaximizeState`
+  with strict bounded JSON through the existing group-highlight Rust FFI).
+  The payload generation carries a per-effect-instance epoch minted from
+  public Qt facilities and fetched via `GetInitialMaximizeEpoch` before any
+  publish, re-read on every lifecycle input so a reloaded effect rebinds;
+  any other generation is rejected before authorization, and
+  deleted/closed windows clear initial authority. Unknown/unavailable never
+  falls back to normal; fullscreen/any maximize suppress both borders with
+  native signals authoritative over any delayed script zero. The narrow
+  script publisher reads only public activeWindow, normalWindow, internalId,
+  and maximizeMode. No geometry inference, polling, timers, or private APIs
+  are selected. Approved 2026-09-21: the Slice 1 drag oracle is folded into
+  the surviving `plasma-auto-tiler-active-border` effect plugin (one exported
+  effect hosting active border, group overlay, initial-maximize handoff, and
+  drag oracle); no second `plasma-auto-tiler-drag-oracle` effect, factory,
+  metadata, or KCM entry remains.
 - The outline never clips, reshapes, or changes window textures. Plasma 6.5+
   decoration-driven rounded corners remain the selected corner solution.
 - C++ is limited to platform-required public-API adapters and effects. Manual
@@ -71,10 +90,9 @@ Historical implementation detail is recoverable in Git history.
   them. The implemented gap resync dispatches retained `update-gaps`, accepted
   and reprojected by the existing session with topology/share/focus
   preservation for changed inner, outer, or combined gaps. Overall settings
-  liveness is PARTIAL, not complete. `tilingAlgorithm`,
-  `automaticSplitTarget`, and `dropOutlinePreview` are persisted but consumed
-  by nothing, so neither reload nor restart applies them; consuming them is
-  launch-blocker work. Shortcut re-registration is unselected: the pinned
+  liveness is PARTIAL, not complete. The ineffective `tilingAlgorithm`,
+  `automaticSplitTarget`, and `dropOutlinePreview` controls are removed;
+  existing values are neither read nor rewritten. Shortcut re-registration is unselected: the pinned
   scripting surface offers no unregister operation, so reload never
   re-registers and foreign records change only through explicit KCM
   Apply/Revert. Before launch, every
@@ -359,7 +377,12 @@ Historical implementation detail is recoverable in Git history.
   assigns the current desktop, restores prior floating placement there, or for
   prior tiled members fresh-admits there rather than restoring an old slot. The
   native write has one exact-reference `desktopsChanged` echo fence, with no
-  retry, timeout, fallback, or polling.
+  retry, timeout, fallback, or polling. Approved 2026-09-21: an eligible normal
+  window already native-sticky with an empty desktop list and no same-runtime
+  origin is adopted as a sticky float with prior-float semantics only; sticky-off
+  leaves it a normal float on the then-current desktop with preserved geometry
+  and focus, and a later ordinary float toggle tiles it. Known tiled origins
+  keep fresh admission and known float origins stay float.
 - Intentional normal and sticky floating request KWin's public `keepAbove=true`.
   KWin owns the normal keep-above/keep-below exclusive transition. The adapter
   records the prior pair and restores a project-cleared `keepBelow` (or prior
@@ -461,12 +484,17 @@ Historical implementation detail is recoverable in Git history.
   `per-output-local` and `global-unique` assign distinct backing desktops to
   output domains; `shared` selects the same backing desktop on every output.
   The adapter keeps one structurally trailing empty backing desktop per relevant
-  domain, reusing it for `Meta+0` and `Meta+Shift+0` before creating one. It
-  retires session-owned empties and safe preexisting extras only from the
-  mapped native-order terminal empty run, retaining its first desktop and at
-  least two global desktops. Occupied, current, visible, intermediate, and
-  unmapped desktops remain protected. Mapping and output identity are
-  session-local. The initial disconnected-output policy preserves its displaced
+  domain, reusing it for `Meta+0` and `Meta+Shift+0` before creating one. Once
+  invisible on every output, an empty non-final explicitly project-owned backing
+  desktop may be removed. The literal native-order trailing empty is retained.
+  Every live local or global-unique output domain, and the shared domain, keeps
+  at least two logical workspaces. Preexisting desktops merely adopted into a
+  session-local map are not project-owned and are never removed by this policy.
+  Automatic cleanup for those auto-mapped desktops is unresolved, not rejected.
+  Occupied (including floating, fullscreen, and maximized), visible,
+  transaction-pinned, displaced, and unmapped desktops remain protected; sticky
+  all-desktops windows do not occupy every backing desktop. Mapping and output
+  identity are session-local. The initial disconnected-output policy preserves its displaced
   layout in separate workspace(s), rather than merging it into a new top-level
   split of the remaining visible layout. If the active window was on the
   disconnected monitor, show its relocated workspace and retain focus on that

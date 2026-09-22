@@ -128,7 +128,7 @@ part1_setup() {
   assert_contains "unfamiliar" "setup alternate msg"
 
   # Missing staged .so fails actionable.
-  rm -f "$root/stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
+  rm -f "$root/stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
   rm -f "$env_file"
   set +e
   bash "$HELPER" setup >"$OUTPUT" 2>&1
@@ -136,7 +136,7 @@ part1_setup() {
   set -e
   check_exit 1 "setup missing stage fails"
   assert_contains "just build-native-effect" "setup missing actionable"
-  printf 'oracle-so' > "$root/stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
+  printf 'border-so' > "$root/stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
 
   # No kwinrc writes, no D-Bus use: setup must not create kwinrc.
   [[ ! -e "$root/config/kwinrc" ]] && PASS=$((PASS + 1)) || { echo "FAIL [setup no kwinrc]" >&2; FAIL=$((FAIL + 1)); }
@@ -322,7 +322,7 @@ case "$*" in
     if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then
       printf '{"type":"b","data":[%s]}\n' "$(cat "$state/border-supported" 2>/dev/null || printf 'true')"
     else
-      printf '{"type":"b","data":[%s]}\n' "$(cat "$state/oracle-supported" 2>/dev/null || printf 'true')"
+      exit 1
     fi ;;
   *"isEffectLoaded"*)
     if [[ -f "$state/loaded-fail" ]]; then exit 1; fi
@@ -330,20 +330,18 @@ case "$*" in
     if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then
       printf '{"type":"b","data":[%s]}\n' "$(cat "$state/border-loaded" 2>/dev/null || printf 'false')"
     else
-      printf '{"type":"b","data":[%s]}\n' "$(cat "$state/oracle-loaded" 2>/dev/null || printf 'false')"
+      exit 1
     fi ;;
   *"unloadEffect"*)
     printf 'unloadEffect %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
     if [[ -f "$state/unload-fail" ]]; then exit 1; fi
-    if [[ -f "$state/unload-fail-oracle" && "$*" != *"plasma-auto-tiler-active-border"* ]]; then exit 1; fi
-    if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then printf 'false\n' > "$state/border-loaded"; else printf 'false\n' > "$state/oracle-loaded"; fi
+    printf 'false\n' > "$state/border-loaded"
     printf '{"type":"b","data":[true]}\n'
     exit 0 ;;
   *"loadEffect"*)
     printf 'loadEffect %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
     if [[ -f "$state/load-fail" ]]; then exit 1; fi
-    if [[ -f "$state/load-fail-oracle" && "$*" != *"plasma-auto-tiler-active-border"* ]]; then exit 1; fi
-    if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then printf 'true\n' > "$state/border-loaded"; else printf 'true\n' > "$state/oracle-loaded"; fi
+    printf 'true\n' > "$state/border-loaded"
     printf '{"type":"b","data":[true]}\n'
     exit 0 ;;
   *) exit 1 ;;
@@ -357,24 +355,19 @@ EOF
   export PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/p2/stage"
   mkdir -p "$PLASMA_AUTO_TILER_NATIVE_STAGE/kwin/effects/plugins"
   printf 'x\0org.kde.kwin.EffectPluginFactory6.7.4\0' > "$PLASMA_AUTO_TILER_NATIVE_STAGE/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-  printf 'x\0org.kde.kwin.EffectPluginFactory6.7.4\0' > "$PLASMA_AUTO_TILER_NATIVE_STAGE/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
   mkdir -p "$PROC_ROOT/5151"
   printf '5151 (kwin_wayland) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 777888\n' > "$PROC_ROOT/5151/stat"
   printf '5151\n' > "$WORK/p2/state/kwin-pid"
   printf 'true\n' > "$WORK/p2/state/border-supported"
-  printf 'true\n' > "$WORK/p2/state/oracle-supported"
   printf 'false\n' > "$WORK/p2/state/border-loaded"
-  printf 'false\n' > "$WORK/p2/state/oracle-loaded"
   : > "$WORK/p2/calls.log"
 }
 
 p2_reset() {
-  rm -f "$WORK/p2/state"/kwin-unowned "$WORK/p2/state"/kwin-owner "$WORK/p2/state"/owner-malformed "$WORK/p2/state"/status-fail "$WORK/p2/state"/supported-fail "$WORK/p2/state"/supported-malformed "$WORK/p2/state"/loaded-fail "$WORK/p2/state"/loaded-malformed "$WORK/p2/state"/load-fail "$WORK/p2/state"/load-fail-oracle "$WORK/p2/state"/unload-fail "$WORK/p2/state"/unload-fail-oracle
+  rm -f "$WORK/p2/state"/kwin-unowned "$WORK/p2/state"/kwin-owner "$WORK/p2/state"/owner-malformed "$WORK/p2/state"/status-fail "$WORK/p2/state"/supported-fail "$WORK/p2/state"/supported-malformed "$WORK/p2/state"/loaded-fail "$WORK/p2/state"/loaded-malformed "$WORK/p2/state"/load-fail "$WORK/p2/state"/unload-fail
   printf '5151\n' > "$WORK/p2/state/kwin-pid"
   printf 'true\n' > "$WORK/p2/state/border-supported"
-  printf 'true\n' > "$WORK/p2/state/oracle-supported"
   printf 'false\n' > "$WORK/p2/state/border-loaded"
-  printf 'false\n' > "$WORK/p2/state/oracle-loaded"
   mkdir -p "$PROC_ROOT/5151"
   printf '5151 (kwin_wayland) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 777888\n' > "$PROC_ROOT/5151/stat"
   : > "$WORK/p2/calls.log"
@@ -394,11 +387,11 @@ part2_tests() {
   assert_contains "kwin_owner=:1.99" "preflight owner"
   assert_contains "kwin_pid=5151" "preflight pid"
   assert_contains "effect plasma-auto-tiler-active-border supported=true loaded=false" "preflight border"
-  assert_contains "effect plasma-auto-tiler-drag-oracle supported=true loaded=false" "preflight oracle"
+  assert_not_contains "plasma-auto-tiler-drag-oracle" "preflight single effect"
 
   # Unsupported ABI skew is actionable without incorrectly repeating setup.
   p2_reset
-  printf 'false\n' > "$WORK/p2/state/oracle-supported"
+  printf 'false\n' > "$WORK/p2/state/border-supported"
   set +e
   bash "$HELPER" preflight >"$OUTPUT" 2>&1
   EXIT=$?
@@ -406,14 +399,14 @@ part2_tests() {
   check_exit 2 "preflight unsupported"
   assert_contains "does not establish a session boundary" "unsupported not only discovery"
   assert_contains "plugin load, factory, or ABI failure" "unsupported factory"
-  assert_contains "active-border=6.7.4, drag-oracle=6.7.4, KWin=6.7.5" "unsupported ABI versions"
+  assert_contains "active-border=6.7.4, KWin=6.7.5" "unsupported ABI versions"
   assert_contains "Setup alone cannot resolve this ABI mismatch" "unsupported ABI no repeat setup"
   assert_not_contains "just dev-native-setup" "unsupported ABI omits setup"
 
   # Without recognized ABI evidence, retain the generic delivery guidance.
   p2_reset
   touch "$WORK/p2/state/status-fail"
-  printf 'false\n' > "$WORK/p2/state/oracle-supported"
+  printf 'false\n' > "$WORK/p2/state/border-supported"
   set +e
   bash "$HELPER" preflight >"$OUTPUT" 2>&1
   EXIT=$?
@@ -681,20 +674,19 @@ case "$*" in
   *"isEffectSupported"*)
     if [[ -f "$state/supported-fail" ]]; then exit 1; fi
     if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then printf '{"type":"b","data":[%s]}\n' "$(cat "$state/border-supported" 2>/dev/null || printf 'true')"
-    else printf '{"type":"b","data":[%s]}\n' "$(cat "$state/oracle-supported" 2>/dev/null || printf 'true')"; fi ;;
+    else exit 1; fi ;;
   *"isEffectLoaded"*)
     if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then printf '{"type":"b","data":[%s]}\n' "$(cat "$state/border-loaded" 2>/dev/null || printf 'false')"
-    else printf '{"type":"b","data":[%s]}\n' "$(cat "$state/oracle-loaded" 2>/dev/null || printf 'false')"; fi ;;
+    else exit 1; fi ;;
   *"unloadEffect"*)
     printf 'unloadEffect %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
     if [[ -f "$state/unload-fail" ]]; then exit 1; fi
-    if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then printf 'false\n' > "$state/border-loaded"; else printf 'false\n' > "$state/oracle-loaded"; fi
+    printf 'false\n' > "$state/border-loaded"
     printf '{"type":"b","data":[true]}\n'; exit 0 ;;
   *"loadEffect"*)
     printf 'loadEffect %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
-    if [[ -f "$state/load-fail-oracle" && "$*" != *"plasma-auto-tiler-active-border"* ]]; then exit 1; fi
     if [[ -f "$state/load-fail" ]]; then exit 1; fi
-    if [[ "$*" == *"plasma-auto-tiler-active-border"* ]]; then printf 'true\n' > "$state/border-loaded"; else printf 'true\n' > "$state/oracle-loaded"; fi
+    printf 'true\n' > "$state/border-loaded"
     printf '{"type":"b","data":[true]}\n'; exit 0 ;;
   *"isScriptLoaded"*)
     printf '{"type":"b","data":[%s]}\n' "$(cat "$state/loaded" 2>/dev/null || printf 'false')" ;;
@@ -727,7 +719,6 @@ build_dir="${PLASMA_AUTO_TILER_NATIVE_BUILD:-}"
 if [[ -n "$build_dir" ]]; then
   mkdir -p "$build_dir/bin/kwin/effects/plugins" "$build_dir/bin/kwin/effects/configs"
   printf 'x' > "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
-  printf 'x' > "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
   printf 'x' > "$build_dir/bin/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
 fi
 exit 0
@@ -774,6 +765,12 @@ if [[ "${1:-}" == "path-info" ]]; then
 fi
 if [[ "${1:-}" == "derivation" ]]; then
   printf '{"%s":{"outputs":{"out":{"path":"%s"},"dev":{"path":"%s"}}}}\n' "${FAKE_DRV:?}" "${FAKE_STORE_PATH:?}" "${FAKE_DEV_OUT:?}"
+  exit 0
+fi
+if [[ "${1:-}" == "build" ]]; then
+  [[ "${2:-}" == "${FAKE_DRV:?}^dev" ]] || { echo "fake nix: expected exact dev output" >&2; exit 2; }
+  mkdir -p "${FAKE_DEV_OUT:?}/lib/cmake/KWin"
+  printf '# realized KWinConfig\n' > "${FAKE_DEV_OUT:?}/lib/cmake/KWin/KWinConfig.cmake"
   exit 0
 fi
 if [[ "${1:-}" == "develop" ]]; then
@@ -833,9 +830,7 @@ EOF
     : > "$OUTPUT"
     printf 'false\n' > "$jwork/state/loaded"
     printf 'true\n' > "$jwork/state/border-supported"
-    printf 'true\n' > "$jwork/state/oracle-supported"
     printf 'false\n' > "$jwork/state/border-loaded"
-    printf 'false\n' > "$jwork/state/oracle-loaded"
     printf '// fake\n' > "$jwork/fake-kwin/contents/code/main.js"
     mkdir -p "$jwork/proc/5151"
     printf '5151 (kwin_wayland) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 777888\n' > "$jwork/proc/5151/stat"
@@ -880,7 +875,7 @@ EOF
     wait "$JPLANNER" 2>/dev/null || true
   }
 
-  # Owned: none preloaded -> both loaded owned, both unloaded reverse, full build.
+  # Owned: none preloaded -> single survivor loaded owned, then unloaded, full build.
   jreset
   jrun dev
   jexit="$EXIT"
@@ -889,18 +884,17 @@ EOF
   check_exit 0 "just dev owned cycle"
   assert_contains "transient" "just owned transient"
   if grep -Fq "loadEffect" "$jwork/calls.log" && grep -Fq "unloadEffect" "$jwork/calls.log"; then PASS=$((PASS + 1)); else echo "FAIL [just owned load/unload]" >&2; cat "$jwork/calls.log" >&2; FAIL=$((FAIL + 1)); fi
-  # Reverse order: oracle unload before border unload (load order border,oracle).
-  load_border="$(grep -n "loadEffect.*active-border" "$jwork/calls.log" | head -n1 | cut -d: -f1)"
-  load_oracle="$(grep -n "loadEffect.*drag-oracle" "$jwork/calls.log" | head -n1 | cut -d: -f1)"
-  unload_border="$(grep -n "unloadEffect.*active-border" "$jwork/calls.log" | head -n1 | cut -d: -f1)"
-  unload_oracle="$(grep -n "unloadEffect.*drag-oracle" "$jwork/calls.log" | head -n1 | cut -d: -f1)"
-  if [[ -n "$load_border" && -n "$load_oracle" && -n "$unload_border" && -n "$unload_oracle" && "$load_border" -lt "$load_oracle" && "$unload_oracle" -lt "$unload_border" ]]; then PASS=$((PASS + 1)); else echo "FAIL [just owned reverse order]" >&2; cat "$jwork/calls.log" >&2; FAIL=$((FAIL + 1)); fi
+  # Single survivor: exactly one owned load of the border plus its teardown
+  # unload, and no oracle traffic.
+  if [[ "$(grep -c "^loadEffect" "$jwork/calls.log")" -eq 1 ]] && grep -Eq "^loadEffect.*active-border" "$jwork/calls.log"; then PASS=$((PASS + 1)); else echo "FAIL [just owned single load]" >&2; cat "$jwork/calls.log" >&2; FAIL=$((FAIL + 1)); fi
+  if [[ "$(grep -c "^unloadEffect" "$jwork/calls.log")" -eq 1 ]] && grep -Eq "^unloadEffect.*active-border" "$jwork/calls.log"; then PASS=$((PASS + 1)); else echo "FAIL [just owned single unload]" >&2; cat "$jwork/calls.log" >&2; FAIL=$((FAIL + 1)); fi
+  if grep -Fq "drag-oracle" "$jwork/calls.log"; then echo "FAIL [just owned no oracle traffic]" >&2; cat "$jwork/calls.log" >&2; FAIL=$((FAIL + 1)); else PASS=$((PASS + 1)); fi
   if grep -Fq "cmake build" "$jwork/calls.log"; then PASS=$((PASS + 1)); else echo "FAIL [just owned full build]" >&2; FAIL=$((FAIL + 1)); fi
   if grep -Fqi "kwriteconfig" "$jwork/calls.log"; then echo "FAIL [just no persistent enable writes]" >&2; FAIL=$((FAIL + 1)); else PASS=$((PASS + 1)); fi
   assert_contains "never hot-reloads" "just no hot reload"
   assert_contains "does not prove the library is unmapped" "just no unmapped claim"
 
-  # Preloaded border: skip native rebuild, preserve border, only oracle owned.
+  # Preloaded border: skip native rebuild, preserve border, own nothing.
   jreset
   printf 'true\n' > "$jwork/state/border-loaded"
   jrun dev
@@ -912,11 +906,11 @@ EOF
   assert_contains "skipping native rebuild" "preloaded skip rebuild"
   if grep -Fq "cmake build" "$jwork/calls.log"; then echo "FAIL [preloaded no native rebuild]" >&2; FAIL=$((FAIL + 1)); else PASS=$((PASS + 1)); fi
   if grep -Eq "unloadEffect.*active-border" "$jwork/calls.log"; then echo "FAIL [preloaded border never unloaded]" >&2; FAIL=$((FAIL + 1)); else PASS=$((PASS + 1)); fi
-  if grep -Eq "unloadEffect.*drag-oracle" "$jwork/calls.log"; then PASS=$((PASS + 1)); else echo "FAIL [preloaded oracle unloaded]" >&2; FAIL=$((FAIL + 1)); fi
+  if grep -Fq "loadEffect" "$jwork/calls.log"; then echo "FAIL [preloaded nothing owned]" >&2; cat "$jwork/calls.log" >&2; FAIL=$((FAIL + 1)); else PASS=$((PASS + 1)); fi
 
   # Unsupported: actionable, no startup mutation.
   jreset
-  printf 'false\n' > "$jwork/state/oracle-supported"
+  printf 'false\n' > "$jwork/state/border-supported"
   jrun dev
   jexit="$EXIT"
   jstop_planner
@@ -929,16 +923,16 @@ EOF
   if grep -Fq "setsid" "$jwork/calls.log"; then echo "FAIL [unsupported no launch]" >&2; FAIL=$((FAIL + 1)); else PASS=$((PASS + 1)); fi
   if grep -Fq "loadEffect" "$jwork/calls.log"; then echo "FAIL [unsupported no load]" >&2; FAIL=$((FAIL + 1)); else PASS=$((PASS + 1)); fi
 
-  # Partial failure: oracle load fails after border owned -> border unwound, no dev-on.
+  # Partial failure: border load fails -> no dev-on, nothing to unwind.
   jreset
-  touch "$jwork/state/load-fail-oracle"
+  touch "$jwork/state/load-fail"
   jrun dev
   jexit="$EXIT"
   jstop_planner
   EXIT="$jexit"
   if [[ "$EXIT" -eq 0 ]]; then echo "FAIL [partial must fail]" >&2; FAIL=$((FAIL + 1)); else PASS=$((PASS + 1)); fi
   if grep -Fq "start-test start" "$jwork/calls.log"; then echo "FAIL [partial no start]" >&2; FAIL=$((FAIL + 1)); else PASS=$((PASS + 1)); fi
-  if grep -Eq "unloadEffect.*active-border" "$jwork/calls.log"; then PASS=$((PASS + 1)); else echo "FAIL [partial unwind border]" >&2; cat "$jwork/calls.log" >&2; FAIL=$((FAIL + 1)); fi
+  assert_contains "native load failed" "partial load failed msg"
 
   # Absent (KWin unowned): actionable, no mutation.
   jreset

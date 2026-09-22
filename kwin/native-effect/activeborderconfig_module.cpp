@@ -56,15 +56,6 @@ ActiveBorderConfigModule::ActiveBorderConfigModule(QObject *parent, const KPlugi
     m_ui.setupUi(widget());
     addConfig(ActiveBorderConfig::self(), widget());
 
-    m_ui.tilingAlgorithmCombo->addItem(i18n("Columns"), QStringLiteral("columns"));
-    m_ui.tilingAlgorithmCombo->addItem(i18n("Rows"), QStringLiteral("rows"));
-    m_ui.tilingAlgorithmCombo->addItem(i18n("Balanced grid"), QStringLiteral("balanced-grid"));
-    m_ui.tilingAlgorithmCombo->addItem(i18n("Dwindle"), QStringLiteral("dwindle"));
-
-    m_ui.automaticSplitTargetCombo->addItem(i18n("Dwindle"), QStringLiteral("dwindle"));
-    m_ui.automaticSplitTargetCombo->addItem(i18n("Largest"), QStringLiteral("largest"));
-    m_ui.automaticSplitTargetCombo->addItem(i18n("Active"), QStringLiteral("active"));
-
     m_ui.workspaceModeCombo->addItem(i18n("Per output, local"), QStringLiteral("per-output-local"));
     m_ui.workspaceModeCombo->addItem(i18n("Global, unique"), QStringLiteral("global-unique"));
     m_ui.workspaceModeCombo->addItem(i18n("Shared"), QStringLiteral("shared"));
@@ -73,11 +64,8 @@ ActiveBorderConfigModule::ActiveBorderConfigModule(QObject *parent, const KPlugi
     m_ui.shortcutProfileCombo->addItem(i18n("Hyprland"), QStringLiteral("hyprland"));
     m_ui.shortcutProfileCombo->addItem(i18n("bspwm"), QStringLiteral("bspwm"));
 
-    connect(m_ui.tilingAlgorithmCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ActiveBorderConfigModule::updateScriptState);
-    connect(m_ui.automaticSplitTargetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ActiveBorderConfigModule::updateScriptState);
     connect(m_ui.workspaceModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ActiveBorderConfigModule::updateScriptState);
     connect(m_ui.shortcutProfileCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ActiveBorderConfigModule::updateScriptState);
-    connect(m_ui.dropOutlinePreviewCheckBox, &QCheckBox::toggled, this, &ActiveBorderConfigModule::updateScriptState);
     connect(m_ui.innerGapSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, &ActiveBorderConfigModule::updateScriptState);
     connect(m_ui.outerGapSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, &ActiveBorderConfigModule::updateScriptState);
 
@@ -100,7 +88,6 @@ ActiveBorderConfigModule::ActiveBorderConfigModule(QObject *parent, const KPlugi
     refreshShortcutState();
     m_tilerReloadRequired = false;
     m_tilerRestartRequired = false;
-    m_tilerUnconsumedPending = false;
     m_tilerReloadStatus = QStringLiteral("No pending tiler reload in this dialog.");
     updateTilerReloadPresentation();
 }
@@ -256,7 +243,7 @@ bool ActiveBorderConfigModule::isTilerRestartRequired() const
 
 bool ActiveBorderConfigModule::isTilerUnconsumedPending() const
 {
-    return m_tilerUnconsumedPending;
+    return false;
 }
 
 void ActiveBorderConfigModule::requestTilerReload()
@@ -267,47 +254,28 @@ void ActiveBorderConfigModule::requestTilerReload()
     // script reread kwinrc. Success keeps reload-required and reports
     // sent-but-unconfirmed; failure keeps reload-required and reports failed.
     // A queued send never clears a pending session-restart requirement for
-    // startup-consumed settings (shortcutProfile, workspaceMode), never clears
-    // unconsumed-setting state (tilingAlgorithm, automaticSplitTarget,
-    // dropOutlinePreview), and never claims all settings applied. This
-    // never touches shortcuts and never unloads scripts or plugins. With no
-    // pending gap reload the request is refused without sending so an idle
-    // click can neither queue D-Bus traffic nor mark the dialog reload-required.
+    // startup-consumed settings (shortcutProfile, workspaceMode) and never
+    // claims all settings applied. This never touches shortcuts and never
+    // unloads scripts or plugins. With no pending gap reload the request is
+    // refused without sending so an idle click can neither queue D-Bus traffic
+    // nor mark the dialog reload-required.
     if (!m_tilerReloadRequired) {
         return;
     }
     if (requestScriptReconfigure()) {
-        if (m_tilerRestartRequired && m_tilerUnconsumedPending) {
-            m_tilerReloadStatus = QStringLiteral(
-                "Reload request sent. Gap application unconfirmed; session restart remains required for startup "
-                "settings. No running tiler effect for unconsumed settings.");
-        } else if (m_tilerRestartRequired) {
+        if (m_tilerRestartRequired) {
             m_tilerReloadStatus = QStringLiteral(
                 "Reload request sent. Gap application unconfirmed; session restart remains required for startup "
                 "settings. Restart the session to guarantee pickup.");
-        } else if (m_tilerUnconsumedPending) {
-            m_tilerReloadStatus = QStringLiteral(
-                "Reload request sent. Gap application unconfirmed. No running tiler effect for unconsumed settings. "
-                "Restart the session to guarantee gap pickup.");
         } else {
             m_tilerReloadStatus = QStringLiteral(
                 "Reload request sent. Application unconfirmed; restart the session to guarantee pickup.");
         }
     } else {
-        if (m_tilerRestartRequired && m_tilerUnconsumedPending) {
-            m_tilerReloadStatus = QStringLiteral(
-                "Reload request failed. Running tiler still uses startup gap values; retry or restart the session "
-                "for gaps. Session restart remains required for startup settings. No running tiler effect for "
-                "unconsumed settings.");
-        } else if (m_tilerRestartRequired) {
+        if (m_tilerRestartRequired) {
             m_tilerReloadStatus = QStringLiteral(
                 "Reload request failed. Running tiler still uses startup gap values; retry or restart the session "
                 "for gaps. Session restart remains required for startup settings.");
-        } else if (m_tilerUnconsumedPending) {
-            m_tilerReloadRequired = true;
-            m_tilerReloadStatus = QStringLiteral(
-                "Reload request failed. Running tiler still uses startup gap values; retry or restart the session "
-                "for gaps. No running tiler effect for unconsumed settings.");
         } else {
             m_tilerReloadRequired = true;
             m_tilerReloadStatus = QStringLiteral(
@@ -754,11 +722,8 @@ void ActiveBorderConfigModule::refreshShortcutState()
 QVariantMap ActiveBorderConfigModule::currentScriptValues() const
 {
     return {
-        {QStringLiteral("tilingAlgorithm"), m_ui.tilingAlgorithmCombo->currentData()},
-        {QStringLiteral("automaticSplitTarget"), m_ui.automaticSplitTargetCombo->currentData()},
         {QStringLiteral("workspaceMode"), m_ui.workspaceModeCombo->currentData()},
         {QStringLiteral("shortcutProfile"), m_ui.shortcutProfileCombo->currentData()},
-        {QStringLiteral("dropOutlinePreview"), m_ui.dropOutlinePreviewCheckBox->isChecked()},
         {QStringLiteral("innerGap"), m_ui.innerGapSpinBox->value()},
         {QStringLiteral("outerGap"), m_ui.outerGapSpinBox->value()},
     };
@@ -768,11 +733,8 @@ void ActiveBorderConfigModule::updateScriptState()
 {
     const QVariantMap current = currentScriptValues();
     const QVariantMap defaults = {
-        {QStringLiteral("tilingAlgorithm"), QStringLiteral("dwindle")},
-        {QStringLiteral("automaticSplitTarget"), QStringLiteral("dwindle")},
         {QStringLiteral("workspaceMode"), QStringLiteral("per-output-local")},
         {QStringLiteral("shortcutProfile"), QStringLiteral("cosmic")},
-        {QStringLiteral("dropOutlinePreview"), false},
         {QStringLiteral("innerGap"), 8},
         {QStringLiteral("outerGap"), 8},
     };
@@ -790,31 +752,19 @@ void ActiveBorderConfigModule::load()
         const int fallbackIndex = combo->findData(fallback);
         combo->setCurrentIndex(index >= 0 ? index : fallbackIndex);
     };
-    const QString tilingAlgorithm = group.readEntry(QStringLiteral("tilingAlgorithm"), QStringLiteral("dwindle"));
-    const QString automaticSplitTarget = group.readEntry(QStringLiteral("automaticSplitTarget"), QStringLiteral("dwindle"));
     const QString workspaceMode = group.readEntry(QStringLiteral("workspaceMode"), QStringLiteral("per-output-local"));
     const QString shortcutProfile = group.readEntry(QStringLiteral("shortcutProfile"), QStringLiteral("cosmic"));
-    const QString dropOutlinePreviewRaw = group.readEntry(QStringLiteral("dropOutlinePreview"), QString());
-    m_loadedDropOutlinePreviewRawValid = !group.hasKey(QStringLiteral("dropOutlinePreview"))
-        || dropOutlinePreviewRaw.compare(QStringLiteral("true"), Qt::CaseInsensitive) == 0
-        || dropOutlinePreviewRaw.compare(QStringLiteral("false"), Qt::CaseInsensitive) == 0;
     const int innerGap = readBoundedGap(group, QStringLiteral("innerGap"));
     const int outerGap = readBoundedGap(group, QStringLiteral("outerGap"));
     m_loadedInnerGapRawValid = isBoundedGapRawValid(group, QStringLiteral("innerGap"));
     m_loadedOuterGapRawValid = isBoundedGapRawValid(group, QStringLiteral("outerGap"));
-    select(m_ui.tilingAlgorithmCombo, tilingAlgorithm, QStringLiteral("dwindle"));
-    select(m_ui.automaticSplitTargetCombo, automaticSplitTarget, QStringLiteral("dwindle"));
     select(m_ui.workspaceModeCombo, workspaceMode, QStringLiteral("per-output-local"));
     select(m_ui.shortcutProfileCombo, shortcutProfile, QStringLiteral("cosmic"));
-    m_ui.dropOutlinePreviewCheckBox->setChecked(group.readEntry(QStringLiteral("dropOutlinePreview"), false));
     m_ui.innerGapSpinBox->setValue(innerGap);
     m_ui.outerGapSpinBox->setValue(outerGap);
     m_loadedScriptValues = {
-        {QStringLiteral("tilingAlgorithm"), tilingAlgorithm},
-        {QStringLiteral("automaticSplitTarget"), automaticSplitTarget},
         {QStringLiteral("workspaceMode"), workspaceMode},
         {QStringLiteral("shortcutProfile"), shortcutProfile},
-        {QStringLiteral("dropOutlinePreview"), m_ui.dropOutlinePreviewCheckBox->isChecked()},
         {QStringLiteral("innerGap"), innerGap},
         {QStringLiteral("outerGap"), outerGap},
     };
@@ -823,7 +773,6 @@ void ActiveBorderConfigModule::load()
     refreshShortcutState();
     m_tilerReloadRequired = false;
     m_tilerRestartRequired = false;
-    m_tilerUnconsumedPending = false;
     m_tilerReloadStatus = QStringLiteral("No pending tiler reload in this dialog.");
     updateTilerReloadPresentation();
 }
@@ -834,32 +783,19 @@ void ActiveBorderConfigModule::save()
     KCModule::save();
 
     const QVariantMap current = currentScriptValues();
-    if (!m_loadedDropOutlinePreviewRawValid || !m_loadedInnerGapRawValid || !m_loadedOuterGapRawValid || current != m_loadedScriptValues) {
+    if (!m_loadedInnerGapRawValid || !m_loadedOuterGapRawValid || current != m_loadedScriptValues) {
         const bool gapChanged = !m_loadedInnerGapRawValid || !m_loadedOuterGapRawValid
             || current.value(QStringLiteral("innerGap")) != m_loadedScriptValues.value(QStringLiteral("innerGap"))
             || current.value(QStringLiteral("outerGap")) != m_loadedScriptValues.value(QStringLiteral("outerGap"));
         const bool startupConsumedChanged = current.value(QStringLiteral("workspaceMode"))
                 != m_loadedScriptValues.value(QStringLiteral("workspaceMode"))
             || current.value(QStringLiteral("shortcutProfile")) != m_loadedScriptValues.value(QStringLiteral("shortcutProfile"));
-        const bool unconsumedChanged = !m_loadedDropOutlinePreviewRawValid
-            || current.value(QStringLiteral("tilingAlgorithm")) != m_loadedScriptValues.value(QStringLiteral("tilingAlgorithm"))
-            || current.value(QStringLiteral("automaticSplitTarget")) != m_loadedScriptValues.value(QStringLiteral("automaticSplitTarget"))
-            || current.value(QStringLiteral("dropOutlinePreview")) != m_loadedScriptValues.value(QStringLiteral("dropOutlinePreview"));
         KConfigGroup group(KSharedConfig::openConfig(QStringLiteral("kwinrc")), QStringLiteral("Script-plasma-auto-tiler-kwin"));
-        if (current.value(QStringLiteral("tilingAlgorithm")) != m_loadedScriptValues.value(QStringLiteral("tilingAlgorithm"))) {
-            group.writeEntry(QStringLiteral("tilingAlgorithm"), current.value(QStringLiteral("tilingAlgorithm")).toString());
-        }
-        if (current.value(QStringLiteral("automaticSplitTarget")) != m_loadedScriptValues.value(QStringLiteral("automaticSplitTarget"))) {
-            group.writeEntry(QStringLiteral("automaticSplitTarget"), current.value(QStringLiteral("automaticSplitTarget")).toString());
-        }
         if (current.value(QStringLiteral("workspaceMode")) != m_loadedScriptValues.value(QStringLiteral("workspaceMode"))) {
             group.writeEntry(QStringLiteral("workspaceMode"), current.value(QStringLiteral("workspaceMode")).toString());
         }
         if (current.value(QStringLiteral("shortcutProfile")) != m_loadedScriptValues.value(QStringLiteral("shortcutProfile"))) {
             group.writeEntry(QStringLiteral("shortcutProfile"), current.value(QStringLiteral("shortcutProfile")).toString());
-        }
-        if (!m_loadedDropOutlinePreviewRawValid || current.value(QStringLiteral("dropOutlinePreview")) != m_loadedScriptValues.value(QStringLiteral("dropOutlinePreview"))) {
-            group.writeEntry(QStringLiteral("dropOutlinePreview"), current.value(QStringLiteral("dropOutlinePreview")).toBool());
         }
         if (!m_loadedInnerGapRawValid || current.value(QStringLiteral("innerGap")) != m_loadedScriptValues.value(QStringLiteral("innerGap"))) {
             group.writeEntry(QStringLiteral("innerGap"), current.value(QStringLiteral("innerGap")).toInt());
@@ -869,7 +805,6 @@ void ActiveBorderConfigModule::save()
         }
         group.sync();
         m_loadedScriptValues = current;
-        m_loadedDropOutlinePreviewRawValid = true;
         m_loadedInnerGapRawValid = true;
         m_loadedOuterGapRawValid = true;
         if (gapChanged) {
@@ -878,35 +813,16 @@ void ActiveBorderConfigModule::save()
         if (startupConsumedChanged) {
             m_tilerRestartRequired = true;
         }
-        if (unconsumedChanged) {
-            m_tilerUnconsumedPending = true;
-        }
-        if (m_tilerReloadRequired && m_tilerRestartRequired && m_tilerUnconsumedPending) {
-            m_tilerReloadStatus = QStringLiteral(
-                "Tiling gaps, startup, and unconsumed settings saved. Reload applies gaps only; session restart "
-                "remains required for startup settings. No running tiler effect for unconsumed settings.");
-        } else if (m_tilerReloadRequired && m_tilerRestartRequired) {
+        if (m_tilerReloadRequired && m_tilerRestartRequired) {
             m_tilerReloadStatus = QStringLiteral(
                 "Tiling gaps and startup settings saved. Reload applies gaps only; session restart remains required "
                 "for startup settings.");
-        } else if (m_tilerReloadRequired && m_tilerUnconsumedPending) {
-            m_tilerReloadStatus = QStringLiteral(
-                "Tiling gaps and unconsumed settings saved. Reload applies gaps only. No running tiler effect for "
-                "unconsumed settings.");
-        } else if (m_tilerRestartRequired && m_tilerUnconsumedPending) {
-            m_tilerReloadStatus = QStringLiteral(
-                "Startup and unconsumed settings saved. Session restart required for startup settings. No running "
-                "tiler effect for unconsumed settings.");
         } else if (m_tilerReloadRequired) {
             m_tilerReloadStatus = QStringLiteral(
                 "Tiling gaps saved. Reload required: the running tiler still uses startup gap values.");
         } else if (m_tilerRestartRequired) {
             m_tilerReloadStatus = QStringLiteral(
                 "Startup setting saved. Session restart required: the running tiler still uses startup values.");
-        } else if (m_tilerUnconsumedPending) {
-            m_tilerReloadStatus = QStringLiteral(
-                "Setting saved. No running tiler effect: this setting is unconsumed; neither reload nor restart "
-                "applies it.");
         }
     }
     updateScriptState();
@@ -925,9 +841,7 @@ void ActiveBorderConfigModule::save()
     // Border hot-apply stays live through the native effect reconfigure. The
     // running controller re-reads only validated gaps on the KWin Options
     // configChanged signal emitted by the deliberate reconfigure; only
-    // shortcutProfile and workspaceMode are startup-consumed, while
-    // tilingAlgorithm, automaticSplitTarget, and dropOutlinePreview are
-    // persisted but consumed by nothing, and KWin's
+    // shortcutProfile and workspaceMode are startup-consumed, and KWin's
     // reconfigure is Q_NOREPLY, so save() never auto-sends a tiler reload and
     // never claims the running tiler applied saved values. The deliberate
     // Reload Tiler button sends one typed reconfigure request for gaps and
@@ -938,11 +852,8 @@ void ActiveBorderConfigModule::defaults()
 {
     KCModule::defaults();
 
-    m_ui.tilingAlgorithmCombo->setCurrentIndex(m_ui.tilingAlgorithmCombo->findData(QStringLiteral("dwindle")));
-    m_ui.automaticSplitTargetCombo->setCurrentIndex(m_ui.automaticSplitTargetCombo->findData(QStringLiteral("dwindle")));
     m_ui.workspaceModeCombo->setCurrentIndex(m_ui.workspaceModeCombo->findData(QStringLiteral("per-output-local")));
     m_ui.shortcutProfileCombo->setCurrentIndex(m_ui.shortcutProfileCombo->findData(QStringLiteral("cosmic")));
-    m_ui.dropOutlinePreviewCheckBox->setChecked(false);
     m_ui.innerGapSpinBox->setValue(8);
     m_ui.outerGapSpinBox->setValue(8);
     updateScriptState();

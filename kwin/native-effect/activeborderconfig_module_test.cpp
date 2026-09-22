@@ -42,11 +42,6 @@ KConfigGroup scriptGroup()
     return KConfigGroup(KSharedConfig::openConfig(QStringLiteral("kwinrc")), QStringLiteral("Script-plasma-auto-tiler-kwin"));
 }
 
-QCheckBox *scriptCheckBox(KWin::ActiveBorderConfigModule &module)
-{
-    return module.widget()->findChild<QCheckBox *>(QStringLiteral("dropOutlinePreviewCheckBox"));
-}
-
 QSpinBox *innerGapSpinBox(KWin::ActiveBorderConfigModule &module)
 {
     return module.widget()->findChild<QSpinBox *>(QStringLiteral("innerGapSpinBox"));
@@ -77,7 +72,7 @@ QCheckBox *useThemeColorCheckBox(KWin::ActiveBorderConfigModule &module)
     return module.widget()->findChild<QCheckBox *>(QStringLiteral("kcfg_UseThemeColor"));
 }
 
-QComboBox *tilingAlgorithmCombo(KWin::ActiveBorderConfigModule &module)
+[[maybe_unused]] QComboBox *tilingAlgorithmCombo(KWin::ActiveBorderConfigModule &module)
 {
     return module.widget()->findChild<QComboBox *>(QStringLiteral("tilingAlgorithmCombo"));
 }
@@ -90,11 +85,6 @@ QComboBox *workspaceModeCombo(KWin::ActiveBorderConfigModule &module)
 QComboBox *shortcutProfileCombo(KWin::ActiveBorderConfigModule &module)
 {
     return module.widget()->findChild<QComboBox *>(QStringLiteral("shortcutProfileCombo"));
-}
-
-QComboBox *automaticSplitTargetCombo(KWin::ActiveBorderConfigModule &module)
-{
-    return module.widget()->findChild<QComboBox *>(QStringLiteral("automaticSplitTargetCombo"));
 }
 
 QLabel *tilerReloadStatusLabel(KWin::ActiveBorderConfigModule &module)
@@ -114,11 +104,6 @@ bool tilerReloadButtonEnabled(KWin::ActiveBorderConfigModule &module)
     return button != nullptr && button->isEnabled();
 }
 
-QString storedTilingAlgorithm()
-{
-    return scriptGroup().readEntry(QStringLiteral("tilingAlgorithm"), QStringLiteral("dwindle"));
-}
-
 QString storedWorkspaceMode()
 {
     return scriptGroup().readEntry(QStringLiteral("workspaceMode"), QStringLiteral("per-output-local"));
@@ -129,7 +114,12 @@ QString storedShortcutProfile()
     return scriptGroup().readEntry(QStringLiteral("shortcutProfile"), QStringLiteral("cosmic"));
 }
 
-QString otherTilingAlgorithm(const QString &current)
+[[maybe_unused]] QString storedTilingAlgorithm()
+{
+    return scriptGroup().readEntry(QStringLiteral("tilingAlgorithm"), QStringLiteral("dwindle"));
+}
+
+[[maybe_unused]] QString otherTilingAlgorithm(const QString &current)
 {
     const QStringList candidates = {
         QStringLiteral("columns"),
@@ -550,97 +540,6 @@ void useThemeColorOnlyHotApplyRetry()
     CHECK(!module.needsSave());
 }
 
-void malformedValueBecomesEstablishedFalse()
-{
-    {
-        KConfigGroup group = scriptGroup();
-        group.writeEntry(QStringLiteral("dropOutlinePreview"), QStringLiteral("not-a-boolean"));
-        group.sync();
-    }
-
-    KWin::ActiveBorderConfigModule module(nullptr, KPluginMetaData());
-    QCheckBox *checkBox = scriptCheckBox(module);
-    CHECK(checkBox != nullptr);
-    module.load();
-
-    module.defaults();
-    if (checkBox) {
-        CHECK(!checkBox->isChecked());
-    }
-    module.save();
-
-    const KConfigGroup group = scriptGroup();
-    CHECK(group.hasKey(QStringLiteral("dropOutlinePreview")));
-    CHECK(group.readEntry(QStringLiteral("dropOutlinePreview"), QString()) == QStringLiteral("false"));
-}
-
-void validValueIsPreservedUntilDefaultsAreSaved()
-{
-    {
-        KConfigGroup group = scriptGroup();
-        group.writeEntry(QStringLiteral("dropOutlinePreview"), QStringLiteral("true"));
-        group.sync();
-        CHECK(group.readEntry(QStringLiteral("dropOutlinePreview"), QString()) == QStringLiteral("true"));
-    }
-
-    {
-        KWin::ActiveBorderConfigModule module(nullptr, KPluginMetaData());
-        module.load();
-        QCheckBox *checkBox = scriptCheckBox(module);
-        CHECK(checkBox != nullptr);
-        if (checkBox) {
-            CHECK(checkBox->isChecked());
-        }
-        module.save();
-    }
-
-    {
-        const KConfigGroup group = scriptGroup();
-        CHECK(group.hasKey(QStringLiteral("dropOutlinePreview")));
-        CHECK(group.readEntry(QStringLiteral("dropOutlinePreview"), QString()) == QStringLiteral("true"));
-    }
-
-    KWin::ActiveBorderConfigModule module(nullptr, KPluginMetaData());
-    QCheckBox *checkBox = scriptCheckBox(module);
-    CHECK(checkBox != nullptr);
-    CHECK(scriptGroup().readEntry(QStringLiteral("dropOutlinePreview"), QString()) == QStringLiteral("true"));
-    module.load();
-    CHECK(scriptGroup().readEntry(QStringLiteral("dropOutlinePreview"), QString()) == QStringLiteral("true"));
-    if (checkBox) {
-        CHECK(checkBox->isChecked());
-    }
-    module.defaults();
-    if (checkBox) {
-        CHECK(!checkBox->isChecked());
-    }
-    module.save();
-
-    const KConfigGroup group = scriptGroup();
-    CHECK(group.hasKey(QStringLiteral("dropOutlinePreview")));
-    CHECK(group.readEntry(QStringLiteral("dropOutlinePreview"), QString()) == QStringLiteral("false"));
-}
-
-void missingValueKeepsTheDefaultWithoutCreatingAKey()
-{
-    KWin::ActiveBorderConfigModule module(nullptr, KPluginMetaData());
-    QCheckBox *checkBox = scriptCheckBox(module);
-    CHECK(checkBox != nullptr);
-    module.load();
-    if (checkBox) {
-        CHECK(!checkBox->isChecked());
-    }
-
-    module.defaults();
-    if (checkBox) {
-        CHECK(!checkBox->isChecked());
-    }
-    module.save();
-
-    const KConfigGroup group = scriptGroup();
-    CHECK(!group.hasKey(QStringLiteral("dropOutlinePreview")));
-    CHECK(!group.readEntry(QStringLiteral("dropOutlinePreview"), false));
-}
-
 void gapContractNormalizesBoundsAndPersists()
 {
     {
@@ -775,6 +674,26 @@ void gapContractNormalizesBoundsAndPersists()
         CHECK(scriptGroup().readEntry(QStringLiteral("innerGap"), -1) == 8);
         CHECK(scriptGroup().readEntry(QStringLiteral("outerGap"), -1) == 8);
     }
+}
+
+void unsupportedControlsAreAbsentAndLegacyValuesUntouched()
+{
+    KConfigGroup group = scriptGroup();
+    group.writeEntry(QStringLiteral("tilingAlgorithm"), QStringLiteral("columns"));
+    group.writeEntry(QStringLiteral("automaticSplitTarget"), QStringLiteral("active"));
+    group.writeEntry(QStringLiteral("dropOutlinePreview"), true);
+    group.sync();
+
+    SucceedingReconfigureModule module(nullptr, KPluginMetaData());
+    module.load();
+    CHECK(module.widget()->findChild<QComboBox *>(QStringLiteral("tilingAlgorithmCombo")) == nullptr);
+    CHECK(module.widget()->findChild<QComboBox *>(QStringLiteral("automaticSplitTargetCombo")) == nullptr);
+    CHECK(module.widget()->findChild<QCheckBox *>(QStringLiteral("dropOutlinePreviewCheckBox")) == nullptr);
+    module.save();
+
+    CHECK(group.readEntry(QStringLiteral("tilingAlgorithm"), QString()) == QStringLiteral("columns"));
+    CHECK(group.readEntry(QStringLiteral("automaticSplitTarget"), QString()) == QStringLiteral("active"));
+    CHECK(group.readEntry(QStringLiteral("dropOutlinePreview"), false));
 }
 
 class CountingScriptReloadModule : public KWin::ActiveBorderConfigModule
@@ -931,81 +850,6 @@ void shortcutProfileSaveDisablesReloadWithRestartMessage()
     CHECK(confirms == 0);
 }
 
-void unconsumedOnlySaveHasNoEffectWithoutRestartOrReload()
-{    CountingScriptReloadModule module(nullptr, KPluginMetaData());
-    module.load();
-    QComboBox *tiling = tilingAlgorithmCombo(module);
-    CHECK(tiling != nullptr);
-    if (!tiling) {
-        return;
-    }
-    const QString tilingTarget = otherTilingAlgorithm(storedTilingAlgorithm());
-    const int tilingIndex = tiling->findData(tilingTarget);
-    CHECK(tilingIndex >= 0);
-    tiling->setCurrentIndex(tilingIndex);
-    CHECK(module.needsSave());
-    int confirms = 0;
-    module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
-        ++confirms;
-        return false;
-    });
-    module.save();
-    CHECK(scriptGroup().readEntry(QStringLiteral("tilingAlgorithm"), QString()) == tilingTarget);
-    CHECK(!module.isTilerReloadRequired());
-    CHECK(!tilerReloadButtonEnabled(module));
-    CHECK(!module.isTilerRestartRequired());
-    CHECK(module.isTilerUnconsumedPending());
-    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("No running tiler effect")));
-    CHECK(!containsRestartRequirement(module.tilerReloadStatusText()));
-    CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
-    CHECK(module.scriptCalls == 0);
-    CHECK(module.effectCalls == 0);
-    CHECK(!module.needsSave());
-    CHECK(confirms == 0);
-    // An unchanged follow-up save must not auto-send and must keep the no-effect flag.
-    module.save();
-    CHECK(!module.isTilerReloadRequired());
-    CHECK(!module.isTilerRestartRequired());
-    CHECK(module.isTilerUnconsumedPending());
-    CHECK(module.scriptCalls == 0);
-    CHECK(confirms == 0);
-}
-
-void unconsumedVariantsShareNoEffectWithoutRestartOrReload()
-{
-    CountingScriptReloadModule module(nullptr, KPluginMetaData());
-    module.load();
-    QComboBox *split = automaticSplitTargetCombo(module);
-    QCheckBox *preview = scriptCheckBox(module);
-    CHECK(split != nullptr);
-    CHECK(preview != nullptr);
-    if (!split || !preview) {
-        return;
-    }
-    const int count = split->count();
-    CHECK(count > 1);
-    split->setCurrentIndex((split->currentIndex() + 1) % count);
-    preview->setChecked(!preview->isChecked());
-    CHECK(module.needsSave());
-    int confirms = 0;
-    module.setShortcutConfirmHandler([&confirms](const QString &, const QString &) {
-        ++confirms;
-        return false;
-    });
-    module.save();
-    CHECK(!module.isTilerReloadRequired());
-    CHECK(!tilerReloadButtonEnabled(module));
-    CHECK(!module.isTilerRestartRequired());
-    CHECK(module.isTilerUnconsumedPending());
-    CHECK(module.tilerReloadStatusText().contains(QStringLiteral("No running tiler effect")));
-    CHECK(!containsRestartRequirement(module.tilerReloadStatusText()));
-    CHECK(!containsAppliedClaim(module.tilerReloadStatusText()));
-    CHECK(module.scriptCalls == 0);
-    CHECK(module.effectCalls == 0);
-    CHECK(!module.needsSave());
-    CHECK(confirms == 0);
-}
-
 void combinedGapAndNonGapSaveEnablesReloadWithResidualRestart()
 {
     CountingScriptReloadModule module(nullptr, KPluginMetaData());
@@ -1045,7 +889,7 @@ void combinedGapAndNonGapSaveEnablesReloadWithResidualRestart()
     CHECK(confirms == 0);
 }
 
-void gapAndUnconsumedSaveEnablesReloadWithoutRestart()
+[[maybe_unused]] void gapAndUnconsumedSaveEnablesReloadWithoutRestart()
 {
     CountingScriptReloadModule module(nullptr, KPluginMetaData());
     module.load();
@@ -1085,7 +929,7 @@ void gapAndUnconsumedSaveEnablesReloadWithoutRestart()
     CHECK(confirms == 0);
 }
 
-void startupAndUnconsumedSaveDisablesReloadWithSplitMessage()
+[[maybe_unused]] void startupAndUnconsumedSaveDisablesReloadWithSplitMessage()
 {
     CountingScriptReloadModule module(nullptr, KPluginMetaData());
     module.load();
@@ -1126,7 +970,7 @@ void startupAndUnconsumedSaveDisablesReloadWithSplitMessage()
     CHECK(confirms == 0);
 }
 
-void allCategoriesSaveEnablesReloadWithSplitMessage()
+[[maybe_unused]] void allCategoriesSaveEnablesReloadWithSplitMessage()
 {
     CountingScriptReloadModule module(nullptr, KPluginMetaData());
     module.load();
@@ -1444,7 +1288,7 @@ void deliberateReloadFailureKeepsResidualRestart()
     CHECK(confirms == 0);
 }
 
-void deliberateReloadWithUnconsumedKeepsNoEffectWithoutRestartClaim()
+[[maybe_unused]] void deliberateReloadWithUnconsumedKeepsNoEffectWithoutRestartClaim()
 {
     CountingScriptReloadModule module(nullptr, KPluginMetaData());
     module.load();
@@ -1496,7 +1340,7 @@ void deliberateReloadWithUnconsumedKeepsNoEffectWithoutRestartClaim()
     CHECK(confirms == 0);
 }
 
-void deliberateReloadWithAllCategoriesDistinguishesEffects()
+[[maybe_unused]] void deliberateReloadWithAllCategoriesDistinguishesEffects()
 {
     CountingScriptReloadModule module(nullptr, KPluginMetaData());
     module.load();
@@ -1574,13 +1418,7 @@ int main(int argc, char **argv)
     }
 
     const QString scenario = QString::fromLocal8Bit(argv[1]);
-    if (scenario == QStringLiteral("malformed")) {
-        malformedValueBecomesEstablishedFalse();
-    } else if (scenario == QStringLiteral("valid")) {
-        validValueIsPreservedUntilDefaultsAreSaved();
-    } else if (scenario == QStringLiteral("missing")) {
-        missingValueKeepsTheDefaultWithoutCreatingAKey();
-    } else if (scenario == QStringLiteral("dbus")) {
+    if (scenario == QStringLiteral("dbus")) {
         dbusTargetIsExact();
         dbusErrorClassification();
         reconfigureRequestFailsWithoutKwin();
@@ -1604,18 +1442,14 @@ int main(int argc, char **argv)
         effectConfigReloadReflectsStoredValues();
     } else if (scenario == QStringLiteral("gaps")) {
         gapContractNormalizesBoundsAndPersists();
+        unsupportedControlsAreAbsentAndLegacyValuesUntouched();
     } else if (scenario == QStringLiteral("reload")) {
         scriptReconfigureTargetIsExact();
         unchangedSaveMarksNoReloadWithoutSend();
         noPendingReloadSendsNothingAndStaysDisabled();
         nonGapSaveDisablesReloadWithRestartMessage();
         shortcutProfileSaveDisablesReloadWithRestartMessage();
-        unconsumedOnlySaveHasNoEffectWithoutRestartOrReload();
-        unconsumedVariantsShareNoEffectWithoutRestartOrReload();
         combinedGapAndNonGapSaveEnablesReloadWithResidualRestart();
-        gapAndUnconsumedSaveEnablesReloadWithoutRestart();
-        startupAndUnconsumedSaveDisablesReloadWithSplitMessage();
-        allCategoriesSaveEnablesReloadWithSplitMessage();
         borderOnlySaveHotAppliesWithoutReloadRequired();
         borderAndGapSingleSaveHotAppliesBorderOnceKeepsReload();
         borderAndNonGapSingleSaveHotAppliesBorderWithoutReload();
@@ -1624,8 +1458,6 @@ int main(int argc, char **argv)
         deliberateReloadFailureKeepsRequiredWithoutAppliedClaim();
         deliberateReloadSuccessKeepsResidualRestart();
         deliberateReloadFailureKeepsResidualRestart();
-        deliberateReloadWithUnconsumedKeepsNoEffectWithoutRestartClaim();
-        deliberateReloadWithAllCategoriesDistinguishesEffects();
         poisonedBusScriptSendFailsClosed();
     } else {
         std::fprintf(stderr, "unknown scenario: %s\n", argv[1]);

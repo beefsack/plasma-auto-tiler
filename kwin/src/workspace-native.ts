@@ -1738,151 +1738,13 @@ export class WorkspaceNativeAdapter {
         this.logToken(`workspace-show-returning:${activeId}`);
     }
 
-    private terminalRunStart(orderedIds: ReadonlyArray<string>, occupied: Set<string>): number {
-        let start = orderedIds.length;
-        for (let index = orderedIds.length - 1; index >= 0; index -= 1) {
-            const id = orderedIds[index] as string;
-            if (occupied.has(id)) {
-                break;
-            }
-            start = index;
-        }
-        return start;
-    }
-
-    private collapseManagedTerminalRun(
-        orderedIds: ReadonlyArray<string>,
-        visible: Set<string>,
-        occupied: Set<string>,
-        remove: (id: string) => boolean,
-    ): void {
-        if (orderedIds.length === 0) {
-            return;
-        }
-        const start = this.terminalRunStart(orderedIds, occupied);
-        const run = orderedIds.slice(start);
-        if (run.length <= 1) {
-            return;
-        }
-        for (const id of run) {
-            if (visible.has(id)) {
-                return;
+    private isDisplacedId(id: string): boolean {
+        for (const entry of this.displacedByOrigin.values()) {
+            if (entry.workspaceIds.includes(id)) {
+                return true;
             }
         }
-        const extras = run.slice(1);
-        for (const id of extras) {
-            const live = this.liveOrdered();
-            if (live === null || live.length <= MIN_GLOBAL_DESKTOPS) {
-                return;
-            }
-            if (visible.has(id) || occupied.has(id)) {
-                continue;
-            }
-            if (!remove(id)) {
-                return;
-            }
-        }
-    }
-
-    private removeManagedTerminalLocal(id: string, visible: Set<string>): boolean {
-        if (visible.has(id) || this.isTransactionRetained(id)) {
-            return false;
-        }
-        const live = this.liveOrdered();
-        if (live === null || live.length <= MIN_GLOBAL_DESKTOPS) {
-            return false;
-        }
-        const target = live.find((entry) => entry.id === id);
-        if (target === undefined) {
-            return false;
-        }
-        const surface = this.liveWorkspace();
-        if (surface === null) {
-            return false;
-        }
-        const fn = readProp(surface, "removeDesktop");
-        if (typeof fn !== "function") {
-            return false;
-        }
-        try {
-            Reflect.apply(fn as (...args: ReadonlyArray<unknown>) => unknown, surface, [target.ref]);
-        } catch (error) {
-            void error;
-            return false;
-        }
-        this.owned.delete(id);
-        for (const list of this.localWorkspaces.values()) {
-            const at = list.indexOf(id);
-            if (at >= 0) {
-                list.splice(at, 1);
-            }
-        }
-        this.logToken(`workspace-cleanup-removed:${id}`);
-        return true;
-    }
-
-    private removeManagedTerminalGlobal(id: string, visible: Set<string>): boolean {
-        if (visible.has(id) || this.isTransactionRetained(id)) {
-            return false;
-        }
-        const live = this.liveOrdered();
-        if (live === null || live.length <= MIN_GLOBAL_DESKTOPS) {
-            return false;
-        }
-        const target = live.find((entry) => entry.id === id);
-        if (target === undefined) {
-            return false;
-        }
-        const surface = this.liveWorkspace();
-        if (surface === null) {
-            return false;
-        }
-        const fn = readProp(surface, "removeDesktop");
-        if (typeof fn !== "function") {
-            return false;
-        }
-        try {
-            Reflect.apply(fn as (...args: ReadonlyArray<unknown>) => unknown, surface, [target.ref]);
-        } catch (error) {
-            void error;
-            return false;
-        }
-        this.owned.delete(id);
-        this.unassignGlobal(id);
-        this.logToken(`workspace-cleanup-removed:${id}`);
-        return true;
-    }
-
-    private removeManagedTerminalShared(id: string, visible: Set<string>): boolean {
-        if (visible.has(id) || this.isTransactionRetained(id)) {
-            return false;
-        }
-        const live = this.liveOrdered();
-        if (live === null || live.length <= MIN_GLOBAL_DESKTOPS) {
-            return false;
-        }
-        const target = live.find((entry) => entry.id === id);
-        if (target === undefined) {
-            return false;
-        }
-        const surface = this.liveWorkspace();
-        if (surface === null) {
-            return false;
-        }
-        const fn = readProp(surface, "removeDesktop");
-        if (typeof fn !== "function") {
-            return false;
-        }
-        try {
-            Reflect.apply(fn as (...args: ReadonlyArray<unknown>) => unknown, surface, [target.ref]);
-        } catch (error) {
-            void error;
-            return false;
-        }
-        this.owned.delete(id);
-        this.rebuildSharedMapping();
-        this.logToken(`workspace-cleanup-removed:${id}`);
-        return true;
+        return false;
     }
 
     private enforceLocalTrailing(visible: Set<string>, occupied: Set<string>): void {
@@ -1906,18 +1768,12 @@ export class WorkspaceNativeAdapter {
                     orderedIds,
                     isEmpty: (id) => !occupied.has(id),
                     isVisible: (id) => visible.has(id),
-                    removeDesktop: (id) => this.removeOwnedEmpty(id, visible),
+                    removeDesktop: (id) => {
+                        const current = this.localWorkspaces.get(key)?.length ?? orderedIds.length;
+                        return this.removeOwnedEmpty(id, visible, occupied, current);
+                    },
                     createDesktop: () => this.appendDesktopForOutputKey(key),
                 });
-                const membership = new Set(this.localWorkspaces.get(key) ?? []);
-                const refreshed = this.liveOrdered();
-                const domainIds =
-                    refreshed === null
-                        ? [...membership]
-                        : refreshed.filter((entry) => membership.has(entry.id)).map((entry) => entry.id);
-                this.collapseManagedTerminalRun(domainIds, visible, occupied, (id) =>
-                    this.removeManagedTerminalLocal(id, visible),
-                );
             }
             const assigned = new Set<string>();
             for (const ids of this.localWorkspaces.values()) {
@@ -1930,7 +1786,7 @@ export class WorkspaceNativeAdapter {
                 if (assigned.has(entry.id) || occupied.has(entry.id) || visible.has(entry.id)) {
                     continue;
                 }
-                this.removeOwnedEmpty(entry.id, visible);
+                this.removeOwnedEmpty(entry.id, visible, occupied);
             }
         } finally {
             this.reconciling = false;
@@ -1958,15 +1814,16 @@ export class WorkspaceNativeAdapter {
                     orderedIds,
                     isEmpty: (id) => !occupied.has(id),
                     isVisible: (id) => visible.has(id),
-                    removeDesktop: (id) => this.removeOwnedEmptyGlobal(id, visible),
+                    removeDesktop: (id) => {
+                        const currentLive = this.liveOrdered();
+                        const current =
+                            currentLive === null
+                                ? orderedIds.length
+                                : this.globalOrdered(currentLive, key).length;
+                        return this.removeOwnedEmptyGlobal(id, visible, occupied, current);
+                    },
                     createDesktop: () => this.appendDesktopForGlobalKey(key),
                 });
-                const refreshed = this.liveOrdered();
-                const domainIds =
-                    refreshed === null ? orderedIds : this.globalOrdered(refreshed, key).map((entry) => entry.id);
-                this.collapseManagedTerminalRun(domainIds, visible, occupied, (id) =>
-                    this.removeManagedTerminalGlobal(id, visible),
-                );
             }
         } finally {
             this.reconciling = false;
@@ -1984,14 +1841,12 @@ export class WorkspaceNativeAdapter {
                 orderedIds: live.map((entry) => entry.id),
                 isEmpty: (id) => !occupied.has(id),
                 isVisible: (id) => visible.has(id),
-                removeDesktop: (id) => this.removeOwnedEmptyShared(id, visible),
+                removeDesktop: (id) => {
+                    const current = this.liveOrdered();
+                    return this.removeOwnedEmptyShared(id, visible, occupied, current === null ? live.length : current.length);
+                },
                 createDesktop: () => this.appendDesktopForSharedIdOnly(),
             });
-            const refreshed = this.liveOrdered();
-            const domainIds = refreshed === null ? live.map((entry) => entry.id) : refreshed.map((entry) => entry.id);
-            this.collapseManagedTerminalRun(domainIds, visible, occupied, (id) =>
-                this.removeManagedTerminalShared(id, visible),
-            );
         } finally {
             this.reconciling = false;
         }
@@ -2454,12 +2309,25 @@ export class WorkspaceNativeAdapter {
         return created === null ? null : created.id;
     }
 
-    private removeOwnedEmpty(id: string, visible: Set<string>): boolean {
+    private removeOwnedEmpty(id: string, visible: Set<string>, occupied?: Set<string>, domainCount?: number): boolean {
         if (!this.owned.has(id) || visible.has(id) || this.isTransactionRetained(id)) {
+            return false;
+        }
+        if (occupied !== undefined && occupied.has(id)) {
+            return false;
+        }
+        if (this.isDisplacedId(id)) {
             return false;
         }
         const live = this.liveOrdered();
         if (live === null || live.length <= MIN_GLOBAL_DESKTOPS) {
+            return false;
+        }
+        const trailing = live[live.length - 1];
+        if (trailing !== undefined && trailing.id === id) {
+            return false;
+        }
+        if (domainCount !== undefined && domainCount <= MIN_GLOBAL_DESKTOPS) {
             return false;
         }
         const target = live.find((entry) => entry.id === id);
@@ -2491,12 +2359,25 @@ export class WorkspaceNativeAdapter {
         return true;
     }
 
-    private removeOwnedEmptyGlobal(id: string, visible: Set<string>): boolean {
+    private removeOwnedEmptyGlobal(id: string, visible: Set<string>, occupied?: Set<string>, domainCount?: number): boolean {
         if (!this.owned.has(id) || visible.has(id) || this.isTransactionRetained(id)) {
+            return false;
+        }
+        if (occupied !== undefined && occupied.has(id)) {
+            return false;
+        }
+        if (this.isDisplacedId(id)) {
             return false;
         }
         const live = this.liveOrdered();
         if (live === null || live.length <= MIN_GLOBAL_DESKTOPS) {
+            return false;
+        }
+        const trailing = live[live.length - 1];
+        if (trailing !== undefined && trailing.id === id) {
+            return false;
+        }
+        if (domainCount !== undefined && domainCount <= MIN_GLOBAL_DESKTOPS) {
             return false;
         }
         const target = live.find((entry) => entry.id === id);
@@ -2523,12 +2404,25 @@ export class WorkspaceNativeAdapter {
         return true;
     }
 
-    private removeOwnedEmptyShared(id: string, visible: Set<string>): boolean {
+    private removeOwnedEmptyShared(id: string, visible: Set<string>, occupied?: Set<string>, domainCount?: number): boolean {
         if (!this.owned.has(id) || visible.has(id) || this.isTransactionRetained(id)) {
+            return false;
+        }
+        if (occupied !== undefined && occupied.has(id)) {
+            return false;
+        }
+        if (this.isDisplacedId(id)) {
             return false;
         }
         const live = this.liveOrdered();
         if (live === null || live.length <= MIN_GLOBAL_DESKTOPS) {
+            return false;
+        }
+        const trailing = live[live.length - 1];
+        if (trailing !== undefined && trailing.id === id) {
+            return false;
+        }
+        if (domainCount !== undefined && domainCount <= MIN_GLOBAL_DESKTOPS) {
             return false;
         }
         const target = live.find((entry) => entry.id === id);

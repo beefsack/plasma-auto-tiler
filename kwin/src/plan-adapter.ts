@@ -1676,6 +1676,12 @@ export class PlanAdapter {
     private maximizeToggleEcho: { ref: object; id: string; resourceClass: string } | null = null;
     private stickyEcho: { ref: object; id: string; resourceClass: string; allDesktops: boolean; previousFloating: boolean } | null = null;
     private stickyPreviousFloating = new Map<string, boolean>();
+    // Adopted sticky floats with unknown same-runtime origin: an eligible
+    // normal window already native-sticky (onAllDesktops true with an empty
+    // native desktop list) observed without a recorded origin is adopted as a
+    // sticky float with prior-float semantics only. No tiled slot is guessed,
+    // no history is persisted, and unstick never claims planner admission.
+    private adoptedSticky = new Set<string>();
     // The native setters own mutual exclusivity. Retain only the prior pair so
     // a project float can restore an initial keep-below choice exactly.
     private keepAbovePrevious = new Map<string, { ref: object; above: boolean; below: boolean }>();
@@ -1770,6 +1776,7 @@ export class PlanAdapter {
         this.maximizeToggleEcho = null;
         this.stickyEcho = null;
         this.stickyPreviousFloating.clear();
+        this.adoptedSticky.clear();
         this.keepAbovePrevious.clear();
         this.maximizeToggleAttempts.clear();
         this.stickyAttempts.clear();
@@ -1805,6 +1812,7 @@ export class PlanAdapter {
         this.maximizeToggleEcho = null;
         this.stickyEcho = null;
         this.stickyPreviousFloating.clear();
+        this.adoptedSticky.clear();
         this.keepAbovePrevious.clear();
         this.maximizeToggleAttempts.clear();
         this.stickyAttempts.clear();
@@ -2346,7 +2354,11 @@ export class PlanAdapter {
         if (target.sticky === true) {
             const previousFloating = this.stickyPreviousFloating.get(target.id);
             if (previousFloating === undefined) {
-                this.logToken(`${LOG_PREFIX}:sticky-refused-untracked window=${target.id} resource_class=${resourceClass}`);
+                if (!this.adoptStickyUnknown(target, resourceClass)) {
+                    this.logToken(`${LOG_PREFIX}:sticky-refused-untracked window=${target.id} resource_class=${resourceClass}`);
+                    return;
+                }
+                this.issueSticky(target, false, true);
                 return;
             }
             this.issueSticky(target, false, previousFloating);
@@ -2367,6 +2379,39 @@ export class PlanAdapter {
             floatTarget: { window: target.id, floating: true },
             stickyTarget: { window: target.id, previousFloating },
         });
+    }
+
+    // Adopted sticky-float origin for externally sticky windows: an eligible
+    // normal window already native-sticky with an empty native desktop list but
+    // no same-runtime origin is adopted as a sticky float with prior-float
+    // semantics only. No tiled slot is guessed, no history is persisted, and no
+    // planner admission is claimed. Returns false when the native membership
+    // cannot prove the empty-list sticky shape (fail closed, keep the existing
+    // untracked refusal and never broaden unmanaged/non-normal windows).
+    private adoptStickyUnknown(target: PlanObservedWindow, resourceClass: string): boolean {
+        let ids: ReadonlyArray<string> | null = null;
+        try {
+            const reader = this.env.readDesktopIds;
+            if (typeof reader !== "function") {
+                return false;
+            }
+            try {
+                ids = reader(target.ref);
+            } catch (error) {
+                void error;
+                ids = null;
+            }
+            if (ids === null || ids.length !== 0) {
+                return false;
+            }
+        } catch (error) {
+            void error;
+            return false;
+        }
+        this.stickyPreviousFloating.set(target.id, true);
+        this.adoptedSticky.add(target.id);
+        this.logToken(`${LOG_PREFIX}:sticky-adopted window=${target.id} resource_class=${resourceClass} origin=unknown-float`);
+        return true;
     }
 
     // Bounded sticky focus retention: the exact toggled window stays
@@ -2483,6 +2528,18 @@ export class PlanAdapter {
             void error;
         }
         this.logToken(`${LOG_PREFIX}:sticky-toggle window=${target.id} resource_class=${resourceClass} target=${allDesktops ? "all-desktops" : "current-desktop"} outcome=${outcome}`);
+        if (outcome !== "invoked") {
+            // A false/missing/throwing native assignment never retries,
+            // replays, or fabricates success. Clear the one-shot attempt fence
+            // so later explicit commands stay usable, and drop a stale
+            // sticky-on claim (the window never became sticky) while keeping a
+            // failed sticky-off origin for a later explicit retry.
+            this.stickyAttempts.delete(target.ref);
+            if (allDesktops) {
+                this.stickyPreviousFloating.delete(target.id);
+                this.adoptedSticky.delete(target.id);
+            }
+        }
         this.retainStickyFocus(target);
         if (this.stickyEcho !== null) {
             this.stickyEcho = null;
@@ -2798,7 +2855,19 @@ export class PlanAdapter {
                 this.stickyEcho = null;
                 this.logToken(`${LOG_PREFIX}:sticky-echo-consumed`);
                 if (!echo.allDesktops) {
+                    const wasAdopted = this.adoptedSticky.delete(echo.id);
                     this.stickyPreviousFloating.delete(echo.id);
+                    if (wasAdopted) {
+                        // Adopted unknown origin stays a normal float on the
+                        // then-current desktop: native assignment already
+                        // homed it, so only mark canonical float tracking
+                        // with no geometry, workspace, or planner admission.
+                        try {
+                            this.env.setFloating?.(echo.id, true);
+                        } catch (error) {
+                            void error;
+                        }
+                    }
                     if (!echo.previousFloating) {
                         if (!this.restoreKeepAbove(echo.id, echo.resourceClass)) {
                             return;
@@ -2970,6 +3039,8 @@ export class PlanAdapter {
             if (!after.has(entry.id)) {
                 this.maximizeAdmissionAttempts.delete(entry.id);
                 this.keepAbovePrevious.delete(entry.id);
+                this.stickyPreviousFloating.delete(entry.id);
+                this.adoptedSticky.delete(entry.id);
                 try {
                     this.env.noteRemoved?.(entry.id);
                 } catch (error) {
@@ -3358,6 +3429,8 @@ export class PlanAdapter {
         for (const entry of previous.windows) {
             if (!after.has(entry.id)) {
                 this.maximizeAdmissionAttempts.delete(entry.id);
+                this.stickyPreviousFloating.delete(entry.id);
+                this.adoptedSticky.delete(entry.id);
                 try {
                     this.env.noteRemoved?.(entry.id);
                 } catch (error) {
@@ -5217,6 +5290,8 @@ export class PlanAdapter {
                 if (flightState.removed !== null) {
                     this.maximizeAdmissionAttempts.delete(flightState.removed);
                     this.keepAbovePrevious.delete(flightState.removed);
+                    this.stickyPreviousFloating.delete(flightState.removed);
+                    this.adoptedSticky.delete(flightState.removed);
                     try {
                         this.env.noteRemoved?.(flightState.removed);
                     } catch (error) {

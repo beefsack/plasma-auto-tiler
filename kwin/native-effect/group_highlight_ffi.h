@@ -42,6 +42,39 @@ struct GroupHighlightStatus {
     uint8_t has_group = 0;
     uint8_t order_initialized = 0;
 };
+// Initial active-border maximize-state handoff: hide-until-confirmed gate.
+// Field order mirrors the Rust InitialMaximizeState layout exactly (C layout).
+// confirmed_normal is 1 only after a valid current Set with maximize_mode 0
+// for the exact live active window; maximize_mode holds the last accepted
+// 0..3 or 255 when none/cleared.
+struct InitialMaximizeState {
+    uint8_t confirmed_normal = 0;
+    uint8_t order_initialized = 0;
+    uint64_t last_revision = 0;
+    size_t owner_len = 0;
+    uint8_t owner[128] = {};
+    size_t generation_len = 0;
+    uint8_t generation[64] = {};
+    size_t active_len = 0;
+    uint8_t active[128] = {};
+    uint8_t maximize_mode = 255;
+    uint64_t receipts = 0;
+    uint64_t accepted = 0;
+    uint64_t parse_rejected = 0;
+    uint64_t identity_mismatch = 0;
+    uint64_t stale_ignored = 0;
+    uint64_t clear_requests = 0;
+};
+struct InitialMaximizeStatus {
+    uint64_t receipts = 0;
+    uint64_t accepted = 0;
+    uint64_t parse_rejected = 0;
+    uint64_t identity_mismatch = 0;
+    uint64_t stale_ignored = 0;
+    uint64_t clear_requests = 0;
+    uint8_t confirmed_normal = 0;
+    uint8_t order_initialized = 0;
+};
 extern "C" {
 // Zero-initializes the state. Returns 0 on success, -1 on null state.
 int32_t group_highlight_state_init(GroupHighlightState *state);
@@ -73,4 +106,26 @@ int32_t group_highlight_rect(const GroupHighlightState *state, GroupHighlightRec
 // Copies redacted receipt classification counters and display/order flags.
 // Returns 0 with *out written, -1 on null pointers. Never mutates state.
 int32_t group_highlight_status(const GroupHighlightState *state, GroupHighlightStatus *out);
+// Zero-initializes the initial maximize gate. Returns 0 on success, -1 on null.
+int32_t initial_maximize_state_init(InitialMaximizeState *state);
+// Applies one script handoff payload (Set or Clear shape) plus the exact live
+// native active identity bytes (empty range when there is no active window)
+// and the live effect-issued epoch bytes. A payload generation differing
+// from the live epoch is rejected as stale before any other authorization.
+// Returns 1 accepted (gate updated; an accepted Clear terminates the stream),
+// 2 ignored stale (gate preserved), 0 parse-rejected (hidden), 3
+// identity-mismatched (hidden), -1 on null state.
+int32_t initial_maximize_apply(InitialMaximizeState *state, const uint8_t *payload, size_t payloadLen,
+    const uint8_t *activeIdentity, size_t activeIdentityLen, const uint8_t *epoch, size_t epochLen);
+// Hides while preserving the order within the stream. Returns 1 when a normal
+// confirmation was displayed, 0 when already hidden, -1 on null state.
+int32_t initial_maximize_clear(InitialMaximizeState *state);
+// Returns 1 when the gate holds a valid current normal confirmation.
+uint8_t initial_maximize_is_confirmed(const InitialMaximizeState *state);
+// Pure display gate: confirmed normal plus no fullscreen, no native maximize,
+// and a usable endpoint. Returns 1 visible, 0 hidden.
+uint8_t initial_maximize_allows_display(uint8_t confirmedNormal, uint8_t fullscreen, uint8_t nativeMaximized,
+    uint8_t endpointUsable);
+// Copies redacted handoff counters and gate/order flags. Returns 0, -1 on null.
+int32_t initial_maximize_status(const InitialMaximizeState *state, InitialMaximizeStatus *out);
 } // extern "C"

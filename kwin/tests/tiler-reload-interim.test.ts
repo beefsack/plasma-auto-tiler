@@ -166,13 +166,11 @@ describe("interim tiler reload contract", () => {
     it("marks gap reload-required and non-gap restart-required without auto-send", () => {
         assert.match(module, /m_tilerReloadRequired = true/);
         assert.match(module, /m_tilerRestartRequired = true/);
-        assert.match(module, /m_tilerUnconsumedPending = true/);
         assert.match(module, /gapChanged/);
         assert.match(module, /startupConsumedChanged/);
-        assert.match(module, /unconsumedChanged/);
         assert.match(module, /Reload applies gaps only/);
         assert.match(module, /Session restart required/);
-        assert.match(module, /No running tiler effect for unconsumed settings/);
+        assert.doesNotMatch(module, /tilingAlgorithm|automaticSplitTarget|dropOutlinePreview|unconsumed settings/);
         assert.match(module, /startup gap values/);
         assert.match(module, /requestEffectReconfigure\(\)/);
         assert.match(module, /reconfigureEffect/);
@@ -189,7 +187,7 @@ describe("interim tiler reload contract", () => {
         assert.match(module, /Reload request failed\. Running tiler still uses startup values/);
         assert.match(module, /restart the session to guarantee pickup/);
         assert.match(module, /session restart remains required for startup settings/i);
-        assert.match(module, /No running tiler effect for unconsumed settings/);
+        assert.doesNotMatch(module, /No running tiler effect for unconsumed settings/);
         const reloadBody = functionBody(module, "void ActiveBorderConfigModule::requestTilerReload()");
         const reloadStrings = reloadBody
             .split("\n")
@@ -235,7 +233,7 @@ describe("interim tiler reload contract", () => {
         assert.match(ui, /Gap settings are saved to kwinrc\./);
         assert.match(ui, /Saving gaps marks a reload as required/);
         assert.match(ui, /startup settings require a session restart/i);
-        assert.match(ui, /unconsumed settings have no running effect/i);
+        assert.doesNotMatch(ui, /unconsumed settings have no running effect/i);
         assert.match(ui, /Border changes apply immediately through the KWin effect reconfigure\./);
         assert.match(ui, /Gap settings can reload/);
     });
