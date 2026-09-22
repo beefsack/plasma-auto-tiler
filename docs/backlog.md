@@ -2,28 +2,18 @@
 
 Only meaningful pending or active work is listed.
 
-- P0 | Invisible empty workspace cleanup | User reports five occupied workspaces
-  plus a sixth trailing empty; after closing the only window on workspace four
-  and navigating away, four remains. Remove empty non-final workspaces once
-  invisible on every output, retain the trailing empty, and keep at least two
-  logical workspaces per output. Preserve occupied, transaction-pinned, and
-  unrelated/unmapped desktops. Explicit-owned cleanup and the per-output floor
-  are implemented with 7 focused regressions and full TypeScript coverage.
-  Preexisting mapped workspaces are now managed as approved, separately from
-  created-resource ownership. Disable clears management without deleting adopted
-  desktops. The six-preexisting-workspace regression retains four while visible
-  through restart, then removes it after navigation while preserving occupied
-  five and trailing six. Per-output minimum, occupancy, any-output visibility,
-  displacement, transaction retention, and unmapped protections pass offline.
-  User reports solid behavior after deployment, but sending the lone window from
-  two to trailing four leaves empty two until another navigation. Follow-time
-  cleanup correctly held the pending source; successful commit released retention
-  without scheduling native cleanup. Commit now requests native reconciliation
-  after release; uncertain/failure paths stay unchanged. Regression proves two
-  survives verification, five becomes trailing empty, and commit removes two
-  without changing target visibility/focus or waiting for navigation. Typecheck
-  and all 879 KWin tests pass. Next: user restarts the development script and
-  repeats the `Meta+Shift+0` send/follow sequence.
+- P1 | Intermittent active-border disappearance | User reports active border
+  stopped midway through a session. Exact trace
+  `/run/user/1000/plasma-auto-tiler-dev.Xm6rPM.log` continues script state
+  submissions but lacks native endpoint/gate/visibility records; group/oracle
+  activity does not prove active-border rendering. No historical cause is proven.
+  Added bounded default-info `plasma-auto-tiler:active-border:` endpoint,
+  initial-gate result, and changed-visibility reasons. Existing `just dev trace`
+  captures them automatically. They report eligibility, not rendered pixels.
+  Typecheck, 883 KWin tests, host-native build, and 27 native tests pass. Next:
+  user starts a fresh Plasma session with rebuilt native effect and supplies the
+  exact combined trace if it recurs.
+  [diagnostics](changes/archive/active-border-visibility-diagnostics.md)
 - P1 | Initial border state confirmation live gate | Implemented default-hidden
   visibility with exact active-window identity, effect-instance epoch, ordered
   script observations, and native maximise veto. Missing/stale state stays hidden;

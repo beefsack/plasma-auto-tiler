@@ -15,6 +15,8 @@
 #include <QSet>
 #include <QString>
 
+#include <cstdint>
+
 namespace KWin
 {
 
@@ -79,10 +81,20 @@ private:
     void handleInitialPayload(const QString &payload);
     void clearInitialGate();
     bool isInitialConfirmedNormal() const;
+    void logActiveBorderDiag(const QString &message);
+    void emitActiveBorderEndpoint();
+    void emitActiveBorderApply(int32_t code);
+    void emitActiveBorderVisible(bool visible, const char *reason);
     bool m_groupVisible = false;
     bool m_metaHeld = false;
     bool m_firstMouseSeen = false;
     bool m_groupDbusAvailable = false;
+    // Bounded visibility diagnostic edge state only (two scalars, no ledger):
+    // whether the first updateBorder() evaluation was emitted, and the last
+    // emitted visibility. updateBorder() emits exactly on first evaluation
+    // and then only when computed visibility flips.
+    bool m_borderDiagEmitted = false;
+    bool m_borderDiagVisible = false;
 };
 
 } // namespace KWin

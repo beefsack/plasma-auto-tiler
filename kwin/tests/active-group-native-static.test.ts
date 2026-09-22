@@ -248,3 +248,115 @@ describe("active-group native static contract", () => {
         assert.match(oracleRust, /correlation/);
     });
 });
+
+describe("active-border visibility diagnostics", () => {
+    function functionBody(body: string, marker: string): string {
+        const start = body.indexOf(marker);
+        assert.ok(start >= 0, marker);
+        const end = body.indexOf("\n}\n", start);
+        assert.ok(end > start, marker);
+        return body.slice(start, end + 3);
+    }
+
+    it("emits bounded endpoint, apply, and visible shapes from fixed sites", () => {
+        assert.match(effectImpl, /Q_LOGGING_CATEGORY\(lcActiveBorder,\s*"plasmaautotiler\.activeborder"\)/);
+        assert.match(effectImpl, /qCInfo\(lcActiveBorder\)\.noquote\(\)/);
+        assert.match(effectImpl, /plasma-auto-tiler:active-border:endpoint available=/);
+        assert.match(effectImpl, /plasma-auto-tiler:active-border:initial-apply code=/);
+        assert.match(effectImpl, /plasma-auto-tiler:active-border:visible vis=/);
+        assert.match(effectImpl, /emitActiveBorderEndpoint\(\)/);
+        assert.match(effectImpl, /emitActiveBorderApply\(code\)/);
+        assert.match(effectImpl, /emitActiveBorderVisible\(visible,/);
+        assert.match(effectHeader, /m_borderDiagEmitted/);
+        assert.match(effectHeader, /m_borderDiagVisible/);
+        assert.match(effectHeader, /emitActiveBorderVisible\(bool visible, const char \*reason\)/);
+        for (const token of [
+            "eligible",
+            "no-window",
+            "deleted",
+            "minimized",
+            "fullscreen",
+            "maximized",
+            "endpoint-unavailable",
+            "initial-unconfirmed",
+        ]) {
+            assert.ok(effectImpl.includes(`"${token}"`), token);
+        }
+        // Endpoint once after registration, apply after the Rust apply call
+        // including the stale early return, visible inside updateBorder.
+        const ctorEndpoint = effectImpl.indexOf("emitActiveBorderEndpoint();");
+        assert.ok(ctorEndpoint > effectImpl.indexOf("m_groupDbusAvailable = groupRegistered"));
+        const applyCall = effectImpl.indexOf("emitActiveBorderApply(code);");
+        assert.ok(applyCall > effectImpl.indexOf("initial_maximize_apply("));
+        assert.ok(effectImpl.indexOf("if (code == 2)", applyCall) > applyCall);
+        const updateBorderBody = functionBody(effectImpl, "void ActiveWindowBorderEffect::updateBorder()");
+        assert.match(updateBorderBody, /emitActiveBorderVisible\(visible,/);
+    });
+
+    it("emits visible edge-only on first evaluation and visibility flips", () => {
+        assert.equal(countMatches(effectImpl, /plasma-auto-tiler:active-border:visible/g), 1);
+        assert.equal(countMatches(effectImpl, /emitActiveBorderVisible/g), 2);
+        const visibleBody = functionBody(effectImpl, "void ActiveWindowBorderEffect::emitActiveBorderVisible(");
+        assert.match(visibleBody, /m_borderDiagEmitted/);
+        assert.match(visibleBody, /m_borderDiagVisible/);
+        assert.match(visibleBody, /visible == m_borderDiagVisible/);
+        // updateBorder delegates edge dedup to the emitter; it must call it
+        // with the computed visibility but hold no ledger itself.
+        const updateBorderBody = functionBody(effectImpl, "void ActiveWindowBorderEffect::updateBorder()");
+        assert.match(updateBorderBody, /emitActiveBorderVisible\(visible,/);
+        assert.doesNotMatch(updateBorderBody, /m_borderDiagVisible =/);
+        // No timers, polling, or new registry/transport for diagnostics.
+        for (const forbidden of [/QTimer/, /singleShot/, /startTimer/, /registerService/, /registerObject/]) {
+            assert.doesNotMatch(visibleBody, forbidden);
+        }
+    });
+
+    it("keeps diagnostics out of paint, mouse, and group update paths", () => {
+        const paintBody = functionBody(effectImpl, "void ActiveWindowBorderEffect::paintScreen(");
+        assert.doesNotMatch(paintBody, /active-border:/);
+        assert.doesNotMatch(paintBody, /emitActiveBorder/);
+        assert.doesNotMatch(paintBody, /lcActiveBorder/);
+        const mouseBody = functionBody(effectImpl, "void ActiveWindowBorderEffect::onMouseChanged(");
+        assert.doesNotMatch(mouseBody, /active-border:/);
+        assert.doesNotMatch(mouseBody, /emitActiveBorder/);
+        assert.doesNotMatch(mouseBody, /lcActiveBorder/);
+        const groupBody = functionBody(effectImpl, "void ActiveWindowBorderEffect::updateGroupVisibility()");
+        assert.doesNotMatch(groupBody, /active-border:/);
+        assert.doesNotMatch(groupBody, /emitActiveBorder/);
+        assert.doesNotMatch(groupBody, /lcActiveBorder/);
+    });
+
+    it("uses fixed bounded fields with no identity, epoch, payload, or geometry", () => {
+        const applyBody = functionBody(effectImpl, "void ActiveWindowBorderEffect::emitActiveBorderApply(");
+        assert.match(applyBody, /code=%1 confirmed=%2/);
+        const visibleBody = functionBody(effectImpl, "void ActiveWindowBorderEffect::emitActiveBorderVisible(");
+        assert.match(visibleBody, /vis=%1 reason=%2/);
+        const endpointBody = functionBody(effectImpl, "void ActiveWindowBorderEffect::emitActiveBorderEndpoint(");
+        assert.match(endpointBody, /endpoint available=%1/);
+        for (const body of [applyBody, visibleBody, endpointBody]) {
+            for (const forbidden of [
+                /internalId/,
+                /WithoutBraces/,
+                /payloadBytes/,
+                /epochBytes/,
+                /activeBytes/,
+                /frameGeometry/,
+                /windowItem/,
+                /mapFromScene/,
+                /active_window/,
+                /maximize_mode/,
+                /generation/,
+                /QUuid::createUuid/,
+                /QRectF/,
+            ]) {
+                assert.doesNotMatch(body, forbidden);
+            }
+        }
+        // Logging failures are swallowed and never gate rendering decisions.
+        const logBody = functionBody(effectImpl, "void ActiveWindowBorderEffect::logActiveBorderDiag(");
+        assert.match(logBody, /catch \(\.\.\.\)/);
+        assert.doesNotMatch(logBody, /setVisible/);
+        assert.doesNotMatch(logBody, /addRepaintFull/);
+        assert.doesNotMatch(logBody, /initial_maximize_/);
+    });
+});

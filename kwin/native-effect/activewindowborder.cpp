@@ -14,6 +14,7 @@
 #include <QByteArray>
 #include <QColor>
 #include <QDBusConnection>
+#include <QLoggingCategory>
 #include <QPalette>
 #include <QUuid>
 
@@ -23,6 +24,8 @@
 
 namespace KWin
 {
+
+Q_LOGGING_CATEGORY(lcActiveBorder, "plasmaautotiler.activeborder");
 
 namespace
 {
@@ -126,6 +129,37 @@ QRect oracleMoveResizeRect(EffectWindow *window)
     return QRect();
 }
 
+// Single fixed reason token for the computed active-border visibility. Order
+// matches updateBorder() evaluation so exactly one token distinguishes the
+// first suppressing gate: endpoint, window presence, deleted, minimized,
+// fullscreen, maximized, then the initial confirmation gate.
+const char *activeBorderDiagReason(bool hasWindow, bool deleted, bool minimized, bool fullScreen, bool nativeMaximized,
+    bool dbusAvailable, bool initialOk)
+{
+    if (!dbusAvailable) {
+        return "endpoint-unavailable";
+    }
+    if (!hasWindow) {
+        return "no-window";
+    }
+    if (deleted) {
+        return "deleted";
+    }
+    if (minimized) {
+        return "minimized";
+    }
+    if (fullScreen) {
+        return "fullscreen";
+    }
+    if (nativeMaximized) {
+        return "maximized";
+    }
+    if (!initialOk) {
+        return "initial-unconfirmed";
+    }
+    return "eligible";
+}
+
 } // namespace
 
 ActiveWindowBorderEffect::ActiveWindowBorderEffect()
@@ -163,6 +197,9 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
         group_highlight_clear(&m_groupState);
         initial_maximize_clear(&m_initialState);
     }
+    // Transition diagnostic only: endpoint availability once, after
+    // registration. Never affects gate, visibility, or repaint decisions.
+    emitActiveBorderEndpoint();
 
     // Folded Slice 1 drag oracle endpoint: registered independently of the
     // ActiveBorder endpoint outcome, so one registration failure never hides
@@ -455,6 +492,9 @@ void ActiveWindowBorderEffect::handleInitialPayload(const QString &payload)
     const uint8_t *epochPtr = epochBytes.isEmpty() ? nullptr : reinterpret_cast<const uint8_t *>(epochBytes.constData());
     const int32_t code = initial_maximize_apply(&m_initialState, payloadPtr, static_cast<size_t>(payloadBytes.size()), activePtr,
         static_cast<size_t>(activeBytes.size()), epochPtr, static_cast<size_t>(epochBytes.size()));
+    // Transition diagnostic only (including stale code 2). Never affects the
+    // gate, visibility, or repaint decision below.
+    emitActiveBorderApply(code);
     if (code == 2) {
         // Stale/out-of-order cannot authorize the current window: preserve.
         return;
@@ -477,6 +517,54 @@ void ActiveWindowBorderEffect::clearInitialGate()
 bool ActiveWindowBorderEffect::isInitialConfirmedNormal() const
 {
     return initial_maximize_is_confirmed(&m_initialState) != 0;
+}
+
+void ActiveWindowBorderEffect::logActiveBorderDiag(const QString &message)
+{
+    // Diagnostic path only: swallow every failure and never branch caller
+    // behavior on logging. Bounded fixed-token message built by callers.
+    try {
+        qCInfo(lcActiveBorder).noquote() << message;
+    } catch (...) {
+    }
+}
+
+void ActiveWindowBorderEffect::emitActiveBorderEndpoint()
+{
+    try {
+        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:active-border:endpoint available=%1")
+                .arg(m_groupDbusAvailable ? 1 : 0));
+    } catch (...) {
+    }
+}
+
+void ActiveWindowBorderEffect::emitActiveBorderApply(int32_t code)
+{
+    // Fixed bounded fields only: apply return code and confirmed boolean.
+    // No payload, epoch, window identity, or geometry.
+    try {
+        const bool confirmed = isInitialConfirmedNormal();
+        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:active-border:initial-apply code=%1 confirmed=%2")
+                .arg(code)
+                .arg(confirmed ? 1 : 0));
+    } catch (...) {
+    }
+}
+
+void ActiveWindowBorderEffect::emitActiveBorderVisible(bool visible, const char *reason)
+{
+    // Edge only: first evaluation plus visibility flips. Two scalars, no ledger.
+    try {
+        if (m_borderDiagEmitted && visible == m_borderDiagVisible) {
+            return;
+        }
+        m_borderDiagEmitted = true;
+        m_borderDiagVisible = visible;
+        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:active-border:visible vis=%1 reason=%2")
+                .arg(visible ? 1 : 0)
+                .arg(QString::fromUtf8(reason)));
+    } catch (...) {
+    }
 }
 
 void ActiveWindowBorderEffect::updateBorder()
@@ -503,6 +591,11 @@ void ActiveWindowBorderEffect::updateBorder()
                                nativeMaximized ? 1 : 0, m_groupDbusAvailable ? 1 : 0)
         != 0;
     const bool visible = state.visible && initialOk;
+    // Transition diagnostic only: first evaluation plus visibility flips.
+    // Never affects the border, gate, or repaint decision below.
+    emitActiveBorderVisible(visible,
+        activeBorderDiagReason(window != nullptr, window ? window->isDeleted() : false, window ? window->isMinimized() : false,
+            fullScreen, nativeMaximized, m_groupDbusAvailable, initialOk));
     const qreal gap = ActiveBorderConfig::borderGap();
     const QRectF innerRect = activeBorderInnerRect(state.innerRect, gap);
     m_borderItem.setInnerRect(window ? window->windowItem()->mapFromScene(innerRect) : RectF());
