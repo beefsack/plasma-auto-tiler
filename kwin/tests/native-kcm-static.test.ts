@@ -8,7 +8,7 @@ const read = (path: string): string => readFileSync(join(process.cwd(), path), "
 const schema = read("contents/config/main.xml");
 const scriptMetadata = JSON.parse(read("metadata.json")) as Record<string, unknown>;
 const nativeMetadata = JSON.parse(read("native-effect/metadata.json")) as {
-    KPlugin: { Id: string; EnabledByDefault: boolean };
+    KPlugin: { Id: string; Name: string; Description: string; EnabledByDefault: boolean };
     "X-KDE-ConfigModule": string;
 };
 const kcmMetadata = JSON.parse(read("native-effect/activeborderconfig_module.json")) as {
@@ -79,12 +79,9 @@ describe("native KCM static contract", () => {
     });
 
     it("brands the surviving effect Plasma Auto Tiler and keeps exactly one effect plugin", () => {
-        const effectMetadata = nativeMetadata as {
-            KPlugin: { Id: string; Name: string; Description: string; EnabledByDefault: boolean };
-        };
-        assert.equal(effectMetadata.KPlugin.Name, "Plasma Auto Tiler");
-        assert.notEqual(effectMetadata.KPlugin.Description, "");
-        assert.match(effectMetadata.KPlugin.Description, /Plasma Auto Tiler/);
+        assert.equal(nativeMetadata.KPlugin.Name, "Plasma Auto Tiler");
+        assert.notEqual(nativeMetadata.KPlugin.Description, "");
+        assert.match(nativeMetadata.KPlugin.Description, /Plasma Auto Tiler/);
         assert.equal(kcmMetadata.KPlugin.Name, "Plasma Auto Tiler");
         // Exactly one effect plugin target plus the KCM config target; the
         // standalone drag-oracle effect, factory, metadata, and validation
@@ -123,10 +120,7 @@ describe("native KCM static contract", () => {
             if (key === "innerGap" || key === "outerGap") {
                 continue;
             }
-            const defaultExpression =
-                setting.defaultValue === "false"
-                    ? "false"
-                    : `QStringLiteral("${setting.defaultValue}")`;
+            const defaultExpression = `QStringLiteral("${setting.defaultValue}")`;
             assert.match(
                 module,
                 new RegExp(

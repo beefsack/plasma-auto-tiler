@@ -485,12 +485,13 @@ Historical implementation detail is recoverable in Git history.
   output domains; `shared` selects the same backing desktop on every output.
   The adapter keeps one structurally trailing empty backing desktop per relevant
   domain, reusing it for `Meta+0` and `Meta+Shift+0` before creating one. Once
-  invisible on every output, an empty non-final explicitly project-owned backing
-  desktop may be removed. The literal native-order trailing empty is retained.
-  Every live local or global-unique output domain, and the shared domain, keeps
-  at least two logical workspaces. Preexisting desktops merely adopted into a
-  session-local map are not project-owned and are never removed by this policy.
-  Automatic cleanup for those auto-mapped desktops is unresolved, not rejected.
+   invisible on every output, an empty non-final managed backing desktop may be
+   removed. Management includes preexisting desktops adopted into the current
+   logical mapping; it is distinct from lifetime ownership, so disable/teardown
+   never treats an adopted desktop as disposable. The literal native-order trailing
+   empty is retained. Every live local or global-unique output domain, and the
+   shared domain, keeps at least two logical workspaces. Unmapped desktops remain
+   outside management.
   Occupied (including floating, fullscreen, and maximized), visible,
   transaction-pinned, displaced, and unmapped desktops remain protected; sticky
   all-desktops windows do not occupy every backing desktop. Mapping and output

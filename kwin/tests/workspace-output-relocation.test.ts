@@ -386,10 +386,10 @@ describe("output disconnect displacement identity and visibility", () => {
         const wsBack = world.desktops[2] as FakeDesktop;
         setVisible(world, outKeep, wsKeep);
         setVisible(world, outGone, wsFore);
-        const { adapter } = startNative(world, "per-output-local");
         addWindow(world, "win-keep", wsKeep, outKeep);
         addWindow(world, "win-fore", wsFore, outGone);
         addWindow(world, "win-back", wsBack, outGone);
+        const { adapter } = startNative(world, "per-output-local");
         adapter.handleTopologySignal();
         (world.workspace["activeWindow"] as unknown) = world.wins[0];
         (world.workspace["activeScreen"] as unknown) = outKeep;

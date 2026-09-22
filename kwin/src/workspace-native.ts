@@ -416,7 +416,11 @@ export class WorkspaceNativeAdapter {
     private readonly globalInverse = new Map<string, string>();
     private globalPrimary: string | undefined = undefined;
     private readonly sharedIds: string[] = [];
+    // Created desktops are lifetime-owned. Managed desktops are the current
+    // session mapping domain and may be retired when all cleanup guards allow.
+    // Preexisting desktops join only the latter set.
     private readonly owned = new Set<string>();
+    private readonly managed = new Set<string>();
     // Session-local output-displacement mapping only, no restart persistence.
     // Origin output key -> displaced workspace ids plus chosen survivor key.
     // Workspace relocation is the unit: return moves whole workspaces with
@@ -487,7 +491,7 @@ export class WorkspaceNativeAdapter {
         }
         this.mode = parseWorkspaceMode(raw);
         this.resetMappingState();
-        this.pruneOwnedToLive();
+        this.pruneTrackedToLive();
         this.enabled = true;
         this.rebuildKeysAndMappings();
         this.cleanupDesktops();
@@ -510,9 +514,10 @@ export class WorkspaceNativeAdapter {
         this.displacedByOrigin.clear();
         this.lastVisibleByKey.clear();
         this.lastKnownByKey.clear();
+        this.managed.clear();
     }
 
-    private pruneOwnedToLive(): void {
+    private pruneTrackedToLive(): void {
         const live = this.liveOrdered();
         if (live === null) {
             return;
@@ -521,6 +526,11 @@ export class WorkspaceNativeAdapter {
         for (const id of [...this.owned]) {
             if (!liveIds.has(id)) {
                 this.owned.delete(id);
+            }
+        }
+        for (const id of [...this.managed]) {
+            if (!liveIds.has(id)) {
+                this.managed.delete(id);
             }
         }
     }
@@ -559,11 +569,10 @@ export class WorkspaceNativeAdapter {
 
     // One synchronous cleanup per workspace or window signal. Creates or
     // retires backing desktops so every relevant domain keeps one trailing
-    // empty. Never removes populated, current, visible, unowned, or one of
-    // the minimum two global desktops. Output disconnect/reconnect
-    // displacement runs after the ordinary lifecycle so displaced layouts
-    // stay separate workspaces on a survivor and return with CURRENT
-    // contents on reconnect.
+    // empty. Never removes populated, current, visible, transaction-retained,
+    // displaced, or one of the minimum two global desktops. Output
+    // disconnect/reconnect displacement runs first so cleanup sees and retains
+    // every displaced workspace before considering empty mapped desktops.
     handleTopologySignal(): void {
         if (!this.enabled || this.reconciling) {
             return;
@@ -583,8 +592,8 @@ export class WorkspaceNativeAdapter {
         for (const [key, ids] of this.globalAssigned) {
             prevGlobal.set(key, [...ids]);
         }
-        this.cleanupDesktops();
         this.reconcileOutputDisplacement(prevLocal, prevGlobal);
+        this.cleanupDesktops();
     }
 
     // Meta+1..9: select only an existing logical position on the active
@@ -832,11 +841,12 @@ export class WorkspaceNativeAdapter {
                 }
             }
             for (const entry of live) {
-                if (this.owned.has(entry.id) || assigned.has(entry.id)) {
+                if (assigned.has(entry.id)) {
                     continue;
                 }
                 list.push(entry.id);
                 assigned.add(entry.id);
+                this.managed.add(entry.id);
             }
             this.localWorkspaces.set(primary, list);
         }
@@ -877,14 +887,16 @@ export class WorkspaceNativeAdapter {
     }
 
     private globalOrdered(live: ReadonlyArray<DesktopEntry>, key: string): DesktopEntry[] {
-        const ids = new Set(this.globalAssigned.get(key) ?? []);
-        const filtered = live.filter((entry) => ids.has(entry.id));
-        if (filtered.some((entry) => entry.num === null)) {
-            return filtered;
+        const byId = new Map(live.map((entry) => [entry.id, entry]));
+        const mapped = this.globalAssigned.get(key) ?? [];
+        const ordered: DesktopEntry[] = [];
+        for (const id of mapped) {
+            const entry = byId.get(id);
+            if (entry !== undefined) {
+                ordered.push(entry);
+            }
         }
-        return filtered
-            .slice()
-            .sort((a, b) => (a.num as number) - (b.num as number));
+        return ordered;
     }
 
     private rebuildGlobalMapping(live: ReadonlyArray<DesktopEntry>): void {
@@ -943,6 +955,7 @@ export class WorkspaceNativeAdapter {
                 continue;
             }
             this.assignGlobal(entry.id, this.globalPrimary);
+            this.managed.add(entry.id);
         }
         for (const key of keys) {
             const list = this.globalAssigned.get(key);
@@ -967,6 +980,7 @@ export class WorkspaceNativeAdapter {
         this.sharedIds.length = 0;
         for (const entry of live) {
             this.sharedIds.push(entry.id);
+            this.managed.add(entry.id);
         }
     }
 
@@ -1770,7 +1784,7 @@ export class WorkspaceNativeAdapter {
                     isVisible: (id) => visible.has(id),
                     removeDesktop: (id) => {
                         const current = this.localWorkspaces.get(key)?.length ?? orderedIds.length;
-                        return this.removeOwnedEmpty(id, visible, occupied, current);
+                        return this.removeManagedEmpty(id, visible, occupied, current);
                     },
                     createDesktop: () => this.appendDesktopForOutputKey(key),
                 });
@@ -1786,7 +1800,7 @@ export class WorkspaceNativeAdapter {
                 if (assigned.has(entry.id) || occupied.has(entry.id) || visible.has(entry.id)) {
                     continue;
                 }
-                this.removeOwnedEmpty(entry.id, visible, occupied);
+                this.removeManagedEmpty(entry.id, visible, occupied);
             }
         } finally {
             this.reconciling = false;
@@ -1820,7 +1834,7 @@ export class WorkspaceNativeAdapter {
                             currentLive === null
                                 ? orderedIds.length
                                 : this.globalOrdered(currentLive, key).length;
-                        return this.removeOwnedEmptyGlobal(id, visible, occupied, current);
+                        return this.removeManagedEmptyGlobal(id, visible, occupied, current);
                     },
                     createDesktop: () => this.appendDesktopForGlobalKey(key),
                 });
@@ -1843,7 +1857,7 @@ export class WorkspaceNativeAdapter {
                 isVisible: (id) => visible.has(id),
                 removeDesktop: (id) => {
                     const current = this.liveOrdered();
-                    return this.removeOwnedEmptyShared(id, visible, occupied, current === null ? live.length : current.length);
+                    return this.removeManagedEmptyShared(id, visible, occupied, current === null ? live.length : current.length);
                 },
                 createDesktop: () => this.appendDesktopForSharedIdOnly(),
             });
@@ -2243,6 +2257,7 @@ export class WorkspaceNativeAdapter {
                 return null;
             }
             this.owned.add(candidate.id);
+            this.managed.add(candidate.id);
             this.logToken("workspace-created-owned");
             return candidate;
         } finally {
@@ -2309,8 +2324,8 @@ export class WorkspaceNativeAdapter {
         return created === null ? null : created.id;
     }
 
-    private removeOwnedEmpty(id: string, visible: Set<string>, occupied?: Set<string>, domainCount?: number): boolean {
-        if (!this.owned.has(id) || visible.has(id) || this.isTransactionRetained(id)) {
+    private removeManagedEmpty(id: string, visible: Set<string>, occupied?: Set<string>, domainCount?: number): boolean {
+        if (!this.managed.has(id) || visible.has(id) || this.isTransactionRetained(id)) {
             return false;
         }
         if (occupied !== undefined && occupied.has(id)) {
@@ -2349,6 +2364,7 @@ export class WorkspaceNativeAdapter {
             return false;
         }
         this.owned.delete(id);
+        this.managed.delete(id);
         for (const list of this.localWorkspaces.values()) {
             const at = list.indexOf(id);
             if (at >= 0) {
@@ -2359,8 +2375,8 @@ export class WorkspaceNativeAdapter {
         return true;
     }
 
-    private removeOwnedEmptyGlobal(id: string, visible: Set<string>, occupied?: Set<string>, domainCount?: number): boolean {
-        if (!this.owned.has(id) || visible.has(id) || this.isTransactionRetained(id)) {
+    private removeManagedEmptyGlobal(id: string, visible: Set<string>, occupied?: Set<string>, domainCount?: number): boolean {
+        if (!this.managed.has(id) || visible.has(id) || this.isTransactionRetained(id)) {
             return false;
         }
         if (occupied !== undefined && occupied.has(id)) {
@@ -2399,13 +2415,14 @@ export class WorkspaceNativeAdapter {
             return false;
         }
         this.owned.delete(id);
+        this.managed.delete(id);
         this.unassignGlobal(id);
         this.logToken(`workspace-cleanup-removed:${id}`);
         return true;
     }
 
-    private removeOwnedEmptyShared(id: string, visible: Set<string>, occupied?: Set<string>, domainCount?: number): boolean {
-        if (!this.owned.has(id) || visible.has(id) || this.isTransactionRetained(id)) {
+    private removeManagedEmptyShared(id: string, visible: Set<string>, occupied?: Set<string>, domainCount?: number): boolean {
+        if (!this.managed.has(id) || visible.has(id) || this.isTransactionRetained(id)) {
             return false;
         }
         if (occupied !== undefined && occupied.has(id)) {
@@ -2444,6 +2461,7 @@ export class WorkspaceNativeAdapter {
             return false;
         }
         this.owned.delete(id);
+        this.managed.delete(id);
         this.rebuildSharedMapping();
         this.logToken(`workspace-cleanup-removed:${id}`);
         return true;

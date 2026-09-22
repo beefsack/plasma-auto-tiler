@@ -9,10 +9,14 @@ Only meaningful pending or active work is listed.
   logical workspaces per output. Preserve occupied, transaction-pinned, and
   unrelated/unmapped desktops. Explicit-owned cleanup and the per-output floor
   are implemented with 7 focused regressions and full TypeScript coverage.
-  Auto-mapped preexisting desktops are currently not owned: decide whether they
-  may also be pruned. The reported workspace-four case is not yet claimed fixed
-  if it was present before adapter startup. Occupancy, any-output visibility,
-  displacement, and transaction retention remain protected.
+  Preexisting mapped workspaces are now managed as approved, separately from
+  created-resource ownership. Disable clears management without deleting adopted
+  desktops. The six-preexisting-workspace regression retains four while visible
+  through restart, then removes it after navigation while preserving occupied
+  five and trailing six. Per-output minimum, occupancy, any-output visibility,
+  displacement, transaction retention, and unmapped protections pass offline.
+  Typecheck and all 878 KWin tests pass. Next: user restarts the development script
+  and verifies the original close-window/navigate-away sequence.
 - P1 | Initial border state confirmation live gate | Implemented default-hidden
   visibility with exact active-window identity, effect-instance epoch, ordered
   script observations, and native maximise veto. Missing/stale state stays hidden;

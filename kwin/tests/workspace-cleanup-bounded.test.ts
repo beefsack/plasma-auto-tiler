@@ -151,56 +151,44 @@ function emptyDesktop(world: FakeWorld, desktop: FakeDesktop): void {
     world.wins = world.wins.filter((win) => !win.desktops.includes(desktop));
 }
 
-function buildSixOccupied(world: FakeWorld, adapter: WorkspaceNativeAdapter): string[] {
-    const first = world.desktops[0];
-    const second = world.desktops[1];
-    assert.ok(first !== undefined && second !== undefined);
-    occupy(world, first, "win-1");
-    occupy(world, second, "win-2");
-    adapter.handleTopologySignal();
-    let n = 3;
-    while (world.desktops.length < 6) {
-        const trailing = world.desktops[world.desktops.length - 1];
-        assert.ok(trailing !== undefined);
-        occupy(world, trailing as FakeDesktop, `win-build-${String(n)}`);
-        adapter.handleTopologySignal();
-        n += 1;
-        assert.ok(n < 20, "bounded build");
-    }
-    assert.equal(world.desktops.length, 6);
-    return ids(world);
-}
-
 describe("bounded owned intermediate cleanup", () => {
-    it("1-6 scenario removes only project-owned 4 once invisible, retains 5 and trailing 6", () => {
-        const world = fakeWorld(["out-1"], ["ws-1", "ws-2"]);
-        const { adapter, logs } = startNative(world, "per-output-local");
-        buildSixOccupied(world, adapter);
+    it("removes mapped preexisting 4 after restart once invisible, retaining 5 and trailing 6", () => {
+        const world = fakeWorld(["out-1"], ["ws-1", "ws-2", "ws-3", "ws-4", "ws-5", "ws-6"]);
         const all = [...world.desktops];
+        for (let index = 0; index < 5; index += 1) {
+            const desktop = all[index];
+            assert.ok(desktop !== undefined);
+            occupy(world, desktop, `win-${String(index + 1)}`);
+        }
         const fourth = all[3] as FakeDesktop;
         const fifth = all[4] as FakeDesktop;
         const sixth = all[5] as FakeDesktop;
-        assert.ok(adapter.ownedSnapshot().includes(fourth.id), "fourth is project-owned");
+        const first = all[0] as FakeDesktop;
+        const { adapter } = startNative(world, "per-output-local");
+        assert.ok(!adapter.ownedSnapshot().includes(fourth.id), "preexisting fourth is not lifetime-owned");
         emptyDesktop(world, fourth);
         setVisible(world, world.outputs[0] as FakeOutput, fourth);
-        const beforeVisible = ids(world);
         adapter.handleTopologySignal();
-        assert.ok(ids(world).includes(fourth.id), `visible owned empty retained: ${ids(world).join(",")}`);
-        setVisible(world, world.outputs[0] as FakeOutput, all[0] as FakeDesktop);
+        assert.ok(ids(world).includes(fourth.id), `visible mapped empty retained: ${ids(world).join(",")}`);
+        adapter.disable();
+        assert.deepEqual(ids(world), ["ws-1", "ws-2", "ws-3", "ws-4", "ws-5", "ws-6"], "disable never deletes adopted desktops");
+        const restarted = startNative(world, "per-output-local");
+        assert.ok(!restarted.adapter.ownedSnapshot().includes(fourth.id), "restart keeps preexisting lifetime-unowned");
+        assert.ok(ids(world).includes(fourth.id), "visible fourth survives restart");
+        setVisible(world, world.outputs[0] as FakeOutput, first);
         const currentBefore = world.currentByOutput.get(world.outputs[0] as FakeOutput);
-        adapter.handleTopologySignal();
+        restarted.adapter.handleTopologySignal();
         const after = ids(world);
-        assert.ok(!after.includes(fourth.id), `owned 4 removed: ${after.join(",")}`);
+        assert.ok(!after.includes(fourth.id), `mapped preexisting 4 removed: ${after.join(",")}`);
         assert.ok(after.includes(fifth.id), "occupied 5 retained");
         assert.ok(after.includes(sixth.id), "literal trailing 6 retained");
-        assert.ok(logs.some((line) => line.includes(`workspace-cleanup-removed:${fourth.id}`)));
+        assert.ok(restarted.logs.some((line) => line.includes(`workspace-cleanup-removed:${fourth.id}`)));
         assert.equal(world.currentByOutput.get(world.outputs[0] as FakeOutput), currentBefore, "no visibility switch");
-        const snap = adapter.localSnapshot();
+        const snap = restarted.adapter.localSnapshot();
         const flat = Object.values(snap).flat() as string[];
         assert.ok(!flat.includes(fourth.id), "mapping updated");
         assert.ok(world.desktops.some((entry) => entry.id === sixth.id), "order keeps trailing last");
-        adapter.disable();
-        void beforeVisible;
+        restarted.adapter.disable();
     });
 
     it("per-output-local keeps >=2 per output, not just raw count", () => {
@@ -373,18 +361,17 @@ describe("bounded owned intermediate cleanup", () => {
         void logs;
     });
 
-    it("pending retention blocks until settle; displaced owned remains until exact return", () => {
-        const world = fakeWorld(["out-1"], ["ws-1", "ws-2"]);
+    it("pending retention blocks mapped preexisting cleanup until settle; displaced workspaces remain until exact return", () => {
+        const world = fakeWorld(["out-1"], ["ws-1", "ws-2", "ws-3", "ws-4"]);
         const ws1 = world.desktops[0] as FakeDesktop;
         const ws2 = world.desktops[1] as FakeDesktop;
+        const ws3 = world.desktops[2] as FakeDesktop;
         addWindow(world, "win-1", ws1);
         addWindow(world, "win-2", ws2);
+        addWindow(world, "win-source", ws3);
         const { adapter } = startNative(world, "per-output-local");
-        const trailing = world.desktops[world.desktops.length - 1] as FakeDesktop;
-        addWindow(world, "win-source", trailing);
-        adapter.handleTopologySignal();
-        const sourceId = trailing.id;
-        assert.ok(adapter.ownedSnapshot().includes(sourceId) || ids(world).includes(sourceId));
+        const sourceId = ws3.id;
+        assert.ok(!adapter.ownedSnapshot().includes(sourceId), "source is preexisting rather than lifetime-owned");
         for (const win of world.wins) {
             if (win.internalId === "win-source") {
                 win.desktops = [ws1];
@@ -438,7 +425,7 @@ describe("bounded owned intermediate cleanup", () => {
         handle3.adapter.disable();
     });
 
-    it("repeat is idempotent and preserves unowned plus literal trailing", () => {
+    it("repeat is idempotent after pruning mapped empties and retaining the literal trailing", () => {
         const world = fakeWorld(["out-1"], ["ws-1", "ws-2", "ws-3"]);
         const ws1 = world.desktops[0] as FakeDesktop;
         addWindow(world, "win-keep", ws1);
@@ -455,7 +442,7 @@ describe("bounded owned intermediate cleanup", () => {
             removalsFirst,
             "no extra removals",
         );
-        assert.ok(afterSecond.includes("ws-2"), "unowned empty preserved");
+        assert.ok(!afterSecond.includes("ws-2"), "mapped non-final empty pruned");
         assert.ok(afterSecond.includes(trailing), "literal trailing preserved");
         assert.ok(afterSecond.length >= 2);
         adapter.disable();
