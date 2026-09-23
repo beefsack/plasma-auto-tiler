@@ -28,6 +28,7 @@ use crate::directional::{
 use crate::geometry::Rect;
 use crate::ids::{GenerationId, OwnerId};
 use crate::pending::{DirectionalMovePending, WorkspacePending};
+use crate::policy::{LayoutPolicy, default_policy};
 use crate::reconcile::{AckError, CancelUnackedError, StateKind, VerifyError};
 use crate::seed::EngineWindow;
 use crate::session::{
@@ -58,8 +59,13 @@ const DIRECTION_MESSAGE: &str = "direction is invalid";
 
 /// Portable world engine: per-domain sessions plus binding state and the two
 /// per-route pending pair transactions.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Engine {
+    /// Selected layout policy carried into every retained session. Stateless
+    /// transactionally: cloning, backups, relocation, and canonical
+    /// pair/split work carry it without touching revision, divergence,
+    /// pending, or gap state. COSMIC v1 is the only implementation.
+    policy: std::sync::Arc<dyn LayoutPolicy>,
     sessions: BTreeMap<DomainKey, Session>,
     outer_gaps: BTreeMap<DomainKey, i32>,
     owner: Option<OwnerId>,
@@ -88,11 +94,40 @@ pub fn committed_session_is_empty(session: &Session) -> bool {
     session.snapshot().windows.is_empty() && session.exception_count() == 0
 }
 
+impl Default for Engine {
+    fn default() -> Self {
+        Self {
+            policy: default_policy(),
+            sessions: BTreeMap::new(),
+            outer_gaps: BTreeMap::new(),
+            owner: None,
+            generation: None,
+            workspace_pending: None,
+            directional_pending: None,
+        }
+    }
+}
+
 impl Engine {
     /// Empty retained engine.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Retained engine carrying an explicit layout policy.
+    #[must_use]
+    pub fn with_policy(policy: std::sync::Arc<dyn LayoutPolicy>) -> Self {
+        Self {
+            policy,
+            ..Self::default()
+        }
+    }
+
+    /// Selected layout policy carried into retained sessions.
+    #[must_use]
+    pub fn policy(&self) -> &std::sync::Arc<dyn LayoutPolicy> {
+        &self.policy
     }
 
     /// Number of retained domains (bounded by [`MAX_DOMAINS`]).
@@ -199,14 +234,18 @@ impl Engine {
     /// Direct insert used only by pair-relocation paths that already validated
     /// on a clone and manage capacity explicitly. Normal commits must use
     /// [`Engine::store_committed`].
-    pub fn insert_raw(&mut self, key: DomainKey, session: Session, outer_gap: i32) {
+    pub fn insert_raw(&mut self, key: DomainKey, mut session: Session, outer_gap: i32) {
+        // Retaining carries the selected policy; no revision, divergence,
+        // pending, gap, or topology state is touched.
+        session.set_policy(self.policy.clone());
         self.outer_gaps.insert(key.clone(), outer_gap);
         self.sessions.insert(key, session);
     }
 
     /// Restore a session without an outer-gap entry (exact legacy restore
     /// when the source had no gap recorded).
-    pub fn insert_session_only(&mut self, key: DomainKey, session: Session) {
+    pub fn insert_session_only(&mut self, key: DomainKey, mut session: Session) {
+        session.set_policy(self.policy.clone());
         self.sessions.insert(key, session);
     }
 
@@ -247,7 +286,7 @@ impl Engine {
     /// Store a committed session: empty results retire the slot, capacity
     /// misses never evict unrelated domains, otherwise the slot and outer gap
     /// are recorded.
-    pub fn store_committed(&mut self, domain_key: DomainKey, session: Session, outer_gap: i32) {
+    pub fn store_committed(&mut self, domain_key: DomainKey, mut session: Session, outer_gap: i32) {
         if committed_session_is_empty(&session) {
             self.sessions.remove(&domain_key);
             self.outer_gaps.remove(&domain_key);
@@ -256,6 +295,7 @@ impl Engine {
         if self.sessions.len() >= MAX_DOMAINS && !self.sessions.contains_key(&domain_key) {
             return;
         }
+        session.set_policy(self.policy.clone());
         self.outer_gaps.insert(domain_key.clone(), outer_gap);
         self.sessions.insert(domain_key, session);
     }
@@ -1170,6 +1210,9 @@ impl Engine {
                 detail: "seed-failed",
             };
         };
+        // Fresh seeds propose through the selected policy from the start;
+        // storing stamps it again, so retention always carries it.
+        session.set_policy(self.policy.clone());
         if !session.sync_focus_from_window(&event.domain_key, &event.focused_window) {
             let kind = RefusalKind::FocusMismatch;
             return CoreReply::Rejected {
@@ -1347,6 +1390,7 @@ impl Engine {
                 detail: "seed-failed",
             };
         };
+        session.set_policy(self.policy.clone());
         let base = session.accepted_revision();
         let observation = crate::seed::session_observation_for(
             &event.owner,
@@ -1443,6 +1487,7 @@ impl Engine {
                 event.fingerprint,
                 vec![event.domain.clone()],
             ) {
+                fitted.set_policy(self.policy.clone());
                 let base = fitted.accepted_revision();
                 let observation = crate::seed::session_observation_for(
                     &event.owner,

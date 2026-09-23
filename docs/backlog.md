@@ -18,9 +18,6 @@ each review claim before acting; it was a static sampling review.
   AR11's validated fact/expectation transition ships. AR11's reviewed
   transition contract has not shipped; this dependency remains blocked.
   [scope](changes/architecture-review-ar4-observation-sync.md)
-- P0 | AR5 LayoutPolicy seam and Session split | 7.9: `cosmic_v1` behind
-  `LayoutPolicy`; split `Session` along the seam. bspwm_v1 scope awaits user
-  decision.
 - P0 | AR6 Logical workspace model in core | 7.10: workspace modes, trailing
   empty, displacement/return in core emitting actions; adapter keeps output
   identity and native reads/writes.
