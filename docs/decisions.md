@@ -3,6 +3,48 @@
 Only active, user-approved product and project choices are recorded here.
 Historical implementation detail is recoverable in Git history.
 
+## Architecture Direction
+
+User-approved 2026-09-24 from the
+[architecture review](research/architecture-review/review.md). Entries
+elsewhere in this file that conflict remain accurate for shipped code until
+the corresponding item ships; each such entry names its replacement.
+
+- Target shape (review section 6): a portable `tiler-core` Engine with
+  world/domain state behind a `LayoutPolicy` seam; `tiler-protocol` as a thin
+  codec; a Linux service crate; the KWin script as observer and actuator; the
+  native effect as renderer. Host-synchronous paths may stay in the adapter
+  where moving them would change latency or failure behavior.
+- Workspaces: the current KWin logical-workspace implementation is the
+  "native workspaces" mode of a future per-platform choice between native and
+  project-managed workspaces. Moving the workspace model and remaining
+  portable policy to core is deferred until a non-KWin host needs it.
+- Initial maximize (AR9): the effect seeds each window's maximize state from
+  `window()->maximizeMode()` when it starts observing it, replacing the
+  script hide-until-confirmed handoff and its epoch endpoints.
+- Effect Rust build (AR10): effect Rust is built by Cargo as a workspace
+  staticlib invoked from CMake, reusing serde and core types; the bare-`rustc`
+  build and hand-written JSON parser are retired. Rust keeps group visibility
+  policy.
+- Size hints (AR12): observed windows carry min/max size hints; projection
+  honours minimums by taking space from siblings, marks unsatisfiable windows
+  overconstrained rather than reasserting them, and reconcile accepts
+  client-clamped sizes without counting them as drift.
+- Size caps (AR16): the 64-window and 16-domain count caps are replaced by one
+  codec request byte cap (about 1 MiB).
+- Settings (AR15): tiling settings (`workspaceMode`, `shortcutProfile`, gaps)
+  are configured from the KWin script's own configure page; the effect KCM
+  keeps border and shortcut settings. Storage stays in the same `kwinrc`
+  group.
+- Threat model (AR13): processes of the same user are trusted. The tray drops
+  the KWin executable allowlist and `/proc`/pidfd/inode binding, runs single
+  instance by owning its D-Bus name, is delivered by XDG autostart or a user
+  unit, and accepts snapshots only from the current `org.kde.KWin` owner. The
+  Planner same-UID caller check remains.
+- Testing investment: build test fixtures that are sensible and valuable for
+  the change at hand; avoid extensive custom harnesses that constrain later
+  development.
+
 ## Native Active Border
 
 - The active-window border is an MVP requirement. Use an experimental,
@@ -26,8 +68,10 @@ Historical implementation detail is recoverable in Git history.
   additions. KWin exposes maximize transitions but no initial EffectWindow
   maximize getter, so a window already maximized before effect load remains an
   unclassifiable pre-load edge; no polling, private API, geometry heuristic, or
-  default-hide fallback is selected.
-- Approved hide-until-confirmed initial handoff: both native borders stay
+  default-hide fallback is selected. Replaced by the AR9 direct read (see
+  Architecture Direction) when it ships.
+- Approved hide-until-confirmed initial handoff (replaced by AR9 when it
+  ships): both native borders stay
   hidden until a valid current script confirmation says the exact active
   native window is normal (`maximize_mode: 0`) over the effect-owned
   ActiveBorder endpoint (`SetInitialMaximizeState`/`ClearInitialMaximizeState`
@@ -74,7 +118,9 @@ Historical implementation detail is recoverable in Git history.
 
 ## Settings And Distribution
 
-- One native QWidget effect-scoped KCM owns tiling, workspace, shortcut,
+- (Tiling/workspace settings ownership moves to the script configure page
+  when AR15 ships; see Architecture Direction.) One native QWidget
+  effect-scoped KCM owns tiling, workspace, shortcut,
   outline, and border settings through the Desktop Effects entry. Existing
   script groups, keys, values, and defaults remain unchanged. The approved
   interim target remains a deliberate tiler reload after saving tiling settings
@@ -827,6 +873,10 @@ Historical implementation detail is recoverable in Git history.
   shared tiles, or compositor groups.
 
 ## Tray
+
+The executable-identity, lock/PID and pidfd/inode binding entries below are
+replaced by the AR13 same-UID-trusted tray (see Architecture Direction) when it
+ships.
 
 - Use a portable Rust StatusNotifierItem carrier with the KWin backend first;
   fail closed without a watcher. The bridge is whitelisted, outbound

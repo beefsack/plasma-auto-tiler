@@ -4,61 +4,62 @@ Only meaningful pending or active work is listed.
 
 Architecture review program: immediate next priority, in listed order. Section
 references are to [the review](research/architecture-review/review.md). Verify
-each review claim before acting; it was a static sampling review.
+each review claim before acting; it was a static sampling review. User
+decisions of 2026-09-24 are recorded under
+[Architecture Direction](decisions.md#architecture-direction).
 
-- P0 | AR4 Single observation `sync` | 7.7: core derives removals, admissions,
-  domain changes, flag transitions, and drift from one observation; removes TS
-  membership baselines, `hiddenIntentFor`, and reconcile counters/thresholds.
-  Collapsing intermediate layout writes is selected (review 7.7), preserving
-  final order, focus, desktop behavior and independent per-domain state.
-  Blocked: three attempts and a design review failed. Session removal requires
-  a pre-removal observation, so post-only sync needs either a retained
-  historical baseline or changed fence semantics (AR11 territory). User decided
-  2026-09-23 to defer AR4 behind AR11. Post-only removal remains blocked until
-  AR11's validated fact/expectation transition ships. AR11's reviewed
-  transition contract has not shipped; this dependency remains blocked.
-  [scope](changes/architecture-review-ar4-observation-sync.md)
-- P0 | AR6 Logical workspace model in core | 7.10: workspace modes, trailing
-  empty, displacement/return in core emitting actions; adapter keeps output
-  identity and native reads/writes. Blocked: `Meta+1..9`, trailing-empty and
-  hotplug run synchronously in KWin and work without the Planner; a Planner
-  route changes latency and failure behavior. Awaiting user decision.
-  [design](changes/architecture-review-ar6-workspaces.md)
-- P0 | AR7 Remaining portable policy to core | 4.2, rec 4: shortcut action
-  catalog/profiles, eligibility and window rules, settings schema, single
-  fingerprint and wire-schema source.
+- P0 | Drag resize rejection | Next session's first item. On `H[W1 V[W2 W3]]`
+  (W1/W2 Ghostty, W3 Firefox): grow W3 vertically, shrink vertically, grow
+  horizontally all worked; the following vertical shrink was rejected and W3
+  reverted to its original size as the drag started (expected: shrink). Trace
+  `/run/user/1000/plasma-auto-tiler-dev.2Wcery.log`, last drag. Not yet
+  investigated. May inform AR8.
 - P0 | AR8 Drag oracle measurement | 7.1: trace-mode finish/first-change/verdict
   logging instrumented offline. Next: user captures ~20 Wayland edge drags,
   incl. a size-increment terminal and Esc cancellation, using
   [AR8 runbook](changes/architecture-review-ar8-drag-oracle-measurement.md).
   Evidence selects removal, pointer-derived boundary, or folding into
   `ActiveBorder`.
-- P0 | AR9 Initial maximize direct read | 7.2. Awaiting user decision: reverses
-  hide-until-confirmed handoff.
-- P0 | AR10 Effect Rust build and payload parsing | 7.3, after AR8/AR9.
-  Awaiting user decision: C++ `QJsonDocument` versus Cargo staticlib via
-  Corrosion.
-- P0 | AR11 One transaction model (expectations) | 7.8, prototype on workspace
-  send first. User selected host-authoritative facts, engine-authoritative layout
-  and bounded convergence on 2026-09-23, replacing verified-success semantics
-  for the send slice when implemented. Design review found the model feasible;
-  two experimental core approaches failed implementation review and were
-  restored. The subsequent concrete transition contract passed independent
-  design review, but two further implementation reviews failed (core fences,
-  then cross-component native proof, scope, expiry and binding); experimental
-  code was restored. Next: validate a small vertical native-observer-to-core
-  fixture across the transition rows before replacing the pending path.
-  Live user acceptance after offline implementation: rapid repeated sends
-  retain prompt native-proof follow without focus theft; failed sends converge
-  back to source and remain usable. [scope](changes/architecture-review-ar11-expectations.md)
-- P0 | AR12 Size hints and clamp acceptance | 7.11. Awaiting user decision.
-  Related: Ghostty short-frame items below.
-- P0 | AR13 Same-UID-trusted threat model and tray simplification | 7.12.
-  Awaiting user decision: security posture change.
-- P0 | AR15 Script-only tiling settings | 7.4. Awaiting user decision: changes
-  single-KCM settings ownership.
-- P0 | AR16 Size caps | 7.13. Awaiting user decision: replace count caps with
-  one codec byte cap.
+- P0 | AR9 Initial maximize direct read | 7.2. Approved: seed maximize state in
+  the effect via `window()->maximizeMode()`; remove the script epoch handshake,
+  `active-border-initial.ts`, and the Rust `initial_maximize_*` half.
+- P0 | AR10 Cargo-built effect Rust | 7.3, after AR8/AR9. Approved: replace the
+  bare-`rustc` effect build with a Cargo workspace staticlib built from CMake
+  (e.g. Corrosion), using serde/core types; delete the hand-written parser.
+  Rust keeps group visibility policy. Nix derivation follows.
+- P0 | AR12 Size hints and clamp acceptance | 7.11. Approved. Related: Ghostty
+  short-frame and local-movement height items below.
+- P0 | AR16 Size caps | 7.13. Approved: drop 64-window/16-domain count caps in
+  core and TS; keep one codec request byte cap (~1 MiB).
+- P0 | AR15 Script-page tiling settings | 7.4. Approved: tiling settings
+  (`workspaceMode`, `shortcutProfile`, gaps) move to the script's configure page
+  via `X-KDE-ConfigModule`; effect KCM keeps border and shortcut settings only.
+  Same `kwinrc` group. Verify whether script-page save reaches the gap resync.
+- P0 | AR13 Same-UID-trusted tray | 7.12. Approved: drop KWin executable
+  allowlist and `/proc`/pidfd/inode binding; single instance via D-Bus name;
+  XDG autostart or user unit; accept snapshots only from the current
+  `org.kde.KWin` owner. Planner same-UID caller check stays.
+- P0 | AR11 One transaction model (expectations) | 7.8, workspace send first.
+  User selected host-authoritative facts, engine-authoritative layout and
+  bounded convergence (2026-09-23). Transition contract passed design review;
+  four implementation attempts failed review, each on the native-observer to
+  core path that offline component tests missed. Approved next step
+  (2026-09-24): a sensible, minimal offline fixture driving the TS adapter's
+  observer against the Rust Engine for the send transition rows, sized to what
+  is valuable, not an extensive harness that constrains development. Then
+  retry the send slice. Live acceptance after: rapid repeated sends keep
+  prompt native-proof follow without focus theft; failed sends converge back
+  to source. [scope](changes/architecture-review-ar11-expectations.md)
+- P0 | AR4 Single observation `sync` | 7.7, after AR11. Collapsing intermediate
+  layout writes is selected. Post-only removal needs AR11's fact/expectation
+  model. [scope](changes/architecture-review-ar4-observation-sync.md)
+- P3 | AR6 Logical workspace model in core | 7.10. Deferred 2026-09-24 until a
+  non-KWin host needs it. The current KWin implementation is the "native
+  workspaces" mode of a future native/custom choice.
+  [design](changes/architecture-review-ar6-workspaces.md)
+- P3 | AR7 Remaining portable policy to core | 4.2, rec 4: shortcut catalog/
+  profiles, eligibility and window rules, settings schema, fingerprint and
+  wire-schema source. Deferred with AR6.
 
 Existing work:
 
