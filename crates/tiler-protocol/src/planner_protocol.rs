@@ -1,4 +1,4 @@
-//! Bounded Planner protocol (Stage 4, product-shaped, static only).
+//! Bounded Planner protocol (product-shaped, static only).
 //!
 //! Pure JSON-string-in / JSON-string-out evaluation. Rust owns all policy:
 //! the complete normalized current observation (opaque adapter ids, frame
@@ -334,7 +334,7 @@ fn serialize_bounded(reply: &PlanReply) -> String {
 /// sink (Planner stderr, captured via the dev `planner-log` pointer into the
 /// combined `[planner]` stream).
 ///
-/// These replace the former raw full-JSON trace: a complete request/reply
+/// A complete request/reply
 /// pair carries window ids, frame rectangles, domains, owner, and generation
 /// in cleartext, which exceeds every other surface's redaction posture (KWin
 /// logs opaque ids at most, never rects, owners, or payload bytes). The
@@ -2097,7 +2097,7 @@ fn parse_directional_move_operation(
     Some((operation, echo))
 }
 
-/// Authoritative live-tree planner (D4).
+/// Authoritative live-tree planner.
 ///
 /// Retains one committed [`Session`] per logical domain across `DescribePlan`
 /// calls. Observations validate membership/divergence against the retained
@@ -2209,7 +2209,7 @@ impl Planner {
             _ => {}
         }
         self.sync_binding(&ctx.owner, &ctx.generation);
-        // AR3 typed-codec slice: reconcile/update-gaps/admit/remove/active-group
+        // Typed codec: reconcile/update-gaps/admit/remove/active-group
         // parse once via `SyncCommand` after all boundaries (validation, async
         // dispatch, pending conflict, send dispatch, binding sync) and call the
         // inner bodies directly, eliminating the second `from_value` + op-string
@@ -3686,7 +3686,7 @@ struct ActiveGroupCommand {
     op: String,
 }
 
-/// Typed synchronous command codec (AR3 slice, narrow).
+/// Typed synchronous command codec (narrow).
 ///
 /// Internally tagged on `op` with `deny_unknown_fields` for all nineteen
 /// command ops: the ten synchronous ops plus `send-to-workspace` and the
@@ -3818,7 +3818,7 @@ fn is_unknown_variant(error: &serde_json::Error) -> bool {
     error.to_string().contains("unknown variant")
 }
 
-/// Typed core boundary conversion (AR3 slice, deferred for verify).
+/// Typed core boundary conversion (deferred for verify).
 ///
 /// Maps the already-decoded [`SyncCommand`] into
 /// [`tiler_core::boundary::CoreCommand`] after the existing validation, async
@@ -3834,8 +3834,7 @@ fn is_unknown_variant(error: &serde_json::Error) -> bool {
 /// [`Engine::handle`]. No fabricated placeholder values exist here or in
 /// tests. Pending, binding, and transaction state never cross. Directional
 /// pair state comes from the validated `directional_domains`/`directional_keys`;
-/// the workspace-send target stays route-local (validated `WorkspaceInput`)
-/// until a later slice moves that orchestration.
+/// the workspace-send target stays route-local (validated `WorkspaceInput`).
 fn core_command_from_sync(command: &SyncCommand) -> Option<tiler_core::boundary::CoreCommand> {
     use tiler_core::boundary::CoreCommand;
     use tiler_core::directional::{OutputId, WorkspaceId};
@@ -4328,7 +4327,7 @@ mod tests {
             )));
             assert_eq!(reply["outcome"], "planned", "{reply}");
         }
-        // p5 analogue: float removes the tile, retains placement, survivors stay tiled.
+        // Float removes the tile, retains placement, survivors stay tiled.
         let floated = parse_reply(&planner.evaluate(&float_request(
             "float-seq-3",
             "win-2",
@@ -4536,7 +4535,7 @@ mod tests {
 
     #[test]
     fn retained_admit_portrait_output_splits_top_bottom_despite_landscape_rects() {
-        // D1: the split axis derives from the rebuild target (here the full
+        // The split axis derives from the rebuild target (here the full
         // portrait output), never from the admitted window's own observed
         // rect. Both observed rects are landscape, which must not select a
         // left/right split on this portrait output.
@@ -4565,7 +4564,7 @@ mod tests {
 
     #[test]
     fn retained_admit_landscape_output_splits_left_right_despite_portrait_rects() {
-        // Converse of D1: portrait observed rects must not select a
+        // Portrait observed rects must not select a
         // top/bottom split on a landscape output.
         let request = custom_request(
             "admit-landscape-1",
@@ -4775,7 +4774,7 @@ mod tests {
 
     #[test]
     fn retained_equal_non_focused_rects_plan_after_initial() {
-        // D4: after the initial plan the domain topology is retained, so equal
+        // After the initial plan the domain topology is retained, so equal
         // non-focused rectangles no longer force `ambiguous-placement`.
         let mut planner = Planner::new();
         for (correlation, focused, windows, command) in [
@@ -4809,8 +4808,7 @@ mod tests {
         }
         assert_eq!(planner.retained_domains(), 1);
         // Two non-focused windows share an exact frame; retained state
-        // proposes directly from membership, so it still plans (the D4
-        // behavior under test).
+        // proposes directly from membership, so it still plans.
         let ambiguous = retained_request(
             "d4-equal-4",
             "owner-1",
@@ -4831,7 +4829,7 @@ mod tests {
 
     #[test]
     fn retained_generation_change_discards_and_rebuilds() {
-        // D4 recovery: owner/generation change (adapter restart) discards all
+        // Recovery: owner/generation change (adapter restart) discards all
         // retained domains and rebuilds once from the fresh observation.
         let mut planner = Planner::new();
         let first = retained_request(
@@ -4886,7 +4884,7 @@ mod tests {
 
     #[test]
     fn retained_divergence_discards_and_rebuilds_once() {
-        // D4 recovery: membership divergence discards the domain and rebuilds
+        // Recovery: membership divergence discards the domain and rebuilds
         // once; the rebuilt topology then commits so later calls stay live.
         let mut planner = Planner::new();
         for (correlation, windows, command) in [
@@ -4937,7 +4935,7 @@ mod tests {
 
     #[test]
     fn retained_rejects_when_safe_rebuild_is_impossible() {
-        // D4 fail-closed: when no retained topology exists and the observation
+        // Fail-closed: when no retained topology exists and the observation
         // cannot safely infer one (equal non-focused rects), reject rather
         // than wedge; the next fresh observation still recovers.
         let mut planner = Planner::new();
@@ -5082,11 +5080,8 @@ mod tests {
 
     #[test]
     fn retained_keyboard_resize_caps_large_press_index() {
-        // D6: retained `op=resize` must apply the COSMIC
+        // Retained `op=resize` must apply the COSMIC
         // `(10 + 2 + 2 * press_index).min(20)` cap for every u32.
-        // The previous i32 multiply returned 10px for u32::MAX and
-        // panicked in debug for 2^31, so a held-key repeat with a large
-        // index mis-sized the retained boundary.
         fn resize_shares(press_index: u32) -> serde_json::Value {
             let mut planner = Planner::new();
             for (correlation, focused, windows, command) in [
@@ -5467,7 +5462,7 @@ mod tests {
     }
     #[test]
     fn typed_sync_codec_admit_remove_active_group_wire_golden() {
-        // Wire golden for the AR3 typed `SyncCommand` slice (admit, remove,
+        // Wire golden for the typed `SyncCommand` (admit, remove,
         // active-group): valid requests plan byte-exact through the single
         // typed parse + inner path, malformed commands reject byte-exact with
         // unchanged kinds. Literals recorded from the production `evaluate`
@@ -5570,7 +5565,7 @@ mod tests {
     }
     #[test]
     fn typed_boundary_conversion_covers_all_nineteen_ops_total() {
-        // Fence proof for the AR3 boundary slice: the 17 non-verify wire ops
+        // Fence proof for the boundary conversion: the 17 non-verify wire ops
         // decode once via `SyncCommand`, then convert into `CoreCommand` with
         // the identical `op` token. Fallible vocabularies (direction/mode/ack)
         // cross opaquely. Both verify echoes arrive as deferred `RawEcho`

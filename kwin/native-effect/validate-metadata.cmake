@@ -36,7 +36,7 @@ if(ERROR OR NOT PLUGIN_ID STREQUAL EXPECTED_PLUGIN_ID)
     message(FATAL_ERROR "metadata validation failed: KPlugin/Id '${PLUGIN_ID}' does not match expected '${EXPECTED_PLUGIN_ID}'")
 endif()
 
-# One surviving plugin visibly branded Plasma Auto Tiler; the stable plugin,
+# One plugin visibly branded Plasma Auto Tiler; the stable plugin,
 # KCM, and config identifiers never change.
 string(JSON PLUGIN_NAME ERROR_VARIABLE ERROR GET "${METADATA}" "KPlugin" "Name")
 if(ERROR OR NOT PLUGIN_NAME STREQUAL "Plasma Auto Tiler")
@@ -272,8 +272,7 @@ foreach(GROUP_COVERAGE "group_highlight_apply" "group_highlight_clear" "group_hi
     endif()
 endforeach()
 
-# Folded Slice 1 drag oracle (essential validation, formerly
-# validate-dragoracle.cmake): the survivor hosts the read-only LastVerdict
+# Drag oracle (essential validation): the effect hosts the read-only LastVerdict
 # endpoint with process-static verdict storage served via copy, observes only
 # interactive drag start/finish geometry, and keeps Qt/KWin types out of Rust.
 file(READ "${DRAG_HEADER}" DRAG_HEADER_TEXT)

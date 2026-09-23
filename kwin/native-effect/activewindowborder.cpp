@@ -201,7 +201,7 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
     // registration. Never affects gate, visibility, or repaint decisions.
     emitActiveBorderEndpoint();
 
-    // Folded Slice 1 drag oracle endpoint: registered independently of the
+    // Drag oracle endpoint: registered independently of the
     // ActiveBorder endpoint outcome, so one registration failure never hides
     // the other service. No retry, no polling.
     m_oracleDbusObject = new LastVerdictObject(this);
@@ -245,7 +245,7 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
         updateBorder();
         updateGroupVisibility();
     });
-    // Global maximize tracking and the folded oracle observe every window,
+    // Global maximize tracking and the oracle observe every window,
     // including when the active border cannot render. Windows already
     // maximized before effect load emit no transition and stay unknown.
     for (EffectWindow *window : effects->stackingOrder()) {

@@ -1,4 +1,4 @@
-// Live KWin wiring for the bounded Stage 4 DescribePlan adapter.
+// Live KWin wiring for the bounded DescribePlan adapter.
 //
 // Production startup route: src/entry.ts calls startPlanAdapterEntry with the
 // fixed session owner/generation. Observation is read-only public state only
@@ -3552,7 +3552,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     } catch (error) {
         void error;
     }
-    // Slice 2 oracle route: preserve start rect plus move/resize classification
+    // Oracle route: preserve start rect plus move/resize classification
     // at Started, then on a non-cancelled LastVerdict route exactly one strict
     // pointer-resize derived from the authoritative final rect. Cancelled is a
     // strict no-op; derive failures fail closed with exact bounded reasons.

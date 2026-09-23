@@ -1,4 +1,4 @@
-//! Stage 2 reconciler contract invariants.
+//! Reconciler contract invariants.
 //!
 //! Focused invariant-style checks over the real public API
 //! (`Reconciler`, `contract` types, `directional` plans). Ordinary

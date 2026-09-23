@@ -23,6 +23,30 @@ floating, fullscreen, maximize, and workspace behavior on KWin.
   compositor-owned groups are outside this MVP record; nested split-tree
   structure remains in scope.
 
+## Moved Evidence (from docs/decisions.md)
+
+- `python3` was added intentionally to `devenv.nix`; the development session
+  has been restarted and the committed dependency is available.
+- The static carrier-only operational provenance harness is verified, but no
+  successful carrier smoke occurred: bounded attempts either stopped before
+  effect or were receipt-bound restored. A new smoke is blocked by two retained
+  protected project runtime evidence records. Handling those records requires
+  explicit user authorization under a race-safe recovery procedure; after that,
+  one bounded carrier-only smoke must prove exact host baseline equality. A
+  separately authorized Custom Tile journey remains a later gate.
+- The inert checkout carrier establishes only operational lifecycle binding
+  through its exact plugin/script identity, receipt, diagnostic, and unchanged
+  KWin identity. Current public KWin APIs do not provide direct evaluated-memory
+  source proof for the checkout controller, so `authoritative_ready` remains
+  false; the carrier does not change that verdict.
+- The preflight reports phased readiness: `setup_ready` proves only its
+  read-only KWin, KGlobalAccel, shortcut, and persisted-state checks completed
+  without drift; `journey_ready` and `authoritative_ready` remain false until
+  the applicable acceptance gates are established. No readiness phase
+  authorizes a Custom Tile lifecycle, live journey, or user physical or manual
+  action on its own; carrier setup is limited to its bounded operational
+  binding.
+
 ## Acceptance
 
 - On disposable, project-owned topology with exact restoration, Custom Tile

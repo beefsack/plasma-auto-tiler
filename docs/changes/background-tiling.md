@@ -40,3 +40,8 @@
 - No live KWin/Plasma action or rendered-state proof occurred. User-owned live
   acceptance remains for hidden startup/open/move, multi-output behavior, and
   unchanged native focus/desktop.
+
+## Moved Evidence (from docs/decisions.md)
+
+- Background tiling is implemented and statically verified; live acceptance
+  remains pending.

@@ -28,7 +28,7 @@ pub const OBJECT: &str = "/org/plasmaautotiler/Planner";
 pub const INTERFACE: &str = "org.plasmaautotiler.Planner1";
 #[cfg(test)]
 const KWIN_SERVICE: &str = "org.kde.KWin";
-/// Stage 4 retained general-N planning route: complete normalized current
+/// General-N planning route: complete normalized current
 /// observation plus one parameterized command in, full target geometries or a
 /// bounded recoverable rejection kind out. Retained live-tree state across
 /// calls (per-domain committed sessions, single discard-and-rebuild
@@ -59,18 +59,15 @@ pub fn caller_uid_authorized(caller_uid: Option<u32>, expected_uid: u32) -> bool
     matches!(caller_uid, Some(uid) if uid == expected_uid)
 }
 
-// Exact nested-KWin manifest binding removed (Group E). Nested mode
-// (`planner-service-nested`) no longer exists; there is no manifest parsing,
-// no forensics, and no ambient environment authority anywhere in this
-// service.
+// No nested-KWin manifest binding, nested mode, manifest parsing,
+// forensics, or ambient environment authority in this service.
 
 /// Opt-in structural trace diagnostic gate for DescribePlan flights.
 /// Default off: only the exact value `1` enables the bounded structural
 /// shape line alongside the normal summaries. Any other value, including
 /// unset and empty, stays at the normal summary pair so the default journal
 /// surface keeps one bounded ingress plus one bounded terminal line per
-/// command. The former raw full-JSON request/reply trace was removed: a
-/// complete pair carries window ids, frame rectangles, domains, and owner in
+/// command. A complete pair carries window ids, frame rectangles, domains, and owner in
 /// cleartext, which exceeds the redaction posture of every other surface.
 /// The bounded summaries below preserve the debugging uses (op, correlation,
 /// outcome, kind, revisions, carried-entry counts, fingerprint) without
@@ -148,7 +145,7 @@ impl PlannerEndpoint {
         }
     }
 
-    /// Stage 4 retained planning route. Delegates to the authoritative
+    /// Planning route. Delegates to the authoritative
     /// live-tree [`tiler_protocol::planner_protocol::Planner`] held across calls
     /// (per-domain committed sessions, single discard-and-rebuild recovery);
     /// application-level rejections arrive as `Ok` JSON so fresh observations
@@ -178,8 +175,7 @@ impl Default for PlannerEndpoint {
     }
 }
 
-/// Fail-closed same-UID caller verification shared by production and
-/// nested routes. Converts `caller` to a unique D-Bus name, queries
+/// Fail-closed same-UID caller verification. Converts `caller` to a unique D-Bus name, queries
 /// `org.freedesktop.DBus.GetConnectionUnixUser` for the caller UID through
 /// the existing `DBusProxy`, and accepts iff that UID equals the Planner
 /// geteuid. Any name conversion, proxy, UID lookup, or mismatch failure
@@ -211,9 +207,8 @@ impl PlannerEndpoint {
     ) -> Result<String, PlannerError> {
         // KWin serializes Plan requests with its in-flight guard. This lock
         // rejects concurrent callers as busy rather than queueing them.
-        // Stage 4 retained planning route: same bounded non-queuing
-        // single-flight, same-UID verification, connection-loss, and
-        // reply-size checks as the four legacy routes. Authorized requests
+        // Bounded non-queuing single-flight with same-UID verification,
+        // connection-loss, and reply-size checks. Authorized requests
         // delegate to the retained planner protocol (live-tree sessions per
         // domain over session/reconcile/directional/cosmic_v1 policy);
         // application rejections arrive as `Ok` JSON with one bounded
@@ -364,7 +359,7 @@ fn handle_name_owner_changed(
 }
 
 /// Stateless manually invoked planner service. Acquires the planner name
-/// without queueing and serves the four transaction routes until the serving
+/// without queueing and serves the DescribePlan route until the serving
 /// connection or the planner name is lost. No persistence, no tray coupling.
 pub fn run() -> zbus::Result<()> {
     serve(PlannerEndpoint::new())

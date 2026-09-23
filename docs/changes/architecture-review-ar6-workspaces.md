@@ -28,3 +28,10 @@ There is no in-process Rust execution path in the KWin script. The only existing
 If the mirror route is selected: (1) lock existing TS behavior with shared vectors for all three modes, ordering and move resolution; (2) port trailing create/remove decision and all protection/minimum rules to typed core results, with adapter native success/failure replay in vectors; (3) port disconnect/reconnect, survivor choice and focus/view preservation using current-membership facts; (4) compare Rust/TS on vectors and retain native synchronous shortcuts/signals and Planner-loss fallback; (5) only remove mirrored TS policy after a viable in-process or equivalent synchronous core route is available and reviewed. No wire changes are implied by the pure-core slice. If a D-Bus integration is later selected, design typed event/action wire and update protocol goldens before actuation.
 
 Acceptance for an approved integration: regressions for each mode, desktop ordering, trailing create/remove, occupied/visible/pinned/displaced/unmapped protections and minimum two, displacement/return (including survivor selection and no focus theft), both move-target variants, and Planner-unavailable selection. Verify full Rust fmt/check/clippy/test, KWin typecheck/tests/build, `just check-portable`, changed wire goldens if any, approximate TS lines removed, and independent implementation review. Update `docs/decisions.md` only for a selected or shipped mechanism; the Orchestrator owns the AR6 backlog line. Independent design review checked the current paths and confirmed the latency/failure blocker; three wording corrections about per-domain append, post-plan retention and `activeScreen` selection were incorporated. No implementation or offline test claims yet.
+
+## Moved Evidence (from docs/decisions.md)
+
+- All initial hotplug product choices are resolved; offline coverage exists for
+  the stated displacement/return, atomicity, and preservation pieces and live
+  disconnect/reconnect verification remains pending with no live result
+  claimed.

@@ -61,9 +61,9 @@ add_custom_command(
 )
 add_custom_target(plasma-auto-tiler-group-highlight-rs DEPENDS "${GROUP_HIGHLIGHT_STATICLIB}")
 
-# Slice 1 drag/final-geometry oracle: std-only Rust source compiled hermetically
-# by rustc invoked from CMake, folded into the surviving active-border effect
-# below. No Cargo, no crates, no network, no second effect plugin.
+# Drag/final-geometry oracle: std-only Rust source compiled hermetically
+# by rustc invoked from CMake for the active-border effect
+# below. No Cargo, no crates, no network.
 set(DRAG_ORACLE_STATICLIB "${CMAKE_CURRENT_BINARY_DIR}/libdrag_oracle.a")
 add_custom_command(
     OUTPUT "${DRAG_ORACLE_STATICLIB}"

@@ -669,8 +669,7 @@ private:
 ShortcutStore *createLiveShortcutStore();
 JournalStore *createLiveShortcutJournal(const QString &filePath);
 // Host-independent canonical journal path (GenericConfigLocation,
-// project-owned). Replaces the former host-dependent AppConfigLocation path
-// so one journal is shared by kcmshell6 and System Settings hosts.
+// project-owned) so one journal is shared by kcmshell6 and System Settings hosts.
 QString defaultShortcutJournalPath();
 // Single explicit legacy location: the known kcmshell6-host journal. The
 // only migration source; never a scan.

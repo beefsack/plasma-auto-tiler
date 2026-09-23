@@ -1,4 +1,3 @@
-// Linux-only KWin identity boundary removed (Group E single-engine cleanup).
 // Caller authorization is exactly the fail-closed same-UID check in
 // [`crate::planner_service`] via `GetConnectionUnixUser`.
 pub mod planner_service;

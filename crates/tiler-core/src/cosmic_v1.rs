@@ -1,6 +1,6 @@
 //! Explicit portable COSMIC v1 policy API.
 //!
-//! Versioned thin entry point over the sealed POC1 R1-R4 planning policy in
+//! Versioned thin entry point over the R1-R4 planning policy in
 //! [`crate::directional`], plus the named COSMIC v1 lifecycle/share/resize/drop
 //! policy owned here. [`crate::session`] orchestrates portable transactions
 //! and calls into this module for every COSMIC-specific semantic; no COSMIC
@@ -655,9 +655,8 @@ mod tests {
 
     #[test]
     fn keyboard_step_px_caps_for_all_u32_without_overflow() {
-        // D6: the `(10 + 2 + 2 * press_index).min(20)` schedule must hold
-        // for every u32. The previous i32 `press_index as i32` multiply
-        // returned 10 for u32::MAX and panicked in debug for 2^31.
+        // The `(10 + 2 + 2 * press_index).min(20)` schedule must hold
+        // for every u32 without overflow.
         assert_eq!(keyboard_step_px(1_073_741_823), 20);
         assert_eq!(keyboard_step_px(1_073_741_824), 20);
         assert_eq!(keyboard_step_px(2_147_483_647), 20);

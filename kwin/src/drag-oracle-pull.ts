@@ -52,7 +52,7 @@ export function parseDragOracleVerdict(reply: unknown): DragOracleVerdict | null
     return { cancelled: cancelled as boolean, finalRect: { x: rect["x"] as number, y: rect["y"] as number, w: rect["w"] as number, h: rect["h"] as number }, windowIdentity: identity as string, correlation: parsed["correlation"] as string, reason: parsed["reason"] as string };
 }
 export function formatDragOracleVerdict(verdict: Pick<DragOracleVerdict, "cancelled" | "correlation" | "reason">): string { return `${VERDICT_PREFIX} cancelled=${verdict.cancelled === true ? "true" : "false"} correlation=${verdict.correlation} reason=${verdict.reason}`; }
-// Slice 2 edge helper: stepped payload only, never live geometry. Exactly one
+// Edge helper: stepped payload only, never live geometry. Exactly one
 // edge must move with the opposite fixed; otherwise null (no-change) or mixed.
 export function deriveOracleEdge(start: DragOracleFinalRect, final: DragOracleFinalRect): { direction: string; boundary: number } | "mixed" | null {
     const startRight = start.x + start.w;

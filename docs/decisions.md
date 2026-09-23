@@ -16,11 +16,6 @@ Historical implementation detail is recoverable in Git history.
 - Nix delivery and exact host KWin ABI/session discovery are required for
   runtime delivery; neither is an optional enhancement. Runtime acceptance
   remains unproven.
-- After rebuild/new session, the user manually observed only: the active-window
-  border was enabled, visible, and followed the active window; width hot-applied;
-  and `Use theme highlight color when available` override/theme behavior worked
-  and is manually accepted. This is user visual/manual evidence, not
-  automated/protocol/KWin-source evidence.
 - Approved 2026-09-21: hide the active-window border for fullscreen or any
   native maximize axis, matching the adapter's nonzero maximize collapse. The
   public KWin maximize transition signals update the border before and after
@@ -84,20 +79,16 @@ Historical implementation detail is recoverable in Git history.
   script groups, keys, values, and defaults remain unchanged. The approved
   interim target remains a deliberate tiler reload after saving tiling settings
   with clear reload-required UI; existing live border updates remain live.
-  Implementation is partial: only gap reload is static-complete with retained
-  offline proof and live verification pending. Startup-read
-  `shortcutProfile`/`workspaceMode` still require session restart, which applies
-  them. The implemented gap resync dispatches retained `update-gaps`, accepted
-  and reprojected by the existing session with topology/share/focus
-  preservation for changed inner, outer, or combined gaps. Overall settings
-  liveness is PARTIAL, not complete. The ineffective `tilingAlgorithm`,
+  Startup-read `shortcutProfile`/`workspaceMode` still require session restart,
+  which applies them.
+  The ineffective `tilingAlgorithm`,
   `automaticSplitTarget`, and `dropOutlinePreview` controls are removed;
   existing values are neither read nor rewritten. Shortcut re-registration is unselected: the pinned
   scripting surface offers no unregister operation, so reload never
   re-registers and foreign records change only through explicit KCM
-  Apply/Revert. Before launch, every
-  user-facing setting must apply live. That requirement is a mandatory launch
-  blocker, and the interim reload does not satisfy it.
+  Apply/Revert.
+  Before launch, every user-facing setting must apply live. That requirement is
+  a mandatory launch blocker, and the interim reload does not satisfy it.
 - The core distribution remains the script KPackage for KDE Store and an
   identical GitHub Release artifact. Platform-native packages for the native
   effect and KCM are permitted; their formats and publication are unselected.
@@ -173,7 +164,7 @@ Historical implementation detail is recoverable in Git history.
   restart/rebind loop. A subsequent idle command may request a fresh D-Bus
   activation. User-manager session teardown stops the service; D-Bus
   connection/name loss also ends the Planner without durable recovery state.
-- Selected 2026-09-16, static-complete, live gate pending: on CONFIRMED Planner
+- Selected 2026-09-16: on CONFIRMED Planner
   loss, establish one bounded fresh Planner session automatically. This
   on-demand activation is distinct from a systemd restart loop. It starts from
   current eligible windows only, with no durable layout snapshot or journal
@@ -186,8 +177,8 @@ Historical implementation detail is recoverable in Git history.
   `StartServiceByName(..., 0)` accepting only `PrimaryOwner`/`AlreadyOwner`
   then `GetNameOwner`; ambiguous terminals may run one bounded identity probe
   and only absence or a changed owner recovers. A failed recovery stays
-  bounded without loops. Offline coverage only; no live result is claimed. If
-  the Planner survives sleep, retain its current in-memory layouts rather
+  bounded without loops.
+  If the Planner survives sleep, retain its current in-memory layouts rather
   than rebuild them.
 - Selected Rust KWin commands first resolve the Planner name. An absent name
   makes one bounded `StartServiceByName(..., 0)` request, accepts only
@@ -210,14 +201,9 @@ Historical implementation detail is recoverable in Git history.
   includes ordered N-ary `cosmic_v1` admission/removal, same-output send,
   restored backing-desktop/numbered workspace routes, bounded reconciliation,
   and the selected initial first-startup fitting direction below. General
-  existing-window adoption remains unselected. Only the gap portion of the
-  approved interim reload is implemented: `innerGap`/`outerGap` via
-  `options.configChanged`, sent/queued-but-unconfirmed because KWin reconfigure
-  is Q_NOREPLY. This portion is static-complete with retained offline proof
-  (explicit `update-gaps` reprojection with topology/share/focus preservation)
-  and live verification pending. Before launch, this and every other user-facing setting must
-  apply live; that is a mandatory launch blocker, and the gap-only reload does
-  not satisfy it.
+  existing-window adoption remains unselected.
+  Before launch, this and every other user-facing setting must apply live; that
+  is a mandatory launch blocker, and the gap-only reload does not satisfy it.
 - Approved 2026-09-16: when the first startup domain has no usable retained
   session, Rust may use a versioned, best-effort near-layout fitting heuristic
   to minimize unnecessary initial window movement. It must be simple,
@@ -263,10 +249,7 @@ Historical implementation detail is recoverable in Git history.
   boundary require user action. No `sudo`, system-path mutation,
   external-dotfiles mutation, unrelated host mutation, irreversible cleanup,
   or ambiguous-residue deletion is authorized.
-- Current-host Nix integration, KWin/session load or reload, watcher ordering,
-  login/autostart behavior, and update/rollback activation across Nix
-  generations are pending live evidence, not passed by static evaluation or
-  shell tests. A session boundary is a required evidence boundary for claims
+- A session boundary is a required evidence boundary for claims
   about session-delivered packages.
 - Deleting or restoring preserved candidates, containers, or host artifacts
   needs explicit user authorization plus exact path and identity or hash
@@ -276,27 +259,13 @@ Historical implementation detail is recoverable in Git history.
   fails closed on stale state, collisions, drift, or provenance ambiguity; it
   performs no lifecycle or mutation. Its rollback and journal contract is for a
   later authorized run only.
-- `python3` was added intentionally to `devenv.nix`; the development session
-  has been restarted and the committed dependency is available. The
-  static carrier-only operational provenance harness is verified, but no
-  successful carrier smoke occurred: bounded attempts either stopped before
-  effect or were receipt-bound restored. A new smoke is blocked by two retained
-  protected project runtime evidence records. Handling those records requires
-  explicit user authorization under a race-safe recovery procedure; after that,
-  one bounded carrier-only smoke must prove exact host baseline equality. A
-  separately authorized Custom Tile journey remains a later gate.
-- The inert checkout carrier establishes only operational lifecycle binding
-  through its exact plugin/script identity, receipt, diagnostic, and unchanged
-  KWin identity. Current public KWin APIs do not provide direct evaluated-memory
-  source proof for the checkout controller, so `authoritative_ready` remains
-  false; the carrier does not change that verdict.
-- The preflight reports phased readiness: `setup_ready` proves only its
-  read-only KWin, KGlobalAccel, shortcut, and persisted-state checks completed
-  without drift; `journey_ready` and `authoritative_ready` remain false until
-  the applicable acceptance gates are established. No readiness phase
-  authorizes a Custom Tile lifecycle, live journey, or user physical or manual
-  action on its own; carrier setup is limited to its bounded operational
-  binding.
+- The inert checkout carrier does not change the `authoritative_ready` verdict:
+  current public KWin APIs provide no direct evaluated-memory source proof for
+  the checkout controller, so `authoritative_ready` remains false.
+- No preflight readiness phase authorizes a Custom Tile lifecycle, live journey,
+  or user physical or manual action on its own; `journey_ready` and
+  `authoritative_ready` remain false until the applicable acceptance gates are
+  established; carrier setup is limited to its bounded operational binding.
 - The standing authorization currently selects only bounded read-only
   `DescribeAdvisoryPlan` host transport journeys: start and stop one uniquely
   namespaced project planner service and load, run, then unload only the exact
@@ -343,8 +312,7 @@ Historical implementation detail is recoverable in Git history.
 
 - Approved 2026-09-16: background tiling is supported at startup and on window
   open or move for non-visible workspaces, without switching visibility or
-  stealing focus. It is implemented and statically verified; live acceptance
-  remains pending. Existing floating, sticky, fullscreen, maximize, and
+  stealing focus. Existing floating, sticky, fullscreen, maximize, and
   configured-gap rules remain authoritative, with Rust retaining structural
   ownership and the native adapter retaining observation and actuation.
 - Pointer resize adjusts shared split boundaries or ratios and reflows
@@ -585,11 +553,7 @@ Historical implementation detail is recoverable in Git history.
   active window remains on a surviving output, preserve its view and focus with
   no focus stealing. Other workspace selection follows ordinary behavior, with
   no prior-view tracking or new state/history. The initial scope is
-  session-local with no restart-persistent mapping or return guarantee. All
-  initial hotplug product choices are resolved; offline coverage exists for
-  the stated displacement/return, atomicity, and preservation pieces and live
-  disconnect/reconnect verification remains pending with no live result
-  claimed.
+  session-local with no restart-persistent mapping or return guarantee.
 - `Meta+1..9` select an existing 1-based logical workspace without creation.
   `Meta+Shift+1..9` send only the focused tiled window to an existing
   same-output workspace through the Rust `MoveToWorkspace` route. `0` reuses or
@@ -668,11 +632,7 @@ Historical implementation detail is recoverable in Git history.
   `kwin/KrohnkiteMonocleLayout` from exact preimage `Meta+M`. New five-row
   journals record all preimages; existing three-row journals remain strictly
   resumable and revertible without claiming the two new rows.
-- KCM table override/recovery has focused static coverage; ordinary Settings
-  Apply never mutates shortcuts. The private project journal records each
-  resolution kind and exact prior keys. One user-run Finish Apply completed the
-  three-row postimage; Revert, Restore, Lock Session physical checks, and
-  physical resize checks remain unproven.
+- The private project journal records each resolution kind and exact prior keys.
 - The project journal is host-independent at
   `~/.config/plasma-auto-tiler/shortcut-override-journalrc`, shared by every
   KCM host. The single explicit legacy source is the known kcmshell6-host
@@ -816,16 +776,11 @@ Historical implementation detail is recoverable in Git history.
   an alternative fallback only if Meta-held proves unavailable or impractical,
   never automatic when Meta is not held. `I permit the modifier observation.`
   This authorizes only passive public `EffectsHandler::mouseChanged(...)`
-  observation (`/tmp/opencode/kwin/src/effect/effecthandler.h:901-916`,
-  emits for modifier-only changes at `.cpp:229-236`; `startMousePolling` is
-  stale documentation and no such API exists; only public `cursorPos` exists,
-  `m_cursor.modifiers` is protected with no public input getter, so no public
-  initial modifiers snapshot is asserted; checkout KWin 6.7.3 per
-  `/tmp/opencode/kwin/CMakeLists.txt:5`, exact commit unverified). It
+  observation. No public initial modifiers snapshot is asserted, and
+  `startMousePolling` is stale documentation: no such API exists. It
   authorizes no grabs, interception, filters/spies, private InputRedirection,
-  input consumption, or polling. KWin Script workspace exposes only cursor position
-  (`src/scripting/workspace_wrapper.h:149` / `.cpp:61,148`), so Script alone
-  cannot observe Meta hold.
+  input consumption, or polling. KWin Script workspace exposes only cursor
+  position, so Script alone cannot observe Meta hold.
 - On a recognized Meta press, show the current valid active immediate group;
   while held update/clear it on qualifying tiling/focus/domain changes; clear
   on Meta release. First visibility does not require a tiling mutation. Only
@@ -845,13 +800,11 @@ Historical implementation detail is recoverable in Git history.
   target `EffectWindow::windowItem()`; KWin's public `Item::setParentItem()`
   and `mapFromScene()` keep its geometry window-local. The target texture and
   later-stacked windows therefore occlude it through the normal item-tree and
-  workspace stacking passes (`itemrenderer_opengl.cpp:181-188,328-334`,
-  `workspacescene.cpp:710-723`). The temporary group outline remains a
+  workspace stacking passes. The temporary group outline remains a
   screen-wide overlay because it is not tied to one window. No custom
-  scene/rendering mechanism is selected. COSMIC `cosmic-tiling-mod.rs:5459-5535`
-  renders group backdrops through its compositor-owned `BackdropShader`
-  render-element path (checkout/revision unverified; source-content comparison
-  only, no parity claim).
+  scene/rendering mechanism is selected. COSMIC renders group backdrops through
+  its compositor-owned `BackdropShader` render-element path (source-content
+  comparison only, no parity claim).
 - Active-group highlighting is statically delivered. Rust resolves the focused
   leaf's immediate parent split group and recursively projected members from
   its retained focused-domain tree; the script forwards only the engine union
@@ -897,8 +850,7 @@ Historical implementation detail is recoverable in Git history.
   exact canonical executable identity from the host current-system or
   `/usr/bin` KWin entrypoints; unlisted KWin launch paths fail closed.
 - The static bridge includes freshness and ordering/generation checks,
-  idempotent notifications, and bounded watcher retry. Watcher ordering,
-  login, and XDG autostart behavior remain pending live evidence.
+  idempotent notifications, and bounded watcher retry.
 - Home Manager autostart uses the immutable store tray binary with the fixed
   `tray-managed` mode; `TryExec` remains the immutable store binary alone.
   Managed mode uses only `$XDG_RUNTIME_DIR/plasma-auto-tiler-managed` for its
@@ -915,28 +867,13 @@ Historical implementation detail is recoverable in Git history.
   post-crash retry are not selected.
 - The tray MVP provides basic status and Settings only. It has no direct tiling
   controls and no expansion of the helper boundary.
-- One current-session manual start of the current-generation immutable store
-  `tray-managed` binary proved only exact managed process/runtime binding under
-  `$XDG_RUNTIME_DIR/plasma-auto-tiler-managed`, SNI registration with
-  `unavailable` status, and one fixed Settings action with exact
-  Settings-process cleanup. No KWin snapshot authority is claimed from that run.
-- That run claims no visual panel behavior, no watcher-ordering/login/autostart
-  delivery, no native ABI/plugin load, no baseline-restoration proof, and no
-  KWin Script1 identity or cleanup.
-- The pre-repair current immutable process held
-  `org.plasmaautotiler.Tray/StatusNotifierItem` but timed out on every SNI
-  object request, including `Peer.Ping`; Plasma could not obtain its icon,
-  tooltip, menu, or activation from that process.
-- One bounded disposable repaired candidate answered SNI `Peer.Ping`,
-  introspection, and properties; returned valid icon-pixmap, tooltip, menu, and
-  method contracts; completed one fixed Settings launch with exact resulting
-  process cleanup; and terminated with exact original autostart restoration.
-  It claims no panel visual behavior or session boundary.
-- After rebuild/new session, the user manually observed only: the tray icon was
-  visible and usable, and clicking it opened the native settings dialog. This
-  is user visual/manual evidence, not automated/protocol evidence. No
-  KWin-origin authoritative snapshot, watcher-ordering/login-autostart, or
-  update/rollback generation claim is made.
+- No KWin snapshot authority is claimed from tray live runs. Tray live runs
+  claim no visual panel behavior, no watcher-ordering/login-autostart delivery,
+  no native ABI/plugin load, no baseline-restoration proof, and no KWin Script1
+  identity or cleanup.
+- The repaired candidate claimed no panel visual behavior or session boundary.
+  No KWin-origin authoritative snapshot, watcher-ordering/login-autostart, or
+  update/rollback generation claim is made from tray live runs.
 
 ## Production Interactive Edge Drag
 
@@ -945,22 +882,8 @@ Historical implementation detail is recoverable in Git history.
   records final drag geometry; after its explicit one-time enable, the
   production script pulls its read-only session D-Bus verdict and routes a
   non-cancelled verdict through `pointer-resize` shares. A cancelled or
-  no-change verdict makes no pointer-resize plan.
-- One real-hardware KWin 6.7.4 session proved only this route in one three-window
-  scope on one output: `isEffectSupported` returned true; the effect loaded and
-  its endpoint answered; strict D-Bus demarshalling and pull ordering worked;
-  and KWin did not crash. Twelve committed drags each logged
-  `route-diag:drag-pull action=dispatch`, then
-  `route-diag:drag-verdict cancelled=false correlation=drag-N reason=ok-moved`,
-  then `plan:cmd=plan-1-pN kind=pointer-resize windows=3 outcome=planned-applied`.
-  One Esc-cancelled drag logged
-  `drag-verdict cancelled=true correlation=drag-11 reason=no-change` and no
-  pointer-resize plan.
-- The later one-shot echo-fence and dragged-source reassertion fixes are
-  static-only. The user-reported gap loss before the source fix has not been
-  visually confirmed fixed. Nothing is proven for multi-output, more than three
-  windows, non-horizontal splits, or workspace/output boundaries, and this
-  selects no atomicity, acknowledgement, or stock-KWin parity claim.
+  no-change verdict makes no pointer-resize plan. This selects no atomicity,
+  acknowledgement, or stock-KWin parity claim.
 
 ## Deferred Scope
 
@@ -1046,9 +969,7 @@ Historical implementation detail is recoverable in Git history.
   `isScriptLoaded("plasma-auto-tiler-kwin")`, exact plugin-ID unload/reload,
   one accepted active Nix-store package/source resolution, exact KWin
   owner/PID/start-tick/canonical-executable pinning, and observable behavior.
-  KWin 6.7.4 still cannot prove Script-object-to-plugin/source mapping,
-  duplicate count, handler absence, or exact running-state restoration. The
-  pilot remained disabled by default and had no session boundary, config,
+  The pilot remained disabled by default and had no session boundary, config,
   dotfile, rebuild, shortcut, Custom Tile, or production-delivery change.
 - A host-only systemd fallback accepts only a D-Bus KWin owner whose PPid is
   exactly `plasma-kwin_wayland.service` MainPID, with matching owner/PID,

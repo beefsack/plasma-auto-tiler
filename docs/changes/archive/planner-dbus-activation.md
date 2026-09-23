@@ -58,3 +58,15 @@ changing the public `engineAuthorityMode=legacy` default.
   Planner-service tests, strict lib/bin Clippy, KWin typecheck and 193 focused
   adapter tests, offline Nix module evaluation/build, immutable descriptor
   inspection, and `git diff --check`. No live session action was performed.
+
+## Moved Evidence (from docs/decisions.md)
+
+- On CONFIRMED Planner loss, one bounded fresh Planner session is established
+  automatically (selected 2026-09-16, static-complete, live gate pending; this
+  on-demand activation is distinct from a systemd restart loop). Offline coverage
+  only; no live result is claimed.
+- Only the gap portion of the approved interim reload is implemented:
+  `innerGap`/`outerGap` via `options.configChanged`, sent/queued-but-unconfirmed
+  because KWin reconfigure is Q_NOREPLY. This portion is static-complete with
+  retained offline proof (explicit `update-gaps` reprojection with
+  topology/share/focus preservation) and live verification pending.

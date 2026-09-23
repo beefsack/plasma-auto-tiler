@@ -1796,3 +1796,14 @@ exist first. Production remains suspended (`isScriptLoaded` false), Planner
   lifecycle/recovery, workspace/output behavior, drop reorganization, full
   reconciliation, reliability, parity, configure acknowledgement, nor measured
   latency.
+
+## Moved Evidence (from docs/decisions.md)
+
+- POC3's bounded host-only pilot used temporary production suspend/resume
+  authority that was pragmatic only: `isScriptLoaded("plasma-auto-tiler-kwin")`,
+  exact plugin-ID unload/reload, one accepted active Nix-store package/source
+  resolution, exact KWin owner/PID/start-tick/canonical-executable pinning, and
+  observable behavior. KWin 6.7.4 still cannot prove Script-object-to-plugin/source
+  mapping, duplicate count, handler absence, or exact running-state restoration.
+  The pilot remained disabled by default and had no session boundary, config,
+  dotfile, rebuild, shortcut, Custom Tile, or production-delivery change.

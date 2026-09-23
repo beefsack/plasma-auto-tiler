@@ -6,8 +6,7 @@
 //! deferred exceptions and retained float geometry) and read-only world
 //! queries/validation. Operation families (lifecycle, move, focus, resize,
 //! drag, float, workspace) and near-layout fit stay outside this module and
-//! call back through these accessors. Behavior is unchanged; this is a
-//! cohesive move from the former single-file session module.
+//! call back through these accessors.
 
 use std::collections::{BTreeMap, BTreeSet};
 

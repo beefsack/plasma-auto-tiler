@@ -2,8 +2,7 @@
 //!
 //! Responsibility: own the resize `impl Session` family. World state,
 //! shared projection/validation helpers, transaction mechanics, and tests
-//! stay in the parent session module. Behavior is unchanged; this is a
-//! cohesive move from the former single-file session module.
+//! stay in the parent session module.
 
 use super::super::*;
 

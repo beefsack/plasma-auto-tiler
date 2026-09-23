@@ -1,4 +1,4 @@
-// Bounded Stage 4 DescribePlan adapter (single production route).
+// Bounded DescribePlan adapter (single route).
 //
 // KWin-side observation and actuation only. Rust owns all tiling, order,
 // membership, and rejection policy through the stateless DescribePlan route:
@@ -2705,7 +2705,7 @@ export class PlanAdapter {
         }
     }
 
-    // Slice 2 oracle route: exactly one strict pointer-resize from the
+    // Oracle route: exactly one strict pointer-resize from the
     // authoritative final rect. Strict decoding only; fail-closed false when
     // the window, direction, or boundary cannot be safely bound. Defers
     // through the single pending slot when a flight is active, never bypasses
@@ -3233,7 +3233,7 @@ export class PlanAdapter {
             }
             return;
         }
-        // Slice 2 echo fence: exactly one one-shot neighbour-write expectation
+        // Echo fence: exactly one one-shot neighbour-write expectation
         // keyed by pointer correlation and source. Consume only when same-scope
         // fresh neighbour rectangles equal the planned rectangles; update
         // lastGood and return. Any mismatch falls through to bounded

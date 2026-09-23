@@ -124,3 +124,21 @@
   reconcile. Verify each affected sibling and outer gap is visibly 8px. If a
   gap is lost, capture the bounded plan diagnostics and geometry for a separate
   cause.
+
+## Moved Evidence (from docs/decisions.md)
+
+- One real-hardware KWin 6.7.4 session proved only this route in one three-window
+  scope on one output: `isEffectSupported` returned true; the effect loaded and
+  its endpoint answered; strict D-Bus demarshalling and pull ordering worked;
+  and KWin did not crash. Twelve committed drags each logged
+  `route-diag:drag-pull action=dispatch`, then
+  `route-diag:drag-verdict cancelled=false correlation=drag-N reason=ok-moved`,
+  then `plan:cmd=plan-1-pN kind=pointer-resize windows=3 outcome=planned-applied`.
+  One Esc-cancelled drag logged
+  `drag-verdict cancelled=true correlation=drag-11 reason=no-change` and no
+  pointer-resize plan.
+- The later one-shot echo-fence and dragged-source reassertion fixes are
+  static-only. The user-reported gap loss before the source fix has not been
+  visually confirmed fixed. Nothing is proven for multi-output, more than three
+  windows, non-horizontal splits, or workspace/output boundaries, and this
+  selects no atomicity, acknowledgement, or stock-KWin parity claim.

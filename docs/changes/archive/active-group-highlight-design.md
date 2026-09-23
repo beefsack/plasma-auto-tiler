@@ -167,3 +167,16 @@
 3. Complete a full Plasma logout/login. The configured env script is sourced
    when the new Plasma session starts. Do not use `/Effects` to replace a
    same-path loaded native binary: it cannot hot-replace it.
+
+## Moved Evidence (from docs/decisions.md)
+
+- Modifier-observation source proofs: public `EffectsHandler::mouseChanged(...)`
+  (`/tmp/opencode/kwin/src/effect/effecthandler.h:901-916`, emits for
+  modifier-only changes at `.cpp:229-236`); only public `cursorPos` exists,
+  `m_cursor.modifiers` is protected with no public input getter; checkout KWin
+  6.7.3 per `/tmp/opencode/kwin/CMakeLists.txt:5`, exact commit unverified.
+  KWin Script workspace cursor position at
+  `src/scripting/workspace_wrapper.h:149` / `.cpp:61,148`.
+- Renderer source proofs: `itemrenderer_opengl.cpp:181-188,328-334`,
+  `workspacescene.cpp:710-723`; COSMIC `cosmic-tiling-mod.rs:5459-5535`
+  (checkout/revision unverified).

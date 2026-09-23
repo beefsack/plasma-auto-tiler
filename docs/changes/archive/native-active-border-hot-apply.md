@@ -36,3 +36,11 @@ an effect or session restart, and leave an Apply failure retryable.
 Deploy a rebuilt native-effect package through the normal Nix path, complete a
 user session boundary, then change one active-border value in Desktop Effects,
 Apply, and confirm the active border updates immediately.
+
+## Moved Evidence (from docs/decisions.md)
+
+- After rebuild/new session, the user manually observed only: the active-window
+  border was enabled, visible, and followed the active window; width hot-applied;
+  and `Use theme highlight color when available` override/theme behavior worked
+  and is manually accepted. This is user visual/manual evidence, not
+  automated/protocol/KWin-source evidence.

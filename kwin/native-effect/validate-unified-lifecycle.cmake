@@ -1,6 +1,6 @@
-# Unified survivor lifecycle/service/ABI validation: exactly one exported KWin
+# Unified lifecycle/service/ABI validation: exactly one exported KWin
 # effect plugin hosts the active border, group overlay, initial-maximize
-# handoff, and Slice 1 drag oracle. No second effect, factory, or metadata.
+# handoff, and drag oracle. No second effect, factory, or metadata.
 #
 # Required inputs:
 #   SOURCE_FILE - activewindowborder.cpp
@@ -15,7 +15,7 @@ file(READ "${SOURCE_FILE}" IMPL)
 file(READ "${HEADER_FILE}" HEADER)
 file(READ "${CMAKE_FILE}" CMAKE)
 
-# Exactly one effect factory in the survivor, bound to the survivor metadata.
+# Exactly one effect factory, bound to the effect metadata.
 string(REGEX MATCHALL "KWIN_EFFECT_FACTORY" FACTORY_MATCHES "${IMPL}")
 list(LENGTH FACTORY_MATCHES FACTORY_COUNT)
 if(NOT FACTORY_COUNT EQUAL 1)
@@ -117,7 +117,7 @@ if(NOT OUTLINE_COUNT EQUAL 2)
     message(FATAL_ERROR "unified rendering validation failed: expected exactly two OutlinedBorderItem members, found ${OUTLINE_COUNT}")
 endif()
 
-# CMake builds only the survivor effect plus the KCM: no second plugin target,
+# CMake builds only the effect plus the KCM: no second plugin target,
 # factory source, standalone metadata, or validation script.
 foreach(LEGACY_TOKEN "dragoracle.h" "dragoracle.cpp" "dragoracle-metadata.json" "validate-dragoracle.cmake" "native-effect-drag-oracle-validation" "EXPECTED_PLUGIN_ID=plasma-auto-tiler-drag-oracle" "kcoreaddons_add_plugin(plasma-auto-tiler-drag-oracle")
     string(FIND "${CMAKE}" "${LEGACY_TOKEN}" LEGACY_POS)

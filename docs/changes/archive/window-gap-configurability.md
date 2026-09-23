@@ -47,3 +47,11 @@
 - The KCM states that only border changes apply immediately; other script
   settings require a script reload or session restart. Gap changes have no
   hot-apply claim.
+
+## Moved Evidence (from docs/decisions.md)
+
+- Implementation is partial: only gap reload is static-complete with retained
+  offline proof and live verification pending. The implemented gap resync
+  dispatches retained `update-gaps`, accepted and reprojected by the existing
+  session with topology/share/focus preservation for changed inner, outer, or
+  combined gaps. Overall settings liveness is PARTIAL, not complete.

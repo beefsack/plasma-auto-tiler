@@ -140,3 +140,10 @@ and optional tray without changing the external consumer repository.
 Obtain separate authorization for live KWin acceptance of COSMIC directional
 bindings. No Custom Tile, physical, tray/effect, external NixOS/Home Manager,
 or Nix update/rollback behavior is accepted by this resolution evidence.
+
+## Moved Evidence (from docs/decisions.md)
+
+- Current-host Nix integration, KWin/session load or reload, watcher ordering,
+  login/autostart behavior, and update/rollback activation across Nix
+  generations are pending live evidence, not passed by static evaluation or
+  shell tests.

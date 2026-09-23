@@ -1,7 +1,7 @@
 import { startPlanAdapterEntry } from "./plan-adapter-entry";
 import { TrayPublisher } from "./tray-publisher";
 
-// Stage 4 production entry: the single bounded DescribePlan adapter owns all
+// Production entry: the single bounded DescribePlan adapter owns all
 // KWin observation and actuation. Only normal windows are observed with
 // stable opaque ids, frame rectangles, output, workspace, and focus; Rust
 // owns every tiling, order, membership, and rejection decision through the
@@ -48,7 +48,7 @@ const trayPublisher = new TrayPublisher({
 
 trayPublisher.start();
 
-// Slice 2 production route: the plan adapter owns the single finished-handler
+// Drag-verdict route: the plan adapter owns the single finished-handler
 // LastVerdict pull and routes exactly one strict pointer-resize after a
 // non-cancelled verdict. Cancelled verdicts are a strict no-op; derive
 // failures fail closed with exact bounded reasons. No push, retry, or fallback.

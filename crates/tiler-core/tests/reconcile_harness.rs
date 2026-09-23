@@ -29,7 +29,7 @@ fn correlation_id(value: &str) -> CorrelationId {
     CorrelationId::parse(value).unwrap_or_else(|| panic!("valid correlation {value}"))
 }
 
-/// Fake headless compositor: owns the snapshot the real POC1 planner runs
+/// Fake headless compositor: owns the snapshot the real planner runs
 /// against, plus the adapter-contract view (owner/generation/revision,
 /// capabilities, correlation counter).
 struct FakeCompositor {
@@ -69,7 +69,7 @@ impl FakeCompositor {
         Observation::new(owner(), generation(), revision, 11)
     }
 
-    /// Real POC1 planner plan against the owned fake snapshot.
+    /// Real planner plan against the owned fake snapshot.
     fn real_plan(&self) -> MovePlan {
         match plan_move(&self.snapshot, &self.intent) {
             MoveOutcome::Planned(plan) => plan,

@@ -60,7 +60,7 @@ private:
     QSet<EffectWindow *> m_maximizedWindows;
     QSet<EffectWindow *> m_maximizeSubscribed;
     QObject *m_groupDbusObject = nullptr;
-    // Slice 1 drag oracle folded into this surviving effect: inert read-only
+    // Drag oracle state: inert read-only
     // observer state only (start rects plus the D-Bus object). The verdict
     // policy lives in the std-only Rust staticlib behind the POD C ABI.
     QObject *m_oracleDbusObject = nullptr;

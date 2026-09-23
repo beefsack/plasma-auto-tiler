@@ -374,3 +374,10 @@ Migration and Force Apply add these bounded tokens (no foreign reply data):
   method ran. This is unrelated to Apply/Revert, which sends `setShortcutKeys`
   from KWin to the separate KGlobalAccel service. The stripped stack does not
   identify the inbound method or sender.
+
+## Moved Evidence (from docs/decisions.md)
+
+- KCM table override/recovery has focused static coverage; ordinary Settings
+  Apply never mutates shortcuts. One user-run Finish Apply completed the
+  three-row postimage; Revert, Restore, Lock Session physical checks, and
+  physical resize checks remain unproven.

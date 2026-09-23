@@ -85,3 +85,25 @@ the item, show its status, and open its fixed Settings target.
   is user visual/manual evidence, not automated/protocol evidence. No
   KWin-origin authoritative snapshot, watcher-ordering/login-autostart, or
   update/rollback generation claim is made.
+
+## Moved Evidence (from docs/decisions.md)
+
+- One current-session manual start of the current-generation immutable store
+  `tray-managed` binary proved only exact managed process/runtime binding under
+  `$XDG_RUNTIME_DIR/plasma-auto-tiler-managed`, SNI registration with
+  `unavailable` status, and one fixed Settings action with exact
+  Settings-process cleanup. No KWin snapshot authority is claimed from that run.
+- That run claims no visual panel behavior, no watcher-ordering/login-autostart
+  delivery, no native ABI/plugin load, no baseline-restoration proof, and no
+  KWin Script1 identity or cleanup.
+- The pre-repair current immutable process held
+  `org.plasmaautotiler.Tray/StatusNotifierItem` but timed out on every SNI
+  object request, including `Peer.Ping`; Plasma could not obtain its icon,
+  tooltip, menu, or activation from that process.
+- One bounded disposable repaired candidate answered SNI `Peer.Ping`,
+  introspection, and properties; returned valid icon-pixmap, tooltip, menu, and
+  method contracts; completed one fixed Settings launch with exact resulting
+  process cleanup; and terminated with exact original autostart restoration.
+  It claims no panel visual behavior or session boundary.
+- The rebuild/new-session user observation above is already retained verbatim
+  under Outcome and is not duplicated here.

@@ -59,9 +59,6 @@ each review claim before acting; it was a static sampling review.
   single-KCM settings ownership.
 - P0 | AR16 Size caps | 7.13. Awaiting user decision: replace count caps with
   one codec byte cap.
-- P0 | AR17 Documentation and comment cleanup | Rec 13: trim `decisions.md` to
-  current decisions, move evidence to change docs, remove process history from
-  code comments.
 
 Existing work:
 

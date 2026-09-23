@@ -2254,8 +2254,7 @@ QString defaultShortcutJournalPath()
 
 QString legacyShortcutJournalPath()
 {
-    // Single explicit legacy source: the journal written by the former
-    // host-dependent AppConfigLocation path under kcmshell6. The only
+    // Single explicit legacy source: the kcmshell6-host journal. The only
     // migration source; directory scans are never used.
     const QString base = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
     if (base.isEmpty() || !QDir::isAbsolutePath(base)) {
