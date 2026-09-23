@@ -464,6 +464,26 @@ Historical implementation detail is recoverable in Git history.
     must preserve safe handling of later valid commands without treating the
     uncertain transaction as success, replaying it, resetting topology, or
     weakening those fences.
+- USER-APPROVED transaction-model direction, 2026-09-23: adopt architecture
+  review 7.8, prototyped on workspace send first. Host observations own window
+  existence, domain and flags; the engine owns layout within those facts.
+  Prefer bounded convergence to observed truth over never reporting success
+  before verification. Observations must be complete for their declared scope:
+  a window elsewhere changed domain, absence from the entire observed world
+  means closed, and an unexpired expectation protects a window in transit.
+  Fence plans and replies to a monotonic observation sequence, retain the
+  existing same-UID, owner, generation and correlation fences, and never replay
+  commands, blindly reset topology, loop indefinitely or permanently disable
+  a window/domain. Expiry uses the existing deadline and a specified outcome;
+  a failed send re-admits to source with `diag: expectation-expired`. Keep
+  prompt one-shot switch/focus on fresh native proof of the mover's exact
+  arrival without waiting for unrelated layout settling, preserve unrelated
+  focus and in-flight workspace retention, and distinguish dispatch,
+  acceptance, completion and uncertainty in correlated logs. This is an
+  approved direction, **not shipped behavior**: the existing send/R4 pending
+  status, cancellation and verified-success entries below still describe the
+  current code; their send-specific clauses are superseded only when the
+  replacement actually ships. AR4 is deferred behind AR11.
 - USER-APPROVED pending-transaction status, 2026-09-22: the existing
   same-UID-authorized `DescribePlan` route exposes only
   `send-to-workspace-status` and `directional-move-status` for an exact pending

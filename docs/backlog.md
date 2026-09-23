@@ -13,8 +13,9 @@ each review claim before acting; it was a static sampling review.
   final order, focus, desktop behavior and independent per-domain state.
   Blocked: three attempts and a design review failed. Session removal requires
   a pre-removal observation, so post-only sync needs either a retained
-  historical baseline or changed fence semantics (AR11 territory). Awaiting
-  user decision; recommended: defer behind AR11.
+  historical baseline or changed fence semantics (AR11 territory). User decided
+  2026-09-23 to defer AR4 behind AR11. Post-only removal remains blocked until
+  AR11's validated fact/expectation transition ships.
   [scope](changes/architecture-review-ar4-observation-sync.md)
 - P0 | AR5 LayoutPolicy seam and Session split | 7.9: `cosmic_v1` behind
   `LayoutPolicy`; split `Session` along the seam. bspwm_v1 scope awaits user
@@ -35,7 +36,15 @@ each review claim before acting; it was a static sampling review.
   Awaiting user decision: C++ `QJsonDocument` versus Cargo staticlib via
   Corrosion.
 - P0 | AR11 One transaction model (expectations) | 7.8, prototype on workspace
-  send first. Awaiting user decision: reverses verified-success decisions.
+  send first. User selected host-authoritative facts, engine-authoritative layout
+  and bounded convergence on 2026-09-23, replacing verified-success semantics
+  for the send slice when implemented. Design review found the model feasible;
+  two experimental core approaches failed implementation review and were
+  restored. Next: independently review a concrete complete-world/per-domain
+  revision and expiry transition contract before implementation.
+  Live user acceptance after offline implementation: rapid repeated sends
+  retain prompt native-proof follow without focus theft; failed sends converge
+  back to source and remain usable. [scope](changes/architecture-review-ar11-expectations.md)
 - P0 | AR12 Size hints and clamp acceptance | 7.11. Awaiting user decision.
   Related: Ghostty short-frame items below.
 - P0 | AR13 Same-UID-trusted threat model and tray simplification | 7.12.
