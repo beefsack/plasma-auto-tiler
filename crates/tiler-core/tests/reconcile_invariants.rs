@@ -8,16 +8,16 @@
 //! gating, terminal divergence immutability, bounded redacted errors, and
 //! portable-module import prohibition.
 
-use plasma_auto_tiler::contract::{
+use tiler_core::contract::{
     AckOutcome, AdapterAck, DivergenceKind, MAX_CORRELATION_LEN, MAX_GENERATION_LEN, MAX_OWNER_LEN,
     MAX_PRECONDITIONS, MAX_REVISION, Observation, PostObservation,
 };
-use plasma_auto_tiler::directional::{
+use tiler_core::directional::{
     Capabilities, Capability, Direction, MoveIntent, MoveOperation, NodeId, OutputId, Precondition,
     Rule,
 };
-use plasma_auto_tiler::ids::{CorrelationId, GenerationId, OwnerId};
-use plasma_auto_tiler::reconcile::{
+use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
+use tiler_core::reconcile::{
     AckApplied, AckError, ProposeError, Reconciler, StateKind, VerifyError,
 };
 
@@ -30,16 +30,16 @@ fn intent() -> MoveIntent {
     }
 }
 
-use plasma_auto_tiler::directional::WindowId;
+use tiler_core::directional::WindowId;
 
-fn test_plan() -> plasma_auto_tiler::directional::MovePlan {
+fn test_plan() -> tiler_core::directional::MovePlan {
     let operation = MoveOperation::SwapNeighbor {
         rule: Rule::R2a,
         container: NodeId("root".to_owned()),
         neighbor: NodeId("leaf-2".to_owned()),
     };
     let preconditions = operation.preconditions();
-    plasma_auto_tiler::directional::MovePlan {
+    tiler_core::directional::MovePlan {
         intent: intent(),
         rule: Rule::R2a,
         operation,
@@ -104,9 +104,9 @@ fn post_with_operation(
 }
 
 fn full_cycle() -> (
-    plasma_auto_tiler::contract::Dispatch,
-    plasma_auto_tiler::reconcile::Commit,
-    plasma_auto_tiler::reconcile::StatusView,
+    tiler_core::contract::Dispatch,
+    tiler_core::reconcile::Commit,
+    tiler_core::reconcile::StatusView,
 ) {
     let mut r = seed();
     let plan = test_plan();
@@ -787,7 +787,7 @@ fn verified_operation_mismatch_diverges_without_commit() {
     let other = MoveOperation::WrapPerpendicular {
         rule: Rule::R1,
         container: NodeId("root".to_owned()),
-        axis: plasma_auto_tiler::directional::Axis::Horizontal,
+        axis: tiler_core::directional::Axis::Horizontal,
     };
     assert_eq!(
         r.verify(&post_with_operation("corr-1", 0, true, other)),

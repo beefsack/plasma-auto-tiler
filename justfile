@@ -275,9 +275,9 @@ dev-on:
     fi
     # 4. Build. The devenv shell is required only here, and only when outside it.
     if [[ -n "${IN_NIX_SHELL:-}${DEVENV_PROFILE:-}" ]]; then
-      ( cd "$REPO_ROOT" && cargo build ) || { echo "error: cargo build failed" >&2; exit 1; }
+      ( cd "$REPO_ROOT" && cargo build -p plasma-auto-tiler ) || { echo "error: cargo build failed" >&2; exit 1; }
     else
-      devenv shell --impure -- cargo build || { echo "error: cargo build failed (via devenv shell --impure)" >&2; exit 1; }
+      devenv shell --impure -- cargo build -p plasma-auto-tiler || { echo "error: cargo build failed (via devenv shell --impure)" >&2; exit 1; }
     fi
     [[ -x "$BIN" ]] || { echo "error: worktree Planner binary missing after build: $BIN" >&2; exit 1; }
     if [[ -e "$REPO_ROOT/result" ]]; then
@@ -424,9 +424,9 @@ reload:
     OWNER_PID="$(busctl --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetConnectionUnixProcessID s "$(busctl --user call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetNameOwner s "$PLANNER_BUS" 2>/dev/null | awk '{print $NF}' | tr -d '\"')" 2>/dev/null | jq -r '.data[0] // empty' 2>/dev/null || true)"
     [[ "$OWNER_PID" == "$OLD_PID" ]] || { echo "error: $PLANNER_BUS owner pid is '${OWNER_PID:-unowned}', expected recorded pid $OLD_PID; refusing swap" >&2; exit 1; }
     if [[ -n "${IN_NIX_SHELL:-}${DEVENV_PROFILE:-}" ]]; then
-      ( cd "$REPO_ROOT" && cargo build ) || { echo "error: cargo build failed; old planner $OLD_PID left running" >&2; exit 1; }
+      ( cd "$REPO_ROOT" && cargo build -p plasma-auto-tiler ) || { echo "error: cargo build failed; old planner $OLD_PID left running" >&2; exit 1; }
     else
-      devenv shell --impure -- cargo build || { echo "error: cargo build failed (via devenv shell --impure); old planner $OLD_PID left running" >&2; exit 1; }
+      devenv shell --impure -- cargo build -p plasma-auto-tiler || { echo "error: cargo build failed (via devenv shell --impure); old planner $OLD_PID left running" >&2; exit 1; }
     fi
     [[ -x "$BIN" ]] || { echo "error: worktree Planner binary missing after build: $BIN" >&2; exit 1; }
     # Re-verify identity immediately before terminating (TOCTOU guard).
@@ -1107,11 +1107,28 @@ build-rust:
     REPO_ROOT="{{ justfile_directory() }}"
     BIN="$REPO_ROOT/target/debug/plasma-auto-tiler"
     if [[ -n "${IN_NIX_SHELL:-}${DEVENV_PROFILE:-}" ]]; then
-      ( cd "$REPO_ROOT" && cargo build ) || { echo "error: cargo build failed" >&2; exit 1; }
+      ( cd "$REPO_ROOT" && cargo build -p plasma-auto-tiler ) || { echo "error: cargo build failed" >&2; exit 1; }
     else
-      devenv shell --impure -- cargo build || { echo "error: cargo build failed (via devenv shell --impure)" >&2; exit 1; }
+      devenv shell --impure -- cargo build -p plasma-auto-tiler || { echo "error: cargo build failed (via devenv shell --impure)" >&2; exit 1; }
     fi
     [[ -x "$BIN" ]] || { echo "error: worktree Planner binary missing after build: $BIN" >&2; exit 1; }
+
+# Verify tiler-core stays portable: zero normal deps (offline) + no platform leaks.
+check-portable:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    REPO_ROOT="{{ justfile_directory() }}"
+    cargo metadata --manifest-path "$REPO_ROOT/Cargo.toml" --no-deps --format-version 1 --offline \
+      | jq -e '([.packages[] | select(.name == "tiler-core")] | length) == 1 and ([.packages[] | select(.name == "tiler-core") | .dependencies[]? | select(.kind == null)] | length) == 0' >/dev/null \
+      || { echo "error: tiler-core must exist with zero normal dependencies" >&2; exit 1; }
+    if grep -rEn --include='*.rs' 'std::os::|std::process::|/proc|libc|rustix|zbus|extern "C"|cfg[[:space:]]*\([[:space:]]*(unix|windows|target_os)|target_os' "$REPO_ROOT/crates/tiler-core/src"; then
+      echo "error: platform leak found in crates/tiler-core/src" >&2
+      exit 1
+    else
+      status=$?
+      [[ "$status" -eq 1 ]] || { echo "error: could not scan crates/tiler-core/src" >&2; exit 1; }
+    fi
+    echo "check-portable: tiler-core has 0 normal deps and no platform leaks"
 
 # Build the KWin script bundle via npm and verify the existing bundle (subset build).
 build-kwin-script:

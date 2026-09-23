@@ -3,14 +3,14 @@
 //! Drives the real `session::Session` API through full
 //! propose/acknowledge/verify cycles. No live compositor state.
 
-use plasma_auto_tiler::contract::{
+use tiler_core::contract::{
     AckOutcome, AdapterAck, DivergenceKind, LIFECYCLE_POLICY_VERSION, LifecycleCapabilities,
     LifecyclePostObservation, Observation,
 };
-use plasma_auto_tiler::directional::{Axis, Node, NodeId, OutputId, WindowId, WorkspaceId};
-use plasma_auto_tiler::geometry::Rect;
-use plasma_auto_tiler::ids::{CorrelationId, GenerationId, OwnerId};
-use plasma_auto_tiler::session::{
+use tiler_core::directional::{Axis, Node, NodeId, OutputId, WindowId, WorkspaceId};
+use tiler_core::geometry::Rect;
+use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
+use tiler_core::session::{
     DomainKey, ExceptionBehavior, ExceptionFlags, ObservedWindow, OutputDomain, ProposeError,
     RefusalKind, Session, SessionCommand, SessionObservation, SessionPlan,
 };
@@ -161,10 +161,10 @@ fn admit_and_commit(
             owner(),
             generation(),
             base,
-            plasma_auto_tiler::contract::AckOutcome::Accepted,
+            tiler_core::contract::AckOutcome::Accepted,
         ))
         .expect("ack");
-    let post = plasma_auto_tiler::contract::LifecyclePostObservation::new(
+    let post = tiler_core::contract::LifecyclePostObservation::new(
         Observation::new(owner(), generation(), base, 200 + base),
         correlation(corr),
         true,
@@ -195,10 +195,10 @@ fn remove_and_commit(session: &mut Session, window: &str, corr: &str) -> Session
             owner(),
             generation(),
             base,
-            plasma_auto_tiler::contract::AckOutcome::Accepted,
+            tiler_core::contract::AckOutcome::Accepted,
         ))
         .expect("ack");
-    let post = plasma_auto_tiler::contract::LifecyclePostObservation::new(
+    let post = tiler_core::contract::LifecyclePostObservation::new(
         Observation::new(owner(), generation(), base, 300 + base),
         correlation(corr),
         true,
@@ -234,10 +234,10 @@ fn toggle_float_and_commit(
             owner(),
             generation(),
             base,
-            plasma_auto_tiler::contract::AckOutcome::Accepted,
+            tiler_core::contract::AckOutcome::Accepted,
         ))
         .expect("ack");
-    let post = plasma_auto_tiler::contract::LifecyclePostObservation::new(
+    let post = tiler_core::contract::LifecyclePostObservation::new(
         Observation::new(owner(), generation(), base, 600 + base),
         correlation(corr),
         true,
@@ -1062,11 +1062,11 @@ fn exception_flags_fail_closed_until_behavior_selected() {
             owner(),
             generation(),
             base,
-            plasma_auto_tiler::contract::AckOutcome::Accepted,
+            tiler_core::contract::AckOutcome::Accepted,
         ))
         .expect("ack");
     session
-        .verify_lifecycle(&plasma_auto_tiler::contract::LifecyclePostObservation::new(
+        .verify_lifecycle(&tiler_core::contract::LifecyclePostObservation::new(
             Observation::new(owner(), generation(), base, 210),
             correlation("corr-2"),
             true,
@@ -1389,7 +1389,7 @@ fn dispatch_binds_identity_intent_capability_and_affected_ids() {
     assert_eq!(plan.dispatch.generation.as_str(), "gen-1");
     assert_eq!(plan.dispatch.base_revision, 0);
     match &plan.dispatch.intent {
-        plasma_auto_tiler::contract::LifecycleIntent::Admit {
+        tiler_core::contract::LifecycleIntent::Admit {
             window,
             output,
             workspace,
@@ -1400,9 +1400,11 @@ fn dispatch_binds_identity_intent_capability_and_affected_ids() {
         }
         other => panic!("expected admit intent, got {other:?}"),
     }
-    assert!(plan.dispatch.preconditions.contains(
-        &plasma_auto_tiler::contract::LifecyclePrecondition::AdapterMustVerifyPostconditions
-    ));
+    assert!(
+        plan.dispatch.preconditions.contains(
+            &tiler_core::contract::LifecyclePrecondition::AdapterMustVerifyPostconditions
+        )
+    );
     // Portable lifecycle policy binding: explicit cosmic_v1 version.
     assert_eq!(plan.dispatch.policy_version, LIFECYCLE_POLICY_VERSION);
     assert_eq!(plan.dispatch.policy_version, 1);
@@ -1444,7 +1446,7 @@ fn errors_are_redacted_and_bounded() {
 
 #[test]
 fn acknowledge_divergence_clears_pending_desired() {
-    use plasma_auto_tiler::contract::AckOutcome;
+    use tiler_core::contract::AckOutcome;
     let mut session = single_domain_session();
     admit_and_commit(
         &mut session,
@@ -1478,7 +1480,7 @@ fn acknowledge_divergence_clears_pending_desired() {
         .expect_err("correlation mismatch must diverge");
     assert_eq!(
         err,
-        plasma_auto_tiler::reconcile::AckError::Diverged(DivergenceKind::CorrelationMismatch)
+        tiler_core::reconcile::AckError::Diverged(DivergenceKind::CorrelationMismatch)
     );
     assert_eq!(
         session.divergence(),
@@ -1507,7 +1509,7 @@ fn acknowledge_divergence_clears_pending_desired() {
 
 #[test]
 fn verify_divergence_clears_pending_desired() {
-    use plasma_auto_tiler::contract::LifecyclePostObservation;
+    use tiler_core::contract::LifecyclePostObservation;
     let mut session = single_domain_session();
     admit_and_commit(
         &mut session,
@@ -1533,7 +1535,7 @@ fn verify_divergence_clears_pending_desired() {
             owner(),
             generation(),
             base,
-            plasma_auto_tiler::contract::AckOutcome::Accepted,
+            tiler_core::contract::AckOutcome::Accepted,
         ))
         .expect("ack");
     assert!(session.has_pending_desired());
@@ -1552,7 +1554,7 @@ fn verify_divergence_clears_pending_desired() {
         .expect_err("precondition mismatch must diverge");
     assert_eq!(
         err,
-        plasma_auto_tiler::reconcile::VerifyError::Diverged(DivergenceKind::PostconditionMismatch)
+        tiler_core::reconcile::VerifyError::Diverged(DivergenceKind::PostconditionMismatch)
     );
     assert_eq!(
         session.divergence(),
@@ -1570,10 +1572,10 @@ fn verify_divergence_clears_pending_desired() {
 
 #[test]
 fn lifecycle_policy_version_bound_and_rejected_when_tampered() {
-    use plasma_auto_tiler::contract::{
+    use tiler_core::contract::{
         LifecycleIntent, LifecycleOperation, LifecyclePlan, LifecyclePostObservation,
     };
-    use plasma_auto_tiler::reconcile::Reconciler;
+    use tiler_core::reconcile::Reconciler;
     // Session-issued plans carry the explicit cosmic_v1 binding.
     let mut session = single_domain_session();
     let plan = admit_and_commit(
@@ -1610,12 +1612,12 @@ fn lifecycle_policy_version_bound_and_rejected_when_tampered() {
             &correlation("corr-9"),
             &LifecycleCapabilities::full(),
         ),
-        Err(plasma_auto_tiler::reconcile::ProposeError::Diverged(
+        Err(tiler_core::reconcile::ProposeError::Diverged(
             DivergenceKind::PostconditionMismatch
         ))
     );
     // Frozen R1-R4 movement surface still validates independently.
-    assert_eq!(plasma_auto_tiler::contract::POLICY_VERSION, 1);
+    assert_eq!(tiler_core::contract::POLICY_VERSION, 1);
     let _ = LifecyclePostObservation::new(
         obs,
         correlation("corr-9"),
@@ -1732,7 +1734,7 @@ fn two_workspaces_on_same_output_are_isolated() {
 
 #[test]
 fn deferred_removal_commits_without_topology_effect() {
-    use plasma_auto_tiler::contract::AckOutcome;
+    use tiler_core::contract::AckOutcome;
     let mut session = single_domain_session();
     // Defer a floating window, then admit a tiled window.
     let obs = complete_observation(&session, vec![exception_observed("win-9", "out-1", "ws-1")]);
@@ -1768,7 +1770,7 @@ fn deferred_removal_commits_without_topology_effect() {
         ))
         .expect("ack");
     session
-        .verify_lifecycle(&plasma_auto_tiler::contract::LifecyclePostObservation::new(
+        .verify_lifecycle(&tiler_core::contract::LifecyclePostObservation::new(
             Observation::new(owner(), generation(), base, 211),
             correlation("corr-1"),
             true,
@@ -1801,7 +1803,7 @@ fn deferred_removal_commits_without_topology_effect() {
     );
     assert_eq!(session.focus(), focus_before);
     match &plan.dispatch.operation {
-        plasma_auto_tiler::contract::LifecycleOperation::RemoveDeferred {
+        tiler_core::contract::LifecycleOperation::RemoveDeferred {
             window,
             output,
             workspace,
@@ -1902,9 +1904,7 @@ fn portable_session_module_prohibits_platform_imports() {
 
 #[test]
 fn uneven_proportional_insertion_and_removal_preserve_ratios() {
-    use plasma_auto_tiler::cosmic_v1::{
-        proportional_insertion_shares, proportional_removal_shares,
-    };
+    use tiler_core::cosmic_v1::{proportional_insertion_shares, proportional_removal_shares};
     // Uneven survivors preserve ratios on admission: [389, 409] + entrant.
     let inserted = proportional_insertion_shares(&[389, 409], 2).expect("insert");
     assert_eq!(inserted, vec![389, 409, 399]);

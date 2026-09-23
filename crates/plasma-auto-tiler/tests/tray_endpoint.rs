@@ -255,7 +255,7 @@ fn fixture_type_range_and_dispatch_failures_do_not_enter_the_typed_endpoint() {
 }
 
 fn fixture() -> Fixture {
-    serde_json::from_str(include_str!("../test-fixtures/tray-bridge-v1.json")).unwrap()
+    serde_json::from_str(include_str!("../../../test-fixtures/tray-bridge-v1.json")).unwrap()
 }
 
 fn apply_publish(state: &mut TrayState, args: Vec<serde_json::Value>, now_ms: u64) {

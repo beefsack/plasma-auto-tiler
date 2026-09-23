@@ -10,7 +10,7 @@
 
 use std::collections::BTreeSet;
 
-use plasma_auto_tiler::planner_protocol::Planner as CorePlanner;
+use tiler_protocol::planner_protocol::Planner as CorePlanner;
 
 /// Test harness which establishes canonical per-domain state through the
 /// ordinary admission lifecycle before exercising a directional request.

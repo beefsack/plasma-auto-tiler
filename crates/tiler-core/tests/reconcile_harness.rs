@@ -2,18 +2,18 @@
 //!
 //! This is not a production runtime abstraction: it owns fake snapshots,
 //! capabilities, and correlation ids in-test and drives the actual
-//! [`plasma_auto_tiler::reconcile::Reconciler`] API. Every scenario asserts
+//! [`tiler_core::reconcile::Reconciler`] API. Every scenario asserts
 //! real reconciler state transitions (`StatusView`, `Commit`, typed
 //! `DivergenceKind`) rather than reimplementing reconciler logic.
 
-use plasma_auto_tiler::contract::DivergenceKind;
-use plasma_auto_tiler::contract::{AckOutcome, AdapterAck, Observation, PostObservation};
-use plasma_auto_tiler::directional::{
+use tiler_core::contract::DivergenceKind;
+use tiler_core::contract::{AckOutcome, AdapterAck, Observation, PostObservation};
+use tiler_core::directional::{
     Axis, Capabilities, Direction, MoveIntent, MoveOperation, MoveOutcome, MovePlan, Node, NodeId,
     Output, OutputId, Precondition, Rule, Snapshot, WindowId, WindowLink, WorkspaceId, plan_move,
 };
-use plasma_auto_tiler::ids::{CorrelationId, GenerationId, OwnerId};
-use plasma_auto_tiler::reconcile::{
+use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
+use tiler_core::reconcile::{
     AckApplied, AckError, ProposeError, Reconciler, StateKind, VerifyError,
 };
 
@@ -418,9 +418,8 @@ fn plan_missing_verify_precondition_is_postcondition_mismatch() {
     let mut fake = FakeCompositor::new();
     let mut plan = fake.real_plan();
     // Injectable fault: strip the mandatory adapter-verification precondition.
-    plan.preconditions.retain(|p| {
-        *p != plasma_auto_tiler::directional::Precondition::AdapterMustVerifyPostconditions
-    });
+    plan.preconditions
+        .retain(|p| *p != tiler_core::directional::Precondition::AdapterMustVerifyPostconditions);
     assert_eq!(
         {
             let obs = fake.observation(0);
@@ -620,7 +619,7 @@ fn inconsistent_hand_built_plan_is_rejected_before_dispatch() {
     // Rule mismatch.
     let mut fake = FakeCompositor::new();
     let mut bad = fake.real_plan();
-    bad.rule = plasma_auto_tiler::directional::Rule::R1;
+    bad.rule = tiler_core::directional::Rule::R1;
     let before = fake.reconciler.verified_revision();
     assert_eq!(
         {
@@ -640,7 +639,7 @@ fn inconsistent_hand_built_plan_is_rejected_before_dispatch() {
     // Capability mismatch.
     let mut fake = FakeCompositor::new();
     let mut bad = fake.real_plan();
-    bad.required_capability = plasma_auto_tiler::directional::Capability::WrapPerpendicular;
+    bad.required_capability = tiler_core::directional::Capability::WrapPerpendicular;
     assert_eq!(
         {
             let obs = fake.observation(0);
@@ -766,7 +765,7 @@ fn malformed_ack_and_verify_shapes_classify_typed() {
         .expect("propose");
     let bad_ack = fake.ack(
         &correlation,
-        plasma_auto_tiler::contract::MAX_REVISION + 1,
+        tiler_core::contract::MAX_REVISION + 1,
         AckOutcome::Accepted,
     );
     assert_eq!(

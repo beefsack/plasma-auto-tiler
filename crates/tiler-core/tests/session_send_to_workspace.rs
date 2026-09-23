@@ -1,14 +1,14 @@
 //! Same-output send-to-workspace lifecycle tests (portable, headless).
 
-use plasma_auto_tiler::contract::{
+use tiler_core::contract::{
     AckOutcome, AdapterAck, DivergenceKind, LIFECYCLE_POLICY_VERSION, LifecycleCapabilities,
     LifecycleCapability, LifecycleIntent, LifecycleOperation, LifecyclePostObservation,
     Observation,
 };
-use plasma_auto_tiler::directional::{Axis, Node, NodeId, OutputId, Rule, WindowId, WorkspaceId};
-use plasma_auto_tiler::geometry::Rect;
-use plasma_auto_tiler::ids::{CorrelationId, GenerationId, OwnerId};
-use plasma_auto_tiler::session::{
+use tiler_core::directional::{Axis, Node, NodeId, OutputId, Rule, WindowId, WorkspaceId};
+use tiler_core::geometry::Rect;
+use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
+use tiler_core::session::{
     DomainKey, ExceptionBehavior, ExceptionFlags, ObservedWindow, OutputDomain, ProposeError,
     RefusalKind, Session, SessionCommand, SessionObservation, SessionPlan,
 };
@@ -185,7 +185,7 @@ fn flat(t: Option<&Node>) -> Vec<String> {
     }
     v
 }
-fn at(ss: &[plasma_auto_tiler::session::SessionDomainView], o: &str, ws: &str) -> Option<Node> {
+fn at(ss: &[tiler_core::session::SessionDomainView], o: &str, ws: &str) -> Option<Node> {
     ss.iter()
         .find(|d| d.output.0 == o && d.workspace.0 == ws)
         .expect("d")
@@ -314,7 +314,7 @@ fn occupied_target_splits_remembered_leaf() {
 
 #[test]
 fn refusals_fail_closed_then_lifecycle_diverges() {
-    use plasma_auto_tiler::reconcile::VerifyError;
+    use tiler_core::reconcile::VerifyError;
     let mut s = session();
     admit(&mut s, "win-1", "out-1", "ws-a", 120, 80, "corr-1");
     admit(&mut s, "win-2", "out-1", "ws-b", 120, 80, "corr-2");

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-ENDPOINT="$REPO_ROOT/src/tray_endpoint.rs"
+ENDPOINT="$REPO_ROOT/crates/plasma-auto-tiler/src/tray_endpoint.rs"
 SOURCE_BINARY="${TRAY_05A_SOURCE_BINARY:-$REPO_ROOT/target/release/plasma-auto-tiler}"
 BASH_PATH="$(command -v bash)"
 DBUS_RUN_SESSION="$(command -v dbus-run-session || true)"

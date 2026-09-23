@@ -4718,8 +4718,8 @@ describe("cancel/status observability wiring (offline capture proof)", () => {
     });
 
     it("keeps Rust summaries bounded with no raw payload trace", () => {
-        const protocol = readFileSync(repoFile("src", "planner_protocol.rs"), "utf8");
-        const service = readFileSync(repoFile("src", "planner_service.rs"), "utf8");
+        const protocol = readFileSync(repoFile("crates", "tiler-protocol", "src", "planner_protocol.rs"), "utf8");
+        const service = readFileSync(repoFile("crates", "plasma-auto-tiler", "src", "planner_service.rs"), "utf8");
         // The raw full-JSON trace is gone; summaries are the only record.
         assert.ok(!protocol.includes("plan-trace:request"));
         assert.ok(!service.includes("plan-trace:request"));

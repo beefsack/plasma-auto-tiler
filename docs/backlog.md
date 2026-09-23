@@ -6,11 +6,6 @@ Architecture review program: immediate next priority, in listed order. Section
 references are to [the review](research/architecture-review/review.md). Verify
 each review claim before acting; it was a static sampling review.
 
-- P0 | AR2 Cargo workspace split | 7.5: `tiler-core` (std, optional serde),
-  `tiler-protocol`, Linux bin crate; tests move with their crate; Nix packages
-  follow. Portability gate: `cargo check -p tiler-core` for Windows and macOS
-  targets via `devenv.nix` toolchain (session restart required). Document the
-  adapter-normalized integer unit contract (4.5.6).
 - P0 | AR3 Typed Engine behind current wire format | 7.6, 4.3.4-5: world-level
   `Engine::handle(Event) -> Plan`; per-domain map, paired sessions, seeding,
   fitting, relocation become internals; typed serde `Command`/`Reply` enums

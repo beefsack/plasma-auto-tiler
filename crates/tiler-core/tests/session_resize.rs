@@ -8,17 +8,17 @@
 //! refusals, exact acknowledgement/verification and cross-kind mismatch
 //! divergence, deterministic replay, and a bounded property-style matrix.
 
-use plasma_auto_tiler::contract::{
+use std::collections::BTreeMap;
+use tiler_core::contract::{
     AckOutcome, AdapterAck, DivergenceKind, Observation, ResizeCapabilities, ResizePostObservation,
 };
-use plasma_auto_tiler::directional::{Direction, Node, NodeId, OutputId, WindowId, WorkspaceId};
-use plasma_auto_tiler::geometry::Rect;
-use plasma_auto_tiler::ids::{CorrelationId, GenerationId, OwnerId};
-use plasma_auto_tiler::session::{
+use tiler_core::directional::{Direction, Node, NodeId, OutputId, WindowId, WorkspaceId};
+use tiler_core::geometry::Rect;
+use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
+use tiler_core::session::{
     DomainKey, ExceptionFlags, ObservedWindow, OutputDomain, ProposeError, RefusalKind, Session,
     SessionCommand,
 };
-use std::collections::BTreeMap;
 
 fn owner() -> OwnerId {
     OwnerId::parse("owner-1").expect("valid")
@@ -77,7 +77,7 @@ fn key(output: &str, workspace: &str) -> DomainKey {
 fn complete_obs(
     session: &Session,
     extra: Vec<ObservedWindow>,
-) -> plasma_auto_tiler::session::SessionObservation {
+) -> tiler_core::session::SessionObservation {
     let mut windows: Vec<ObservedWindow> = session
         .snapshot()
         .windows
@@ -95,7 +95,7 @@ fn complete_obs(
     windows.extend(session.exception_observed());
     windows.extend(extra);
     windows.sort_by(|a, b| a.window.0.cmp(&b.window.0));
-    plasma_auto_tiler::session::SessionObservation {
+    tiler_core::session::SessionObservation {
         observation: Observation::new(
             owner(),
             generation(),
@@ -132,7 +132,7 @@ fn admit_commit(session: &mut Session, window: &str, horiz: bool, corr: &str) {
             &cmd,
             &obs,
             &correlation(corr),
-            &plasma_auto_tiler::contract::LifecycleCapabilities::full(),
+            &tiler_core::contract::LifecycleCapabilities::full(),
         )
         .unwrap_or_else(|e| panic!("admit {window}: {e:?}"));
     session
@@ -145,7 +145,7 @@ fn admit_commit(session: &mut Session, window: &str, horiz: bool, corr: &str) {
         ))
         .expect("ack");
     session
-        .verify_lifecycle(&plasma_auto_tiler::contract::LifecyclePostObservation::new(
+        .verify_lifecycle(&tiler_core::contract::LifecyclePostObservation::new(
             Observation::new(owner(), generation(), base, 200 + base),
             correlation(corr),
             true,
@@ -184,7 +184,7 @@ fn focus_commit(
             direction,
             &obs,
             &correlation(corr),
-            &plasma_auto_tiler::contract::FocusCapabilities::full(),
+            &tiler_core::contract::FocusCapabilities::full(),
         )
         .unwrap_or_else(|e| panic!("focus {direction:?}: {e:?}"));
     session
@@ -197,7 +197,7 @@ fn focus_commit(
         ))
         .expect("ack");
     session
-        .verify_focus(&plasma_auto_tiler::contract::FocusPostObservation::new(
+        .verify_focus(&tiler_core::contract::FocusPostObservation::new(
             Observation::new(owner(), generation(), base, 950 + base),
             correlation(corr),
             true,
@@ -222,7 +222,7 @@ fn move_commit_focused(
             direction,
             &obs,
             &correlation(corr),
-            &plasma_auto_tiler::directional::Capabilities::full(),
+            &tiler_core::directional::Capabilities::full(),
         )
         .unwrap_or_else(|e| panic!("move {direction:?}: {e:?}"));
     session
@@ -235,7 +235,7 @@ fn move_commit_focused(
         ))
         .expect("ack");
     session
-        .verify_move(&plasma_auto_tiler::contract::PostObservation::new(
+        .verify_move(&tiler_core::contract::PostObservation::new(
             Observation::new(owner(), generation(), base, 300 + base),
             correlation(corr),
             true,
@@ -254,7 +254,7 @@ fn resize_commit(
     window: &WindowId,
     direction: Direction,
     corr: &str,
-) -> plasma_auto_tiler::session::SessionResizePlan {
+) -> tiler_core::session::SessionResizePlan {
     let obs = complete_obs(session, vec![]);
     let base = session.accepted_revision();
     let plan = session
@@ -262,7 +262,7 @@ fn resize_commit(
             domain,
             window,
             direction,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obs,
             &correlation(corr),
@@ -305,7 +305,7 @@ fn collect_leaves(node: &Node, out: &mut Vec<String>) {
         }
     }
 }
-fn assert_resize_geometry(plan: &plasma_auto_tiler::session::SessionResizePlan) {
+fn assert_resize_geometry(plan: &tiler_core::session::SessionResizePlan) {
     assert!(!plan.desired_geometry.is_empty());
     for g in &plan.desired_geometry {
         assert!(g.rect.w > 0 && g.rect.h > 0, "positive geometry");
@@ -440,7 +440,7 @@ fn nested_ancestor_resolution_outward() {
             axis,
             ..
         } => {
-            assert_eq!(*axis, plasma_auto_tiler::directional::Axis::Horizontal);
+            assert_eq!(*axis, tiler_core::directional::Axis::Horizontal);
             assert_eq!(*shares, vec![387, 411]);
             assert_eq!(children.len(), 2);
             match &children[1] {
@@ -529,7 +529,7 @@ fn edge_refusals_are_unchanged() {
                 &k,
                 &w1,
                 dir,
-                plasma_auto_tiler::contract::ResizeMode::Outwards,
+                tiler_core::contract::ResizeMode::Outwards,
                 0,
                 &obs,
                 &correlation("e-1"),
@@ -548,7 +548,7 @@ fn edge_refusals_are_unchanged() {
             &k,
             &w2,
             Direction::Right,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obs,
             &correlation("e-2"),
@@ -562,8 +562,8 @@ fn edge_refusals_are_unchanged() {
 #[test]
 fn normalization_and_clamp_to_exhaustion() {
     // COSMIC policy checks through the versioned seam (no 1/16 project step).
-    use plasma_auto_tiler::cosmic_v1;
-    use plasma_auto_tiler::directional::Axis;
+    use tiler_core::cosmic_v1;
+    use tiler_core::directional::Axis;
     assert_eq!(cosmic_v1::keyboard_step_px(0), 12);
     assert_eq!(cosmic_v1::keyboard_step_px(1), 14);
     assert_eq!(cosmic_v1::keyboard_step_px(4), 20);
@@ -599,7 +599,7 @@ fn normalization_and_clamp_to_exhaustion() {
             &k,
             &w,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obs,
             &correlation(&corr),
@@ -656,7 +656,7 @@ fn focus_retained_and_plan_carries_semantics() {
             &k,
             &w2,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obs,
             &correlation("sem-1"),
@@ -673,11 +673,13 @@ fn focus_retained_and_plan_carries_semantics() {
     assert_eq!(plan.dispatch.base_revision, s.accepted_revision());
     assert_eq!(
         plan.dispatch.required_capability,
-        plasma_auto_tiler::contract::ResizeCapability::KeyboardResize
+        tiler_core::contract::ResizeCapability::KeyboardResize
     );
-    assert!(plan.dispatch.preconditions.contains(
-        &plasma_auto_tiler::contract::ResizePrecondition::AdapterMustVerifyPostconditions
-    ));
+    assert!(
+        plan.dispatch
+            .preconditions
+            .contains(&tiler_core::contract::ResizePrecondition::AdapterMustVerifyPostconditions)
+    );
     assert_eq!(
         plan.resize_plan.operation.target_group,
         plan.dispatch.operation.target_group
@@ -723,7 +725,7 @@ fn refusal_matrix_unknown_mismatch_capability_stale_pending() {
             &bad_domain,
             &w2,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obs,
             &correlation("x-1"),
@@ -737,7 +739,7 @@ fn refusal_matrix_unknown_mismatch_capability_stale_pending() {
             &k,
             &WindowId("win-9".to_owned()),
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obs,
             &correlation("x-2"),
@@ -751,7 +753,7 @@ fn refusal_matrix_unknown_mismatch_capability_stale_pending() {
             &k,
             &WindowId("win-1".to_owned()),
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obs,
             &correlation("x-3"),
@@ -765,7 +767,7 @@ fn refusal_matrix_unknown_mismatch_capability_stale_pending() {
             &k,
             &w2,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obs,
             &correlation("x-4"),
@@ -782,7 +784,7 @@ fn refusal_matrix_unknown_mismatch_capability_stale_pending() {
             &k,
             &w2,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &stale,
             &correlation("x-5"),
@@ -801,7 +803,7 @@ fn refusal_matrix_unknown_mismatch_capability_stale_pending() {
         &pk,
         &pw,
         Direction::Left,
-        plasma_auto_tiler::contract::ResizeMode::Outwards,
+        tiler_core::contract::ResizeMode::Outwards,
         0,
         &pobs,
         &correlation("pend-1"),
@@ -814,7 +816,7 @@ fn refusal_matrix_unknown_mismatch_capability_stale_pending() {
             &pk,
             &pw,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &pobs,
             &correlation("pend-2"),
@@ -838,7 +840,7 @@ fn exact_ack_verify_and_cross_kind_mismatch_diverges() {
             &k,
             &w2,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obs,
             &correlation("v-1"),
@@ -864,7 +866,7 @@ fn exact_ack_verify_and_cross_kind_mismatch_diverges() {
             bad_pre,
             plan.dispatch.operation.clone(),
         )),
-        Err(plasma_auto_tiler::reconcile::VerifyError::Diverged(
+        Err(tiler_core::reconcile::VerifyError::Diverged(
             DivergenceKind::PostconditionMismatch
         ))
     );
@@ -899,7 +901,7 @@ fn cross_kind_verify_diverges() {
             &k,
             &w2,
             Direction::Right,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obs,
             &correlation("x-1"),
@@ -915,7 +917,7 @@ fn cross_kind_verify_diverges() {
     ))
     .expect("ack");
     // Cross-kind: verify_resize pending with a focus post-observation diverges.
-    let focus_op = plasma_auto_tiler::contract::FocusOperation {
+    let focus_op = tiler_core::contract::FocusOperation {
         domain_output: k.output.clone(),
         domain_workspace: k.workspace.clone(),
         from_leaf: NodeId("leaf-win-2".to_owned()),
@@ -927,7 +929,7 @@ fn cross_kind_verify_diverges() {
         cross_source_output: None,
         cross_source_workspace: None,
     };
-    let cross = plasma_auto_tiler::contract::FocusPostObservation::new(
+    let cross = tiler_core::contract::FocusPostObservation::new(
         Observation::new(owner(), generation(), base, 2),
         correlation("x-1"),
         true,
@@ -936,7 +938,7 @@ fn cross_kind_verify_diverges() {
     );
     assert_eq!(
         s.verify_focus(&cross),
-        Err(plasma_auto_tiler::reconcile::VerifyError::Diverged(
+        Err(tiler_core::reconcile::VerifyError::Diverged(
             DivergenceKind::PostconditionMismatch
         ))
     );
@@ -962,7 +964,7 @@ fn deterministic_replay() {
             &ka,
             &wa,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obsa,
             &correlation("rep-1"),
@@ -974,7 +976,7 @@ fn deterministic_replay() {
             &kb,
             &wb,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obsb,
             &correlation("rep-1"),
@@ -1057,7 +1059,7 @@ fn bounded_property_matrix() {
                         back,
                         &obs,
                         &correlation(&fcorr),
-                        &plasma_auto_tiler::contract::FocusCapabilities::full(),
+                        &tiler_core::contract::FocusCapabilities::full(),
                     ) {
                         let base = s.accepted_revision();
                         s.acknowledge(&AdapterAck::new(
@@ -1068,7 +1070,7 @@ fn bounded_property_matrix() {
                             AckOutcome::Accepted,
                         ))
                         .expect("ack");
-                        s.verify_focus(&plasma_auto_tiler::contract::FocusPostObservation::new(
+                        s.verify_focus(&tiler_core::contract::FocusPostObservation::new(
                             Observation::new(owner(), generation(), base, 700 + base),
                             correlation(&fcorr),
                             true,
@@ -1085,7 +1087,7 @@ fn bounded_property_matrix() {
                     &k,
                     &fw,
                     dir,
-                    plasma_auto_tiler::contract::ResizeMode::Outwards,
+                    tiler_core::contract::ResizeMode::Outwards,
                     0,
                     &obs,
                     &correlation(&corr),
@@ -1259,7 +1261,7 @@ fn capability_missing_at_edge_is_unsupported_not_unchanged() {
             &k,
             &w1,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obs,
             &correlation("cap-edge-1"),
@@ -1275,7 +1277,7 @@ fn capability_missing_at_edge_is_unsupported_not_unchanged() {
             &k,
             &w1,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obs,
             &correlation("cap-edge-2"),
@@ -1302,7 +1304,7 @@ fn cosmic_fixed_minima_govern_without_separate_capability() {
             &k,
             &w2,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obs,
             &correlation("cap-native-1"),
@@ -1318,7 +1320,7 @@ fn cosmic_fixed_minima_govern_without_separate_capability() {
             &k,
             &w2,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obs,
             &correlation("cap-native-2"),
@@ -1330,7 +1332,7 @@ fn cosmic_fixed_minima_govern_without_separate_capability() {
 
 #[test]
 fn flagged_observation_refuses_fail_closed() {
-    use plasma_auto_tiler::session::{ExceptionBehavior, SessionCommand};
+    use tiler_core::session::{ExceptionBehavior, SessionCommand};
     let mut s = single_session();
     admit_commit(&mut s, "win-1", true, "c-1");
     admit_commit(&mut s, "win-2", true, "c-2");
@@ -1349,7 +1351,7 @@ fn flagged_observation_refuses_fail_closed() {
             &k,
             &w2,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obs,
             &correlation("flag-1"),
@@ -1394,7 +1396,7 @@ fn flagged_observation_refuses_fail_closed() {
             &defer,
             &tobs,
             &correlation("flag-defer"),
-            &plasma_auto_tiler::contract::LifecycleCapabilities::full(),
+            &tiler_core::contract::LifecycleCapabilities::full(),
         )
         .expect("defer");
     t.acknowledge(&AdapterAck::new(
@@ -1405,7 +1407,7 @@ fn flagged_observation_refuses_fail_closed() {
         AckOutcome::Accepted,
     ))
     .expect("ack");
-    t.verify_lifecycle(&plasma_auto_tiler::contract::LifecyclePostObservation::new(
+    t.verify_lifecycle(&tiler_core::contract::LifecyclePostObservation::new(
         Observation::new(owner(), generation(), tbase, 900 + tbase),
         correlation("flag-defer"),
         true,
@@ -1420,7 +1422,7 @@ fn flagged_observation_refuses_fail_closed() {
             &tk,
             &WindowId("win-9".to_owned()),
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &tkobs,
             &correlation("flag-2"),
@@ -1446,7 +1448,7 @@ fn partial_cross_domain_malformed_observations_refuse() {
             &k,
             &w2,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &partial,
             &correlation("obs-partial"),
@@ -1463,7 +1465,7 @@ fn partial_cross_domain_malformed_observations_refuse() {
             &k,
             &w2,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &cross,
             &correlation("obs-cross"),
@@ -1480,7 +1482,7 @@ fn partial_cross_domain_malformed_observations_refuse() {
             &k,
             &w2,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &malformed,
             &correlation("obs-malformed"),
@@ -1497,7 +1499,7 @@ fn partial_cross_domain_malformed_observations_refuse() {
             &k,
             &w2,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &dup,
             &correlation("obs-dup"),
@@ -1510,10 +1512,8 @@ fn partial_cross_domain_malformed_observations_refuse() {
 
 #[test]
 fn overflow_shares_are_unrepresentable_malformed() {
-    use plasma_auto_tiler::directional::{Axis, Node as DNode};
-    use plasma_auto_tiler::directional::{
-        NodeId as DNodeId, expected_resize_shares, plan_resize_step,
-    };
+    use tiler_core::directional::{Axis, Node as DNode};
+    use tiler_core::directional::{NodeId as DNodeId, expected_resize_shares, plan_resize_step};
     // Valid topology with an unrepresentable x16 normalization.
     let tree = DNode::Group {
         id: DNodeId("root".to_owned()),
@@ -1530,7 +1530,7 @@ fn overflow_shares_are_unrepresentable_malformed() {
     };
     assert_eq!(
         plan_resize_step(&tree, &DNodeId("A".to_owned()), Direction::Right),
-        Err(plasma_auto_tiler::directional::ResizePlanError::Malformed)
+        Err(tiler_core::directional::ResizePlanError::Malformed)
     );
     assert_eq!(expected_resize_shares(&[u64::MAX - 100, 1], 0, 1), None);
 }
@@ -1555,7 +1555,7 @@ fn vertical_gap_conservation() {
             &k,
             &w2,
             Direction::Up,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obs,
             &correlation("vgap-1"),
@@ -1623,7 +1623,7 @@ fn divisible_step_inverts_exactly_via_primitive() {
 
 #[test]
 fn pending_desired_clears_on_resize_terminal_divergence() {
-    use plasma_auto_tiler::contract::DivergenceKind;
+    use tiler_core::contract::DivergenceKind;
     // Verify-path divergence clears staged desired state.
     let mut s = single_session();
     admit_commit(&mut s, "win-1", true, "c-1");
@@ -1637,7 +1637,7 @@ fn pending_desired_clears_on_resize_terminal_divergence() {
             &k,
             &w2,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obs,
             &correlation("div-1"),
@@ -1664,7 +1664,7 @@ fn pending_desired_clears_on_resize_terminal_divergence() {
             bad_pre,
             plan.dispatch.operation.clone(),
         )),
-        Err(plasma_auto_tiler::reconcile::VerifyError::Diverged(
+        Err(tiler_core::reconcile::VerifyError::Diverged(
             DivergenceKind::PostconditionMismatch
         ))
     );
@@ -1682,7 +1682,7 @@ fn pending_desired_clears_on_resize_terminal_divergence() {
         &tk,
         &tw,
         Direction::Left,
-        plasma_auto_tiler::contract::ResizeMode::Outwards,
+        tiler_core::contract::ResizeMode::Outwards,
         0,
         &tobs,
         &correlation("div-2"),
@@ -1698,7 +1698,7 @@ fn pending_desired_clears_on_resize_terminal_divergence() {
             tbase,
             AckOutcome::Accepted,
         )),
-        Err(plasma_auto_tiler::reconcile::AckError::Diverged(
+        Err(tiler_core::reconcile::AckError::Diverged(
             DivergenceKind::CorrelationMismatch
         ))
     );
@@ -1707,7 +1707,7 @@ fn pending_desired_clears_on_resize_terminal_divergence() {
 
 #[test]
 fn keyboard_inwards_shrinks_focused_outwards_grows() {
-    use plasma_auto_tiler::contract::ResizeMode;
+    use tiler_core::contract::ResizeMode;
     let mut s = single_session();
     admit_commit(&mut s, "win-1", true, "c-1");
     admit_commit(&mut s, "win-2", true, "c-2");
@@ -1792,7 +1792,7 @@ fn pair_threshold_uses_direct_sum_not_union_with_gap() {
             &k,
             &w,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obs,
             &correlation("gap-719"),
@@ -1812,7 +1812,7 @@ fn pair_threshold_uses_direct_sum_not_union_with_gap() {
             &k2,
             &w2,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obs2,
             &correlation("gap-720"),
@@ -1832,7 +1832,7 @@ fn pair_threshold_uses_direct_sum_not_union_with_gap() {
             &vk,
             &vw,
             Direction::Up,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &vobs,
             &correlation("gap-479"),
@@ -1851,7 +1851,7 @@ fn pair_threshold_uses_direct_sum_not_union_with_gap() {
             &vk2,
             &vw2,
             Direction::Up,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &vobs2,
             &correlation("gap-480"),
@@ -1866,8 +1866,8 @@ fn keyboard_one_sided_clamp_and_dedicated_reconcile_path() {
     // One-sided source clamp differs from pointer two-sided when the grow
     // side sits below the child minimum: keyboard keeps grow at 232, pointer
     // would correct to 360/360.
-    use plasma_auto_tiler::cosmic_v1;
-    use plasma_auto_tiler::directional::Axis;
+    use tiler_core::cosmic_v1;
+    use tiler_core::directional::Axis;
     assert_eq!(
         cosmic_v1::clamp_keyboard_shrink_pair(500, 220, 12, Axis::Horizontal),
         Some((488, 232))
@@ -1889,7 +1889,7 @@ fn keyboard_one_sided_clamp_and_dedicated_reconcile_path() {
             &k,
             &w2,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Inwards,
+            tiler_core::contract::ResizeMode::Inwards,
             0,
             &obs,
             &correlation("kbd-1"),
@@ -1898,11 +1898,11 @@ fn keyboard_one_sided_clamp_and_dedicated_reconcile_path() {
         .expect("keyboard inwards plans");
     assert_eq!(
         plan.resize_plan.intent.mode,
-        plasma_auto_tiler::contract::ResizeMode::Inwards
+        tiler_core::contract::ResizeMode::Inwards
     );
     assert_eq!(
         plan.dispatch.operation.mode,
-        plasma_auto_tiler::contract::ResizeMode::Inwards
+        tiler_core::contract::ResizeMode::Inwards
     );
     // Inwards on the right child shrinks focused: the focused desired
     // width is smaller than the accepted width (share integers scale for
@@ -1924,7 +1924,7 @@ fn keyboard_one_sided_clamp_and_dedicated_reconcile_path() {
                 &tk,
                 &tw,
                 Direction::Left,
-                plasma_auto_tiler::contract::ResizeMode::Outwards,
+                tiler_core::contract::ResizeMode::Outwards,
                 0,
                 &tobs,
                 &correlation("kbd-out"),
@@ -1971,10 +1971,10 @@ fn keyboard_one_sided_clamp_and_dedicated_reconcile_path() {
     .expect("verify");
     // Reconciliation rejects an invalid keyboard fixed-share operation
     // (broken integer scaling) on the dedicated path.
-    use plasma_auto_tiler::contract::{ResizeIntent, ResizeOperation};
-    use plasma_auto_tiler::directional::{NodeId, OutputId, WindowId, WorkspaceId};
-    use plasma_auto_tiler::ids::{CorrelationId, GenerationId, OwnerId};
-    use plasma_auto_tiler::reconcile::Reconciler;
+    use tiler_core::contract::{ResizeIntent, ResizeOperation};
+    use tiler_core::directional::{NodeId, OutputId, WindowId, WorkspaceId};
+    use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
+    use tiler_core::reconcile::Reconciler;
     let owner = OwnerId::parse("owner-1").expect("owner");
     let generation = GenerationId::parse("gen-1").expect("gen");
     let mut r = Reconciler::new(owner.clone(), generation.clone(), 0, 11).expect("reconciler");
@@ -1984,7 +1984,7 @@ fn keyboard_one_sided_clamp_and_dedicated_reconcile_path() {
         focused_leaf: NodeId("leaf-win-2".to_owned()),
         focused_window: WindowId("win-2".to_owned()),
         direction: Direction::Left,
-        mode: plasma_auto_tiler::contract::ResizeMode::Outwards,
+        mode: tiler_core::contract::ResizeMode::Outwards,
     };
     let bad_op = ResizeOperation {
         domain_output: intent.domain_output.clone(),
@@ -1992,7 +1992,7 @@ fn keyboard_one_sided_clamp_and_dedicated_reconcile_path() {
         focused_leaf: intent.focused_leaf.clone(),
         focused_window: intent.focused_window.clone(),
         direction: Direction::Left,
-        mode: plasma_auto_tiler::contract::ResizeMode::Outwards,
+        mode: tiler_core::contract::ResizeMode::Outwards,
         target_group: NodeId("root".to_owned()),
         focused_child: NodeId("leaf-win-2".to_owned()),
         neighbor_child: NodeId("leaf-win-1".to_owned()),
@@ -2001,8 +2001,8 @@ fn keyboard_one_sided_clamp_and_dedicated_reconcile_path() {
         old_shares: vec![1, 1],
         new_shares: vec![14, 17],
     };
-    let bad_plan = plasma_auto_tiler::contract::ResizePlan::for_operation(intent, bad_op);
-    let obs = plasma_auto_tiler::contract::Observation::new(owner, generation, 0, 11);
+    let bad_plan = tiler_core::contract::ResizePlan::for_operation(intent, bad_op);
+    let obs = tiler_core::contract::Observation::new(owner, generation, 0, 11);
     assert!(matches!(
         r.propose_resize(
             &bad_plan,
@@ -2010,7 +2010,7 @@ fn keyboard_one_sided_clamp_and_dedicated_reconcile_path() {
             &CorrelationId::parse("corr-1").expect("corr"),
             &ResizeCapabilities::full(),
         ),
-        Err(plasma_auto_tiler::reconcile::ProposeError::Diverged(_))
+        Err(tiler_core::reconcile::ProposeError::Diverged(_))
     ));
 }
 
@@ -2036,7 +2036,7 @@ fn pair_minimum_refuses_distinct_kind() {
             &k,
             &w,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &obs,
             &correlation("t-pair-min"),
@@ -2064,7 +2064,7 @@ fn pair_minimum_refuses_distinct_kind() {
             &ek,
             &ew,
             Direction::Left,
-            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            tiler_core::contract::ResizeMode::Outwards,
             0,
             &eobs,
             &correlation("t-edge"),

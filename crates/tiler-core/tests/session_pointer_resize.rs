@@ -7,18 +7,18 @@
 //! minimum, projectability, determinism, capability/pending/stale failures,
 //! and exact acknowledge/verify commit versus divergence. No live compositor.
 
-use plasma_auto_tiler::contract::{
+use std::collections::BTreeMap;
+use tiler_core::contract::{
     AckOutcome, AdapterAck, DivergenceKind, Observation, ResizeCapabilities, ResizePostObservation,
 };
-use plasma_auto_tiler::cosmic_v1;
-use plasma_auto_tiler::directional::{Axis, Direction, Node, OutputId, WindowId, WorkspaceId};
-use plasma_auto_tiler::geometry::Rect;
-use plasma_auto_tiler::ids::{CorrelationId, GenerationId, OwnerId};
-use plasma_auto_tiler::session::{
+use tiler_core::cosmic_v1;
+use tiler_core::directional::{Axis, Direction, Node, OutputId, WindowId, WorkspaceId};
+use tiler_core::geometry::Rect;
+use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
+use tiler_core::session::{
     DomainKey, ExceptionFlags, ObservedWindow, OutputDomain, ProposeError, RefusalKind, Session,
     SessionCommand,
 };
-use std::collections::BTreeMap;
 
 fn owner() -> OwnerId {
     OwnerId::parse("owner-1").expect("valid")
@@ -54,7 +54,7 @@ fn key(output: &str, workspace: &str) -> DomainKey {
         workspace: WorkspaceId(workspace.to_owned()),
     }
 }
-fn complete_obs(session: &Session) -> plasma_auto_tiler::session::SessionObservation {
+fn complete_obs(session: &Session) -> tiler_core::session::SessionObservation {
     let mut windows: Vec<ObservedWindow> = session
         .snapshot()
         .windows
@@ -71,7 +71,7 @@ fn complete_obs(session: &Session) -> plasma_auto_tiler::session::SessionObserva
         .collect();
     windows.extend(session.exception_observed());
     windows.sort_by(|a, b| a.window.0.cmp(&b.window.0));
-    plasma_auto_tiler::session::SessionObservation {
+    tiler_core::session::SessionObservation {
         observation: Observation::new(
             owner(),
             generation(),
@@ -130,7 +130,7 @@ fn admit_commit(session: &mut Session, window: &str, horiz: bool, corr: &str) {
             &cmd,
             &obs,
             &correlation(corr),
-            &plasma_auto_tiler::contract::LifecycleCapabilities::full(),
+            &tiler_core::contract::LifecycleCapabilities::full(),
         )
         .unwrap_or_else(|e| panic!("admit {window}: {e:?}"));
     session
@@ -143,7 +143,7 @@ fn admit_commit(session: &mut Session, window: &str, horiz: bool, corr: &str) {
         ))
         .expect("ack");
     session
-        .verify_lifecycle(&plasma_auto_tiler::contract::LifecyclePostObservation::new(
+        .verify_lifecycle(&tiler_core::contract::LifecyclePostObservation::new(
             Observation::new(owner(), generation(), base, 200 + base),
             correlation(corr),
             true,
@@ -178,7 +178,7 @@ fn move_commit_focused(session: &mut Session, direction: Direction, corr: &str) 
             direction,
             &obs,
             &correlation(corr),
-            &plasma_auto_tiler::directional::Capabilities::full(),
+            &tiler_core::directional::Capabilities::full(),
         )
         .unwrap_or_else(|e| panic!("move {direction:?}: {e:?}"));
     session
@@ -191,7 +191,7 @@ fn move_commit_focused(session: &mut Session, direction: Direction, corr: &str) 
         ))
         .expect("ack");
     session
-        .verify_move(&plasma_auto_tiler::contract::PostObservation::new(
+        .verify_move(&tiler_core::contract::PostObservation::new(
             Observation::new(owner(), generation(), base, 300 + base),
             correlation(corr),
             true,
@@ -212,7 +212,7 @@ fn focus_commit_step(session: &mut Session, direction: Direction, corr: &str) {
             direction,
             &obs,
             &correlation(corr),
-            &plasma_auto_tiler::contract::FocusCapabilities::full(),
+            &tiler_core::contract::FocusCapabilities::full(),
         )
         .unwrap_or_else(|e| panic!("focus {direction:?}: {e:?}"));
     session
@@ -225,7 +225,7 @@ fn focus_commit_step(session: &mut Session, direction: Direction, corr: &str) {
         ))
         .expect("ack");
     session
-        .verify_focus(&plasma_auto_tiler::contract::FocusPostObservation::new(
+        .verify_focus(&tiler_core::contract::FocusPostObservation::new(
             Observation::new(owner(), generation(), base, 400 + base),
             correlation(corr),
             true,
@@ -241,7 +241,7 @@ fn pointer_commit(
     direction: Direction,
     boundary: i32,
     corr: &str,
-) -> plasma_auto_tiler::session::SessionResizePlan {
+) -> tiler_core::session::SessionResizePlan {
     let obs = complete_obs(session);
     let base = session.accepted_revision();
     let plan = session
@@ -362,7 +362,7 @@ fn nested_outer_boundary_with_inner_untouched() {
             Direction::Up,
             &obs,
             &correlation("f-1"),
-            &plasma_auto_tiler::contract::FocusCapabilities::full(),
+            &tiler_core::contract::FocusCapabilities::full(),
         )
         .expect("focus");
     s.acknowledge(&AdapterAck::new(
@@ -373,7 +373,7 @@ fn nested_outer_boundary_with_inner_untouched() {
         AckOutcome::Accepted,
     ))
     .expect("ack");
-    s.verify_focus(&plasma_auto_tiler::contract::FocusPostObservation::new(
+    s.verify_focus(&tiler_core::contract::FocusPostObservation::new(
         Observation::new(owner(), generation(), base, 700),
         correlation("f-1"),
         true,
@@ -832,7 +832,7 @@ fn exact_ack_verify_commit_versus_divergence() {
     // Operation shape matches the shared keyboard reconciliation boundary.
     assert_eq!(
         plan.dispatch.required_capability,
-        plasma_auto_tiler::contract::ResizeCapability::PointerResize
+        tiler_core::contract::ResizeCapability::PointerResize
     );
     s.acknowledge(&AdapterAck::new(
         correlation("v-1"),
@@ -853,7 +853,7 @@ fn exact_ack_verify_commit_versus_divergence() {
             bad_pre,
             plan.dispatch.operation.clone(),
         )),
-        Err(plasma_auto_tiler::reconcile::VerifyError::Diverged(
+        Err(tiler_core::reconcile::VerifyError::Diverged(
             DivergenceKind::PostconditionMismatch
         ))
     );
@@ -967,8 +967,8 @@ fn ordinary_boundary_plans_and_projects_exactly() {
 fn pointer_two_sided_correction_preserved() {
     // Pointer path clamps two-sided to the COSMIC child minima, unlike the
     // keyboard one-sided shrink clamp.
-    use plasma_auto_tiler::cosmic_v1;
-    use plasma_auto_tiler::directional::Axis;
+    use tiler_core::cosmic_v1;
+    use tiler_core::directional::Axis;
     assert_eq!(
         cosmic_v1::clamp_pair_split(800, 10, Axis::Horizontal),
         Some((360, 440))
@@ -1002,7 +1002,7 @@ fn pointer_two_sided_correction_preserved() {
         .expect("pointer plans");
     assert_eq!(
         plan.dispatch.required_capability,
-        plasma_auto_tiler::contract::ResizeCapability::PointerResize
+        tiler_core::contract::ResizeCapability::PointerResize
     );
     assert!(!plan.resize_plan.operation.new_shares.contains(&0));
     assert_ne!(

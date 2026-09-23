@@ -33,12 +33,12 @@ const KWIN_SERVICE: &str = "org.kde.KWin";
 /// bounded recoverable rejection kind out. Retained live-tree state across
 /// calls (per-domain committed sessions, single discard-and-rebuild
 /// recovery), so fresh observations recover after any rejection. Rust owns
-/// all policy via `crate::planner_protocol`.
+/// all policy via `tiler_protocol::planner_protocol`.
 pub const PLAN_METHOD: &str = "DescribePlan";
 /// Bounded plan request cap (mirrors the portable planner protocol bound).
-pub const PLAN_MAX_REQUEST: usize = crate::planner_protocol::PLAN_MAX_REQUEST_BYTES;
+pub const PLAN_MAX_REQUEST: usize = tiler_protocol::planner_protocol::PLAN_MAX_REQUEST_BYTES;
 /// Bounded plan reply cap (mirrors the portable planner protocol bound).
-pub const PLAN_MAX_REPLY: usize = crate::planner_protocol::PLAN_MAX_REPLY_BYTES;
+pub const PLAN_MAX_REPLY: usize = tiler_protocol::planner_protocol::PLAN_MAX_REPLY_BYTES;
 /// Bounded fixed in-band unauthorized rejection. It never parses or echoes
 /// request data and is returned as `Ok`, never as `PlannerError`.
 pub const UNAUTHORIZED_REPLY: &str =
@@ -92,7 +92,7 @@ pub fn planner_trace_enabled() -> bool {
 /// thin drop-then-emit sequence (lock released before logging, exactly like
 /// the success path) and the redaction behavior is unit-testable.
 fn plan_egress_for_error(request: &str) -> String {
-    crate::planner_protocol::summarize_plan_egress(request, "")
+    tiler_protocol::planner_protocol::summarize_plan_egress(request, "")
 }
 
 #[derive(Clone, Copy)]
@@ -134,7 +134,7 @@ pub enum PlannerError {
 #[derive(Clone, Debug)]
 pub struct PlannerEndpoint {
     operation_lock: Arc<async_lock::Mutex<()>>,
-    planner: Arc<std::sync::Mutex<crate::planner_protocol::Planner>>,
+    planner: Arc<std::sync::Mutex<tiler_protocol::planner_protocol::Planner>>,
 }
 
 impl PlannerEndpoint {
@@ -143,13 +143,13 @@ impl PlannerEndpoint {
         Self {
             operation_lock: Arc::new(async_lock::Mutex::new(())),
             planner: Arc::new(std::sync::Mutex::new(
-                crate::planner_protocol::Planner::new(),
+                tiler_protocol::planner_protocol::Planner::new(),
             )),
         }
     }
 
     /// Stage 4 retained planning route. Delegates to the authoritative
-    /// live-tree [`crate::planner_protocol::Planner`] held across calls
+    /// live-tree [`tiler_protocol::planner_protocol::Planner`] held across calls
     /// (per-domain committed sessions, single discard-and-rebuild recovery);
     /// application-level rejections arrive as `Ok` JSON so fresh observations
     /// recover. Only an oversize reply or a poisoned planner lock fails
@@ -284,16 +284,16 @@ impl PlannerEndpoint {
         // preserving ingress/egress order in the log.
         eprintln!(
             "{}",
-            crate::planner_protocol::summarize_plan_ingress(&request)
+            tiler_protocol::planner_protocol::summarize_plan_ingress(&request)
         );
         eprintln!(
             "{}",
-            crate::planner_protocol::summarize_plan_egress(&request, &reply)
+            tiler_protocol::planner_protocol::summarize_plan_egress(&request, &reply)
         );
         if planner_trace_enabled() {
             eprintln!(
                 "{}",
-                crate::planner_protocol::summarize_plan_shape(&request)
+                tiler_protocol::planner_protocol::summarize_plan_shape(&request)
             );
         }
         Ok(reply)
@@ -549,11 +549,11 @@ mod tests {
         assert_eq!(PLAN_MAX_REPLY, 64 * 1024);
         assert_eq!(
             PLAN_MAX_REPLY,
-            crate::planner_protocol::PLAN_MAX_REPLY_BYTES
+            tiler_protocol::planner_protocol::PLAN_MAX_REPLY_BYTES
         );
         assert_eq!(
             PLAN_MAX_REQUEST,
-            crate::planner_protocol::PLAN_MAX_REQUEST_BYTES
+            tiler_protocol::planner_protocol::PLAN_MAX_REQUEST_BYTES
         );
     }
 

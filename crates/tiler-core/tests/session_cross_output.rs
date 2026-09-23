@@ -8,13 +8,13 @@
 //! wrapping, or shortcuts. Fake-test disclaimer: these assert the portable
 //! planning/validation logic only, not actual output-switch acceptance.
 
-use plasma_auto_tiler::contract::{
+use tiler_core::contract::{
     AckOutcome, AdapterAck, FocusCapabilities, FocusPostObservation, Observation, PostObservation,
 };
-use plasma_auto_tiler::directional::{Axis, Capabilities, Direction, OutputId, WorkspaceId};
-use plasma_auto_tiler::geometry::Rect;
-use plasma_auto_tiler::ids::{CorrelationId, GenerationId, OwnerId};
-use plasma_auto_tiler::session::{
+use tiler_core::directional::{Axis, Capabilities, Direction, OutputId, WorkspaceId};
+use tiler_core::geometry::Rect;
+use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
+use tiler_core::session::{
     DomainKey, ExceptionFlags, ObservedWindow, OutputDomain, ProposeError, RefusalKind, Session,
     SessionCommand, SessionObservation,
 };
@@ -119,7 +119,7 @@ fn admit_with_placement(
     corr: &str,
     placement_bounds: Rect,
 ) {
-    use plasma_auto_tiler::contract::LifecycleCapabilities;
+    use tiler_core::contract::LifecycleCapabilities;
     let base = session.accepted_revision();
     let mut observed: Vec<ObservedWindow> = session
         .snapshot()
@@ -137,7 +137,7 @@ fn admit_with_placement(
         .collect();
     observed.extend(session.exception_observed());
     observed.push(ObservedWindow {
-        window: plasma_auto_tiler::directional::WindowId(window.to_owned()),
+        window: tiler_core::directional::WindowId(window.to_owned()),
         output: OutputId(output.to_owned()),
         workspace: WorkspaceId(workspace.to_owned()),
         floating: false,
@@ -154,7 +154,7 @@ fn admit_with_placement(
     let plan = session
         .propose(
             &SessionCommand::Admit {
-                window: plasma_auto_tiler::directional::WindowId(window.to_owned()),
+                window: tiler_core::directional::WindowId(window.to_owned()),
                 output: OutputId(output.to_owned()),
                 workspace: WorkspaceId(workspace.to_owned()),
                 exceptions: ExceptionFlags::none(),
@@ -176,7 +176,7 @@ fn admit_with_placement(
         ))
         .expect("ack");
     session
-        .verify_lifecycle(&plasma_auto_tiler::contract::LifecyclePostObservation::new(
+        .verify_lifecycle(&tiler_core::contract::LifecyclePostObservation::new(
             Observation::new(owner(), generation(), base, base),
             correlation,
             true,
@@ -185,10 +185,7 @@ fn admit_with_placement(
         ))
         .expect("verify");
 }
-fn focused_window(
-    session: &Session,
-    domain: &DomainKey,
-) -> plasma_auto_tiler::directional::WindowId {
+fn focused_window(session: &Session, domain: &DomainKey) -> tiler_core::directional::WindowId {
     let (Some(focus_domain), Some(focus_leaf)) = session.focus() else {
         panic!("no focus")
     };
@@ -208,7 +205,7 @@ fn window_in(
     session: &Session,
     domain: &DomainKey,
     window: &str,
-) -> plasma_auto_tiler::directional::WindowId {
+) -> tiler_core::directional::WindowId {
     session
         .snapshot()
         .windows
@@ -225,7 +222,7 @@ fn move_commit(
     domain: &DomainKey,
     direction: Direction,
     corr: &str,
-) -> plasma_auto_tiler::session::SessionMovePlan {
+) -> tiler_core::session::SessionMovePlan {
     let window = focused_window(session, domain);
     let obs = complete_obs(session);
     let before_rev = session.accepted_revision();
@@ -263,7 +260,7 @@ fn tree_of(
     session: &Session,
     output: &str,
     workspace: &str,
-) -> Option<plasma_auto_tiler::directional::Node> {
+) -> Option<tiler_core::directional::Node> {
     let k = key(output, workspace);
     session
         .snapshot()
@@ -274,14 +271,14 @@ fn tree_of(
 }
 fn root_axis(session: &Session, output: &str, workspace: &str) -> Option<Axis> {
     match tree_of(session, output, workspace)? {
-        plasma_auto_tiler::directional::Node::Leaf { .. } => None,
-        plasma_auto_tiler::directional::Node::Group { axis, .. } => Some(axis),
+        tiler_core::directional::Node::Leaf { .. } => None,
+        tiler_core::directional::Node::Group { axis, .. } => Some(axis),
     }
 }
 fn root_id(session: &Session, output: &str, workspace: &str) -> Option<String> {
     tree_of(session, output, workspace).map(|t| match t {
-        plasma_auto_tiler::directional::Node::Leaf { id } => id.0,
-        plasma_auto_tiler::directional::Node::Group { id, .. } => id.0,
+        tiler_core::directional::Node::Leaf { id } => id.0,
+        tiler_core::directional::Node::Group { id, .. } => id.0,
     })
 }
 /// Direct parent group of `leaf`: (group id, axis, ordered child ids).
@@ -292,16 +289,16 @@ fn parent_of(
     leaf: &str,
 ) -> Option<(String, Axis, Vec<String>)> {
     fn find(
-        node: &plasma_auto_tiler::directional::Node,
+        node: &tiler_core::directional::Node,
         leaf: &str,
     ) -> Option<(String, Axis, Vec<String>)> {
         match node {
-            plasma_auto_tiler::directional::Node::Leaf { .. } => None,
-            plasma_auto_tiler::directional::Node::Group {
+            tiler_core::directional::Node::Leaf { .. } => None,
+            tiler_core::directional::Node::Group {
                 id, axis, children, ..
             } => {
                 for child in children {
-                    if let plasma_auto_tiler::directional::Node::Leaf { id: cid } = child
+                    if let tiler_core::directional::Node::Leaf { id: cid } = child
                         && cid.0 == leaf
                     {
                         return Some((
@@ -310,12 +307,8 @@ fn parent_of(
                             children
                                 .iter()
                                 .map(|c| match c {
-                                    plasma_auto_tiler::directional::Node::Leaf { id } => {
-                                        id.0.clone()
-                                    }
-                                    plasma_auto_tiler::directional::Node::Group { id, .. } => {
-                                        id.0.clone()
-                                    }
+                                    tiler_core::directional::Node::Leaf { id } => id.0.clone(),
+                                    tiler_core::directional::Node::Group { id, .. } => id.0.clone(),
                                 })
                                 .collect(),
                         ));
@@ -333,7 +326,7 @@ fn parent_of(
 fn focus_commit(
     session: &mut Session,
     domain: &DomainKey,
-    window: &plasma_auto_tiler::directional::WindowId,
+    window: &tiler_core::directional::WindowId,
     direction: Direction,
     corr: &str,
 ) {
@@ -371,7 +364,7 @@ fn focus_commit(
 /// Every desired rectangle is positive, contained in its domain work area,
 /// and covers exactly the tiled windows of the listed affected domains.
 fn assert_geometry_complete_for(
-    plan: &plasma_auto_tiler::session::SessionMovePlan,
+    plan: &tiler_core::session::SessionMovePlan,
     session: &Session,
     affected: &[(&str, &str)],
 ) {
@@ -425,10 +418,10 @@ fn leaves(session: &Session, output: &str, workspace: &str) -> Vec<String> {
     {
         Some(view) => match &view.tree {
             Some(tree) => {
-                fn collect(t: &plasma_auto_tiler::directional::Node, out: &mut Vec<String>) {
+                fn collect(t: &tiler_core::directional::Node, out: &mut Vec<String>) {
                     match t {
-                        plasma_auto_tiler::directional::Node::Leaf { id } => out.push(id.0.clone()),
-                        plasma_auto_tiler::directional::Node::Group { children, .. } => {
+                        tiler_core::directional::Node::Leaf { id } => out.push(id.0.clone()),
+                        tiler_core::directional::Node::Group { children, .. } => {
                             for c in children {
                                 collect(c, out);
                             }
@@ -493,9 +486,9 @@ fn cross_workspace_s20_occupied_single_leaf() {
     }
     assert_eq!(focused_window(&s, &k2).0, "win-a");
     let plan = move_commit(&mut s, &k2, Direction::Left, "move-s20");
-    assert_eq!(plan.dispatch.rule, plasma_auto_tiler::directional::Rule::R4);
+    assert_eq!(plan.dispatch.rule, tiler_core::directional::Rule::R4);
     match &plan.dispatch.operation {
-        plasma_auto_tiler::directional::MoveOperation::CrossOutput {
+        tiler_core::directional::MoveOperation::CrossOutput {
             target_output,
             target_workspace,
             target,
@@ -505,7 +498,7 @@ fn cross_workspace_s20_occupied_single_leaf() {
             assert_eq!(target_workspace.0, "ws-a");
             assert_eq!(
                 *target,
-                plasma_auto_tiler::directional::CrossOutputTarget::Occupied
+                tiler_core::directional::CrossOutputTarget::Occupied
             );
         }
         other => panic!("expected cross-output, got {other:?}"),
@@ -566,12 +559,10 @@ fn cross_workspace_s21_perpendicular_no_cross() {
     let windows_before = s.snapshot().windows.clone();
     let plan = move_commit(&mut s, &k2, Direction::Left, "s21-move");
     // Local R1 only: never a cross-output transfer operation.
-    assert_eq!(plan.dispatch.rule, plasma_auto_tiler::directional::Rule::R1);
+    assert_eq!(plan.dispatch.rule, tiler_core::directional::Rule::R1);
     match &plan.dispatch.operation {
-        plasma_auto_tiler::directional::MoveOperation::WrapPerpendicular {
-            container,
-            axis,
-            ..
+        tiler_core::directional::MoveOperation::WrapPerpendicular {
+            container, axis, ..
         } => {
             assert_eq!(*axis, Axis::Horizontal);
             assert!(!container.0.is_empty());
@@ -649,7 +640,7 @@ fn cross_workspace_s22_empty_target() {
     // Empty the target domain out-1/ws-a (it starts empty: no admissions).
     assert_eq!(leaves(&s, "out-1", "ws-a"), Vec::<String>::new());
     let plan = move_commit(&mut s, &k2, Direction::Left, "move-s22");
-    assert_eq!(plan.dispatch.rule, plasma_auto_tiler::directional::Rule::R4);
+    assert_eq!(plan.dispatch.rule, tiler_core::directional::Rule::R4);
     assert_eq!(plan.desired_focus_domain, key("out-1", "ws-a"));
     assert_eq!(leaves(&s, "out-1", "ws-a"), vec!["leaf-win-a".to_string()]);
     assert_eq!(leaves(&s, "out-2", "ws-b"), vec!["leaf-win-b".to_string()]);
@@ -695,9 +686,9 @@ fn cross_workspace_occupied_multiwindow_focused_insertion() {
     focus_commit(&mut s, &k2, &focused_b, Direction::Left, "mw-focus-a");
     assert_eq!(focused_window(&s, &k2).0, "win-a");
     let plan = move_commit(&mut s, &k2, Direction::Left, "mw-move");
-    assert_eq!(plan.dispatch.rule, plasma_auto_tiler::directional::Rule::R4);
+    assert_eq!(plan.dispatch.rule, tiler_core::directional::Rule::R4);
     match &plan.dispatch.operation {
-        plasma_auto_tiler::directional::MoveOperation::CrossOutput {
+        tiler_core::directional::MoveOperation::CrossOutput {
             target_output,
             target_workspace,
             target,
@@ -707,7 +698,7 @@ fn cross_workspace_occupied_multiwindow_focused_insertion() {
             assert_eq!(target_workspace.0, "ws-a");
             assert_eq!(
                 *target,
-                plasma_auto_tiler::directional::CrossOutputTarget::Occupied
+                tiler_core::directional::CrossOutputTarget::Occupied
             );
         }
         other => panic!("expected cross-output, got {other:?}"),

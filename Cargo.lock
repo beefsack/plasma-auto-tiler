@@ -433,6 +433,7 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "tiler-protocol",
  "zbus",
 ]
 
@@ -605,6 +606,19 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys",
+]
+
+[[package]]
+name = "tiler-core"
+version = "0.1.0"
+
+[[package]]
+name = "tiler-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tiler-core",
 ]
 
 [[package]]

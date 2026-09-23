@@ -28,8 +28,7 @@
         fileset = pkgs.lib.fileset.unions [
           ./Cargo.toml
           ./Cargo.lock
-          ./src
-          ./tests
+          ./crates
           ./test-fixtures
           ./assets/icons/plasma-auto-tiler.svg
           ./home-manager-module.nix
@@ -161,6 +160,7 @@
           version = "0.1.0";
           src = traySource pkgs;
           cargoLock.lockFile = ./Cargo.lock;
+          cargoBuildFlags = [ "-p" "plasma-auto-tiler" ];
           buildInputs = [ pkgs.kdePackages.kcmutils ];
           dontWrapQtApps = true;
           env.PLASMA_AUTO_TILER_KCMSHELL6 =

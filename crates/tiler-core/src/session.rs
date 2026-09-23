@@ -780,7 +780,7 @@ impl Session {
 
     /// Update one retained domain's projected work area without changing its
     /// topology, shares, membership, focus, or accepted revision.
-    pub(crate) fn reproject_domain(&mut self, key: &DomainKey, bounds: Rect) {
+    pub fn reproject_domain(&mut self, key: &DomainKey, bounds: Rect) {
         if let Some(domain) = self.domains.iter_mut().find(|domain| &domain.key() == key) {
             domain.bounds = bounds;
         }
@@ -1385,8 +1385,8 @@ impl Session {
     /// (`LifecycleIntent::Admit` / `LifecycleOperation::Admit` on the focused
     /// leaf), so the caller acknowledges and `verify_lifecycle`-commits the
     /// real dispatch like any other admit. No historical MRU is modeled.
-    /// Crate-private and narrowly named for the planner fit path.
-    pub(crate) fn propose_fitted_admit(
+    /// Public for the planner fit path (cross-crate); narrowly named.
+    pub fn propose_fitted_admit(
         &mut self,
         tree: Node,
         links: Vec<WindowLink>,

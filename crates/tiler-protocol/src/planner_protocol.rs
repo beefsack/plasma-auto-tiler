@@ -4,7 +4,7 @@
 //! the complete normalized current observation (opaque adapter ids, frame
 //! rectangles, output, workspace, focus) plus one parameterized command
 //! proposes exactly that command through the existing
-//! session/reconciler/directional/cosmic_v1 APIs ([`crate::cosmic_v1`]
+//! session/reconciler/directional/cosmic_v1 APIs ([`tiler_core::cosmic_v1`]
 //! admission axis/shares, no invented tiling semantics).
 //!
 //! [`Planner`] is the authoritative live-tree route (one
@@ -34,17 +34,17 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::contract::{
+use tiler_core::contract::{
     AckOutcome, AdapterAck, FocusCapabilities, LifecycleCapabilities, LifecycleOperation,
     LifecyclePostObservation, LifecyclePrecondition, Observation,
 };
-use crate::directional::{
+use tiler_core::directional::{
     Axis, Capabilities, Direction, Node, NodeId, OutputId, WindowId, WindowLink, WorkspaceId,
 };
-use crate::geometry::{Rect, project};
-use crate::ids::{CorrelationId, GenerationId, OwnerId};
-use crate::reconcile::{AckError, CancelUnackedError, VerifyError};
-use crate::session::{
+use tiler_core::geometry::{Rect, project};
+use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
+use tiler_core::reconcile::{AckError, CancelUnackedError, VerifyError};
+use tiler_core::session::{
     DesiredGeometry, DomainKey, ExceptionFlags, ObservedWindow, OutputDomain, ProposeError,
     RefusalKind, Session, SessionCommand, SessionObservation, SessionPlan,
 };
@@ -228,10 +228,10 @@ fn direction_str(value: Direction) -> &'static str {
     }
 }
 
-fn parse_mode(value: &str) -> Option<crate::contract::ResizeMode> {
+fn parse_mode(value: &str) -> Option<tiler_core::contract::ResizeMode> {
     match value {
-        "inwards" => Some(crate::contract::ResizeMode::Inwards),
-        "outwards" => Some(crate::contract::ResizeMode::Outwards),
+        "inwards" => Some(tiler_core::contract::ResizeMode::Inwards),
+        "outwards" => Some(tiler_core::contract::ResizeMode::Outwards),
         _ => None,
     }
 }
@@ -617,7 +617,7 @@ fn classify_parse_error(error: &serde_json::Error) -> (&'static str, &'static st
     }
 }
 
-fn geometry_reply(g: &crate::session::DesiredGeometry) -> GeometryReply {
+fn geometry_reply(g: &tiler_core::session::DesiredGeometry) -> GeometryReply {
     GeometryReply {
         window: g.window.0.clone(),
         leaf: g.leaf.0.clone(),
@@ -766,7 +766,7 @@ fn parse_directional_domain(
             ));
         }
     }
-    let Ok(projected) = crate::geometry::inset_bounds(carried, entry.outer_gap) else {
+    let Ok(projected) = tiler_core::geometry::inset_bounds(carried, entry.outer_gap) else {
         return Err(snapshot_invalid(
             correlation_id.to_owned(),
             MSG_OBSERVATION,
@@ -1217,7 +1217,7 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
     // Rust owns the outer inset: an exhausted inset fails closed here while
     // segment overflow still fails in projection.
     let Ok(projected_bounds) =
-        crate::geometry::inset_bounds(carried_bounds, request.domain.outer_gap)
+        tiler_core::geometry::inset_bounds(carried_bounds, request.domain.outer_gap)
     else {
         return Err(snapshot_invalid(
             request.correlation_id.clone(),
@@ -1309,48 +1309,50 @@ fn observation_for(base: u64, ctx: &Validated) -> SessionObservation {
 }
 
 fn acknowledge(session: &mut Session, ctx: &Validated, base: u64) -> bool {
-    let ack = crate::contract::AdapterAck::new(
+    let ack = tiler_core::contract::AdapterAck::new(
         ctx.correlation.clone(),
         ctx.owner.clone(),
         ctx.generation.clone(),
         base,
-        crate::contract::AckOutcome::Accepted,
+        tiler_core::contract::AckOutcome::Accepted,
     );
     session.acknowledge(&ack).is_ok()
 }
 
 /// Wire token for a directional move precondition (production cross-output
 /// route). Matches the portable movement-service vocabulary exactly.
-fn move_precondition_str(value: crate::directional::Precondition) -> &'static str {
+fn move_precondition_str(value: tiler_core::directional::Precondition) -> &'static str {
     match value {
-        crate::directional::Precondition::FocusedLeafOccupiedByFocusedWindow => {
+        tiler_core::directional::Precondition::FocusedLeafOccupiedByFocusedWindow => {
             "focused-leaf-occupied-by-focused-window"
         }
-        crate::directional::Precondition::NeighborLeafOccupied => "neighbor-leaf-occupied",
-        crate::directional::Precondition::ContainerIsDirectParent => "container-is-direct-parent",
-        crate::directional::Precondition::TargetGroupMembership => "target-group-membership",
-        crate::directional::Precondition::ParentGroupMembership => "parent-group-membership",
-        crate::directional::Precondition::SourceRootMembershipAndAdjacentSameWorkspaceOutput => {
+        tiler_core::directional::Precondition::NeighborLeafOccupied => "neighbor-leaf-occupied",
+        tiler_core::directional::Precondition::ContainerIsDirectParent => "container-is-direct-parent",
+        tiler_core::directional::Precondition::TargetGroupMembership => "target-group-membership",
+        tiler_core::directional::Precondition::ParentGroupMembership => "parent-group-membership",
+        tiler_core::directional::Precondition::SourceRootMembershipAndAdjacentSameWorkspaceOutput => {
             "source-root-membership-and-adjacent-same-workspace-output"
         }
-        crate::directional::Precondition::AdapterMustVerifyPostconditions => {
+        tiler_core::directional::Precondition::AdapterMustVerifyPostconditions => {
             "adapter-must-verify-postconditions"
         }
     }
 }
 
 /// Wire token for a focus precondition (production directional route).
-fn focus_precondition_str(value: crate::contract::FocusPrecondition) -> &'static str {
+fn focus_precondition_str(value: tiler_core::contract::FocusPrecondition) -> &'static str {
     match value {
-        crate::contract::FocusPrecondition::FocusedLeafOccupiedByFocusedWindow => {
+        tiler_core::contract::FocusPrecondition::FocusedLeafOccupiedByFocusedWindow => {
             "focused-leaf-occupied-by-focused-window"
         }
-        crate::contract::FocusPrecondition::TargetLeafOccupied => "target-leaf-occupied",
-        crate::contract::FocusPrecondition::FocusTargetsSameDomain => "focus-targets-same-domain",
-        crate::contract::FocusPrecondition::FocusTargetsAdjacentOutput => {
+        tiler_core::contract::FocusPrecondition::TargetLeafOccupied => "target-leaf-occupied",
+        tiler_core::contract::FocusPrecondition::FocusTargetsSameDomain => {
+            "focus-targets-same-domain"
+        }
+        tiler_core::contract::FocusPrecondition::FocusTargetsAdjacentOutput => {
             "focus-targets-adjacent-output"
         }
-        crate::contract::FocusPrecondition::AdapterMustVerifyPostconditions => {
+        tiler_core::contract::FocusPrecondition::AdapterMustVerifyPostconditions => {
             "adapter-must-verify-postconditions"
         }
     }
@@ -1363,9 +1365,9 @@ fn cross_focus_planned_reply(
     correlation_id: &str,
     base_revision: u64,
     detail: serde_json::Value,
-    geometry: &[crate::session::DesiredGeometry],
+    geometry: &[tiler_core::session::DesiredGeometry],
     focus: (&DomainKey, &NodeId),
-    operation: &crate::contract::FocusOperation,
+    operation: &tiler_core::contract::FocusOperation,
 ) -> String {
     let operation_value = serde_json::json!({
         "op": "focus",
@@ -1420,7 +1422,7 @@ fn planned_reply(
     correlation_id: &str,
     base_revision: u64,
     detail: serde_json::Value,
-    geometry: &[crate::session::DesiredGeometry],
+    geometry: &[tiler_core::session::DesiredGeometry],
     focus: Option<(&DomainKey, &NodeId)>,
 ) -> String {
     serialize_bounded(&PlanReply {
@@ -1749,16 +1751,16 @@ fn seed_session(
                 &LifecycleCapabilities::full(),
             )
             .ok()?;
-        let ack = crate::contract::AdapterAck::new(
+        let ack = tiler_core::contract::AdapterAck::new(
             correlation.clone(),
             owner.clone(),
             generation.clone(),
             base,
-            crate::contract::AckOutcome::Accepted,
+            tiler_core::contract::AckOutcome::Accepted,
         );
         session.acknowledge(&ack).ok()?;
         session
-            .verify_lifecycle(&crate::contract::LifecyclePostObservation::new(
+            .verify_lifecycle(&tiler_core::contract::LifecyclePostObservation::new(
                 Observation::new(owner.clone(), generation.clone(), base, base),
                 correlation,
                 true,
@@ -1862,8 +1864,8 @@ struct DirectionalMovePending {
     source_outer_gap: i32,
     target_outer_gap: i32,
     desired_geometry: Vec<DesiredGeometry>,
-    operation: crate::directional::MoveOperation,
-    preconditions: Vec<crate::directional::Precondition>,
+    operation: tiler_core::directional::MoveOperation,
+    preconditions: Vec<tiler_core::directional::Precondition>,
     pre_focused: String,
     pre_windows: Vec<ObservedDto>,
 }
@@ -1917,7 +1919,7 @@ fn observed_from_dto(entry: &ObservedDto) -> ObservedWindow {
 
 /// Terminal divergence reply for the standalone workspace route: outcome
 /// `diverged`, exact bounded kind, no Legacy fallback.
-fn diverged_reply(correlation_id: &str, reason: crate::contract::DivergenceKind) -> String {
+fn diverged_reply(correlation_id: &str, reason: tiler_core::contract::DivergenceKind) -> String {
     serialize_bounded(&PlanReply {
         v: PLAN_CONTRACT_VERSION,
         correlation_id: correlation_id.to_owned(),
@@ -2194,7 +2196,7 @@ fn parse_move_tiled_operation(value: &serde_json::Value) -> Option<LifecycleOper
 /// Parse the exact lifecycle precondition vector from the verify command.
 fn parse_lifecycle_preconditions(value: &serde_json::Value) -> Option<Vec<LifecyclePrecondition>> {
     let values = value.as_array()?;
-    if values.is_empty() || values.len() > crate::contract::MAX_PRECONDITIONS {
+    if values.is_empty() || values.len() > tiler_core::contract::MAX_PRECONDITIONS {
         return None;
     }
     let mut out = Vec::with_capacity(values.len());
@@ -2205,8 +2207,8 @@ fn parse_lifecycle_preconditions(value: &serde_json::Value) -> Option<Vec<Lifecy
 }
 
 /// Parse one directional move precondition token (fail-closed on unknown).
-fn parse_directional_precondition(value: &str) -> Option<crate::directional::Precondition> {
-    use crate::directional::Precondition as P;
+fn parse_directional_precondition(value: &str) -> Option<tiler_core::directional::Precondition> {
+    use tiler_core::directional::Precondition as P;
     match value {
         "focused-leaf-occupied-by-focused-window" => Some(P::FocusedLeafOccupiedByFocusedWindow),
         "neighbor-leaf-occupied" => Some(P::NeighborLeafOccupied),
@@ -2224,9 +2226,9 @@ fn parse_directional_precondition(value: &str) -> Option<crate::directional::Pre
 /// Parse the exact directional precondition vector from the verify command.
 fn parse_directional_preconditions(
     value: &serde_json::Value,
-) -> Option<Vec<crate::directional::Precondition>> {
+) -> Option<Vec<tiler_core::directional::Precondition>> {
     let values = value.as_array()?;
-    if values.is_empty() || values.len() > crate::contract::MAX_PRECONDITIONS {
+    if values.is_empty() || values.len() > tiler_core::contract::MAX_PRECONDITIONS {
         return None;
     }
     let mut out = Vec::with_capacity(values.len());
@@ -2245,7 +2247,7 @@ fn parse_directional_preconditions(
 /// check enforce exactness at verify time.
 fn parse_directional_move_operation(
     value: &serde_json::Value,
-) -> Option<crate::directional::MoveOperation> {
+) -> Option<tiler_core::directional::MoveOperation> {
     if !value.is_object() {
         return None;
     }
@@ -2290,12 +2292,12 @@ fn parse_directional_move_operation(
         return None;
     };
     let target = match value.get("target").and_then(serde_json::Value::as_str) {
-        Some("empty") => crate::directional::CrossOutputTarget::Empty,
-        Some("occupied") => crate::directional::CrossOutputTarget::Occupied,
+        Some("empty") => tiler_core::directional::CrossOutputTarget::Empty,
+        Some("occupied") => tiler_core::directional::CrossOutputTarget::Occupied,
         _ => return None,
     };
-    Some(crate::directional::MoveOperation::CrossOutput {
-        rule: crate::directional::Rule::R4,
+    Some(tiler_core::directional::MoveOperation::CrossOutput {
+        rule: tiler_core::directional::Rule::R4,
         target_output: OutputId(target_output.to_owned()),
         target_workspace: WorkspaceId(target_workspace.to_owned()),
         source_root_child_index: index,
@@ -2491,7 +2493,7 @@ impl Planner {
         Self::default()
     }
 
-    /// Number of retained domains (bounded by [`crate::session::MAX_DOMAINS`]).
+    /// Number of retained domains (bounded by [`tiler_core::session::MAX_DOMAINS`]).
     #[must_use]
     pub fn retained_domains(&self) -> usize {
         self.sessions.len()
@@ -2633,7 +2635,7 @@ impl Planner {
             if pending.owner != ctx.owner || pending.generation != ctx.generation {
                 return Some(diverged_reply(
                     &cid,
-                    crate::contract::DivergenceKind::OwnerMismatch,
+                    tiler_core::contract::DivergenceKind::OwnerMismatch,
                 ));
             }
             if op == "send-to-workspace" {
@@ -2664,7 +2666,7 @@ impl Planner {
             if pending.owner != ctx.owner || pending.generation != ctx.generation {
                 return Some(diverged_reply(
                     &cid,
-                    crate::contract::DivergenceKind::OwnerMismatch,
+                    tiler_core::contract::DivergenceKind::OwnerMismatch,
                 ));
             }
             return Some(rejected(
@@ -2685,7 +2687,7 @@ impl Planner {
             self.domain_outer_gaps.remove(&domain_key);
             return;
         }
-        if self.sessions.len() >= crate::session::MAX_DOMAINS
+        if self.sessions.len() >= tiler_core::session::MAX_DOMAINS
             && !self.sessions.contains_key(&domain_key)
         {
             // Retained topology is authoritative. A capacity miss must never
@@ -2748,12 +2750,16 @@ impl Planner {
             vec![source_domain.clone(), target_domain.clone()],
         )
         .map_err(|error| match error {
-            crate::session::CanonicalPairError::MismatchedIdentity => {
+            tiler_core::session::CanonicalPairError::MismatchedIdentity => {
                 "canonical-pair-identity-mismatch"
             }
-            crate::session::CanonicalPairError::UnusableInput => "canonical-pair-unusable",
-            crate::session::CanonicalPairError::DomainMismatch => "canonical-pair-domain-mismatch",
-            crate::session::CanonicalPairError::DuplicateState => "canonical-pair-duplicate-state",
+            tiler_core::session::CanonicalPairError::UnusableInput => "canonical-pair-unusable",
+            tiler_core::session::CanonicalPairError::DomainMismatch => {
+                "canonical-pair-domain-mismatch"
+            }
+            tiler_core::session::CanonicalPairError::DuplicateState => {
+                "canonical-pair-duplicate-state"
+            }
         })
     }
 
@@ -2862,7 +2868,7 @@ impl Planner {
         let backup_outer = self.domain_outer_gaps.get(&source).copied();
         self.domain_outer_gaps.remove(&source);
         self.sessions.remove(&source);
-        if self.sessions.len() >= crate::session::MAX_DOMAINS {
+        if self.sessions.len() >= tiler_core::session::MAX_DOMAINS {
             // Fail closed, restore source, no clearing.
             self.sessions.insert(source.clone(), backup_session);
             if let Some(gap) = backup_outer {
@@ -3145,7 +3151,7 @@ impl Planner {
                         },
                     );
                     if acknowledge(&mut fitted, ctx, base) {
-                        let post = crate::contract::LifecyclePostObservation::new(
+                        let post = tiler_core::contract::LifecyclePostObservation::new(
                             Observation::new(
                                 ctx.owner.clone(),
                                 ctx.generation.clone(),
@@ -3224,7 +3230,7 @@ impl Planner {
                 if !acknowledge(session, c, base) {
                     return false;
                 }
-                let post = crate::contract::LifecyclePostObservation::new(
+                let post = tiler_core::contract::LifecyclePostObservation::new(
                     Observation::new(
                         c.owner.clone(),
                         c.generation.clone(),
@@ -3303,7 +3309,7 @@ impl Planner {
                 if !acknowledge(session, c, base) {
                     return false;
                 }
-                let post = crate::contract::LifecyclePostObservation::new(
+                let post = tiler_core::contract::LifecyclePostObservation::new(
                     Observation::new(
                         c.owner.clone(),
                         c.generation.clone(),
@@ -3471,7 +3477,7 @@ impl Planner {
                 if !acknowledge(session, c, base) {
                     return false;
                 }
-                let post = crate::contract::PostObservation::new(
+                let post = tiler_core::contract::PostObservation::new(
                     Observation::new(
                         c.owner.clone(),
                         c.generation.clone(),
@@ -3566,7 +3572,7 @@ impl Planner {
                 if !acknowledge(session, c, base) {
                     return false;
                 }
-                let post = crate::contract::FocusPostObservation::new(
+                let post = tiler_core::contract::FocusPostObservation::new(
                     Observation::new(
                         c.owner.clone(),
                         c.generation.clone(),
@@ -3632,7 +3638,7 @@ impl Planner {
                 // R4 cross-output: stage the async pending, never sync-commit.
                 if matches!(
                     plan.dispatch.operation,
-                    crate::directional::MoveOperation::CrossOutput { .. }
+                    tiler_core::directional::MoveOperation::CrossOutput { .. }
                 ) {
                     // Global boundary already blocks when either pending
                     // exists, but refuse here as well without mutation when a
@@ -3714,7 +3720,7 @@ impl Planner {
         window: &WindowId,
         direction: Direction,
         observation: &SessionObservation,
-    ) -> Result<crate::session::SessionMovePlan, ProposeError> {
+    ) -> Result<tiler_core::session::SessionMovePlan, ProposeError> {
         let _ = session
             .sync_focus_from_window(source_key, &WindowId(ctx.request.focused_window.clone()));
         let mut capabilities = Capabilities::full();
@@ -3737,7 +3743,7 @@ impl Planner {
         &self,
         ctx: &Validated,
         direction: Direction,
-        plan: &crate::session::SessionMovePlan,
+        plan: &tiler_core::session::SessionMovePlan,
     ) -> String {
         let detail = serde_json::json!({
             "kind": "move",
@@ -3747,7 +3753,7 @@ impl Planner {
         });
         let focus = Some((&plan.desired_focus_domain, &plan.desired_focus_leaf));
         match &plan.dispatch.operation {
-            crate::directional::MoveOperation::CrossOutput {
+            tiler_core::directional::MoveOperation::CrossOutput {
                 rule,
                 target_output,
                 target_workspace,
@@ -3774,8 +3780,8 @@ impl Planner {
                     "target_workspace": target_workspace.0,
                     "source_root_child_index": source_root_child_index,
                     "target": match target {
-                        crate::directional::CrossOutputTarget::Empty => "empty",
-                        crate::directional::CrossOutputTarget::Occupied => "occupied",
+                        tiler_core::directional::CrossOutputTarget::Empty => "empty",
+                        tiler_core::directional::CrossOutputTarget::Occupied => "occupied",
                     },
                 });
                 let preconditions: Vec<&'static str> = plan
@@ -3815,13 +3821,13 @@ impl Planner {
         &self,
         session: &mut Session,
         ctx: &Validated,
-        plan: &crate::session::SessionMovePlan,
+        plan: &tiler_core::session::SessionMovePlan,
         base: u64,
     ) -> bool {
         if !acknowledge(session, ctx, base) {
             return false;
         }
-        let post = crate::contract::PostObservation::new(
+        let post = tiler_core::contract::PostObservation::new(
             Observation::new(
                 ctx.owner.clone(),
                 ctx.generation.clone(),
@@ -3899,7 +3905,7 @@ impl Planner {
         window: &WindowId,
         direction: Direction,
         observation: &SessionObservation,
-    ) -> Result<(crate::session::SessionFocusPlan, bool), ProposeError> {
+    ) -> Result<(tiler_core::session::SessionFocusPlan, bool), ProposeError> {
         let _ = session
             .sync_focus_from_window(source_key, &WindowId(ctx.request.focused_window.clone()));
         // Local first: any local target wins (no cross).
@@ -3937,7 +3943,7 @@ impl Planner {
         &self,
         ctx: &Validated,
         direction: Direction,
-        plan: &crate::session::SessionFocusPlan,
+        plan: &tiler_core::session::SessionFocusPlan,
         crossed: bool,
     ) -> String {
         if crossed {
@@ -3975,13 +3981,13 @@ impl Planner {
         &self,
         session: &mut Session,
         ctx: &Validated,
-        plan: &crate::session::SessionFocusPlan,
+        plan: &tiler_core::session::SessionFocusPlan,
         base: u64,
     ) -> bool {
         if !acknowledge(session, ctx, base) {
             return false;
         }
-        let post = crate::contract::FocusPostObservation::new(
+        let post = tiler_core::contract::FocusPostObservation::new(
             Observation::new(
                 ctx.owner.clone(),
                 ctx.generation.clone(),
@@ -4038,7 +4044,7 @@ impl Planner {
             false,
         );
         let window = WindowId(command.window.clone());
-        let capabilities = crate::contract::ResizeCapabilities {
+        let capabilities = tiler_core::contract::ResizeCapabilities {
             keyboard_resize: true,
             pointer_resize: false,
         };
@@ -4085,7 +4091,7 @@ impl Planner {
                 if !acknowledge(session, c, base) {
                     return false;
                 }
-                let post = crate::contract::ResizePostObservation::new(
+                let post = tiler_core::contract::ResizePostObservation::new(
                     Observation::new(
                         c.owner.clone(),
                         c.generation.clone(),
@@ -4139,7 +4145,7 @@ impl Planner {
         );
         let window = WindowId(command.window.clone());
         let boundary = command.boundary;
-        let capabilities = crate::contract::ResizeCapabilities {
+        let capabilities = tiler_core::contract::ResizeCapabilities {
             keyboard_resize: false,
             pointer_resize: true,
         };
@@ -4185,7 +4191,7 @@ impl Planner {
                 if !acknowledge(session, c, base) {
                     return false;
                 }
-                let post = crate::contract::ResizePostObservation::new(
+                let post = tiler_core::contract::ResizePostObservation::new(
                     Observation::new(
                         c.owner.clone(),
                         c.generation.clone(),
@@ -4400,7 +4406,7 @@ impl Planner {
             snapshot_windows_leaf_map(&session, &ctx.domain_key);
         // Rebuild authoritative desired geometry from retained topology only;
         // observed client rectangles are never adopted and shares are untouched.
-        let mut geometry: Vec<crate::session::DesiredGeometry> =
+        let mut geometry: Vec<tiler_core::session::DesiredGeometry> =
             Vec::with_capacity(projected.len());
         for leaf in projected {
             let Some(window) = leaf_to_window.get(&leaf.leaf.0) else {
@@ -4419,7 +4425,7 @@ impl Planner {
                     RefusalKind::MalformedTopology.message(),
                 );
             }
-            geometry.push(crate::session::DesiredGeometry {
+            geometry.push(tiler_core::session::DesiredGeometry {
                 window: WindowId(window.clone()),
                 leaf: leaf.leaf.clone(),
                 output: ctx.domain_key.output.clone(),
@@ -4611,7 +4617,7 @@ impl Planner {
         };
         let leaf_to_window: std::collections::BTreeMap<String, String> =
             snapshot_windows_leaf_map(&session, &ctx.domain_key);
-        let mut geometry: Vec<crate::session::DesiredGeometry> =
+        let mut geometry: Vec<tiler_core::session::DesiredGeometry> =
             Vec::with_capacity(projected.len());
         for leaf in projected {
             let Some(window) = leaf_to_window.get(&leaf.leaf.0) else {
@@ -4628,7 +4634,7 @@ impl Planner {
                     RefusalKind::MalformedTopology.message(),
                 );
             }
-            geometry.push(crate::session::DesiredGeometry {
+            geometry.push(tiler_core::session::DesiredGeometry {
                 window: WindowId(window.clone()),
                 leaf: leaf.leaf.clone(),
                 output: ctx.domain_key.output.clone(),
@@ -4696,7 +4702,7 @@ impl Planner {
     /// Carried-window divergence safety (exact contract, no new topology
     /// authority): carried `windows` rectangles/sets are never consulted for
     /// membership or projection. Membership comes solely from the retained
-    /// split tree via [`crate::active_group::describe_active_group`],
+    /// split tree via [`tiler_core::active_group::describe_active_group`],
     /// projection from retained bounds/gap plus the engine projector. The
     /// carried `focused_window` may update retained focus only through its
     /// guarded focus-sync path, while carried domain bounds/gap are bound to
@@ -4877,7 +4883,7 @@ impl Planner {
             }
         }
         let Ok(projected_target) =
-            crate::geometry::inset_bounds(carried_bounds, target_dto.outer_gap)
+            tiler_core::geometry::inset_bounds(carried_bounds, target_dto.outer_gap)
         else {
             return Err(snapshot_invalid(cid, MSG_OBSERVATION, "inset-exhausted"));
         };
@@ -4974,7 +4980,7 @@ impl Planner {
                 return diverged_reply(&cid, reason);
             }
             if pending.owner != ctx.owner || pending.generation != ctx.generation {
-                return diverged_reply(&cid, crate::contract::DivergenceKind::OwnerMismatch);
+                return diverged_reply(&cid, tiler_core::contract::DivergenceKind::OwnerMismatch);
             }
             return rejected(
                 cid,
@@ -5081,13 +5087,16 @@ impl Planner {
             return diverged_reply(&cid, reason);
         }
         if pending.owner != ctx.owner || pending.generation != ctx.generation {
-            return diverged_reply(&cid, crate::contract::DivergenceKind::OwnerMismatch);
+            return diverged_reply(&cid, tiler_core::contract::DivergenceKind::OwnerMismatch);
         }
         if pending.correlation != ctx.correlation {
-            return diverged_reply(&cid, crate::contract::DivergenceKind::CorrelationMismatch);
+            return diverged_reply(
+                &cid,
+                tiler_core::contract::DivergenceKind::CorrelationMismatch,
+            );
         }
         if ctx.request.revision != pending.base_revision {
-            return diverged_reply(&cid, crate::contract::DivergenceKind::StaleRevision);
+            return diverged_reply(&cid, tiler_core::contract::DivergenceKind::StaleRevision);
         }
         let ack = AdapterAck::new(
             ctx.correlation.clone(),
@@ -5136,7 +5145,7 @@ impl Planner {
         if !command.verified {
             return diverged_reply(
                 &cid,
-                crate::contract::DivergenceKind::PostconditionUnverified,
+                tiler_core::contract::DivergenceKind::PostconditionUnverified,
             );
         }
         let Some(preconditions) = parse_lifecycle_preconditions(&command.preconditions) else {
@@ -5154,15 +5163,18 @@ impl Planner {
         }
         if pending.owner != ctx.owner || pending.generation != ctx.generation {
             self.workspace_pending = Some(pending);
-            return diverged_reply(&cid, crate::contract::DivergenceKind::OwnerMismatch);
+            return diverged_reply(&cid, tiler_core::contract::DivergenceKind::OwnerMismatch);
         }
         if pending.correlation != ctx.correlation {
             self.workspace_pending = Some(pending);
-            return diverged_reply(&cid, crate::contract::DivergenceKind::CorrelationMismatch);
+            return diverged_reply(
+                &cid,
+                tiler_core::contract::DivergenceKind::CorrelationMismatch,
+            );
         }
         if ctx.request.revision != pending.base_revision {
             self.workspace_pending = Some(pending);
-            return diverged_reply(&cid, crate::contract::DivergenceKind::StaleRevision);
+            return diverged_reply(&cid, tiler_core::contract::DivergenceKind::StaleRevision);
         }
         // Complete source+target post-observation validation against the
         // retained plan before any lifecycle commit. A bare `verified: true`
@@ -5248,13 +5260,16 @@ impl Planner {
             return diverged_reply(&cid, reason);
         }
         if pending.owner != ctx.owner || pending.generation != ctx.generation {
-            return diverged_reply(&cid, crate::contract::DivergenceKind::OwnerMismatch);
+            return diverged_reply(&cid, tiler_core::contract::DivergenceKind::OwnerMismatch);
         }
         if pending.correlation != ctx.correlation {
-            return diverged_reply(&cid, crate::contract::DivergenceKind::CorrelationMismatch);
+            return diverged_reply(
+                &cid,
+                tiler_core::contract::DivergenceKind::CorrelationMismatch,
+            );
         }
         if ctx.request.revision != pending.base_revision {
-            return diverged_reply(&cid, crate::contract::DivergenceKind::StaleRevision);
+            return diverged_reply(&cid, tiler_core::contract::DivergenceKind::StaleRevision);
         }
         let ack = AdapterAck::new(
             ctx.correlation.clone(),
@@ -5308,7 +5323,7 @@ impl Planner {
         if !command.verified {
             return diverged_reply(
                 &cid,
-                crate::contract::DivergenceKind::PostconditionUnverified,
+                tiler_core::contract::DivergenceKind::PostconditionUnverified,
             );
         }
         let Some(preconditions) = parse_directional_preconditions(&command.preconditions) else {
@@ -5326,15 +5341,18 @@ impl Planner {
         }
         if pending.owner != ctx.owner || pending.generation != ctx.generation {
             self.directional_pending = Some(pending);
-            return diverged_reply(&cid, crate::contract::DivergenceKind::OwnerMismatch);
+            return diverged_reply(&cid, tiler_core::contract::DivergenceKind::OwnerMismatch);
         }
         if pending.correlation != ctx.correlation {
             self.directional_pending = Some(pending);
-            return diverged_reply(&cid, crate::contract::DivergenceKind::CorrelationMismatch);
+            return diverged_reply(
+                &cid,
+                tiler_core::contract::DivergenceKind::CorrelationMismatch,
+            );
         }
         if ctx.request.revision != pending.base_revision {
             self.directional_pending = Some(pending);
-            return diverged_reply(&cid, crate::contract::DivergenceKind::StaleRevision);
+            return diverged_reply(&cid, tiler_core::contract::DivergenceKind::StaleRevision);
         }
         // Exact pending operation/preconditions binding before any commit.
         if operation != pending.operation || preconditions != pending.preconditions {
@@ -5351,7 +5369,7 @@ impl Planner {
         }
         // Fenced source/target binding: the echoed operation target must home
         // to the retained pair, and any carried source binding must match.
-        if let crate::directional::MoveOperation::CrossOutput {
+        if let tiler_core::directional::MoveOperation::CrossOutput {
             target_output,
             target_workspace,
             ..
@@ -5389,7 +5407,7 @@ impl Planner {
                 return diverged_reply(&cid, reason);
             }
         }
-        let post = crate::contract::PostObservation::new(
+        let post = tiler_core::contract::PostObservation::new(
             Observation::new(
                 ctx.owner.clone(),
                 ctx.generation.clone(),
@@ -5414,7 +5432,7 @@ impl Planner {
                     self.directional_pending = Some(pending);
                     return diverged_reply(
                         &cid,
-                        crate::contract::DivergenceKind::PostconditionMismatch,
+                        tiler_core::contract::DivergenceKind::PostconditionMismatch,
                     );
                 };
                 self.directional_pending = None;
@@ -5510,10 +5528,10 @@ impl Planner {
             return status_reply(&cid, Some(pending.base_revision), "unresolved");
         }
         match pending.session.status().state {
-            crate::reconcile::StateKind::PendingAcked => {
+            tiler_core::reconcile::StateKind::PendingAcked => {
                 status_reply(&cid, Some(pending.base_revision), "post-acked")
             }
-            crate::reconcile::StateKind::PendingUnacked => {
+            tiler_core::reconcile::StateKind::PendingUnacked => {
                 status_reply(&cid, Some(pending.base_revision), "post-unacked")
             }
             _ => status_reply(&cid, Some(pending.base_revision), "unresolved"),
@@ -5568,10 +5586,10 @@ impl Planner {
             return status_reply(&cid, Some(pending.base_revision), "unresolved");
         }
         match pending.session.status().state {
-            crate::reconcile::StateKind::PendingAcked => {
+            tiler_core::reconcile::StateKind::PendingAcked => {
                 status_reply(&cid, Some(pending.base_revision), "post-acked")
             }
-            crate::reconcile::StateKind::PendingUnacked => {
+            tiler_core::reconcile::StateKind::PendingUnacked => {
                 status_reply(&cid, Some(pending.base_revision), "post-unacked")
             }
             _ => status_reply(&cid, Some(pending.base_revision), "unresolved"),
@@ -5641,7 +5659,7 @@ impl Planner {
         }
         if !matches!(
             pending.session.status().state,
-            crate::reconcile::StateKind::PendingUnacked
+            tiler_core::reconcile::StateKind::PendingUnacked
         ) {
             return rejected(
                 cid,
@@ -5750,7 +5768,7 @@ impl Planner {
         }
         if !matches!(
             pending.session.status().state,
-            crate::reconcile::StateKind::PendingUnacked
+            tiler_core::reconcile::StateKind::PendingUnacked
         ) {
             return rejected(
                 cid,
@@ -6038,7 +6056,7 @@ fn no_group_reply(ctx: &Validated, base_revision: Option<u64>, reason: &'static 
 /// Shared read-only group resolution over one authoritative session (retained
 /// or ephemeral): validates domain binding, focus mapping, and tree presence,
 /// then derives the focused leaf's immediate parent group through
-/// [`crate::active_group::describe_active_group`] using only retained
+/// [`tiler_core::active_group::describe_active_group`] using only retained
 /// bounds/gap plus engine projection. Always returns a bounded
 /// `active-group`/`no-group` reply; never mutates. The carried revision is
 /// intentionally not gated: this is a read-only current-state snapshot, so a
@@ -6097,7 +6115,7 @@ fn active_group_response(session: &Session, ctx: &Validated) -> String {
         Some(window) if *window == focused_window => {}
         _ => return no_group_reply(ctx, Some(base), "focus-unmapped"),
     }
-    let Some(group) = crate::active_group::describe_active_group(
+    let Some(group) = tiler_core::active_group::describe_active_group(
         &tree,
         retained_domain.bounds,
         retained_domain.gap,
@@ -10658,7 +10676,7 @@ mod tests {
         // At cap, removing the final member of an already-retained domain
         // still commits and retires, freeing exactly one slot. Offline only.
         let mut planner = Planner::new();
-        for index in 1..=crate::session::MAX_DOMAINS {
+        for index in 1..=tiler_core::session::MAX_DOMAINS {
             let workspace = format!("ws-{index}");
             let window = format!("win-{index}");
             let correlation = format!("cap-retire-admit-{index}");
@@ -10675,7 +10693,7 @@ mod tests {
             let reply = parse_reply(&planner.evaluate(&request));
             assert_eq!(reply["outcome"], "planned", "{reply} {index}");
         }
-        assert_eq!(planner.retained_domains(), crate::session::MAX_DOMAINS);
+        assert_eq!(planner.retained_domains(), tiler_core::session::MAX_DOMAINS);
         // Empty the first retained domain with its exact single-member
         // observation: the committed remove retires it even at cap.
         let remove = retained_request_for_domain(
@@ -10695,7 +10713,10 @@ mod tests {
             Some(0),
             "{remove_reply}"
         );
-        assert_eq!(planner.retained_domains(), crate::session::MAX_DOMAINS - 1);
+        assert_eq!(
+            planner.retained_domains(),
+            tiler_core::session::MAX_DOMAINS - 1
+        );
     }
 
     #[test]

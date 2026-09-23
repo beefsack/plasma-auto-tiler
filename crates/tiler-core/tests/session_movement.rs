@@ -7,20 +7,20 @@
 //! R1-R4, focus retention, shares/order, domain isolation, refusals, geometry
 //! completeness, commit, determinism, and a bounded property-like loop.
 
-use plasma_auto_tiler::contract::{
+use std::collections::{BTreeMap, BTreeSet};
+use tiler_core::contract::{
     AckOutcome, AdapterAck, DivergenceKind, FocusCapabilities, FocusPostObservation,
     LifecycleCapabilities, Observation, PostObservation,
 };
-use plasma_auto_tiler::directional::{
+use tiler_core::directional::{
     Capabilities, Direction, Node, NodeId, OutputId, WindowId, WorkspaceId,
 };
-use plasma_auto_tiler::geometry::Rect;
-use plasma_auto_tiler::ids::{CorrelationId, GenerationId, OwnerId};
-use plasma_auto_tiler::session::{
+use tiler_core::geometry::Rect;
+use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
+use tiler_core::session::{
     DomainKey, ExceptionFlags, ObservedWindow, OutputDomain, ProposeError, RefusalKind, Session,
     SessionCommand, SessionFocusPlan, SessionMovePlan, SessionObservation,
 };
-use std::collections::{BTreeMap, BTreeSet};
 
 fn owner() -> OwnerId {
     OwnerId::parse("owner-1").expect("valid")
@@ -185,7 +185,7 @@ fn admit_commit(
         ))
         .expect("ack");
     session
-        .verify_lifecycle(&plasma_auto_tiler::contract::LifecyclePostObservation::new(
+        .verify_lifecycle(&tiler_core::contract::LifecyclePostObservation::new(
             Observation::new(owner(), generation(), base, 200 + base),
             correlation(corr),
             true,
@@ -411,7 +411,7 @@ fn r1_perpendicular_wrap() {
     admit_commit(&mut s, "win-2", "out-1", "ws-1", true, "c-2");
     let k = key("out-1", "ws-1");
     let plan = move_commit_focused(&mut s, &k, Direction::Down, "m-1", &Capabilities::full());
-    assert_eq!(plan.dispatch.rule, plasma_auto_tiler::directional::Rule::R1);
+    assert_eq!(plan.dispatch.rule, tiler_core::directional::Rule::R1);
     assert_eq!(plan.desired_focus_leaf.0, "leaf-win-2");
     assert_eq!(plan.desired_focus_domain, k);
     assert_geometry_complete(&plan, &s);
@@ -430,10 +430,7 @@ fn r2a_swap_neighbor() {
     admit_commit(&mut s, "win-4", "out-1", "ws-1", true, "c-4");
     let k = key("out-1", "ws-1");
     let plan = move_commit_focused(&mut s, &k, Direction::Left, "m-1", &Capabilities::full());
-    assert_eq!(
-        plan.dispatch.rule,
-        plasma_auto_tiler::directional::Rule::R2a
-    );
+    assert_eq!(plan.dispatch.rule, tiler_core::directional::Rule::R2a);
     assert_eq!(plan.desired_focus_leaf.0, "leaf-win-4");
     assert_geometry_complete(&plan, &s);
 }
@@ -461,9 +458,9 @@ fn r2a_uneven_outer_preserved_and_window_share_binding() {
         );
     }
     let r2b = move_commit_focused(&mut s, &k, Direction::Right, "m-pre", &Capabilities::full());
-    assert_eq!(r2b.dispatch.rule, plasma_auto_tiler::directional::Rule::R2b);
+    assert_eq!(r2b.dispatch.rule, tiler_core::directional::Rule::R2b);
     let r2c = move_commit_focused(&mut s, &k, Direction::Right, "m-1", &Capabilities::full());
-    assert_eq!(r2c.dispatch.rule, plasma_auto_tiler::directional::Rule::R2c);
+    assert_eq!(r2c.dispatch.rule, tiler_core::directional::Rule::R2c);
     let snap = s.snapshot();
     let root = snap.domains[0].tree.clone().expect("tree");
     let (outer_shares, outer_len) = match &root {
@@ -477,7 +474,7 @@ fn r2a_uneven_outer_preserved_and_window_share_binding() {
     assert_eq!(outer_shares, vec![2, 1]);
     // Inner R2a swap [1,2] -> [2,1]; outer uneven must be untouched.
     let r2a = move_commit_focused(&mut s, &k, Direction::Right, "m-2", &Capabilities::full());
-    assert_eq!(r2a.dispatch.rule, plasma_auto_tiler::directional::Rule::R2a);
+    assert_eq!(r2a.dispatch.rule, tiler_core::directional::Rule::R2a);
     let snap2 = s.snapshot();
     let root2 = snap2.domains[0].tree.clone().expect("tree");
     match &root2 {
@@ -510,7 +507,7 @@ fn r2b_insert_midpoint_after_r1() {
     admit_commit(&mut s, "win-3", "out-1", "ws-1", true, "c-3");
     let k = key("out-1", "ws-1");
     let r1 = move_commit_focused(&mut s, &k, Direction::Down, "m-1", &Capabilities::full());
-    assert_eq!(r1.dispatch.rule, plasma_auto_tiler::directional::Rule::R1);
+    assert_eq!(r1.dispatch.rule, tiler_core::directional::Rule::R1);
     // Binary admission + R1 leaves H[win-1,V[win-2,win-3]]; win-1 faces a
     // perpendicular 2-child group, so Right from win-1 is Midpoint.
     let _ = focus_commit_focused(
@@ -522,13 +519,10 @@ fn r2b_insert_midpoint_after_r1() {
     );
     assert_eq!(focused_window(&s, &k).0, "win-1");
     let r2b = move_commit_focused(&mut s, &k, Direction::Right, "m-2", &Capabilities::full());
-    assert_eq!(r2b.dispatch.rule, plasma_auto_tiler::directional::Rule::R2b);
+    assert_eq!(r2b.dispatch.rule, tiler_core::directional::Rule::R2b);
     match &r2b.dispatch.operation {
-        plasma_auto_tiler::directional::MoveOperation::InsertIntoGroup { insertion, .. } => {
-            assert_eq!(
-                *insertion,
-                plasma_auto_tiler::directional::Insertion::Midpoint
-            );
+        tiler_core::directional::MoveOperation::InsertIntoGroup { insertion, .. } => {
+            assert_eq!(*insertion, tiler_core::directional::Insertion::Midpoint);
         }
         other => panic!("expected insert-into-group, got {other:?}"),
     }
@@ -548,7 +542,7 @@ fn r2b_split_odd_target() {
     // vertical group, focus to win-2, Midpoint grows it to 3, then Right
     // from win-1 splits the odd target.
     let r1 = move_commit_focused(&mut s, &k, Direction::Up, "m-1", &Capabilities::full());
-    assert_eq!(r1.dispatch.rule, plasma_auto_tiler::directional::Rule::R1);
+    assert_eq!(r1.dispatch.rule, tiler_core::directional::Rule::R1);
     let _ = focus_commit_focused(
         &mut s,
         &k,
@@ -558,10 +552,7 @@ fn r2b_split_odd_target() {
     );
     assert_eq!(focused_window(&s, &k).0, "win-2");
     let r2b_mid = move_commit_focused(&mut s, &k, Direction::Right, "m-mid", &Capabilities::full());
-    assert_eq!(
-        r2b_mid.dispatch.rule,
-        plasma_auto_tiler::directional::Rule::R2b
-    );
+    assert_eq!(r2b_mid.dispatch.rule, tiler_core::directional::Rule::R2b);
     let _ = focus_commit_focused(
         &mut s,
         &k,
@@ -571,21 +562,18 @@ fn r2b_split_odd_target() {
     );
     assert_eq!(focused_window(&s, &k).0, "win-1");
     let r2b = move_commit_focused(&mut s, &k, Direction::Right, "m-2", &Capabilities::full());
-    assert_eq!(r2b.dispatch.rule, plasma_auto_tiler::directional::Rule::R2b);
+    assert_eq!(r2b.dispatch.rule, tiler_core::directional::Rule::R2b);
     match &r2b.dispatch.operation {
-        plasma_auto_tiler::directional::MoveOperation::SplitGroupChild {
+        tiler_core::directional::MoveOperation::SplitGroupChild {
             focused_side,
             axis,
             target_child_index,
             ..
         } => {
-            assert_eq!(*axis, plasma_auto_tiler::directional::Axis::Horizontal);
+            assert_eq!(*axis, tiler_core::directional::Axis::Horizontal);
             assert_eq!(*target_child_index, 1);
             // Right is step +1, so the mover splits Second (far side).
-            assert_eq!(
-                *focused_side,
-                plasma_auto_tiler::directional::FocusedSide::Second
-            );
+            assert_eq!(*focused_side, tiler_core::directional::FocusedSide::Second);
         }
         other => panic!("expected split-group-child, got {other:?}"),
     }
@@ -619,21 +607,15 @@ fn r2b_near_edge_parallel_target() {
     );
     assert_eq!(focused_window(&s, &k).0, "win-1");
     let plan = move_commit_focused(&mut s, &k, Direction::Right, "m-2", &Capabilities::full());
-    assert_eq!(
-        plan.dispatch.rule,
-        plasma_auto_tiler::directional::Rule::R2b
-    );
+    assert_eq!(plan.dispatch.rule, tiler_core::directional::Rule::R2b);
     match &plan.dispatch.operation {
-        plasma_auto_tiler::directional::MoveOperation::InsertIntoGroup {
+        tiler_core::directional::MoveOperation::InsertIntoGroup {
             insertion,
             insertion_index,
             target_group,
             ..
         } => {
-            assert_eq!(
-                *insertion,
-                plasma_auto_tiler::directional::Insertion::NearEdge
-            );
+            assert_eq!(*insertion, tiler_core::directional::Insertion::NearEdge);
             assert_eq!(*insertion_index, 0);
             assert!(!target_group.0.is_empty());
         }
@@ -666,10 +648,7 @@ fn r2c_wrap_neighbor_nary() {
     let _ = move_commit_focused(&mut s, &k, Direction::Right, "m-pre", &Capabilities::full());
     assert_eq!(focused_window(&s, &k).0, "win-1");
     let plan = move_commit_focused(&mut s, &k, Direction::Right, "m-1", &Capabilities::full());
-    assert_eq!(
-        plan.dispatch.rule,
-        plasma_auto_tiler::directional::Rule::R2c
-    );
+    assert_eq!(plan.dispatch.rule, tiler_core::directional::Rule::R2c);
     assert_eq!(plan.desired_focus_leaf.0, "leaf-win-1");
     assert_geometry_complete(&plan, &s);
     let snap = s.snapshot();
@@ -707,14 +686,14 @@ fn r3_escape_with_r1_continuation() {
     // Binary admission gives H[win-1,[win-2,win-3]]; R1 Down wraps the
     // focused pair perpendicular, then Down escapes with R1 continuation.
     let r1 = move_commit_focused(&mut s, &k, Direction::Down, "m-1", &Capabilities::full());
-    assert_eq!(r1.dispatch.rule, plasma_auto_tiler::directional::Rule::R1);
+    assert_eq!(r1.dispatch.rule, tiler_core::directional::Rule::R1);
     let plan = move_commit_focused(&mut s, &k, Direction::Down, "m-2", &Capabilities::full());
-    assert_eq!(plan.dispatch.rule, plasma_auto_tiler::directional::Rule::R3);
+    assert_eq!(plan.dispatch.rule, tiler_core::directional::Rule::R3);
     match &plan.dispatch.operation {
-        plasma_auto_tiler::directional::MoveOperation::EscapeParent { continuation, .. } => {
+        tiler_core::directional::MoveOperation::EscapeParent { continuation, .. } => {
             assert_eq!(
                 *continuation,
-                plasma_auto_tiler::directional::EscapeContinuation::R1
+                tiler_core::directional::EscapeContinuation::R1
             );
         }
         other => panic!("expected escape, got {other:?}"),
@@ -741,20 +720,20 @@ fn r3_escape_same_axis() {
         );
     }
     let r2b = move_commit_focused(&mut s, &k, Direction::Right, "m-pre", &Capabilities::full());
-    assert_eq!(r2b.dispatch.rule, plasma_auto_tiler::directional::Rule::R2b);
+    assert_eq!(r2b.dispatch.rule, tiler_core::directional::Rule::R2b);
     let r2c = move_commit_focused(&mut s, &k, Direction::Right, "m-1", &Capabilities::full());
-    assert_eq!(r2c.dispatch.rule, plasma_auto_tiler::directional::Rule::R2c);
+    assert_eq!(r2c.dispatch.rule, tiler_core::directional::Rule::R2c);
     let r3 = move_commit_focused(&mut s, &k, Direction::Left, "m-2", &Capabilities::full());
-    assert_eq!(r3.dispatch.rule, plasma_auto_tiler::directional::Rule::R3);
+    assert_eq!(r3.dispatch.rule, tiler_core::directional::Rule::R3);
     match &r3.dispatch.operation {
-        plasma_auto_tiler::directional::MoveOperation::EscapeParent {
+        tiler_core::directional::MoveOperation::EscapeParent {
             continuation,
             parent_insertion_index,
             ..
         } => {
             assert_eq!(
                 *continuation,
-                plasma_auto_tiler::directional::EscapeContinuation::None
+                tiler_core::directional::EscapeContinuation::None
             );
             assert!(parent_insertion_index.is_some());
         }
@@ -771,12 +750,12 @@ fn r4_occupied_target() {
     admit_commit(&mut s, "win-3", "out-1", "ws-1", true, "c-3");
     let k = key("out-1", "ws-1");
     let plan = move_commit_focused(&mut s, &k, Direction::Right, "m-1", &Capabilities::full());
-    assert_eq!(plan.dispatch.rule, plasma_auto_tiler::directional::Rule::R4);
+    assert_eq!(plan.dispatch.rule, tiler_core::directional::Rule::R4);
     match &plan.dispatch.operation {
-        plasma_auto_tiler::directional::MoveOperation::CrossOutput { target, .. } => {
+        tiler_core::directional::MoveOperation::CrossOutput { target, .. } => {
             assert_eq!(
                 *target,
-                plasma_auto_tiler::directional::CrossOutputTarget::Occupied
+                tiler_core::directional::CrossOutputTarget::Occupied
             );
         }
         other => panic!("expected cross-output, got {other:?}"),
@@ -802,13 +781,10 @@ fn r4_empty_target() {
     admit_commit(&mut s, "win-2", "out-1", "ws-1", true, "c-2");
     let k = key("out-1", "ws-1");
     let plan = move_commit_focused(&mut s, &k, Direction::Right, "m-1", &Capabilities::full());
-    assert_eq!(plan.dispatch.rule, plasma_auto_tiler::directional::Rule::R4);
+    assert_eq!(plan.dispatch.rule, tiler_core::directional::Rule::R4);
     match &plan.dispatch.operation {
-        plasma_auto_tiler::directional::MoveOperation::CrossOutput { target, .. } => {
-            assert_eq!(
-                *target,
-                plasma_auto_tiler::directional::CrossOutputTarget::Empty
-            );
+        tiler_core::directional::MoveOperation::CrossOutput { target, .. } => {
+            assert_eq!(*target, tiler_core::directional::CrossOutputTarget::Empty);
         }
         other => panic!("expected empty cross-output, got {other:?}"),
     }
@@ -841,7 +817,7 @@ fn r4_edge_direction_domain_isolation() {
     assert!(!solo.has_pending());
     // Wrong direction from non-edge is a real move, not R4.
     let plan = move_commit_focused(&mut solo, &k, Direction::Left, "m-1", &Capabilities::full());
-    assert_ne!(plan.dispatch.rule, plasma_auto_tiler::directional::Rule::R4);
+    assert_ne!(plan.dispatch.rule, tiler_core::directional::Rule::R4);
     // Different workspaces never cross even with adjacency-shaped ids.
     let mut two_ws = Session::new(
         owner(),
@@ -888,7 +864,7 @@ fn r4_edge_direction_domain_isolation() {
         "m-9",
         &Capabilities::full(),
     );
-    assert_eq!(plan.dispatch.rule, plasma_auto_tiler::directional::Rule::R3);
+    assert_eq!(plan.dispatch.rule, tiler_core::directional::Rule::R3);
 }
 
 #[test]
@@ -1473,16 +1449,16 @@ fn cross_kind_reconciliation_mismatches() {
     .expect("ack");
     // Lifecycle verifier on move pending diverges (cross-kind mismatch).
     let _ = &plan;
-    let lifecycle_post = plasma_auto_tiler::contract::LifecyclePostObservation::new(
+    let lifecycle_post = tiler_core::contract::LifecyclePostObservation::new(
         Observation::new(owner(), generation(), base, 1),
         correlation("x-1"),
         true,
         vec![
-            plasma_auto_tiler::contract::LifecyclePrecondition::WindowObserved,
-            plasma_auto_tiler::contract::LifecyclePrecondition::DesiredTopologyValid,
-            plasma_auto_tiler::contract::LifecyclePrecondition::AdapterMustVerifyPostconditions,
+            tiler_core::contract::LifecyclePrecondition::WindowObserved,
+            tiler_core::contract::LifecyclePrecondition::DesiredTopologyValid,
+            tiler_core::contract::LifecyclePrecondition::AdapterMustVerifyPostconditions,
         ],
-        plasma_auto_tiler::contract::LifecycleOperation::Remove {
+        tiler_core::contract::LifecycleOperation::Remove {
             window: WindowId("a".into()),
             leaf: NodeId("leaf-a".into()),
             output: OutputId("out-1".into()),
@@ -1491,7 +1467,7 @@ fn cross_kind_reconciliation_mismatches() {
     );
     assert_eq!(
         s.verify_lifecycle(&lifecycle_post),
-        Err(plasma_auto_tiler::reconcile::VerifyError::Diverged(
+        Err(tiler_core::reconcile::VerifyError::Diverged(
             DivergenceKind::PostconditionMismatch
         ))
     );
@@ -1531,17 +1507,17 @@ fn cross_kind_reconciliation_mismatches() {
             .dispatch
             .preconditions
             .iter()
-            .map(|_| plasma_auto_tiler::directional::Precondition::AdapterMustVerifyPostconditions)
+            .map(|_| tiler_core::directional::Precondition::AdapterMustVerifyPostconditions)
             .collect(),
-        plasma_auto_tiler::directional::MoveOperation::SwapNeighbor {
-            rule: plasma_auto_tiler::directional::Rule::R2a,
+        tiler_core::directional::MoveOperation::SwapNeighbor {
+            rule: tiler_core::directional::Rule::R2a,
             container: NodeId("root".into()),
             neighbor: NodeId("x".into()),
         },
     );
     assert_eq!(
         f.verify_move(&move_post),
-        Err(plasma_auto_tiler::reconcile::VerifyError::Diverged(
+        Err(tiler_core::reconcile::VerifyError::Diverged(
             DivergenceKind::PostconditionMismatch
         ))
     );
@@ -1668,10 +1644,7 @@ fn domain_isolation_outside_r4() {
     let before_other = leaves(&s, "out-2", "ws-2");
     let k = key("out-1", "ws-1");
     let plan = move_commit_focused(&mut s, &k, Direction::Left, "m-1", &Capabilities::full());
-    assert_eq!(
-        plan.dispatch.rule,
-        plasma_auto_tiler::directional::Rule::R2a
-    );
+    assert_eq!(plan.dispatch.rule, tiler_core::directional::Rule::R2a);
     assert_eq!(leaves(&s, "out-2", "ws-2"), before_other);
     assert_eq!(plan.desired_focus_domain, k);
 }
@@ -1872,7 +1845,7 @@ fn ack_verify_commit_and_mismatch_clears() {
     );
     assert_eq!(
         s.verify_move(&early),
-        Err(plasma_auto_tiler::reconcile::VerifyError::NotAcknowledged)
+        Err(tiler_core::reconcile::VerifyError::NotAcknowledged)
     );
     assert!(s.has_pending());
     s.acknowledge(&AdapterAck::new(
@@ -1894,7 +1867,7 @@ fn ack_verify_commit_and_mismatch_clears() {
     );
     assert_eq!(
         s.verify_move(&bad),
-        Err(plasma_auto_tiler::reconcile::VerifyError::Diverged(
+        Err(tiler_core::reconcile::VerifyError::Diverged(
             DivergenceKind::PostconditionMismatch
         ))
     );
@@ -2095,18 +2068,10 @@ fn bounded_property_loop_over_accepted_moves() {
 }
 
 trait FocusedLeafHelper {
-    fn leaf_clone(
-        &self,
-        session: &Session,
-        domain: &DomainKey,
-    ) -> plasma_auto_tiler::directional::NodeId;
+    fn leaf_clone(&self, session: &Session, domain: &DomainKey) -> tiler_core::directional::NodeId;
 }
 impl FocusedLeafHelper for WindowId {
-    fn leaf_clone(
-        &self,
-        session: &Session,
-        domain: &DomainKey,
-    ) -> plasma_auto_tiler::directional::NodeId {
+    fn leaf_clone(&self, session: &Session, domain: &DomainKey) -> tiler_core::directional::NodeId {
         session
             .snapshot()
             .windows
