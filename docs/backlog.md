@@ -15,7 +15,8 @@ each review claim before acting; it was a static sampling review.
   a pre-removal observation, so post-only sync needs either a retained
   historical baseline or changed fence semantics (AR11 territory). User decided
   2026-09-23 to defer AR4 behind AR11. Post-only removal remains blocked until
-  AR11's validated fact/expectation transition ships.
+  AR11's validated fact/expectation transition ships. AR11's reviewed
+  transition contract has not shipped; this dependency remains blocked.
   [scope](changes/architecture-review-ar4-observation-sync.md)
 - P0 | AR5 LayoutPolicy seam and Session split | 7.9: `cosmic_v1` behind
   `LayoutPolicy`; split `Session` along the seam. bspwm_v1 scope awaits user
@@ -40,8 +41,11 @@ each review claim before acting; it was a static sampling review.
   and bounded convergence on 2026-09-23, replacing verified-success semantics
   for the send slice when implemented. Design review found the model feasible;
   two experimental core approaches failed implementation review and were
-  restored. Next: independently review a concrete complete-world/per-domain
-  revision and expiry transition contract before implementation.
+  restored. The subsequent concrete transition contract passed independent
+  design review, but two further implementation reviews failed (core fences,
+  then cross-component native proof, scope, expiry and binding); experimental
+  code was restored. Next: validate a small vertical native-observer-to-core
+  fixture across the transition rows before replacing the pending path.
   Live user acceptance after offline implementation: rapid repeated sends
   retain prompt native-proof follow without focus theft; failed sends converge
   back to source and remain usable. [scope](changes/architecture-review-ar11-expectations.md)
