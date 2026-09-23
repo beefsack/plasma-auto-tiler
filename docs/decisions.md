@@ -878,8 +878,9 @@ Historical implementation detail is recoverable in Git history.
 ## Production Interactive Edge Drag
 
 - Production interactive single-edge drag share adjustment is selected and
-  shipped. The disabled-by-default `plasma-auto-tiler-drag-oracle` native effect
-  records final drag geometry; after its explicit one-time enable, the
+  shipped. The drag oracle hosted in the disabled-by-default unified
+  `plasma-auto-tiler-active-border` native effect records final drag geometry;
+  after that effect's explicit enable, the
   production script pulls its read-only session D-Bus verdict and routes a
   non-cancelled verdict through `pointer-resize` shares. A cancelled or
   no-change verdict makes no pointer-resize plan. This selects no atomicity,
