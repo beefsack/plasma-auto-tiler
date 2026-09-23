@@ -1392,3 +1392,503 @@ describe("entry-to-adapter directional route (production style)", () => {
         void logs;
     });
 });
+
+describe("plan adapter R4 pre-staging cancellation", () => {
+    function cancelledR4Reply(correlation: string): string {
+        return JSON.stringify({
+            v: 1,
+            correlation_id: correlation,
+            outcome: "cancelled",
+            kind: "directional-move",
+            base_revision: 2,
+        });
+    }
+
+    function staleR4Reply(correlation: string): string {
+        return JSON.stringify({
+            v: 1,
+            correlation_id: correlation,
+            outcome: "rejected",
+            kind: "stale",
+            message: "cancel identity does not match the pending transaction",
+        });
+    }
+
+    // Drive an R4-shape move to a live unanswered request: no plan bound, no
+    // transfer staged, zero native writes. Activation resolves synchronously
+    // in this harness, so dbusCalls[0] is the move request.
+    function driveToLiveR4Move(): {
+        mocks: Mocks;
+        adapter: PlanAdapter;
+        correlation: string;
+    } {
+        const r = refs();
+        const mocks = mockEnv(r);
+        const adapter = enable(mocks);
+        adapter.requestMove("right");
+        assert.equal(mocks.dbusCalls.length, 1);
+        const body = payload(mocks, 0);
+        assert.equal((body["command"] as Record<string, unknown>)["op"], "move");
+        assert.ok(Array.isArray(body["domains"]) && (body["domains"] as unknown[]).length === 2);
+        const correlation = body["correlation_id"] as string;
+        return { mocks, adapter, correlation };
+    }
+
+    function cancelCall(mocks: Mocks): { method: string; payload: string } | undefined {
+        return mocks.dbusCalls.find((c) => c.payload.includes("directional-move-cancel"));
+    }
+
+    // Minimal native capability installer for transfer-staging tests (mirrors
+    // the production R4 suite's fake natives): enough for beginR4Transfer to
+    // reach its setters, recording transfers and memberships.
+    function r4Caps(
+        mocks: Mocks,
+    ): { sentTransfers: Array<{ mover: object; output: object }>; sentMemberships: Array<{ mover: object; refs: ReadonlyArray<object> }> } {
+        const sentTransfers: Array<{ mover: object; output: object }> = [];
+        const sentMemberships: Array<{ mover: object; refs: ReadonlyArray<object> }> = [];
+        const out1 = { name: "out-1" };
+        const out2 = { name: "out-2" };
+        const wsA = { id: "ws-a" };
+        const wsB = { id: "ws-b" };
+        const env = mocks.env as unknown as Record<string, unknown>;
+        env["resolveOutput"] = (name: string): object | null =>
+            name === "out-1" ? out1 : name === "out-2" ? out2 : null;
+        env["resolveDesktop"] = (workspace: string): object | null =>
+            workspace === "ws-a" ? wsA : workspace === "ws-b" ? wsB : null;
+        env["sendClientToScreen"] = (mover: object, output: object): boolean => {
+            sentTransfers.push({ mover, output });
+            return true;
+        };
+        env["setDesktops"] = (mover: object, refs: ReadonlyArray<object>): boolean => {
+            sentMemberships.push({ mover, refs });
+            return true;
+        };
+        env["readOutputName"] = (): string | null => "out-2";
+        env["readDesktopIds"] = (): ReadonlyArray<string> | null => ["ws-b"];
+        env["readGeometry"] = (): { x: number; y: number; w: number; h: number } | null => ({
+            x: 810,
+            y: 10,
+            w: 380,
+            h: 580,
+        });
+        env["subscribeMoverOutput"] = (): (() => void) | null => (): void => {};
+        env["subscribeMoverDesktops"] = (): (() => void) | null => (): void => {};
+        env["subscribeWindowGeometry"] = (): (() => void) | null => (): void => {};
+        return { sentTransfers, sentMemberships };
+    }
+
+    it("attempts cancel on pre-staging timeout and clears the flight on cancelled", () => {
+        const { mocks, adapter, correlation } = driveToLiveR4Move();
+        let observations = 0;
+        const baseDirectional = mocks.directionalImpl;
+        mocks.directionalImpl = (direction) => {
+            observations += 1;
+            return baseDirectional(direction);
+        };
+        // The dispatch-phase timer fires with no plan bound and no transfer.
+        mocks.timers[0]?.callback();
+        // Exactly one fresh observation ran for the cancel payload.
+        assert.equal(observations, 1);
+        const cancel = cancelCall(mocks);
+        assert.ok(cancel, JSON.stringify(mocks.dbusCalls.map((c) => c.method)));
+        // Exact current pre observation with the original request revision (0,
+        // never a staged base), the dispatch correlation/identity, and the
+        // attestation.
+        const body = payload(mocks, 1);
+        assert.equal(body["correlation_id"], correlation);
+        assert.equal(body["revision"], 0);
+        assert.equal(body["owner"], "owner-1");
+        assert.equal(body["generation"], "gen-1");
+        assert.equal(body["focused_window"], "win-a");
+        assert.ok(Array.isArray(body["domains"]) && (body["domains"] as unknown[]).length === 2);
+        assert.deepEqual(
+            (body["windows"] as Array<Record<string, unknown>>).map((w) => w["window"]),
+            ["win-a", "win-x"],
+        );
+        const command = body["command"] as Record<string, unknown>;
+        assert.equal(command["op"], "directional-move-cancel");
+        assert.equal(command["zero_dispatch"], true);
+        assert.ok(!("cross_output_transfer" in command));
+        // Flight retained through the wait.
+        assert.equal(adapter.isInFlight, true);
+        assert.equal(mocks.timers[0]?.cancelled, true);
+        // Normal-level attempt record with the dispatch correlation.
+        assert.ok(
+            mocks.logs.some(
+                (l) =>
+                    l.includes(`cmd=${correlation}`) &&
+                    l.includes("component=cosmic-directional") &&
+                    l.includes("route=directional-r4") &&
+                    l.includes("stage=cancel") &&
+                    l.includes(`correlation=${correlation}`) &&
+                    l.includes("generation=gen-1") &&
+                    l.includes("revision=0") &&
+                    l.includes("event=attempt") &&
+                    l.includes("outcome=cancel-requested") &&
+                    l.includes("cause=timeout"),
+            ),
+            mocks.logs.join("\n"),
+        );
+        // Exact matching cancellation clears the flight without terminal
+        // accounting and without any native write.
+        mocks.callbacks[1]?.(cancelledR4Reply(correlation));
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.isR4InFlight, false);
+        assert.equal(mocks.geometries.length, 0);
+        const accepted = mocks.logs.findIndex(
+            (l) =>
+                l.includes(`cmd=${correlation}`) &&
+                l.includes("stage=cancel") &&
+                l.includes("event=reply") &&
+                l.includes("outcome=accepted") &&
+                l.includes("revision=2") &&
+                l.includes("cause=timeout"),
+        );
+        const released = mocks.logs.findIndex(
+            (l) =>
+                l.includes(`cmd=${correlation}`) &&
+                l.includes("stage=release") &&
+                l.includes("event=local-release") &&
+                l.includes("outcome=cancelled") &&
+                l.includes("revision=2") &&
+                l.includes("cause=timeout"),
+        );
+        assert.ok(accepted >= 0 && released > accepted, mocks.logs.join("\n"));
+        // Later commands proceed under a new correlation.
+        adapter.requestMove("right");
+        const next = payload(mocks, mocks.dbusCalls.length - 1);
+        assert.notEqual(next["correlation_id"], correlation);
+        assert.ok(
+            mocks.logs.some(
+                (l) =>
+                    l.includes(`cmd=${next["correlation_id"] as string}`) &&
+                    l.includes("stage=request") &&
+                    l.includes("event=dispatch") &&
+                    l.includes("outcome=started"),
+            ),
+            mocks.logs.join("\n"),
+        );
+    });
+
+    it("runs terminal teardown unchanged when cancel is refused or diverged", () => {
+        for (const [replyOf, refusedLine] of [
+            [
+                (c: string): string => staleR4Reply(c),
+                "cancel-refused-stale",
+            ],
+            [
+                (c: string): string =>
+                    JSON.stringify({ v: 1, correlation_id: c, outcome: "diverged", kind: "stale-revision" }),
+                "cancel-refused-stale-revision",
+            ],
+        ] as const) {
+            const driven = driveToLiveR4Move();
+            driven.mocks.timers[0]?.callback();
+            assert.ok(cancelCall(driven.mocks), replyOf("probe"));
+            driven.mocks.callbacks[1]?.(replyOf(driven.correlation));
+            // The Rust refusal kind is attributed on the cancel line; the
+            // fallthrough keeps the original timeout terminal line.
+            assert.ok(
+                driven.mocks.logs.some(
+                    (l) => l.includes(`cmd=${driven.correlation}`) && l.includes(`outcome=${refusedLine}`),
+                ),
+                driven.mocks.logs.join("\n"),
+            );
+            // Same terminal surface as the pre-cancel timeout path: flight
+            // cleared, timeout line, no success, no transfer ever staged.
+            assert.equal(driven.adapter.isInFlight, false);
+            assert.equal(driven.adapter.isR4InFlight, false);
+            assert.equal(driven.mocks.geometries.length, 0);
+            assert.ok(
+                driven.mocks.logs.some((l) => l.includes("outcome=timeout")),
+                driven.mocks.logs.join("\n"),
+            );
+            assert.ok(
+                driven.mocks.logs.every((l) => !l.includes("outcome=cancelled")),
+                driven.mocks.logs.join("\n"),
+            );
+        }
+    });
+
+    it("preserves a planner diverged terminal without attempting cancellation", () => {
+        const { mocks, adapter, correlation } = driveToLiveR4Move();
+        mocks.callbacks[0]?.(
+            JSON.stringify({ v: 1, correlation_id: correlation, outcome: "diverged", kind: "stale-revision" }),
+        );
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.isR4InFlight, false);
+        assert.ok(!cancelCall(mocks), "no cancellation after a terminal Rust divergence");
+        assert.ok(
+            mocks.logs.some((l) => l.includes(`cmd=${correlation}`) && l.includes("outcome=stale-revision")),
+            mocks.logs.join("\n"),
+        );
+    });
+
+    it("runs terminal teardown unchanged when the cancel reply is malformed", () => {
+        const { mocks, adapter } = driveToLiveR4Move();
+        mocks.timers[0]?.callback();
+        assert.ok(cancelCall(mocks));
+        mocks.callbacks[1]?.("{not-json");
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.isR4InFlight, false);
+        assert.equal(mocks.geometries.length, 0);
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")), mocks.logs.join("\n"));
+    });
+
+    it("runs terminal teardown unchanged when the cancel round trip times out", () => {
+        const { mocks, adapter, correlation } = driveToLiveR4Move();
+        mocks.timers[0]?.callback();
+        assert.ok(cancelCall(mocks));
+        assert.equal(mocks.timers[1]?.cancelled, false);
+        // The cancel deadline fires with no reply: cancel-specific timeout
+        // attribution, then the same terminal teardown.
+        mocks.timers[1]?.callback();
+        assert.ok(
+            mocks.logs.some((l) => l.includes(`cmd=${correlation}`) && l.includes("outcome=cancel-timed-out")),
+            mocks.logs.join("\n"),
+        );
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.isR4InFlight, false);
+        assert.equal(mocks.geometries.length, 0);
+        assert.ok(
+            mocks.logs.some((l) => l.includes(`cmd=${correlation}`) && l.includes("outcome=timeout")),
+            mocks.logs.join("\n"),
+        );
+        assert.ok(
+            mocks.logs.some((l) => l.includes(`cmd=${correlation}`) && l.includes("outcome=timeout")),
+            mocks.logs.join("\n"),
+        );
+    });
+
+    it("never attempts cancel after transfer staged and still reports adapter-lost", () => {
+        const r = refs();
+        const mocks = mockEnv(r);
+        const caps = r4Caps(mocks);
+        const adapter = enable(mocks);
+        adapter.requestMove("right");
+        const body = payload(mocks, 0);
+        const correlation = body["correlation_id"] as string;
+        // Stage the R4 transfer: native setters ran (dispatch counter > 0).
+        mocks.callbacks[0]?.(crossMoveReply(correlation));
+        assert.ok(caps.sentTransfers.length > 0);
+        // The R4 deadline fires post-staging: terminal with the established
+        // adapter-lost report and no cancel attempt.
+        mocks.timers[1]?.callback();
+        assert.ok(
+            mocks.dbusCalls.some(
+                (c) =>
+                    c.payload.includes("directional-move-ack") && c.payload.includes("adapter-lost"),
+            ),
+            JSON.stringify(mocks.dbusCalls.map((c) => c.payload.slice(0, 120))),
+        );
+        assert.ok(!cancelCall(mocks), "no cancel after transfer staging");
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.isR4InFlight, false);
+    });
+
+    it("never attempts cancel after a transfer setter throws", () => {
+        const r = refs();
+        const mocks = mockEnv(r);
+        r4Caps(mocks);
+        const env = mocks.env as unknown as Record<string, unknown>;
+        env["sendClientToScreen"] = (): boolean => {
+            throw new Error("native transfer fault");
+        };
+        const adapter = enable(mocks);
+        adapter.requestMove("right");
+        const correlation = payload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(crossMoveReply(correlation));
+        assert.ok(!cancelCall(mocks), "no cancel after a throwing transfer setter");
+        assert.ok(
+            mocks.dbusCalls.some(
+                (c) =>
+                    c.payload.includes("directional-move-ack") && c.payload.includes("adapter-lost"),
+            ),
+        );
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.isR4InFlight, false);
+    });
+
+    it("runs terminal teardown unchanged when the cancel send throws", () => {
+        const r = refs();
+        const mocks = mockEnv(r);
+        const baseCallDbus = mocks.env.callDbus.bind(mocks.env);
+        const throwingEnv: PlanAdapterEnv = {
+            ...mocks.env,
+            callDbus: (service, path, iface, method, payload, callback) => {
+                if (payload.includes("directional-move-cancel")) {
+                    throw new Error("transport down");
+                }
+                baseCallDbus(service, path, iface, method, payload, callback);
+            },
+        };
+        const adapter = new PlanAdapter(throwingEnv);
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        adapter.requestMove("right");
+        const body = payload(mocks, 0);
+        const correlation = body["correlation_id"] as string;
+        mocks.timers[0]?.callback();
+        // The attempt cannot leave the adapter: one bounded unavailable
+        // record, then the preserved timeout terminal path with no transfer
+        // staged and no native writes.
+        assert.ok(
+            mocks.logs.some(
+                (l) => l.includes(`cmd=${correlation}`) && l.includes("outcome=cancel-unavailable"),
+            ),
+            mocks.logs.join("\n"),
+        );
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.isR4InFlight, false);
+        assert.equal(mocks.geometries.length, 0);
+        assert.ok(
+            mocks.logs.some((l) => l.includes(`cmd=${correlation}`) && l.includes("outcome=timeout")),
+            mocks.logs.join("\n"),
+        );
+        assert.ok(
+            mocks.logs.every((l) => !l.includes("outcome=cancelled")),
+            mocks.logs.join("\n"),
+        );
+    });
+
+    it("maps unknown refusal kinds to refused-unknown without echo", () => {
+        for (const outcome of ["rejected", "diverged"]) {
+            const driven = driveToLiveR4Move();
+            driven.mocks.timers[0]?.callback();
+            assert.ok(cancelCall(driven.mocks));
+            driven.mocks.callbacks[1]?.(
+                JSON.stringify({ v: 1, correlation_id: driven.correlation, outcome, kind: "bogus-kind" }),
+            );
+            // Syntax-valid but foreign kinds never echo: the record carries
+            // the allowlist fallback while the fallthrough stays terminal.
+            assert.ok(
+                driven.mocks.logs.some(
+                    (l) => l.includes(`cmd=${driven.correlation}`) && l.includes("outcome=cancel-refused-unknown"),
+                ),
+                driven.mocks.logs.join("\n"),
+            );
+            assert.ok(
+                driven.mocks.logs.every((l) => !l.includes("bogus-kind")),
+                driven.mocks.logs.join("\n"),
+            );
+            assert.equal(driven.adapter.isInFlight, false);
+            assert.equal(driven.mocks.geometries.length, 0);
+        }
+    });
+
+    it("drops the late original reply and duplicate cancel callbacks while armed", () => {
+        const r = refs();
+        const mocks = mockEnv(r);
+        const caps = r4Caps(mocks);
+        const adapter = enable(mocks);
+        adapter.requestMove("right");
+        const body = payload(mocks, 0);
+        const correlation = body["correlation_id"] as string;
+        mocks.timers[0]?.callback();
+        assert.ok(cancelCall(mocks));
+        const callsBefore = mocks.dbusCalls.length;
+        // Late original planned reply while armed would stage transfer if not
+        // fenced: assert zero native dispatch of any kind.
+        mocks.callbacks[0]?.(crossMoveReply(correlation));
+        assert.equal(caps.sentTransfers.length, 0);
+        assert.equal(caps.sentMemberships.length, 0);
+        assert.equal(mocks.geometries.length, 0);
+        assert.equal(adapter.isInFlight, true);
+        assert.equal(adapter.isR4InFlight, false);
+        // Exact cancellation settles; replays of its callback and timer are inert.
+        mocks.callbacks[1]?.(cancelledR4Reply(correlation));
+        assert.equal(adapter.isInFlight, false);
+        mocks.callbacks[1]?.(cancelledR4Reply(correlation));
+        mocks.timers[1]?.callback();
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.dbusCalls.length, callsBefore);
+        assert.ok(
+            mocks.dbusCalls.every((c) => !c.payload.includes("adapter-lost")),
+            JSON.stringify(mocks.dbusCalls.map((c) => c.payload.slice(0, 120))),
+        );
+        assert.equal(
+            mocks.logs.filter((l) => l.includes("event=local-release") && l.includes("outcome=cancelled")).length,
+            1,
+            mocks.logs.join("\n"),
+        );
+    });
+
+    it("attributes a malformed cancel reply before the unchanged fallthrough", () => {
+        const { mocks, adapter, correlation } = driveToLiveR4Move();
+        mocks.timers[0]?.callback();
+        assert.ok(cancelCall(mocks));
+        mocks.callbacks[1]?.("{not-json");
+        assert.ok(
+            mocks.logs.some(
+                (l) => l.includes(`cmd=${correlation}`) && l.includes("outcome=cancel-reply-malformed"),
+            ),
+            mocks.logs.join("\n"),
+        );
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.isR4InFlight, false);
+        assert.equal(mocks.geometries.length, 0);
+    });
+
+    it("records ineligible-dispatched when a local plan's setter threw", () => {
+        const r = refs();
+        const mocks = mockEnv(r);
+        const throwingEnv: PlanAdapterEnv = {
+            ...mocks.env,
+            setGeometry: (): boolean => {
+                throw new Error("native write fault");
+            },
+        };
+        const adapter = new PlanAdapter(throwingEnv);
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        adapter.requestMove("right");
+        const body = payload(mocks, 0);
+        const correlation = body["correlation_id"] as string;
+        // A local (non-cross) plan on the two-domain flight actuates ordinary
+        // geometries: the first setter throw marks the flight dispatched, so
+        // no cancel may be attempted and the write-failed terminal stands.
+        // Focus stays source-homed with no operation, the exact local shape.
+        // Rects differ from the observed ones so the writes are not skipped
+        // as already-equal.
+        const local = {
+            v: 1,
+            correlation_id: correlation,
+            outcome: "planned",
+            base_revision: 2,
+            desired_geometry: [
+                { window: "win-a", leaf: "leaf-a", output: "out-1", workspace: "ws-a", rect: { x: 800, y: 0, w: 120, h: 100 } },
+                { window: "win-x", leaf: "leaf-x", output: "out-2", workspace: "ws-b", rect: { x: 0, y: 0, w: 120, h: 100 } },
+            ],
+            desired_focus: { domain_output: "out-1", domain_workspace: "ws-a", leaf: "leaf-a" },
+        };
+        mocks.callbacks[0]?.(JSON.stringify(local));
+        assert.ok(!cancelCall(mocks), "no cancel after a setter ran");
+        assert.ok(
+            mocks.logs.some((l) => l.includes(`cmd=${correlation}`) && l.includes("outcome=cancel-ineligible-dispatched")),
+            mocks.logs.join("\n"),
+        );
+        assert.ok(
+            mocks.logs.some((l) => l.includes(`cmd=${correlation}`) && l.includes("outcome=write-failed")),
+            mocks.logs.join("\n"),
+        );
+        assert.equal(adapter.isInFlight, false);
+    });
+
+    it("keeps logging failure-harmless when the logger throws", () => {
+        const r = refs();
+        const mocks = mockEnv(r);
+        const throwingEnv = { ...mocks.env, log: (): void => { throw new Error("log down"); } };
+        const adapter = new PlanAdapter(throwingEnv);
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        adapter.requestMove("right");
+        const body = payload(mocks, 0);
+        const correlation = body["correlation_id"] as string;
+        mocks.timers[0]?.callback();
+        assert.ok(cancelCall(mocks));
+        mocks.callbacks[1]?.(cancelledR4Reply(correlation));
+        // Every diagnostic above threw inside the adapter and was swallowed:
+        // the flight still settles exactly like the logged path.
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.isR4InFlight, false);
+        adapter.requestMove("right");
+        assert.equal(mocks.dbusCalls.length, 3);
+    });
+});

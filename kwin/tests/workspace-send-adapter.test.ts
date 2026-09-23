@@ -971,6 +971,11 @@ describe("cosmic send-to-workspace adapter lifecycle", () => {
         const mismatch = JSON.parse(plannedReply(correlation)) as Record<string, unknown>;
         mismatch["desired_focus"] = { domain_output: "out-1", domain_workspace: "ws-1", leaf: "leaf-win-b" };
         mocks.callbacks[1]?.(JSON.stringify(mismatch));
+        // Pre-actuation zero-dispatch failure: one cancel round trip runs
+        // before the preserved terminal teardown below.
+        assert.equal(adapter.isInFlight, true);
+        assert.ok(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-cancel")));
+        mocks.timers[1]?.callback();
         assert.equal(adapter.isEnabled, false);
         assert.ok(mocks.logs.some((l) => l.includes("outcome=precondition-mismatch")), mocks.logs.join("\n"));
         assert.deepEqual(mocks.switches, []);
@@ -1321,6 +1326,11 @@ describe("cosmic send-to-workspace refusal routes", () => {
         });
         mocks.observeImpl = () => drifted;
         mocks.callbacks[1]?.(plannedReply(correlation));
+        // The drifted re-observation fails before any write; the cancel
+        // attempt runs first, then the preserved terminal teardown.
+        assert.equal(adapter.isInFlight, true);
+        assert.ok(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-cancel")));
+        mocks.timers[1]?.callback();
         assert.equal(adapter.isEnabled, false);
         assert.ok(mocks.logs.some((l) => l.includes("outcome=stale-revision")), mocks.logs.join("\n"));
         // No native writes happened.
@@ -1863,6 +1873,10 @@ describe("cosmic send-to-workspace wire contract", () => {
         const requestCall = mocks.dbusCalls[1];
         const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
         mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "bogus" }));
+        // Service-fault failures attempt one cancel round trip first; the
+        // unanswered deadline runs the same terminal teardown.
+        assert.equal(adapter.isInFlight, true);
+        mocks.timers[1]?.callback();
         assert.equal(adapter.isEnabled, false);
         assert.ok(mocks.logs.some((l) => l.includes("outcome=service-fault")), mocks.logs.join("\n"));
         assert.equal(mocks.geometries.length, 0);
@@ -1955,6 +1969,11 @@ describe("cosmic send-to-workspace review follow-ups", () => {
         operation["leaf"] = "leaf-win-b";
         mismatched["desired_focus"] = { domain_output: "out-1", domain_workspace: "ws-2", leaf: "leaf-win-b" };
         mocks.callbacks[1]?.(JSON.stringify(mismatched));
+        // Mismatched before any write: one cancel round trip runs before the
+        // preserved terminal teardown below.
+        assert.equal(adapter.isInFlight, true);
+        assert.ok(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-cancel")));
+        mocks.timers[1]?.callback();
         assert.equal(adapter.isEnabled, false);
         assert.ok(mocks.logs.some((l) => l.includes("outcome=precondition-mismatch")), mocks.logs.join("\n"));
         assert.equal(mocks.geometries.length, 0);
@@ -3184,6 +3203,9 @@ describe("cosmic send-to-workspace pre-ack timeout settlement", () => {
             const corr = parsePayload(call?.payload ?? "{}")["correlation_id"] as string;
             void corr;
             inner.callbacks[1]?.(reply);
+            // Pre-actuation ambiguous failures run one cancel round trip
+            // first; its unanswered deadline reaches the same terminal line.
+            inner.timers[1]?.callback();
             const line = inner.logs[inner.logs.length - 1] ?? "";
             assert.ok(!line.includes("outcome=no-pending"), `must not interpret as no-pending: ${line}`);
             assert.ok(!inner.logs.some((l) => l.includes("outcome=committed")), inner.logs.join("\n"));
@@ -3201,6 +3223,7 @@ describe("cosmic send-to-workspace pre-ack timeout settlement", () => {
             const call = inner.dbusCalls[1];
             const corr = parsePayload(call?.payload ?? "{}")["correlation_id"] as string;
             inner.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: corr, outcome: "bogus" }));
+            inner.timers[1]?.callback();
             const line = inner.logs[inner.logs.length - 1] ?? "";
             assert.ok(!line.includes("outcome=no-pending"), `must not interpret as no-pending: ${line}`);
             return line;
@@ -3443,6 +3466,10 @@ describe("cosmic send-to-workspace narrow remote-clean recovery", () => {
             mocks.callbacks[0]?.(":1.7");
             const correlation = requestCorrelation(mocks);
             mocks.callbacks[1]?.(replyOf(correlation));
+            // Malformed kinds attempt one cancel round trip first; the
+            // unanswered deadline runs the same terminal teardown.
+            assert.equal(adapter.isInFlight, true);
+            mocks.timers[1]?.callback();
             assert.equal(adapter.isEnabled, false, replyOf(correlation));
             assert.equal(adapter.isInFlight, false);
             assert.equal(adapter.requestSend("ws-2"), false);
@@ -3464,6 +3491,14 @@ describe("cosmic send-to-workspace narrow remote-clean recovery", () => {
             mocks.callbacks[0]?.(":1.7");
             const correlation = requestCorrelation(mocks);
             mocks.callbacks[1]?.(replyOf(correlation));
+            // A `diverged` reply proves Rust terminal and tears down at once;
+            // any other pre-actuation failure first attempts one cancel round
+            // trip, whose unanswered deadline runs the same teardown.
+            if (!replyOf(correlation).includes('"diverged"')) {
+                assert.equal(adapter.isInFlight, true);
+                assert.ok(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-cancel")));
+                mocks.timers[1]?.callback();
+            }
             assert.equal(adapter.isEnabled, false, replyOf(correlation));
             assert.equal(adapter.isInFlight, false);
             assert.equal(adapter.requestSend("ws-2"), false);
@@ -3487,6 +3522,12 @@ describe("cosmic send-to-workspace narrow remote-clean recovery", () => {
         assert.equal(malformedAdapter.requestSend("ws-2"), true);
         malformed.callbacks[0]?.(":1.7");
         malformed.callbacks[1]?.("{not-json");
+        // Pre-actuation zero-dispatch failure: one cancel attempt precedes
+        // teardown. With no Rust answer the cancel deadline runs the
+        // preserved terminal path.
+        assert.equal(malformedAdapter.isInFlight, true);
+        assert.ok(malformed.dbusCalls.some((c) => c.payload.includes("send-to-workspace-cancel")));
+        malformed.timers[1]?.callback();
         assert.equal(malformedAdapter.isEnabled, false);
     });
 });
@@ -4246,5 +4287,447 @@ describe("cosmic send-to-workspace deliberate gap reload", () => {
             targetOuter: 8,
         });
         adapter.disable();
+    });
+});
+
+describe("cosmic send-to-workspace pre-actuation cancellation", () => {
+    function cancelledReply(correlation: string): string {
+        return JSON.stringify({
+            v: WORKSPACE_SEND_CONTRACT_VERSION,
+            correlation_id: correlation,
+            outcome: "cancelled",
+            kind: "send-to-workspace",
+            base_revision: 3,
+        });
+    }
+
+    function staleReply(correlation: string): string {
+        return JSON.stringify({
+            v: WORKSPACE_SEND_CONTRACT_VERSION,
+            correlation_id: correlation,
+            outcome: "rejected",
+            kind: "stale",
+            message: "cancel identity does not match the pending transaction",
+        });
+    }
+
+    // Drive enable + send + owner pin so the DescribePlan request is live and
+    // unanswered (request-phase failure shape: no plan bound, no writes).
+    function driveToLiveRequest(): {
+        adapter: WorkspaceSendAdapter;
+        mocks: Mocks;
+        correlation: string;
+    } {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const request = mocks.dbusCalls[1];
+        assert.equal(request?.service, ":1.7");
+        assert.equal(request?.method, WORKSPACE_SEND_METHOD);
+        const correlation = parsePayload(request?.payload ?? "{}")["correlation_id"] as string;
+        assert.ok(correlation.length > 0);
+        return { adapter, mocks, correlation };
+    }
+
+    function cancelCall(mocks: Mocks): DbusCall | undefined {
+        return mocks.dbusCalls.find((c) => c.payload.includes("send-to-workspace-cancel"));
+    }
+
+    it("attempts cancel on request-phase timeout and stays enabled on cancelled", () => {
+        const { adapter, mocks, correlation } = driveToLiveRequest();
+        let observations = 0;
+        const baseObserve = mocks.observeImpl;
+        mocks.observeImpl = () => {
+            observations += 1;
+            return baseObserve();
+        };
+        // The whole-flight timer fires with no plan bound and no writes.
+        mocks.timers[0]?.callback();
+        const cancel = cancelCall(mocks);
+        assert.ok(cancel, JSON.stringify(mocks.dbusCalls.map((c) => c.method)));
+        assert.equal(cancel?.service, ":1.7");
+        // Exact pre observation with the original request revision (0, never a
+        // base), the dispatch correlation/identity, and the attestation.
+        const payload = parsePayload(cancel?.payload ?? "{}");
+        assert.equal(payload["correlation_id"], correlation);
+        assert.equal(payload["revision"], 0);
+        assert.equal(payload["owner"], "owner-1");
+        assert.equal(payload["generation"], "gen-1");
+        assert.equal(payload["focused_window"], "win-a");
+        assert.deepEqual(
+            (payload["windows"] as Array<Record<string, unknown>>).map((w) => w["window"]),
+            ["win-a", "win-b"],
+        );
+        assert.deepEqual(
+            (payload["target_windows"] as Array<Record<string, unknown>>).map((w) => w["window"]),
+            ["win-t"],
+        );
+        const command = payload["command"] as Record<string, unknown>;
+        assert.equal(command["op"], "send-to-workspace-cancel");
+        assert.equal(command["zero_dispatch"], true);
+        // Flight retained through the wait; exactly one fresh observation ran.
+        assert.equal(adapter.isInFlight, true);
+        assert.equal(adapter.blocksPlan, true);
+        assert.equal(observations, 1);
+        assert.equal(mocks.timers[0]?.cancelled, true);
+        // Normal-level attempt record with the dispatch correlation.
+        assert.ok(
+            mocks.logs.some(
+                (l) =>
+                    l.includes("component=cosmic-send") &&
+                    l.includes("route=send-to-workspace") &&
+                    l.includes("stage=cancel") &&
+                    l.includes(`correlation=${correlation}`) &&
+                    l.includes("generation=gen-1") &&
+                    l.includes("revision=0") &&
+                    l.includes("event=attempt") &&
+                    l.includes("outcome=requested") &&
+                    l.includes("cause=timeout"),
+            ),
+            mocks.logs.join("\n"),
+        );
+        // Exact matching cancellation clears the flight without teardown:
+        // enabled, unblocked, no loss report, zero native writes.
+        mocks.callbacks[2]?.(cancelledReply(correlation));
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.blocksPlan, false);
+        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
+        assert.equal(mocks.geometries.length, 0);
+        assert.equal(mocks.desktops.length, 0);
+        assert.equal(mocks.switches.length, 0);
+        assert.equal(mocks.focuses.length, 0);
+        const accepted = mocks.logs.findIndex(
+            (l) =>
+                l.includes(`correlation=${correlation}`) &&
+                l.includes("stage=cancel") &&
+                l.includes("event=reply") &&
+                l.includes("outcome=accepted") &&
+                l.includes("revision=3") &&
+                l.includes("cause=timeout"),
+        );
+        const released = mocks.logs.findIndex(
+            (l) =>
+                l.includes(`correlation=${correlation}`) &&
+                l.includes("stage=release") &&
+                l.includes("event=local-release") &&
+                l.includes("outcome=cancelled") &&
+                l.includes("revision=3") &&
+                l.includes("cause=timeout"),
+        );
+        assert.ok(accepted >= 0 && released > accepted, mocks.logs.join("\n"));
+        // Later commands proceed under a new correlation.
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[3]?.(":1.7");
+        const next = parsePayload(mocks.dbusCalls[4]?.payload ?? "{}")[
+            "correlation_id"
+        ] as string;
+        assert.notEqual(next, correlation);
+        assert.ok(
+            mocks.logs.some(
+                (l) =>
+                    l.includes(`correlation=${next}`) &&
+                    l.includes("event=dispatch") &&
+                    l.includes("outcome=started"),
+            ),
+            mocks.logs.join("\n"),
+        );
+    });
+
+    it("runs terminal teardown unchanged when cancel is refused", () => {
+        const { adapter, mocks, correlation } = driveToLiveRequest();
+        mocks.timers[0]?.callback();
+        assert.ok(cancelCall(mocks));
+        mocks.callbacks[2]?.(staleReply(correlation));
+        // The Rust refusal kind is attributed on the cancel line; the
+        // fallthrough keeps the original timeout terminal line.
+        assert.ok(
+            mocks.logs.some(
+                (l) => l.includes("event=reply") && l.includes("outcome=refused-stale") && l.includes(`correlation=${correlation}`),
+            ),
+            mocks.logs.join("\n"),
+        );
+        // Identical terminal surface to the pre-cancel timeout path.
+        assert.equal(adapter.isEnabled, false);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")), mocks.logs.join("\n"));
+        assert.ok(
+            mocks.logs.some(
+                (line) =>
+                    line.includes("event=timeout-request") &&
+                    line.includes("follow=not-reached gate=pre-commit phase=timeout reason=timeout-request"),
+            ),
+            mocks.logs.join("\n"),
+        );
+        assert.equal(mocks.geometries.length, 0);
+        assert.equal(mocks.desktops.length, 0);
+    });
+
+    it("runs terminal teardown unchanged when the cancel reply is malformed", () => {
+        const { adapter, mocks } = driveToLiveRequest();
+        mocks.timers[0]?.callback();
+        assert.ok(cancelCall(mocks));
+        mocks.callbacks[2]?.("{not-json");
+        assert.equal(adapter.isEnabled, false);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
+        assert.equal(mocks.geometries.length, 0);
+        assert.equal(mocks.desktops.length, 0);
+    });
+
+    it("runs terminal teardown unchanged when the cancel round trip times out", () => {
+        const { adapter, mocks } = driveToLiveRequest();
+        mocks.timers[0]?.callback();
+        assert.ok(cancelCall(mocks));
+        assert.equal(mocks.timers[1]?.cancelled, false);
+        // The cancel deadline fires with no reply: cancel-specific timeout
+        // attribution, then the same terminal teardown.
+        mocks.timers[1]?.callback();
+        assert.ok(
+            mocks.logs.some((l) => l.includes("event=timeout") && l.includes("outcome=timed-out")),
+            mocks.logs.join("\n"),
+        );
+        assert.equal(adapter.isEnabled, false);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")), mocks.logs.join("\n"));
+        assert.ok(
+            mocks.logs.some((line) => line.includes("event=timeout-request")),
+            mocks.logs.join("\n"),
+        );
+    });
+
+    it("runs terminal teardown unchanged when the cancel send throws", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const baseCallDbus = mocks.env.callDbus.bind(mocks.env);
+        const throwingEnv: WorkspaceSendAdapterEnv = {
+            ...mocks.env,
+            callDbus: (service, path, iface, method, payload, callback) => {
+                if (payload.includes("send-to-workspace-cancel")) {
+                    throw new Error("transport down");
+                }
+                baseCallDbus(service, path, iface, method, payload, callback);
+            },
+        };
+        const adapter = new WorkspaceSendAdapter(throwingEnv);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        mocks.timers[0]?.callback();
+        // The attempt cannot leave the adapter: bounded unavailable record,
+        // then immediate terminal teardown.
+        assert.ok(
+            mocks.logs.some((l) => l.includes("event=send") && l.includes("outcome=unavailable")),
+            mocks.logs.join("\n"),
+        );
+        assert.equal(adapter.isEnabled, false);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")), mocks.logs.join("\n"));
+    });
+
+    it("never attempts cancel after a setter threw", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.geometryImpl = () => {
+            throw new Error("native write fault");
+        };
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
+        // A valid plan binds, then the first geometry setter throws: the
+        // flight dispatched, so no cancel may be attempted (ineligible
+        // recorded with the dispatched reason, which wins over merely bound)
+        // and the established loss report still fires exactly once to the
+        // pinned owner.
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        assert.equal(cancelCall(mocks), undefined);
+        assert.ok(
+            mocks.logs.some(
+                (l) => l.includes("event=eligibility") && l.includes("outcome=ineligible-dispatched"),
+            ),
+            mocks.logs.join("\n"),
+        );
+        assert.equal(adapter.isEnabled, false);
+        const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
+        assert.equal(lost.length, 1);
+        assert.equal(lost[0]?.service, ":1.7");
+    });
+
+    it("drops the late original reply, timer, and duplicate cancel callbacks while armed", () => {
+        const { adapter, mocks, correlation } = driveToLiveRequest();
+        mocks.timers[0]?.callback();
+        assert.ok(cancelCall(mocks));
+        const callsBefore = mocks.dbusCalls.length;
+        // Late original planned reply while armed: inert, no actuation, no ack.
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        assert.equal(mocks.geometries.length, 0);
+        assert.equal(mocks.desktops.length, 0);
+        assert.equal(
+            mocks.dbusCalls.some((c) => c.payload.includes("accepted")),
+            false,
+        );
+        assert.equal(adapter.isInFlight, true);
+        // Exact cancellation settles; replays of its callback and timer are inert.
+        mocks.callbacks[2]?.(cancelledReply(correlation));
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+        mocks.callbacks[2]?.(cancelledReply(correlation));
+        mocks.timers[1]?.callback();
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.dbusCalls.length, callsBefore);
+        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
+        assert.equal(
+            mocks.logs.filter((l) => l.includes("event=local-release") && l.includes("outcome=cancelled")).length,
+            1,
+            mocks.logs.join("\n"),
+        );
+    });
+
+    it("maps unknown refusal kinds to refused-unknown without echo", () => {
+        for (const outcome of ["rejected", "diverged"]) {
+            const driven = driveToLiveRequest();
+            driven.mocks.timers[0]?.callback();
+            assert.ok(cancelCall(driven.mocks));
+            driven.mocks.callbacks[2]?.(
+                JSON.stringify({ v: 1, correlation_id: driven.correlation, outcome, kind: "bogus-kind" }),
+            );
+            // Syntax-valid but foreign kinds never echo: the record carries
+            // the allowlist fallback while the fallthrough stays terminal.
+            assert.ok(
+                driven.mocks.logs.some(
+                    (l) => l.includes("event=reply") && l.includes("outcome=refused-unknown") && l.includes(`correlation=${driven.correlation}`),
+                ),
+                driven.mocks.logs.join("\n"),
+            );
+            assert.ok(
+                driven.mocks.logs.every((l) => !l.includes("bogus-kind")),
+                driven.mocks.logs.join("\n"),
+            );
+            assert.equal(driven.adapter.isEnabled, false);
+            assert.equal(driven.adapter.isInFlight, false);
+        }
+    });
+
+    it("attributes a malformed cancel reply before the unchanged fallthrough", () => {
+        const { adapter, mocks, correlation } = driveToLiveRequest();
+        mocks.timers[0]?.callback();
+        assert.ok(cancelCall(mocks));
+        mocks.callbacks[2]?.("{not-json");
+        assert.ok(
+            mocks.logs.some(
+                (l) => l.includes("event=reply") && l.includes("outcome=reply-malformed") && l.includes(`correlation=${correlation}`),
+            ),
+            mocks.logs.join("\n"),
+        );
+        assert.equal(adapter.isEnabled, false);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
+    });
+
+    it("keeps logging failure-harmless when the logger throws", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const throwingEnv: WorkspaceSendAdapterEnv = {
+            ...mocks.env,
+            log: () => {
+                throw new Error("log down");
+            },
+        };
+        const adapter = new WorkspaceSendAdapter(throwingEnv);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
+        mocks.timers[0]?.callback();
+        assert.ok(cancelCall(mocks));
+        mocks.callbacks[2]?.(
+            JSON.stringify({
+                v: WORKSPACE_SEND_CONTRACT_VERSION,
+                correlation_id: correlation,
+                outcome: "cancelled",
+                kind: "send-to-workspace",
+                base_revision: 3,
+            }),
+        );
+        // Every diagnostic above threw inside the adapter and was swallowed:
+        // the flight still settles exactly like the logged path.
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.requestSend("ws-2"), true);
+    });
+});
+
+describe("cancel/status observability wiring (offline capture proof)", () => {
+    function repoFile(...parts: string[]): string {
+        const candidates = [resolve(process.cwd(), ...parts), resolve(process.cwd(), "..", ...parts)];
+        for (const candidate of candidates) {
+            try {
+                readFileSync(candidate, "utf8");
+                return candidate;
+            } catch (error) {
+                void error;
+            }
+        }
+        throw new Error(`missing source under test: ${parts.join("/")}`);
+    }
+
+    it("routes every cancel/status line through journal-captured prefixes at normal level", () => {
+        const ws = readFileSync(repoFile("kwin", "src", "workspace-send-adapter.ts"), "utf8");
+        const plan = readFileSync(repoFile("kwin", "src", "plan-adapter.ts"), "utf8");
+        // The combined-capture journal filter is the literal
+        // `plasma-auto-tiler:` substring; both adapters' diag facilities use
+        // prefixes carrying it, so every cancel/status record is captured.
+        assert.ok(ws.includes('"plasma-auto-tiler:route-diag"'));
+        assert.ok(plan.includes('"plasma-auto-tiler:plan"'));
+        // Cancel outcomes bypass trace gating on both routes: workspace
+        // admits the whole `cancel` event family in its diag filter (the
+        // `event !== "cancel"` clause defeats the trace-only return), Plan
+        // logs every non-dispatch outcome (cancel lines included).
+        assert.ok(ws.includes('event !== "cancel"'));
+        assert.ok(ws.includes("`ineligible-${ineligible}`"));
+        assert.ok(ws.includes("`refused-${refusal}`"));
+        assert.ok(plan.includes("cancel-ineligible-"));
+        assert.ok(plan.includes("cancel-refused-"));
+        // No cancel/status record echoes payloads, ids, geometry, or owners:
+        // refusal attribution passes through the allowlisted kind helper
+        // (known Rust cancellation/divergence kinds, else `unknown`), never
+        // the syntax-only sanitizer or raw reply bytes.
+        assert.ok(ws.includes("refusal = cancelRefusalKind("));
+        assert.ok(plan.includes("refusal = cancelRefusalKind("));
+        assert.ok(ws.includes('"cancel-op-invalid"'));
+        assert.ok(plan.includes('"cancel-op-invalid"'));
+    });
+
+    it("keeps the combined dev capture wiring both sinks", () => {
+        const justfile = readFileSync(repoFile("justfile"), "utf8");
+        // Planner stderr file tail plus the KWin journal filter feed the
+        // combined stream; either sink going missing fails bring-up loudly.
+        assert.ok(justfile.includes('tail -n +1 -F "$PLANNER_LOG"'));
+        assert.ok(justfile.includes('grep --line-buffered -F "plasma-auto-tiler:"'));
+        assert.ok(justfile.includes("dev-planner-stream"));
+        assert.ok(justfile.includes("dev-kwin-stream"));
+    });
+
+    it("keeps Rust summaries bounded with no raw payload trace", () => {
+        const protocol = readFileSync(repoFile("src", "planner_protocol.rs"), "utf8");
+        const service = readFileSync(repoFile("src", "planner_service.rs"), "utf8");
+        // The raw full-JSON trace is gone; summaries are the only record.
+        assert.ok(!protocol.includes("plan-trace:request"));
+        assert.ok(!service.includes("plan-trace:request"));
+        assert.ok(protocol.includes("PLAN_SUMMARY_PREFIX"));
+        assert.ok(service.includes("summarize_plan_ingress"));
+        assert.ok(service.includes("summarize_plan_egress"));
+        // Trace wiring (env var + gated shape line) is preserved.
+        assert.ok(service.includes("PLASMA_AUTO_TILER_TRACE"));
+        assert.ok(protocol.includes("summarize_plan_shape"));
     });
 });

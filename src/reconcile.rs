@@ -241,6 +241,54 @@ pub struct Reconciler {
     diverged: Option<DivergenceKind>,
 }
 
+/// Non-divergent cancellation failure. Unlike acknowledgement/verification
+/// mismatches, a cancellation probe must never record divergence: it only
+/// reports whether the pending plan may be withdrawn, so a stale or foreign
+/// probe leaves the live transaction exactly untouched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelUnackedError {
+    /// No pending plan: discarded without divergence or advancement.
+    NoPending,
+    /// Pending plan already acknowledged: withdrawal refused without
+    /// divergence or state change (an applied ack may already have committed
+    /// elsewhere, including behind a lost commit reply).
+    AlreadyAcknowledged,
+    /// Correlation or base revision does not bind the pending plan: refused
+    /// without divergence or state change.
+    BindingMismatch,
+    /// A transient drag capture remains active: withdrawal refused without
+    /// divergence or state change.
+    DragActive,
+    /// Fail-closed divergence already recorded.
+    Diverged(DivergenceKind),
+}
+
+impl CancelUnackedError {
+    /// Stable kind string, never echoes input.
+    #[must_use]
+    pub const fn kind(self) -> &'static str {
+        match self {
+            Self::NoPending => "no-pending",
+            Self::AlreadyAcknowledged => "already-acknowledged",
+            Self::BindingMismatch => "binding-mismatch",
+            Self::DragActive => "drag-active",
+            Self::Diverged(reason) => reason.as_str(),
+        }
+    }
+
+    /// Fixed redacted message, never echoes input.
+    #[must_use]
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::NoPending => "no dispatched plan awaits cancellation",
+            Self::AlreadyAcknowledged => "plan was already acknowledged",
+            Self::BindingMismatch => "cancellation does not bind the pending plan",
+            Self::DragActive => "pending plan holds a drag capture",
+            Self::Diverged(reason) => reason.message(),
+        }
+    }
+}
+
 impl Reconciler {
     /// Pin stable owner/generation metadata and seed the verified revision.
     pub fn new(
@@ -843,6 +891,33 @@ impl Reconciler {
             },
         });
         Ok(dispatch)
+    }
+
+    /// Withdraw an unacknowledged pending plan without recording divergence.
+    /// Requires an exact correlation/base-revision binding against the pending
+    /// plan; owner/generation binding is enforced by the caller, which retains
+    /// the authoritative copies. On success the pending slot clears with no
+    /// revision advancement and no divergence recorded. Any failure leaves
+    /// state exactly untouched, including already-recorded divergence.
+    pub fn cancel_unacked(
+        &mut self,
+        correlation_id: &CorrelationId,
+        base_revision: u64,
+    ) -> Result<(), CancelUnackedError> {
+        if let Some(reason) = self.diverged {
+            return Err(CancelUnackedError::Diverged(reason));
+        }
+        let Some(pending) = self.pending.as_ref() else {
+            return Err(CancelUnackedError::NoPending);
+        };
+        if pending.acked {
+            return Err(CancelUnackedError::AlreadyAcknowledged);
+        }
+        if pending.correlation_id != *correlation_id || pending.base_revision != base_revision {
+            return Err(CancelUnackedError::BindingMismatch);
+        }
+        self.pending = None;
+        Ok(())
     }
 
     /// Record an explicit adapter acknowledgement. Requires an exact binding

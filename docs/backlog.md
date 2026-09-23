@@ -165,17 +165,39 @@ Only meaningful pending or active work is listed.
   Next: user restarts `just dev trace`, repeats the local move and a subsequent
   command, and provides the exact trace to distinguish native constraints from
   post-write mismatch. No native lifecycle or geometry mutation ran in verification.
+- P1 | Consistent correlated observability | User requires consistent lifecycle,
+  decision, and failure logging throughout the solution, with trace IDs linking
+  requests across services; encoded in `docs/principles.md`. Delivered normal
+  correlated workspace-send/R4 cancellation lifecycle and Planner summaries:
+  eligibility, attempt, failure/refusal/timeout, acceptance, local release with
+  original cause, and later command dispatch. Fixed uncorrelated summaries cover
+  Planner early exits without parsing rejected input. Offline Rust/KWin tests,
+  typecheck/build, and independent review pass. Wider source assessment is
+  complete. Next: correlated Plan activation/owner-pinning/request-send records
+  to distinguish transport boundaries currently collapsed into `no-planner`.
+  Then address ordinary Plan apply/verify phase visibility and silent tray
+  owner/refusal/publication failures. Ambient topology and native signals must
+  not inherit unrelated request IDs. Whole-system coverage and live capture
+  behavior remain unproven.
+  [cancellation observability](changes/archive/correlated-pending-observability.md)
+  [coverage assessment](changes/observability-coverage-assessment.md)
 - P1 | Recoverable window handling | User requires logged problems and continued
   window handling, never a permanently disabled window/domain after a tiling
-  failure. Reconsider existing terminal divergence/parking accordingly while
-  keeping immediate work focused on the local-move defect and height mismatch.
-  Failed operations must not be reported as successful; select a minimal fresh-
-  observation recovery path that preserves usable layouts and subsequent
-  commands without tight retry loops or fighting active user interaction.
-  Detailed uncertain-transfer recovery remains to be designed under this newly
-  approved recoverability requirement, superseding permanent-disable behavior.
-  Regression coverage confirms existing explicit moves can bypass reconcile
-  parking and clear it on success; general recovery is not yet implemented.
+  failure. Delivered read-only pending-status queries and user-approved bounded
+  automatic pre-actuation cancellation for workspace-send and directional R4.
+  One attempt requires exact retained pre-image/request revision, transaction
+  fences, and same-UID adapter zero-dispatch attestation; the old flight is made
+  inert before observation. Confirmed cancellation preserves canonical topology,
+  focus, shares, exceptions, revision, and unrelated domains, allowing later
+  commands with new correlations. Any setter dispatch, including a throwing
+  setter, excludes recovery. Rust format/check/full tests, KWin typecheck/full
+  tests/build, final focused regressions, and independent review pass; no live
+  acceptance is claimed. Remaining design: post-actuation uncertainty, lost
+  committed replies, and diverged state. These remain fenced; no settlement,
+  receipts, replay, reset, or reseed is selected. Existing explicit moves can
+  bypass ordinary reconcile parking and clear it on success.
+  [status protocol](changes/archive/pending-transaction-status.md)
+  [pre-actuation recovery](changes/archive/pending-transaction-pre-actuation-cancellation.md)
 - P1 | Cross-output directional focus and movement live gate | Implemented
   Meta+Left/Right focus and Meta+Shift+Left/Right movement across horizontally
   adjacent outputs after local operations are exhausted. Targets use the other
@@ -253,14 +275,12 @@ Only meaningful pending or active work is listed.
   evidence. Graceful, unsurprising confirmed partial success and responsiveness
   during rapid use are the durable product preference, not permission to ignore
   errors, retry, reset a queue, or change architecture.
-  Recovery from genuinely uncertain layout transactions remains a separate
-  product decision; the accepted run does not select new recovery semantics.
-  Proven pre-dispatch and well-formed request rejection paths are reusable. Sent request/lost callback,
-  malformed reply, request timeout, owner loss, and other transport ambiguity
-  can leave Rust pending; partial native mutation plus ack/verify timeout can
-  also be uncertain. Selecting discard/reseed or another generation/protocol
-  recovery remains a material decision; no blind reset, replay, or topology
-  reconstruction is selected.
+  Separately authorized pre-actuation cancellation is now implemented: a lost
+  planned reply may recover through one fenced zero-dispatch cancellation,
+  as tracked under Recoverable window handling. Owner loss, partial native
+  mutation, ack/verify uncertainty, lost commit replies, and divergence remain
+  unresolved. Their recovery semantics require a separate decision; no blind
+  reset, replay, or topology reconstruction is selected.
 - P1 | Temporary active-group highlight live gate | Named-log diagnosis found
   retained-focus lookup and missing completed-geometry refresh defects; both are
   corrected and statically verified. A read-only native status diagnostic now

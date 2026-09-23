@@ -902,6 +902,37 @@ function sanitizeKind(value: unknown): string {
     return value;
 }
 
+// Allowlisted Rust cancellation/divergence kinds for the cancel refusal
+// record: every kind the R4 cancel evaluator can emit (same set as the
+// workspace-send route). Known kinds pass through verbatim; anything else
+// (transport mangling, never genuine Rust output on this route) maps to
+// `unknown` with no echo of the received bytes. Syntax-only sanitization
+// alone would admit well-formed but foreign kinds.
+const CANCEL_REFUSAL_KINDS: readonly string[] = Object.freeze([
+    "stale",
+    "cancel-refused",
+    "cancel-mismatch",
+    "no-pending",
+    "cancel-op-invalid",
+    "stale-revision",
+    "owner-mismatch",
+    "generation-mismatch",
+    "correlation-mismatch",
+    "capability-refused",
+    "partial-application",
+    "adapter-lost",
+    "postcondition-unverified",
+    "postcondition-mismatch",
+    "revision-exhausted",
+]);
+
+function cancelRefusalKind(value: unknown): string {
+    if (typeof value !== "string") {
+        return "unknown";
+    }
+    return CANCEL_REFUSAL_KINDS.indexOf(value) >= 0 ? value : "unknown";
+}
+
 function sanitizeDetail(value: unknown): string | null {
     if (typeof value !== "string" || value.length === 0 || value.length > 64) {
         return null;
@@ -1521,6 +1552,10 @@ interface PendingFlight {
     readonly direction: PlanDirection | null;
     // Pinned-owner transport payload retained across activation steps.
     readonly requestPayload: string;
+    // Original request revision carried at dispatch (always 0 on the request
+    // phase). Cancellation echoes exactly this value, never a base revision
+    // learned from a stale probe.
+    readonly requestRevision: number;
     // True when dispatched from confirmed-loss recovery: a terminal failure
     // stays bounded without a second identity probe, so a failed recovery
     // never loops.
@@ -1705,6 +1740,22 @@ export class PlanAdapter {
     // PlanAdapter operation refuses busy; completion or terminal failure
     // always clears it exactly once with no replay.
     private r4Flight: R4Flight | null = null;
+    // Per-flight native-dispatch count: incremented immediately before every
+    // geometry, membership, and transfer setter invocation, even when the
+    // call throws. Zero proves this flight never dispatched a native write,
+    // which is the adapter half of cancellation eligibility. Reset on every
+    // dispatch.
+    private r4Dispatches = 0;
+    // Cancellation fence for a pre-staging R4 move flight: while armed, the
+    // original late replies, timers, transfer staging, and new commands
+    // cannot write or recover. Armed before the fresh cancel observation and
+    // cleared on cancel settlement (success or fallthrough) or flight clear.
+    private cancelArmed = false;
+    private cancelReplySeen = false;
+    // Fallthrough terminal outcome preserved across the cancel attempt so a
+    // failed cancellation runs the exact terminal path the original failure
+    // would have run.
+    private cancelOutcome = "";
 
     constructor(private readonly env: PlanAdapterEnv) {}
 
@@ -1786,6 +1837,10 @@ export class PlanAdapter {
         this.knownOwner = null;
         this.nextIsRecovery = false;
         this.activeProbe = 0;
+        this.r4Dispatches = 0;
+        this.cancelArmed = false;
+        this.cancelReplySeen = false;
+        this.cancelOutcome = "";
         this.clearRepeat();
         return true;
     }
@@ -1821,6 +1876,10 @@ export class PlanAdapter {
         this.knownOwner = null;
         this.nextIsRecovery = false;
         this.activeProbe = 0;
+        this.r4Dispatches = 0;
+        this.cancelArmed = false;
+        this.cancelReplySeen = false;
+        this.cancelOutcome = "";
         this.clearRepeat();
         this.clearTimer();
         this.clearDebounce();
@@ -3812,13 +3871,14 @@ export class PlanAdapter {
                     ? intent.direction
                     : null,
             requestPayload: payload,
+            requestRevision: 0,
             isRecovery,
         };
-        // Bounded route entry: every dispatched flight opens with the same
-        // cmd line shape and `outcome=dispatch`, then closes with its terminal
-        // outcome line (planned-applied, rejected, timeout, ...). Together the
-        // two lines make every user action observable with entry and verdict.
-        this.diag(intent.op, correlation, sortedIds.length, "dispatch");
+        this.r4Dispatches = 0;
+        this.cancelArmed = false;
+        this.cancelReplySeen = false;
+        this.cancelOutcome = "";
+        this.lifecycleDiag(this.pending as PendingFlight, "request", "dispatch", "started", "-");
         this.callbackSeen = false;
         this.token += 1;
         const flight = this.token;
@@ -4213,6 +4273,26 @@ export class PlanAdapter {
         if (!this.inFlight || flight !== this.activeToken || session !== this.plannerSession) {
             return;
         }
+        // Cancel wait timeout: the single bounded cancel round trip never
+        // answered. Attribute the wait, then disarm and run the preserved
+        // fallthrough terminal path exactly once (terminate, never re-arm:
+        // no retry).
+        if (this.cancelArmed) {
+            const lost = this.pending;
+            const outcome = this.cancelOutcome;
+            if (lost !== null) {
+                this.lifecycleDiag(lost, "cancel", "timeout", "cancel-timed-out", outcome);
+            }
+            this.cancelArmed = false;
+            this.cancelReplySeen = false;
+            this.cancelOutcome = "";
+            if (lost !== null) {
+                this.terminateFlight(lost, outcome);
+            } else {
+                this.finishFlight();
+            }
+            return;
+        }
         // The dispatch-phase timer is always cleared before R4 arming; a late
         // fire while R4 holds the flight belongs to the R4 deadline.
         if (this.r4Flight !== null) {
@@ -4220,11 +4300,20 @@ export class PlanAdapter {
             return;
         }
         const lost = this.pending;
+        // Pre-staging R4-shape flights get one cancel attempt before the
+        // terminal teardown below; everything else keeps the established path
+        // unchanged (including the probe and flight chaining that follow).
+        if (lost !== null && this.tryStartR4Cancel(lost, flight, session, "timeout")) {
+            return;
+        }
         this.clearTimer();
         this.inFlight = false;
         this.pending = null;
         this.pinnedOwner = null;
         this.activationStep = 0;
+        this.cancelArmed = false;
+        this.cancelReplySeen = false;
+        this.cancelOutcome = "";
         if (lost !== null) {
             this.diag(lost.op, lost.correlation, lost.windowCount, "timeout");
             if (lost.background === true) {
@@ -4247,6 +4336,12 @@ export class PlanAdapter {
         // A duplicate `planned` must never restart native transfer, overwrite
         // `r4Flight`, or reset the whole-flight timer.
         if (this.r4Flight !== null) {
+            return;
+        }
+        // Cancel-armed fence: a late original reply arriving while the
+        // withdrawal awaits must never stage transfer or actuate. The cancel
+        // outcome alone settles the flight.
+        if (this.cancelArmed) {
             return;
         }
         const flightState = this.pending;
@@ -4280,6 +4375,10 @@ export class PlanAdapter {
             return;
         }
         const outcome = parsed["outcome"];
+        if (outcome === "diverged") {
+            this.failFlight(flightState, sanitizeKind(parsed["kind"]), false);
+            return;
+        }
         if (outcome === "rejected") {
             const kind = sanitizeKind(parsed["kind"]);
             const detail = sanitizeDetail(parsed["detail"]);
@@ -4766,11 +4865,25 @@ export class PlanAdapter {
     // owner loss, wrong output, write failure, or focus failure is terminal:
     // one best-effort adapter-lost ack (when ack is still unbound) or no
     // verify at all, never a replay.
+    // Cancellation fence helper: incremented immediately before every
+    // native dispatch (transfer, membership, geometry), even when the call
+    // throws. Cancellation eligibility reads the counter, never an inferred
+    // phase.
+    private markR4Dispatch(): void {
+        this.r4Dispatches += 1;
+    }
+
     private beginR4Transfer(
         planned: PlannedReply,
         flightState: PendingFlight,
         current: PlanObserved,
     ): void {
+        // Cancel-armed fence: staging transfer while a withdrawal awaits
+        // would void the zero-dispatch attestation. Unreachable (the reply
+        // path is fenced), guarded explicitly.
+        if (this.cancelArmed) {
+            return;
+        }
         const operation = planned.operation as PlanMoveOperation;
         const domains = flightState.snapshot.domains as ReadonlyArray<PlanDomain>;
         const target = domains[1] as PlanDomain;
@@ -4930,6 +5043,7 @@ export class PlanAdapter {
         // membership, then geometries. Any failure is terminal before ack.
         let transferred = false;
         try {
+            this.markR4Dispatch();
             transferred = this.env.sendClientToScreen?.(moverRef, targetOutputRef) === true;
         } catch (error) {
             void error;
@@ -4941,6 +5055,7 @@ export class PlanAdapter {
         }
         let membershipWritten = false;
         try {
+            this.markR4Dispatch();
             membershipWritten = this.env.setDesktops?.(moverRef, [targetDesktopRef]) === true;
         } catch (error) {
             void error;
@@ -4963,6 +5078,7 @@ export class PlanAdapter {
             }
             let written = false;
             try {
+                this.markR4Dispatch();
                 written = this.env.setGeometry(ref, entry.rect) === true;
             } catch (error) {
                 void error;
@@ -5103,6 +5219,7 @@ export class PlanAdapter {
                 }
                 let written = false;
                 try {
+                    this.markR4Dispatch();
                     written = this.env.setGeometry(target, entry.rect) === true;
                 } catch (error) {
                     void error;
@@ -5148,6 +5265,7 @@ export class PlanAdapter {
                 }
                 let written = false;
                 try {
+                    this.markR4Dispatch();
                     written = this.env.setGeometry(target, floatGeometry.rect) === true;
                 } catch (error) {
                     void error;
@@ -5826,6 +5944,303 @@ export class PlanAdapter {
         }
     }
 
+    // One automatic pre-staging recovery attempt for an R4-shape move flight
+    // (op move, Left/Right direction, two-domain snapshot) that never staged
+    // transfer and never dispatched a native write: Rust may hold a clean
+    // unacknowledged pair pending worth withdrawing before terminal teardown.
+    // Returns true when the attempt started (caller must return immediately
+    // with the flight retained); false when the caller must run its terminal
+    // path unchanged. Ordinary ops, background flights, staged R4 flights,
+    // and any flight that dispatched fall through untouched.
+    private tryStartR4Cancel(
+        flightState: PendingFlight,
+        flight: number,
+        session: number,
+        fallthroughOutcome: string,
+    ): boolean {
+        if (
+            !this.inFlight ||
+            flight !== this.activeToken ||
+            session !== this.plannerSession ||
+            this.cancelArmed ||
+            this.pending !== flightState ||
+            flightState.plannerSession !== session
+        ) {
+            return false;
+        }
+        // Non-R4-shape flights (ordinary ops, recovery replays, background
+        // work, single-domain moves) never stage pair pendings: silently
+        // left to their existing terminal paths.
+        if (
+            flightState.op !== "move" ||
+            flightState.isRecovery ||
+            (flightState.direction !== "left" && flightState.direction !== "right") ||
+            flightState.snapshot.domains === undefined ||
+            flightState.snapshot.domains.length !== 2
+        ) {
+            return false;
+        }
+        // Bounded ineligibility reason for the normal-level cancel line, so a
+        // skipped attempt stays attributable without touching terminal
+        // behavior. A dispatched setter wins over a merely bound transfer:
+        // any native dispatch (including a throw) proves actuation started,
+        // while staging alone does not.
+        const ineligible =
+            this.r4Dispatches !== 0
+                ? "dispatched"
+                : this.r4Flight !== null
+                  ? "bound"
+                  : this.activationStep !== 5
+                    ? "phase"
+                    : !isUniqueOwner(this.pinnedOwner)
+                      ? "owner"
+                      : null;
+        if (ineligible !== null) {
+            this.lifecycleDiag(
+                flightState,
+                "cancel",
+                "eligibility",
+                `cancel-ineligible-${ineligible}`,
+                fallthroughOutcome,
+            );
+            return false;
+        }
+        // Arm before the fresh observation so a late original reply arriving
+        // between observation and send cannot stage transfer.
+        this.cancelArmed = true;
+        this.cancelReplySeen = false;
+        this.cancelOutcome = fallthroughOutcome;
+        const observed = this.freshDirectionalForFlight(flightState);
+        if (observed === null) {
+            return this.abortR4CancelStart(flightState);
+        }
+        const payload = this.buildR4CancelPayload(flightState, observed);
+        if (payload === null || payload.length > PLAN_MAX_REQUEST_BYTES) {
+            return this.abortR4CancelStart(flightState);
+        }
+        // Retire the firing/armed dispatch-phase deadline and arm the single
+        // bounded cancel round trip; the existing onTimeout cancel branch
+        // settles the wait. A stale epoch can never touch it.
+        this.clearTimer();
+        try {
+            const cancel = this.env.scheduleOnce(PLAN_TIMEOUT_MS, () => this.onTimeout(flight, session));
+            this.cancelTimer = cancel;
+        } catch (error) {
+            void error;
+            return this.abortR4CancelStart(flightState);
+        }
+        try {
+            const target = this.pinnedOwner as string;
+            this.env.callDbus(
+                target,
+                PLAN_OBJECT,
+                PLAN_INTERFACE,
+                PLAN_METHOD,
+                payload,
+                (reply) => this.onCancelR4Reply(reply, flight, session),
+            );
+        } catch (error) {
+            void error;
+            this.clearTimer();
+            return this.abortR4CancelStart(flightState);
+        }
+        this.lifecycleDiag(flightState, "cancel", "attempt", "cancel-requested", fallthroughOutcome);
+        return true;
+    }
+
+    // Abort a just-armed attempt before any send: disarm, emit the bounded
+    // unavailable outcome, and report failure so the caller runs its terminal
+    // path unchanged. Covers unreadable scope, unbuildable/oversize payloads,
+    // timer arming faults, and D-Bus send throws.
+    private abortR4CancelStart(flightState: PendingFlight): false {
+        const cause = this.cancelOutcome;
+        this.cancelArmed = false;
+        this.cancelReplySeen = false;
+        this.cancelOutcome = "";
+        this.lifecycleDiag(flightState, "cancel", "send", "cancel-unavailable", cause);
+        return false;
+    }
+
+    // Cancel payload: the exact current two-domain pre-observation with the
+    // original request revision (never a base learned from a stale probe)
+    // plus the zero-dispatch attestation. Mirrors the dispatch wire mapping
+    // (domains, windows with carried flags, rebound directional fingerprint);
+    // the command carries only the cancel op and attestation. The attempt
+    // itself performs zero native writes: one synchronous observation and one
+    // D-Bus send only.
+    private buildR4CancelPayload(flightState: PendingFlight, observed: PlanObserved): string | null {
+        const snapshot = snapshotOf(observed);
+        if (snapshot.domains === undefined || snapshot.domains.length !== 2) {
+            return null;
+        }
+        // Wire mapping mirrors dispatch exactly (including the carried
+        // floating/fit-excluded flags), so the Rust pre-image comparison sees
+        // the same normalized observation shape.
+        const windows = snapshot.windows.map((entry) => ({
+            window: entry.id,
+            output: entry.output,
+            workspace: entry.workspace,
+            rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
+            ...(entry.floating === true ? { floating: true } : {}),
+            ...(entry.floating === true || entry.sticky === true || entry.fullscreen || entry.maximized
+                ? { fit_excluded: true }
+                : {}),
+        }));
+        const domains = (snapshot.domains as ReadonlyArray<PlanDomain>).map((entry) => ({
+            output: entry.output,
+            workspace: entry.workspace,
+            bounds: { x: entry.bounds.x, y: entry.bounds.y, w: entry.bounds.w, h: entry.bounds.h },
+            gap: entry.gap,
+            outer_gap: entry.outerGap,
+            adjacent: { ...(entry.adjacent as Record<string, string>) },
+        }));
+        const fingerprint = planDirectionalFingerprint(
+            snapshot.domains as ReadonlyArray<PlanDomain>,
+            snapshot.focusedId,
+            windows.map((entry) => ({
+                window: entry.window as string,
+                output: entry.output as string,
+                workspace: entry.workspace as string,
+                rect: entry.rect as PlanRect,
+                floating: (entry as Record<string, unknown>)["floating"] === true,
+                fitExcluded: (entry as Record<string, unknown>)["fit_excluded"] === true,
+            })),
+        );
+        let payload = "";
+        try {
+            payload = JSON.stringify({
+                v: PLAN_CONTRACT_VERSION,
+                correlation_id: flightState.correlation,
+                owner: this.owner,
+                generation: this.generation,
+                revision: flightState.requestRevision,
+                fingerprint,
+                domain: {
+                    output: snapshot.domainOutput,
+                    workspace: snapshot.domainWorkspace,
+                    bounds: {
+                        x: snapshot.domainBounds.x,
+                        y: snapshot.domainBounds.y,
+                        w: snapshot.domainBounds.w,
+                        h: snapshot.domainBounds.h,
+                    },
+                    gap: snapshot.domainGap,
+                    outer_gap: snapshot.domainOuterGap,
+                },
+                domains,
+                focused_window: snapshot.focusedId,
+                windows,
+                command: { op: "directional-move-cancel", zero_dispatch: true },
+            });
+        } catch (error) {
+            void error;
+            return null;
+        }
+        return payload;
+    }
+
+    private onCancelR4Reply(reply: unknown, flight: number, session: number): void {
+        if (
+            !this.inFlight ||
+            flight !== this.activeToken ||
+            session !== this.plannerSession ||
+            !this.cancelArmed ||
+            this.cancelReplySeen ||
+            this.r4Flight !== null
+        ) {
+            return;
+        }
+        const flightState = this.pending;
+        // The flight context is retained through the cancel wait (only
+        // explicit disable clears it, which also disarms); a missing flight
+        // here means teardown already owns the outcome, so there is nothing
+        // to fall through to.
+        if (flightState === null || flightState.plannerSession !== session) {
+            return;
+        }
+        this.cancelReplySeen = true;
+        this.clearTimer();
+        // Success binds the exact correlation, the cancelled outcome for this
+        // route, and a well-formed Rust base revision (the un-advanced pair
+        // base, which the adapter never knew pre-staging). A well-formed
+        // refusal is attributed with its allowlisted kind before the preserved
+        // fallthrough; anything else, including a lost or malformed reply,
+        // falls through without further attribution.
+        let cancelled = false;
+        let refusal: string | null = null;
+        let releaseRevision = flightState.requestRevision;
+        if (typeof reply === "string" && reply.length <= PLAN_MAX_REPLY_BYTES) {
+            try {
+                const parsed: unknown = JSON.parse(reply);
+                cancelled =
+                    isRecord(parsed) &&
+                    parsed["v"] === PLAN_CONTRACT_VERSION &&
+                    parsed["correlation_id"] === flightState.correlation &&
+                    parsed["outcome"] === "cancelled" &&
+                    parsed["kind"] === "directional-move" &&
+                    parseBaseRevision(parsed) !== null;
+                if (cancelled && isRecord(parsed)) {
+                    releaseRevision = parseBaseRevision(parsed) as number;
+                }
+                if (
+                    !cancelled &&
+                    isRecord(parsed) &&
+                    parsed["v"] === PLAN_CONTRACT_VERSION &&
+                    parsed["correlation_id"] === flightState.correlation &&
+                    (parsed["outcome"] === "rejected" || parsed["outcome"] === "diverged")
+                ) {
+                    refusal = cancelRefusalKind(parsed["kind"]);
+                }
+            } catch (error) {
+                void error;
+                cancelled = false;
+                refusal = null;
+            }
+        }
+        if (refusal !== null) {
+            this.lifecycleDiag(
+                flightState,
+                "cancel",
+                "reply",
+                `cancel-refused-${refusal}`,
+                this.cancelOutcome,
+            );
+        } else if (!cancelled) {
+            this.lifecycleDiag(flightState, "cancel", "reply", "cancel-reply-malformed", this.cancelOutcome);
+        }
+        if (!cancelled) {
+            const outcome = this.cancelOutcome;
+            this.cancelArmed = false;
+            this.cancelReplySeen = false;
+            this.cancelOutcome = "";
+            this.terminateFlight(flightState, outcome);
+            return;
+        }
+        const cause = this.cancelOutcome;
+        this.lifecycleDiag(flightState, "cancel", "reply", "accepted", cause, releaseRevision);
+        // Withdrawn: the matching unacknowledged Rust pair pending is gone
+        // with its staged desired state, nothing committed, nothing written,
+        // canonical sessions untouched. Clear the flight without terminal
+        // accounting and stay convergent so later commands may proceed under
+        // new correlations.
+        this.clearTimer();
+        this.inFlight = false;
+        this.pending = null;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
+        this.cancelArmed = false;
+        this.cancelReplySeen = false;
+        this.cancelOutcome = "";
+        this.r4Dispatches = 0;
+        this.lifecycleDiag(flightState, "release", "local-release", "cancelled", cause, releaseRevision);
+        this.finishFlight();
+        try {
+            this.requestResync();
+        } catch (error) {
+            void error;
+        }
+    }
+
     private onR4AckReply(reply: unknown, flight: number, session: number): void {
         const r4 = this.r4Current();
         if (r4 === null || flight !== r4.flight || session !== r4.session || !r4.acked || r4.settled) {
@@ -5914,6 +6329,9 @@ export class PlanAdapter {
         this.pending = null;
         this.pinnedOwner = null;
         this.activationStep = 0;
+        this.cancelArmed = false;
+        this.cancelReplySeen = false;
+        this.cancelOutcome = "";
         this.diag(settled.op, settled.correlation, settled.planned.geometry.length, "planned-applied");
         // Exactly one observational active-group refresh after the committed
         // R4 boundary, mirroring the local geometry-plan edge.
@@ -5964,6 +6382,9 @@ export class PlanAdapter {
         this.pending = null;
         this.pinnedOwner = null;
         this.activationStep = 0;
+        this.cancelArmed = false;
+        this.cancelReplySeen = false;
+        this.cancelOutcome = "";
         this.diag(op, correlation, count, outcome);
         this.noteReconcileTerminal(op);
         this.finishFlight();
@@ -5990,7 +6411,23 @@ export class PlanAdapter {
         }
     }
 
-    private failFlight(flightState: PendingFlight, outcome: string): void {
+    private failFlight(flightState: PendingFlight, outcome: string, allowCancel = true): void {
+        if (flightState.plannerSession !== this.plannerSession) {
+            return;
+        }
+        // One automatic pre-staging recovery attempt for R4-shape flights;
+        // every other flight (and any ineligible R4 flight) runs the terminal
+        // core unchanged.
+        if (allowCancel && this.tryStartR4Cancel(flightState, this.activeToken, this.plannerSession, outcome)) {
+            return;
+        }
+        this.terminateFlight(flightState, outcome);
+    }
+
+    // Shared terminal core: exactly the historical failFlight teardown. The
+    // cancel fence is cleared here so a failed attempt can never re-arm from
+    // its own fallthrough.
+    private terminateFlight(flightState: PendingFlight, outcome: string): void {
         if (flightState.plannerSession !== this.plannerSession) {
             return;
         }
@@ -6000,6 +6437,9 @@ export class PlanAdapter {
         this.pending = null;
         this.pinnedOwner = null;
         this.activationStep = 0;
+        this.cancelArmed = false;
+        this.cancelReplySeen = false;
+        this.cancelOutcome = "";
         this.diag(flightState.op, flightState.correlation, flightState.windowCount, outcome);
         if (flightState.background === true) {
             this.noteBackgroundTerminal(flightState.snapshot);
@@ -6085,6 +6525,31 @@ export class PlanAdapter {
         }
         try {
             this.env.log(`${LOG_PREFIX}:cmd=${correlation} kind=${op} windows=${String(windows)} outcome=${outcome}`);
+        } catch (error) {
+            void error;
+        }
+    }
+
+    // Normal-level lifecycle context for cancellable R4 flights. Retains the
+    // established plan:cmd prefix while making the route independently
+    // attributable without payload or trace logging.
+    private lifecycleDiag(
+        flight: PendingFlight,
+        stage: string,
+        event: string,
+        outcome: string,
+        cause: string,
+        revision = flight.requestRevision,
+    ): void {
+        try {
+            const isR4 =
+                flight.op === "move" &&
+                (flight.direction === "left" || flight.direction === "right") &&
+                flight.snapshot.domains !== undefined &&
+                flight.snapshot.domains.length === 2;
+            this.env.log(
+                `${LOG_PREFIX}:cmd=${flight.correlation} kind=${flight.op} windows=${String(flight.windowCount)} component=${isR4 ? "cosmic-directional" : "cosmic-plan"} route=${isR4 ? "directional-r4" : "plan"} stage=${stage} correlation=${flight.correlation} generation=${this.generation} revision=${String(revision)} event=${event} outcome=${sanitizeKind(outcome)} cause=${cause === "-" ? "-" : sanitizeKind(cause)}`,
+            );
         } catch (error) {
             void error;
         }

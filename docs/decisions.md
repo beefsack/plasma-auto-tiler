@@ -467,9 +467,56 @@ Historical implementation detail is recoverable in Git history.
    Authorization, malformed-input, owner, correlation, and stale-scope fences
    remain fail-closed.
    Detailed uncertain-transaction recovery remains pending. Any future design
-   must preserve safe handling of later valid commands without treating the
-   uncertain transaction as success, replaying it, resetting topology, or
-   weakening those fences.
+    must preserve safe handling of later valid commands without treating the
+    uncertain transaction as success, replaying it, resetting topology, or
+    weakening those fences.
+- USER-APPROVED pending-transaction status, 2026-09-22: the existing
+  same-UID-authorized `DescribePlan` route exposes only
+  `send-to-workspace-status` and `directional-move-status` for an exact pending
+  transaction. With the normal owner, generation, correlation, revision,
+  domain, bounds, and complete-observation fences, the read-only replies are
+  `post-unacked`, `post-acked`, `unresolved`, `stale`, `diverged`, or
+  `no-pending-unknown`. They expose no native/window data beyond the caller's
+  correlation and a retained pending base revision. `no-pending-unknown` never
+  means committed or safe to unblock. Status cannot acknowledge, verify,
+  clear, rebind, advance, write native state, release adapter blocks, retain
+  pre-observation, keep receipts, cancel, settle, retry, discard, reseed, or
+  recover. Exact pre-state and lost-commit classification remain unselected.
+- USER-APPROVED pre-actuation cancellation, 2026-09-22: one automatic bounded
+  cancellation attempt may withdraw a workspace-send or directional R4 pending
+  transaction only before its KWin flight has bound a plan or dispatched a
+  geometry, membership, or follow setter. The same-UID KWin caller attests
+  zero dispatch for its exact generation, flight, and correlation; Rust treats
+  that as a trusted protocol input, not native-history proof. Before the fresh
+  pre-state observation, KWin arms cancellation so old replies, timers, echo
+  completion, setters, and new commands remain inert until the cancellation
+  reply. Rust retains a bounded normalized dispatch-time pre-image and original
+  request revision only for the pending lifetime, and requires those plus exact
+  owner, generation, correlation, route scope, `PendingUnacked`, and no
+  divergence. Success clears only that pending/reconciler slot and staged desired
+  state, preserving canonical topology, focus, shares, exceptions, revision,
+  and unrelated domains; it replies `cancelled`, never success for the original
+  transaction. Any cancellation failure or ineligible state follows existing
+  terminal behavior unchanged. Status remains read-only. Acked, post-actuation,
+  unresolved, stale, diverged, absent, and lost-commit cases remain fenced;
+   this selects no settlement, receipt, replay, rollback write, reset, reseed,
+   polling, or retry loop.
+- Approved correlated pending observability, 2026-09-22: authorized Planner
+  `DescribePlan` status/cancel requests and replies emit bounded normal-level
+  `plasma-auto-tiler:plan-summary` records on Planner stderr; opt-in trace adds
+  only a bounded structural request/reply shape. Workspace send uses the
+  existing `plasma-auto-tiler:route-diag` schema and directional R4 retains its
+  `plasma-auto-tiler:plan:cmd` prefix while adding component, route, stage,
+  correlation, generation, known revision, event, outcome, and original cause
+  for cancellation lifecycle and subsequent dispatch. Successful cancellation
+  records the validated reply before local release. Fixed uncorrelated Planner
+  early-exit summaries cover busy, closed, oversize, and unauthorized without
+  parsing rejected input. Records use only bounded/allowlisted values and
+  exclude native/window identity, geometry, domains, owners, payloads, and
+  foreign error text. Logging is best-effort. The R4 direct-`diverged` skip is
+  a correction enforcing the already selected no-divergence cancellation fence;
+  no new recovery or retry behavior is selected. This slice does not claim
+  observability for other routes.
 - Permissive admission, authorized 2026-09-14: an observed normal window's
   incoming frame rectangle never decides whether it may join a tiled domain.
   Admission assigns a new complete geometry for every member and may reflow

@@ -1566,3 +1566,440 @@ fn r1_r3_stay_synchronous_without_pending() {
     )));
     assert_eq!(follow["outcome"], "planned", "{follow}");
 }
+
+// R4 cancel helper: same two-domain envelope as status (rebased revision,
+// rebound fingerprint) with the cancellation command carrying the
+// zero-dispatch attestation and the exact dispatch-time pre-observation.
+// Revision is always the original request revision (0), never a base learned
+// from a stale probe.
+fn cancel_request(
+    correlation: &str,
+    focused: &str,
+    pre_windows: Vec<serde_json::Value>,
+    zero_dispatch: bool,
+) -> String {
+    let mut value: serde_json::Value = serde_json::from_str(&request_with_domain(
+        correlation,
+        focused,
+        pre_windows,
+        serde_json::json!({"op": "directional-move-cancel", "zero_dispatch": zero_dispatch}),
+        left_source_domain(),
+        Some(left_domains_payload()),
+    ))
+    .expect("valid cancel");
+    value["correlation_id"] = serde_json::json!(correlation);
+    value["revision"] = serde_json::json!(0);
+    value["fingerprint"] = serde_json::json!(directional_fp(
+        &value["domains"],
+        focused,
+        &value["windows"].as_array().cloned().unwrap_or_default(),
+    ));
+    value.to_string()
+}
+
+fn r4_pre_windows() -> Vec<serde_json::Value> {
+    vec![
+        win("win-a", "out-1", "ws-a", 10, 10, 100, 80),
+        win("win-b", "out-1", "ws-a", 400, 10, 100, 80),
+        win("win-x", "out-2", "ws-b", 810, 10, 100, 80),
+    ]
+}
+
+#[test]
+fn directional_cancel_withdraws_unacked_pre_and_leaves_new_correlation_usable() {
+    let mut planner = Planner::new();
+    let planned = plan_r4_occupied(&mut planner, "dir-cancel-1");
+    let base = planned["base_revision"].as_u64().expect("base");
+    // Exact dispatch-time pre-image with the original request revision:
+    // withdrawn, never committed.
+    let cancelled = parse(&planner.evaluate(&cancel_request(
+        "dir-cancel-1",
+        "win-b",
+        r4_pre_windows(),
+        true,
+    )));
+    assert_eq!(cancelled["outcome"], "cancelled", "{cancelled}");
+    assert_eq!(cancelled["kind"], "directional-move", "{cancelled}");
+    assert_eq!(cancelled["base_revision"], base, "{cancelled}");
+    assert!(cancelled.get("desired_geometry").is_none(), "{cancelled}");
+    // The slot is released without a wedge: status cannot imply a commit, a
+    // duplicate cancel finds no pending, and the canonical pair survived
+    // (it re-stages a fresh R4 immediately under a new correlation).
+    let unknown = parse(&planner.evaluate(&status_request(
+        "dir-cancel-1",
+        base,
+        post_windows_from_geometry(&planned["desired_geometry"]),
+    )));
+    assert_eq!(unknown["kind"], "no-pending-unknown", "{unknown}");
+    let duplicate = parse(&planner.evaluate(&cancel_request(
+        "dir-cancel-1",
+        "win-b",
+        r4_pre_windows(),
+        true,
+    )));
+    assert_eq!(duplicate["outcome"], "rejected", "{duplicate}");
+    assert_eq!(duplicate["kind"], "no-pending", "{duplicate}");
+    let second = plan_r4_occupied(&mut planner, "dir-cancel-2");
+    assert_eq!(second["detail"]["rule"], "R4", "{second}");
+}
+
+#[test]
+fn directional_cancel_refuses_acked_and_mismatch_without_mutation() {
+    let mut planner = Planner::new();
+    let planned = plan_r4_occupied(&mut planner, "dir-cancel-3");
+    let base = planned["base_revision"].as_u64().expect("base");
+    let post = post_windows_from_geometry(&planned["desired_geometry"]);
+    let acked_reply =
+        parse(&planner.evaluate(&ack_request("dir-cancel-3", base, post.clone(), "accepted")));
+    assert_eq!(acked_reply["outcome"], "acknowledged", "{acked_reply}");
+    // Acked plans refuse even with the exact pre-image.
+    let refused = parse(&planner.evaluate(&cancel_request(
+        "dir-cancel-3",
+        "win-b",
+        r4_pre_windows(),
+        true,
+    )));
+    assert_eq!(refused["outcome"], "rejected", "{refused}");
+    assert_eq!(refused["kind"], "cancel-refused", "{refused}");
+    // Refusal mutated nothing: the ack stands and verify still commits.
+    let status = parse(&planner.evaluate(&status_request("dir-cancel-3", base, post.clone())));
+    assert_eq!(status["kind"], "post-acked", "{status}");
+    let committed = parse(&planner.evaluate(&verify_request(
+        "dir-cancel-3",
+        base,
+        post,
+        planned["preconditions"].clone(),
+        planned["operation"].clone(),
+    )));
+    assert_eq!(committed["outcome"], "committed", "{committed}");
+
+    // A started write surfaces as pre-image mismatch on a live pending.
+    let mut pending = Planner::new();
+    let staged = plan_r4_occupied(&mut pending, "dir-cancel-4");
+    let staged_base = staged["base_revision"].as_u64().expect("base");
+    let staged_post = post_windows_from_geometry(&staged["desired_geometry"]);
+    let mismatch = parse(&pending.evaluate(&cancel_request(
+        "dir-cancel-4",
+        "",
+        staged_post.clone(),
+        true,
+    )));
+    assert_eq!(mismatch["outcome"], "rejected", "{mismatch}");
+    assert_eq!(mismatch["kind"], "cancel-mismatch", "{mismatch}");
+    // Mismatch mutated nothing: exact ack plus verify still commit.
+    let acked = parse(&pending.evaluate(&ack_request(
+        "dir-cancel-4",
+        staged_base,
+        staged_post.clone(),
+        "accepted",
+    )));
+    assert_eq!(acked["outcome"], "acknowledged", "{acked}");
+    let committed = parse(&pending.evaluate(&verify_request(
+        "dir-cancel-4",
+        staged_base,
+        staged_post,
+        staged["preconditions"].clone(),
+        staged["operation"].clone(),
+    )));
+    assert_eq!(committed["outcome"], "committed", "{committed}");
+}
+
+#[test]
+fn directional_cancel_refuses_stale_diverged_absent_malformed() {
+    let mut planner = Planner::new();
+    let planned = plan_r4_occupied(&mut planner, "dir-cancel-5");
+    let base = planned["base_revision"].as_u64().expect("base");
+    // Wrong correlation and the staged base instead of the original request
+    // revision each report stale without recording anything.
+    let wrong_corr = parse(&planner.evaluate(&cancel_request(
+        "dir-cancel-other",
+        "win-b",
+        r4_pre_windows(),
+        true,
+    )));
+    assert_eq!(wrong_corr["outcome"], "rejected", "{wrong_corr}");
+    assert_eq!(wrong_corr["kind"], "stale", "{wrong_corr}");
+    let mut wrong_rev: serde_json::Value = serde_json::from_str(&cancel_request(
+        "dir-cancel-5",
+        "win-b",
+        r4_pre_windows(),
+        true,
+    ))
+    .expect("json");
+    wrong_rev["revision"] = serde_json::json!(base);
+    wrong_rev["correlation_id"] = serde_json::json!("dir-cancel-5");
+    let stale_rev = parse(&planner.evaluate(&wrong_rev.to_string()));
+    assert_eq!(stale_rev["outcome"], "rejected", "{stale_rev}");
+    assert_eq!(stale_rev["kind"], "stale", "{stale_rev}");
+    // A false attestation refuses outright.
+    let attested = parse(&planner.evaluate(&cancel_request(
+        "dir-cancel-5",
+        "win-b",
+        r4_pre_windows(),
+        false,
+    )));
+    assert_eq!(attested["outcome"], "rejected", "{attested}");
+    assert_eq!(attested["kind"], "cancel-refused", "{attested}");
+    // Stale and refused probes recorded nothing: exact cancellation succeeds.
+    let cancelled = parse(&planner.evaluate(&cancel_request(
+        "dir-cancel-5",
+        "win-b",
+        r4_pre_windows(),
+        true,
+    )));
+    assert_eq!(cancelled["outcome"], "cancelled", "{cancelled}");
+    // A terminally diverged transaction reports divergence, never cancel.
+    let diverged_plan = plan_r4_occupied(&mut planner, "dir-cancel-6");
+    let div_base = diverged_plan["base_revision"].as_u64().expect("base");
+    let div_post = post_windows_from_geometry(&diverged_plan["desired_geometry"]);
+    let refused = parse(&planner.evaluate(&ack_request(
+        "dir-cancel-6",
+        div_base,
+        div_post,
+        "partial-application",
+    )));
+    assert_eq!(refused["outcome"], "diverged", "{refused}");
+    let diverged = parse(&planner.evaluate(&cancel_request(
+        "dir-cancel-6",
+        "win-b",
+        r4_pre_windows(),
+        true,
+    )));
+    assert_eq!(diverged["outcome"], "diverged", "{diverged}");
+    assert_eq!(diverged["kind"], "partial-application", "{diverged}");
+    // Absent pending and malformed shapes fail closed with no mutation.
+    let mut fresh = Planner::new();
+    let absent = parse(&fresh.evaluate(&cancel_request(
+        "dir-cancel-7",
+        "win-b",
+        r4_pre_windows(),
+        true,
+    )));
+    assert_eq!(absent["outcome"], "rejected", "{absent}");
+    assert_eq!(absent["kind"], "no-pending", "{absent}");
+    let mut unknown: serde_json::Value = serde_json::from_str(&cancel_request(
+        "dir-cancel-5",
+        "win-b",
+        r4_pre_windows(),
+        true,
+    ))
+    .expect("json");
+    unknown["command"] =
+        serde_json::json!({"op": "directional-move-cancel", "zero_dispatch": true, "extra": 1});
+    let unknown_reply = parse(&planner.evaluate(&unknown.to_string()));
+    assert_eq!(unknown_reply["outcome"], "rejected", "{unknown_reply}");
+    assert_eq!(unknown_reply["kind"], "unknown-field", "{unknown_reply}");
+}
+
+// R4 status helper: same post-observation envelope as ack (empty focus,
+// rebased revision, rebound fingerprint) with the read-only status command.
+// Never acknowledges, verifies, or mutates the retained pending.
+fn status_request(
+    correlation: &str,
+    base_revision: u64,
+    post_windows: Vec<serde_json::Value>,
+) -> String {
+    let mut value: serde_json::Value = serde_json::from_str(&request_with_domain(
+        correlation,
+        "",
+        post_windows,
+        serde_json::json!({"op": "directional-move-status"}),
+        left_source_domain(),
+        Some(left_domains_payload()),
+    ))
+    .expect("valid status");
+    value["correlation_id"] = serde_json::json!(correlation);
+    value["revision"] = serde_json::json!(base_revision);
+    value["fingerprint"] = serde_json::json!(directional_fp(
+        &value["domains"],
+        "",
+        &value["windows"].as_array().cloned().unwrap_or_default(),
+    ));
+    value.to_string()
+}
+
+#[test]
+fn directional_status_reports_post_unacked_then_post_acked_without_blocking_commit() {
+    let mut planner = Planner::new();
+    let planned = plan_r4_occupied(&mut planner, "dir-status-1");
+    let base = planned["base_revision"].as_u64().expect("base");
+    let post = post_windows_from_geometry(&planned["desired_geometry"]);
+    // Exact planned post before any ack: unacknowledged, never committed.
+    let unacked = parse(&planner.evaluate(&status_request("dir-status-1", base, post.clone())));
+    assert_eq!(unacked["outcome"], "status", "{unacked}");
+    assert_eq!(unacked["kind"], "post-unacked", "{unacked}");
+    assert_eq!(unacked["base_revision"], base, "{unacked}");
+    assert!(unacked.get("desired_geometry").is_none(), "{unacked}");
+    // Read-only: the normal ack still applies afterwards.
+    let acked_reply =
+        parse(&planner.evaluate(&ack_request("dir-status-1", base, post.clone(), "accepted")));
+    assert_eq!(acked_reply["outcome"], "acknowledged", "{acked_reply}");
+    // Exact planned post after the accepted ack: acknowledged.
+    let acked = parse(&planner.evaluate(&status_request("dir-status-1", base, post.clone())));
+    assert_eq!(acked["outcome"], "status", "{acked}");
+    assert_eq!(acked["kind"], "post-acked", "{acked}");
+    assert_eq!(acked["base_revision"], base, "{acked}");
+    // Read-only again: the normal verify still commits afterwards.
+    let committed = parse(&planner.evaluate(&verify_request(
+        "dir-status-1",
+        base,
+        post,
+        planned["preconditions"].clone(),
+        planned["operation"].clone(),
+    )));
+    assert_eq!(committed["outcome"], "committed", "{committed}");
+    assert_eq!(committed["base_revision"], base + 1, "{committed}");
+}
+
+#[test]
+fn directional_status_reports_unresolved_without_consuming_pending() {
+    let mut planner = Planner::new();
+    let planned = plan_r4_occupied(&mut planner, "dir-status-2");
+    let base = planned["base_revision"].as_u64().expect("base");
+    let post = post_windows_from_geometry(&planned["desired_geometry"]);
+    // One observed rectangle diverges from the retained desired geometry.
+    let mut bad = post.clone();
+    bad[0]["rect"]["w"] = serde_json::json!(7);
+    // Rebind the fingerprint to the tampered post so the probe exercises the
+    // planned-post match rather than fingerprint binding.
+    let mut bad_request: serde_json::Value =
+        serde_json::from_str(&status_request("dir-status-2", base, bad)).expect("json");
+    bad_request["fingerprint"] = serde_json::json!(directional_fp(
+        &bad_request["domains"],
+        "",
+        &bad_request["windows"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default(),
+    ));
+    let unresolved = parse(&planner.evaluate(&bad_request.to_string()));
+    assert_eq!(unresolved["outcome"], "status", "{unresolved}");
+    assert_eq!(unresolved["kind"], "unresolved", "{unresolved}");
+    assert_eq!(unresolved["base_revision"], base, "{unresolved}");
+    // The pending survives the probe: exact ack plus verify still commit.
+    let acked =
+        parse(&planner.evaluate(&ack_request("dir-status-2", base, post.clone(), "accepted")));
+    assert_eq!(acked["outcome"], "acknowledged", "{acked}");
+    let committed = parse(&planner.evaluate(&verify_request(
+        "dir-status-2",
+        base,
+        post,
+        planned["preconditions"].clone(),
+        planned["operation"].clone(),
+    )));
+    assert_eq!(committed["outcome"], "committed", "{committed}");
+}
+
+#[test]
+fn directional_status_reports_stale_without_recording_divergence() {
+    let mut planner = Planner::new();
+    let planned = plan_r4_occupied(&mut planner, "dir-status-3");
+    let base = planned["base_revision"].as_u64().expect("base");
+    let post = post_windows_from_geometry(&planned["desired_geometry"]);
+    // Wrong correlation and wrong revision each report stale.
+    let wrong_corr =
+        parse(&planner.evaluate(&status_request("dir-status-other", base, post.clone())));
+    assert_eq!(wrong_corr["outcome"], "status", "{wrong_corr}");
+    assert_eq!(wrong_corr["kind"], "stale", "{wrong_corr}");
+    assert_eq!(wrong_corr["base_revision"], base, "{wrong_corr}");
+    let wrong_rev =
+        parse(&planner.evaluate(&status_request("dir-status-3", base + 1, post.clone())));
+    assert_eq!(wrong_rev["outcome"], "status", "{wrong_rev}");
+    assert_eq!(wrong_rev["kind"], "stale", "{wrong_rev}");
+    // Wrong owner reports stale through the same read-only path.
+    let mut wrong_owner: serde_json::Value =
+        serde_json::from_str(&status_request("dir-status-3", base, post.clone())).expect("json");
+    wrong_owner["owner"] = serde_json::json!("owner-9");
+    let stale_owner = parse(&planner.evaluate(&wrong_owner.to_string()));
+    assert_eq!(stale_owner["outcome"], "status", "{stale_owner}");
+    assert_eq!(stale_owner["kind"], "stale", "{stale_owner}");
+    // Stale probes record nothing: the exact query still sees the live
+    // unacknowledged post, and the lifecycle still commits.
+    let live = parse(&planner.evaluate(&status_request("dir-status-3", base, post.clone())));
+    assert_eq!(live["kind"], "post-unacked", "{live}");
+    let acked =
+        parse(&planner.evaluate(&ack_request("dir-status-3", base, post.clone(), "accepted")));
+    assert_eq!(acked["outcome"], "acknowledged", "{acked}");
+    let committed = parse(&planner.evaluate(&verify_request(
+        "dir-status-3",
+        base,
+        post,
+        planned["preconditions"].clone(),
+        planned["operation"].clone(),
+    )));
+    assert_eq!(committed["outcome"], "committed", "{committed}");
+}
+
+#[test]
+fn directional_status_reports_diverged_after_terminal_ack() {
+    let mut planner = Planner::new();
+    let planned = plan_r4_occupied(&mut planner, "dir-status-4");
+    let base = planned["base_revision"].as_u64().expect("base");
+    let post = post_windows_from_geometry(&planned["desired_geometry"]);
+    let refused = parse(&planner.evaluate(&ack_request(
+        "dir-status-4",
+        base,
+        post.clone(),
+        "partial-application",
+    )));
+    assert_eq!(refused["outcome"], "diverged", "{refused}");
+    let diverged = parse(&planner.evaluate(&status_request("dir-status-4", base, post)));
+    assert_eq!(diverged["outcome"], "diverged", "{diverged}");
+    assert_eq!(diverged["kind"], "partial-application", "{diverged}");
+}
+
+#[test]
+fn directional_status_no_pending_unknown_carries_no_commit_implication() {
+    let mut planner = Planner::new();
+    // A valid two-domain scope with no retained transaction: unknown, with no
+    // base revision and no geometry that could be mistaken for a commit.
+    let post = post_windows_from_geometry(&serde_json::json!([
+        {"window": "win-a", "leaf": "leaf-a", "output": "out-1", "workspace": "ws-a",
+         "rect": {"x": 10, "y": 10, "w": 100, "h": 80}},
+        {"window": "win-b", "leaf": "leaf-b", "output": "out-1", "workspace": "ws-a",
+         "rect": {"x": 400, "y": 10, "w": 100, "h": 80}},
+        {"window": "win-x", "leaf": "leaf-x", "output": "out-2", "workspace": "ws-b",
+         "rect": {"x": 810, "y": 10, "w": 100, "h": 80}},
+    ]));
+    let reply = parse(&planner.evaluate(&status_request("dir-status-5", 0, post)));
+    assert_eq!(reply["outcome"], "status", "{reply}");
+    assert_eq!(reply["kind"], "no-pending-unknown", "{reply}");
+    assert!(reply.get("base_revision").is_none(), "{reply}");
+    assert!(reply.get("desired_geometry").is_none(), "{reply}");
+}
+
+#[test]
+fn directional_status_rejects_malformed_and_scope_violations() {
+    let mut planner = Planner::new();
+    let planned = plan_r4_occupied(&mut planner, "dir-status-6");
+    let base = planned["base_revision"].as_u64().expect("base");
+    let post = post_windows_from_geometry(&planned["desired_geometry"]);
+    // Unknown command fields fail closed like any other route.
+    let mut unknown: serde_json::Value =
+        serde_json::from_str(&status_request("dir-status-6", base, post.clone())).expect("json");
+    unknown["command"] = serde_json::json!({"op": "directional-move-status", "extra": 1});
+    let unknown_reply = parse(&planner.evaluate(&unknown.to_string()));
+    assert_eq!(unknown_reply["outcome"], "rejected", "{unknown_reply}");
+    assert_eq!(unknown_reply["kind"], "unknown-field", "{unknown_reply}");
+    // A status query without the two-domain scope fails closed as
+    // domain-invalid, consistent with directional scope validation. The
+    // windows stay homed in the single carried domain so the failure proves
+    // the status-level pair requirement rather than request containment.
+    let mut single: serde_json::Value = serde_json::from_str(&request_with_domain(
+        "dir-status-6",
+        "",
+        vec![
+            win("win-a", "out-1", "ws-a", 10, 10, 100, 80),
+            win("win-b", "out-1", "ws-a", 400, 10, 100, 80),
+        ],
+        serde_json::json!({"op": "directional-move-status"}),
+        left_source_domain(),
+        None,
+    ))
+    .expect("json");
+    single["revision"] = serde_json::json!(base);
+    let single_reply = parse(&planner.evaluate(&single.to_string()));
+    assert_eq!(single_reply["outcome"], "rejected", "{single_reply}");
+    assert_eq!(single_reply["kind"], "snapshot-invalid", "{single_reply}");
+    assert_eq!(single_reply["detail"], "domain-invalid", "{single_reply}");
+}

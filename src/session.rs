@@ -4695,6 +4695,40 @@ impl Session {
         }
     }
 
+    /// Withdraw an unacknowledged pending plan without recording divergence.
+    /// Exact guards: no recorded divergence, no transient drag capture, an
+    /// unacknowledged reconciler pending bound to the exact
+    /// correlation/base-revision pair. On success the reconciler pending slot
+    /// and the staged desired topology/focus/exceptions clear together with no
+    /// revision advancement; committed trees, windows, focus, exceptions,
+    /// retained float geometry, and accepted revision/fingerprint are exactly
+    /// preserved. Any failure leaves state exactly untouched and records
+    /// nothing. Owner/generation binding is enforced by the caller, which
+    /// retains the authoritative copies.
+    pub fn cancel_unacked_pending(
+        &mut self,
+        correlation_id: &CorrelationId,
+        base_revision: u64,
+    ) -> Result<(), crate::reconcile::CancelUnackedError> {
+        if self.drag.is_some() {
+            // Unreachable through the public API (`begin_drag` refuses while
+            // pending and every propose path refuses while dragging); the
+            // planner additionally refuses cancelled drags before calling.
+            // Fail closed without divergence if ever reached.
+            return Err(crate::reconcile::CancelUnackedError::DragActive);
+        }
+        match self
+            .reconciler
+            .cancel_unacked(correlation_id, base_revision)
+        {
+            Ok(()) => {
+                self.pending_desired = None;
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     /// Commit a pending lifecycle plan after acknowledgement. On commit the
     /// pending desired topology/focus/exceptions apply atomically and the
     /// accepted revision advances by exactly one. Terminal divergence clears

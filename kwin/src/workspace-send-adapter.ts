@@ -357,6 +357,38 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
     return true;
 }
 
+// Allowlisted Rust cancellation/divergence kinds for the cancel refusal
+// record: every kind the cancel evaluator can emit (`stale`,
+// `cancel-refused`, `cancel-mismatch`, `no-pending`, `cancel-op-invalid`,
+// plus the shared divergence reasons). Known kinds pass through verbatim;
+// anything else (transport mangling, never genuine Rust output on this
+// route) maps to `unknown` with no echo of the received bytes. Syntax-only
+// sanitization alone would admit well-formed but foreign kinds.
+const CANCEL_REFUSAL_KINDS: readonly string[] = Object.freeze([
+    "stale",
+    "cancel-refused",
+    "cancel-mismatch",
+    "no-pending",
+    "cancel-op-invalid",
+    "stale-revision",
+    "owner-mismatch",
+    "generation-mismatch",
+    "correlation-mismatch",
+    "capability-refused",
+    "partial-application",
+    "adapter-lost",
+    "postcondition-unverified",
+    "postcondition-mismatch",
+    "revision-exhausted",
+]);
+
+function cancelRefusalKind(value: unknown): string {
+    if (typeof value !== "string") {
+        return "unknown";
+    }
+    return CANCEL_REFUSAL_KINDS.indexOf(value) >= 0 ? value : "unknown";
+}
+
 // Bounded rejection-kind token: lowercase dashes only, otherwise redacted to
 // `unknown`. Never echoes payload bytes.
 function sanitizeKind(value: unknown): string {
@@ -819,6 +851,10 @@ interface WorkspacePendingFlight {
     planned: WorkspacePlanned | null;
     verifiedObserved: WorkspaceSendObserved | null;
     acked: boolean;
+    // Original request revision carried at dispatch (always 0 on the request
+    // phase). Cancellation echoes exactly this value, never a base revision
+    // learned from a stale probe.
+    requestRevision: number;
     // Native move/follow is a distinct, at-most-once partial-success result.
     // It never advances the Rust acknowledgement or layout commit phases.
     followStarted: boolean;
@@ -891,6 +927,23 @@ export class WorkspaceSendAdapter {
     private pinnedOwner: string | null = null;
     private activationStep = 0;
     private pending: WorkspacePendingFlight | null = null;
+    // Per-flight native-dispatch count: incremented immediately before every
+    // geometry, membership, and follow setter invocation, even when the call
+    // throws. Zero proves this flight never dispatched a native write, which
+    // is the adapter half of cancellation eligibility. Reset on every flight.
+    private nativeDispatches = 0;
+    // Cancellation fence: while armed, the original late replies, timers,
+    // echoes, completions, setters, and new commands cannot write or recover.
+    // Armed before the fresh cancel observation and cleared on cancel
+    // settlement (success or fallthrough) or explicit disable.
+    private cancelArmed = false;
+    private cancelReplySeen = false;
+    // Fallthrough terminal outcome (plus diag event) preserved across the
+    // cancel attempt so a failed cancellation runs the exact terminal path
+    // the original failure would have run.
+    private cancelOutcome = "";
+    private cancelEvent = "";
+    private cancelFollow: string | undefined = undefined;
     private seq = 0;
     private lossReported = false;
     private echoDetach: (() => void) | null = null;
@@ -1023,6 +1076,12 @@ export class WorkspaceSendAdapter {
         this.geoRefs = new Map<string, object>();
         this.geoDiagSeq = 0;
         this.diagSeq = 0;
+        this.nativeDispatches = 0;
+        this.cancelArmed = false;
+        this.cancelReplySeen = false;
+        this.cancelOutcome = "";
+        this.cancelFollow = undefined;
+        this.cancelEvent = "";
         return true;
     }
 
@@ -1052,6 +1111,14 @@ export class WorkspaceSendAdapter {
         this.activeDeadline = 0;
         this.clearTimer();
         this.clearEcho();
+        // Explicit disable wins over a pending cancel wait: the outstanding
+        // cancel reply, if any, is fenced by the cleared flight below.
+        this.cancelArmed = false;
+        this.cancelReplySeen = false;
+        this.cancelOutcome = "";
+        this.cancelFollow = undefined;
+        this.cancelEvent = "";
+        this.nativeDispatches = 0;
     }
 
     requestSend(targetWorkspace: unknown, requestedOrdinal?: unknown): boolean {
@@ -1376,6 +1443,12 @@ export class WorkspaceSendAdapter {
         this.clearEcho();
         this.geoDiagSeq = 0;
         this.diagSeq = 0;
+        this.nativeDispatches = 0;
+        this.cancelArmed = false;
+        this.cancelReplySeen = false;
+        this.cancelOutcome = "";
+        this.cancelFollow = undefined;
+        this.cancelEvent = "";
         const flags = snapshotMoverFlags(snapshot, moverId);
         this.pending = {
             correlation,
@@ -1391,6 +1464,7 @@ export class WorkspaceSendAdapter {
             srcInSource: flags.srcInSource,
             srcInTarget: flags.srcInTarget,
             baseRevision: 0,
+            requestRevision: 0,
             preconditions: [],
             operation: null,
             planned: null,
@@ -1400,6 +1474,7 @@ export class WorkspaceSendAdapter {
             followOutcome: "not-reached",
             fenceTotal: 0,
         };
+        this.diag("request", correlation, 0, "dispatch", "started");
         // True command-dispatch observation at the request boundary, using the
         // original dispatch observation and revision 0. Best-effort only.
         this.emitFollowDiag(
@@ -1633,6 +1708,12 @@ export class WorkspaceSendAdapter {
         if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
             return;
         }
+        // Cancel-armed fence: a late original reply arriving while the
+        // withdrawal awaits must never bind a plan or actuate. The cancel
+        // outcome alone settles the flight.
+        if (this.cancelArmed) {
+            return;
+        }
         const pending = this.pending;
         if (pending === null || !isUniqueOwner(this.pinnedOwner) || this.activationStep !== 5) {
             return;
@@ -1674,7 +1755,7 @@ export class WorkspaceSendAdapter {
         }
         const outcome = parsed["outcome"];
         if (outcome === "diverged") {
-            this.failFlight(flight, correlation, sanitizeKind(parsed["kind"]));
+            this.failFlight(flight, correlation, sanitizeKind(parsed["kind"]), false);
             return;
         }
         if (outcome === "rejected") {
@@ -1944,7 +2025,7 @@ export class WorkspaceSendAdapter {
     }
 
     private onMoverEcho(flight: number, correlation: string): void {
-        if (!this.inFlight || flight !== this.activeToken || !this.echoArmed) {
+        if (!this.inFlight || flight !== this.activeToken || !this.echoArmed || this.cancelArmed) {
             return;
         }
         const pending = this.pending;
@@ -1970,7 +2051,7 @@ export class WorkspaceSendAdapter {
     }
 
     private onGeometryEcho(windowId: string, flight: number, correlation: string): void {
-        if (!this.inFlight || flight !== this.activeToken) {
+        if (!this.inFlight || flight !== this.activeToken || this.cancelArmed) {
             return;
         }
         if (!this.geoPending.has(windowId)) {
@@ -2012,7 +2093,7 @@ export class WorkspaceSendAdapter {
     }
 
     private tryMaybeComplete(flight: number, correlation: string): void {
-        if (!this.inFlight || flight !== this.activeToken || this.nativeWriteDepth > 0 || this.nativeFollowDepth > 0) {
+        if (!this.inFlight || flight !== this.activeToken || this.nativeWriteDepth > 0 || this.nativeFollowDepth > 0 || this.cancelArmed) {
             return;
         }
         if (!this.moverSeen || this.geoPending.size > 0) {
@@ -2027,7 +2108,7 @@ export class WorkspaceSendAdapter {
     }
 
     private completePostWrite(planned: WorkspacePlanned, flight: number, correlation: string): void {
-        if (this.nativeWriteDepth > 0 || this.nativeFollowDepth > 0) {
+        if (this.nativeWriteDepth > 0 || this.nativeFollowDepth > 0 || this.cancelArmed) {
             return;
         }
         const pending = this.pending;
@@ -2093,6 +2174,14 @@ export class WorkspaceSendAdapter {
         this.geoRefs = new Map<string, object>();
     }
 
+    // Cancellation fence helper: incremented immediately before every
+    // native dispatch (geometry, membership, follow switch/focus), even when
+    // the call throws. Cancellation eligibility reads the counter, never an
+    // inferred phase.
+    private markNativeDispatch(): void {
+        this.nativeDispatches += 1;
+    }
+
     private writeGeometries(
         planned: WorkspacePlanned,
         flightState: WorkspacePendingFlight,
@@ -2120,6 +2209,7 @@ export class WorkspaceSendAdapter {
             }
             let written = false;
             try {
+                this.markNativeDispatch();
                 written = this.env.setGeometry(target, entry.rect) === true;
             } catch (error) {
                 void error;
@@ -2171,6 +2261,7 @@ export class WorkspaceSendAdapter {
         }
         let written = false;
         try {
+            this.markNativeDispatch();
             written = this.env.setDesktops(mover, [current.targetDesktopRef]) === true;
         } catch (error) {
             void error;
@@ -2306,7 +2397,7 @@ export class WorkspaceSendAdapter {
     }
 
     private sendAck(flight: number, correlation: string, payload: string): void {
-        if (!this.inFlight || flight !== this.activeToken || !isUniqueOwner(this.pinnedOwner)) {
+        if (!this.inFlight || flight !== this.activeToken || !isUniqueOwner(this.pinnedOwner) || this.cancelArmed) {
             return;
         }
         this.callbackSeen = false;
@@ -2326,7 +2417,7 @@ export class WorkspaceSendAdapter {
     }
 
     private onAckReply(reply: unknown, flight: number, correlation: string): void {
-        if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
+        if (!this.inFlight || flight !== this.activeToken || this.callbackSeen || this.cancelArmed) {
             return;
         }
         const pending = this.pending;
@@ -2397,7 +2488,7 @@ export class WorkspaceSendAdapter {
     }
 
     private sendVerify(flight: number, correlation: string, payload: string): void {
-        if (!this.inFlight || flight !== this.activeToken || !isUniqueOwner(this.pinnedOwner)) {
+        if (!this.inFlight || flight !== this.activeToken || !isUniqueOwner(this.pinnedOwner) || this.cancelArmed) {
             return;
         }
         this.callbackSeen = false;
@@ -2417,7 +2508,7 @@ export class WorkspaceSendAdapter {
     }
 
     private onVerifyReply(reply: unknown, flight: number, correlation: string): void {
-        if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
+        if (!this.inFlight || flight !== this.activeToken || this.callbackSeen || this.cancelArmed) {
             return;
         }
         const pending = this.pending;
@@ -2514,6 +2605,7 @@ export class WorkspaceSendAdapter {
             this.activationStep !== 5 ||
             this.nativeWriteDepth > 0 ||
             this.nativeFollowDepth > 0 ||
+            this.cancelArmed ||
             !isUniqueOwner(this.pinnedOwner)
         ) {
             return;
@@ -2552,6 +2644,7 @@ export class WorkspaceSendAdapter {
         let switched = false;
         this.nativeFollowDepth += 1;
         try {
+            this.markNativeDispatch();
             switched = switchToTarget(targetDesktopRef, {
                 correlation,
                 revision: planned.baseRevision,
@@ -2592,6 +2685,7 @@ export class WorkspaceSendAdapter {
         }
         let focused = false;
         try {
+            this.markNativeDispatch();
             focused = focusWindow(moverRef, {
                 correlation,
                 revision: planned.baseRevision,
@@ -2768,13 +2862,40 @@ export class WorkspaceSendAdapter {
         }
     }
 
-    private failFlight(flight: number, correlation: string, outcome: string): void {
+    private failFlight(flight: number, correlation: string, outcome: string, allowCancel = true): void {
+        if (flight !== this.activeToken) {
+            return;
+        }
+        // One automatic pre-actuation recovery attempt: when the flight never
+        // bound a plan and never dispatched a native write, Rust may hold a
+        // clean unacknowledged pending worth withdrawing before terminal
+        // teardown. Any ineligibility falls through to the terminal core
+        // unchanged. Callers proving Rust terminal for this scope (a
+        // `diverged` reply) bypass the attempt: cancellation refuses diverged
+        // transactions, so the attempt could never succeed.
+        if (allowCancel && this.tryStartCancel(flight, "result", outcome)) {
+            return;
+        }
+        this.terminateFlight(flight, correlation, "result", outcome, undefined);
+    }
+
+    // Shared terminal core: exactly the historical failFlight teardown
+    // (plan-block on bound plans, one best-effort adapter-lost report,
+    // context clear, result diagnostic, disable). The timer is retired first
+    // so a reentrant fire during the loss report cannot double-terminate.
+    private terminateFlight(
+        flight: number,
+        correlation: string,
+        event: string,
+        outcome: string,
+        followFallback: string | undefined,
+    ): void {
         if (flight !== this.activeToken) {
             return;
         }
         const pending = this.pending;
         const revision = pending === null ? 0 : pending.baseRevision;
-        const followOutcome = pending?.followOutcome;
+        const followOutcome = pending?.followOutcome ?? followFallback;
         // Post-plan terminal divergence: one bounded best-effort
         // `send-to-workspace-ack` `adapter-lost` to the still pinned owner
         // before disabling. Never the well-known name, never a retry, and a
@@ -2782,6 +2903,7 @@ export class WorkspaceSendAdapter {
         if (pending?.planned !== null) {
             this.planBlocked = true;
         }
+        this.clearTimer();
         this.reportAdapterLost();
         this.inFlight = false;
         this.pending = null;
@@ -2789,8 +2911,327 @@ export class WorkspaceSendAdapter {
         this.pinnedOwner = null;
         this.activeDeadline = 0;
         this.clearEcho();
-        this.diag("result", correlation, revision, "result", outcome, followOutcome);
+        this.cancelArmed = false;
+        this.cancelReplySeen = false;
+        this.cancelOutcome = "";
+        this.cancelFollow = undefined;
+        this.cancelEvent = "";
+        this.diag("result", correlation, revision, event, outcome, followOutcome);
         this.disable();
+    }
+
+    // One automatic pre-actuation recovery attempt. Eligible only while still
+    // holding the single-flight for a request that reached the planner
+    // (activation step 5) but never bound a plan and never dispatched a
+    // native write: Rust may hold a clean unacknowledged pending worth
+    // withdrawing before terminal teardown. Returns true when the attempt
+    // started (caller must return immediately with the flight retained);
+    // false when the caller must run its terminal path unchanged.
+    private tryStartCancel(
+        flight: number,
+        event: string,
+        outcome: string,
+        followFallback?: string,
+    ): boolean {
+        if (!this.inFlight || flight !== this.activeToken) {
+            return false;
+        }
+        const pending = this.pending;
+        // Null flight record or an already-running attempt: internal states,
+        // silently left to their owning paths.
+        if (pending === null || this.cancelArmed) {
+            return false;
+        }
+        // Bounded ineligibility reason for the normal-level cancel line, so a
+        // skipped attempt stays attributable without touching terminal
+        // behavior. A dispatched setter wins over a merely bound plan: any
+        // native dispatch (including a throw) proves actuation started, while
+        // binding alone does not.
+        const ineligible =
+            this.nativeDispatches !== 0
+                ? "dispatched"
+                : pending.planned !== null
+                  ? "bound"
+                  : this.activationStep !== 5
+                    ? "phase"
+                    : !isUniqueOwner(this.pinnedOwner)
+                      ? "owner"
+                      : null;
+        if (ineligible !== null) {
+            this.diag(
+                "cancel",
+                pending.correlation,
+                pending.baseRevision,
+                "eligibility",
+                `ineligible-${ineligible}`,
+                undefined,
+                outcome,
+            );
+            return false;
+        }
+        // Arm before the fresh observation so a late original reply, echo, or
+        // timer firing between observation and send cannot actuate or recover
+        // the flight being withdrawn.
+        this.cancelArmed = true;
+        this.cancelReplySeen = false;
+        this.cancelOutcome = outcome;
+        this.cancelEvent = event;
+        this.cancelFollow = followFallback;
+        const correlation = pending.correlation;
+        const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+        if (fresh === null) {
+            return this.abortCancelStart(pending);
+        }
+        const payload = this.buildCancelPayload(
+            fresh,
+            correlation,
+            pending.requestRevision,
+            pending.innerGap,
+            pending.outerGap,
+        );
+        if (payload === null || payload.length > WORKSPACE_SEND_MAX_REQUEST_BYTES) {
+            return this.abortCancelStart(pending);
+        }
+        // Retire the firing/armed whole-flight deadline and arm the single
+        // bounded cancel round trip on a fresh epoch; a stale epoch can never
+        // touch the wait.
+        this.clearTimer();
+        this.deadlineToken += 1;
+        this.activeDeadline = this.deadlineToken;
+        const deadline = this.activeDeadline;
+        let timer: (() => void) | null = null;
+        try {
+            timer = this.env.scheduleOnce(WORKSPACE_SEND_TIMEOUT_MS, () =>
+                this.onTimeout(flight, "cancel", deadline),
+            );
+        } catch (error) {
+            void error;
+            timer = null;
+        }
+        if (timer === null) {
+            this.activeDeadline = 0;
+            return this.abortCancelStart(pending);
+        }
+        this.cancelTimer = timer;
+        try {
+            this.env.callDbus(
+                this.pinnedOwner as string,
+                WORKSPACE_SEND_OBJECT,
+                WORKSPACE_SEND_INTERFACE,
+                WORKSPACE_SEND_METHOD,
+                payload,
+                (reply) => this.onCancelReply(reply, flight, correlation),
+            );
+        } catch (error) {
+            void error;
+            this.clearTimer();
+            this.activeDeadline = 0;
+            return this.abortCancelStart(pending);
+        }
+        this.diag("cancel", correlation, pending.baseRevision, "attempt", "requested", undefined, outcome);
+        return true;
+    }
+
+    // Abort a just-armed attempt before any send: disarm, emit the bounded
+    // unavailable outcome, and report failure so the caller runs its terminal
+    // path unchanged. Covers unobservable scope, unbuildable/oversize
+    // payloads, timer arming faults, and D-Bus send throws.
+    private abortCancelStart(pending: WorkspacePendingFlight): false {
+        const cause = this.cancelOutcome;
+        this.cancelArmed = false;
+        this.cancelReplySeen = false;
+        this.cancelOutcome = "";
+        this.cancelEvent = "";
+        this.cancelFollow = undefined;
+        this.diag(
+            "cancel",
+            pending.correlation,
+            pending.baseRevision,
+            "send",
+            "unavailable",
+            undefined,
+            cause,
+        );
+        return false;
+    }
+
+    // Cancel payload: the exact current pre-observation with the original
+    // request revision (never a base learned from a stale probe) plus the
+    // zero-dispatch attestation. The attempt itself performs zero native
+    // writes: one synchronous observation and one D-Bus send only.
+    private buildCancelPayload(
+        observed: WorkspaceSendObserved,
+        correlation: string,
+        requestRevision: number,
+        innerGap: number,
+        outerGap: number,
+    ): string | null {
+        const sourceWindows = observed.sourceWindows.map((entry) => ({
+            window: entry.id,
+            output: observed.sourceOutput,
+            workspace: observed.sourceWorkspace,
+            rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
+        }));
+        const targetWindows = observed.targetWindows.map((entry) => ({
+            window: entry.id,
+            output: observed.targetOutput,
+            workspace: observed.targetWorkspace,
+            rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
+        }));
+        let payload = "";
+        try {
+            payload = JSON.stringify({
+                v: WORKSPACE_SEND_CONTRACT_VERSION,
+                correlation_id: correlation,
+                owner: this.owner,
+                generation: this.generation,
+                revision: requestRevision,
+                fingerprint: this.scopeFingerprint(observed),
+                domain: {
+                    output: observed.sourceOutput,
+                    workspace: observed.sourceWorkspace,
+                    bounds: {
+                        x: observed.sourceBounds.x,
+                        y: observed.sourceBounds.y,
+                        w: observed.sourceBounds.w,
+                        h: observed.sourceBounds.h,
+                    },
+                    gap: innerGap,
+                    outer_gap: outerGap,
+                },
+                target_domain: {
+                    output: observed.targetOutput,
+                    workspace: observed.targetWorkspace,
+                    bounds: {
+                        x: observed.targetBounds.x,
+                        y: observed.targetBounds.y,
+                        w: observed.targetBounds.w,
+                        h: observed.targetBounds.h,
+                    },
+                    gap: innerGap,
+                    outer_gap: outerGap,
+                },
+                focused_window: observed.focusedId,
+                windows: sourceWindows,
+                target_windows: targetWindows,
+                command: { op: "send-to-workspace-cancel", zero_dispatch: true },
+            });
+        } catch (error) {
+            void error;
+            return null;
+        }
+        return payload;
+    }
+
+    private onCancelReply(reply: unknown, flight: number, correlation: string): void {
+        if (!this.inFlight || flight !== this.activeToken || !this.cancelArmed || this.cancelReplySeen) {
+            return;
+        }
+        const pending = this.pending;
+        if (pending === null || pending.correlation !== correlation || pending.planned !== null) {
+            this.cancelArmed = false;
+            this.cancelReplySeen = false;
+            const event = this.cancelEvent;
+            const outcome = this.cancelOutcome;
+            const follow = this.cancelFollow;
+            this.cancelOutcome = "";
+            this.cancelEvent = "";
+            this.cancelFollow = undefined;
+            this.terminateFlight(flight, correlation, event, outcome, follow);
+            return;
+        }
+        this.cancelReplySeen = true;
+        this.clearTimer();
+        // Success binds the exact correlation, the cancelled outcome for this
+        // route, and a well-formed Rust base revision (the un-advanced pending
+        // base, which the adapter never knew pre-plan). A well-formed refusal
+        // is attributed with its allowlisted kind before the preserved
+        // fallthrough; anything else, including a lost or malformed reply,
+        // falls through without further attribution.
+        let cancelled = false;
+        let refusal: string | null = null;
+        let releaseRevision = pending.baseRevision;
+        if (typeof reply === "string" && reply.length <= WORKSPACE_SEND_MAX_REPLY_BYTES) {
+            try {
+                const parsed: unknown = JSON.parse(reply);
+                cancelled =
+                    isRecord(parsed) &&
+                    parsed["v"] === WORKSPACE_SEND_CONTRACT_VERSION &&
+                    parsed["correlation_id"] === correlation &&
+                    parsed["outcome"] === "cancelled" &&
+                    parsed["kind"] === "send-to-workspace" &&
+                    isRevision(parsed["base_revision"]);
+                if (cancelled && isRecord(parsed)) {
+                    releaseRevision = parsed["base_revision"] as number;
+                }
+                if (
+                    !cancelled &&
+                    isRecord(parsed) &&
+                    parsed["v"] === WORKSPACE_SEND_CONTRACT_VERSION &&
+                    parsed["correlation_id"] === correlation &&
+                    (parsed["outcome"] === "rejected" || parsed["outcome"] === "diverged")
+                ) {
+                    refusal = cancelRefusalKind(parsed["kind"]);
+                }
+            } catch (error) {
+                void error;
+                cancelled = false;
+                refusal = null;
+            }
+        }
+        if (refusal !== null) {
+            this.diag(
+                "cancel",
+                correlation,
+                pending.baseRevision,
+                "reply",
+                `refused-${refusal}`,
+                undefined,
+                this.cancelOutcome,
+            );
+        } else if (!cancelled) {
+            this.diag(
+                "cancel",
+                correlation,
+                pending.baseRevision,
+                "reply",
+                "reply-malformed",
+                undefined,
+                this.cancelOutcome,
+            );
+        }
+        if (!cancelled) {
+            const event = this.cancelEvent;
+            const outcome = this.cancelOutcome;
+            const follow = this.cancelFollow;
+            this.cancelArmed = false;
+            this.cancelReplySeen = false;
+            this.cancelOutcome = "";
+            this.cancelEvent = "";
+            this.cancelFollow = undefined;
+            this.terminateFlight(flight, correlation, event, outcome, follow);
+            return;
+        }
+        const cause = this.cancelOutcome;
+        this.diag("cancel", correlation, releaseRevision, "reply", "accepted", undefined, cause);
+        // Withdrawn: the matching unacknowledged Rust pending is gone with
+        // its staged desired state, nothing committed, nothing written. Clear
+        // the flight exactly like a clean recovery and stay enabled so later
+        // commands may proceed under new correlations.
+        this.clearEcho();
+        this.inFlight = false;
+        this.pending = null;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.activeDeadline = 0;
+        this.callbackSeen = false;
+        this.cancelArmed = false;
+        this.cancelReplySeen = false;
+        this.cancelOutcome = "";
+        this.cancelEvent = "";
+        this.cancelFollow = undefined;
+        this.nativeDispatches = 0;
+        this.diag("release", correlation, releaseRevision, "local-release", "cancelled", undefined, cause);
     }
 
     // Narrow remote-clean recovery: no plan/pending exists on either side, so
@@ -2813,6 +3254,11 @@ export class WorkspaceSendAdapter {
         this.pinnedOwner = null;
         this.activeDeadline = 0;
         this.callbackSeen = false;
+        this.cancelArmed = false;
+        this.cancelReplySeen = false;
+        this.cancelOutcome = "";
+        this.cancelFollow = undefined;
+        this.cancelEvent = "";
         this.diag("result", correlation, 0, "result", outcome);
     }
 
@@ -2822,6 +3268,24 @@ export class WorkspaceSendAdapter {
 
     private onTimeout(flight: number, stage: string, deadline: number): void {
         if (!this.inFlight || flight !== this.activeToken || deadline !== this.activeDeadline) {
+            return;
+        }
+        // Cancel wait timeout: the single bounded cancel round trip never
+        // answered. Attribute the wait, then disarm and run the preserved
+        // fallthrough terminal path.
+        if (this.cancelArmed) {
+            const correlation = this.pending === null ? "" : this.pending.correlation;
+            const revision = this.pending === null ? 0 : this.pending.baseRevision;
+            const event = this.cancelEvent;
+            const outcome = this.cancelOutcome;
+            const follow = this.cancelFollow;
+            this.diag("cancel", correlation, revision, "timeout", "timed-out", undefined, outcome);
+            this.cancelArmed = false;
+            this.cancelReplySeen = false;
+            this.cancelOutcome = "";
+            this.cancelFollow = undefined;
+            this.cancelEvent = "";
+            this.terminateFlight(flight, correlation, event, outcome, follow);
             return;
         }
         // Synchronous settlement-deadline reentrancy (scheduleOnce invoking
@@ -2955,6 +3419,12 @@ export class WorkspaceSendAdapter {
                 fence: this.timeoutFenceDetail(pending.planned, pending.fenceTotal),
             });
         }
+        // Pre-actuation timeout with zero dispatch: one bounded cancel attempt
+        // before the terminal teardown below. Post-plan timeouts skip it via
+        // the eligibility gate and keep the established path unchanged.
+        if (this.tryStartCancel(flight, `timeout-${stage}`, "timeout", pending?.followOutcome ?? followOutcome)) {
+            return;
+        }
         if (pending?.planned !== null) {
             this.planBlocked = true;
         }
@@ -2970,6 +3440,11 @@ export class WorkspaceSendAdapter {
         this.pinnedOwner = null;
         this.activeDeadline = 0;
         this.clearEcho();
+        this.cancelArmed = false;
+        this.cancelReplySeen = false;
+        this.cancelOutcome = "";
+        this.cancelFollow = undefined;
+        this.cancelEvent = "";
         this.diag("result", correlation, revision, `timeout-${stage}`, "timeout", pending?.followOutcome ?? followOutcome);
         this.disable();
     }
@@ -3093,12 +3568,21 @@ export class WorkspaceSendAdapter {
         event: string,
         outcome: string,
         terminalFollowOutcome?: string,
+        cancellationCause?: string,
     ): void {
         if (
             !KWIN_TRACE_ENABLED &&
             stage !== "result" &&
             stage !== "follow" &&
             event !== "refuse" &&
+            event !== "cancel" &&
+            event !== "dispatch" &&
+            event !== "eligibility" &&
+            event !== "attempt" &&
+            event !== "send" &&
+            event !== "reply" &&
+            event !== "timeout" &&
+            event !== "local-release" &&
             outcome !== "no-planner" &&
             !(event === "plan" && outcome === "planned") &&
             !(event === "ack" && outcome === "acknowledged") &&
@@ -3125,7 +3609,7 @@ export class WorkspaceSendAdapter {
                           ? ` follow=not-reached gate=pre-commit phase=timeout reason=${event}`
                           : "";
             this.env.log(
-                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=${stage} correlation=${correlation} generation=${this.generation} revision=${String(revision)} diag_seq=${String(this.nextDiagSeq())} event=${event} outcome=${outcome}${followGate}`,
+                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} route=send-to-workspace stage=${stage} correlation=${correlation} generation=${this.generation} revision=${String(revision)} diag_seq=${String(this.nextDiagSeq())} event=${event} outcome=${outcome}${cancellationCause === undefined ? "" : ` cause=${sanitizeKind(cancellationCause)}`}${followGate}`,
             );
         } catch (error) {
             void error;

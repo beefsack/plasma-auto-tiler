@@ -97,15 +97,20 @@ pub fn caller_uid_authorized(caller_uid: Option<u32>, expected_uid: u32) -> bool
 // no forensics, and no ambient environment authority anywhere in this
 // service.
 
-/// Opt-in trace diagnostic gate for DescribePlan flights. Default off:
-/// only the exact value `1` enables full request/reply logging to the
-/// Planner's own log file (stderr, captured via the dev `planner-log`
-/// pointer). Any other value, including unset and empty, stays silent so the
-/// default journal surface (one bounded line per command plus one per
-/// rejection, KWin side only) is preserved exactly.
+/// Opt-in structural trace diagnostic gate for DescribePlan flights.
+/// Default off: only the exact value `1` enables the bounded structural
+/// shape line alongside the normal summaries. Any other value, including
+/// unset and empty, stays at the normal summary pair so the default journal
+/// surface keeps one bounded ingress plus one bounded terminal line per
+/// command. The former raw full-JSON request/reply trace was removed: a
+/// complete pair carries window ids, frame rectangles, domains, and owner in
+/// cleartext, which exceeds the redaction posture of every other surface.
+/// The bounded summaries below preserve the debugging uses (op, correlation,
+/// outcome, kind, revisions, carried-entry counts, fingerprint) without
+/// payload bytes.
 pub const PLANNER_TRACE_ENV_VAR: &str = "PLASMA_AUTO_TILER_TRACE";
 
-/// Whether trace DescribePlan logging is enabled (`1` only).
+/// Whether structural trace logging is enabled (`1` only).
 #[must_use]
 pub fn planner_trace_enabled() -> bool {
     matches!(
@@ -114,25 +119,42 @@ pub fn planner_trace_enabled() -> bool {
     )
 }
 
-/// Pure trace line formatting: full request and reply JSON with stable
-/// prefixes. No truncation: trace mode is explicitly opt-in diagnostics.
-#[must_use]
-pub fn format_trace_plan_lines(request: &str, reply: &str) -> (String, String) {
-    (
-        format!("plasma-auto-tiler:plan-trace:request {request}"),
-        format!("plasma-auto-tiler:plan-trace:reply {reply}"),
-    )
+/// Bounded terminal summary for an evaluation failure that produces no
+/// reply (for example a poisoned planner lock surfacing as `Unavailable`).
+/// Pure over the request string so the `describe_plan` error branch stays a
+/// thin drop-then-emit sequence (lock released before logging, exactly like
+/// the success path) and the redaction behavior is unit-testable.
+fn plan_egress_for_error(request: &str) -> String {
+    crate::planner_protocol::summarize_plan_egress(request, "")
 }
 
-/// Trace lines when enabled, `None` when default-off. Pure gate for tests;
-/// production writes the lines with `eprintln!` (Planner's own log file).
-#[must_use]
-pub fn trace_plan_lines(request: &str, reply: &str) -> Option<(String, String)> {
-    if planner_trace_enabled() {
-        Some(format_trace_plan_lines(request, reply))
-    } else {
-        None
+#[derive(Clone, Copy)]
+enum PlanEarlyExit {
+    Busy,
+    Closed,
+    Oversize,
+    Unauthorized,
+}
+
+fn plan_early_exit_summary(exit: PlanEarlyExit) -> &'static str {
+    match exit {
+        PlanEarlyExit::Busy => {
+            "plasma-auto-tiler:plan-summary direction=egress op=unknown correlation=- outcome=unavailable kind=busy base_revision=- detail=early-exit"
+        }
+        PlanEarlyExit::Closed => {
+            "plasma-auto-tiler:plan-summary direction=egress op=unknown correlation=- outcome=unavailable kind=connection-closed base_revision=- detail=early-exit"
+        }
+        PlanEarlyExit::Oversize => {
+            "plasma-auto-tiler:plan-summary direction=egress op=unknown correlation=- outcome=unavailable kind=request-oversize base_revision=- detail=early-exit"
+        }
+        PlanEarlyExit::Unauthorized => {
+            "plasma-auto-tiler:plan-summary direction=egress op=unknown correlation=- outcome=rejected kind=unauthorized base_revision=- detail=early-exit"
+        }
     }
+}
+
+fn emit_plan_early_exit(exit: PlanEarlyExit) {
+    eprintln!("{}", plan_early_exit_summary(exit));
 }
 
 #[derive(Debug, zbus::DBusError, PartialEq, Eq)]
@@ -252,24 +274,29 @@ impl PlannerEndpoint {
         // reply-size checks as the four legacy routes. Authorized requests
         // delegate to the retained planner protocol (live-tree sessions per
         // domain over session/reconcile/directional/cosmic_v1 policy);
-        // application rejections arrive as `Ok` JSON and stay silent like
-        // success, so fresh observations recover after any rejection.
-        // Diagnostics are emitted only after the guard is released (see
-        // `emit_outcome` contract).
+        // application rejections arrive as `Ok` JSON with one bounded
+        // ingress plus one bounded terminal summary line each, so fresh
+        // observations recover after any rejection and every transaction is
+        // attributable by correlation. Diagnostics are emitted only after
+        // the guard is released (see `emit_outcome` contract).
         if request.len() > PLAN_MAX_REQUEST {
             let Some(_guard) = self.operation_lock.try_lock() else {
+                emit_plan_early_exit(PlanEarlyExit::Busy);
                 return Err(PlannerError::Unavailable("planner is busy".to_owned()));
             };
             drop(_guard);
+            emit_plan_early_exit(PlanEarlyExit::Oversize);
             return Err(PlannerError::Unavailable(
                 "request exceeds size bound".to_owned(),
             ));
         }
         let Some(_guard) = self.operation_lock.try_lock() else {
+            emit_plan_early_exit(PlanEarlyExit::Busy);
             return Err(PlannerError::Unavailable("planner is busy".to_owned()));
         };
         if emitter.connection().is_closed() {
             drop(_guard);
+            emit_plan_early_exit(PlanEarlyExit::Closed);
             return Err(PlannerError::Unavailable(
                 "planner serving connection was lost".to_owned(),
             ));
@@ -277,16 +304,19 @@ impl PlannerEndpoint {
         let caller = header.sender().map(ToString::to_string);
         let Some(caller) = caller.as_deref() else {
             drop(_guard);
+            emit_plan_early_exit(PlanEarlyExit::Unauthorized);
             return Ok(unauthorized_rejection());
         };
         if !verify_planner_caller(emitter.connection(), caller).await {
             drop(_guard);
+            emit_plan_early_exit(PlanEarlyExit::Unauthorized);
             return Ok(unauthorized_rejection());
         };
         let reply = match self.evaluate_plan_request(&request) {
             Ok(reply) => reply,
             Err(error) => {
                 drop(_guard);
+                eprintln!("{}", plan_egress_for_error(&request));
                 return Err(error);
             }
         };
@@ -296,18 +326,35 @@ impl PlannerEndpoint {
                 "reply exceeds size bound".to_owned(),
             ));
         }
-        // Planned and recoverably rejected replies are silent by default
-        // (zero diagnostic lines): the reply is returned with the lock
-        // released and no logging, so output never triggers bus activation
+        // Bounded normal-level summaries: one ingress line per authorized
+        // command plus one terminal line per reply, plus one fixed
+        // uncorrelated early-exit line for oversize/busy/closed/unauthorized.
+        // The reply is returned with the lock released and no
+        // logging beyond these lines, so output never triggers bus activation
         // and never holds the operation lock. Opt-in trace mode
-        // (`PLASMA_AUTO_TILER_TRACE=1`) writes the full request
-        // and reply JSON to the Planner's own log file (stderr) after the
-        // guard is released; the KWin journal surface stays exactly one
-        // bounded line per command plus one per rejection.
+        // (`PLASMA_AUTO_TILER_TRACE=1`) appends the bounded structural shape
+        // line (carried-entry counts plus fingerprint; still no ids, rects,
+        // domains, owner, or payload bytes) to the Planner's own log file
+        // (stderr); the KWin journal surface stays exactly one bounded line
+        // per command plus one per rejection.
         drop(_guard);
-        if let Some((request_line, reply_line)) = trace_plan_lines(&request, &reply) {
-            eprintln!("{request_line}");
-            eprintln!("{reply_line}");
+        // Both summaries are pure over the request/reply strings and are
+        // emitted here, after the guard is released, so logging never holds
+        // the operation lock. The single-flight transport serializes calls,
+        // preserving ingress/egress order in the log.
+        eprintln!(
+            "{}",
+            crate::planner_protocol::summarize_plan_ingress(&request)
+        );
+        eprintln!(
+            "{}",
+            crate::planner_protocol::summarize_plan_egress(&request, &reply)
+        );
+        if planner_trace_enabled() {
+            eprintln!(
+                "{}",
+                crate::planner_protocol::summarize_plan_shape(&request)
+            );
         }
         Ok(reply)
     }
@@ -802,55 +849,75 @@ mod tests {
 
     #[test]
     fn planner_trace_is_default_off_and_opt_in_by_single_env() {
-        // D7: default-off gate plus full-JSON line formatting. Single test
+        // Default-off gate for the opt-in structural shape line. Single test
         // touches the process env var to avoid parallel-test races.
         let var = crate::planner_service::PLANNER_TRACE_ENV_VAR;
         let previous = std::env::var(var).ok();
         unsafe { std::env::remove_var(var) };
         assert!(
             !crate::planner_service::planner_trace_enabled(),
-            "unset must stay silent"
-        );
-        assert!(
-            crate::planner_service::trace_plan_lines("{}", "{}").is_none(),
-            "unset must produce no lines"
+            "unset must stay at normal summaries"
         );
         for off in ["0", "", "true", "TRUE", "2"] {
             unsafe { std::env::set_var(var, off) };
             assert!(
                 !crate::planner_service::planner_trace_enabled(),
-                "value {off:?} must stay silent"
-            );
-            assert!(
-                crate::planner_service::trace_plan_lines("{}", "{}").is_none(),
-                "value {off:?} must produce no lines"
+                "value {off:?} must stay at normal summaries"
             );
         }
         unsafe { std::env::set_var(var, "1") };
         assert!(crate::planner_service::planner_trace_enabled());
-        let request = r#"{"v":1,"correlation_id":"plan-1-p44"}"#;
-        let reply = r#"{"v":1,"outcome":"rejected","kind":"snapshot-invalid"}"#;
-        let lines = crate::planner_service::trace_plan_lines(request, reply)
-            .expect("value 1 must produce lines");
-        assert!(
-            lines.0.contains(request),
-            "request line must carry full JSON: {lines:?}"
-        );
-        assert!(
-            lines.1.contains(reply),
-            "reply line must carry full JSON: {lines:?}"
-        );
-        assert!(
-            lines.0.starts_with("plasma-auto-tiler:plan-trace:request "),
-            "{lines:?}"
-        );
-        assert!(
-            lines.1.starts_with("plasma-auto-tiler:plan-trace:reply "),
-            "{lines:?}"
-        );
         match previous {
             Some(value) => unsafe { std::env::set_var(var, value) },
             None => unsafe { std::env::remove_var(var) },
+        }
+    }
+
+    #[test]
+    fn error_egress_summary_is_bounded_without_echo() {
+        // The failure branch emits a redacted terminal summary with no reply
+        // to summarize: unparseable sides degrade to placeholders and no
+        // caller-controlled bytes escape, so poisoned-lock and oversize
+        // terminals stay attributable without echo.
+        let line = super::plan_egress_for_error("{\"v\":1}");
+        assert_eq!(
+            line,
+            "plasma-auto-tiler:plan-summary direction=egress op=unknown correlation=- outcome=unknown kind=- base_revision=- detail=-"
+        );
+        let hostile = super::plan_egress_for_error(
+            "{\"correlation_id\":\"evil!!\",\"owner\":\"owner-9\",\"command\":{\"op\":\"Bogus OP\"}}",
+        );
+        assert!(!hostile.contains("evil"), "{hostile}");
+        assert!(!hostile.contains("owner-9"), "{hostile}");
+        assert!(!hostile.contains("Bogus"), "{hostile}");
+        assert!(hostile.contains("correlation=-"), "{hostile}");
+        assert!(hostile.contains("op=unknown"), "{hostile}");
+        // Pure function: no endpoint state exists to change, and repeated
+        // calls are identical.
+        assert_eq!(super::plan_egress_for_error("{\"v\":1}"), line);
+    }
+
+    #[test]
+    fn plan_early_exit_summaries_are_fixed_and_uncorrelated() {
+        let lines = [
+            super::plan_early_exit_summary(super::PlanEarlyExit::Busy),
+            super::plan_early_exit_summary(super::PlanEarlyExit::Closed),
+            super::plan_early_exit_summary(super::PlanEarlyExit::Oversize),
+            super::plan_early_exit_summary(super::PlanEarlyExit::Unauthorized),
+        ];
+        assert_eq!(
+            lines,
+            [
+                "plasma-auto-tiler:plan-summary direction=egress op=unknown correlation=- outcome=unavailable kind=busy base_revision=- detail=early-exit",
+                "plasma-auto-tiler:plan-summary direction=egress op=unknown correlation=- outcome=unavailable kind=connection-closed base_revision=- detail=early-exit",
+                "plasma-auto-tiler:plan-summary direction=egress op=unknown correlation=- outcome=unavailable kind=request-oversize base_revision=- detail=early-exit",
+                "plasma-auto-tiler:plan-summary direction=egress op=unknown correlation=- outcome=rejected kind=unauthorized base_revision=- detail=early-exit",
+            ]
+        );
+        for line in lines {
+            assert!(line.contains("correlation=-"), "{line}");
+            assert!(!line.contains("owner"), "{line}");
+            assert!(!line.contains("payload"), "{line}");
         }
     }
 }

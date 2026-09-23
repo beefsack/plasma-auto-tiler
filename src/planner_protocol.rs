@@ -27,7 +27,10 @@
 //! `send-to-workspace-ack` and a matching verified `send-to-workspace-verify`
 //! post-observation commit it. No owner rebind during pending; pending
 //! mismatch, loss, refused ack, or failed verification is terminal
-//! `diverged` with no Legacy fallback. Legacy requests are unchanged.
+//! `diverged` with no Legacy fallback. Legacy requests are unchanged. A
+//! read-only `send-to-workspace-status` query classifies the retained
+//! transaction against a fresh complete observation without mutating,
+//! acknowledging, verifying, rebinding, or advancing anything.
 
 use std::collections::BTreeMap;
 
@@ -42,7 +45,7 @@ use crate::directional::{
 };
 use crate::geometry::{Rect, project};
 use crate::ids::{CorrelationId, GenerationId, OwnerId};
-use crate::reconcile::{AckError, VerifyError};
+use crate::reconcile::{AckError, CancelUnackedError, VerifyError};
 use crate::session::{
     DesiredGeometry, DomainKey, ExceptionFlags, ObservedWindow, OutputDomain, ProposeError,
     RefusalKind, Session, SessionCommand, SessionObservation, SessionPlan,
@@ -235,7 +238,7 @@ fn parse_mode(value: &str) -> Option<crate::contract::ResizeMode> {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RectDto {
     x: i32,
@@ -255,7 +258,7 @@ struct DomainDto {
     outer_gap: i32,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ObservedDto {
     window: String,
@@ -368,6 +371,153 @@ fn serialize_bounded(reply: &PlanReply) -> String {
         _ => "{\"v\":1,\"correlation_id\":\"\",\"outcome\":\"rejected\",\"kind\":\"snapshot-invalid\",\"message\":\"snapshot or intent is malformed\"}"
             .to_owned(),
     }
+}
+
+/// Bounded redacted DescribePlan summary lines for the normal-level service
+/// sink (Planner stderr, captured via the dev `planner-log` pointer into the
+/// combined `[planner]` stream).
+///
+/// These replace the former raw full-JSON trace: a complete request/reply
+/// pair carries window ids, frame rectangles, domains, owner, and generation
+/// in cleartext, which exceeds every other surface's redaction posture (KWin
+/// logs opaque ids at most, never rects, owners, or payload bytes). The
+/// summaries below are the only Planner-side record: op/outcome/kind tokens,
+/// a validated correlation, bounded integers, and carried-entry counts.
+/// Window/native ids, geometry, domains, owner, app/caption/secret data, and
+/// raw payloads never appear. Both functions are pure and total over
+/// arbitrary input: unparseable or out-of-shape sides degrade to bounded
+/// placeholders, so malformed and unauthorized-shaped inputs cannot echo.
+pub const PLAN_SUMMARY_PREFIX: &str = "plasma-auto-tiler:plan-summary";
+
+/// Sanitize one free-form token for summary lines: lowercase dashes only,
+/// capped at 64 chars, else `unknown`. Mirrors the adapter-side rejection
+/// token vocabulary. Never echoes payload bytes.
+fn summary_token(raw: Option<&str>) -> String {
+    match raw {
+        Some(text)
+            if !text.is_empty()
+                && text.len() <= 64
+                && text.bytes().all(|b| b.is_ascii_lowercase() || b == b'-') =>
+        {
+            text.to_owned()
+        }
+        _ => "unknown".to_owned(),
+    }
+}
+
+/// Validated correlation for summary lines, else `-`. Only a well-formed
+/// correlation id is ever emitted, so garbage (including unauthorized or
+/// malformed requests) never echoes. This is the cross-service lookup key
+/// shared with the KWin `correlation=` fields.
+fn summary_correlation(raw: Option<&str>) -> String {
+    match raw.and_then(CorrelationId::parse) {
+        Some(id) => id.as_str().to_owned(),
+        None => "-".to_owned(),
+    }
+}
+
+/// Bounded revision for summary lines, else `-`.
+fn summary_revision(value: Option<u64>) -> String {
+    match value {
+        Some(n) if n <= PLAN_MAX_REVISION => n.to_string(),
+        _ => "-".to_owned(),
+    }
+}
+
+/// Carried-entry count for summary lines. The request itself is size-bounded,
+/// so the count is exact without enumerating anything sensitive.
+fn summary_count(value: Option<&serde_json::Value>) -> String {
+    match value.and_then(serde_json::Value::as_array) {
+        Some(items) => items.len().to_string(),
+        None => "0".to_owned(),
+    }
+}
+
+fn summary_request_field<'a>(
+    request: &'a serde_json::Value,
+    key: &str,
+) -> Option<&'a serde_json::Value> {
+    request.as_object().and_then(|object| object.get(key))
+}
+
+/// Normal-level ingress summary: requested op, validated correlation, bounded
+/// revision. Emitted for every authorized `DescribePlan` call, covering
+/// normal ops plus the status and cancel routes with truthful op tokens.
+#[must_use]
+pub fn summarize_plan_ingress(request_json: &str) -> String {
+    let request: serde_json::Value = serde_json::from_str(request_json).unwrap_or_default();
+    format!(
+        "{PLAN_SUMMARY_PREFIX} direction=ingress op={} correlation={} revision={}",
+        summary_token(
+            summary_request_field(&request, "command")
+                .and_then(|command| command.get("op"))
+                .and_then(serde_json::Value::as_str)
+        ),
+        summary_correlation(
+            summary_request_field(&request, "correlation_id").and_then(serde_json::Value::as_str)
+        ),
+        summary_revision(
+            summary_request_field(&request, "revision").and_then(serde_json::Value::as_u64)
+        ),
+    )
+}
+
+/// Opt-in structural ingress detail (trace wiring only): carried observation
+/// shape as entry counts plus the numeric fingerprint. Counts and integers
+/// only; never ids, rects, domains, owner, or payload bytes.
+#[must_use]
+pub fn summarize_plan_shape(request_json: &str) -> String {
+    let request: serde_json::Value = serde_json::from_str(request_json).unwrap_or_default();
+    format!(
+        "{PLAN_SUMMARY_PREFIX} direction=shape op={} correlation={} windows={} target_windows={} domains={} fingerprint={}",
+        summary_token(
+            summary_request_field(&request, "command")
+                .and_then(|command| command.get("op"))
+                .and_then(serde_json::Value::as_str)
+        ),
+        summary_correlation(
+            summary_request_field(&request, "correlation_id").and_then(serde_json::Value::as_str)
+        ),
+        summary_count(summary_request_field(&request, "windows")),
+        summary_count(summary_request_field(&request, "target_windows")),
+        summary_count(summary_request_field(&request, "domains")),
+        match summary_request_field(&request, "fingerprint").and_then(serde_json::Value::as_u64) {
+            Some(n) => n.to_string(),
+            None => "-".to_owned(),
+        },
+    )
+}
+
+/// Normal-level terminal summary: op re-parsed from the request (so the pair
+/// stays attributable even when the reply carries no context), plus
+/// correlation/outcome/kind/base/detail from the reply echo. Status result
+/// codes pass through truthfully (`status`/`post-unacked`/…,
+/// `cancelled`/`send-to-workspace`/…); `no-pending-unknown` stays exactly
+/// that and never implies a commit.
+#[must_use]
+pub fn summarize_plan_egress(request_json: &str, reply_json: &str) -> String {
+    let request: serde_json::Value = serde_json::from_str(request_json).unwrap_or_default();
+    let reply: serde_json::Value = serde_json::from_str(reply_json).unwrap_or_default();
+    let reply_field = |key: &str| reply.as_object().and_then(|object| object.get(key));
+    format!(
+        "{PLAN_SUMMARY_PREFIX} direction=egress op={} correlation={} outcome={} kind={} base_revision={} detail={}",
+        summary_token(
+            summary_request_field(&request, "command")
+                .and_then(|command| command.get("op"))
+                .and_then(serde_json::Value::as_str)
+        ),
+        summary_correlation(reply_field("correlation_id").and_then(serde_json::Value::as_str)),
+        summary_token(reply_field("outcome").and_then(serde_json::Value::as_str)),
+        match reply_field("kind").and_then(serde_json::Value::as_str) {
+            Some(kind) => summary_token(Some(kind)),
+            None => "-".to_owned(),
+        },
+        summary_revision(reply_field("base_revision").and_then(serde_json::Value::as_u64)),
+        match reply_field("detail") {
+            Some(serde_json::Value::String(detail)) => summary_token(Some(detail)),
+            _ => "-".to_owned(),
+        },
+    )
 }
 
 fn rejected(correlation_id: String, kind: &str, message: &str) -> String {
@@ -819,15 +969,17 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
     // Production directional payload: only focus/move may carry `domains`;
     // every other op (including the standalone workspace-send route) keeps
     // legacy single-domain behavior and refuses it fail-closed. The
-    // directional R4 async ack/verify phases carry the same two-domain
-    // post-observation, so they admit `domains` with no new topology
-    // seeding.
+    // directional R4 async ack/verify/status/cancel phases carry the same
+    // two-domain post-observation, so they admit `domains` with no new
+    // topology seeding.
     let directional = match (&request.domains, op_str) {
         (None, _) => None,
         (Some(_), "focus")
         | (Some(_), "move")
         | (Some(_), "directional-move-ack")
-        | (Some(_), "directional-move-verify") => request.domains.clone(),
+        | (Some(_), "directional-move-verify")
+        | (Some(_), "directional-move-status")
+        | (Some(_), "directional-move-cancel") => request.domains.clone(),
         (Some(_), _) => {
             return Err(snapshot_invalid(
                 request.correlation_id.clone(),
@@ -996,11 +1148,13 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
             }
         }
     }
-    // Ack/verify phases carry the complete source+target post-observation
-    // where focus is not a planning input: after the mover leaves the source
-    // desktop the observed focus may be empty or a remaining source window, so
-    // the focus-membership gate is relaxed for those ops only (workspace and
-    // directional R4 async routes).
+    // Ack/verify/status/cancel phases carry the complete source+target
+    // post-observation where focus is not a planning input: after the mover
+    // leaves the source desktop the observed focus may be empty or a
+    // remaining source window, so the focus-membership gate is relaxed for
+    // those ops only (workspace and directional R4 async routes). Cancellation
+    // additionally binds focus exactly against the retained pre-image below,
+    // so the relaxed gate loses nothing.
     let focus_skipped_for_ack_verify = matches!(
         request
             .command
@@ -1008,8 +1162,12 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
             .and_then(serde_json::Value::as_str),
         Some("send-to-workspace-ack")
             | Some("send-to-workspace-verify")
+            | Some("send-to-workspace-status")
+            | Some("send-to-workspace-cancel")
             | Some("directional-move-ack")
             | Some("directional-move-verify")
+            | Some("directional-move-status")
+            | Some("directional-move-cancel")
     );
     if !request.windows.is_empty()
         && !focus_skipped_for_ack_verify
@@ -1661,15 +1819,25 @@ fn spatial_with_focus_last(
 /// verification is terminal divergence with no Legacy fallback. The retained
 /// desired geometry is exactly the expected post-observation: a bare
 /// `verified: true` never commits unless every desired window is observed once
-/// with the expected output, workspace, and rectangle.
+/// with the expected output, workspace, and rectangle. The retained pre-image
+/// is the exact normalized dispatch-time observation (focused window plus the
+/// complete source/target window sets with carried rectangles); it is bounded
+/// by the request window/entry bounds and lives exactly as long as the
+/// pending. `request_revision` is the revision the dispatching request
+/// carried (distinct from the seeded `base_revision`); cancellation must echo
+/// it, never a base learned from a stale probe.
 #[derive(Debug)]
 struct WorkspacePending {
     owner: OwnerId,
     generation: GenerationId,
     correlation: CorrelationId,
     base_revision: u64,
+    request_revision: u64,
     session: Session,
     desired_geometry: Vec<DesiredGeometry>,
+    pre_focused: String,
+    pre_windows: Vec<ObservedDto>,
+    pre_target_windows: Vec<ObservedDto>,
 }
 
 /// One retained pending two-domain directional R4 cross-output move. Bound to
@@ -1681,13 +1849,15 @@ struct WorkspacePending {
 /// it via `Session::verify_move` then split/store the canonical sessions
 /// once. Pending mismatch, refused ack, failed verification, or
 /// identity/correlation/revision loss is terminal `diverged` with no commit.
-/// R1-R3 never stage this pending and stay synchronous.
+/// R1-R3 never stage this pending and stay synchronous. The retained
+/// pre-image and `request_revision` follow the [`WorkspacePending`] contract.
 #[derive(Debug)]
 struct DirectionalMovePending {
     owner: OwnerId,
     generation: GenerationId,
     correlation: CorrelationId,
     base_revision: u64,
+    request_revision: u64,
     session: Session,
     source_key: DomainKey,
     target_key: DomainKey,
@@ -1696,6 +1866,8 @@ struct DirectionalMovePending {
     desired_geometry: Vec<DesiredGeometry>,
     operation: crate::directional::MoveOperation,
     preconditions: Vec<crate::directional::Precondition>,
+    pre_focused: String,
+    pre_windows: Vec<ObservedDto>,
 }
 
 /// Validated workspace-send route input: the target domain plus the exact
@@ -1755,6 +1927,50 @@ fn diverged_reply(correlation_id: &str, reason: crate::contract::DivergenceKind)
         kind: Some(reason.as_str().to_owned()),
         message: Some(reason.message().to_owned()),
         base_revision: None,
+        detail: None,
+        desired_geometry: None,
+        desired_focus: None,
+        float_geometry: None,
+        preconditions: None,
+        operation: None,
+    })
+}
+
+/// Read-only pending-transaction status reply: outcome `status` with the
+/// truthful classification as `kind` (`post-unacked`, `post-acked`,
+/// `unresolved`, `stale`, or `no-pending-unknown`). Carries no geometry,
+/// focus, operation, or preconditions and never implies a commit:
+/// `no-pending-unknown` in particular cannot be read as committed.
+fn status_reply(correlation_id: &str, base_revision: Option<u64>, status: &'static str) -> String {
+    serialize_bounded(&PlanReply {
+        v: PLAN_CONTRACT_VERSION,
+        correlation_id: correlation_id.to_owned(),
+        outcome: "status",
+        kind: Some(status.to_owned()),
+        message: None,
+        base_revision,
+        detail: None,
+        desired_geometry: None,
+        desired_focus: None,
+        float_geometry: None,
+        preconditions: None,
+        operation: None,
+    })
+}
+
+/// Cancellation success reply: outcome `cancelled` with the route kind and
+/// the un-advanced base revision. Carries no geometry, focus, operation, or
+/// preconditions and must never be read as a commit: nothing advanced, the
+/// matching unacknowledged pending was withdrawn and its staged desired state
+/// discarded.
+fn cancelled_reply(correlation_id: &str, kind: &'static str, base_revision: u64) -> String {
+    serialize_bounded(&PlanReply {
+        v: PLAN_CONTRACT_VERSION,
+        correlation_id: correlation_id.to_owned(),
+        outcome: "cancelled",
+        kind: Some(kind.to_owned()),
+        message: None,
+        base_revision: Some(base_revision),
         detail: None,
         desired_geometry: None,
         desired_focus: None,
@@ -2089,6 +2305,56 @@ fn parse_directional_move_operation(
     })
 }
 
+/// Exact normalized pre-image match against the dispatch-time observation:
+/// focused window plus every carried window exactly once with identical
+/// output, workspace, rectangle, and flags. Order-insensitive like the post
+/// predicates (adapter enumeration order is not significant), but otherwise
+/// byte-exact: any missing, duplicate, extra, mis-homed, mis-sized, or
+/// flag-divergent entry fails closed. Pure function, no mutation.
+fn pre_image_matches(
+    pre_focused: &str,
+    pre_windows: &[ObservedDto],
+    pre_target_windows: &[ObservedDto],
+    ctx: &Validated,
+) -> bool {
+    if ctx.request.focused_window != pre_focused {
+        return false;
+    }
+    let mut retained: std::collections::HashMap<&str, &ObservedDto> =
+        std::collections::HashMap::with_capacity(pre_windows.len() + pre_target_windows.len());
+    for entry in pre_windows.iter().chain(pre_target_windows.iter()) {
+        if retained.insert(entry.window.as_str(), entry).is_some() {
+            return false;
+        }
+    }
+    let mut observed: std::collections::HashMap<&str, &ObservedDto> =
+        std::collections::HashMap::with_capacity(
+            ctx.request.windows.len() + ctx.request.target_windows.len(),
+        );
+    for entry in ctx
+        .request
+        .windows
+        .iter()
+        .chain(ctx.request.target_windows.iter())
+    {
+        if observed.insert(entry.window.as_str(), entry).is_some() {
+            return false;
+        }
+    }
+    if observed.len() != retained.len() {
+        return false;
+    }
+    for (id, want) in &retained {
+        let Some(got) = observed.get(id) else {
+            return false;
+        };
+        if *got != *want {
+            return false;
+        }
+    }
+    true
+}
+
 /// Complete directional post-observation validation against the retained R4
 /// plan: every desired window must be carried exactly once (source plus
 /// target homed entries in `windows`) with the expected output, workspace,
@@ -2195,14 +2461,21 @@ fn needs_rebuild(error: &ProposeError) -> bool {
 /// Standalone workspace-send route: `send-to-workspace`/`-ack`/`-verify` keep
 /// one pending two-domain Session in [`WorkspacePending`], never crossing
 /// routes. No owner rebind during pending; pending mismatch/loss/refused
-/// ack/failed verification is terminal `diverged`.
+/// ack/failed verification is terminal `diverged`. `send-to-workspace-status`
+/// is read-only classification of that pending against a fresh observation
+/// and never mutates, acknowledges, verifies, rebinds, or advances anything.
+/// `send-to-workspace-cancel` withdraws the pending only on exact identity,
+/// scope, unacked state, zero-dispatch attestation, and pre-image proof,
+/// preserving everything committed.
 ///
 /// Directional R4 route: `move` with a two-domain payload proposes an R4
 /// cross-output transfer once and retains it in [`DirectionalMovePending`]
 /// until `directional-move-ack`/`directional-move-verify` commit it. R1-R3
 /// stay synchronous with no pending. While either pending exists, all other
 /// plan operations block as `pending-exists` (diverged on identity loss) so
-/// workspace and directional routes never interleave.
+/// workspace and directional routes never interleave. `directional-move-status`
+/// is the read-only counterpart of the workspace status query, and
+/// `directional-move-cancel` the counterpart of the workspace cancellation.
 #[derive(Debug, Default)]
 pub struct Planner {
     owner: Option<OwnerId>,
@@ -2264,7 +2537,13 @@ impl Planner {
     /// phases before the legacy owner/generation binding sync so a pending
     /// Session is never discarded or rebound mid-flight; legacy requests are
     /// unchanged except that any pending (workspace or directional) blocks all
-    /// other plan operations.
+    /// other plan operations. The read-only status phases dispatch alongside
+    /// ack/verify (before the binding sync and the pending conflict boundary)
+    /// and take `&self` so they cannot mutate, acknowledge, verify, clear,
+    /// rebind, or advance any retained state or topology. The cancellation
+    /// phases dispatch at the same boundary but take `&mut self`: on exact
+    /// pre-image proof they withdraw only the matching unacknowledged pending
+    /// and its staged desired state, preserving everything committed.
     pub fn evaluate(&mut self, request_json: &str) -> String {
         let ctx = match validate_request(request_json) {
             Ok(ctx) => ctx,
@@ -2273,13 +2552,18 @@ impl Planner {
         match validated_op(&ctx).as_str() {
             "send-to-workspace-ack" => return self.evaluate_workspace_ack(&ctx),
             "send-to-workspace-verify" => return self.evaluate_workspace_verify(&ctx),
+            "send-to-workspace-status" => return self.evaluate_workspace_status(&ctx),
+            "send-to-workspace-cancel" => return self.evaluate_workspace_cancel(&ctx),
             "directional-move-ack" => return self.evaluate_directional_ack(&ctx),
             "directional-move-verify" => return self.evaluate_directional_verify(&ctx),
+            "directional-move-status" => return self.evaluate_directional_status(&ctx),
+            "directional-move-cancel" => return self.evaluate_directional_cancel(&ctx),
             _ => {}
         }
         // Full global pending conflict boundary: while either pending exists,
         // every other plan operation blocks (diverged on identity/divergence
-        // loss, else `pending-exists`). Ack/verify above never reach here.
+        // loss, else `pending-exists`). Ack/verify/status/cancel above never
+        // reach here.
         if let Some(reply) = self.pending_conflict_reply(&ctx) {
             return reply;
         }
@@ -3392,6 +3676,7 @@ impl Planner {
                         generation: ctx.generation.clone(),
                         correlation: ctx.correlation.clone(),
                         base_revision: base,
+                        request_revision: ctx.request.revision,
                         session,
                         source_key: source_key.clone(),
                         target_key: target_key.clone(),
@@ -3400,6 +3685,8 @@ impl Planner {
                         desired_geometry: plan.desired_geometry.clone(),
                         operation: plan.dispatch.operation.clone(),
                         preconditions: plan.dispatch.preconditions.clone(),
+                        pre_focused: ctx.request.focused_window.clone(),
+                        pre_windows: ctx.request.windows.clone(),
                     });
                     return text;
                 }
@@ -4465,11 +4752,13 @@ impl Planner {
         active_group_response(&session, ctx)
     }
 
-    /// Validate the standalone workspace-send target: optional `target_domain`
-    /// plus `target_windows` against the source `domain`/`windows`. Refuses
-    /// cross-output, same-workspace, absent/invalid focus, and malformed or
-    /// uncovered target windows fail-closed with bounded kinds.
-    fn validate_workspace_input(&self, ctx: &Validated) -> Result<WorkspaceInput, String> {
+    /// Shared standalone workspace-send target scope: optional `target_domain`
+    /// plus `target_windows` against the source `domain`. Refuses
+    /// cross-output, same-workspace, and malformed or uncovered target windows
+    /// fail-closed with bounded kinds, and returns the projected target domain
+    /// plus its key. No mover/command binding; the request and status paths
+    /// add their own command checks.
+    fn workspace_target_scope(&self, ctx: &Validated) -> Result<(OutputDomain, DomainKey), String> {
         let cid = ctx.request.correlation_id.clone();
         let Some(target_dto) = &ctx.request.target_domain else {
             return Err(rejected(
@@ -4504,13 +4793,6 @@ impl Planner {
                 cid,
                 "unchanged-workspace",
                 "target workspace equals the source workspace",
-            ));
-        }
-        if ctx.request.focused_window.is_empty() {
-            return Err(rejected(
-                cid,
-                "absent-focus",
-                "no focused window is observed",
             ));
         }
         let carried_bounds = Rect {
@@ -4612,6 +4894,30 @@ impl Planner {
         if !target_domain.validate() {
             return Err(snapshot_invalid(cid, MSG_OBSERVATION, "domain-invalid"));
         }
+        let target_key = DomainKey {
+            output: OutputId(target_dto.output.clone()),
+            workspace: WorkspaceId(target_dto.workspace.clone()),
+        };
+        Ok((target_domain, target_key))
+    }
+
+    /// Validate the standalone workspace-send target: optional `target_domain`
+    /// plus `target_windows` against the source `domain`/`windows`. Refuses
+    /// cross-output, same-workspace, absent/invalid focus, and malformed or
+    /// uncovered target windows fail-closed with bounded kinds.
+    fn validate_workspace_input(&self, ctx: &Validated) -> Result<WorkspaceInput, String> {
+        let cid = ctx.request.correlation_id.clone();
+        // Target scope first (presence, cross-output, bounds, homing), then
+        // the mover binding; a missing target still reports
+        // `workspace-target-invalid` from the shared scope helper.
+        let (target_domain, target_key) = self.workspace_target_scope(ctx)?;
+        if ctx.request.focused_window.is_empty() {
+            return Err(rejected(
+                cid,
+                "absent-focus",
+                "no focused window is observed",
+            ));
+        }
         let command: WorkspaceSendCommand =
             match serde_json::from_value(ctx.request.command.clone()) {
                 Ok(command) => command,
@@ -4643,8 +4949,8 @@ impl Planner {
                 "the moved window is not the focused window",
             ));
         }
-        if command.target_output != target_dto.output
-            || command.target_workspace != target_dto.workspace
+        if command.target_output != target_key.output.0
+            || command.target_workspace != target_key.workspace.0
         {
             return Err(rejected(
                 cid,
@@ -4654,10 +4960,7 @@ impl Planner {
         }
         Ok(WorkspaceInput {
             target_domain,
-            target_key: DomainKey {
-                output: OutputId(target_dto.output.clone()),
-                workspace: WorkspaceId(target_dto.workspace.clone()),
-            },
+            target_key,
             target_windows: ctx.request.target_windows.clone(),
             window: WindowId(command.window.clone()),
         })
@@ -4736,8 +5039,12 @@ impl Planner {
                     generation: ctx.generation.clone(),
                     correlation: ctx.correlation.clone(),
                     base_revision: base,
+                    request_revision: ctx.request.revision,
                     session,
                     desired_geometry: plan.desired_geometry.clone(),
+                    pre_focused: ctx.request.focused_window.clone(),
+                    pre_windows: ctx.request.windows.clone(),
+                    pre_target_windows: ctx.request.target_windows.clone(),
                 });
                 text
             }
@@ -5144,6 +5451,364 @@ impl Planner {
                 self.directional_pending = Some(pending);
                 rejected(cid, "verify-rejected", "directional verification failed")
             }
+        }
+    }
+
+    /// Read-only workspace-send status query: classify the exact retained
+    /// [`WorkspacePending`] transaction against a fresh complete observation.
+    ///
+    /// Takes `&self`, so classification cannot acknowledge, verify, clear,
+    /// rebind, or advance any retained state, revision, or topology. Envelope
+    /// validation (opaque ids, bounds, containment) is the shared
+    /// [`validate_request`] path; target scope validation is the shared
+    /// [`Planner::workspace_target_scope`] helper without any mover command
+    /// binding. The planned-post predicate is the exact
+    /// [`workspace_post_matches`] pure function (it builds one local map and
+    /// only reads `pending.desired_geometry` plus the carried request, so it
+    /// performs no mutation). Identity mismatch reports `stale` without
+    /// recording divergence; a nonmatching observation reports `unresolved`
+    /// (never `mixed`); absent pending reports `no-pending-unknown`, which
+    /// cannot imply a commit.
+    fn evaluate_workspace_status(&self, ctx: &Validated) -> String {
+        let cid = ctx.request.correlation_id.clone();
+        let command: WorkspaceStatusCommand =
+            match serde_json::from_value(ctx.request.command.clone()) {
+                Ok(command) => command,
+                Err(error) => {
+                    let (kind, message) = classify_parse_error(&error);
+                    return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+                }
+            };
+        if command.op != "send-to-workspace-status" {
+            return rejected(cid, "status-op-invalid", "status operation is invalid");
+        }
+        // A `domains` payload on this route is already refused fail-closed by
+        // `validate_request` (`domain-invalid`); only the target scope below
+        // remains to bind.
+        let (target_domain, _) = match self.workspace_target_scope(ctx) {
+            Ok(scope) => scope,
+            Err(reply) => return reply,
+        };
+        let Some(pending) = &self.workspace_pending else {
+            return status_reply(&cid, None, "no-pending-unknown");
+        };
+        if let Some(reason) = pending.session.divergence() {
+            return diverged_reply(&cid, reason);
+        }
+        if pending.owner != ctx.owner
+            || pending.generation != ctx.generation
+            || pending.correlation != ctx.correlation
+            || ctx.request.revision != pending.base_revision
+        {
+            return status_reply(&cid, Some(pending.base_revision), "stale");
+        }
+        // Strict scope binding: the carried source/target domains (projected
+        // bounds and gaps included) must equal the retained pending domains.
+        // Window geometry alone does not prove scope.
+        let retained = pending.session.domains();
+        if retained.len() != 2 || retained[0] != ctx.domain || retained[1] != target_domain {
+            return status_reply(&cid, Some(pending.base_revision), "unresolved");
+        }
+        if !workspace_post_matches(pending, ctx) {
+            return status_reply(&cid, Some(pending.base_revision), "unresolved");
+        }
+        match pending.session.status().state {
+            crate::reconcile::StateKind::PendingAcked => {
+                status_reply(&cid, Some(pending.base_revision), "post-acked")
+            }
+            crate::reconcile::StateKind::PendingUnacked => {
+                status_reply(&cid, Some(pending.base_revision), "post-unacked")
+            }
+            _ => status_reply(&cid, Some(pending.base_revision), "unresolved"),
+        }
+    }
+
+    /// Read-only directional R4 status query: classify the exact retained
+    /// [`DirectionalMovePending`] transaction against a fresh complete
+    /// observation. Same read-only contract as
+    /// [`Planner::evaluate_workspace_status`]; the planned-post predicate is
+    /// the exact [`directional_post_matches`] pure function (one local map,
+    /// reads only), plus strict carried-pair binding to the retained
+    /// source/target keys and projected domains.
+    fn evaluate_directional_status(&self, ctx: &Validated) -> String {
+        let cid = ctx.request.correlation_id.clone();
+        let command: DirectionalMoveStatusCommand =
+            match serde_json::from_value(ctx.request.command.clone()) {
+                Ok(command) => command,
+                Err(error) => {
+                    let (kind, message) = classify_parse_error(&error);
+                    return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+                }
+            };
+        if command.op != "directional-move-status" {
+            return rejected(cid, "status-op-invalid", "status operation is invalid");
+        }
+        let Some((source_domain, source_key, target_domain, target_key)) = directional_pair(ctx)
+        else {
+            return snapshot_invalid(cid, MSG_OBSERVATION, "domain-invalid");
+        };
+        let Some(pending) = &self.directional_pending else {
+            return status_reply(&cid, None, "no-pending-unknown");
+        };
+        if let Some(reason) = pending.session.divergence() {
+            return diverged_reply(&cid, reason);
+        }
+        if pending.owner != ctx.owner
+            || pending.generation != ctx.generation
+            || pending.correlation != ctx.correlation
+            || ctx.request.revision != pending.base_revision
+        {
+            return status_reply(&cid, Some(pending.base_revision), "stale");
+        }
+        if source_key != &pending.source_key || target_key != &pending.target_key {
+            return status_reply(&cid, Some(pending.base_revision), "unresolved");
+        }
+        let retained = pending.session.domains();
+        if retained.len() != 2 || retained[0] != *source_domain || retained[1] != *target_domain {
+            return status_reply(&cid, Some(pending.base_revision), "unresolved");
+        }
+        if !directional_post_matches(pending, ctx) {
+            return status_reply(&cid, Some(pending.base_revision), "unresolved");
+        }
+        match pending.session.status().state {
+            crate::reconcile::StateKind::PendingAcked => {
+                status_reply(&cid, Some(pending.base_revision), "post-acked")
+            }
+            crate::reconcile::StateKind::PendingUnacked => {
+                status_reply(&cid, Some(pending.base_revision), "post-unacked")
+            }
+            _ => status_reply(&cid, Some(pending.base_revision), "unresolved"),
+        }
+    }
+
+    /// Workspace-send cancellation: withdraw the exact retained
+    /// [`WorkspacePending`] transaction when the adapter proves, over the
+    /// same-UID transport, that its flight dispatched no native write and its
+    /// current complete observation still equals the dispatch-time pre-image.
+    ///
+    /// Requires the exact owner/generation/correlation/original-request-
+    /// revision identity, the exact route scope, a non-diverged
+    /// `PendingUnacked` reconciler state with no drag capture, the
+    /// `zero_dispatch` attestation, and byte-exact pre-image equality. On
+    /// success clears only the matching pending, its reconciler pending slot,
+    /// and its staged desired state; committed topology, focus, exceptions,
+    /// retained float geometry, accepted revision/fingerprint, and unrelated
+    /// domains are exactly preserved, and the base/ack/verify paths are
+    /// untouched. Every other state fails closed with no mutation and no
+    /// divergence recorded: started writes can only surface as pre-image or
+    /// scope mismatch (natives already moved), acked plans refuse (an applied
+    /// ack may already have committed elsewhere), and stale/diverged/absent/
+    /// malformed probes change nothing.
+    fn evaluate_workspace_cancel(&mut self, ctx: &Validated) -> String {
+        let cid = ctx.request.correlation_id.clone();
+        let command: WorkspaceCancelCommand =
+            match serde_json::from_value(ctx.request.command.clone()) {
+                Ok(command) => command,
+                Err(error) => {
+                    let (kind, message) = classify_parse_error(&error);
+                    return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+                }
+            };
+        if command.op != "send-to-workspace-cancel" {
+            return rejected(cid, "cancel-op-invalid", "cancel operation is invalid");
+        }
+        if !command.zero_dispatch {
+            return rejected(cid, "cancel-refused", "adapter attests a native dispatch");
+        }
+        // A `domains` payload on this route is already refused fail-closed by
+        // `validate_request` (`domain-invalid`); only the target scope below
+        // remains to bind.
+        let (target_domain, _) = match self.workspace_target_scope(ctx) {
+            Ok(scope) => scope,
+            Err(reply) => return reply,
+        };
+        let Some(pending) = &mut self.workspace_pending else {
+            return rejected(cid, "no-pending", "no workspace plan is pending");
+        };
+        if let Some(reason) = pending.session.divergence() {
+            return diverged_reply(&cid, reason);
+        }
+        if pending.owner != ctx.owner
+            || pending.generation != ctx.generation
+            || pending.correlation != ctx.correlation
+            || ctx.request.revision != pending.request_revision
+        {
+            return rejected(
+                cid,
+                "stale",
+                "cancel identity does not match the pending transaction",
+            );
+        }
+        if pending.session.has_drag() {
+            return rejected(cid, "cancel-refused", "pending plan holds a drag capture");
+        }
+        if !matches!(
+            pending.session.status().state,
+            crate::reconcile::StateKind::PendingUnacked
+        ) {
+            return rejected(
+                cid,
+                "cancel-refused",
+                "pending plan was already acknowledged",
+            );
+        }
+        // Strict scope binding first: the carried source/target domains
+        // (projected bounds and gaps included) must equal the retained pending
+        // domains. Window pre-image alone does not prove scope.
+        let retained = pending.session.domains();
+        if retained.len() != 2 || retained[0] != ctx.domain || retained[1] != target_domain {
+            return rejected(
+                cid,
+                "cancel-mismatch",
+                "current scope does not match the pending transaction",
+            );
+        }
+        if !pre_image_matches(
+            &pending.pre_focused,
+            &pending.pre_windows,
+            &pending.pre_target_windows,
+            ctx,
+        ) {
+            return rejected(
+                cid,
+                "cancel-mismatch",
+                "current observation does not match the dispatch-time pre-image",
+            );
+        }
+        let base = pending.base_revision;
+        match pending
+            .session
+            .cancel_unacked_pending(&ctx.correlation, base)
+        {
+            Ok(()) => {
+                self.workspace_pending = None;
+                cancelled_reply(&cid, "send-to-workspace", base)
+            }
+            Err(CancelUnackedError::Diverged(reason)) => diverged_reply(&cid, reason),
+            Err(CancelUnackedError::NoPending) => {
+                rejected(cid, "no-pending", "no workspace plan is pending")
+            }
+            Err(CancelUnackedError::AlreadyAcknowledged) => rejected(
+                cid,
+                "cancel-refused",
+                "pending plan was already acknowledged",
+            ),
+            Err(CancelUnackedError::DragActive) => {
+                rejected(cid, "cancel-refused", "pending plan holds a drag capture")
+            }
+            Err(CancelUnackedError::BindingMismatch) => rejected(
+                cid,
+                "stale",
+                "cancel identity does not match the pending transaction",
+            ),
+        }
+    }
+
+    /// Directional R4 cancellation: withdraw the exact retained
+    /// [`DirectionalMovePending`] transaction under the same contract as
+    /// [`Planner::evaluate_workspace_cancel`], with the carried pair keys and
+    /// projected domains bound to the retained pair plus byte-exact pre-image
+    /// equality over the combined two-domain window set. On success the pair
+    /// pending clears without splitting or storing: canonical sessions are
+    /// exactly preserved.
+    fn evaluate_directional_cancel(&mut self, ctx: &Validated) -> String {
+        let cid = ctx.request.correlation_id.clone();
+        let command: DirectionalMoveCancelCommand =
+            match serde_json::from_value(ctx.request.command.clone()) {
+                Ok(command) => command,
+                Err(error) => {
+                    let (kind, message) = classify_parse_error(&error);
+                    return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+                }
+            };
+        if command.op != "directional-move-cancel" {
+            return rejected(cid, "cancel-op-invalid", "cancel operation is invalid");
+        }
+        if !command.zero_dispatch {
+            return rejected(cid, "cancel-refused", "adapter attests a native dispatch");
+        }
+        let Some((source_domain, source_key, target_domain, target_key)) = directional_pair(ctx)
+        else {
+            return snapshot_invalid(cid, MSG_OBSERVATION, "domain-invalid");
+        };
+        let Some(pending) = &mut self.directional_pending else {
+            return rejected(cid, "no-pending", "no directional move is pending");
+        };
+        if let Some(reason) = pending.session.divergence() {
+            return diverged_reply(&cid, reason);
+        }
+        if pending.owner != ctx.owner
+            || pending.generation != ctx.generation
+            || pending.correlation != ctx.correlation
+            || ctx.request.revision != pending.request_revision
+        {
+            return rejected(
+                cid,
+                "stale",
+                "cancel identity does not match the pending transaction",
+            );
+        }
+        if pending.session.has_drag() {
+            return rejected(cid, "cancel-refused", "pending plan holds a drag capture");
+        }
+        if !matches!(
+            pending.session.status().state,
+            crate::reconcile::StateKind::PendingUnacked
+        ) {
+            return rejected(
+                cid,
+                "cancel-refused",
+                "pending plan was already acknowledged",
+            );
+        }
+        if source_key != &pending.source_key || target_key != &pending.target_key {
+            return rejected(
+                cid,
+                "cancel-mismatch",
+                "current scope does not match the pending transaction",
+            );
+        }
+        let retained = pending.session.domains();
+        if retained.len() != 2 || retained[0] != *source_domain || retained[1] != *target_domain {
+            return rejected(
+                cid,
+                "cancel-mismatch",
+                "current scope does not match the pending transaction",
+            );
+        }
+        if !pre_image_matches(&pending.pre_focused, &pending.pre_windows, &[], ctx) {
+            return rejected(
+                cid,
+                "cancel-mismatch",
+                "current observation does not match the dispatch-time pre-image",
+            );
+        }
+        let base = pending.base_revision;
+        match pending
+            .session
+            .cancel_unacked_pending(&ctx.correlation, base)
+        {
+            Ok(()) => {
+                self.directional_pending = None;
+                cancelled_reply(&cid, "directional-move", base)
+            }
+            Err(CancelUnackedError::Diverged(reason)) => diverged_reply(&cid, reason),
+            Err(CancelUnackedError::NoPending) => {
+                rejected(cid, "no-pending", "no directional move is pending")
+            }
+            Err(CancelUnackedError::AlreadyAcknowledged) => rejected(
+                cid,
+                "cancel-refused",
+                "pending plan was already acknowledged",
+            ),
+            Err(CancelUnackedError::DragActive) => {
+                rejected(cid, "cancel-refused", "pending plan holds a drag capture")
+            }
+            Err(CancelUnackedError::BindingMismatch) => rejected(
+                cid,
+                "stale",
+                "cancel identity does not match the pending transaction",
+            ),
         }
     }
 }
@@ -6011,6 +6676,46 @@ struct DirectionalMoveVerifyCommand {
     operation: serde_json::Value,
 }
 
+/// Strict read-only workspace-send status command: no fields beyond the op
+/// tag. The envelope already carries the complete fresh observation plus the
+/// exact transaction identity; extra fields fail closed as malformed.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceStatusCommand {
+    op: String,
+}
+
+/// Strict read-only directional R4 status command: no fields beyond the op
+/// tag, same envelope rule as the workspace status command.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DirectionalMoveStatusCommand {
+    op: String,
+}
+
+/// Strict workspace-send cancellation command: the op tag plus the trusted
+/// adapter zero-dispatch attestation. `zero_dispatch` must be exactly true:
+/// the adapter attests that this flight dispatched no geometry, membership,
+/// or follow setter, so withdrawing the unacknowledged plan cannot strand a
+/// native mutation. Rust cannot verify the claim itself; it is trusted only
+/// together with the exact identity, scope, unacked state, and pre-image
+/// checks, over the same-UID transport that already authorizes the route.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceCancelCommand {
+    op: String,
+    zero_dispatch: bool,
+}
+
+/// Strict directional R4 cancellation command: same attestation contract as
+/// the workspace cancellation command.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DirectionalMoveCancelCommand {
+    op: String,
+    zero_dispatch: bool,
+}
+
 fn evaluate_resize(ctx: &Validated) -> String {
     let command: ResizeCommand = match serde_json::from_value(ctx.request.command.clone()) {
         Ok(command) => command,
@@ -6316,7 +7021,10 @@ mod tests {
             ),
         ] {
             let reply = parse_reply(&planner.evaluate(&float_request(
-                correlation, focused, &windows, command,
+                correlation,
+                focused,
+                &windows,
+                command,
             )));
             assert_eq!(reply["outcome"], "planned", "{reply}");
         }
@@ -6324,7 +7032,10 @@ mod tests {
         let floated = parse_reply(&planner.evaluate(&float_request(
             "float-seq-3",
             "win-2",
-            &[("win-1", 0, 0, 100, 80, false), ("win-2", 200, 0, 100, 80, false)],
+            &[
+                ("win-1", 0, 0, 100, 80, false),
+                ("win-2", 200, 0, 100, 80, false),
+            ],
             serde_json::json!({"op": "toggle-float", "window": "win-2"}),
         )));
         assert_eq!(floated["outcome"], "planned", "{floated}");
@@ -9210,6 +9921,882 @@ mod tests {
         )));
         assert_eq!(verify["outcome"], "diverged", "{verify}");
         assert_eq!(verify["kind"], "postcondition-mismatch", "{verify}");
+    }
+
+    fn workspace_status_body() -> serde_json::Value {
+        serde_json::json!({"op": "send-to-workspace-status"})
+    }
+
+    fn workspace_cancel_body() -> serde_json::Value {
+        serde_json::json!({"op": "send-to-workspace-cancel", "zero_dispatch": true})
+    }
+
+    /// Stage one workspace send and split its planned desired geometry into
+    /// the exact source/target post-observation the adapter must report back.
+    fn stage_workspace_send(
+        planner: &mut Planner,
+        correlation: &str,
+    ) -> (
+        serde_json::Value,
+        Vec<serde_json::Value>,
+        Vec<serde_json::Value>,
+    ) {
+        let source = vec![
+            workspace_entry("win-1", "ws-1", 0),
+            workspace_entry("win-2", "ws-1", 100),
+        ];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let planned = parse_reply(&planner.evaluate(&workspace_request(
+            correlation,
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source,
+            target,
+            workspace_send_body(),
+        )));
+        assert_eq!(planned["outcome"], "planned", "{planned}");
+        let (post_source, post_target) = observation_from_geometry(&planned["desired_geometry"]);
+        (planned, post_source, post_target)
+    }
+
+    fn workspace_status_request(
+        correlation: &str,
+        owner: &str,
+        generation: &str,
+        revision: u64,
+        source: Vec<serde_json::Value>,
+        target: Vec<serde_json::Value>,
+        command: serde_json::Value,
+    ) -> String {
+        workspace_request(
+            correlation,
+            owner,
+            generation,
+            revision,
+            "",
+            source,
+            target,
+            command,
+        )
+    }
+
+    #[test]
+    fn workspace_status_reports_post_unacked_then_post_acked_without_blocking_commit() {
+        let mut planner = Planner::new();
+        let (planned, post_source, post_target) = stage_workspace_send(&mut planner, "ws-status-1");
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        // Exact planned post before any ack: unacknowledged, never committed.
+        let unacked = parse_reply(&planner.evaluate(&workspace_status_request(
+            "ws-status-1",
+            "owner-1",
+            "gen-1",
+            base,
+            post_source.clone(),
+            post_target.clone(),
+            workspace_status_body(),
+        )));
+        assert_eq!(unacked["outcome"], "status", "{unacked}");
+        assert_eq!(unacked["kind"], "post-unacked", "{unacked}");
+        assert_eq!(unacked["base_revision"], base, "{unacked}");
+        assert!(unacked.get("desired_geometry").is_none(), "{unacked}");
+        // Read-only: the normal ack still applies afterwards.
+        let acked_reply = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-status-1",
+            "owner-1",
+            "gen-1",
+            base,
+            "",
+            post_source.clone(),
+            post_target.clone(),
+            workspace_ack_body(),
+        )));
+        assert_eq!(acked_reply["outcome"], "acknowledged", "{acked_reply}");
+        // Exact planned post after the accepted ack: acknowledged.
+        let acked = parse_reply(&planner.evaluate(&workspace_status_request(
+            "ws-status-1",
+            "owner-1",
+            "gen-1",
+            base,
+            post_source.clone(),
+            post_target.clone(),
+            workspace_status_body(),
+        )));
+        assert_eq!(acked["outcome"], "status", "{acked}");
+        assert_eq!(acked["kind"], "post-acked", "{acked}");
+        assert_eq!(acked["base_revision"], base, "{acked}");
+        // Read-only again: the normal verify still commits afterwards.
+        let committed = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-status-1",
+            "owner-1",
+            "gen-1",
+            base,
+            "",
+            post_source,
+            post_target,
+            workspace_verify_body(
+                planned["preconditions"].clone(),
+                planned["operation"].clone(),
+            ),
+        )));
+        assert_eq!(committed["outcome"], "committed", "{committed}");
+        assert_eq!(committed["base_revision"], base + 1, "{committed}");
+    }
+
+    #[test]
+    fn workspace_status_reports_unresolved_without_consuming_pending() {
+        let mut planner = Planner::new();
+        let (planned, post_source, post_target) = stage_workspace_send(&mut planner, "ws-status-2");
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        // One observed rectangle diverges from the retained desired geometry.
+        let (mut bad_source, bad_target) = observation_from_geometry(&planned["desired_geometry"]);
+        bad_source[0]["rect"]["w"] = serde_json::json!(1);
+        let unresolved = parse_reply(&planner.evaluate(&workspace_status_request(
+            "ws-status-2",
+            "owner-1",
+            "gen-1",
+            base,
+            bad_source,
+            bad_target,
+            workspace_status_body(),
+        )));
+        assert_eq!(unresolved["outcome"], "status", "{unresolved}");
+        assert_eq!(unresolved["kind"], "unresolved", "{unresolved}");
+        assert_eq!(unresolved["base_revision"], base, "{unresolved}");
+        // The pending survives the probe: exact ack plus verify still commit.
+        assert_eq!(
+            parse_reply(&planner.evaluate(&workspace_request(
+                "ws-status-2",
+                "owner-1",
+                "gen-1",
+                base,
+                "",
+                post_source.clone(),
+                post_target.clone(),
+                workspace_ack_body(),
+            )))["outcome"],
+            "acknowledged"
+        );
+        let committed = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-status-2",
+            "owner-1",
+            "gen-1",
+            base,
+            "",
+            post_source,
+            post_target,
+            workspace_verify_body(
+                planned["preconditions"].clone(),
+                planned["operation"].clone(),
+            ),
+        )));
+        assert_eq!(committed["outcome"], "committed", "{committed}");
+    }
+
+    #[test]
+    fn workspace_status_reports_stale_without_recording_divergence() {
+        let mut planner = Planner::new();
+        let (planned, post_source, post_target) = stage_workspace_send(&mut planner, "ws-status-3");
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        // Wrong correlation, revision, owner, and generation each report stale
+        // against the exact post-observation.
+        for (correlation, owner, generation, revision) in [
+            ("ws-status-other", "owner-1", "gen-1", base),
+            ("ws-status-3", "owner-1", "gen-1", base + 1),
+            ("ws-status-3", "owner-9", "gen-1", base),
+            ("ws-status-3", "owner-1", "gen-9", base),
+        ] {
+            let stale = parse_reply(&planner.evaluate(&workspace_status_request(
+                correlation,
+                owner,
+                generation,
+                revision,
+                post_source.clone(),
+                post_target.clone(),
+                workspace_status_body(),
+            )));
+            assert_eq!(stale["outcome"], "status", "{stale}");
+            assert_eq!(stale["kind"], "stale", "{stale}");
+            assert_eq!(stale["base_revision"], base, "{stale}");
+        }
+        // Stale probes record nothing: the exact query still sees the live
+        // unacknowledged post, and the lifecycle still commits.
+        let live = parse_reply(&planner.evaluate(&workspace_status_request(
+            "ws-status-3",
+            "owner-1",
+            "gen-1",
+            base,
+            post_source.clone(),
+            post_target.clone(),
+            workspace_status_body(),
+        )));
+        assert_eq!(live["kind"], "post-unacked", "{live}");
+        assert_eq!(
+            parse_reply(&planner.evaluate(&workspace_request(
+                "ws-status-3",
+                "owner-1",
+                "gen-1",
+                base,
+                "",
+                post_source.clone(),
+                post_target.clone(),
+                workspace_ack_body(),
+            )))["outcome"],
+            "acknowledged"
+        );
+        assert_eq!(
+            parse_reply(&planner.evaluate(&workspace_request(
+                "ws-status-3",
+                "owner-1",
+                "gen-1",
+                base,
+                "",
+                post_source,
+                post_target,
+                workspace_verify_body(
+                    planned["preconditions"].clone(),
+                    planned["operation"].clone(),
+                ),
+            )))["outcome"],
+            "committed"
+        );
+    }
+
+    #[test]
+    fn workspace_status_reports_diverged_after_terminal_ack() {
+        let mut planner = Planner::new();
+        let (planned, post_source, post_target) = stage_workspace_send(&mut planner, "ws-status-4");
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        let refused = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-status-4",
+            "owner-1",
+            "gen-1",
+            base,
+            "",
+            post_source.clone(),
+            post_target.clone(),
+            serde_json::json!({"op": "send-to-workspace-ack", "ack_outcome": "partial-application"}),
+        )));
+        assert_eq!(refused["outcome"], "diverged", "{refused}");
+        let diverged = parse_reply(&planner.evaluate(&workspace_status_request(
+            "ws-status-4",
+            "owner-1",
+            "gen-1",
+            base,
+            post_source,
+            post_target,
+            workspace_status_body(),
+        )));
+        assert_eq!(diverged["outcome"], "diverged", "{diverged}");
+        assert_eq!(diverged["kind"], "partial-application", "{diverged}");
+    }
+
+    #[test]
+    fn workspace_status_no_pending_unknown_carries_no_commit_implication() {
+        let planner = &mut Planner::new();
+        // A valid scope with no retained transaction: unknown, with no base
+        // revision and no geometry that could be mistaken for a commit.
+        let reply = parse_reply(&planner.evaluate(&workspace_status_request(
+            "ws-status-5",
+            "owner-1",
+            "gen-1",
+            0,
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_status_body(),
+        )));
+        assert_eq!(reply["outcome"], "status", "{reply}");
+        assert_eq!(reply["kind"], "no-pending-unknown", "{reply}");
+        assert!(reply.get("base_revision").is_none(), "{reply}");
+        assert!(reply.get("desired_geometry").is_none(), "{reply}");
+        assert!(reply.get("kind").and_then(|kind| kind.as_str()) != Some("send-to-workspace"));
+        // Read-only against an empty planner: no binding sync, no sessions.
+        assert!(planner.owner().is_none());
+        assert_eq!(planner.retained_domains(), 0);
+    }
+
+    #[test]
+    fn workspace_status_rejects_malformed_and_scope_violations() {
+        let mut planner = Planner::new();
+        let source = vec![workspace_entry("win-1", "ws-1", 0)];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        // Unknown command fields fail closed like any other route.
+        let unknown = parse_reply(&planner.evaluate(&workspace_status_request(
+            "ws-status-6",
+            "owner-1",
+            "gen-1",
+            0,
+            source.clone(),
+            target.clone(),
+            serde_json::json!({"op": "send-to-workspace-status", "extra": 1}),
+        )));
+        assert_eq!(unknown["outcome"], "rejected", "{unknown}");
+        assert_eq!(unknown["kind"], "unknown-field", "{unknown}");
+        // Missing target domain fails closed with the request scope kind.
+        let mut missing: serde_json::Value = serde_json::from_str(&workspace_status_request(
+            "ws-status-6",
+            "owner-1",
+            "gen-1",
+            0,
+            source.clone(),
+            target.clone(),
+            workspace_status_body(),
+        ))
+        .expect("json");
+        missing
+            .as_object_mut()
+            .expect("object")
+            .remove("target_domain");
+        let missing_reply = parse_reply(&planner.evaluate(&missing.to_string()));
+        assert_eq!(missing_reply["outcome"], "rejected", "{missing_reply}");
+        assert_eq!(
+            missing_reply["kind"], "workspace-target-invalid",
+            "{missing_reply}"
+        );
+        // Cross-output target fails closed with the request scope kind.
+        let mut cross: serde_json::Value = serde_json::from_str(&workspace_status_request(
+            "ws-status-6",
+            "owner-1",
+            "gen-1",
+            0,
+            source.clone(),
+            target.clone(),
+            workspace_status_body(),
+        ))
+        .expect("json");
+        cross["target_domain"]["output"] = serde_json::json!("out-9");
+        let cross_reply = parse_reply(&planner.evaluate(&cross.to_string()));
+        assert_eq!(cross_reply["outcome"], "rejected", "{cross_reply}");
+        assert_eq!(cross_reply["kind"], "cross-output", "{cross_reply}");
+        // Same-workspace target fails closed with the request scope kind.
+        let mut same: serde_json::Value = serde_json::from_str(&workspace_status_request(
+            "ws-status-6",
+            "owner-1",
+            "gen-1",
+            0,
+            source,
+            target,
+            workspace_status_body(),
+        ))
+        .expect("json");
+        same["target_domain"]["workspace"] = serde_json::json!("ws-1");
+        let same_reply = parse_reply(&planner.evaluate(&same.to_string()));
+        assert_eq!(same_reply["outcome"], "rejected", "{same_reply}");
+        assert_eq!(same_reply["kind"], "unchanged-workspace", "{same_reply}");
+    }
+
+    /// Cancel request carrying the exact dispatch-time pre-observation:
+    /// revision 0 is the original request revision (never the seeded base),
+    /// focus names the dispatch-time focused window, and source/target carry
+    /// the dispatch-time window sets.
+    #[allow(clippy::too_many_arguments)]
+    fn workspace_cancel_request(
+        correlation: &str,
+        owner: &str,
+        generation: &str,
+        revision: u64,
+        focused: &str,
+        source: Vec<serde_json::Value>,
+        target: Vec<serde_json::Value>,
+        command: serde_json::Value,
+    ) -> String {
+        workspace_request(
+            correlation,
+            owner,
+            generation,
+            revision,
+            focused,
+            source,
+            target,
+            command,
+        )
+    }
+
+    #[test]
+    fn workspace_cancel_withdraws_unacked_pre_and_leaves_new_correlation_usable() {
+        let mut planner = Planner::new();
+        let source = vec![
+            workspace_entry("win-1", "ws-1", 0),
+            workspace_entry("win-2", "ws-1", 100),
+        ];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let planned = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-cancel-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source.clone(),
+            target.clone(),
+            workspace_send_body(),
+        )));
+        assert_eq!(planned["outcome"], "planned", "{planned}");
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        // Exact dispatch-time pre-image with the original request revision:
+        // withdrawn, never committed.
+        let cancelled = parse_reply(&planner.evaluate(&workspace_cancel_request(
+            "ws-cancel-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source,
+            target,
+            workspace_cancel_body(),
+        )));
+        assert_eq!(cancelled["outcome"], "cancelled", "{cancelled}");
+        assert_eq!(cancelled["kind"], "send-to-workspace", "{cancelled}");
+        assert_eq!(cancelled["base_revision"], base, "{cancelled}");
+        assert!(cancelled.get("desired_geometry").is_none(), "{cancelled}");
+        // The slot is released without a wedge: status cannot imply a commit,
+        // a duplicate cancel finds no pending, and a fresh correlation plans.
+        // Nothing committed, so no canonical domain was retained either.
+        let unknown = parse_reply(&planner.evaluate(&workspace_status_request(
+            "ws-cancel-1",
+            "owner-1",
+            "gen-1",
+            0,
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_status_body(),
+        )));
+        assert_eq!(unknown["kind"], "no-pending-unknown", "{unknown}");
+        let duplicate = parse_reply(&planner.evaluate(&workspace_cancel_request(
+            "ws-cancel-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_cancel_body(),
+        )));
+        assert_eq!(duplicate["outcome"], "rejected", "{duplicate}");
+        assert_eq!(duplicate["kind"], "no-pending", "{duplicate}");
+        assert_eq!(planner.retained_domains(), 0);
+        let second = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-cancel-2",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_send_body(),
+        )));
+        assert_eq!(second["outcome"], "planned", "{second}");
+    }
+
+    #[test]
+    fn workspace_cancel_refuses_acked_plan_without_mutation() {
+        let mut planner = Planner::new();
+        let (planned, post_source, post_target) = stage_workspace_send(&mut planner, "ws-cancel-3");
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        assert_eq!(
+            parse_reply(&planner.evaluate(&workspace_request(
+                "ws-cancel-3",
+                "owner-1",
+                "gen-1",
+                base,
+                "",
+                post_source.clone(),
+                post_target.clone(),
+                workspace_ack_body(),
+            )))["outcome"],
+            "acknowledged"
+        );
+        // The plan is acked: cancellation refuses even with the exact
+        // pre-image, since the ack may already have committed elsewhere.
+        let refused = parse_reply(&planner.evaluate(&workspace_cancel_request(
+            "ws-cancel-3",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            vec![
+                workspace_entry("win-1", "ws-1", 0),
+                workspace_entry("win-2", "ws-1", 100),
+            ],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_cancel_body(),
+        )));
+        assert_eq!(refused["outcome"], "rejected", "{refused}");
+        assert_eq!(refused["kind"], "cancel-refused", "{refused}");
+        // Refusal mutated nothing: the ack stands and verify still commits.
+        let status = parse_reply(&planner.evaluate(&workspace_status_request(
+            "ws-cancel-3",
+            "owner-1",
+            "gen-1",
+            base,
+            post_source.clone(),
+            post_target.clone(),
+            workspace_status_body(),
+        )));
+        assert_eq!(status["kind"], "post-acked", "{status}");
+        let committed = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-cancel-3",
+            "owner-1",
+            "gen-1",
+            base,
+            "",
+            post_source,
+            post_target,
+            workspace_verify_body(
+                planned["preconditions"].clone(),
+                planned["operation"].clone(),
+            ),
+        )));
+        assert_eq!(committed["outcome"], "committed", "{committed}");
+    }
+
+    #[test]
+    fn workspace_cancel_refuses_mismatch_without_mutation() {
+        let mut planner = Planner::new();
+        let (planned, post_source, post_target) = stage_workspace_send(&mut planner, "ws-cancel-4");
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        // One carried rectangle differs from the dispatch-time pre-image:
+        // mismatch refuses while the pending stays live and committable.
+        let mut bad_source = vec![
+            workspace_entry("win-1", "ws-1", 0),
+            workspace_entry("win-2", "ws-1", 100),
+        ];
+        bad_source[0]["rect"]["w"] = serde_json::json!(1);
+        let mismatch = parse_reply(&planner.evaluate(&workspace_cancel_request(
+            "ws-cancel-4",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            bad_source,
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_cancel_body(),
+        )));
+        assert_eq!(mismatch["outcome"], "rejected", "{mismatch}");
+        assert_eq!(mismatch["kind"], "cancel-mismatch", "{mismatch}");
+        // A started write surfaces the same way: the post-observation is not
+        // the pre-image, so cancellation refuses and the lifecycle proceeds.
+        let started = parse_reply(&planner.evaluate(&workspace_cancel_request(
+            "ws-cancel-4",
+            "owner-1",
+            "gen-1",
+            0,
+            "",
+            post_source.clone(),
+            post_target.clone(),
+            workspace_cancel_body(),
+        )));
+        assert_eq!(started["outcome"], "rejected", "{started}");
+        assert_eq!(started["kind"], "cancel-mismatch", "{started}");
+        assert_eq!(
+            parse_reply(&planner.evaluate(&workspace_request(
+                "ws-cancel-4",
+                "owner-1",
+                "gen-1",
+                base,
+                "",
+                post_source.clone(),
+                post_target.clone(),
+                workspace_ack_body(),
+            )))["outcome"],
+            "acknowledged"
+        );
+        assert_eq!(
+            parse_reply(&planner.evaluate(&workspace_request(
+                "ws-cancel-4",
+                "owner-1",
+                "gen-1",
+                base,
+                "",
+                post_source,
+                post_target,
+                workspace_verify_body(
+                    planned["preconditions"].clone(),
+                    planned["operation"].clone(),
+                ),
+            )))["outcome"],
+            "committed"
+        );
+    }
+
+    #[test]
+    fn workspace_cancel_refuses_stale_diverged_absent_malformed() {
+        let mut planner = Planner::new();
+        let (planned, post_source, post_target) = stage_workspace_send(&mut planner, "ws-cancel-5");
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        let pre_source = vec![
+            workspace_entry("win-1", "ws-1", 0),
+            workspace_entry("win-2", "ws-1", 100),
+        ];
+        let pre_target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        // Wrong correlation, the seeded base instead of the original request
+        // revision, wrong owner, and wrong generation each report stale
+        // without recording anything.
+        for (correlation, owner, generation, revision) in [
+            ("ws-cancel-other", "owner-1", "gen-1", 0),
+            ("ws-cancel-5", "owner-1", "gen-1", base),
+            ("ws-cancel-5", "owner-9", "gen-1", 0),
+            ("ws-cancel-5", "owner-1", "gen-9", 0),
+        ] {
+            let stale = parse_reply(&planner.evaluate(&workspace_cancel_request(
+                correlation,
+                owner,
+                generation,
+                revision,
+                "win-1",
+                pre_source.clone(),
+                pre_target.clone(),
+                workspace_cancel_body(),
+            )));
+            assert_eq!(stale["outcome"], "rejected", "{stale}");
+            assert_eq!(stale["kind"], "stale", "{stale}");
+        }
+        // A false attestation (a dispatch did occur) refuses outright.
+        let attested = parse_reply(&planner.evaluate(&workspace_cancel_request(
+            "ws-cancel-5",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            pre_source.clone(),
+            pre_target.clone(),
+            serde_json::json!({"op": "send-to-workspace-cancel", "zero_dispatch": false}),
+        )));
+        assert_eq!(attested["outcome"], "rejected", "{attested}");
+        assert_eq!(attested["kind"], "cancel-refused", "{attested}");
+        // Stale and refused probes recorded nothing: exact cancellation still
+        // succeeds and the lifecycle is fully released.
+        let cancelled = parse_reply(&planner.evaluate(&workspace_cancel_request(
+            "ws-cancel-5",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            pre_source,
+            pre_target,
+            workspace_cancel_body(),
+        )));
+        assert_eq!(cancelled["outcome"], "cancelled", "{cancelled}");
+        // A terminally diverged transaction reports divergence, never cancel.
+        let (diverged_plan, div_source, div_target) =
+            stage_workspace_send(&mut planner, "ws-cancel-6");
+        let div_base = diverged_plan["base_revision"].as_u64().expect("base");
+        assert_eq!(
+            parse_reply(&planner.evaluate(&workspace_request(
+                "ws-cancel-6",
+                "owner-1",
+                "gen-1",
+                div_base,
+                "",
+                div_source,
+                div_target,
+                serde_json::json!({"op": "send-to-workspace-ack", "ack_outcome": "partial-application"}),
+            )))["outcome"],
+            "diverged"
+        );
+        let diverged = parse_reply(&planner.evaluate(&workspace_cancel_request(
+            "ws-cancel-6",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            vec![
+                workspace_entry("win-1", "ws-1", 0),
+                workspace_entry("win-2", "ws-1", 100),
+            ],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_cancel_body(),
+        )));
+        assert_eq!(diverged["outcome"], "diverged", "{diverged}");
+        assert_eq!(diverged["kind"], "partial-application", "{diverged}");
+        // Absent pending and malformed shapes fail closed with no mutation.
+        let absent = parse_reply(&Planner::new().evaluate(&workspace_cancel_request(
+            "ws-cancel-7",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_cancel_body(),
+        )));
+        assert_eq!(absent["outcome"], "rejected", "{absent}");
+        assert_eq!(absent["kind"], "no-pending", "{absent}");
+        let unknown = parse_reply(&planner.evaluate(&workspace_cancel_request(
+            "ws-cancel-6",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            serde_json::json!({"op": "send-to-workspace-cancel", "zero_dispatch": true, "extra": 1}),
+        )));
+        assert_eq!(unknown["outcome"], "rejected", "{unknown}");
+        assert_eq!(unknown["kind"], "unknown-field", "{unknown}");
+        let _ = (post_source, post_target);
+    }
+
+    #[test]
+    fn plan_summary_ingress_is_bounded_and_redacted() {
+        let request = workspace_request(
+            "ws-sum-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_send_body(),
+        );
+        let line = summarize_plan_ingress(&request);
+        assert_eq!(
+            line,
+            "plasma-auto-tiler:plan-summary direction=ingress op=send-to-workspace correlation=ws-sum-1 revision=0"
+        );
+        // Malformed input degrades to placeholders without echoing anything
+        // caller-controlled: no window ids, rects, owner, or payload bytes.
+        let garbage = summarize_plan_ingress("{not-json!! owner-1 win-1");
+        assert_eq!(
+            garbage,
+            "plasma-auto-tiler:plan-summary direction=ingress op=unknown correlation=- revision=-"
+        );
+        // An invalid correlation shape never echoes, even when well-formed.
+        let bad_corr = summarize_plan_ingress(
+            r#"{"v":1,"correlation_id":"evil correlation!!","owner":"owner-1","generation":"gen-1","revision":0,"command":{"op":"remove"}}"#,
+        );
+        assert!(bad_corr.contains("correlation=-"), "{bad_corr}");
+        assert!(!bad_corr.contains("evil"), "{bad_corr}");
+        // Out-of-bounds revisions never echo.
+        let bad_rev = summarize_plan_ingress(
+            r#"{"v":1,"correlation_id":"ws-sum-1","revision":99999999,"command":{"op":"remove"}}"#,
+        );
+        assert!(bad_rev.contains("revision=-"), "{bad_rev}");
+        assert!(!bad_rev.contains("99999999"), "{bad_rev}");
+    }
+
+    #[test]
+    fn plan_summary_egress_reports_status_and_cancel_truthfully() {
+        // Status result codes pass through exactly, including the
+        // never-commit `no-pending-unknown`.
+        let status_request = workspace_request(
+            "ws-sum-2",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_status_body(),
+        );
+        let status_reply =
+            r#"{"v":1,"correlation_id":"ws-sum-2","outcome":"status","kind":"no-pending-unknown"}"#;
+        assert_eq!(
+            summarize_plan_egress(&status_request, status_reply),
+            "plasma-auto-tiler:plan-summary direction=egress op=send-to-workspace-status correlation=ws-sum-2 outcome=status kind=no-pending-unknown base_revision=- detail=-"
+        );
+        // Cancellation success carries the route kind and the un-advanced
+        // base, never commit language.
+        let cancel_request = workspace_cancel_request(
+            "ws-sum-3",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_cancel_body(),
+        );
+        let cancel_reply = r#"{"v":1,"correlation_id":"ws-sum-3","outcome":"cancelled","kind":"send-to-workspace","base_revision":3}"#;
+        let cancelled = summarize_plan_egress(&cancel_request, cancel_reply);
+        assert!(cancelled.contains("outcome=cancelled"), "{cancelled}");
+        assert!(cancelled.contains("kind=send-to-workspace"), "{cancelled}");
+        assert!(cancelled.contains("base_revision=3"), "{cancelled}");
+        assert!(!cancelled.contains("committed"), "{cancelled}");
+        // A garbage reply degrades without echoing it.
+        let garbage = summarize_plan_egress(&cancel_request, "{not-json!!");
+        assert!(garbage.contains("outcome=unknown"), "{garbage}");
+        assert!(garbage.contains("correlation=-"), "{garbage}");
+        assert!(!garbage.contains("not-json"), "{garbage}");
+        // Snapshot-invalid detail tokens pass through bounded.
+        let invalid = summarize_plan_egress(
+            &cancel_request,
+            r#"{"v":1,"correlation_id":"ws-sum-3","outcome":"rejected","kind":"snapshot-invalid","detail":"domain-invalid"}"#,
+        );
+        assert!(invalid.contains("detail=domain-invalid"), "{invalid}");
+    }
+
+    #[test]
+    fn plan_summary_shape_counts_without_payload_bytes() {
+        let request = workspace_request(
+            "ws-sum-4",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            vec![
+                workspace_entry("win-1", "ws-1", 0),
+                workspace_entry("win-2", "ws-1", 100),
+            ],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_send_body(),
+        );
+        let shape = summarize_plan_shape(&request);
+        assert!(shape.contains("windows=2"), "{shape}");
+        assert!(shape.contains("target_windows=1"), "{shape}");
+        assert!(!shape.contains("win-1"), "{shape}");
+        assert!(!shape.contains("owner-1"), "{shape}");
+        assert!(!shape.contains("\"x\""), "{shape}");
+        // Summaries are pure: running them changes no planner state and the
+        // lifecycle they describe still commits exactly once afterwards.
+        let mut planner = Planner::new();
+        let (planned, post_source, post_target) = stage_workspace_send(&mut planner, "ws-sum-5");
+        let base = planned["base_revision"].as_u64().expect("base");
+        let pre = workspace_request(
+            "ws-sum-5",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            vec![
+                workspace_entry("win-1", "ws-1", 0),
+                workspace_entry("win-2", "ws-1", 100),
+            ],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_send_body(),
+        );
+        let _ = summarize_plan_ingress(&pre);
+        let _ = summarize_plan_shape(&pre);
+        let _ = summarize_plan_egress(&pre, &planned.to_string());
+        assert_eq!(
+            parse_reply(&planner.evaluate(&workspace_request(
+                "ws-sum-5",
+                "owner-1",
+                "gen-1",
+                base,
+                "",
+                post_source.clone(),
+                post_target.clone(),
+                workspace_ack_body(),
+            )))["outcome"],
+            "acknowledged"
+        );
+        assert_eq!(
+            parse_reply(&planner.evaluate(&workspace_request(
+                "ws-sum-5",
+                "owner-1",
+                "gen-1",
+                base,
+                "",
+                post_source,
+                post_target,
+                workspace_verify_body(
+                    planned["preconditions"].clone(),
+                    planned["operation"].clone(),
+                ),
+            )))["outcome"],
+            "committed"
+        );
     }
 
     fn active_group_request(
