@@ -2,6 +2,59 @@
 
 Only meaningful pending or active work is listed.
 
+Architecture review program: immediate next priority, in listed order. Section
+references are to [the review](research/architecture-review/review.md). Verify
+each review claim before acting; it was a static sampling review.
+
+- P0 | AR2 Cargo workspace split | 7.5: `tiler-core` (std, optional serde),
+  `tiler-protocol`, Linux bin crate; tests move with their crate; Nix packages
+  follow. Portability gate: `cargo check -p tiler-core` for Windows and macOS
+  targets via `devenv.nix` toolchain (session restart required). Document the
+  adapter-normalized integer unit contract (4.5.6).
+- P0 | AR3 Typed Engine behind current wire format | 7.6, 4.3.4-5: world-level
+  `Engine::handle(Event) -> Plan`; per-domain map, paired sessions, seeding,
+  fitting, relocation become internals; typed serde `Command`/`Reply` enums
+  replace string dispatch and hand validation. `DescribePlan` wire unchanged.
+  Document or bound Planner single-flight `busy` coupling (4.4).
+- P0 | AR4 Single observation `sync` | 7.7: core derives removals, admissions,
+  domain changes, flag transitions, and drift from one observation; removes TS
+  membership baselines, `hiddenIntentFor`, and reconcile counters/thresholds.
+- P0 | AR5 LayoutPolicy seam and Session split | 7.9: `cosmic_v1` behind
+  `LayoutPolicy`; split `Session` along the seam. bspwm_v1 scope awaits user
+  decision.
+- P0 | AR6 Logical workspace model in core | 7.10: workspace modes, trailing
+  empty, displacement/return in core emitting actions; adapter keeps output
+  identity and native reads/writes.
+- P0 | AR7 Remaining portable policy to core | 4.2, rec 4: shortcut action
+  catalog/profiles, eligibility and window rules, settings schema, single
+  fingerprint and wire-schema source.
+- P0 | AR8 Drag oracle measurement | 7.1: trace-mode finish/first-change/verdict
+  logging; user runs ~20 Wayland edge drags incl. a size-increment terminal.
+  Result selects removal, pointer-derived boundary, or folding into
+  `ActiveBorder`.
+- P0 | AR9 Initial maximize direct read | 7.2. Awaiting user decision: reverses
+  hide-until-confirmed handoff.
+- P0 | AR10 Effect Rust build and payload parsing | 7.3, after AR8/AR9.
+  Awaiting user decision: C++ `QJsonDocument` versus Cargo staticlib via
+  Corrosion.
+- P0 | AR11 One transaction model (expectations) | 7.8, prototype on workspace
+  send first. Awaiting user decision: reverses verified-success decisions.
+- P0 | AR12 Size hints and clamp acceptance | 7.11. Awaiting user decision.
+  Related: Ghostty short-frame items below.
+- P0 | AR13 Same-UID-trusted threat model and tray simplification | 7.12.
+  Awaiting user decision: security posture change.
+- P0 | AR14 Shortcut override journal simplification | Rec 11; focused read of
+  `shortcutreconciler.cpp` first.
+- P0 | AR15 Script-only tiling settings | 7.4. Awaiting user decision: changes
+  single-KCM settings ownership.
+- P0 | AR16 Size caps | 7.13. Awaiting user decision: replace count caps with
+  one codec byte cap.
+- P0 | AR17 Documentation and comment cleanup | Rec 13: trim `decisions.md` to
+  current decisions, move evidence to change docs, remove process history from
+  code comments.
+
+Existing work:
+
 - P1 | Intermittent active-border disappearance | User reports active border
   stopped midway through a session. Exact trace
   `/run/user/1000/plasma-auto-tiler-dev.Xm6rPM.log` continues script state

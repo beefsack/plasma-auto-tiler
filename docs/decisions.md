@@ -166,9 +166,8 @@ Historical implementation detail is recoverable in Git history.
   autostart target, durable PID/receipt state, or second Planner process mode.
 - `programs.plasma-auto-tiler.planner.enable` defaults true when this Home
   Manager module is imported. The service remains inert until D-Bus activation,
-  so the default has no idle Planner process cost and does not change the
-  public `engineAuthorityMode=legacy` default. Set it false to omit both the
-  descriptor package and user unit.
+  so the default has no idle Planner process cost. Set it false to omit both
+  the descriptor package and user unit.
 - The unit uses `Restart=no`: Planner name loss terminates the old Planner
   session and any in-flight KWin transaction, and cannot form a systemd
   restart/rebind loop. A subsequent idle command may request a fresh D-Bus
@@ -204,19 +203,14 @@ Historical implementation detail is recoverable in Git history.
   UID, or differing UID rejects. Process executable/PID/start-tick/boot,
   systemd MainPID/parentage, wrapper-pair, cgroup, KWin-owner, and pre/post
   revalidation do not participate in caller authorization.
-- On authorization failure, `DescribeFocus`, `DescribeMovement`,
-  `DescribeResize`, and `DescribePointerResize` return the fixed bounded
-  in-band JSON rejection `outcome:"rejected", kind:"unauthorized"` so KWin
-  records `result=rejected`. `EvaluateMove`, `DescribeAdvisoryPlan`, and
-  `DescribeShadowProjection` retain their D-Bus error behavior.
-- `engineAuthorityMode=legacy` remains the only automatic-tiling mode. Rust is
-  opt-in development-only and never falls back to Legacy. Its approved lifecycle
-  is limited to ordered N-ary `cosmic_v1` admission/removal, same-output send,
+- On authorization failure, `DescribePlan` returns the fixed bounded in-band
+  JSON rejection `outcome:"rejected", kind:"unauthorized"` so KWin records
+  `result=rejected`.
+- `DescribePlan` is the sole shipped automatic-tiling route. Its approved lifecycle
+  includes ordered N-ary `cosmic_v1` admission/removal, same-output send,
   restored backing-desktop/numbered workspace routes, bounded reconciliation,
   and the selected initial first-startup fitting direction below. General
-  existing-window adoption and default promotion remain unselected. KCM Apply
-  currently persists the selection as a startup-only setting requiring session
-  restart with no enabled generic reload path. Only the gap portion of the
+  existing-window adoption remains unselected. Only the gap portion of the
   approved interim reload is implemented: `innerGap`/`outerGap` via
   `options.configChanged`, sent/queued-but-unconfirmed because KWin reconfigure
   is Q_NOREPLY. This portion is static-complete with retained offline proof
@@ -788,15 +782,6 @@ Historical implementation detail is recoverable in Git history.
   KDE/Plasma/KWin. The Rust-engine/direct-geometry direction above is the
   selected replacement architecture; the bounded adapter remains active only
   until its individual replacement paths are promoted.
-- Rust focus adapter authority, authorized 2026-09-09: the production-shaped
-  KWin focus adapter is disabled by default and has no normal startup, tray,
-  KCM, autostart, lifecycle, or shortcut activation route. A later reviewed
-  explicit wiring route must bind one owner/generation and prove exclusive
-  focus-path ownership before any native focus write; it must never run the
-  legacy and Rust focus handlers for one command. Owner, service, scope,
-  revision, acknowledgement, or post-observation failure disables this
-  development authority fail closed. This selects no movement or geometry
-  actuation.
 - Grouped/tabbed windows remain deferred pending compositor-owned KWin support
   and a live multi-window Custom Tile stability proof. No tab or stack carrier,
   controls, or bindings are selected.

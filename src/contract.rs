@@ -784,12 +784,11 @@ impl FocusPostObservation {
 /// Adapter-facing resize capability required to realize a split-share
 /// resize plan. Separate from movement [`Capability`], lifecycle
 /// [`LifecycleCapability`], and focus [`FocusCapability`] so frozen movement
-/// behavior is never misused for resize. Keyboard (`DescribeResize`) and
-/// pointer (`DescribePointerResize`) routes require their own explicit
-/// capability so platforms can advertise either independently. COSMIC fixed
-/// 360/240 minima live under [`crate::cosmic_v1`] and the normalized
-/// projector supplies physical geometry; no separate native capability
-/// exists.
+/// behavior is never misused for resize. Keyboard and pointer resize routes
+/// require their own explicit capability so platforms can advertise either
+/// independently. COSMIC fixed 360/240 minima live under
+/// [`crate::cosmic_v1`] and the normalized projector supplies physical
+/// geometry; no separate native capability exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ResizeCapability {
     KeyboardResize,

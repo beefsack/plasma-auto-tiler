@@ -28,22 +28,6 @@ pub const OBJECT: &str = "/org/plasmaautotiler/Planner";
 pub const INTERFACE: &str = "org.plasmaautotiler.Planner1";
 #[cfg(test)]
 const KWIN_SERVICE: &str = "org.kde.KWin";
-#[cfg(test)]
-const FOCUS_METHOD: &str = "DescribeFocus";
-#[cfg(test)]
-const MOVEMENT_METHOD: &str = "DescribeMovement";
-#[cfg(test)]
-const RESIZE_METHOD: &str = "DescribeResize";
-#[cfg(test)]
-const POINTER_RESIZE_METHOD: &str = "DescribePointerResize";
-#[cfg(test)]
-const FOCUS_MAX_REPLY: usize = 64 * 1024;
-#[cfg(test)]
-const MOVEMENT_MAX_REPLY: usize = 64 * 1024;
-#[cfg(test)]
-const RESIZE_MAX_REPLY: usize = 64 * 1024;
-#[cfg(test)]
-const POINTER_RESIZE_MAX_REPLY: usize = 64 * 1024;
 /// Stage 4 retained general-N planning route: complete normalized current
 /// observation plus one parameterized command in, full target geometries or a
 /// bounded recoverable rejection kind out. Retained live-tree state across
@@ -66,23 +50,6 @@ pub const MAX_UNAUTHORIZED_REPLY_BYTES: usize = 256;
 #[must_use]
 pub fn unauthorized_rejection() -> String {
     UNAUTHORIZED_REPLY.to_owned()
-}
-
-#[cfg(test)]
-fn unauthorized_uses_inband_rejection(method: &str) -> bool {
-    matches!(
-        method,
-        FOCUS_METHOD | MOVEMENT_METHOD | RESIZE_METHOD | POINTER_RESIZE_METHOD | PLAN_METHOD
-    )
-}
-
-#[cfg(test)]
-fn unauthorized_response(method: &str) -> Result<String, PlannerError> {
-    if unauthorized_uses_inband_rejection(method) {
-        Ok(unauthorized_rejection())
-    } else {
-        Err(PlannerError::Unauthorized)
-    }
 }
 
 /// Pure same-UID decision. Accepts iff `caller_uid` is present and equals
@@ -171,33 +138,6 @@ pub struct PlannerEndpoint {
 }
 
 impl PlannerEndpoint {
-    #[cfg(test)]
-    fn evaluate_focus_request(&self, _request: &str) -> Result<String, PlannerError> {
-        Err(PlannerError::Unavailable(
-            "planner trio runtime was removed".to_owned(),
-        ))
-    }
-
-    #[cfg(test)]
-    fn evaluate_movement_request(&self, _request: &str) -> Result<String, PlannerError> {
-        Err(PlannerError::Unavailable(
-            "planner trio runtime was removed".to_owned(),
-        ))
-    }
-
-    #[cfg(test)]
-    fn evaluate_resize_request(&self, _request: &str) -> Result<String, PlannerError> {
-        Err(PlannerError::Unavailable(
-            "planner trio runtime was removed".to_owned(),
-        ))
-    }
-
-    #[cfg(test)]
-    fn evaluate_pointer_resize_request(&self, _request: &str) -> Result<String, PlannerError> {
-        Err(PlannerError::Unavailable(
-            "planner trio runtime was removed".to_owned(),
-        ))
-    }
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -540,10 +480,6 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first, UNAUTHORIZED_REPLY);
         assert!(first.len() <= MAX_UNAUTHORIZED_REPLY_BYTES);
-        assert!(first.len() <= FOCUS_MAX_REPLY);
-        assert!(first.len() <= MOVEMENT_MAX_REPLY);
-        assert!(first.len() <= RESIZE_MAX_REPLY);
-        assert!(first.len() <= POINTER_RESIZE_MAX_REPLY);
         assert!(first.len() <= PLAN_MAX_REPLY);
         let parsed: serde_json::Value =
             serde_json::from_str(&first).expect("unauthorized reply is valid JSON");
@@ -560,41 +496,17 @@ mod tests {
     }
 
     #[test]
-    fn unauthorized_channel_is_inband_for_exactly_five_routes() {
-        // The five transaction routes return the fixed in-band JSON body via
-        // the actual production helper.
-        for method in [
-            FOCUS_METHOD,
-            MOVEMENT_METHOD,
-            RESIZE_METHOD,
-            POINTER_RESIZE_METHOD,
-            PLAN_METHOD,
-        ] {
-            assert!(
-                unauthorized_uses_inband_rejection(method),
-                "{method} must use the in-band unauthorized rejection"
-            );
-            let body = unauthorized_response(method)
-                .unwrap_or_else(|_| panic!("{method} must return in-band Ok"));
-            assert_eq!(body, UNAUTHORIZED_REPLY, "{method} in-band body is fixed");
-            let parsed: serde_json::Value =
-                serde_json::from_str(&body).expect("in-band body is valid JSON");
-            assert_eq!(parsed["v"], 1);
-            assert_eq!(parsed["outcome"], "rejected");
-            assert_eq!(parsed["kind"], "unauthorized");
-            assert_eq!(parsed["message"], "unauthorized");
-        }
-        // Unknown methods fail closed via the D-Bus PlannerError::Unauthorized
-        // channel through the same helper.
-        assert!(
-            !unauthorized_uses_inband_rejection("EvaluateMove"),
-            "unknown method must use PlannerError::Unauthorized"
-        );
-        assert_eq!(
-            unauthorized_response("EvaluateMove"),
-            Err(PlannerError::Unauthorized),
-            "unknown method must return D-Bus unauthorized"
-        );
+    fn unauthorized_channel_is_inband_for_plan_route() {
+        // The single `DescribePlan` route returns the fixed in-band JSON body
+        // via the actual production helper.
+        let body = unauthorized_rejection();
+        assert_eq!(body, UNAUTHORIZED_REPLY, "in-band body is fixed");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&body).expect("in-band body is valid JSON");
+        assert_eq!(parsed["v"], 1);
+        assert_eq!(parsed["outcome"], "rejected");
+        assert_eq!(parsed["kind"], "unauthorized");
+        assert_eq!(parsed["message"], "unauthorized");
     }
 
     #[test]
@@ -605,113 +517,6 @@ mod tests {
             &endpoint.operation_lock,
             &cloned.operation_lock
         ));
-    }
-
-    #[test]
-    fn movement_method_identity_is_exact_and_distinct() {
-        assert_eq!(MOVEMENT_METHOD, "DescribeMovement");
-        assert_ne!(MOVEMENT_METHOD, FOCUS_METHOD);
-        assert_ne!(MOVEMENT_METHOD, RESIZE_METHOD);
-        assert_eq!(SERVICE, "org.plasmaautotiler.Planner");
-        assert_eq!(OBJECT, "/org/plasmaautotiler/Planner");
-        assert_eq!(INTERFACE, "org.plasmaautotiler.Planner1");
-        assert_eq!(MOVEMENT_MAX_REPLY, 64 * 1024);
-        assert_eq!(
-            MOVEMENT_MAX_REPLY,
-            crate::movement_service::MOVEMENT_MAX_REPLY_BYTES
-        );
-    }
-
-    #[test]
-    fn movement_method_signature_is_json_string_to_json_string() {
-        let message = zbus::message::Message::method_call(OBJECT, MOVEMENT_METHOD)
-            .unwrap()
-            .destination(SERVICE)
-            .unwrap()
-            .interface(INTERFACE)
-            .unwrap()
-            .build(&("{\"v\":1}".to_owned(),))
-            .unwrap();
-        assert_eq!(message.body().signature().to_string(), "s");
-        let body: (String,) = message.body().deserialize().unwrap();
-        assert_eq!(body.0, "{\"v\":1}");
-    }
-
-    #[test]
-    fn removed_trio_routes_fail_closed_as_unavailable() {
-        // Group B: the trio backend was removed. The four legacy transaction
-        // routes fail closed as unavailable over the preserved D-Bus
-        // identity; Stage 4 `DescribePlan` is the only planning route.
-        let endpoint = PlannerEndpoint::new();
-        for result in [
-            endpoint.evaluate_focus_request("{\"v\":1}"),
-            endpoint.evaluate_movement_request("{\"v\":1}"),
-            endpoint.evaluate_resize_request("{\"v\":1}"),
-            endpoint.evaluate_pointer_resize_request("{\"v\":1}"),
-        ] {
-            assert_eq!(
-                result,
-                Err(PlannerError::Unavailable(
-                    "planner trio runtime was removed".to_owned()
-                ))
-            );
-        }
-    }
-
-    #[test]
-    fn focus_method_identity_is_exact_and_distinct() {
-        assert_eq!(FOCUS_METHOD, "DescribeFocus");
-        assert_ne!(FOCUS_METHOD, RESIZE_METHOD);
-        assert_eq!(SERVICE, "org.plasmaautotiler.Planner");
-        assert_eq!(OBJECT, "/org/plasmaautotiler/Planner");
-        assert_eq!(INTERFACE, "org.plasmaautotiler.Planner1");
-        assert_eq!(FOCUS_MAX_REPLY, 64 * 1024);
-        assert_eq!(FOCUS_MAX_REPLY, crate::focus_service::FOCUS_MAX_REPLY_BYTES);
-    }
-
-    #[test]
-    fn focus_method_signature_is_json_string_to_json_string() {
-        let message = zbus::message::Message::method_call(OBJECT, FOCUS_METHOD)
-            .unwrap()
-            .destination(SERVICE)
-            .unwrap()
-            .interface(INTERFACE)
-            .unwrap()
-            .build(&("{\"v\":1}".to_owned(),))
-            .unwrap();
-        assert_eq!(message.body().signature().to_string(), "s");
-        let body: (String,) = message.body().deserialize().unwrap();
-        assert_eq!(body.0, "{\"v\":1}");
-    }
-
-    #[test]
-    fn resize_method_identity_is_exact_and_distinct() {
-        assert_eq!(RESIZE_METHOD, "DescribeResize");
-        assert_ne!(RESIZE_METHOD, FOCUS_METHOD);
-        assert_ne!(RESIZE_METHOD, MOVEMENT_METHOD);
-        assert_eq!(SERVICE, "org.plasmaautotiler.Planner");
-        assert_eq!(OBJECT, "/org/plasmaautotiler/Planner");
-        assert_eq!(INTERFACE, "org.plasmaautotiler.Planner1");
-        assert_eq!(RESIZE_MAX_REPLY, 64 * 1024);
-        assert_eq!(
-            RESIZE_MAX_REPLY,
-            crate::resize_service::RESIZE_MAX_REPLY_BYTES
-        );
-    }
-
-    #[test]
-    fn resize_method_signature_is_json_string_to_json_string() {
-        let message = zbus::message::Message::method_call(OBJECT, RESIZE_METHOD)
-            .unwrap()
-            .destination(SERVICE)
-            .unwrap()
-            .interface(INTERFACE)
-            .unwrap()
-            .build(&("{\"v\":1}".to_owned(),))
-            .unwrap();
-        assert_eq!(message.body().signature().to_string(), "s");
-        let body: (String,) = message.body().deserialize().unwrap();
-        assert_eq!(body.0, "{\"v\":1}");
     }
 
     #[test]
@@ -738,10 +543,6 @@ mod tests {
     #[test]
     fn plan_method_identity_is_exact_and_distinct() {
         assert_eq!(PLAN_METHOD, "DescribePlan");
-        assert_ne!(PLAN_METHOD, FOCUS_METHOD);
-        assert_ne!(PLAN_METHOD, MOVEMENT_METHOD);
-        assert_ne!(PLAN_METHOD, RESIZE_METHOD);
-        assert_ne!(PLAN_METHOD, POINTER_RESIZE_METHOD);
         assert_eq!(SERVICE, "org.plasmaautotiler.Planner");
         assert_eq!(OBJECT, "/org/plasmaautotiler/Planner");
         assert_eq!(INTERFACE, "org.plasmaautotiler.Planner1");

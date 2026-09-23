@@ -3948,33 +3948,15 @@ describe("plan adapter destroyed-window reply boundary", () => {
 });
 
 describe("plan native identity sharing and string-keyed cache", () => {
-    it("shares braced-UUID normalization across entries with no local copies", () => {
+    it("shares braced-UUID normalization with the plan entry with no local copy", () => {
         const dir = kwinSrcDir();
         const shared = readFileSync(join(dir, "native-id.ts"), "utf8");
         assert.ok(shared.includes("function normalizeNativeId"), "shared normalizer");
         assert.ok(shared.includes("unwrapBraced"), "braced handling");
         assert.ok(shared.includes("String("), "String(internalId)");
-        for (const file of [
-            "focus-adapter-entry.ts",
-            "movement-adapter-entry.ts",
-            "resize-adapter-entry.ts",
-            "pointer-resize-adapter-entry.ts",
-            "plan-adapter-entry.ts",
-        ]) {
-            const body = readFileSync(join(dir, file), "utf8");
-            assert.ok(body.includes("./native-id"), `${file} uses shared utility`);
-            assert.ok(body.includes("normalizeNativeId"), `${file} calls shared normalizer`);
-        }
-        for (const file of [
-            "focus-adapter-entry.ts",
-            "movement-adapter-entry.ts",
-            "resize-adapter-entry.ts",
-            "pointer-resize-adapter-entry.ts",
-        ]) {
-            const body = readFileSync(join(dir, file), "utf8");
-            assert.ok(!body.includes("function normalizeNativeId"), `${file} has no local copy`);
-            assert.ok(!body.includes("function unwrapBraced"), `${file} has no local unwrap`);
-        }
+        const body = readFileSync(join(dir, "plan-adapter-entry.ts"), "utf8");
+        assert.ok(body.includes("./native-id"), "plan entry uses shared utility");
+        assert.ok(body.includes("normalizeNativeId"), "plan entry calls shared normalizer");
         const planEntry = readFileSync(join(dir, "plan-adapter-entry.ts"), "utf8");
         assert.ok(!planEntry.includes("function normalizeNativeId"), "plan entry uses shared, not a copy");
         assert.ok(!planEntry.includes("function unwrapBraced"), "plan entry uses shared, not a copy");

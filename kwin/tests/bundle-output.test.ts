@@ -67,55 +67,10 @@ describe("production bundle compatibility", () => {
         assert.doesNotMatch(ui, /engineAuthorityMode/);
     });
 
-    it("shares one callable-signal connector across all four Rust entries", () => {
-        const capability = readFileSync("src/signal-capability.ts", "utf8");
-        assert.ok(capability.includes("connectSignal"));
-        assert.ok(capability.includes("isConnectableSignal"));
-        assert.ok(capability.includes('"function"'));
-        assert.ok(!capability.includes("globalThis"));
-        assert.ok(!capability.includes("Function("));
-        assert.ok(!capability.includes("setTimeout"));
-        assert.ok(!capability.includes("setInterval"));
-        assert.ok(!capability.includes("pollFor"));
-        assert.ok(!capability.includes("fallback"));
-        for (const name of ["focus-adapter-entry", "movement-adapter-entry", "resize-adapter-entry", "pointer-resize-adapter-entry"]) {
-            const body = readFileSync(`src/${name}.ts`, "utf8");
-            assert.ok(body.includes("signal-capability"), `${name} must use the shared connector`);
-            assert.ok(body.includes("connectSignal"), `${name} must connect through the shared layer`);
-            assert.ok(!body.includes('typeof signal !== "object"'), `${name} must not keep the object-only guard`);
-            assert.ok(!body.includes("globalThis"), `${name} must not use globals`);
-            assert.ok(!body.includes("Function("), `${name} must not use dynamic function construction`);
-            assert.ok(!body.includes("pollFor"), `${name} must not poll`);
-        }
-    });
-
     it("declares windowActivated without a Rust authority dispatcher", () => {
         const globals = readFileSync("src/kwin-globals.d.ts", "utf8");
         assert.ok(globals.includes("windowActivated"));
         assert.throws(() => readFileSync("src/engine-authority.ts", "utf8"));
     });
 
-    it("names exact window signals with window-owned stepped payload and no polling/globals/legacy", () => {
-        const pointer = readFileSync("src/pointer-resize-adapter-entry.ts", "utf8");
-        for (const name of ["interactiveMoveResizeStarted", "interactiveMoveResizeStepped", "interactiveMoveResizeFinished", "moveResizedChanged"]) {
-            assert.ok(pointer.includes(`"${name}"`));
-        }
-        assert.ok(pointer.includes('readSignal(ref, "interactiveMoveResizeStepped")'));
-        assert.ok(pointer.includes("onStepped"));
-        assert.ok(pointer.includes("adapter.windowStepped(ref, payload)"));
-        const globals = readFileSync("src/kwin-globals.d.ts", "utf8");
-        assert.ok(globals.includes("interactiveMoveResizeStepped"));
-        assert.ok(globals.includes("Signal1<Rect>"));
-        assert.ok(globals.includes("interface Window"));
-        for (const name of ["focus-adapter-entry", "movement-adapter-entry", "resize-adapter-entry", "pointer-resize-adapter-entry", "signal-capability"]) {
-            const body = readFileSync(`src/${name}.ts`, "utf8");
-            assert.ok(!body.includes("globalThis"));
-            assert.ok(!body.includes("Function("));
-            assert.ok(!body.includes("setTimeout"));
-            assert.ok(!body.includes("setInterval"));
-            assert.ok(!body.includes("pollFor"));
-            assert.ok(!body.includes("fallback"));
-            assert.ok(!/legacy/i.test(body));
-        }
-    });
 });

@@ -7,9 +7,7 @@
 //! session/reconciler/directional/cosmic_v1 APIs ([`crate::cosmic_v1`]
 //! admission axis/shares, no invented tiling semantics).
 //!
-//! Two evaluators share validation and reply shapes: [`evaluate_plan_json`]
-//! is the stateless helper (ephemeral [`crate::session::Session`] rebuilt per
-//! call), while [`Planner`] is the authoritative live-tree route (one
+//! [`Planner`] is the authoritative live-tree route (one
 //! committed session per domain across calls; observations validate
 //! membership/divergence but never rebuild known topology). Recovery is a
 //! single rule: discard and rebuild once on owner/generation, domain, or
@@ -658,7 +656,7 @@ fn propose_failure(kind: ProposeError, correlation_id: String) -> String {
     }
 }
 
-/// Validated request shared by the stateless and retained evaluators.
+/// Validated request for the retained evaluator.
 struct Validated {
     request: RequestDto,
     raw: serde_json::Value,
@@ -2528,22 +2526,21 @@ impl Planner {
         }
     }
 
-    /// Stateful evaluation across calls. Validation, bounds, and reply shapes
-    /// match [`evaluate_plan_json`]; only topology sourcing differs (retained
-    /// vs rebuilt). Retained reconcile accepts work-area bounds changes only when
-    /// the domain key and complete window set remain unchanged, projecting the
-    /// existing tree without replacing shares or topology. The standalone
-    /// workspace-send and directional-move routes dispatch their ack/verify
-    /// phases before the legacy owner/generation binding sync so a pending
-    /// Session is never discarded or rebound mid-flight; legacy requests are
-    /// unchanged except that any pending (workspace or directional) blocks all
-    /// other plan operations. The read-only status phases dispatch alongside
-    /// ack/verify (before the binding sync and the pending conflict boundary)
-    /// and take `&self` so they cannot mutate, acknowledge, verify, clear,
-    /// rebind, or advance any retained state or topology. The cancellation
-    /// phases dispatch at the same boundary but take `&mut self`: on exact
-    /// pre-image proof they withdraw only the matching unacknowledged pending
-    /// and its staged desired state, preserving everything committed.
+    /// Stateful evaluation across calls. Retained reconcile accepts work-area
+    /// bounds changes only when the domain key and complete window set remain
+    /// unchanged, projecting the existing tree without replacing shares or
+    /// topology. The standalone workspace-send and directional-move routes
+    /// dispatch their ack/verify phases before the legacy owner/generation
+    /// binding sync so a pending Session is never discarded or rebound
+    /// mid-flight; legacy requests are unchanged except that any pending
+    /// (workspace or directional) blocks all other plan operations. The
+    /// read-only status phases dispatch alongside ack/verify (before the
+    /// binding sync and the pending conflict boundary) and take `&self` so
+    /// they cannot mutate, acknowledge, verify, clear, rebind, or advance
+    /// any retained state or topology. The cancellation phases dispatch at
+    /// the same boundary but take `&mut self`: on exact pre-image proof they
+    /// withdraw only the matching unacknowledged pending and its staged
+    /// desired state, preserving everything committed.
     pub fn evaluate(&mut self, request_json: &str) -> String {
         let ctx = match validate_request(request_json) {
             Ok(ctx) => ctx,
@@ -2882,8 +2879,8 @@ impl Planner {
     /// Shared retained propose/commit: try the usable retained session, then
     /// rebuild once from `seed_order`. `ambiguous_as_snapshot` selects the
     /// fail-closed kind when no safe order exists (admit/remove use
-    /// `ambiguous-placement`; directional ops reuse the stateless
-    /// `snapshot-invalid` mapping).
+    /// `ambiguous-placement`; directional ops reuse the `snapshot-invalid`
+    /// mapping).
     fn run_retained<R>(
         &mut self,
         ctx: &Validated,
@@ -5813,85 +5810,6 @@ impl Planner {
     }
 }
 
-/// Strict stateless Planner evaluation. Always returns a bounded reply:
-/// `planned` with full target geometries plus retained focus, or recoverable
-/// `rejected` with a bounded kind. Never retains state, so fresh observations
-/// recover after any rejection.
-pub fn evaluate_plan_json(request_json: &str) -> String {
-    let ctx = match validate_request(request_json) {
-        Ok(ctx) => ctx,
-        Err(reply) => return reply,
-    };
-    match validated_op(&ctx).as_str() {
-        "admit" => evaluate_admit(&ctx),
-        "remove" => evaluate_remove(&ctx),
-        "move" => evaluate_move(&ctx),
-        "focus" => evaluate_focus(&ctx),
-        "resize" => evaluate_resize(&ctx),
-        "toggle-float" => evaluate_toggle_float_with(&ctx, |command, float_rect| {
-            if ctx
-                .request
-                .windows
-                .iter()
-                .any(|entry| entry.window == command.window && entry.floating)
-            {
-                return rejected(
-                    ctx.request.correlation_id.clone(),
-                    RefusalKind::NotTiled.as_str(),
-                    RefusalKind::NotTiled.message(),
-                );
-            }
-            let Some(seed_order) = spatial_with_focus_last(
-                ctx.request.windows.clone(),
-                &ctx.request.focused_window,
-                false,
-            ) else {
-                return rejected(
-                    ctx.request.correlation_id.clone(),
-                    "ambiguous-placement",
-                    MSG_AMBIGUOUS,
-                );
-            };
-            let Some(mut session) = seed_session(
-                &ctx.owner,
-                &ctx.generation,
-                ctx.request.fingerprint,
-                &ctx.domain,
-                &seed_order,
-            ) else {
-                return snapshot_invalid(
-                    ctx.request.correlation_id.clone(),
-                    MSG_OBSERVATION,
-                    "seed-failed",
-                );
-            };
-            let base = session.accepted_revision();
-            let observation = observation_for(base, &ctx);
-            let window = WindowId(command.window.clone());
-            let plan = match session.propose(
-                &SessionCommand::ToggleFloat {
-                    window: window.clone(),
-                    float_geometry: float_rect,
-                },
-                &observation,
-                &ctx.correlation,
-                &LifecycleCapabilities::full(),
-            ) {
-                Ok(plan) => plan,
-                Err(error) => return propose_failure(error, ctx.request.correlation_id.clone()),
-            };
-            let effective = session.pending_float_geometry(&window);
-            float_planned_reply(&ctx.request.correlation_id, &plan, effective)
-        }),
-        "active-group" => evaluate_active_group_stateless(&ctx),
-        _ => rejected(
-            valid_correlation_echo(&ctx.raw),
-            "unknown-value",
-            MSG_UNKNOWN_VALUE,
-        ),
-    }
-}
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AdmitCommand {
@@ -5901,153 +5819,6 @@ struct AdmitCommand {
     workspace: String,
     #[serde(default)]
     placement_bounds: Option<RectDto>,
-}
-
-fn evaluate_admit(ctx: &Validated) -> String {
-    let command: AdmitCommand = match serde_json::from_value(ctx.request.command.clone()) {
-        Ok(command) => command,
-        Err(error) => {
-            let (kind, message) = classify_parse_error(&error);
-            return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-        }
-    };
-    if command.op != "admit" {
-        return snapshot_invalid(
-            ctx.request.correlation_id.clone(),
-            MSG_OPAQUE_ID,
-            "admit-op-invalid",
-        );
-    }
-    if !is_opaque_id(&command.window) {
-        return snapshot_invalid(
-            ctx.request.correlation_id.clone(),
-            MSG_OPAQUE_ID,
-            "admit-window-invalid",
-        );
-    }
-    if !is_opaque_id(&command.output) {
-        return snapshot_invalid(
-            ctx.request.correlation_id.clone(),
-            MSG_OPAQUE_ID,
-            "admit-output-invalid",
-        );
-    }
-    if !is_opaque_id(&command.workspace) {
-        return snapshot_invalid(
-            ctx.request.correlation_id.clone(),
-            MSG_OPAQUE_ID,
-            "admit-workspace-invalid",
-        );
-    }
-    if command.output != ctx.request.domain.output
-        || command.workspace != ctx.request.domain.workspace
-    {
-        return rejected(
-            ctx.request.correlation_id.clone(),
-            "cross-domain-mismatch",
-            MSG_CROSS_DOMAIN,
-        );
-    }
-    let Some(admitted) = ctx
-        .request
-        .windows
-        .iter()
-        .find(|w| w.window == command.window)
-    else {
-        return rejected(
-            ctx.request.correlation_id.clone(),
-            "partial-observation",
-            MSG_OBSERVATION,
-        );
-    };
-    if admitted.output != command.output || admitted.workspace != command.workspace {
-        return rejected(
-            ctx.request.correlation_id.clone(),
-            "partial-observation",
-            MSG_OBSERVATION,
-        );
-    }
-    let base: Vec<ObservedDto> = ctx
-        .request
-        .windows
-        .iter()
-        .filter(|w| w.window != command.window)
-        .cloned()
-        .collect();
-    let Some(seed_order) = spatial_with_focus_last(base, &ctx.request.focused_window, true) else {
-        return rejected(
-            ctx.request.correlation_id.clone(),
-            "ambiguous-placement",
-            MSG_AMBIGUOUS,
-        );
-    };
-    let Some(mut session) = seed_session(
-        &ctx.owner,
-        &ctx.generation,
-        ctx.request.fingerprint,
-        &ctx.domain,
-        &seed_order,
-    ) else {
-        return snapshot_invalid(
-            ctx.request.correlation_id.clone(),
-            MSG_OBSERVATION,
-            "seed-failed",
-        );
-    };
-    let placement = match command.placement_bounds {
-        Some(rect) => {
-            if !valid_carried_rect(rect.x, rect.y, rect.w, rect.h) {
-                return snapshot_invalid(
-                    ctx.request.correlation_id.clone(),
-                    MSG_OBSERVATION,
-                    "placement-bounds-invalid",
-                );
-            }
-            Rect {
-                x: rect.x,
-                y: rect.y,
-                w: rect.w,
-                h: rect.h,
-            }
-        }
-        // No explicit target geometry (the KWin adapter sends none): split
-        // the rebuild target, never the admitted window's own rect, so a
-        // landscape observed rect on a portrait output cannot select a
-        // left/right split (and vice versa).
-        None => seed_target_bounds(&session, &ctx.domain),
-    };
-    let base_revision = session.accepted_revision();
-    let observation = observation_for(base_revision, ctx);
-    let session_command = SessionCommand::Admit {
-        window: WindowId(command.window.clone()),
-        output: OutputId(command.output.clone()),
-        workspace: WorkspaceId(command.workspace.clone()),
-        exceptions: ExceptionFlags::none(),
-        exception_behavior: None,
-        placement_bounds: placement,
-    };
-    match session.propose(
-        &session_command,
-        &observation,
-        &ctx.correlation,
-        &LifecycleCapabilities::full(),
-    ) {
-        Ok(plan) => planned_reply(
-            &ctx.request.correlation_id,
-            plan.dispatch.base_revision,
-            serde_json::json!({
-                "kind": "admit",
-                "policy_version": plan.dispatch.policy_version,
-                "capability": "admit-tiled",
-            }),
-            &plan.desired_geometry,
-            match (&plan.desired_focus_domain, &plan.desired_focus_leaf) {
-                (Some(d), Some(l)) => Some((d, l)),
-                _ => None,
-            },
-        ),
-        Err(error) => propose_failure(error, ctx.request.correlation_id.clone()),
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -6161,81 +5932,6 @@ fn float_planned_reply(
     })
 }
 
-fn evaluate_remove(ctx: &Validated) -> String {
-    let command: RemoveCommand = match serde_json::from_value(ctx.request.command.clone()) {
-        Ok(command) => command,
-        Err(error) => {
-            let (kind, message) = classify_parse_error(&error);
-            return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-        }
-    };
-    if command.op != "remove" {
-        return snapshot_invalid(
-            ctx.request.correlation_id.clone(),
-            MSG_OPAQUE_ID,
-            "remove-op-invalid",
-        );
-    }
-    if !is_opaque_id(&command.window) {
-        return snapshot_invalid(
-            ctx.request.correlation_id.clone(),
-            MSG_OPAQUE_ID,
-            "remove-window-invalid",
-        );
-    }
-    let Some(seed_order) = spatial_with_focus_last(
-        ctx.request.windows.clone(),
-        &ctx.request.focused_window,
-        false,
-    ) else {
-        return rejected(
-            ctx.request.correlation_id.clone(),
-            "ambiguous-placement",
-            MSG_AMBIGUOUS,
-        );
-    };
-    let Some(mut session) = seed_session(
-        &ctx.owner,
-        &ctx.generation,
-        ctx.request.fingerprint,
-        &ctx.domain,
-        &seed_order,
-    ) else {
-        return snapshot_invalid(
-            ctx.request.correlation_id.clone(),
-            MSG_OBSERVATION,
-            "seed-failed",
-        );
-    };
-    let base_revision = session.accepted_revision();
-    let observation = observation_for(base_revision, ctx);
-    let session_command = SessionCommand::Remove {
-        window: WindowId(command.window.clone()),
-    };
-    match session.propose(
-        &session_command,
-        &observation,
-        &ctx.correlation,
-        &LifecycleCapabilities::full(),
-    ) {
-        Ok(plan) => planned_reply(
-            &ctx.request.correlation_id,
-            plan.dispatch.base_revision,
-            serde_json::json!({
-                "kind": "remove",
-                "policy_version": plan.dispatch.policy_version,
-                "capability": "remove-tiled",
-            }),
-            &plan.desired_geometry,
-            match (&plan.desired_focus_domain, &plan.desired_focus_leaf) {
-                (Some(d), Some(l)) => Some((d, l)),
-                _ => None,
-            },
-        ),
-        Err(error) => propose_failure(error, ctx.request.correlation_id.clone()),
-    }
-}
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DirectedCommand {
@@ -6252,146 +5948,6 @@ struct DirectedCommand {
 
 const fn default_cross_output_transfer() -> bool {
     true
-}
-
-fn build_full_session(ctx: &Validated) -> Result<(Session, SessionObservation), &'static str> {
-    let Some(seed_order) = spatial_with_focus_last(
-        ctx.request.windows.clone(),
-        &ctx.request.focused_window,
-        false,
-    ) else {
-        return Err("missing-seed-order");
-    };
-    let Some(session) = seed_session(
-        &ctx.owner,
-        &ctx.generation,
-        ctx.request.fingerprint,
-        &ctx.domain,
-        &seed_order,
-    ) else {
-        return Err("seed-failed");
-    };
-    let base_revision = session.accepted_revision();
-    let observation = observation_for(base_revision, ctx);
-    Ok((session, observation))
-}
-
-fn evaluate_move(ctx: &Validated) -> String {
-    let command: DirectedCommand = match serde_json::from_value(ctx.request.command.clone()) {
-        Ok(command) => command,
-        Err(error) => {
-            let (kind, message) = classify_parse_error(&error);
-            return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-        }
-    };
-    if command.op != "move" {
-        return snapshot_invalid(
-            ctx.request.correlation_id.clone(),
-            MSG_OPAQUE_ID,
-            "move-op-invalid",
-        );
-    }
-    if !is_opaque_id(&command.window) {
-        return snapshot_invalid(
-            ctx.request.correlation_id.clone(),
-            MSG_OPAQUE_ID,
-            "move-window-invalid",
-        );
-    }
-    let Some(direction) = parse_direction(&command.direction) else {
-        return rejected(
-            ctx.request.correlation_id.clone(),
-            "direction-invalid",
-            MSG_DIRECTION,
-        );
-    };
-    let (mut session, observation) = match build_full_session(ctx) {
-        Ok(built) => built,
-        Err(detail) => {
-            return snapshot_invalid(ctx.request.correlation_id.clone(), MSG_OBSERVATION, detail);
-        }
-    };
-    match session.propose_move(
-        &ctx.domain_key,
-        &WindowId(command.window.clone()),
-        direction,
-        &observation,
-        &ctx.correlation,
-        &Capabilities::full(),
-    ) {
-        Ok(plan) => planned_reply(
-            &ctx.request.correlation_id,
-            plan.dispatch.base_revision,
-            serde_json::json!({
-                "kind": "move",
-                "rule": format!("{:?}", plan.dispatch.rule),
-                "capability": format!("{:?}", plan.dispatch.required_capability),
-                "direction": direction_str(direction),
-            }),
-            &plan.desired_geometry,
-            Some((&plan.desired_focus_domain, &plan.desired_focus_leaf)),
-        ),
-        Err(error) => propose_failure(error, ctx.request.correlation_id.clone()),
-    }
-}
-
-fn evaluate_focus(ctx: &Validated) -> String {
-    let command: DirectedCommand = match serde_json::from_value(ctx.request.command.clone()) {
-        Ok(command) => command,
-        Err(error) => {
-            let (kind, message) = classify_parse_error(&error);
-            return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-        }
-    };
-    if command.op != "focus" {
-        return snapshot_invalid(
-            ctx.request.correlation_id.clone(),
-            MSG_OPAQUE_ID,
-            "focus-op-invalid",
-        );
-    }
-    if !is_opaque_id(&command.window) {
-        return snapshot_invalid(
-            ctx.request.correlation_id.clone(),
-            MSG_OPAQUE_ID,
-            "focus-window-invalid",
-        );
-    }
-    let Some(direction) = parse_direction(&command.direction) else {
-        return rejected(
-            ctx.request.correlation_id.clone(),
-            "direction-invalid",
-            MSG_DIRECTION,
-        );
-    };
-    let (mut session, observation) = match build_full_session(ctx) {
-        Ok(built) => built,
-        Err(detail) => {
-            return snapshot_invalid(ctx.request.correlation_id.clone(), MSG_OBSERVATION, detail);
-        }
-    };
-    match session.propose_focus(
-        &ctx.domain_key,
-        &WindowId(command.window.clone()),
-        direction,
-        &observation,
-        &ctx.correlation,
-        &FocusCapabilities::full(),
-    ) {
-        Ok(plan) => planned_reply(
-            &ctx.request.correlation_id,
-            plan.dispatch.base_revision,
-            serde_json::json!({
-                "kind": "focus",
-                "capability": "directional-focus",
-                "direction": direction_str(direction),
-                "to_window": plan.dispatch.operation.to_window.0,
-            }),
-            &plan.desired_geometry,
-            Some((&plan.desired_focus_domain, &plan.desired_focus_leaf)),
-        ),
-        Err(error) => propose_failure(error, ctx.request.correlation_id.clone()),
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -6607,31 +6163,6 @@ fn active_group_response(session: &Session, ctx: &Validated) -> String {
     })
 }
 
-/// Stateless active-group evaluation over an ephemeral rebuild (same
-/// validation and reply shapes as the retained route; only topology sourcing
-/// differs). Fail-closed `no-group` when no safe topology exists.
-fn evaluate_active_group_stateless(ctx: &Validated) -> String {
-    let command: ActiveGroupCommand = match serde_json::from_value(ctx.request.command.clone()) {
-        Ok(command) => command,
-        Err(error) => {
-            let (kind, message) = classify_parse_error(&error);
-            return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-        }
-    };
-    if command.op != "active-group" {
-        return snapshot_invalid(
-            ctx.request.correlation_id.clone(),
-            MSG_OPAQUE_ID,
-            "active-group-op-invalid",
-        );
-    }
-    let (session, _) = match build_full_session(ctx) {
-        Ok(built) => built,
-        Err(_) => return no_group_reply(ctx, None, "no-parent-group"),
-    };
-    active_group_response(&session, ctx)
-}
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WorkspaceSendCommand {
@@ -6716,89 +6247,11 @@ struct DirectionalMoveCancelCommand {
     zero_dispatch: bool,
 }
 
-fn evaluate_resize(ctx: &Validated) -> String {
-    let command: ResizeCommand = match serde_json::from_value(ctx.request.command.clone()) {
-        Ok(command) => command,
-        Err(error) => {
-            let (kind, message) = classify_parse_error(&error);
-            return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-        }
-    };
-    if command.op != "resize" {
-        return snapshot_invalid(
-            ctx.request.correlation_id.clone(),
-            MSG_OPAQUE_ID,
-            "resize-op-invalid",
-        );
-    }
-    if !is_opaque_id(&command.window) {
-        return snapshot_invalid(
-            ctx.request.correlation_id.clone(),
-            MSG_OPAQUE_ID,
-            "resize-window-invalid",
-        );
-    }
-    let Some(direction) = parse_direction(&command.direction) else {
-        return rejected(
-            ctx.request.correlation_id.clone(),
-            "direction-invalid",
-            MSG_DIRECTION,
-        );
-    };
-    let Some(mode) = parse_mode(&command.mode) else {
-        return rejected(
-            ctx.request.correlation_id.clone(),
-            "direction-invalid",
-            MSG_DIRECTION,
-        );
-    };
-    let (mut session, observation) = match build_full_session(ctx) {
-        Ok(built) => built,
-        Err(detail) => {
-            return snapshot_invalid(ctx.request.correlation_id.clone(), MSG_OBSERVATION, detail);
-        }
-    };
-    let capabilities = crate::contract::ResizeCapabilities {
-        keyboard_resize: true,
-        pointer_resize: false,
-    };
-    match session.propose_resize(
-        &ctx.domain_key,
-        &WindowId(command.window.clone()),
-        direction,
-        mode,
-        command.press_index,
-        &observation,
-        &ctx.correlation,
-        &capabilities,
-    ) {
-        Ok(plan) => planned_reply(
-            &ctx.request.correlation_id,
-            plan.dispatch.base_revision,
-            serde_json::json!({
-                "kind": "resize",
-                "capability": "keyboard-resize",
-                "direction": direction_str(direction),
-                "mode": mode.as_str(),
-                "target_group": plan.dispatch.operation.target_group.0,
-                "focused_index": plan.dispatch.operation.focused_index,
-                "neighbor_index": plan.dispatch.operation.neighbor_index,
-                "old_shares": plan.dispatch.operation.old_shares,
-                "new_shares": plan.dispatch.operation.new_shares,
-            }),
-            &plan.desired_geometry,
-            Some((&plan.desired_focus_domain, &plan.desired_focus_leaf)),
-        ),
-        Err(error) => propose_failure(error, ctx.request.correlation_id.clone()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     type SnapshotMutator = fn(&mut serde_json::Value);
-    type OpEvaluator = fn(&Validated) -> String;
 
     fn domain_bounds() -> serde_json::Value {
         serde_json::json!({"x": 0, "y": 0, "w": 1200, "h": 800})
@@ -7235,38 +6688,7 @@ mod tests {
     }
 
     #[test]
-    fn admit_builds_1_to_6_with_full_geometries() {
-        for total in 1..=6 {
-            let windows: Vec<String> = (1..=total).map(|i| format!("win-{i}")).collect();
-            let refs: Vec<&str> = windows.iter().map(String::as_str).collect();
-            let admitted = format!("win-{total}");
-            // Observation carries the complete normalized set including the
-            // admitted window; the base is rebuilt from the remaining set.
-            let focused = if total == 1 {
-                admitted.clone()
-            } else {
-                "win-1".to_owned()
-            };
-            let request = plan_request(
-                &format!("admit-1-{total}"),
-                &focused,
-                &refs,
-                serde_json::json!({
-                    "op": "admit",
-                    "window": admitted,
-                    "output": "out-1",
-                    "workspace": "ws-1",
-                }),
-            );
-            let reply = parse_reply(&evaluate_plan_json(&request));
-            assert_eq!(reply["outcome"], "planned", "total={total} {reply}");
-            let want: Vec<&str> = refs.clone();
-            assert_geometry_covers(&reply, &want);
-        }
-    }
-
-    #[test]
-    fn admit_portrait_output_splits_top_bottom_despite_landscape_rects() {
+    fn retained_admit_portrait_output_splits_top_bottom_despite_landscape_rects() {
         // D1: the split axis derives from the rebuild target (here the full
         // portrait output), never from the admitted window's own observed
         // rect. Both observed rects are landscape, which must not select a
@@ -7283,7 +6705,8 @@ mod tests {
                 "workspace": "ws-1",
             }),
         );
-        let reply = parse_reply(&evaluate_plan_json(&request));
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&request));
         assert_eq!(reply["outcome"], "planned", "{reply}");
         assert_geometry_covers(&reply, &["win-1", "win-2"]);
         assert_eq!(
@@ -7294,7 +6717,7 @@ mod tests {
     }
 
     #[test]
-    fn admit_landscape_output_splits_left_right_despite_portrait_rects() {
+    fn retained_admit_landscape_output_splits_left_right_despite_portrait_rects() {
         // Converse of D1: portrait observed rects must not select a
         // top/bottom split on a landscape output.
         let request = custom_request(
@@ -7309,7 +6732,8 @@ mod tests {
                 "workspace": "ws-1",
             }),
         );
-        let reply = parse_reply(&evaluate_plan_json(&request));
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&request));
         assert_eq!(reply["outcome"], "planned", "{reply}");
         assert_geometry_covers(&reply, &["win-1", "win-2"]);
         assert_eq!(
@@ -7320,7 +6744,7 @@ mod tests {
     }
 
     #[test]
-    fn admit_square_tie_splits_top_bottom() {
+    fn retained_admit_square_tie_splits_top_bottom() {
         // Exact-square tie selects Vertical (top/bottom stacking). This keeps
         // the COSMIC tall/tied-to-portable-Vertical rule and the historic tie
         // direction deterministic; a square output has no wider axis, so the
@@ -7337,7 +6761,8 @@ mod tests {
                 "workspace": "ws-1",
             }),
         );
-        let reply = parse_reply(&evaluate_plan_json(&request));
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&request));
         assert_eq!(reply["outcome"], "planned", "{reply}");
         assert_geometry_covers(&reply, &["win-1", "win-2"]);
         assert_eq!(
@@ -7406,135 +6831,12 @@ mod tests {
             ],
             serde_json::json!({"op": "focus", "window": "ghostty", "direction": "left"}),
         );
-        let drift_reply = parse_reply(&evaluate_plan_json(&drift));
+        let drift_reply = parse_reply(&restarted_planner.evaluate(&drift));
         assert_eq!(drift_reply["kind"], "snapshot-invalid", "{drift_reply}");
         assert_eq!(
             drift_reply["detail"], "window-out-of-bounds",
             "{drift_reply}"
         );
-    }
-
-    #[test]
-    fn remove_collapses_2_to_6_preserving_survivors() {
-        for total in 2..=6 {
-            let windows: Vec<String> = (1..=total).map(|i| format!("win-{i}")).collect();
-            let refs: Vec<&str> = windows.iter().map(String::as_str).collect();
-            // Remove a middle window so single-child collapse is exercised.
-            let removed = format!("win-{}", (total + 1) / 2);
-            let request = plan_request(
-                &format!("remove-1-{total}"),
-                "win-1",
-                &refs,
-                serde_json::json!({"op": "remove", "window": removed}),
-            );
-            let reply = parse_reply(&evaluate_plan_json(&request));
-            assert_eq!(reply["outcome"], "planned", "total={total} {reply}");
-            let want: Vec<String> = windows.iter().filter(|w| *w != &removed).cloned().collect();
-            let want_refs: Vec<&str> = want.iter().map(String::as_str).collect();
-            assert_geometry_covers(&reply, &want_refs);
-        }
-    }
-
-    #[test]
-    fn directional_focus_moves_to_neighbor() {
-        // Seeding admits sorted ids with the focused window last, so win-1
-        // is the rightmost leaf; left reaches its siblings.
-        let request = plan_request(
-            "focus-1",
-            "win-1",
-            &["win-1", "win-2", "win-3"],
-            serde_json::json!({"op": "focus", "window": "win-1", "direction": "left"}),
-        );
-        let reply = parse_reply(&evaluate_plan_json(&request));
-        assert_eq!(reply["outcome"], "planned", "{reply}");
-        assert_geometry_covers(&reply, &["win-1", "win-2", "win-3"]);
-        let to = reply["detail"]["to_window"].as_str().expect("to_window");
-        assert_ne!(to, "win-1", "{reply}");
-    }
-
-    #[test]
-    fn directional_move_retains_mover_with_full_geometry() {
-        // Rightmost focused leaf moves left into its siblings (R2a/R2c).
-        let request = plan_request(
-            "move-1",
-            "win-1",
-            &["win-1", "win-2", "win-3"],
-            serde_json::json!({"op": "move", "window": "win-1", "direction": "left"}),
-        );
-        let reply = parse_reply(&evaluate_plan_json(&request));
-        assert_eq!(reply["outcome"], "planned", "{reply}");
-        assert_geometry_covers(&reply, &["win-1", "win-2", "win-3"]);
-        assert!(reply["detail"]["rule"].as_str().is_some(), "{reply}");
-    }
-
-    #[test]
-    fn keyboard_resize_reflows_with_full_geometry() {
-        // Rightmost focused leaf resizes against its left neighbor.
-        let request = plan_request(
-            "resize-1",
-            "win-1",
-            &["win-1", "win-2"],
-            serde_json::json!({
-                "op": "resize",
-                "window": "win-1",
-                "direction": "left",
-                "mode": "outwards",
-                "press_index": 0,
-            }),
-        );
-        let reply = parse_reply(&evaluate_plan_json(&request));
-        assert_eq!(reply["outcome"], "planned", "{reply}");
-        assert_geometry_covers(&reply, &["win-1", "win-2"]);
-        let old = reply["detail"]["old_shares"]
-            .as_array()
-            .expect("old shares");
-        let new = reply["detail"]["new_shares"]
-            .as_array()
-            .expect("new shares");
-        assert_eq!(old.len(), new.len(), "{reply}");
-        assert_ne!(old, new, "{reply}");
-    }
-
-    #[test]
-    fn fresh_observations_recover_after_any_rejection() {
-        // Unknown window rejects recoverably (rejected, never diverged).
-        let bad = plan_request(
-            "recover-bad-1",
-            "win-1",
-            &["win-1", "win-2"],
-            serde_json::json!({"op": "remove", "window": "win-9"}),
-        );
-        let bad_reply = parse_reply(&evaluate_plan_json(&bad));
-        assert_eq!(bad_reply["outcome"], "rejected", "{bad_reply}");
-        assert!(bad_reply["kind"].as_str().is_some(), "{bad_reply}");
-        assert_ne!(bad_reply["kind"], "diverged", "{bad_reply}");
-        // A fresh observation with a valid command plans immediately.
-        let good = plan_request(
-            "recover-good-1",
-            "win-1",
-            &["win-1", "win-2"],
-            serde_json::json!({"op": "focus", "window": "win-1", "direction": "left"}),
-        );
-        let good_reply = parse_reply(&evaluate_plan_json(&good));
-        assert_eq!(good_reply["outcome"], "planned", "{good_reply}");
-        // Malformed input also recovers on the next fresh call.
-        let malformed = plan_request(
-            "recover-bad-2",
-            "win-1",
-            &["win-1", "win-2"],
-            serde_json::json!({"op": "move", "window": "win-1", "direction": "diagonal"}),
-        );
-        let malformed_reply = parse_reply(&evaluate_plan_json(&malformed));
-        assert_eq!(malformed_reply["outcome"], "rejected", "{malformed_reply}");
-        let good2 = plan_request(
-            "recover-good-2",
-            "win-1",
-            &["win-1", "win-2"],
-            serde_json::json!({"op": "remove", "window": "win-2"}),
-        );
-        let good2_reply = parse_reply(&evaluate_plan_json(&good2));
-        assert_eq!(good2_reply["outcome"], "planned", "{good2_reply}");
-        assert_geometry_covers(&good2_reply, &["win-1"]);
     }
 
     #[test]
@@ -7545,7 +6847,8 @@ mod tests {
             &["win-1"],
             serde_json::json!({"op": "remove", "window": "evil-window-xyz"}),
         );
-        let reply = parse_reply(&evaluate_plan_json(&bad));
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&bad));
         assert_eq!(reply["outcome"], "rejected", "{reply}");
         let text = serde_json::to_string(&reply).expect("serialize");
         assert!(!text.contains("evil-window-xyz"), "{reply}");
@@ -7658,8 +6961,9 @@ mod tests {
             assert_eq!(reply["outcome"], "planned", "{reply}");
         }
         assert_eq!(planner.retained_domains(), 1);
-        // Two non-focused windows share an exact frame; the stateless rebuild
-        // path must still reject this as ambiguous (the D4 root).
+        // Two non-focused windows share an exact frame; retained state
+        // proposes directly from membership, so it still plans (the D4
+        // behavior under test).
         let ambiguous = retained_request(
             "d4-equal-4",
             "owner-1",
@@ -7672,10 +6976,6 @@ mod tests {
             ],
             serde_json::json!({"op": "remove", "window": "win-3"}),
         );
-        let stateless = parse_reply(&evaluate_plan_json(&ambiguous));
-        assert_eq!(stateless["outcome"], "rejected", "{stateless}");
-        assert_eq!(stateless["kind"], "ambiguous-placement", "{stateless}");
-        // Retained state proposes directly from membership, so it plans.
         let retained = parse_reply(&planner.evaluate(&ambiguous));
         assert_eq!(retained["outcome"], "planned", "{retained}");
         assert_geometry_covers(&retained, &["win-1", "win-2"]);
@@ -8135,9 +7435,10 @@ mod tests {
         .expect("valid base")
     }
 
-    fn assert_stateless_detail(mut value: serde_json::Value, cid: &str, expected: &str) {
+    fn assert_retained_detail(mut value: serde_json::Value, cid: &str, expected: &str) {
         value["correlation_id"] = serde_json::json!(cid);
-        let reply = parse_reply(&evaluate_plan_json(&value.to_string()));
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&value.to_string()));
         assert_eq!(reply["outcome"], "rejected", "{reply}");
         assert_eq!(reply["kind"], "snapshot-invalid", "{reply}");
         assert_eq!(reply["detail"], expected, "{reply}");
@@ -8198,7 +7499,7 @@ mod tests {
         for (index, (expected, mutate)) in cases.into_iter().enumerate() {
             let mut value = base_valid_value(&format!("snap-v-{index}"));
             mutate(&mut value);
-            assert_stateless_detail(value, &format!("snap-v-{index}"), expected);
+            assert_retained_detail(value, &format!("snap-v-{index}"), expected);
         }
         let mut many = base_valid_value("snap-v-limit");
         let mut windows = Vec::new();
@@ -8211,14 +7512,7 @@ mod tests {
         }
         many["windows"] = serde_json::Value::Array(windows);
         many["focused_window"] = serde_json::json!("win-0");
-        assert_stateless_detail(many, "snap-v-limit", "window-limit");
-        let mut retained_value = base_valid_value("snap-v-ret");
-        retained_value["domain"]["gap"] = serde_json::json!(-1);
-        retained_value["correlation_id"] = serde_json::json!("snap-v-ret");
-        let mut planner = Planner::new();
-        let retained = parse_reply(&planner.evaluate(&retained_value.to_string()));
-        assert_eq!(retained["kind"], "snapshot-invalid", "{retained}");
-        assert_eq!(retained["detail"], "gap-low", "{retained}");
+        assert_retained_detail(many, "snap-v-limit", "window-limit");
     }
     #[test]
     fn command_and_construction_details_are_exact() {
@@ -8262,7 +7556,7 @@ mod tests {
                 value["focused_window"] = serde_json::json!("win-1");
             }
             value["command"] = command;
-            assert_stateless_detail(value, &format!("snap-c-{index}"), expected);
+            assert_retained_detail(value, &format!("snap-c-{index}"), expected);
         }
         let ambiguous = retained_request(
             "snap-c-amb",
@@ -8276,66 +7570,53 @@ mod tests {
             ],
             serde_json::json!({"op": "move", "window": "win-1", "direction": "left"}),
         );
-        let stateless = parse_reply(&evaluate_plan_json(&ambiguous));
-        assert_eq!(stateless["kind"], "snapshot-invalid", "{stateless}");
-        assert_eq!(stateless["detail"], "missing-seed-order", "{stateless}");
         let mut planner = Planner::new();
         let retained = parse_reply(&planner.evaluate(&ambiguous));
         assert_eq!(retained["kind"], "snapshot-invalid", "{retained}");
         assert_eq!(retained["detail"], "missing-seed-order", "{retained}");
     }
     #[test]
-    fn command_op_details_are_exact() {
-        let cases: Vec<(&str, serde_json::Value, OpEvaluator)> = vec![
+    fn retained_op_details_are_exact() {
+        let cases = [
             (
                 "admit-op-invalid",
                 serde_json::json!({"op": "admit", "window": "win-2", "output": "out-1", "workspace": "ws-1"}),
-                evaluate_admit,
+                Planner::evaluate_admit_retained as fn(&mut Planner, &Validated) -> String,
             ),
             (
                 "remove-op-invalid",
                 serde_json::json!({"op": "remove", "window": "win-2"}),
-                evaluate_remove,
+                Planner::evaluate_remove_retained,
             ),
             (
                 "move-op-invalid",
                 serde_json::json!({"op": "move", "window": "win-1", "direction": "left"}),
-                evaluate_move,
+                Planner::evaluate_move_retained,
             ),
             (
                 "focus-op-invalid",
                 serde_json::json!({"op": "focus", "window": "win-1", "direction": "left"}),
-                evaluate_focus,
+                Planner::evaluate_focus_retained,
             ),
             (
                 "resize-op-invalid",
                 serde_json::json!({"op": "resize", "window": "win-1", "direction": "left", "mode": "outwards", "press_index": 0}),
-                evaluate_resize,
+                Planner::evaluate_resize_retained,
             ),
         ];
         for (index, (expected, command, eval)) in cases.into_iter().enumerate() {
-            let cid = format!("snap-o-{index}");
+            let cid = format!("snap-o-ret-{index}");
             let mut ctx =
                 validate_request(&plan_request(&cid, "win-1", &["win-1", "win-2"], command))
                     .expect("base valid");
             ctx.request.command["op"] = serde_json::json!("bogus-op");
-            let text = eval(&ctx);
+            let mut planner = Planner::new();
+            let text = eval(&mut planner, &ctx);
             let reply = parse_reply(&text);
-            assert_eq!(reply["outcome"], "rejected", "{reply}");
-            assert_eq!(reply["kind"], "snapshot-invalid", "{reply}");
             assert_eq!(reply["detail"], expected, "{reply}");
             assert_eq!(reply["correlation_id"], cid, "{reply}");
             assert!(text.len() <= PLAN_MAX_REPLY_BYTES, "{reply}");
         }
-        let cid = "snap-o-ret";
-        let mut ctx = validate_request(&plan_request(cid, "win-1", &["win-1", "win-2"], serde_json::json!({"op": "admit", "window": "win-2", "output": "out-1", "workspace": "ws-1"}))).expect("base valid");
-        ctx.request.command["op"] = serde_json::json!("bogus-op");
-        let mut planner = Planner::new();
-        let text = planner.evaluate_admit_retained(&ctx);
-        let reply = parse_reply(&text);
-        assert_eq!(reply["detail"], "admit-op-invalid", "{reply}");
-        assert_eq!(reply["correlation_id"], cid, "{reply}");
-        assert!(text.len() <= PLAN_MAX_REPLY_BYTES, "{reply}");
     }
     #[test]
     fn planner_snapshot_detail_registry_is_unique() {
@@ -11470,32 +10751,6 @@ mod tests {
         if let Some(geometry) = reply.get("desired_geometry") {
             assert_ne!(geometry.as_array().map(Vec::len), Some(0), "{reply}");
         }
-    }
-
-    #[test]
-    fn stateless_active_group_reports_ephemeral_membership() {
-        let request = plan_request(
-            "ag-stateless-1",
-            "win-1",
-            &["win-1", "win-2"],
-            serde_json::json!({"op": "active-group"}),
-        );
-        let reply = parse_reply(&evaluate_plan_json(&request));
-        assert_eq!(reply["outcome"], "active-group", "{reply}");
-        assert_eq!(
-            reply["detail"]["members"].as_array().map(Vec::len),
-            Some(2),
-            "{reply}"
-        );
-        let solo = plan_request(
-            "ag-stateless-2",
-            "win-1",
-            &["win-1"],
-            serde_json::json!({"op": "active-group"}),
-        );
-        let cleared = parse_reply(&evaluate_plan_json(&solo));
-        assert_eq!(cleared["outcome"], "no-group", "{cleared}");
-        assert_eq!(cleared["detail"]["reason"], "no-parent-group", "{cleared}");
     }
 
     fn fit_excluded_request(
