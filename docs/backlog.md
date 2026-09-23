@@ -20,13 +20,18 @@ each review claim before acting; it was a static sampling review.
   [scope](changes/architecture-review-ar4-observation-sync.md)
 - P0 | AR6 Logical workspace model in core | 7.10: workspace modes, trailing
   empty, displacement/return in core emitting actions; adapter keeps output
-  identity and native reads/writes.
+  identity and native reads/writes. Blocked: `Meta+1..9`, trailing-empty and
+  hotplug run synchronously in KWin and work without the Planner; a Planner
+  route changes latency and failure behavior. Awaiting user decision.
+  [design](changes/architecture-review-ar6-workspaces.md)
 - P0 | AR7 Remaining portable policy to core | 4.2, rec 4: shortcut action
   catalog/profiles, eligibility and window rules, settings schema, single
   fingerprint and wire-schema source.
 - P0 | AR8 Drag oracle measurement | 7.1: trace-mode finish/first-change/verdict
-  logging; user runs ~20 Wayland edge drags incl. a size-increment terminal.
-  Result selects removal, pointer-derived boundary, or folding into
+  logging instrumented offline. Next: user captures ~20 Wayland edge drags,
+  incl. a size-increment terminal and Esc cancellation, using
+  [AR8 runbook](changes/architecture-review-ar8-drag-oracle-measurement.md).
+  Evidence selects removal, pointer-derived boundary, or folding into
   `ActiveBorder`.
 - P0 | AR9 Initial maximize direct read | 7.2. Awaiting user decision: reverses
   hide-until-confirmed handoff.

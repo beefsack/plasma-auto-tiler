@@ -26,6 +26,16 @@
 
 import { DomainGaps, readDomainGaps } from "./domain-gap";
 import { deriveOracleEdge, startDragOraclePullEntry, DragOracleFinishContext, DragOracleVerdict } from "./drag-oracle-pull";
+import {
+    DRAG_MEASURE_LATER_TIMEOUT_MS,
+    DRAG_MEASURE_VERDICT_TIMEOUT_MS,
+    DragMeasurePointer,
+    DragMeasureRect,
+    describeMeasureEdge,
+    formatDragMeasureLine,
+    readMeasurePointer,
+    readMeasureRect,
+} from "./drag-measure";
 import { normalizeNativeId } from "./native-id";
 import {
     ActiveGroupObserved,
@@ -3611,6 +3621,353 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             return null;
         }
     };
+    // AR8 offline drag measurement (trace-only, read-only): one bounded
+    // correlated record per interactive move/resize finish carrying the
+    // finish frameGeometry, the first later frameGeometryChanged for the
+    // same window or a timeout marker, the route's captured start rect (or
+    // missing when the route holds no capture for the finish), the pulled
+    // verdict (cancelled/reason/final geometry), the deriveOracleEdge result
+    // over those rects, pointer start/finish via workspace.cursorPos, and
+    // the existing drag correlation. Opt-in via KWIN_TRACE_ENABLED; when
+    // disabled nothing is captured, subscribed, scheduled, or logged. Reads
+    // frameGeometry/cursorPos only: never calls DescribePlan, never writes
+    // geometry, never touches the oracle route above. The start rect is
+    // peeked (never consumed) from the route's own oracleStarts under its
+    // epoch guard; pointers are captured separately at Started. Keyed by
+    // the oracle finish context (one pending per initiated pull, never by
+    // window alone), so overlapping finishes keep separate records and a
+    // reply always meets its own finish: the pending is created in the
+    // finish context factory before the pull runs, so even a synchronous
+    // D-Bus callback settles after creation regardless of finish-listener
+    // order. A fired-but-unreadable later geometry completes as missing
+    // (never misreported as timeout), and a per-pending verdict timeout
+    // bounds finishes whose reply never arrives. A finish followed by
+    // window removal still emits one partial record (arrived sides kept,
+    // unarrived verdict as missing, unarrived later as missing rather than
+    // timeout). When the global oracle pull failed to attach, the entry
+    // finished handler arms a standalone pending per finish whose verdict
+    // side completes via the verdict timeout. No titles, no window
+    // identity strings, no raw native ids.
+    interface MeasurePending {
+        ref: object;
+        seq: number;
+        start: DragMeasureRect | null;
+        finish: DragMeasureRect | null;
+        later: DragMeasureRect | null;
+        laterDone: boolean;
+        laterTimeout: boolean;
+        verdict: DragOracleVerdict | null;
+        verdictMissing: boolean;
+        verdictDone: boolean;
+        pointerStart: DragMeasurePointer | null;
+        pointerFinish: DragMeasurePointer | null;
+        cancelLaterTimer: (() => void) | null;
+        cancelVerdictTimer: (() => void) | null;
+        detachLater: (() => void) | null;
+    }
+    const measureStarts = new Map<object, DragMeasurePointer | null>();
+    // Route captures already claimed by a standalone finish. The standalone
+    // path cannot consume oracleStarts (route-owned), so each route capture
+    // may back at most one standalone record: a second finish without an
+    // intervening Started reports start=missing. A new Started re-arms.
+    const measureStandaloneClaimed = new Set<object>();
+    const measurePending = new Map<DragOracleFinishContext, MeasurePending>();
+    let measureSeq = 0;
+    // True once the global oracle pull attached. Only then does a finish
+    // context (and a later settle) exist; otherwise the entry finished
+    // handler owns a standalone measurement below.
+    let measurePullAvailable = false;
+    const releaseMeasurePending = (ctx: DragOracleFinishContext, pending: MeasurePending): void => {
+        try {
+            measurePending.delete(ctx);
+        } catch (error) {
+            void error;
+        }
+        try {
+            pending.detachLater?.();
+        } catch (error) {
+            void error;
+        }
+        try {
+            pending.cancelLaterTimer?.();
+        } catch (error) {
+            void error;
+        }
+        try {
+            pending.cancelVerdictTimer?.();
+        } catch (error) {
+            void error;
+        }
+    };
+    const dropMeasureWindow = (ref: object): void => {
+        try {
+            for (const [ctx, pending] of [...measurePending]) {
+                if (pending.ref !== ref) {
+                    continue;
+                }
+                releaseMeasurePending(ctx, pending);
+            }
+        } catch (error) {
+            void error;
+        }
+    };
+    const tryEmitMeasure = (ctx: DragOracleFinishContext): void => {
+        try {
+            const pending = measurePending.get(ctx);
+            if (pending === undefined || !pending.verdictDone || (!pending.laterDone && !pending.laterTimeout)) {
+                return;
+            }
+            emitMeasureRecord(ctx, pending);
+        } catch (error) {
+            void error;
+        }
+    };
+    const emitMeasureRecord = (ctx: DragOracleFinishContext, pending: MeasurePending): void => {
+        try {
+            releaseMeasurePending(ctx, pending);
+            const correlation =
+                !pending.verdictMissing && pending.verdict !== null ? pending.verdict.correlation : "none";
+            try {
+                log(
+                    formatDragMeasureLine({
+                        seq: pending.seq,
+                        correlation,
+                        start: pending.start,
+                        finish: pending.finish,
+                        later: pending.later,
+                        laterTimeout: pending.laterTimeout,
+                        verdict: pending.verdict,
+                        verdictMissing: pending.verdictMissing,
+                        edge: describeMeasureEdge(pending.start, pending.finish),
+                        pointerStart: pending.pointerStart,
+                        pointerFinish: pending.pointerFinish,
+                    }),
+                );
+            } catch (error) {
+                void error;
+            }
+        } catch (error) {
+            void error;
+        }
+    };
+    // Removal completion: a finish followed by window removal before its
+    // later geometry or verdict still yields one bounded partial record.
+    // An arrived side is kept; an unarrived verdict completes as missing
+    // (no reply can meaningfully arrive for a removed window) and an
+    // unarrived later stays missing (never timeout: the timer never won).
+    // Reads nothing from the removed window; no ids leave this path.
+    const completeMeasureRemoval = (ref: object): void => {
+        try {
+            for (const [ctx, pending] of [...measurePending]) {
+                if (pending.ref !== ref) {
+                    continue;
+                }
+                if (!pending.verdictDone) {
+                    pending.verdict = null;
+                    pending.verdictMissing = true;
+                    pending.verdictDone = true;
+                }
+                emitMeasureRecord(ctx, pending);
+            }
+        } catch (error) {
+            void error;
+        }
+    };
+    const captureMeasureStart = (ref: object): void => {
+        if (!KWIN_TRACE_ENABLED) {
+            return;
+        }
+        try {
+            measureStarts.set(ref, readMeasurePointer(liveWorkspace));
+            measureStandaloneClaimed.delete(ref);
+        } catch (error) {
+            void error;
+        }
+    };
+    const takeMeasurePointer = (ref: object): DragMeasurePointer | null => {
+        try {
+            const pointer = measureStarts.get(ref) ?? null;
+            try {
+                measureStarts.delete(ref);
+            } catch (error) {
+                void error;
+            }
+            return pointer;
+        } catch (error) {
+            void error;
+            return null;
+        }
+    };
+    // The recorded start rect is the oracle route's own capture for this
+    // finish (same epoch guard as takeOwnStart), never an independent
+    // script read: peek only, the route still owns consumption. Missing
+    // exactly when the route has no capture for this finish.
+    const peekMeasureStartRect = (ctx: DragOracleFinishContext): DragMeasureRect | null => {
+        try {
+            const start = oracleStarts.get(ctx.ref);
+            if (start === undefined || start.epoch > ctx.finishEpoch) {
+                return null;
+            }
+            return { x: start.rect.x, y: start.rect.y, w: start.rect.w, h: start.rect.h };
+        } catch (error) {
+            void error;
+            return null;
+        }
+    };
+    const createMeasurePending = (ctx: DragOracleFinishContext): void => {
+        if (!KWIN_TRACE_ENABLED) {
+            return;
+        }
+        try {
+            armMeasurePending(ctx, peekMeasureStartRect(ctx), takeMeasurePointer(ctx.ref));
+        } catch (error) {
+            void error;
+        }
+    };
+    // Standalone finish for a globally unavailable oracle pull (no pull
+    // listeners exist, so no ordering or duplication concern): the latest
+    // unclaimed route capture is the start association (each capture backs
+    // at most one record; a repeat finish without a new Started reports
+    // missing) and the verdict side can only complete via the verdict
+    // timeout. Route/pull untouched: with no handle neither ever runs, and
+    // oracleStarts itself is never mutated here.
+    const createMeasureStandaloneFinish = (ref: object): void => {
+        if (!KWIN_TRACE_ENABLED || measurePullAvailable) {
+            return;
+        }
+        try {
+            let start: DragMeasureRect | null = null;
+            try {
+                const captured = oracleStarts.get(ref);
+                if (captured !== undefined && !measureStandaloneClaimed.has(ref)) {
+                    start = { x: captured.rect.x, y: captured.rect.y, w: captured.rect.w, h: captured.rect.h };
+                    measureStandaloneClaimed.add(ref);
+                }
+            } catch (error) {
+                void error;
+            }
+            armMeasurePending({ ref, finishEpoch: 0 }, start, takeMeasurePointer(ref));
+        } catch (error) {
+            void error;
+        }
+    };
+    const armMeasurePending = (
+        ctx: DragOracleFinishContext,
+        start: DragMeasureRect | null,
+        pointerStart: DragMeasurePointer | null,
+    ): void => {
+        try {
+            const pending: MeasurePending = {
+                ref: ctx.ref,
+                seq: (measureSeq += 1),
+                start,
+                finish: readMeasureRect(ctx.ref),
+                later: null,
+                laterDone: false,
+                laterTimeout: false,
+                verdict: null,
+                verdictMissing: false,
+                verdictDone: false,
+                pointerStart,
+                pointerFinish: readMeasurePointer(liveWorkspace),
+                cancelLaterTimer: null,
+                cancelVerdictTimer: null,
+                detachLater: null,
+            };
+            measurePending.set(ctx, pending);
+            try {
+                const detach = connectSignal(readSignal(ctx.ref, "frameGeometryChanged"), () => {
+                    try {
+                        const current = measurePending.get(ctx);
+                        if (current === undefined || current.laterDone || current.laterTimeout) {
+                            return;
+                        }
+                        // A fired change always completes the later slot, even
+                        // when the rect itself is unreadable (missing, never
+                        // timeout). Only the timer below reports timeout.
+                        current.later = readMeasureRect(ctx.ref);
+                        current.laterDone = true;
+                        tryEmitMeasure(ctx);
+                    } catch (error) {
+                        void error;
+                    }
+                });
+                pending.detachLater = detach;
+            } catch (error) {
+                void error;
+            }
+            try {
+                pending.cancelLaterTimer = scheduleOnce(DRAG_MEASURE_LATER_TIMEOUT_MS, () => {
+                    try {
+                        const current = measurePending.get(ctx);
+                        if (current === undefined || current.laterDone) {
+                            return;
+                        }
+                        current.laterTimeout = true;
+                        tryEmitMeasure(ctx);
+                    } catch (error) {
+                        void error;
+                    }
+                });
+            } catch (error) {
+                void error;
+            }
+            try {
+                pending.cancelVerdictTimer = scheduleOnce(DRAG_MEASURE_VERDICT_TIMEOUT_MS, () => {
+                    try {
+                        const current = measurePending.get(ctx);
+                        if (current === undefined || current.verdictDone) {
+                            return;
+                        }
+                        current.verdict = null;
+                        current.verdictMissing = true;
+                        current.verdictDone = true;
+                        tryEmitMeasure(ctx);
+                    } catch (error) {
+                        void error;
+                    }
+                });
+            } catch (error) {
+                void error;
+            }
+        } catch (error) {
+            void error;
+        }
+    };
+    // Per-finish measurement factory: wraps the existing oracle finish
+    // context (same epoch token, same object the route and settle paths
+    // already use) and creates this finish's pending before the pull runs.
+    // Route/settle behavior is unchanged: the returned context is the
+    // oracle's own.
+    const measureMakeFinishContext = (ref: object): DragOracleFinishContext => {
+        const ctx = makeOracleFinishContext(ref);
+        try {
+            createMeasurePending(ctx);
+        } catch (error) {
+            void error;
+        }
+        return ctx;
+    };
+    const feedMeasureVerdict = (ctx: DragOracleFinishContext | undefined, verdict: DragOracleVerdict | null): void => {
+        if (!KWIN_TRACE_ENABLED) {
+            return;
+        }
+        try {
+            if (ctx === undefined) {
+                return;
+            }
+            const pending = measurePending.get(ctx);
+            if (pending === undefined || pending.verdictDone) {
+                return;
+            }
+            pending.verdict = verdict;
+            pending.verdictMissing = verdict === null;
+            pending.verdictDone = true;
+            tryEmitMeasure(ctx);
+        } catch (error) {
+            void error;
+        }
+    };
     // Finish-token completion: runs after every parsed verdict (including
     // cancelled) and for invalid/unavailable replies (null). Consumes only
     // its own finish's associated start without routing, logging, or
@@ -3619,6 +3976,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         try {
             void verdict;
             takeOwnStart(ctx);
+            feedMeasureVerdict(ctx, verdict);
         } catch (error) {
             void error;
         }
@@ -3708,6 +4066,9 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 }
             }
             oracleStarts.delete(ref);
+            measureStarts.delete(ref);
+            measureStandaloneClaimed.delete(ref);
+            completeMeasureRemoval(ref);
             if (interactiveResizeRefs.delete(ref) && interactiveResizeRefs.size === 0) {
                 adapter.setInteractiveResizeActive(false);
             }
@@ -3729,6 +4090,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         try {
             startedDetach = connectSignal(started, () => {
                 try { captureOracleStart(ref); } catch (error) { void error; }
+                try { captureMeasureStart(ref); } catch (error) { void error; }
             });
             if (startedDetach === null) return;
             finishedDetach = connectSignal(finished, () => {
@@ -3737,6 +4099,11 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                         adapter.setInteractiveResizeActive(false);
                     }
                 } catch (error) { void error; }
+                // Standalone measurement only: active exactly when the
+                // global oracle pull failed to attach (no pull listeners
+                // exist for this finish). Never duplicates the
+                // context-keyed path above.
+                try { createMeasureStandaloneFinish(ref); } catch (error) { void error; }
             });
             if (finishedDetach === null) {
                 startedDetach();
@@ -3779,10 +4146,13 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     try {
         const oracleOverrides: import("./drag-oracle-pull").DragOraclePullOverrides =
             overrides.oracleCallDbus === undefined
-                ? { workspace: liveWorkspace, log, routePointer: routeOracleVerdict, onSettled: settleOracleVerdict, makeFinishContext: makeOracleFinishContext }
-                : { workspace: liveWorkspace, log, callDbus: overrides.oracleCallDbus, routePointer: routeOracleVerdict, onSettled: settleOracleVerdict, makeFinishContext: makeOracleFinishContext };
+                ? { workspace: liveWorkspace, log, routePointer: routeOracleVerdict, onSettled: settleOracleVerdict, makeFinishContext: measureMakeFinishContext }
+                : { workspace: liveWorkspace, log, callDbus: overrides.oracleCallDbus, routePointer: routeOracleVerdict, onSettled: settleOracleVerdict, makeFinishContext: measureMakeFinishContext };
         const oracleHandle = startDragOraclePullEntry(oracleOverrides);
-        if (oracleHandle !== null) oracleStop = () => { try { oracleHandle.stop(); } catch (error) { void error; } };
+        if (oracleHandle !== null) {
+            oracleStop = () => { try { oracleHandle.stop(); } catch (error) { void error; } };
+            measurePullAvailable = true;
+        }
     } catch (error) { void error; }
     // Temporary active-group highlight bridge: asks the existing DescribePlan
     // route with {"op":"active-group"} at startup and on focus/domain/tree
@@ -4138,6 +4508,13 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             for (const detach of oracleDetaches) {
                 try { detach(); } catch (error) { void error; }
             }
+            try {
+                for (const pending of [...measurePending.values()]) {
+                    dropMeasureWindow(pending.ref);
+                }
+                measureStarts.clear();
+                measureStandaloneClaimed.clear();
+            } catch (error) { void error; }
             if (oracleStop !== null) {
                 try { oracleStop(); } catch (error) { void error; }
             }
