@@ -185,7 +185,7 @@ Only meaningful pending or active work is listed.
   repeated-heartbeat noise suppressed. Validated generation/revision/enabled
   joins snapshot identity across KWin/Rust, not individual heartbeat causality.
   Typecheck, 937 KWin tests, full Rust tests, and independent review pass.
-  Next: establish a reliable queryable sink for autostarted Rust tray diagnostics;
+  Active: establish a reliable queryable sink for autostarted Rust tray diagnostics;
   source establishes only inherited stderr, while `just dev` captures KWin and
   Planner, not tray stderr. Ambient topology and native signals must not inherit
   unrelated request IDs. Whole-system coverage and live capture remain unproven.
