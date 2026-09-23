@@ -9,6 +9,11 @@ each review claim before acting; it was a static sampling review.
 - P0 | AR4 Single observation `sync` | 7.7: core derives removals, admissions,
   domain changes, flag transitions, and drift from one observation; removes TS
   membership baselines, `hiddenIntentFor`, and reconcile counters/thresholds.
+  Collapsing intermediate layout writes is selected (review 7.7), preserving
+  final order, focus, desktop behavior and independent per-domain state.
+  Two core approaches failed independent review and were reverted; restart
+  from a validated multi-domain observation boundary.
+  [scope](changes/architecture-review-ar4-observation-sync.md)
 - P0 | AR5 LayoutPolicy seam and Session split | 7.9: `cosmic_v1` behind
   `LayoutPolicy`; split `Session` along the seam. bspwm_v1 scope awaits user
   decision.
