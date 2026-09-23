@@ -15,6 +15,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -583,6 +584,31 @@ public:
     }
 };
 
+// Readback-tampering subclass of the real KConfig backend: persist writes
+// and syncs normally, but the internal readback load is mutated (or fails)
+// so the production exact ordered comparison is exercised directly. Temp
+// dirs only; no host journal is touched.
+class ReadbackTamperJournal : public KConfigFileJournal
+{
+public:
+    using KConfigFileJournal::KConfigFileJournal;
+    mutable bool failLoad = false;
+    mutable std::function<void(ShortcutJournal &)> mutate;
+    bool load(ShortcutJournal *journal, QString *error) const override
+    {
+        if (failLoad) {
+            return false;
+        }
+        if (!KConfigFileJournal::load(journal, error)) {
+            return false;
+        }
+        if (mutate) {
+            mutate(*journal);
+        }
+        return true;
+    }
+};
+
 QString oversizedString();
 
 void seedReady6(FakeShortcutStore &store, const QList<int> &focusPre, const QList<int> &lockPre)
@@ -622,6 +648,17 @@ void fillResizeReady(ShortcutJournal &journal, const QList<int> &upPre, const QL
     journal.row2Kind = shortcutResolutionClear();
     journal.row3Kind = shortcutResolutionClear();
     journal.row4Kind = shortcutResolutionClear();
+}
+
+void makeValidV3Journal(ShortcutJournal &journal)
+{
+    journal.schema = shortcutJournalSchema();
+    journal.phase = shortcutJournalPhasePending();
+    journal.owner = QStringLiteral(":1.20");
+    journal.uid = static_cast<uint>(::geteuid());
+    journal.focus = {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}, QList<int>{META_L}};
+    journal.lock = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}, QList<int>{META_ESC}};
+    fillResizeReady(journal, QList<int>{7}, QList<int>{8});
 }
 
 void applySuccessAndOrder()
@@ -3921,6 +3958,99 @@ void v2CompletedUpgradeInterruptedResumes()
     CHECK(!journal.present);
 }
 
+void journalReadbackSingleFieldTamperingRefuses()
+{
+    // Unloadable readback keeps the distinct failed token (not mismatch).
+    {
+        QTemporaryDir dir;
+        CHECK(dir.isValid());
+        ReadbackTamperJournal journal(dir.path() + QStringLiteral("/journalrc"));
+        ShortcutJournal valid;
+        makeValidV3Journal(valid);
+        journal.failLoad = true;
+        QString error;
+        CHECK(!journal.persist(valid, &error));
+        CHECK(error.contains(QStringLiteral("journal readback failed")));
+    }
+    // One representative late-v3-entry field refuses with mismatch.
+    {
+        QTemporaryDir dir;
+        CHECK(dir.isValid());
+        ReadbackTamperJournal journal(dir.path() + QStringLiteral("/journalrc"));
+        ShortcutJournal valid;
+        makeValidV3Journal(valid);
+        journal.mutate = [](ShortcutJournal &j) {
+            j.monocle.post = QList<int>{888888};
+        };
+        QString error;
+        CHECK(!journal.persist(valid, &error));
+        CHECK(error.contains(QStringLiteral("journal readback mismatch")));
+    }
+    // v2 persists compare all ten entries too: an unused new-row field
+    // mutated on a v2 image refuses even though v2 validation ignores it.
+    {
+        QTemporaryDir dir;
+        CHECK(dir.isValid());
+        ReadbackTamperJournal journal(dir.path() + QStringLiteral("/journalrc"));
+        ShortcutJournal v2;
+        fillV2Ready(v2);
+        journal.mutate = [](ShortcutJournal &j) {
+            j.floatToggle.pre = QList<int>{123};
+        };
+        QString error;
+        CHECK(!journal.persist(v2, &error));
+        CHECK(error.contains(QStringLiteral("journal readback mismatch")));
+    }
+}
+
+void v2PendingUpgradePreservesPhaseAndOldPreimages()
+{
+    // Pending (non-completed) v2 upgrades share the single persist path but
+    // keep their phase: an interrupted pending upgrade is a resumable v3
+    // image with original old-row preimages and live-adopted new rows.
+    const QString phases[2] = {shortcutJournalPhasePending(), shortcutJournalPhaseFocusApplied()};
+    for (const QString &phase : phases) {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
+        for (ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("plasma-auto-tiler-toggle-float")
+                || tuple.action == QStringLiteral("plasma-auto-tiler-toggle-maximize")) {
+                tuple.active = QList<int>();
+            }
+            if (tuple.action == QStringLiteral("Grid View")) {
+                tuple.active = QList<int>{META_G};
+            }
+            if (tuple.action == QStringLiteral("KrohnkiteMonocleLayout")) {
+                tuple.active = QList<int>{META_M};
+            }
+        }
+        store.failNextWrite = true;
+        FakeJournal journal;
+        ShortcutJournal v2;
+        fillV2Ready(v2);
+        v2.phase = phase;
+        journal.present = true;
+        journal.stored = v2;
+        const ShortcutApplyResult interrupted = ShortcutReconciler(&store, &journal).apply();
+        CHECK(!interrupted.ok);
+        CHECK(journal.present);
+        CHECK(journal.stored.schema == shortcutJournalSchema());
+        CHECK(journal.stored.phase == phase);
+        CHECK(journal.stored.focus.pre == (QList<int>{1}));
+        CHECK(journal.stored.lock.pre == (QList<int>{META_L}));
+        CHECK(journal.stored.resizeUp.pre == (QList<int>{7}));
+        CHECK(journal.stored.switchNext.pre == (QList<int>{META_ALT_K}));
+        CHECK(journal.stored.resizeRight.pre == (QList<int>{8}));
+        CHECK(journal.stored.switchLast.pre == (QList<int>{META_ALT_L}));
+        CHECK(journal.stored.gridView.pre == (QList<int>{META_G}));
+        CHECK(journal.stored.gridView.post.isEmpty());
+        CHECK(journal.stored.monocle.pre == (QList<int>{META_M}));
+        CHECK(journal.stored.monocle.post.isEmpty());
+        CHECK(journal.stored.row3Kind == shortcutResolutionClear());
+        CHECK(journal.stored.row4Kind == shortcutResolutionClear());
+    }
+}
+
 void v2JournalUpgradeAndRevertCompat()
 {
     // A persisted v2 pending journal resumes its three rows, upgrades to v3
@@ -4960,6 +5090,7 @@ int main(int argc, char **argv)
     }
     if (scenario == QStringLiteral("all") || scenario == QStringLiteral("journal")) {
         kconfigJournalWriteSyncReadback();
+        journalReadbackSingleFieldTamperingRefuses();
         journalPathSafety();
         fakeJournalMirrorsRealValidation();
         schemaV1UpgradeExplicit();
@@ -4968,6 +5099,7 @@ int main(int argc, char **argv)
         v2CompletedUpgradeAppliesNewRows();
         v2CompletedUpgradeDriftRefusesWithoutUpgrade();
         v2CompletedUpgradeInterruptedResumes();
+        v2PendingUpgradePreservesPhaseAndOldPreimages();
         completedV2OldRowMismatchRefusesDrift();
         legacyMigrationNormalPath();
         legacyMigrationFailClosed();

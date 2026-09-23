@@ -55,8 +55,6 @@ each review claim before acting; it was a static sampling review.
   Related: Ghostty short-frame items below.
 - P0 | AR13 Same-UID-trusted threat model and tray simplification | 7.12.
   Awaiting user decision: security posture change.
-- P0 | AR14 Shortcut override journal simplification | Rec 11; focused read of
-  `shortcutreconciler.cpp` first.
 - P0 | AR15 Script-only tiling settings | 7.4. Awaiting user decision: changes
   single-KCM settings ownership.
 - P0 | AR16 Size caps | 7.13. Awaiting user decision: replace count caps with

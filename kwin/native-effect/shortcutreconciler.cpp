@@ -240,6 +240,13 @@ const QDBusArgument &operator>>(const QDBusArgument &argument, ShortcutInfoField
     return argument;
 }
 
+// Shared exact journal-entry comparison (component/action/pre/post), used by
+// the persist readback and the force upgrade stale-image checks alike.
+bool journalEntryEqual(const ShortcutJournalEntry &a, const ShortcutJournalEntry &b)
+{
+    return a.component == b.component && a.action == b.action && a.pre == b.pre && a.post == b.post;
+}
+
 namespace
 {
 
@@ -373,6 +380,30 @@ bool readJournalEntry(const KConfigGroup &group, const QString &prefix, Shortcut
     out->action = group.readEntry(prefix + QStringLiteral("Action"), QString());
     return readJournalKeys(group, prefix + QStringLiteral("Pre"), &out->pre, error)
         && readJournalKeys(group, prefix + QStringLiteral("Post"), &out->post, error);
+}
+
+// One exact ordered journal comparison for persist readback: every scalar
+// field in fixed order, including all ten entries even for v2 (v2 persists
+// carry the new rows empty and inert, so they must round-trip too) and all
+// schema, phase, owner, UID, and row-kind scalars.
+bool journalsEqual(const ShortcutJournal &a, const ShortcutJournal &b)
+{
+    if (a.schema != b.schema || a.phase != b.phase || a.owner != b.owner || a.uid != b.uid) {
+        return false;
+    }
+    const ShortcutJournalEntry *aEntries[10] = {&a.focus, &a.lock, &a.resizeUp, &a.switchNext,
+                                                &a.resizeRight, &a.switchLast, &a.floatToggle, &a.gridView,
+                                                &a.maximizeToggle, &a.monocle};
+    const ShortcutJournalEntry *bEntries[10] = {&b.focus, &b.lock, &b.resizeUp, &b.switchNext,
+                                                &b.resizeRight, &b.switchLast, &b.floatToggle, &b.gridView,
+                                                &b.maximizeToggle, &b.monocle};
+    for (int i = 0; i < 10; ++i) {
+        if (!journalEntryEqual(*aEntries[i], *bEntries[i])) {
+            return false;
+        }
+    }
+    return a.row0Kind == b.row0Kind && a.row1Kind == b.row1Kind && a.row2Kind == b.row2Kind
+        && a.row3Kind == b.row3Kind && a.row4Kind == b.row4Kind;
 }
 
 bool ensurePrivateDir(const QString &dirPath, QString *error)
@@ -2099,30 +2130,7 @@ bool KConfigFileJournal::persist(const ShortcutJournal &journal, QString *error)
         }
         return false;
     }
-    if (readback.schema != journal.schema || readback.phase != journal.phase || readback.owner != journal.owner
-        || readback.uid != journal.uid || readback.focus.component != journal.focus.component
-        || readback.focus.action != journal.focus.action || readback.focus.pre != journal.focus.pre
-        || readback.focus.post != journal.focus.post || readback.lock.component != journal.lock.component
-        || readback.lock.action != journal.lock.action || readback.lock.pre != journal.lock.pre
-        || readback.lock.post != journal.lock.post || readback.resizeUp.component != journal.resizeUp.component
-        || readback.resizeUp.action != journal.resizeUp.action || readback.resizeUp.pre != journal.resizeUp.pre
-        || readback.resizeUp.post != journal.resizeUp.post || readback.switchNext.component != journal.switchNext.component
-        || readback.switchNext.action != journal.switchNext.action || readback.switchNext.pre != journal.switchNext.pre
-        || readback.switchNext.post != journal.switchNext.post || readback.resizeRight.component != journal.resizeRight.component
-        || readback.resizeRight.action != journal.resizeRight.action || readback.resizeRight.pre != journal.resizeRight.pre
-        || readback.resizeRight.post != journal.resizeRight.post || readback.switchLast.component != journal.switchLast.component
-        || readback.switchLast.action != journal.switchLast.action || readback.switchLast.pre != journal.switchLast.pre
-        || readback.switchLast.post != journal.switchLast.post || readback.floatToggle.component != journal.floatToggle.component
-        || readback.floatToggle.action != journal.floatToggle.action || readback.floatToggle.pre != journal.floatToggle.pre
-        || readback.floatToggle.post != journal.floatToggle.post || readback.gridView.component != journal.gridView.component
-        || readback.gridView.action != journal.gridView.action || readback.gridView.pre != journal.gridView.pre
-        || readback.gridView.post != journal.gridView.post || readback.maximizeToggle.component != journal.maximizeToggle.component
-        || readback.maximizeToggle.action != journal.maximizeToggle.action || readback.maximizeToggle.pre != journal.maximizeToggle.pre
-        || readback.maximizeToggle.post != journal.maximizeToggle.post || readback.monocle.component != journal.monocle.component
-        || readback.monocle.action != journal.monocle.action || readback.monocle.pre != journal.monocle.pre
-        || readback.monocle.post != journal.monocle.post || readback.row0Kind != journal.row0Kind
-        || readback.row1Kind != journal.row1Kind || readback.row2Kind != journal.row2Kind
-        || readback.row3Kind != journal.row3Kind || readback.row4Kind != journal.row4Kind) {
+    if (!journalsEqual(readback, journal)) {
         if (error) {
             *error = QStringLiteral("journal readback mismatch");
         }
@@ -2683,40 +2691,31 @@ ShortcutApplyResult ShortcutReconciler::applyImpl(const ShortcutForcePreview *fo
                     result.writes = usedWrites();
                     return result;
                 }
-                journal.floatToggle = {shortcutFloatComponent(), shortcutFloatAction(), floatCurrent.active,
-                                       floatPost};
-                journal.gridView = {shortcutGridViewComponent(), shortcutGridViewAction(),
-                                    gridViewCurrent.active, QList<int>{}};
-                journal.maximizeToggle = {shortcutMaximizeComponent(), shortcutMaximizeAction(),
-                                          maximizeCurrent.active, maximizePost};
-                journal.monocle = {shortcutMonocleComponent(), shortcutMonocleAction(), monocleCurrent.active,
-                                   QList<int>{}};
-                journal.row3Kind = shortcutResolutionClear();
-                journal.row4Kind = shortcutResolutionClear();
-                journal.schema = shortcutJournalSchema();
+            }
+            // One shared v2->v3 upgrade construction and persist path: the
+            // two new rows are built from current live bindings (pre = live,
+            // post = table image) while the three recorded rows stay
+            // untouched. Only a legitimate completed upgrade demotes to
+            // focus-applied so the new rows resume; pending upgrades keep
+            // their phase.
+            journal.floatToggle = {shortcutFloatComponent(), shortcutFloatAction(), floatCurrent.active,
+                                   floatPost};
+            journal.gridView = {shortcutGridViewComponent(), shortcutGridViewAction(), gridViewCurrent.active,
+                                QList<int>{}};
+            journal.maximizeToggle = {shortcutMaximizeComponent(), shortcutMaximizeAction(), maximizeCurrent.active,
+                                      maximizePost};
+            journal.monocle = {shortcutMonocleComponent(), shortcutMonocleAction(), monocleCurrent.active,
+                               QList<int>{}};
+            journal.row3Kind = shortcutResolutionClear();
+            journal.row4Kind = shortcutResolutionClear();
+            journal.schema = shortcutJournalSchema();
+            if (completingUpgrade) {
                 journal.phase = shortcutJournalPhaseFocusApplied();
-                if (!m_journal->persist(journal, &error)) {
-                    result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
-                    result.writes = usedWrites();
-                    return result;
-                }
-            } else {
-                journal.floatToggle = {shortcutFloatComponent(), shortcutFloatAction(), floatCurrent.active,
-                                       floatPost};
-                journal.gridView = {shortcutGridViewComponent(), shortcutGridViewAction(),
-                                    gridViewCurrent.active, QList<int>{}};
-                journal.maximizeToggle = {shortcutMaximizeComponent(), shortcutMaximizeAction(),
-                                          maximizeCurrent.active, maximizePost};
-                journal.monocle = {shortcutMonocleComponent(), shortcutMonocleAction(), monocleCurrent.active,
-                                   QList<int>{}};
-                journal.row3Kind = shortcutResolutionClear();
-                journal.row4Kind = shortcutResolutionClear();
-                journal.schema = shortcutJournalSchema();
-                if (!m_journal->persist(journal, &error)) {
-                    result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
-                    result.writes = usedWrites();
-                    return result;
-                }
+            }
+            if (!m_journal->persist(journal, &error)) {
+                result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
+                result.writes = usedWrites();
+                return result;
             }
         }
         if (journal.phase == shortcutJournalPhaseComplete()) {
@@ -3409,11 +3408,6 @@ bool forceMismatchEqual(const ShortcutForceMismatch &a, const ShortcutForceMisma
         && a.actual == b.actual && a.post == b.post;
 }
 
-bool forceEntryEqual(const ShortcutJournalEntry &a, const ShortcutJournalEntry &b)
-{
-    return a.component == b.component && a.action == b.action && a.pre == b.pre && a.post == b.post;
-}
-
 bool forceLiveSnapshotEqual(const ShortcutForcePreview &a, const ShortcutForcePreview &b)
 {
     return a.owner == b.owner && a.uid == b.uid && a.liveImages == b.liveImages && a.journalOwner == b.journalOwner;
@@ -3660,12 +3654,12 @@ ShortcutForceApplyResult ShortcutReconciler::applyForced(const ShortcutForcePrev
     }
     if (confirmed.context == ShortcutForceContext::V2Upgrade) {
         if (current.journalSchema != confirmed.journalSchema || current.journalPhase != confirmed.journalPhase
-            || !forceEntryEqual(current.focusPre, confirmed.focusPre)
-            || !forceEntryEqual(current.lockPre, confirmed.lockPre)
-            || !forceEntryEqual(current.resizeUpPre, confirmed.resizeUpPre)
-            || !forceEntryEqual(current.switchNextPre, confirmed.switchNextPre)
-            || !forceEntryEqual(current.resizeRightPre, confirmed.resizeRightPre)
-            || !forceEntryEqual(current.switchLastPre, confirmed.switchLastPre)) {
+            || !journalEntryEqual(current.focusPre, confirmed.focusPre)
+            || !journalEntryEqual(current.lockPre, confirmed.lockPre)
+            || !journalEntryEqual(current.resizeUpPre, confirmed.resizeUpPre)
+            || !journalEntryEqual(current.switchNextPre, confirmed.switchNextPre)
+            || !journalEntryEqual(current.resizeRightPre, confirmed.resizeRightPre)
+            || !journalEntryEqual(current.switchLastPre, confirmed.switchLastPre)) {
             return fail(QStringLiteral("confirmed force image is stale; re-preview before forcing"), "stale");
         }
     }
