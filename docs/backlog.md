@@ -11,8 +11,10 @@ each review claim before acting; it was a static sampling review.
   membership baselines, `hiddenIntentFor`, and reconcile counters/thresholds.
   Collapsing intermediate layout writes is selected (review 7.7), preserving
   final order, focus, desktop behavior and independent per-domain state.
-  Two core approaches failed independent review and were reverted; restart
-  from a validated multi-domain observation boundary.
+  Blocked: three attempts and a design review failed. Session removal requires
+  a pre-removal observation, so post-only sync needs either a retained
+  historical baseline or changed fence semantics (AR11 territory). Awaiting
+  user decision; recommended: defer behind AR11.
   [scope](changes/architecture-review-ar4-observation-sync.md)
 - P0 | AR5 LayoutPolicy seam and Session split | 7.9: `cosmic_v1` behind
   `LayoutPolicy`; split `Session` along the seam. bspwm_v1 scope awaits user
