@@ -266,20 +266,6 @@ Historical implementation detail is recoverable in Git history.
   or user physical or manual action on its own; `journey_ready` and
   `authoritative_ready` remain false until the applicable acceptance gates are
   established; carrier setup is limited to its bounded operational binding.
-- The standing authorization currently selects only bounded read-only
-  `DescribeAdvisoryPlan` host transport journeys: start and stop one uniquely
-  namespaced project planner service and load, run, then unload only the exact
-  standalone advisory KWin Script object. It excludes all native-window,
-  focus, geometry, workspace, output, configuration, shortcut, Custom Tile,
-  production-plugin lifecycle, session-boundary, manual, and physical action.
-  Each journey must preserve an exact-three active-output/current-desktop
-  scope without manufacturing it, pin KWin and planner ownership, use one
-  in-flight correlation, and prove exact restoration. A reviewed static
-  correction permits one fresh bounded retry only when earlier work stopped
-  before resource creation or proved exact restoration with no ambiguous
-  residue. The authorization is revoked for any restoration ambiguity,
-  broader host mutation, material security/product/architecture change, or
-  need for manual arrangement; stop and ask the user in those cases.
 - The user subsequently authorized reversible project-scoped KWin, session
   D-Bus, and Rust Planner testing for Rust-authority diagnosis. Each attempt
   must pin exact source, owner, baseline, bounded resources, and restoration;
