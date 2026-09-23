@@ -2003,3 +2003,237 @@ fn directional_status_rejects_malformed_and_scope_violations() {
     assert_eq!(single_reply["kind"], "snapshot-invalid", "{single_reply}");
     assert_eq!(single_reply["detail"], "domain-invalid", "{single_reply}");
 }
+
+#[test]
+fn r4_typed_codec_ack_verify_status_cancel_wire_golden() {
+    // Wire golden for the tagged `SyncCommand` conversion of the directional
+    // R4 phases: plan/ack/verify plus read-only status and cancel, byte-exact
+    // through the in-place typed parse. The pre-binding dispatch boundary,
+    // read-only status contract, and cancel withdraw effects are unchanged.
+    // Literals recorded from the production `evaluate` path before the
+    // switch (offline, no host mutation).
+    let mut planner = Planner::new();
+    let planned_str = planner.evaluate(&request_with_domain(
+        "gold-r4-1",
+        "win-b",
+        vec![
+            win("win-a", "out-1", "ws-a", 10, 10, 100, 80),
+            win("win-b", "out-1", "ws-a", 400, 10, 100, 80),
+            win("win-x", "out-2", "ws-b", 810, 10, 100, 80),
+        ],
+        move_cmd("win-b", "right"),
+        left_source_domain(),
+        Some(left_domains_payload()),
+    ));
+    assert_eq!(
+        planned_str,
+        "{\"v\":1,\"correlation_id\":\"gold-r4-1\",\"outcome\":\"planned\",\"base_revision\":1,\"detail\":{\"capability\":\"CrossOutputTransfer\",\"direction\":\"right\",\"kind\":\"move\",\"rule\":\"R4\"},\"desired_geometry\":[{\"window\":\"win-a\",\"leaf\":\"fit-l0\",\"output\":\"out-1\",\"workspace\":\"ws-a\",\"rect\":{\"x\":8,\"y\":8,\"w\":784,\"h\":584}},{\"window\":\"win-b\",\"leaf\":\"fit-l1\",\"output\":\"out-2\",\"workspace\":\"ws-b\",\"rect\":{\"x\":808,\"y\":8,\"w\":390,\"h\":584}},{\"window\":\"win-x\",\"leaf\":\"pair-target-0\",\"output\":\"out-2\",\"workspace\":\"ws-b\",\"rect\":{\"x\":1202,\"y\":8,\"w\":390,\"h\":584}}],\"desired_focus\":{\"domain_output\":\"out-2\",\"domain_workspace\":\"ws-b\",\"leaf\":\"fit-l1\"},\"preconditions\":[\"focused-leaf-occupied-by-focused-window\",\"source-root-membership-and-adjacent-same-workspace-output\",\"adapter-must-verify-postconditions\"],\"operation\":{\"capability\":\"CrossOutputTransfer\",\"direction\":\"right\",\"leaf\":\"fit-l1\",\"op\":\"move\",\"rule\":\"R4\",\"source_output\":\"out-1\",\"source_root_child_index\":1,\"source_workspace\":\"ws-a\",\"target\":\"occupied\",\"target_output\":\"out-2\",\"target_workspace\":\"ws-b\",\"window\":\"win-b\"}}",
+    );
+    let planned = parse(&planned_str);
+    let base = planned["base_revision"].as_u64().expect("base");
+    let post = post_windows_from_geometry(&planned["desired_geometry"]);
+    assert_eq!(
+        planner.evaluate(&status_request("gold-r4-1", base, post.clone())),
+        "{\"v\":1,\"correlation_id\":\"gold-r4-1\",\"outcome\":\"status\",\"kind\":\"post-unacked\",\"base_revision\":1}",
+    );
+    assert_eq!(
+        planner.evaluate(&ack_request("gold-r4-1", base, post.clone(), "accepted")),
+        "{\"v\":1,\"correlation_id\":\"gold-r4-1\",\"outcome\":\"acknowledged\",\"kind\":\"directional-move\",\"base_revision\":1}",
+    );
+    assert_eq!(
+        planner.evaluate(&status_request("gold-r4-1", base, post.clone())),
+        "{\"v\":1,\"correlation_id\":\"gold-r4-1\",\"outcome\":\"status\",\"kind\":\"post-acked\",\"base_revision\":1}",
+    );
+    assert_eq!(
+        planner.evaluate(&verify_request(
+            "gold-r4-1",
+            base,
+            post,
+            planned["preconditions"].clone(),
+            planned["operation"].clone(),
+        )),
+        "{\"v\":1,\"correlation_id\":\"gold-r4-1\",\"outcome\":\"committed\",\"kind\":\"directional-move\",\"base_revision\":2}",
+    );
+    // Cancel withdraws a freshly staged pair pending on exact pre-image
+    // proof, preserving the canonical sessions.
+    let mut canceller = Planner::new();
+    let staged = parse(&canceller.evaluate(&request_with_domain(
+        "gold-r4-2",
+        "win-b",
+        vec![
+            win("win-a", "out-1", "ws-a", 10, 10, 100, 80),
+            win("win-b", "out-1", "ws-a", 400, 10, 100, 80),
+            win("win-x", "out-2", "ws-b", 810, 10, 100, 80),
+        ],
+        move_cmd("win-b", "right"),
+        left_source_domain(),
+        Some(left_domains_payload()),
+    )));
+    assert_eq!(staged["outcome"], "planned", "{staged}");
+    let mut cancel: serde_json::Value = serde_json::from_str(&request_with_domain(
+        "gold-r4-2",
+        "win-b",
+        vec![
+            win("win-a", "out-1", "ws-a", 10, 10, 100, 80),
+            win("win-b", "out-1", "ws-a", 400, 10, 100, 80),
+            win("win-x", "out-2", "ws-b", 810, 10, 100, 80),
+        ],
+        serde_json::json!({"op": "directional-move-cancel", "zero_dispatch": true}),
+        left_source_domain(),
+        Some(left_domains_payload()),
+    ))
+    .expect("cancel request");
+    cancel["revision"] = serde_json::json!(0);
+    assert_eq!(
+        canceller.evaluate(&cancel.to_string()),
+        "{\"v\":1,\"correlation_id\":\"gold-r4-2\",\"outcome\":\"cancelled\",\"kind\":\"directional-move\",\"base_revision\":1}",
+    );
+}
+
+#[test]
+fn r4_verify_echo_typed_boundary_wire_golden() {
+    // Byte-level golden for the verify echo boundary (directional R4 route):
+    // malformed nested preconditions/operation reject as `verify-invalid`
+    // before any pending handling, `verified: false` diverges before echo
+    // parsing, and the exact echo still commits. Literals recorded from the
+    // production `evaluate` path (offline, no host mutation); the typed
+    // `SyncCommand` conversion must reproduce them byte-exact.
+    let mut planner = Planner::new();
+    let planned = plan_r4_occupied(&mut planner, "gold-r4-verify-1");
+    let base = planned["base_revision"].as_u64().expect("base");
+    let post = post_windows_from_geometry(&planned["desired_geometry"]);
+    let acked = parse(&planner.evaluate(&ack_request(
+        "gold-r4-verify-1",
+        base,
+        post.clone(),
+        "accepted",
+    )));
+    assert_eq!(acked["outcome"], "acknowledged", "{acked}");
+    let good_pre = planned["preconditions"].clone();
+    let good_op = planned["operation"].clone();
+    // Malformed nested echoes reject as `verify-invalid` before any pending
+    // handling, so the staged pending survives every probe below.
+    let malformed: &[(&str, serde_json::Value, serde_json::Value, &str)] = &[
+        (
+            "gold-r4-verify-2",
+            serde_json::json!("focused-leaf-occupied-by-focused-window"),
+            good_op.clone(),
+            "{\"v\":1,\"correlation_id\":\"gold-r4-verify-2\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"preconditions are invalid\"}",
+        ),
+        (
+            "gold-r4-verify-3",
+            serde_json::json!(["focused-leaf-occupied-by-focused-window", 7]),
+            good_op.clone(),
+            "{\"v\":1,\"correlation_id\":\"gold-r4-verify-3\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"preconditions are invalid\"}",
+        ),
+        (
+            "gold-r4-verify-4",
+            serde_json::json!(["bogus-token"]),
+            good_op.clone(),
+            "{\"v\":1,\"correlation_id\":\"gold-r4-verify-4\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"preconditions are invalid\"}",
+        ),
+        (
+            "gold-r4-verify-5",
+            good_pre.clone(),
+            serde_json::json!({"op": "move", "rule": "R3", "capability": "CrossOutputTransfer", "direction": "right", "window": "win-b", "leaf": "fit-l1", "source_output": "out-1", "source_workspace": "ws-a", "target_output": "out-2", "target_workspace": "ws-b", "source_root_child_index": 1, "target": "occupied"}),
+            "{\"v\":1,\"correlation_id\":\"gold-r4-verify-5\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"operation is invalid\"}",
+        ),
+        (
+            "gold-r4-verify-6",
+            good_pre.clone(),
+            serde_json::json!({"op": "move", "rule": "R4", "capability": "CrossOutputTransfer", "direction": "right", "window": "win-b", "leaf": "fit-l1", "source_output": "out-1", "source_workspace": "ws-a", "target_output": "out-2", "target_workspace": "ws-b", "source_root_child_index": "1", "target": "occupied"}),
+            "{\"v\":1,\"correlation_id\":\"gold-r4-verify-6\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"operation is invalid\"}",
+        ),
+        (
+            "gold-r4-verify-7",
+            good_pre.clone(),
+            serde_json::json!({"op": "move", "rule": "R4", "capability": "CrossOutputTransfer", "direction": "right", "window": "win-b", "leaf": "fit-l1", "source_output": "out-1", "source_workspace": "ws-a", "target_output": "out-2", "target_workspace": "ws-b", "source_root_child_index": 1, "target": "midpoint"}),
+            "{\"v\":1,\"correlation_id\":\"gold-r4-verify-7\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"operation is invalid\"}",
+        ),
+    ];
+    for (cid, preconditions, operation, expected) in malformed {
+        assert_eq!(
+            planner.evaluate(&verify_request(
+                cid,
+                base,
+                post.clone(),
+                preconditions.clone(),
+                operation.clone()
+            )),
+            *expected,
+            "{cid}",
+        );
+    }
+    // The `verified` flag gates before echo parsing: an unverified report
+    // with garbage echoes diverges as postcondition-unverified, never
+    // `verify-invalid`.
+    let mut unverified: serde_json::Value = serde_json::from_str(&verify_request(
+        "gold-r4-verify-8",
+        base,
+        post.clone(),
+        serde_json::json!([7]),
+        serde_json::json!([]),
+    ))
+    .expect("verify JSON");
+    unverified["command"]["verified"] = serde_json::json!(false);
+    assert_eq!(
+        planner.evaluate(&unverified.to_string()),
+        "{\"v\":1,\"correlation_id\":\"gold-r4-verify-8\",\"outcome\":\"diverged\",\"kind\":\"postcondition-unverified\",\"message\":\"adapter did not verify postconditions\"}",
+    );
+    // The exact echo still commits after every probe above: echo parsing
+    // never consumed the pending.
+    assert_eq!(
+        planner.evaluate(&verify_request(
+            "gold-r4-verify-1",
+            base,
+            post.clone(),
+            good_pre.clone(),
+            good_op.clone(),
+        )),
+        format!(
+            "{{\"v\":1,\"correlation_id\":\"gold-r4-verify-1\",\"outcome\":\"committed\",\"kind\":\"directional-move\",\"base_revision\":{}}}",
+            base + 1
+        ),
+    );
+    // Echo parsing precedes pending checks: malformed echoes on a planner
+    // with no pending report `verify-invalid`, never `no-pending`.
+    let mut fresh = Planner::new();
+    assert_eq!(
+        fresh.evaluate(&verify_request(
+            "gold-r4-verify-9",
+            base,
+            post.clone(),
+            serde_json::json!([7]),
+            good_op.clone(),
+        )),
+        "{\"v\":1,\"correlation_id\":\"gold-r4-verify-9\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"preconditions are invalid\"}",
+    );
+    // Extra fencing fields stay lenient: the exact echo plus one unknown
+    // nested field still commits on a freshly staged pair.
+    let mut lenient = Planner::new();
+    let staged = plan_r4_occupied(&mut lenient, "gold-r4-verify-10");
+    let staged_base = staged["base_revision"].as_u64().expect("base");
+    let staged_post = post_windows_from_geometry(&staged["desired_geometry"]);
+    let staged_ack = parse(&lenient.evaluate(&ack_request(
+        "gold-r4-verify-10",
+        staged_base,
+        staged_post.clone(),
+        "accepted",
+    )));
+    assert_eq!(staged_ack["outcome"], "acknowledged", "{staged_ack}");
+    let mut extra_op = staged["operation"].clone();
+    extra_op["bogus"] = serde_json::json!(1);
+    assert_eq!(
+        lenient.evaluate(&verify_request(
+            "gold-r4-verify-10",
+            staged_base,
+            staged_post,
+            staged["preconditions"].clone(),
+            extra_op,
+        )),
+        format!(
+            "{{\"v\":1,\"correlation_id\":\"gold-r4-verify-10\",\"outcome\":\"committed\",\"kind\":\"directional-move\",\"base_revision\":{}}}",
+            staged_base + 1
+        ),
+    );
+}

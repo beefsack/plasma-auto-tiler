@@ -209,6 +209,8 @@ impl PlannerEndpoint {
         #[zbus(header)] header: zbus::message::Header<'_>,
         #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
     ) -> Result<String, PlannerError> {
+        // KWin serializes Plan requests with its in-flight guard. This lock
+        // rejects concurrent callers as busy rather than queueing them.
         // Stage 4 retained planning route: same bounded non-queuing
         // single-flight, same-UID verification, connection-loss, and
         // reply-size checks as the four legacy routes. Authorized requests

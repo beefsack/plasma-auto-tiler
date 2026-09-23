@@ -39,8 +39,9 @@ use tiler_core::contract::{
     LifecyclePostObservation, LifecyclePrecondition, Observation,
 };
 use tiler_core::directional::{
-    Axis, Capabilities, Direction, Node, NodeId, OutputId, WindowId, WindowLink, WorkspaceId,
+    Capabilities, Direction, Node, NodeId, OutputId, WindowId, WindowLink, WorkspaceId,
 };
+use tiler_core::engine::Engine;
 use tiler_core::geometry::{Rect, project};
 use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
 use tiler_core::reconcile::{AckError, CancelUnackedError, VerifyError};
@@ -1542,144 +1543,46 @@ fn seed_target_bounds(session: &Session, domain: &OutputDomain) -> Rect {
     domain.bounds
 }
 
-/// Deterministic near-strip fit over the current admission's complete
-/// carried rectangles.
-///
-/// A simple best-effort project policy, not topology reconstruction and not
-/// exact recognition: succeeds only when every non-excluded rectangle is
-/// valid, contained in the already-inset domain, and non-overlapping, plus
-/// one axis has unambiguous sequential primary intervals. A horizontal
-/// near-strip sorts by the existing `(x, y, w, h)` key and needs each
-/// carried positive x interval strictly non-overlapping and sequential
-/// (`previous.x + previous.w <= next.x`), regardless of domain edge offsets,
-/// cross-axis drift, or the observed inter-window gap; vertical mirrors by
-/// sorting on `(y, x, h, w)` and checking `previous.y + previous.h <=
-/// next.y`. A single window stays on the normal path (`None`).
-///
-/// Each supported axis builds one ordered flat N-ary `Node::Group` along
-/// that axis with the observed primary spans (`w` horizontal, `h` vertical)
-/// as shares, then projects it with the existing
-/// `project(domain.bounds, domain.gap)` as the canonical valid complete
-/// result with the configured gap. No exact input reprojection is required.
-/// When both axes support, the fixed Horizontal tie-break applies. Anything
-/// else returns `None` for the normal deterministic seed/reflow. Grids,
-/// nested, and T arrangements with primary-interval overlap on both axes are
-/// normal unsupported fallback, not fitted topology. Topology decisions use
-/// only rectangle geometry (never opaque window ids); leaf/group ids are
-/// safe internal deterministic index names.
-fn try_flat_strip_fit(
-    domain: &OutputDomain,
-    windows: &[ObservedDto],
-) -> Option<(Node, Vec<WindowLink>)> {
-    if windows.len() < 2 || windows.len() > PLAN_MAX_WINDOWS {
-        return None;
-    }
-    if windows.iter().any(|w| w.floating || w.fit_excluded) {
-        return None;
-    }
-    let mut items: Vec<(WindowId, Rect)> = Vec::with_capacity(windows.len());
-    for entry in windows {
-        let rect = Rect {
+/// Convert carried wire windows to the portable near-strip fitter.
+fn engine_window_from_dto(entry: &ObservedDto) -> tiler_core::seed::EngineWindow {
+    tiler_core::seed::EngineWindow {
+        window: WindowId(entry.window.clone()),
+        output: OutputId(entry.output.clone()),
+        workspace: WorkspaceId(entry.workspace.clone()),
+        rect: Rect {
             x: entry.rect.x,
             y: entry.rect.y,
             w: entry.rect.w,
             h: entry.rect.h,
-        };
-        if !valid_carried_rect(rect.x, rect.y, rect.w, rect.h) {
-            return None;
-        }
-        if !rect_contained(rect, domain.bounds) {
-            return None;
-        }
-        items.push((WindowId(entry.window.clone()), rect));
+        },
+        floating: entry.floating,
+        fit_excluded: entry.fit_excluded,
     }
-    for i in 0..items.len() {
-        for (_, other) in items.iter().skip(i + 1) {
-            let (a, b) = (items[i].1, *other);
-            if a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h {
-                return None;
-            }
-        }
+}
+
+fn observed_dto_from_engine(entry: &tiler_core::seed::EngineWindow) -> ObservedDto {
+    ObservedDto {
+        window: entry.window.0.clone(),
+        output: entry.output.0.clone(),
+        workspace: entry.workspace.0.clone(),
+        rect: RectDto {
+            x: entry.rect.x,
+            y: entry.rect.y,
+            w: entry.rect.w,
+            h: entry.rect.h,
+        },
+        floating: entry.floating,
+        fit_excluded: entry.fit_excluded,
     }
-    // One axis attempt: sort by the existing geometry key, require strictly
-    // non-overlapping sequential primary intervals with no tolerance knobs,
-    // then project one flat N-ary group with observed primary spans as
-    // shares. Edge offsets, cross-axis drift, and observed gaps never gate
-    // support; the configured-gap projection is the canonical result.
-    fn strip_candidate(
-        domain: &OutputDomain,
-        items: &[(WindowId, Rect)],
-        axis: Axis,
-    ) -> Option<(Node, Vec<WindowLink>)> {
-        let mut ordered: Vec<(WindowId, Rect)> = items.to_vec();
-        match axis {
-            Axis::Horizontal => ordered
-                .sort_by(|a, b| (a.1.x, a.1.y, a.1.w, a.1.h).cmp(&(b.1.x, b.1.y, b.1.w, b.1.h))),
-            Axis::Vertical => ordered
-                .sort_by(|a, b| (a.1.y, a.1.x, a.1.h, a.1.w).cmp(&(b.1.y, b.1.x, b.1.h, b.1.w))),
-        }
-        for pair in ordered.windows(2) {
-            let (previous, next) = (pair[0].1, pair[1].1);
-            match axis {
-                Axis::Horizontal => {
-                    if i64::from(previous.x) + i64::from(previous.w) > i64::from(next.x) {
-                        return None;
-                    }
-                }
-                Axis::Vertical => {
-                    if i64::from(previous.y) + i64::from(previous.h) > i64::from(next.y) {
-                        return None;
-                    }
-                }
-            }
-        }
-        let shares: Vec<u64> = ordered
-            .iter()
-            .map(|(_, rect)| match axis {
-                Axis::Horizontal => rect.w as u64,
-                Axis::Vertical => rect.h as u64,
-            })
-            .collect();
-        if shares.iter().any(|share| *share == 0) {
-            return None;
-        }
-        let children: Vec<Node> = (0..ordered.len())
-            .map(|i| Node::Leaf {
-                id: NodeId(format!("fit-l{i}")),
-            })
-            .collect();
-        let tree = Node::Group {
-            id: NodeId("fit-g0".to_owned()),
-            axis,
-            children,
-            shares,
-        };
-        let projected = project(&tree, domain.bounds, domain.gap).ok()?;
-        if projected.len() != ordered.len() {
-            return None;
-        }
-        let links: Vec<WindowLink> = ordered
-            .iter()
-            .enumerate()
-            .map(|(index, (window, _))| WindowLink {
-                window: window.clone(),
-                leaf: NodeId(format!("fit-l{index}")),
-                output: domain.id.clone(),
-                workspace: domain.workspace.clone(),
-            })
-            .collect();
-        Some((tree, links))
-    }
-    let horizontal = strip_candidate(domain, &items, Axis::Horizontal);
-    let vertical = strip_candidate(domain, &items, Axis::Vertical);
-    match (horizontal, vertical) {
-        // Fixed Horizontal tie-break keeps the choice deterministic when both
-        // interval orders support a near strip.
-        (Some(h), Some(_)) => Some(h),
-        (Some(h), None) => Some(h),
-        (None, Some(v)) => Some(v),
-        (None, None) => None,
-    }
+}
+
+fn try_flat_strip_fit(
+    domain: &OutputDomain,
+    windows: &[ObservedDto],
+) -> Option<(Node, Vec<WindowLink>)> {
+    let engine: Vec<tiler_core::seed::EngineWindow> =
+        windows.iter().map(engine_window_from_dto).collect();
+    tiler_core::seed::try_flat_strip_fit(domain, &engine)
 }
 
 /// Rebuild ephemeral authoritative topology from the normalized observation.
@@ -1773,44 +1676,18 @@ fn seed_session(
 }
 
 fn spatial_with_focus_last(
-    mut windows: Vec<ObservedDto>,
+    windows: Vec<ObservedDto>,
     focused: &str,
     allow_tied_observations: bool,
 ) -> Option<Vec<ObservedDto>> {
-    if !allow_tied_observations {
-        // Non-admission rebuilds reconstruct existing tiled state, so equal
-        // frame rectangles still lack a safe topology signal.
-        for (index, left) in windows.iter().enumerate() {
-            if left.window == focused {
-                continue;
-            }
-            if windows[index + 1..].iter().any(|right| {
-                right.window != focused
-                    && left.rect.x == right.rect.x
-                    && left.rect.y == right.rect.y
-                    && left.rect.w == right.rect.w
-                    && left.rect.h == right.rect.h
-            }) {
-                return None;
-            }
-        }
-    }
-    // Stable sorting preserves the adapter's observation order when carried
-    // rectangles tie during admission. Admission assigns new geometry, so an
-    // uninformative incoming rectangle must not reject the other members.
-    windows.sort_by(
-        |left, right| match (left.window == focused, right.window == focused) {
-            (true, false) => std::cmp::Ordering::Greater,
-            (false, true) => std::cmp::Ordering::Less,
-            _ => (left.rect.y, left.rect.x, left.rect.h, left.rect.w).cmp(&(
-                right.rect.y,
-                right.rect.x,
-                right.rect.h,
-                right.rect.w,
-            )),
-        },
-    );
-    Some(windows)
+    let engine: Vec<tiler_core::seed::EngineWindow> =
+        windows.iter().map(engine_window_from_dto).collect();
+    let ordered = tiler_core::seed::order_spatial_with_focus_last(
+        engine,
+        &WindowId(focused.to_owned()),
+        allow_tied_observations,
+    )?;
+    Some(ordered.iter().map(observed_dto_from_engine).collect())
 }
 
 /// One retained pending two-domain workspace-send Session for the standalone
@@ -2152,56 +2029,117 @@ fn workspace_post_matches(pending: &WorkspacePending, ctx: &Validated) -> bool {
     true
 }
 
-/// Parse a MoveTiled operation JSON body back to its typed lifecycle form.
-fn parse_move_tiled_operation(value: &serde_json::Value) -> Option<LifecycleOperation> {
-    if !value.is_object() {
+/// Deferred raw echo of a verify command's nested `preconditions`/`operation`.
+///
+/// Captures the nested JSON bytes opaquely at the tagged [`SyncCommand`]
+/// decode boundary, so the outer parse always succeeds on well-formed JSON
+/// and conversion to portable core types runs only after the `verified` gate
+/// at its exact legacy position. Handlers see only this opaque string plus
+/// the converted core types, never an untyped JSON tree: every shape failure
+/// still maps to `verify-invalid`, never to a top-level parse error.
+/// Re-serialization is outcome-preserving here because inner validation only
+/// reads strings/bools/u64 through the strict echo DTOs below, which accept
+/// exactly the shapes the previous untyped parse accepted.
+#[derive(Debug, Clone)]
+struct RawEcho(String);
+
+impl<'de> Deserialize<'de> for RawEcho {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        serde_json::to_string(&value)
+            .map(RawEcho)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+/// Typed wire echo of a MoveTiled operation carried in a verify command.
+/// No `deny_unknown_fields`: extra fencing fields stay lenient exactly like
+/// the previous untyped parse (typed operation equality plus the
+/// post-observation geometry check enforce exactness at verify time).
+/// Decoded only from the deferred [`RawEcho`] after the `verified` gate, so
+/// every shape failure still maps to `verify-invalid`.
+#[derive(Debug, Clone, Deserialize)]
+struct MoveTiledEchoDto {
+    op: String,
+    window: String,
+    leaf: String,
+    source_output: String,
+    source_workspace: String,
+    target_output: String,
+    target_workspace: String,
+}
+
+/// Typed wire echo of an R4 cross-output move operation carried in a verify
+/// command. Same leniency contract as [`MoveTiledEchoDto`]: extra fencing
+/// fields are ignored here while the typed operation equality, the fenced
+/// source/target binding, and the post-observation geometry check enforce
+/// exactness at verify time. The exact wire syntax (window/leaf/direction/
+/// source ids/capability) cannot be represented by the portable
+/// [`tiler_core::directional::MoveOperation::CrossOutput`] shape, which
+/// carries only rule/target/output/workspace/child-index/target-occupancy, so
+/// decoding stays strictly in protocol and only the portable operation is
+/// passed to the next layer (see recommendation in the work report).
+#[derive(Debug, Clone, Deserialize)]
+struct DirectionalMoveEchoDto {
+    op: String,
+    rule: String,
+    capability: String,
+    direction: String,
+    window: String,
+    leaf: String,
+    source_output: String,
+    source_workspace: String,
+    target_output: String,
+    target_workspace: String,
+    source_root_child_index: u64,
+    target: String,
+}
+
+/// Parse a MoveTiled operation echo back to its typed lifecycle form.
+/// The echo arrives as deferred [`RawEcho`] (see [`SyncCommand`]) so the
+/// outer tagged decode always succeeds on well-formed JSON and this runs only
+/// after the `verified` gate at its exact legacy position; any shape failure
+/// maps to `verify-invalid`.
+fn parse_move_tiled_operation(value: &RawEcho) -> Option<LifecycleOperation> {
+    let echo: MoveTiledEchoDto = serde_json::from_str(&value.0).ok()?;
+    if echo.op != "move-tiled" {
         return None;
     }
-    let window = value.get("window").and_then(serde_json::Value::as_str)?;
-    let leaf = value.get("leaf").and_then(serde_json::Value::as_str)?;
-    let source_output = value
-        .get("source_output")
-        .and_then(serde_json::Value::as_str)?;
-    let source_workspace = value
-        .get("source_workspace")
-        .and_then(serde_json::Value::as_str)?;
-    let target_output = value
-        .get("target_output")
-        .and_then(serde_json::Value::as_str)?;
-    let target_workspace = value
-        .get("target_workspace")
-        .and_then(serde_json::Value::as_str)?;
-    if value.get("op").and_then(serde_json::Value::as_str) != Some("move-tiled") {
-        return None;
-    }
-    if !is_opaque_id(window)
-        || !is_opaque_id(leaf)
-        || !is_opaque_id(source_output)
-        || !is_opaque_id(source_workspace)
-        || !is_opaque_id(target_output)
-        || !is_opaque_id(target_workspace)
+    if !is_opaque_id(&echo.window)
+        || !is_opaque_id(&echo.leaf)
+        || !is_opaque_id(&echo.source_output)
+        || !is_opaque_id(&echo.source_workspace)
+        || !is_opaque_id(&echo.target_output)
+        || !is_opaque_id(&echo.target_workspace)
     {
         return None;
     }
     Some(LifecycleOperation::MoveTiled {
-        window: WindowId(window.to_owned()),
-        leaf: NodeId(leaf.to_owned()),
-        source_output: OutputId(source_output.to_owned()),
-        source_workspace: WorkspaceId(source_workspace.to_owned()),
-        target_output: OutputId(target_output.to_owned()),
-        target_workspace: WorkspaceId(target_workspace.to_owned()),
+        window: WindowId(echo.window),
+        leaf: NodeId(echo.leaf),
+        source_output: OutputId(echo.source_output),
+        source_workspace: WorkspaceId(echo.source_workspace),
+        target_output: OutputId(echo.target_output),
+        target_workspace: WorkspaceId(echo.target_workspace),
     })
 }
 
-/// Parse the exact lifecycle precondition vector from the verify command.
-fn parse_lifecycle_preconditions(value: &serde_json::Value) -> Option<Vec<LifecyclePrecondition>> {
-    let values = value.as_array()?;
+/// Parse the exact lifecycle precondition vector from the verify echo.
+/// Deferred [`RawEcho`] input preserves the legacy precedence: non-array,
+/// empty, overlong, non-string, and unknown-token echoes all map to
+/// `verify-invalid` after the `verified` gate, never to a top-level parse
+/// error.
+fn parse_lifecycle_preconditions(value: &RawEcho) -> Option<Vec<LifecyclePrecondition>> {
+    let values: Vec<String> = serde_json::from_str(&value.0).ok()?;
     if values.is_empty() || values.len() > tiler_core::contract::MAX_PRECONDITIONS {
         return None;
     }
     let mut out = Vec::with_capacity(values.len());
-    for entry in values {
-        out.push(parse_lifecycle_precondition(entry.as_str()?)?);
+    for entry in &values {
+        out.push(parse_lifecycle_precondition(entry)?);
     }
     Some(out)
 }
@@ -2223,86 +2161,76 @@ fn parse_directional_precondition(value: &str) -> Option<tiler_core::directional
     }
 }
 
-/// Parse the exact directional precondition vector from the verify command.
+/// Parse the exact directional precondition vector from the verify echo.
+/// Deferred [`RawEcho`] input preserves the legacy precedence exactly like
+/// [`parse_lifecycle_preconditions`].
 fn parse_directional_preconditions(
-    value: &serde_json::Value,
+    value: &RawEcho,
 ) -> Option<Vec<tiler_core::directional::Precondition>> {
-    let values = value.as_array()?;
+    let values: Vec<String> = serde_json::from_str(&value.0).ok()?;
     if values.is_empty() || values.len() > tiler_core::contract::MAX_PRECONDITIONS {
         return None;
     }
     let mut out = Vec::with_capacity(values.len());
-    for entry in values {
-        out.push(parse_directional_precondition(entry.as_str()?)?);
+    for entry in &values {
+        out.push(parse_directional_precondition(entry)?);
     }
     Some(out)
 }
 
-/// Parse an R4 cross-output move operation from the verify command back to
-/// its typed directional form. Strict bounded parsing: requires the exact
-/// fenced wire shape emitted in the planned reply (`op`/`rule`/`capability`/
-/// left-right `direction`, opaque window/leaf/source/target ids, bounded
-/// child index, empty/occupied target). Extra fencing fields are validated
-/// for shape; the typed operation equality plus the post-observation geometry
-/// check enforce exactness at verify time.
+/// Parse an R4 cross-output move echo back to its typed directional form
+/// plus the fenced wire DTO. Strict bounded parsing of the exact fenced wire
+/// shape emitted in the planned reply (`op`/`rule`/`capability`/ left-right
+/// `direction`, opaque window/leaf/source/target ids, bounded child index,
+/// empty/occupied target); extra fencing fields stay lenient while the typed
+/// operation equality, the fenced source/target binding, and the
+/// post-observation geometry check enforce exactness at verify time.
+/// Deferred [`RawEcho`] input keeps every shape failure on the
+/// `verify-invalid` path after the `verified` gate.
 fn parse_directional_move_operation(
-    value: &serde_json::Value,
-) -> Option<tiler_core::directional::MoveOperation> {
-    if !value.is_object() {
+    value: &RawEcho,
+) -> Option<(
+    tiler_core::directional::MoveOperation,
+    DirectionalMoveEchoDto,
+)> {
+    let echo: DirectionalMoveEchoDto = serde_json::from_str(&value.0).ok()?;
+    if echo.op != "move" {
         return None;
     }
-    if value.get("op").and_then(serde_json::Value::as_str) != Some("move") {
+    if echo.rule != "R4" {
         return None;
     }
-    if value.get("rule").and_then(serde_json::Value::as_str) != Some("R4") {
+    if echo.capability != "CrossOutputTransfer" {
         return None;
     }
-    if value.get("capability").and_then(serde_json::Value::as_str) != Some("CrossOutputTransfer") {
+    if echo.direction != "left" && echo.direction != "right" {
         return None;
     }
-    let direction = value.get("direction").and_then(serde_json::Value::as_str)?;
-    if direction != "left" && direction != "right" {
-        return None;
-    }
-    let window = value.get("window").and_then(serde_json::Value::as_str)?;
-    let leaf = value.get("leaf").and_then(serde_json::Value::as_str)?;
-    let source_output = value
-        .get("source_output")
-        .and_then(serde_json::Value::as_str)?;
-    let source_workspace = value
-        .get("source_workspace")
-        .and_then(serde_json::Value::as_str)?;
-    let target_output = value
-        .get("target_output")
-        .and_then(serde_json::Value::as_str)?;
-    let target_workspace = value
-        .get("target_workspace")
-        .and_then(serde_json::Value::as_str)?;
-    if !is_opaque_id(window)
-        || !is_opaque_id(leaf)
-        || !is_opaque_id(source_output)
-        || !is_opaque_id(source_workspace)
-        || !is_opaque_id(target_output)
-        || !is_opaque_id(target_workspace)
+    if !is_opaque_id(&echo.window)
+        || !is_opaque_id(&echo.leaf)
+        || !is_opaque_id(&echo.source_output)
+        || !is_opaque_id(&echo.source_workspace)
+        || !is_opaque_id(&echo.target_output)
+        || !is_opaque_id(&echo.target_workspace)
     {
         return None;
     }
-    let index = value.get("source_root_child_index")?.as_u64()?;
-    let Ok(index) = usize::try_from(index) else {
+    let Ok(index) = usize::try_from(echo.source_root_child_index) else {
         return None;
     };
-    let target = match value.get("target").and_then(serde_json::Value::as_str) {
-        Some("empty") => tiler_core::directional::CrossOutputTarget::Empty,
-        Some("occupied") => tiler_core::directional::CrossOutputTarget::Occupied,
+    let target = match echo.target.as_str() {
+        "empty" => tiler_core::directional::CrossOutputTarget::Empty,
+        "occupied" => tiler_core::directional::CrossOutputTarget::Occupied,
         _ => return None,
     };
-    Some(tiler_core::directional::MoveOperation::CrossOutput {
+    let operation = tiler_core::directional::MoveOperation::CrossOutput {
         rule: tiler_core::directional::Rule::R4,
-        target_output: OutputId(target_output.to_owned()),
-        target_workspace: WorkspaceId(target_workspace.to_owned()),
+        target_output: OutputId(echo.target_output.clone()),
+        target_workspace: WorkspaceId(echo.target_workspace.clone()),
         source_root_child_index: index,
         target,
-    })
+    };
+    Some((operation, echo))
 }
 
 /// Exact normalized pre-image match against the dispatch-time observation:
@@ -2478,10 +2406,7 @@ fn needs_rebuild(error: &ProposeError) -> bool {
 /// `directional-move-cancel` the counterpart of the workspace cancellation.
 #[derive(Debug, Default)]
 pub struct Planner {
-    owner: Option<OwnerId>,
-    generation: Option<GenerationId>,
-    sessions: BTreeMap<DomainKey, Session>,
-    domain_outer_gaps: BTreeMap<DomainKey, i32>,
+    engine: Engine,
     workspace_pending: Option<WorkspacePending>,
     directional_pending: Option<DirectionalMovePending>,
 }
@@ -2496,36 +2421,23 @@ impl Planner {
     /// Number of retained domains (bounded by [`tiler_core::session::MAX_DOMAINS`]).
     #[must_use]
     pub fn retained_domains(&self) -> usize {
-        self.sessions.len()
+        self.engine.retained_domains()
     }
 
     /// Retained owner binding, if any.
     #[must_use]
     pub fn owner(&self) -> Option<&OwnerId> {
-        self.owner.as_ref()
+        self.engine.owner()
     }
 
     /// Retained generation binding, if any.
     #[must_use]
     pub fn generation(&self) -> Option<&GenerationId> {
-        self.generation.as_ref()
+        self.engine.generation()
     }
 
     fn sync_binding(&mut self, owner: &OwnerId, generation: &GenerationId) {
-        let owner_changed = self
-            .owner
-            .as_ref()
-            .is_none_or(|o| o.as_str() != owner.as_str());
-        let generation_changed = self
-            .generation
-            .as_ref()
-            .is_none_or(|g| g.as_str() != generation.as_str());
-        if owner_changed || generation_changed {
-            self.sessions.clear();
-            self.domain_outer_gaps.clear();
-            self.owner = Some(owner.clone());
-            self.generation = Some(generation.clone());
-        }
+        self.engine.sync_binding(owner, generation);
     }
 
     /// Stateful evaluation across calls. Retained reconcile accepts work-area
@@ -2571,17 +2483,53 @@ impl Planner {
             _ => {}
         }
         self.sync_binding(&ctx.owner, &ctx.generation);
+        // AR3 typed-codec slice: reconcile/update-gaps/admit/remove/active-group
+        // parse once via `SyncCommand` after all boundaries (validation, async
+        // dispatch, pending conflict, send dispatch, binding sync) and call the
+        // inner bodies directly, eliminating the second `from_value` + op-string
+        // check on this production path. The string guard preserves exact
+        // unknown/missing/non-string `unknown-value` behavior without a typed
+        // parse; malformed known ops during pending never reach here.
+        // Move/focus/resize/pointer-resize/toggle-float parse `SyncCommand`
+        // once in place inside their handlers (see `SyncCommand` docs for the
+        // exact probe/ordering reasons), so these arms dispatch by op string.
         match validated_op(&ctx).as_str() {
-            "admit" => self.evaluate_admit_retained(&ctx),
-            "remove" => self.evaluate_remove_retained(&ctx),
+            "reconcile" | "update-gaps" | "admit" | "remove" | "active-group" => {
+                match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+                    Ok(SyncCommand::Reconcile {}) => self.evaluate_reconcile_inner(&ctx),
+                    Ok(SyncCommand::UpdateGaps {}) => self.evaluate_update_gaps_inner(&ctx),
+                    Ok(SyncCommand::Admit {
+                        window,
+                        output,
+                        workspace,
+                        placement_bounds,
+                    }) => self.evaluate_admit_inner(
+                        &ctx,
+                        &window,
+                        &output,
+                        &workspace,
+                        placement_bounds,
+                    ),
+                    Ok(SyncCommand::Remove { window }) => self.evaluate_remove_inner(&ctx, &window),
+                    Ok(SyncCommand::ActiveGroup {}) => self.evaluate_active_group_inner(&ctx),
+                    // Unreachable: the outer string guard admits only the five
+                    // ops above, so no other variant can decode here.
+                    Ok(_) => rejected(
+                        valid_correlation_echo(&ctx.raw),
+                        "unknown-value",
+                        MSG_UNKNOWN_VALUE,
+                    ),
+                    Err(error) => {
+                        let (kind, message) = classify_parse_error(&error);
+                        rejected(valid_correlation_echo(&ctx.raw), kind, message)
+                    }
+                }
+            }
             "move" => self.evaluate_move_retained(&ctx),
             "focus" => self.evaluate_focus_retained(&ctx),
             "resize" => self.evaluate_resize_retained(&ctx),
             "pointer-resize" => self.evaluate_pointer_resize_retained(&ctx),
-            "reconcile" => self.evaluate_reconcile_retained(&ctx),
-            "update-gaps" => self.evaluate_update_gaps_retained(&ctx),
             "toggle-float" => self.evaluate_toggle_float_retained(&ctx),
-            "active-group" => self.evaluate_active_group_retained(&ctx),
             _ => rejected(
                 valid_correlation_echo(&ctx.raw),
                 "unknown-value",
@@ -2595,20 +2543,7 @@ impl Planner {
         domain_key: &DomainKey,
         domain: &OutputDomain,
     ) -> Option<Session> {
-        let session = self.sessions.get(domain_key)?;
-        if !session_usable(session) || !session_domain_matches(session, domain) {
-            self.sessions.remove(domain_key);
-            self.domain_outer_gaps.remove(domain_key);
-            return None;
-        }
-        // Legacy empty slots never block capacity: drop them lazily without
-        // proposing, so a later admission can reuse the slot.
-        if committed_session_is_empty(session) {
-            self.sessions.remove(domain_key);
-            self.domain_outer_gaps.remove(domain_key);
-            return None;
-        }
-        Some(session.clone())
+        self.engine.take_usable_session(domain_key, domain)
     }
 
     /// Pending conflict boundary for every non-ack/verify plan operation.
@@ -2679,23 +2614,7 @@ impl Planner {
     }
 
     fn store_committed(&mut self, domain_key: DomainKey, session: Session, outer_gap: i32) {
-        // A committed remove that empties the domain retires its session at
-        // the same applied boundary so the slot is released. Zero-window
-        // sessions are never retained.
-        if committed_session_is_empty(&session) {
-            self.sessions.remove(&domain_key);
-            self.domain_outer_gaps.remove(&domain_key);
-            return;
-        }
-        if self.sessions.len() >= tiler_core::session::MAX_DOMAINS
-            && !self.sessions.contains_key(&domain_key)
-        {
-            // Retained topology is authoritative. A capacity miss must never
-            // evict unrelated domains and force their later spatial rebuild.
-            return;
-        }
-        self.domain_outer_gaps.insert(domain_key.clone(), outer_gap);
-        self.sessions.insert(domain_key, session);
+        self.engine.store_committed(domain_key, session, outer_gap);
     }
 
     fn canonical_component_domain(domain: &OutputDomain) -> OutputDomain {
@@ -2724,8 +2643,8 @@ impl Planner {
         // because an adjacent work area changed. A normal reconcile owns that
         // update; this selected path fails closed without spatial rebuilding.
         let source = self
-            .sessions
-            .get(source_key)
+            .engine
+            .session(source_key)
             .filter(|session| {
                 session_usable(session)
                     && !committed_session_is_empty(session)
@@ -2733,7 +2652,7 @@ impl Planner {
             })
             .cloned()
             .ok_or("canonical-source-unavailable")?;
-        let target = match self.sessions.get(target_key) {
+        let target = match self.engine.session(target_key) {
             None => None,
             Some(session)
                 if session_usable(session)
@@ -2775,17 +2694,12 @@ impl Planner {
         let Ok((source, target)) = pair.split_canonical_pair() else {
             return false;
         };
-        let target_outer_gap = self
-            .domain_outer_gaps
-            .get(&target_key)
-            .copied()
-            .unwrap_or(0);
+        let target_outer_gap = self.engine.outer_gap(&target_key).unwrap_or(0);
         self.store_committed(source_key, source, source_outer_gap);
         if let Some(target) = target {
             self.store_committed(target_key, target, target_outer_gap);
         } else {
-            self.sessions.remove(&target_key);
-            self.domain_outer_gaps.remove(&target_key);
+            self.engine.remove(&target_key);
         }
         true
     }
@@ -2824,11 +2738,11 @@ impl Planner {
         // start is never removed or superseded for relocation, even if it is
         // empty, unusable, or mismatched. Normal target cleanup/seeding owns
         // that slot.
-        if self.sessions.contains_key(target_key) {
+        if self.engine.contains(target_key) {
             return false;
         }
         let mut source_key: Option<DomainKey> = None;
-        for key in self.sessions.keys() {
+        for key in self.engine.keys() {
             if key.workspace == target_key.workspace && key.output != target_key.output {
                 if source_key.is_some() {
                     // Ambiguous source: fail closed, no mutation.
@@ -2840,7 +2754,7 @@ impl Planner {
         let Some(source) = source_key else {
             return false;
         };
-        let Some(session) = self.sessions.get(&source) else {
+        let Some(session) = self.engine.session(&source) else {
             return false;
         };
         if !session_usable(session) {
@@ -2865,20 +2779,18 @@ impl Planner {
         // All validation passed: mutate. Capacity was freed by removing the
         // source; insert under normal constraints without all-clear.
         let backup_session = session.clone();
-        let backup_outer = self.domain_outer_gaps.get(&source).copied();
-        self.domain_outer_gaps.remove(&source);
-        self.sessions.remove(&source);
-        if self.sessions.len() >= tiler_core::session::MAX_DOMAINS {
+        let backup_outer = self.engine.outer_gap(&source);
+        self.engine.remove(&source);
+        if self.engine.len() >= tiler_core::session::MAX_DOMAINS {
             // Fail closed, restore source, no clearing.
-            self.sessions.insert(source.clone(), backup_session);
-            if let Some(gap) = backup_outer {
-                self.domain_outer_gaps.insert(source, gap);
+            match backup_outer {
+                Some(gap) => self.engine.insert_raw(source, backup_session, gap),
+                None => self.engine.insert_session_only(source, backup_session),
             }
             return false;
         }
-        self.domain_outer_gaps
-            .insert(target_key.clone(), request_outer_gap);
-        self.sessions.insert(target_key.clone(), moved);
+        self.engine
+            .insert_raw(target_key.clone(), moved, request_outer_gap);
         true
     }
 
@@ -2901,7 +2813,7 @@ impl Planner {
         // owns that slot. Source relocation is attempted only when no target
         // session existed, even if normal cleanup removes a stale target
         // below. This preserves existing non-hotplug behavior.
-        let target_existed = self.sessions.contains_key(&ctx.domain_key);
+        let target_existed = self.engine.contains(&ctx.domain_key);
         if let Some(mut session) = self.take_usable_session(&ctx.domain_key, &ctx.domain) {
             let base = session.accepted_revision();
             let observation = observation_for(base, ctx);
@@ -2916,13 +2828,11 @@ impl Planner {
                         );
                         return text;
                     }
-                    self.sessions.remove(&ctx.domain_key);
-                    self.domain_outer_gaps.remove(&ctx.domain_key);
+                    self.engine.remove(&ctx.domain_key);
                     return snapshot_invalid(cid, MSG_OBSERVATION, "commit-rejected");
                 }
                 Err(error) if needs_rebuild(&error) => {
-                    self.sessions.remove(&ctx.domain_key);
-                    self.domain_outer_gaps.remove(&ctx.domain_key);
+                    self.engine.remove(&ctx.domain_key);
                 }
                 Err(error) => {
                     return propose_failure(error, cid.clone());
@@ -2935,8 +2845,7 @@ impl Planner {
             // convergence through the normal propose path below. A rejected
             // follow-up leaves retained state untouched: the source backup is
             // restored before falling through or replying.
-            let backup_sessions = self.sessions.clone();
-            let backup_gaps = self.domain_outer_gaps.clone();
+            let backup_engine = self.engine.clone();
             if self.try_relocate_for_target(
                 &ctx.domain_key,
                 &ctx.domain,
@@ -2957,26 +2866,22 @@ impl Planner {
                                 return text;
                             }
                             // Commit rejected: restore source, no mutation.
-                            self.sessions = backup_sessions;
-                            self.domain_outer_gaps = backup_gaps;
+                            self.engine = backup_engine;
                             return snapshot_invalid(cid, MSG_OBSERVATION, "commit-rejected");
                         }
                         Err(error) if needs_rebuild(&error) => {
                             // Rebuild path: restore source, then fall through
                             // to seed the target from scratch.
-                            self.sessions = backup_sessions;
-                            self.domain_outer_gaps = backup_gaps;
+                            self.engine = backup_engine;
                         }
                         Err(error) => {
-                            self.sessions = backup_sessions;
-                            self.domain_outer_gaps = backup_gaps;
+                            self.engine = backup_engine;
                             return propose_failure(error, cid.clone());
                         }
                     }
                 } else {
                     // Relocated target unusable: restore source, fall through.
-                    self.sessions = backup_sessions;
-                    self.domain_outer_gaps = backup_gaps;
+                    self.engine = backup_engine;
                 }
             }
         }
@@ -3014,6 +2919,10 @@ impl Planner {
         }
     }
 
+    /// Direct-evaluator compatibility wrapper (test-only): exact legacy
+    /// `from_value` + op-check behavior. Production `evaluate` bypasses this
+    /// via the typed [`SyncCommand`] single parse + inner below.
+    #[cfg(test)]
     fn evaluate_admit_retained(&mut self, ctx: &Validated) -> String {
         let command: AdmitCommand = match serde_json::from_value(ctx.request.command.clone()) {
             Ok(command) => command,
@@ -3029,30 +2938,47 @@ impl Planner {
                 "admit-op-invalid",
             );
         }
-        if !is_opaque_id(&command.window) {
+        self.evaluate_admit_inner(
+            ctx,
+            &command.window,
+            &command.output,
+            &command.workspace,
+            command.placement_bounds.clone(),
+        )
+    }
+
+    /// Production admit body without a second command parse/op check.
+    /// Same boundary contract as [`Self::evaluate_reconcile_inner`].
+    fn evaluate_admit_inner(
+        &mut self,
+        ctx: &Validated,
+        window: &str,
+        output: &str,
+        workspace: &str,
+        placement_bounds: Option<RectDto>,
+    ) -> String {
+        if !is_opaque_id(window) {
             return snapshot_invalid(
                 ctx.request.correlation_id.clone(),
                 MSG_OPAQUE_ID,
                 "admit-window-invalid",
             );
         }
-        if !is_opaque_id(&command.output) {
+        if !is_opaque_id(output) {
             return snapshot_invalid(
                 ctx.request.correlation_id.clone(),
                 MSG_OPAQUE_ID,
                 "admit-output-invalid",
             );
         }
-        if !is_opaque_id(&command.workspace) {
+        if !is_opaque_id(workspace) {
             return snapshot_invalid(
                 ctx.request.correlation_id.clone(),
                 MSG_OPAQUE_ID,
                 "admit-workspace-invalid",
             );
         }
-        if command.output != ctx.request.domain.output
-            || command.workspace != ctx.request.domain.workspace
-        {
+        if output != ctx.request.domain.output || workspace != ctx.request.domain.workspace {
             return rejected(
                 ctx.request.correlation_id.clone(),
                 "cross-domain-mismatch",
@@ -3063,7 +2989,7 @@ impl Planner {
             .request
             .windows
             .iter()
-            .find(|w| w.window == command.window)
+            .find(|w| w.window.as_str() == window)
         else {
             return rejected(
                 ctx.request.correlation_id.clone(),
@@ -3071,14 +2997,14 @@ impl Planner {
                 MSG_OBSERVATION,
             );
         };
-        if admitted.output != command.output || admitted.workspace != command.workspace {
+        if admitted.output.as_str() != output || admitted.workspace.as_str() != workspace {
             return rejected(
                 ctx.request.correlation_id.clone(),
                 "partial-observation",
                 MSG_OBSERVATION,
             );
         };
-        let placement_explicit = match &command.placement_bounds {
+        let placement_explicit = match &placement_bounds {
             Some(rect) => {
                 if !valid_carried_rect(rect.x, rect.y, rect.w, rect.h) {
                     return snapshot_invalid(
@@ -3105,12 +3031,12 @@ impl Planner {
         // falls through to the normal seed/reflow below, independently per
         // foreground or background domain through this same admit route.
         if placement_explicit.is_none()
-            && command.window == ctx.request.focused_window
-            && self.sessions.get(&ctx.domain_key).is_none()
+            && window == ctx.request.focused_window.as_str()
+            && self.engine.session(&ctx.domain_key).is_none()
             && let Some((tree, links)) = try_flat_strip_fit(&ctx.domain, &ctx.request.windows)
             && let Some(focus_leaf) = links
                 .iter()
-                .find(|l| l.window.0 == command.window)
+                .find(|l| l.window.0.as_str() == window)
                 .map(|l| l.leaf.clone())
         {
             if let Ok(mut fitted) = Session::new(
@@ -3122,9 +3048,9 @@ impl Planner {
             ) {
                 let base = fitted.accepted_revision();
                 let observation = observation_for(base, ctx);
-                let window = WindowId(command.window.clone());
-                let output = OutputId(command.output.clone());
-                let workspace = WorkspaceId(command.workspace.clone());
+                let window = WindowId(window.to_owned());
+                let output = OutputId(output.to_owned());
+                let workspace = WorkspaceId(workspace.to_owned());
                 if let Ok(plan) = fitted.propose_fitted_admit(
                     tree,
                     links,
@@ -3179,15 +3105,15 @@ impl Planner {
             ctx.request
                 .windows
                 .iter()
-                .filter(|w| w.window != command.window)
+                .filter(|w| w.window.as_str() != window)
                 .cloned()
                 .collect(),
             &ctx.request.focused_window,
             true,
         );
-        let window = WindowId(command.window.clone());
-        let output = OutputId(command.output.clone());
-        let workspace = WorkspaceId(command.workspace.clone());
+        let window = WindowId(window.to_owned());
+        let output = OutputId(output.to_owned());
+        let workspace = WorkspaceId(workspace.to_owned());
         let domain = ctx.domain.clone();
         self.run_retained(
             ctx,
@@ -3247,6 +3173,10 @@ impl Planner {
         )
     }
 
+    /// Direct-evaluator compatibility wrapper (test-only): exact legacy
+    /// `from_value` + op-check behavior. Production `evaluate` bypasses this
+    /// via the typed [`SyncCommand`] single parse + inner below.
+    #[cfg(test)]
     fn evaluate_remove_retained(&mut self, ctx: &Validated) -> String {
         let command: RemoveCommand = match serde_json::from_value(ctx.request.command.clone()) {
             Ok(command) => command,
@@ -3262,7 +3192,13 @@ impl Planner {
                 "remove-op-invalid",
             );
         }
-        if !is_opaque_id(&command.window) {
+        self.evaluate_remove_inner(ctx, &command.window)
+    }
+
+    /// Production remove body without a second command parse/op check.
+    /// Same boundary contract as [`Self::evaluate_reconcile_inner`].
+    fn evaluate_remove_inner(&mut self, ctx: &Validated, window: &str) -> String {
+        if !is_opaque_id(window) {
             return snapshot_invalid(
                 ctx.request.correlation_id.clone(),
                 MSG_OPAQUE_ID,
@@ -3274,7 +3210,7 @@ impl Planner {
             &ctx.request.focused_window,
             false,
         );
-        let window = WindowId(command.window.clone());
+        let window = WindowId(window.to_owned());
         self.run_retained(
             ctx,
             seed_order,
@@ -3341,7 +3277,7 @@ impl Planner {
                         .unwrap_or_default()
             })
             .is_some_and(|entry| entry.floating)
-            && !self.sessions.contains_key(&ctx.domain_key)
+            && !self.engine.contains(&ctx.domain_key)
         {
             return rejected(
                 ctx.request.correlation_id.clone(),
@@ -3349,13 +3285,13 @@ impl Planner {
                 RefusalKind::NotTiled.message(),
             );
         }
-        evaluate_toggle_float_with(ctx, |command, float_rect| {
+        evaluate_toggle_float_with(ctx, |window, float_rect| {
             let seed_order = spatial_with_focus_last(
                 ctx.request.windows.clone(),
                 &ctx.request.focused_window,
                 false,
             );
-            let window = WindowId(command.window.clone());
+            let window = WindowId(window.to_owned());
             self.run_retained(
                 ctx,
                 seed_order,
@@ -3401,20 +3337,39 @@ impl Planner {
     }
 
     fn evaluate_move_retained(&mut self, ctx: &Validated) -> String {
-        let command: DirectedCommand = match serde_json::from_value(ctx.request.command.clone()) {
-            Ok(command) => command,
-            Err(error) => {
-                let (kind, message) = classify_parse_error(&error);
-                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-            }
-        };
-        if command.op != "move" {
-            return snapshot_invalid(
-                ctx.request.correlation_id.clone(),
-                MSG_OPAQUE_ID,
-                "move-op-invalid",
-            );
-        }
+        // Strict tagged decode in place (see `SyncCommand`): the directional
+        // pair branch and every validation below run on the rebuilt plumbing
+        // value exactly as before.
+        let command: DirectedCommand =
+            match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+                Ok(SyncCommand::Move {
+                    window,
+                    direction,
+                    cross_output_transfer,
+                }) => DirectedCommand {
+                    window,
+                    direction,
+                    cross_output_transfer,
+                },
+                Ok(_) => {
+                    return snapshot_invalid(
+                        ctx.request.correlation_id.clone(),
+                        MSG_OPAQUE_ID,
+                        "move-op-invalid",
+                    );
+                }
+                Err(error) => {
+                    if is_unknown_variant(&error) {
+                        return snapshot_invalid(
+                            ctx.request.correlation_id.clone(),
+                            MSG_OPAQUE_ID,
+                            "move-op-invalid",
+                        );
+                    }
+                    let (kind, message) = classify_parse_error(&error);
+                    return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+                }
+            };
         // Production directional route: two-domain observations build one
         // temporary pair from canonical retained domain sessions.
         // Single-domain legacy requests fall through unchanged.
@@ -3495,20 +3450,39 @@ impl Planner {
     }
 
     fn evaluate_focus_retained(&mut self, ctx: &Validated) -> String {
-        let command: DirectedCommand = match serde_json::from_value(ctx.request.command.clone()) {
-            Ok(command) => command,
-            Err(error) => {
-                let (kind, message) = classify_parse_error(&error);
-                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-            }
-        };
-        if command.op != "focus" {
-            return snapshot_invalid(
-                ctx.request.correlation_id.clone(),
-                MSG_OPAQUE_ID,
-                "focus-op-invalid",
-            );
-        }
+        // Strict tagged decode in place (see `SyncCommand`): same contract as
+        // `evaluate_move_retained`; the `cross_output_transfer` carrier is
+        // preserved so explicit values keep parsing exactly as before.
+        let command: DirectedCommand =
+            match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+                Ok(SyncCommand::Focus {
+                    window,
+                    direction,
+                    cross_output_transfer,
+                }) => DirectedCommand {
+                    window,
+                    direction,
+                    cross_output_transfer,
+                },
+                Ok(_) => {
+                    return snapshot_invalid(
+                        ctx.request.correlation_id.clone(),
+                        MSG_OPAQUE_ID,
+                        "focus-op-invalid",
+                    );
+                }
+                Err(error) => {
+                    if is_unknown_variant(&error) {
+                        return snapshot_invalid(
+                            ctx.request.correlation_id.clone(),
+                            MSG_OPAQUE_ID,
+                            "focus-op-invalid",
+                        );
+                    }
+                    let (kind, message) = classify_parse_error(&error);
+                    return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+                }
+            };
         // Production directional route: two-domain observations try local
         // focus first, then the exhausted Left/Right cross-output proposal
         // against a temporary pair built from canonical domain state.
@@ -4003,35 +3977,49 @@ impl Planner {
     }
 
     fn evaluate_resize_retained(&mut self, ctx: &Validated) -> String {
-        let command: ResizeCommand = match serde_json::from_value(ctx.request.command.clone()) {
-            Ok(command) => command,
-            Err(error) => {
-                let (kind, message) = classify_parse_error(&error);
-                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-            }
-        };
-        if command.op != "resize" {
-            return snapshot_invalid(
-                ctx.request.correlation_id.clone(),
-                MSG_OPAQUE_ID,
-                "resize-op-invalid",
-            );
-        }
-        if !is_opaque_id(&command.window) {
+        // Strict tagged decode in place (see `SyncCommand`).
+        let (window_raw, direction_raw, mode_raw, press_index) =
+            match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+                Ok(SyncCommand::Resize {
+                    window,
+                    direction,
+                    mode,
+                    press_index,
+                }) => (window, direction, mode, press_index),
+                Ok(_) => {
+                    return snapshot_invalid(
+                        ctx.request.correlation_id.clone(),
+                        MSG_OPAQUE_ID,
+                        "resize-op-invalid",
+                    );
+                }
+                Err(error) => {
+                    if is_unknown_variant(&error) {
+                        return snapshot_invalid(
+                            ctx.request.correlation_id.clone(),
+                            MSG_OPAQUE_ID,
+                            "resize-op-invalid",
+                        );
+                    }
+                    let (kind, message) = classify_parse_error(&error);
+                    return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+                }
+            };
+        if !is_opaque_id(&window_raw) {
             return snapshot_invalid(
                 ctx.request.correlation_id.clone(),
                 MSG_OPAQUE_ID,
                 "resize-window-invalid",
             );
         }
-        let Some(direction) = parse_direction(&command.direction) else {
+        let Some(direction) = parse_direction(&direction_raw) else {
             return rejected(
                 ctx.request.correlation_id.clone(),
                 "direction-invalid",
                 MSG_DIRECTION,
             );
         };
-        let Some(mode) = parse_mode(&command.mode) else {
+        let Some(mode) = parse_mode(&mode_raw) else {
             return rejected(
                 ctx.request.correlation_id.clone(),
                 "direction-invalid",
@@ -4043,7 +4031,7 @@ impl Planner {
             &ctx.request.focused_window,
             false,
         );
-        let window = WindowId(command.window.clone());
+        let window = WindowId(window_raw);
         let capabilities = tiler_core::contract::ResizeCapabilities {
             keyboard_resize: true,
             pointer_resize: false,
@@ -4062,7 +4050,7 @@ impl Planner {
                     &window,
                     direction,
                     mode,
-                    command.press_index,
+                    press_index,
                     observation,
                     &ctx.correlation,
                     &capabilities,
@@ -4109,29 +4097,41 @@ impl Planner {
     }
 
     fn evaluate_pointer_resize_retained(&mut self, ctx: &Validated) -> String {
-        let command: PointerResizeCommand =
-            match serde_json::from_value(ctx.request.command.clone()) {
-                Ok(command) => command,
+        // Strict tagged decode in place (see `SyncCommand`).
+        let (window_raw, direction_raw, boundary) =
+            match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+                Ok(SyncCommand::PointerResize {
+                    window,
+                    direction,
+                    boundary,
+                }) => (window, direction, boundary),
+                Ok(_) => {
+                    return snapshot_invalid(
+                        ctx.request.correlation_id.clone(),
+                        MSG_OPAQUE_ID,
+                        "pointer-resize-op-invalid",
+                    );
+                }
                 Err(error) => {
+                    if is_unknown_variant(&error) {
+                        return snapshot_invalid(
+                            ctx.request.correlation_id.clone(),
+                            MSG_OPAQUE_ID,
+                            "pointer-resize-op-invalid",
+                        );
+                    }
                     let (kind, message) = classify_parse_error(&error);
                     return rejected(valid_correlation_echo(&ctx.raw), kind, message);
                 }
             };
-        if command.op != "pointer-resize" {
-            return snapshot_invalid(
-                ctx.request.correlation_id.clone(),
-                MSG_OPAQUE_ID,
-                "pointer-resize-op-invalid",
-            );
-        }
-        if !is_opaque_id(&command.window) {
+        if !is_opaque_id(&window_raw) {
             return snapshot_invalid(
                 ctx.request.correlation_id.clone(),
                 MSG_OPAQUE_ID,
                 "pointer-resize-window-invalid",
             );
         }
-        let Some(direction) = parse_direction(&command.direction) else {
+        let Some(direction) = parse_direction(&direction_raw) else {
             return rejected(
                 ctx.request.correlation_id.clone(),
                 "direction-invalid",
@@ -4143,8 +4143,7 @@ impl Planner {
             &ctx.request.focused_window,
             false,
         );
-        let window = WindowId(command.window.clone());
-        let boundary = command.boundary;
+        let window = WindowId(window_raw);
         let capabilities = tiler_core::contract::ResizeCapabilities {
             keyboard_resize: false,
             pointer_resize: true,
@@ -4208,6 +4207,10 @@ impl Planner {
         )
     }
 
+    /// Direct-evaluator compatibility wrapper (test-only): exact legacy
+    /// `from_value` + op-check behavior. Production `evaluate` bypasses this
+    /// via the typed [`SyncCommand`] single parse + inner below.
+    #[cfg(test)]
     fn evaluate_reconcile_retained(&mut self, ctx: &Validated) -> String {
         let command: ReconcileCommand = match serde_json::from_value(ctx.request.command.clone()) {
             Ok(command) => command,
@@ -4223,20 +4226,27 @@ impl Planner {
                 "reconcile-op-invalid",
             );
         }
+        self.evaluate_reconcile_inner(ctx)
+    }
+
+    /// Production reconcile body without a second command parse/op check.
+    /// The `evaluate` typed path parses [`SyncCommand`] once after all
+    /// dispatch boundaries and calls here directly; the retained wrapper
+    /// above preserves the exact direct-evaluator invalid-op behavior.
+    fn evaluate_reconcile_inner(&mut self, ctx: &Validated) -> String {
         let cid = ctx.request.correlation_id.clone();
         // Displaced workspace relocation for reconcile: same workspace id on
         // a different output reuses the retained tree. No retained mutation
         // occurs on any rejection: outer-gap is pre-validated against the
         // source before mutating, and any later rejection restores the source.
-        let backup_sessions = self.sessions.clone();
-        let backup_gaps = self.domain_outer_gaps.clone();
+        let backup_engine = self.engine.clone();
         let mut relocated_here = false;
-        if !self.sessions.contains_key(&ctx.domain_key) {
+        if !self.engine.contains(&ctx.domain_key) {
             // Pre-validate outer-gap against the unique source so a mismatch
             // fails closed with no mutation (target collision inside
             // `try_relocate_for_target` likewise mutates nothing).
             let mut source_key: Option<DomainKey> = None;
-            for key in self.sessions.keys() {
+            for key in self.engine.keys() {
                 if key.workspace == ctx.domain_key.workspace && key.output != ctx.domain_key.output
                 {
                     if source_key.is_some() {
@@ -4248,8 +4258,7 @@ impl Planner {
             }
             let outer_ok = match &source_key {
                 Some(source) => {
-                    self.domain_outer_gaps.get(source).copied()
-                        == Some(ctx.request.domain.outer_gap)
+                    self.engine.outer_gap_ref(source).copied() == Some(ctx.request.domain.outer_gap)
                 }
                 None => false,
             };
@@ -4266,12 +4275,11 @@ impl Planner {
         macro_rules! restore_on_reject {
             () => {
                 if relocated_here {
-                    self.sessions = backup_sessions.clone();
-                    self.domain_outer_gaps = backup_gaps.clone();
+                    self.engine = backup_engine.clone();
                 }
             };
         }
-        let Some(session) = self.sessions.get(&ctx.domain_key).cloned() else {
+        let Some(session) = self.engine.session(&ctx.domain_key).cloned() else {
             restore_on_reject!();
             return rejected(
                 cid,
@@ -4312,8 +4320,7 @@ impl Planner {
                 "domain gap does not match retained state",
             );
         }
-        if self.domain_outer_gaps.get(&ctx.domain_key).copied()
-            != Some(ctx.request.domain.outer_gap)
+        if self.engine.outer_gap_ref(&ctx.domain_key).copied() != Some(ctx.request.domain.outer_gap)
         {
             restore_on_reject!();
             return rejected(
@@ -4355,7 +4362,7 @@ impl Planner {
         let Some(tree) = tree else {
             if known.is_empty() && observed.is_empty() {
                 if bounds_changed {
-                    if let Some(session) = self.sessions.get_mut(&ctx.domain_key) {
+                    if let Some(session) = self.engine.session_mut(&ctx.domain_key) {
                         session.reproject_domain(&ctx.domain_key, ctx.domain.bounds);
                     }
                 }
@@ -4453,7 +4460,7 @@ impl Planner {
             );
         }
         if bounds_changed {
-            if let Some(session) = self.sessions.get_mut(&ctx.domain_key) {
+            if let Some(session) = self.engine.session_mut(&ctx.domain_key) {
                 session.reproject_domain(&ctx.domain_key, ctx.domain.bounds);
             }
         }
@@ -4483,23 +4490,11 @@ impl Planner {
     /// folds into the same projection with reconcile-equivalent safety; a
     /// simultaneous membership change refuses as partial-observation and the
     /// normal admit/remove path owns it.
-    fn evaluate_update_gaps_retained(&mut self, ctx: &Validated) -> String {
-        let command: UpdateGapsCommand = match serde_json::from_value(ctx.request.command.clone()) {
-            Ok(command) => command,
-            Err(error) => {
-                let (kind, message) = classify_parse_error(&error);
-                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-            }
-        };
-        if command.op != "update-gaps" {
-            return snapshot_invalid(
-                ctx.request.correlation_id.clone(),
-                MSG_OPAQUE_ID,
-                "update-gaps-op-invalid",
-            );
-        }
+    /// Production update-gaps body without a second command parse/op check.
+    /// Same boundary contract as [`Self::evaluate_reconcile_inner`].
+    fn evaluate_update_gaps_inner(&mut self, ctx: &Validated) -> String {
         let cid = ctx.request.correlation_id.clone();
-        let Some(session) = self.sessions.get(&ctx.domain_key).cloned() else {
+        let Some(session) = self.engine.session(&ctx.domain_key).cloned() else {
             return rejected(
                 cid,
                 RefusalKind::UnknownDomain.as_str(),
@@ -4558,7 +4553,7 @@ impl Planner {
         let tree = domain_view.and_then(|d| d.tree);
         let Some(tree) = tree else {
             if known.is_empty() && observed.is_empty() {
-                if let Some(session) = self.sessions.get_mut(&ctx.domain_key)
+                if let Some(session) = self.engine.session_mut(&ctx.domain_key)
                     && !session.update_domain_gaps(
                         &ctx.domain_key,
                         ctx.domain.bounds,
@@ -4571,8 +4566,8 @@ impl Planner {
                         RefusalKind::MalformedTopology.message(),
                     );
                 }
-                self.domain_outer_gaps
-                    .insert(ctx.domain_key.clone(), ctx.request.domain.outer_gap);
+                self.engine
+                    .set_outer_gap(ctx.domain_key.clone(), ctx.request.domain.outer_gap);
                 return planned_reply(
                     &cid,
                     session.accepted_revision(),
@@ -4710,6 +4705,10 @@ impl Planner {
     /// lagging revisions cannot corrupt topology or geometry: worst case is
     /// fail-closed `no-group` via `focus-unmapped`/`domain-mismatch`/pending/
     /// diverged.
+    /// Direct-evaluator compatibility wrapper (test-only): exact legacy
+    /// `from_value` + op-check behavior. Production `evaluate` bypasses this
+    /// via the typed [`SyncCommand`] single parse + inner below.
+    #[cfg(test)]
     fn evaluate_active_group_retained(&mut self, ctx: &Validated) -> String {
         let command: ActiveGroupCommand = match serde_json::from_value(ctx.request.command.clone())
         {
@@ -4726,7 +4725,13 @@ impl Planner {
                 "active-group-op-invalid",
             );
         }
-        let Some(mut session) = self.sessions.get(&ctx.domain_key).cloned() else {
+        self.evaluate_active_group_inner(ctx)
+    }
+
+    /// Production active-group body without a second command parse/op check.
+    /// Same boundary contract as [`Self::evaluate_reconcile_inner`].
+    fn evaluate_active_group_inner(&mut self, ctx: &Validated) -> String {
+        let Some(mut session) = self.engine.session(&ctx.domain_key).cloned() else {
             return no_group_reply(ctx, None, "no-session");
         };
         // Align retained focus from the valid observed snapshot before
@@ -4747,7 +4752,7 @@ impl Planner {
             let before = session.focus();
             if session.sync_focus_from_window(&ctx.domain_key, &focused)
                 && session.focus() != before
-                && let Some(stored) = self.sessions.get_mut(&ctx.domain_key)
+                && let Some(stored) = self.engine.session_mut(&ctx.domain_key)
             {
                 *stored = session.clone();
             }
@@ -4921,40 +4926,47 @@ impl Planner {
                 "no focused window is observed",
             ));
         }
-        let command: WorkspaceSendCommand =
-            match serde_json::from_value(ctx.request.command.clone()) {
-                Ok(command) => command,
+        // Strict tagged decode after the target scope and focus checks above
+        // (see `SyncCommand`): scope-before-parse order is unchanged.
+        let (window, target_output, target_workspace) =
+            match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+                Ok(SyncCommand::SendToWorkspace {
+                    window,
+                    target_output,
+                    target_workspace,
+                }) => (window, target_output, target_workspace),
+                Ok(_) => {
+                    return Err(snapshot_invalid(cid, MSG_OPAQUE_ID, "move-op-invalid"));
+                }
                 Err(error) => {
+                    if is_unknown_variant(&error) {
+                        return Err(snapshot_invalid(cid, MSG_OPAQUE_ID, "move-op-invalid"));
+                    }
                     let (kind, message) = classify_parse_error(&error);
                     return Err(rejected(valid_correlation_echo(&ctx.raw), kind, message));
                 }
             };
-        if command.op != "send-to-workspace" {
-            return Err(snapshot_invalid(cid, MSG_OPAQUE_ID, "move-op-invalid"));
-        }
-        if !is_opaque_id(&command.window) {
+        if !is_opaque_id(&window) {
             return Err(snapshot_invalid(cid, MSG_OPAQUE_ID, "move-window-invalid"));
         }
-        if !is_opaque_id(&command.target_output) {
+        if !is_opaque_id(&target_output) {
             return Err(snapshot_invalid(cid, MSG_OPAQUE_ID, "move-output-invalid"));
         }
-        if !is_opaque_id(&command.target_workspace) {
+        if !is_opaque_id(&target_workspace) {
             return Err(snapshot_invalid(
                 cid,
                 MSG_OPAQUE_ID,
                 "move-workspace-invalid",
             ));
         }
-        if command.window != ctx.request.focused_window {
+        if window != ctx.request.focused_window {
             return Err(rejected(
                 cid,
                 "focus-mismatch",
                 "the moved window is not the focused window",
             ));
         }
-        if command.target_output != target_key.output.0
-            || command.target_workspace != target_key.workspace.0
-        {
+        if target_output != target_key.output.0 || target_workspace != target_key.workspace.0 {
             return Err(rejected(
                 cid,
                 "target-mismatch",
@@ -4965,7 +4977,7 @@ impl Planner {
             target_domain,
             target_key,
             target_windows: ctx.request.target_windows.clone(),
-            window: WindowId(command.window.clone()),
+            window: WindowId(window),
         })
     }
 
@@ -5060,18 +5072,22 @@ impl Planner {
     /// terminal divergence.
     fn evaluate_workspace_ack(&mut self, ctx: &Validated) -> String {
         let cid = ctx.request.correlation_id.clone();
-        let command: WorkspaceAckCommand = match serde_json::from_value(ctx.request.command.clone())
-        {
-            Ok(command) => command,
+        // Strict tagged decode first (see `SyncCommand`); pending and binding
+        // checks below are untouched.
+        let ack_outcome = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+            Ok(SyncCommand::SendToWorkspaceAck { ack_outcome }) => ack_outcome,
+            Ok(_) => {
+                return snapshot_invalid(cid, MSG_OPAQUE_ID, "ack-op-invalid");
+            }
             Err(error) => {
+                if is_unknown_variant(&error) {
+                    return snapshot_invalid(cid, MSG_OPAQUE_ID, "ack-op-invalid");
+                }
                 let (kind, message) = classify_parse_error(&error);
                 return rejected(valid_correlation_echo(&ctx.raw), kind, message);
             }
         };
-        if command.op != "send-to-workspace-ack" {
-            return snapshot_invalid(cid, MSG_OPAQUE_ID, "ack-op-invalid");
-        }
-        let outcome = match command.ack_outcome.as_str() {
+        let outcome = match ack_outcome.as_str() {
             "accepted" => AckOutcome::Accepted,
             "refused-capability" => AckOutcome::RefusedCapability,
             "partial-application" => AckOutcome::PartialApplication,
@@ -5131,27 +5147,37 @@ impl Planner {
     /// Pending mismatch or failed verification is terminal divergence.
     fn evaluate_workspace_verify(&mut self, ctx: &Validated) -> String {
         let cid = ctx.request.correlation_id.clone();
-        let command: WorkspaceVerifyCommand =
-            match serde_json::from_value(ctx.request.command.clone()) {
-                Ok(command) => command,
+        // Strict tagged decode first (see `SyncCommand`); the verified flag,
+        // precondition/operation echo parsing, and pending checks below are
+        // untouched.
+        let (verified, preconditions_raw, operation_raw) =
+            match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+                Ok(SyncCommand::SendToWorkspaceVerify {
+                    verified,
+                    preconditions,
+                    operation,
+                }) => (verified, preconditions, operation),
+                Ok(_) => {
+                    return snapshot_invalid(cid, MSG_OPAQUE_ID, "verify-op-invalid");
+                }
                 Err(error) => {
+                    if is_unknown_variant(&error) {
+                        return snapshot_invalid(cid, MSG_OPAQUE_ID, "verify-op-invalid");
+                    }
                     let (kind, message) = classify_parse_error(&error);
                     return rejected(valid_correlation_echo(&ctx.raw), kind, message);
                 }
             };
-        if command.op != "send-to-workspace-verify" {
-            return snapshot_invalid(cid, MSG_OPAQUE_ID, "verify-op-invalid");
-        }
-        if !command.verified {
+        if !verified {
             return diverged_reply(
                 &cid,
                 tiler_core::contract::DivergenceKind::PostconditionUnverified,
             );
         }
-        let Some(preconditions) = parse_lifecycle_preconditions(&command.preconditions) else {
+        let Some(preconditions) = parse_lifecycle_preconditions(&preconditions_raw) else {
             return rejected(cid, "verify-invalid", "preconditions are invalid");
         };
-        let Some(operation) = parse_move_tiled_operation(&command.operation) else {
+        let Some(operation) = parse_move_tiled_operation(&operation_raw) else {
             return rejected(cid, "verify-invalid", "operation is invalid");
         };
         let Some(mut pending) = self.workspace_pending.take() else {
@@ -5233,18 +5259,22 @@ impl Planner {
     /// seeding.
     fn evaluate_directional_ack(&mut self, ctx: &Validated) -> String {
         let cid = ctx.request.correlation_id.clone();
-        let command: DirectionalMoveAckCommand =
-            match serde_json::from_value(ctx.request.command.clone()) {
-                Ok(command) => command,
-                Err(error) => {
-                    let (kind, message) = classify_parse_error(&error);
-                    return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+        // Strict tagged decode first (see `SyncCommand`); pending and binding
+        // checks below are untouched.
+        let ack_outcome = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+            Ok(SyncCommand::DirectionalMoveAck { ack_outcome }) => ack_outcome,
+            Ok(_) => {
+                return snapshot_invalid(cid, MSG_OPAQUE_ID, "ack-op-invalid");
+            }
+            Err(error) => {
+                if is_unknown_variant(&error) {
+                    return snapshot_invalid(cid, MSG_OPAQUE_ID, "ack-op-invalid");
                 }
-            };
-        if command.op != "directional-move-ack" {
-            return snapshot_invalid(cid, MSG_OPAQUE_ID, "ack-op-invalid");
-        }
-        let outcome = match command.ack_outcome.as_str() {
+                let (kind, message) = classify_parse_error(&error);
+                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+            }
+        };
+        let outcome = match ack_outcome.as_str() {
             "accepted" => AckOutcome::Accepted,
             "refused-capability" => AckOutcome::RefusedCapability,
             "partial-application" => AckOutcome::PartialApplication,
@@ -5309,27 +5339,37 @@ impl Planner {
     /// commit. A bare `verified: true` never commits.
     fn evaluate_directional_verify(&mut self, ctx: &Validated) -> String {
         let cid = ctx.request.correlation_id.clone();
-        let command: DirectionalMoveVerifyCommand =
-            match serde_json::from_value(ctx.request.command.clone()) {
-                Ok(command) => command,
+        // Strict tagged decode first (see `SyncCommand`); the verified flag,
+        // echo parsing, fenced operation binding, and pending checks below
+        // are untouched.
+        let (verified, preconditions_raw, operation_raw) =
+            match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+                Ok(SyncCommand::DirectionalMoveVerify {
+                    verified,
+                    preconditions,
+                    operation,
+                }) => (verified, preconditions, operation),
+                Ok(_) => {
+                    return snapshot_invalid(cid, MSG_OPAQUE_ID, "verify-op-invalid");
+                }
                 Err(error) => {
+                    if is_unknown_variant(&error) {
+                        return snapshot_invalid(cid, MSG_OPAQUE_ID, "verify-op-invalid");
+                    }
                     let (kind, message) = classify_parse_error(&error);
                     return rejected(valid_correlation_echo(&ctx.raw), kind, message);
                 }
             };
-        if command.op != "directional-move-verify" {
-            return snapshot_invalid(cid, MSG_OPAQUE_ID, "verify-op-invalid");
-        }
-        if !command.verified {
+        if !verified {
             return diverged_reply(
                 &cid,
                 tiler_core::contract::DivergenceKind::PostconditionUnverified,
             );
         }
-        let Some(preconditions) = parse_directional_preconditions(&command.preconditions) else {
+        let Some(preconditions) = parse_directional_preconditions(&preconditions_raw) else {
             return rejected(cid, "verify-invalid", "preconditions are invalid");
         };
-        let Some(operation) = parse_directional_move_operation(&command.operation) else {
+        let Some((operation, echo)) = parse_directional_move_operation(&operation_raw) else {
             return rejected(cid, "verify-invalid", "operation is invalid");
         };
         let Some(mut pending) = self.directional_pending.take() else {
@@ -5369,38 +5409,19 @@ impl Planner {
         }
         // Fenced source/target binding: the echoed operation target must home
         // to the retained pair, and any carried source binding must match.
+        // Reads the already-validated typed echo DTO (never raw JSON).
         if let tiler_core::directional::MoveOperation::CrossOutput {
             target_output,
             target_workspace,
             ..
         } = &pending.operation
         {
-            let op_target_output = command
-                .operation
-                .get("target_output")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            let op_target_workspace = command
-                .operation
-                .get("target_workspace")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            let op_source_output = command
-                .operation
-                .get("source_output")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            let op_source_workspace = command
-                .operation
-                .get("source_workspace")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            if op_target_output != target_output.0
-                || op_target_workspace != target_workspace.0
-                || op_target_output != pending.target_key.output.0
-                || op_target_workspace != pending.target_key.workspace.0
-                || op_source_output != pending.source_key.output.0
-                || op_source_workspace != pending.source_key.workspace.0
+            if echo.target_output != target_output.0
+                || echo.target_workspace != target_workspace.0
+                || echo.target_output != pending.target_key.output.0
+                || echo.target_workspace != pending.target_key.workspace.0
+                || echo.source_output != pending.source_key.output.0
+                || echo.source_workspace != pending.source_key.workspace.0
             {
                 let reason = pending.session.note_postcondition_mismatch();
                 self.directional_pending = Some(pending);
@@ -5440,8 +5461,7 @@ impl Planner {
                 if let Some(target) = target {
                     self.store_committed(target_key, target, target_outer_gap);
                 } else {
-                    self.sessions.remove(&target_key);
-                    self.domain_outer_gaps.remove(&target_key);
+                    self.engine.remove(&target_key);
                 }
                 serialize_bounded(&PlanReply {
                     v: PLAN_CONTRACT_VERSION,
@@ -5486,16 +5506,20 @@ impl Planner {
     /// cannot imply a commit.
     fn evaluate_workspace_status(&self, ctx: &Validated) -> String {
         let cid = ctx.request.correlation_id.clone();
-        let command: WorkspaceStatusCommand =
-            match serde_json::from_value(ctx.request.command.clone()) {
-                Ok(command) => command,
-                Err(error) => {
-                    let (kind, message) = classify_parse_error(&error);
-                    return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+        // Strict tagged decode first (see `SyncCommand`); the read-only
+        // contract below is untouched.
+        match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+            Ok(SyncCommand::SendToWorkspaceStatus {}) => {}
+            Ok(_) => {
+                return rejected(cid, "status-op-invalid", "status operation is invalid");
+            }
+            Err(error) => {
+                if is_unknown_variant(&error) {
+                    return rejected(cid, "status-op-invalid", "status operation is invalid");
                 }
-            };
-        if command.op != "send-to-workspace-status" {
-            return rejected(cid, "status-op-invalid", "status operation is invalid");
+                let (kind, message) = classify_parse_error(&error);
+                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+            }
         }
         // A `domains` payload on this route is already refused fail-closed by
         // `validate_request` (`domain-invalid`); only the target scope below
@@ -5547,16 +5571,20 @@ impl Planner {
     /// source/target keys and projected domains.
     fn evaluate_directional_status(&self, ctx: &Validated) -> String {
         let cid = ctx.request.correlation_id.clone();
-        let command: DirectionalMoveStatusCommand =
-            match serde_json::from_value(ctx.request.command.clone()) {
-                Ok(command) => command,
-                Err(error) => {
-                    let (kind, message) = classify_parse_error(&error);
-                    return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+        // Strict tagged decode first (see `SyncCommand`); the read-only
+        // contract below is untouched.
+        match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+            Ok(SyncCommand::DirectionalMoveStatus {}) => {}
+            Ok(_) => {
+                return rejected(cid, "status-op-invalid", "status operation is invalid");
+            }
+            Err(error) => {
+                if is_unknown_variant(&error) {
+                    return rejected(cid, "status-op-invalid", "status operation is invalid");
                 }
-            };
-        if command.op != "directional-move-status" {
-            return rejected(cid, "status-op-invalid", "status operation is invalid");
+                let (kind, message) = classify_parse_error(&error);
+                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+            }
         }
         let Some((source_domain, source_key, target_domain, target_key)) = directional_pair(ctx)
         else {
@@ -5616,18 +5644,23 @@ impl Planner {
     /// malformed probes change nothing.
     fn evaluate_workspace_cancel(&mut self, ctx: &Validated) -> String {
         let cid = ctx.request.correlation_id.clone();
-        let command: WorkspaceCancelCommand =
-            match serde_json::from_value(ctx.request.command.clone()) {
-                Ok(command) => command,
-                Err(error) => {
-                    let (kind, message) = classify_parse_error(&error);
-                    return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+        // Strict tagged decode first (see `SyncCommand`); attestation, scope,
+        // identity, and withdraw effects below are untouched.
+        let zero_dispatch = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone())
+        {
+            Ok(SyncCommand::SendToWorkspaceCancel { zero_dispatch }) => zero_dispatch,
+            Ok(_) => {
+                return rejected(cid, "cancel-op-invalid", "cancel operation is invalid");
+            }
+            Err(error) => {
+                if is_unknown_variant(&error) {
+                    return rejected(cid, "cancel-op-invalid", "cancel operation is invalid");
                 }
-            };
-        if command.op != "send-to-workspace-cancel" {
-            return rejected(cid, "cancel-op-invalid", "cancel operation is invalid");
-        }
-        if !command.zero_dispatch {
+                let (kind, message) = classify_parse_error(&error);
+                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+            }
+        };
+        if !zero_dispatch {
             return rejected(cid, "cancel-refused", "adapter attests a native dispatch");
         }
         // A `domains` payload on this route is already refused fail-closed by
@@ -5728,18 +5761,23 @@ impl Planner {
     /// exactly preserved.
     fn evaluate_directional_cancel(&mut self, ctx: &Validated) -> String {
         let cid = ctx.request.correlation_id.clone();
-        let command: DirectionalMoveCancelCommand =
-            match serde_json::from_value(ctx.request.command.clone()) {
-                Ok(command) => command,
-                Err(error) => {
-                    let (kind, message) = classify_parse_error(&error);
-                    return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+        // Strict tagged decode first (see `SyncCommand`); attestation, pair
+        // binding, identity, and withdraw effects below are untouched.
+        let zero_dispatch = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone())
+        {
+            Ok(SyncCommand::DirectionalMoveCancel { zero_dispatch }) => zero_dispatch,
+            Ok(_) => {
+                return rejected(cid, "cancel-op-invalid", "cancel operation is invalid");
+            }
+            Err(error) => {
+                if is_unknown_variant(&error) {
+                    return rejected(cid, "cancel-op-invalid", "cancel operation is invalid");
                 }
-            };
-        if command.op != "directional-move-cancel" {
-            return rejected(cid, "cancel-op-invalid", "cancel operation is invalid");
-        }
-        if !command.zero_dispatch {
+                let (kind, message) = classify_parse_error(&error);
+                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+            }
+        };
+        if !zero_dispatch {
             return rejected(cid, "cancel-refused", "adapter attests a native dispatch");
         }
         let Some((source_domain, source_key, target_domain, target_key)) = directional_pair(ctx)
@@ -5830,6 +5868,7 @@ impl Planner {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg(test)]
 struct AdmitCommand {
     op: String,
     window: String,
@@ -5841,39 +5880,42 @@ struct AdmitCommand {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg(test)]
 struct RemoveCommand {
     op: String,
     window: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ToggleFloatCommand {
-    op: String,
-    window: String,
-    #[serde(default)]
-    float_rect: Option<RectDto>,
-}
-
 fn evaluate_toggle_float_with(
     ctx: &Validated,
-    evaluate: impl FnOnce(&ToggleFloatCommand, Option<Rect>) -> String,
+    evaluate: impl FnOnce(&str, Option<Rect>) -> String,
 ) -> String {
-    let command: ToggleFloatCommand = match serde_json::from_value(ctx.request.command.clone()) {
-        Ok(command) => command,
-        Err(error) => {
-            let (kind, message) = classify_parse_error(&error);
-            return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-        }
-    };
-    if command.op != "toggle-float" {
-        return snapshot_invalid(
-            ctx.request.correlation_id.clone(),
-            MSG_OBSERVATION,
-            "toggle-float-op-invalid",
-        );
-    }
-    if !is_opaque_id(&command.window) {
+    // Strict tagged decode in place (see `SyncCommand`): runs after the
+    // caller's raw-window floating probe, preserving `not-tiled` precedence
+    // for malformed floats on untracked floating windows.
+    let (window, float_rect_dto) =
+        match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+            Ok(SyncCommand::ToggleFloat { window, float_rect }) => (window, float_rect),
+            Ok(_) => {
+                return snapshot_invalid(
+                    ctx.request.correlation_id.clone(),
+                    MSG_OBSERVATION,
+                    "toggle-float-op-invalid",
+                );
+            }
+            Err(error) => {
+                if is_unknown_variant(&error) {
+                    return snapshot_invalid(
+                        ctx.request.correlation_id.clone(),
+                        MSG_OBSERVATION,
+                        "toggle-float-op-invalid",
+                    );
+                }
+                let (kind, message) = classify_parse_error(&error);
+                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+            }
+        };
+    if !is_opaque_id(&window) {
         return snapshot_invalid(
             ctx.request.correlation_id.clone(),
             MSG_OBSERVATION,
@@ -5884,7 +5926,7 @@ fn evaluate_toggle_float_with(
         .request
         .windows
         .iter()
-        .any(|entry| entry.window == command.window)
+        .any(|entry| entry.window == window)
     {
         return rejected(
             ctx.request.correlation_id.clone(),
@@ -5892,7 +5934,7 @@ fn evaluate_toggle_float_with(
             MSG_OBSERVATION,
         );
     }
-    let float_rect = match command.float_rect.as_ref() {
+    let float_rect = match float_rect_dto.as_ref() {
         Some(rect) if valid_carried_rect(rect.x, rect.y, rect.w, rect.h) => Some(Rect {
             x: rect.x,
             y: rect.y,
@@ -5908,7 +5950,7 @@ fn evaluate_toggle_float_with(
         }
         None => None,
     };
-    evaluate(&command, float_rect)
+    evaluate(&window, float_rect)
 }
 
 fn float_planned_reply(
@@ -5950,17 +5992,19 @@ fn float_planned_reply(
     })
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// Directional move/focus plumbing value for the canonical pair path.
+/// Rebuilt by the converted `move`/`focus` handlers from the typed
+/// [`SyncCommand`] variant (never parsed directly anymore); the
+/// `cross_output_transfer` default-true is mirrored on the enum variants so
+/// omitted legacy requests keep their historical full-capability behavior.
+#[derive(Debug, Clone)]
 struct DirectedCommand {
-    op: String,
     window: String,
     direction: String,
     /// Active KWin currently has no public output-transfer primitive. The
     /// adapter sends false for a two-domain flight, preserving local movement
     /// while rejecting R4 before the planner stages any state. Omitted legacy
     /// requests retain their historical full-capability behavior.
-    #[serde(default = "default_cross_output_transfer")]
     cross_output_transfer: bool,
 }
 
@@ -5970,36 +6014,8 @@ const fn default_cross_output_transfer() -> bool {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ResizeCommand {
-    op: String,
-    window: String,
-    direction: String,
-    mode: String,
-    press_index: u32,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PointerResizeCommand {
-    op: String,
-    window: String,
-    direction: String,
-    boundary: i32,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[cfg(test)]
 struct ReconcileCommand {
-    op: String,
-}
-
-/// Deliberate gap-update command: same strict envelope as [`ReconcileCommand`]
-/// but an explicit opt-in to retained gap reprojection. Only the deliberate
-/// tiler-reload route sends it; ordinary drift reconciliation keeps refusing
-/// gap changes as `domain-mismatch`.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct UpdateGapsCommand {
     op: String,
 }
 
@@ -6008,8 +6024,141 @@ struct UpdateGapsCommand {
 /// extra fields reject via the established unknown-field path.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg(test)]
 struct ActiveGroupCommand {
     op: String,
+}
+
+/// Typed synchronous command codec (AR3 slice, narrow).
+///
+/// Internally tagged on `op` with `deny_unknown_fields` for all nineteen
+/// command ops: the ten synchronous ops plus `send-to-workspace` and the
+/// eight R4 ack/verify/status/cancel phases. Sync handlers parse
+/// [`SyncCommand`] once in place after the existing dispatch boundaries
+/// (validation, ack/verify/status/cancel dispatch, pending conflict, send
+/// dispatch, binding sync): the production `evaluate` string-guards on the
+/// known op before dispatch, so missing/non-string/unknown ops keep the exact
+/// `unknown-value` path without a typed parse, and malformed known ops during
+/// pending keep `pending-exists` by never reaching here.
+/// Transaction handlers parse [`SyncCommand`] once in place at their exact
+/// legacy position: `send-to-workspace` keeps target-scope-before-parse in
+/// `validate_workspace_input`, ack/verify/status/cancel keep parse-first at
+/// the pre-binding dispatch boundary, status handlers stay read-only
+/// (`&self`), cancel handlers keep their `&mut self` withdraw effects.
+/// A present-but-wrong op string surfaces as an
+/// `unknown variant` decode error, which each handler maps back to the exact
+/// legacy `*-op-invalid` snapshot the old `from_value` + op-check produced;
+/// missing/non-string/extra-field errors keep `classify_parse_error`
+/// behavior. Direct `evaluate_*` tests therefore pass unchanged.
+/// `move`/`focus` rebuild the [`DirectedCommand`] plumbing value from the
+/// typed variant for the untouched directional pair path (including the
+/// `cross_output_transfer` default-true); `toggle-float` keeps its raw-window
+/// floating probe before the typed parse, so malformed floats on untracked
+/// floating windows still report `not-tiled`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "op", deny_unknown_fields)]
+enum SyncCommand {
+    #[serde(rename = "reconcile")]
+    Reconcile {},
+    #[serde(rename = "update-gaps")]
+    UpdateGaps {},
+    #[serde(rename = "admit")]
+    Admit {
+        window: String,
+        output: String,
+        workspace: String,
+        #[serde(default)]
+        placement_bounds: Option<RectDto>,
+    },
+    #[serde(rename = "remove")]
+    Remove { window: String },
+    #[serde(rename = "active-group")]
+    ActiveGroup {},
+    #[serde(rename = "move")]
+    Move {
+        window: String,
+        direction: String,
+        #[serde(default = "default_cross_output_transfer")]
+        cross_output_transfer: bool,
+    },
+    #[serde(rename = "focus")]
+    Focus {
+        window: String,
+        direction: String,
+        #[serde(default = "default_cross_output_transfer")]
+        cross_output_transfer: bool,
+    },
+    #[serde(rename = "resize")]
+    Resize {
+        window: String,
+        direction: String,
+        mode: String,
+        press_index: u32,
+    },
+    #[serde(rename = "pointer-resize")]
+    PointerResize {
+        window: String,
+        direction: String,
+        boundary: i32,
+    },
+    #[serde(rename = "toggle-float")]
+    ToggleFloat {
+        window: String,
+        #[serde(default)]
+        float_rect: Option<RectDto>,
+    },
+    #[serde(rename = "send-to-workspace")]
+    SendToWorkspace {
+        window: String,
+        target_output: String,
+        target_workspace: String,
+    },
+    #[serde(rename = "send-to-workspace-ack")]
+    SendToWorkspaceAck { ack_outcome: String },
+    #[serde(rename = "send-to-workspace-verify")]
+    SendToWorkspaceVerify {
+        verified: bool,
+        /// Deferred raw echo: any well-formed JSON decodes here so the
+        /// `verified` gate and `verify-invalid` precedence below stay exact;
+        /// conversion to [`LifecyclePrecondition`] runs only afterwards via
+        /// [`parse_lifecycle_preconditions`].
+        preconditions: RawEcho,
+        /// Deferred raw echo; conversion to [`LifecycleOperation`] runs only
+        /// after the `verified` gate via [`parse_move_tiled_operation`].
+        operation: RawEcho,
+    },
+    #[serde(rename = "send-to-workspace-status")]
+    SendToWorkspaceStatus {},
+    #[serde(rename = "send-to-workspace-cancel")]
+    SendToWorkspaceCancel { zero_dispatch: bool },
+    #[serde(rename = "directional-move-ack")]
+    DirectionalMoveAck { ack_outcome: String },
+    #[serde(rename = "directional-move-verify")]
+    DirectionalMoveVerify {
+        verified: bool,
+        /// Deferred raw echo; conversion to the portable directional
+        /// preconditions runs only after the `verified` gate via
+        /// [`parse_directional_preconditions`].
+        preconditions: RawEcho,
+        /// Deferred raw echo; conversion to
+        /// [`tiler_core::directional::MoveOperation`] plus the fenced wire
+        /// DTO runs only after the `verified` gate via
+        /// [`parse_directional_move_operation`].
+        operation: RawEcho,
+    },
+    #[serde(rename = "directional-move-status")]
+    DirectionalMoveStatus {},
+    #[serde(rename = "directional-move-cancel")]
+    DirectionalMoveCancel { zero_dispatch: bool },
+}
+
+/// Legacy op-mismatch mapping for converted handlers (see [`SyncCommand`]):
+/// a tagged-decode `unknown variant` error means the carried op was present
+/// but wrong, which the legacy struct parse + op-check reported as the
+/// handler's `*-op-invalid` snapshot. All other decode errors keep
+/// [`classify_parse_error`] behavior.
+fn is_unknown_variant(error: &serde_json::Error) -> bool {
+    error.to_string().contains("unknown variant")
 }
 
 /// Fixed `no-group` reasons (short lowercase-hyphenated ASCII, never echoes
@@ -6179,90 +6328,6 @@ fn active_group_response(session: &Session, ctx: &Validated) -> String {
         preconditions: None,
         operation: None,
     })
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WorkspaceSendCommand {
-    op: String,
-    window: String,
-    target_output: String,
-    target_workspace: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WorkspaceAckCommand {
-    op: String,
-    ack_outcome: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WorkspaceVerifyCommand {
-    op: String,
-    verified: bool,
-    preconditions: serde_json::Value,
-    operation: serde_json::Value,
-}
-
-/// Strict directional R4 acknowledgement command.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DirectionalMoveAckCommand {
-    op: String,
-    ack_outcome: String,
-}
-
-/// Strict directional R4 verification command: exact echoed preconditions and
-/// cross-output operation plus the explicit native verification flag.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DirectionalMoveVerifyCommand {
-    op: String,
-    verified: bool,
-    preconditions: serde_json::Value,
-    operation: serde_json::Value,
-}
-
-/// Strict read-only workspace-send status command: no fields beyond the op
-/// tag. The envelope already carries the complete fresh observation plus the
-/// exact transaction identity; extra fields fail closed as malformed.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WorkspaceStatusCommand {
-    op: String,
-}
-
-/// Strict read-only directional R4 status command: no fields beyond the op
-/// tag, same envelope rule as the workspace status command.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DirectionalMoveStatusCommand {
-    op: String,
-}
-
-/// Strict workspace-send cancellation command: the op tag plus the trusted
-/// adapter zero-dispatch attestation. `zero_dispatch` must be exactly true:
-/// the adapter attests that this flight dispatched no geometry, membership,
-/// or follow setter, so withdrawing the unacknowledged plan cannot strand a
-/// native mutation. Rust cannot verify the claim itself; it is trusted only
-/// together with the exact identity, scope, unacked state, and pre-image
-/// checks, over the same-UID transport that already authorizes the route.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WorkspaceCancelCommand {
-    op: String,
-    zero_dispatch: bool,
-}
-
-/// Strict directional R4 cancellation command: same attestation contract as
-/// the workspace cancellation command.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DirectionalMoveCancelCommand {
-    op: String,
-    zero_dispatch: bool,
 }
 
 #[cfg(test)]
@@ -7635,6 +7700,648 @@ mod tests {
             assert_eq!(reply["correlation_id"], cid, "{reply}");
             assert!(text.len() <= PLAN_MAX_REPLY_BYTES, "{reply}");
         }
+    }
+    #[test]
+    fn typed_sync_codec_admit_remove_active_group_wire_golden() {
+        // Wire golden for the AR3 typed `SyncCommand` slice (admit, remove,
+        // active-group): valid requests plan byte-exact through the single
+        // typed parse + inner path, malformed commands reject byte-exact with
+        // unchanged kinds. Literals recorded from the production `evaluate`
+        // path (offline, no host mutation).
+        let mut planner = Planner::new();
+        let admit = retained_request(
+            "gold-admit-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
+        );
+        let text = planner.evaluate(&admit);
+        assert_eq!(
+            text,
+            "{\"v\":1,\"correlation_id\":\"gold-admit-1\",\"outcome\":\"planned\",\"base_revision\":0,\"detail\":{\"capability\":\"admit-tiled\",\"kind\":\"admit\",\"policy_version\":1},\"desired_geometry\":[{\"window\":\"win-1\",\"leaf\":\"leaf-win-1\",\"output\":\"out-1\",\"workspace\":\"ws-1\",\"rect\":{\"x\":0,\"y\":0,\"w\":1200,\"h\":800}}],\"desired_focus\":{\"domain_output\":\"out-1\",\"domain_workspace\":\"ws-1\",\"leaf\":\"leaf-win-1\"}}",
+        );
+        let admit_extra = retained_request(
+            "gold-admit-2",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1", "bogus": 1}),
+        );
+        assert_eq!(
+            planner.evaluate(&admit_extra),
+            "{\"v\":1,\"correlation_id\":\"gold-admit-2\",\"outcome\":\"rejected\",\"kind\":\"unknown-field\",\"message\":\"request contains an unknown field\"}",
+        );
+        // Seed a two-window domain, then remove byte-exact.
+        let mut planner = Planner::new();
+        for (cid, focused, windows, command) in [
+            (
+                "s1",
+                "win-1",
+                vec![("win-1", 0, 0, 100, 80)],
+                serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
+            ),
+            (
+                "s2",
+                "win-2",
+                vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                serde_json::json!({"op": "admit", "window": "win-2", "output": "out-1", "workspace": "ws-1"}),
+            ),
+        ] {
+            let reply = parse_reply(&planner.evaluate(&retained_request(
+                cid, "owner-1", "gen-1", focused, &windows, command,
+            )));
+            assert_eq!(reply["outcome"], "planned", "{reply}");
+        }
+        let remove = retained_request(
+            "gold-remove-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "remove", "window": "win-2"}),
+        );
+        assert_eq!(
+            planner.evaluate(&remove),
+            "{\"v\":1,\"correlation_id\":\"gold-remove-1\",\"outcome\":\"planned\",\"base_revision\":2,\"detail\":{\"capability\":\"remove-tiled\",\"kind\":\"remove\",\"policy_version\":1},\"desired_geometry\":[{\"window\":\"win-1\",\"leaf\":\"leaf-win-1\",\"output\":\"out-1\",\"workspace\":\"ws-1\",\"rect\":{\"x\":0,\"y\":0,\"w\":1200,\"h\":800}}],\"desired_focus\":{\"domain_output\":\"out-1\",\"domain_workspace\":\"ws-1\",\"leaf\":\"leaf-win-1\"}}",
+        );
+        let remove_missing = retained_request(
+            "gold-remove-2",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "remove"}),
+        );
+        assert_eq!(
+            planner.evaluate(&remove_missing),
+            "{\"v\":1,\"correlation_id\":\"gold-remove-2\",\"outcome\":\"rejected\",\"kind\":\"request-malformed\",\"message\":\"request is malformed\"}",
+        );
+        let active_group = retained_request(
+            "gold-ag-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "active-group"}),
+        );
+        assert_eq!(
+            planner.evaluate(&active_group),
+            "{\"v\":1,\"correlation_id\":\"gold-ag-1\",\"outcome\":\"no-group\",\"kind\":\"no-group\",\"base_revision\":3,\"detail\":{\"generation\":\"gen-1\",\"kind\":\"no-group\",\"owner\":\"owner-1\",\"reason\":\"no-parent-group\"}}",
+        );
+        let active_group_extra = retained_request(
+            "gold-ag-2",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "active-group", "bogus": 1}),
+        );
+        assert_eq!(
+            planner.evaluate(&active_group_extra),
+            "{\"v\":1,\"correlation_id\":\"gold-ag-2\",\"outcome\":\"rejected\",\"kind\":\"unknown-field\",\"message\":\"request contains an unknown field\"}",
+        );
+    }
+    #[test]
+    fn typed_sync_codec_move_focus_resize_float_wire_golden() {
+        // Wire golden for the tagged `SyncCommand` conversion of
+        // move/focus/resize/pointer-resize/toggle-float: valid requests reply
+        // byte-exact through the in-place typed parse, malformed commands
+        // reject byte-exact with unchanged kinds. Literals recorded from the
+        // production `evaluate` path before the switch (offline).
+        // Explicit `cross_output_transfer: false` refuses the local swap as
+        // `planner-noop` while the omitted (default-true) form plans: pins
+        // the preserved default. Each group below runs on a freshly seeded
+        // two-window planner so committed plans cannot bleed across goldens.
+        let seed = || {
+            let mut planner = Planner::new();
+            for (cid, focused, windows, command) in [
+                (
+                    "s1",
+                    "win-1",
+                    vec![("win-1", 0, 0, 100, 80)],
+                    serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
+                ),
+                (
+                    "s2",
+                    "win-2",
+                    vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                    serde_json::json!({"op": "admit", "window": "win-2", "output": "out-1", "workspace": "ws-1"}),
+                ),
+            ] {
+                let reply = parse_reply(&planner.evaluate(&retained_request(
+                    cid, "owner-1", "gen-1", focused, &windows, command,
+                )));
+                assert_eq!(reply["outcome"], "planned", "{reply}");
+            }
+            planner
+        };
+        let mut planner = seed();
+        let two = vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)];
+        let request = retained_request(
+            "gold-move-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "move", "window": "win-1", "direction": "right"}),
+        );
+        assert_eq!(
+            planner.evaluate(&request),
+            "{\"v\":1,\"correlation_id\":\"gold-move-1\",\"outcome\":\"planned\",\"base_revision\":2,\"detail\":{\"capability\":\"SwapNeighbor\",\"direction\":\"right\",\"kind\":\"move\",\"rule\":\"R2a\"},\"desired_geometry\":[{\"window\":\"win-1\",\"leaf\":\"leaf-win-1\",\"output\":\"out-1\",\"workspace\":\"ws-1\",\"rect\":{\"x\":600,\"y\":0,\"w\":600,\"h\":800}},{\"window\":\"win-2\",\"leaf\":\"leaf-win-2\",\"output\":\"out-1\",\"workspace\":\"ws-1\",\"rect\":{\"x\":0,\"y\":0,\"w\":600,\"h\":800}}],\"desired_focus\":{\"domain_output\":\"out-1\",\"domain_workspace\":\"ws-1\",\"leaf\":\"leaf-win-1\"}}",
+        );
+        let no_transfer = retained_request(
+            "gold-move-2",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "move", "window": "win-1", "direction": "right", "cross_output_transfer": false}),
+        );
+        assert_eq!(
+            planner.evaluate(&no_transfer),
+            "{\"v\":1,\"correlation_id\":\"gold-move-2\",\"outcome\":\"rejected\",\"kind\":\"planner-noop\",\"message\":\"planner reports no movement\"}",
+        );
+        let move_extra = retained_request(
+            "gold-move-3",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "move", "window": "win-1", "direction": "right", "bogus": 1}),
+        );
+        assert_eq!(
+            planner.evaluate(&move_extra),
+            "{\"v\":1,\"correlation_id\":\"gold-move-3\",\"outcome\":\"rejected\",\"kind\":\"unknown-field\",\"message\":\"request contains an unknown field\"}",
+        );
+        planner = seed();
+        let focus = retained_request(
+            "gold-focus-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "focus", "window": "win-1", "direction": "right"}),
+        );
+        assert_eq!(
+            planner.evaluate(&focus),
+            "{\"v\":1,\"correlation_id\":\"gold-focus-1\",\"outcome\":\"planned\",\"base_revision\":2,\"detail\":{\"capability\":\"directional-focus\",\"direction\":\"right\",\"kind\":\"focus\",\"to_window\":\"win-2\"},\"desired_geometry\":[{\"window\":\"win-1\",\"leaf\":\"leaf-win-1\",\"output\":\"out-1\",\"workspace\":\"ws-1\",\"rect\":{\"x\":0,\"y\":0,\"w\":600,\"h\":800}},{\"window\":\"win-2\",\"leaf\":\"leaf-win-2\",\"output\":\"out-1\",\"workspace\":\"ws-1\",\"rect\":{\"x\":600,\"y\":0,\"w\":600,\"h\":800}}],\"desired_focus\":{\"domain_output\":\"out-1\",\"domain_workspace\":\"ws-1\",\"leaf\":\"leaf-win-2\"}}",
+        );
+        let focus_missing = retained_request(
+            "gold-focus-2",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "focus", "window": "win-2"}),
+        );
+        assert_eq!(
+            planner.evaluate(&focus_missing),
+            "{\"v\":1,\"correlation_id\":\"gold-focus-2\",\"outcome\":\"rejected\",\"kind\":\"request-malformed\",\"message\":\"request is malformed\"}",
+        );
+        planner = seed();
+        let resize = retained_request(
+            "gold-resize-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "resize", "window": "win-1", "direction": "right", "mode": "outwards", "press_index": 0}),
+        );
+        assert_eq!(
+            planner.evaluate(&resize),
+            "{\"v\":1,\"correlation_id\":\"gold-resize-1\",\"outcome\":\"planned\",\"base_revision\":2,\"detail\":{\"capability\":\"keyboard-resize\",\"direction\":\"right\",\"focused_index\":0,\"kind\":\"resize\",\"mode\":\"outwards\",\"neighbor_index\":1,\"new_shares\":[611,587],\"old_shares\":[1,1],\"target_group\":\"grp-win-2-r1\"},\"desired_geometry\":[{\"window\":\"win-1\",\"leaf\":\"leaf-win-1\",\"output\":\"out-1\",\"workspace\":\"ws-1\",\"rect\":{\"x\":0,\"y\":0,\"w\":612,\"h\":800}},{\"window\":\"win-2\",\"leaf\":\"leaf-win-2\",\"output\":\"out-1\",\"workspace\":\"ws-1\",\"rect\":{\"x\":612,\"y\":0,\"w\":588,\"h\":800}}],\"desired_focus\":{\"domain_output\":\"out-1\",\"domain_workspace\":\"ws-1\",\"leaf\":\"leaf-win-1\"}}",
+        );
+        let resize_extra = retained_request(
+            "gold-resize-2",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "resize", "window": "win-1", "direction": "right", "mode": "outwards", "press_index": 0, "bogus": 1}),
+        );
+        assert_eq!(
+            planner.evaluate(&resize_extra),
+            "{\"v\":1,\"correlation_id\":\"gold-resize-2\",\"outcome\":\"rejected\",\"kind\":\"unknown-field\",\"message\":\"request contains an unknown field\"}",
+        );
+        planner = seed();
+        let pointer = retained_request(
+            "gold-ptr-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "pointer-resize", "window": "win-1", "direction": "right", "boundary": 550}),
+        );
+        assert_eq!(
+            planner.evaluate(&pointer),
+            "{\"v\":1,\"correlation_id\":\"gold-ptr-1\",\"outcome\":\"planned\",\"base_revision\":2,\"detail\":{\"boundary\":550,\"capability\":\"pointer-resize\",\"direction\":\"right\",\"focused_index\":0,\"kind\":\"pointer-resize\",\"neighbor_index\":1,\"new_shares\":[549,649],\"old_shares\":[1,1],\"target_group\":\"grp-win-2-r1\"},\"desired_geometry\":[{\"window\":\"win-1\",\"leaf\":\"leaf-win-1\",\"output\":\"out-1\",\"workspace\":\"ws-1\",\"rect\":{\"x\":0,\"y\":0,\"w\":550,\"h\":800}},{\"window\":\"win-2\",\"leaf\":\"leaf-win-2\",\"output\":\"out-1\",\"workspace\":\"ws-1\",\"rect\":{\"x\":550,\"y\":0,\"w\":650,\"h\":800}}],\"desired_focus\":{\"domain_output\":\"out-1\",\"domain_workspace\":\"ws-1\",\"leaf\":\"leaf-win-1\"}}",
+        );
+        let pointer_missing = retained_request(
+            "gold-ptr-2",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "pointer-resize", "window": "win-1", "direction": "right"}),
+        );
+        assert_eq!(
+            planner.evaluate(&pointer_missing),
+            "{\"v\":1,\"correlation_id\":\"gold-ptr-2\",\"outcome\":\"rejected\",\"kind\":\"request-malformed\",\"message\":\"request is malformed\"}",
+        );
+        planner = seed();
+        let float = retained_request(
+            "gold-float-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "toggle-float", "window": "win-1"}),
+        );
+        assert_eq!(
+            planner.evaluate(&float),
+            "{\"v\":1,\"correlation_id\":\"gold-float-1\",\"outcome\":\"planned\",\"base_revision\":2,\"detail\":{\"capability\":\"intentional-float\",\"kind\":\"toggle-float\",\"policy_version\":1},\"desired_geometry\":[{\"window\":\"win-2\",\"leaf\":\"leaf-win-2\",\"output\":\"out-1\",\"workspace\":\"ws-1\",\"rect\":{\"x\":0,\"y\":0,\"w\":1200,\"h\":800}}],\"desired_focus\":{\"domain_output\":\"out-1\",\"domain_workspace\":\"ws-1\",\"leaf\":\"leaf-win-2\"},\"float_geometry\":{\"window\":\"win-1\",\"rect\":{\"x\":240,\"y\":160,\"w\":720,\"h\":480}}}",
+        );
+        let float_extra = retained_request(
+            "gold-float-2",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "toggle-float", "window": "win-1", "bogus": 1}),
+        );
+        assert_eq!(
+            planner.evaluate(&float_extra),
+            "{\"v\":1,\"correlation_id\":\"gold-float-2\",\"outcome\":\"rejected\",\"kind\":\"unknown-field\",\"message\":\"request contains an unknown field\"}",
+        );
+        // Probe-before-parse precedence: a malformed float naming an untracked
+        // floating window still reports `not-tiled`, never `unknown-field`.
+        let mut fresh = Planner::new();
+        let mut floating_value: serde_json::Value = serde_json::from_str(&retained_request(
+            "gold-float-3",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "toggle-float", "window": "win-1", "bogus": 1}),
+        ))
+        .expect("request JSON");
+        floating_value["windows"][0]["floating"] = serde_json::Value::Bool(true);
+        assert_eq!(
+            fresh.evaluate(&floating_value.to_string()),
+            "{\"v\":1,\"correlation_id\":\"gold-float-3\",\"outcome\":\"rejected\",\"kind\":\"not-tiled\",\"message\":\"focused window is not a tiled window\"}",
+        );
+    }
+    #[test]
+    fn typed_transaction_codec_workspace_wire_golden() {
+        // Wire golden for the tagged `SyncCommand` conversion of the
+        // workspace-send route: full request/ack/verify lifecycle plus
+        // read-only status and cancel, byte-exact through the in-place typed
+        // parse. Malformed commands reject byte-exact with unchanged kinds;
+        // scope-before-parse order is unchanged (`send-to-workspace` still
+        // validates the target scope first). Literals recorded from the
+        // production `evaluate` path before the switch (offline).
+        let source = vec![
+            workspace_entry("win-1", "ws-1", 0),
+            workspace_entry("win-2", "ws-1", 100),
+        ];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let mut planner = Planner::new();
+        let planned_str = planner.evaluate(&workspace_request(
+            "gold-ws-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source.clone(),
+            target.clone(),
+            workspace_send_body(),
+        ));
+        assert_eq!(
+            planned_str,
+            "{\"v\":1,\"correlation_id\":\"gold-ws-1\",\"outcome\":\"planned\",\"kind\":\"send-to-workspace\",\"base_revision\":3,\"detail\":{\"capability\":\"move-tiled\",\"kind\":\"send-to-workspace\",\"policy_version\":1},\"desired_geometry\":[{\"window\":\"win-2\",\"leaf\":\"leaf-win-2\",\"output\":\"out-1\",\"workspace\":\"ws-1\",\"rect\":{\"x\":0,\"y\":0,\"w\":1200,\"h\":800}},{\"window\":\"win-1\",\"leaf\":\"leaf-win-1\",\"output\":\"out-1\",\"workspace\":\"ws-2\",\"rect\":{\"x\":600,\"y\":0,\"w\":600,\"h\":800}},{\"window\":\"win-t1\",\"leaf\":\"leaf-win-t1\",\"output\":\"out-1\",\"workspace\":\"ws-2\",\"rect\":{\"x\":0,\"y\":0,\"w\":600,\"h\":800}}],\"desired_focus\":{\"domain_output\":\"out-1\",\"domain_workspace\":\"ws-2\",\"leaf\":\"leaf-win-1\"},\"preconditions\":[\"window-observed\",\"desired-topology-valid\",\"adapter-must-verify-postconditions\"],\"operation\":{\"leaf\":\"leaf-win-1\",\"op\":\"move-tiled\",\"source_output\":\"out-1\",\"source_workspace\":\"ws-1\",\"target_output\":\"out-1\",\"target_workspace\":\"ws-2\",\"window\":\"win-1\"}}",
+        );
+        let planned = parse_reply(&planned_str);
+        let base = planned["base_revision"].as_u64().expect("base");
+        let (post_source, post_target) = observation_from_geometry(&planned["desired_geometry"]);
+        let post = |command: serde_json::Value| {
+            workspace_request(
+                "gold-ws-1",
+                "owner-1",
+                "gen-1",
+                base,
+                "",
+                post_source.clone(),
+                post_target.clone(),
+                command,
+            )
+        };
+        assert_eq!(
+            planner.evaluate(&post(serde_json::json!({"op": "send-to-workspace-status"}))),
+            "{\"v\":1,\"correlation_id\":\"gold-ws-1\",\"outcome\":\"status\",\"kind\":\"post-unacked\",\"base_revision\":3}",
+        );
+        assert_eq!(
+            planner.evaluate(&post(workspace_ack_body())),
+            "{\"v\":1,\"correlation_id\":\"gold-ws-1\",\"outcome\":\"acknowledged\",\"kind\":\"send-to-workspace\",\"base_revision\":3}",
+        );
+        assert_eq!(
+            planner.evaluate(&post(serde_json::json!({"op": "send-to-workspace-status"}))),
+            "{\"v\":1,\"correlation_id\":\"gold-ws-1\",\"outcome\":\"status\",\"kind\":\"post-acked\",\"base_revision\":3}",
+        );
+        assert_eq!(
+            planner.evaluate(&post(workspace_verify_body(
+                planned["preconditions"].clone(),
+                planned["operation"].clone()
+            ))),
+            "{\"v\":1,\"correlation_id\":\"gold-ws-1\",\"outcome\":\"committed\",\"kind\":\"send-to-workspace\",\"base_revision\":4}",
+        );
+        // Malformed commands reject before any scope/pending handling, with
+        // unchanged kinds.
+        let mut fresh = Planner::new();
+        let malformed = [
+            (
+                "gold-ws-2",
+                serde_json::json!({"op": "send-to-workspace", "window": "win-1", "target_output": "out-1", "target_workspace": "ws-2", "bogus": 1}),
+                "{\"v\":1,\"correlation_id\":\"gold-ws-2\",\"outcome\":\"rejected\",\"kind\":\"unknown-field\",\"message\":\"request contains an unknown field\"}",
+            ),
+            (
+                "gold-ws-3",
+                serde_json::json!({"op": "send-to-workspace-ack", "ack_outcome": "accepted", "bogus": 1}),
+                "{\"v\":1,\"correlation_id\":\"gold-ws-3\",\"outcome\":\"rejected\",\"kind\":\"unknown-field\",\"message\":\"request contains an unknown field\"}",
+            ),
+            (
+                "gold-ws-4",
+                serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": []}),
+                "{\"v\":1,\"correlation_id\":\"gold-ws-4\",\"outcome\":\"rejected\",\"kind\":\"request-malformed\",\"message\":\"request is malformed\"}",
+            ),
+            (
+                "gold-ws-5",
+                serde_json::json!({"op": "send-to-workspace-status", "bogus": 1}),
+                "{\"v\":1,\"correlation_id\":\"gold-ws-5\",\"outcome\":\"rejected\",\"kind\":\"unknown-field\",\"message\":\"request contains an unknown field\"}",
+            ),
+            (
+                "gold-ws-6",
+                serde_json::json!({"op": "send-to-workspace-cancel"}),
+                "{\"v\":1,\"correlation_id\":\"gold-ws-6\",\"outcome\":\"rejected\",\"kind\":\"request-malformed\",\"message\":\"request is malformed\"}",
+            ),
+        ];
+        for (cid, command, expected) in malformed {
+            let reply = fresh.evaluate(&workspace_request(
+                cid,
+                "owner-1",
+                "gen-1",
+                0,
+                if cid == "gold-ws-2" { "win-1" } else { "" },
+                source.clone(),
+                target.clone(),
+                command,
+            ));
+            assert_eq!(reply, expected, "{cid}");
+        }
+        // Read-only status with no retained transaction.
+        assert_eq!(
+            fresh.evaluate(&workspace_request(
+                "gold-ws-7",
+                "owner-1",
+                "gen-1",
+                0,
+                "",
+                source.clone(),
+                target.clone(),
+                serde_json::json!({"op": "send-to-workspace-status"}),
+            )),
+            "{\"v\":1,\"correlation_id\":\"gold-ws-7\",\"outcome\":\"status\",\"kind\":\"no-pending-unknown\"}",
+        );
+        // Cancel withdraws the staged pending on exact pre-image proof.
+        let mut canceller = Planner::new();
+        let staged = canceller.evaluate(&workspace_request(
+            "gold-ws-8",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source.clone(),
+            target.clone(),
+            workspace_send_body(),
+        ));
+        assert_eq!(parse_reply(&staged)["outcome"], "planned", "{staged}");
+        assert_eq!(
+            canceller.evaluate(&workspace_request(
+                "gold-ws-8",
+                "owner-1",
+                "gen-1",
+                0,
+                "win-1",
+                source,
+                target,
+                serde_json::json!({"op": "send-to-workspace-cancel", "zero_dispatch": true}),
+            )),
+            "{\"v\":1,\"correlation_id\":\"gold-ws-8\",\"outcome\":\"cancelled\",\"kind\":\"send-to-workspace\",\"base_revision\":3}",
+        );
+        // Directional phases reject malformed commands before any pair
+        // binding or pending handling, with unchanged kinds.
+        let directional_malformed = [
+            (
+                "gold-dir-1",
+                serde_json::json!({"op": "directional-move-ack", "ack_outcome": "accepted", "bogus": 1}),
+                "{\"v\":1,\"correlation_id\":\"gold-dir-1\",\"outcome\":\"rejected\",\"kind\":\"unknown-field\",\"message\":\"request contains an unknown field\"}",
+            ),
+            (
+                "gold-dir-2",
+                serde_json::json!({"op": "directional-move-verify", "verified": true, "preconditions": []}),
+                "{\"v\":1,\"correlation_id\":\"gold-dir-2\",\"outcome\":\"rejected\",\"kind\":\"request-malformed\",\"message\":\"request is malformed\"}",
+            ),
+            (
+                "gold-dir-3",
+                serde_json::json!({"op": "directional-move-status", "bogus": 1}),
+                "{\"v\":1,\"correlation_id\":\"gold-dir-3\",\"outcome\":\"rejected\",\"kind\":\"unknown-field\",\"message\":\"request contains an unknown field\"}",
+            ),
+            (
+                "gold-dir-4",
+                serde_json::json!({"op": "directional-move-cancel"}),
+                "{\"v\":1,\"correlation_id\":\"gold-dir-4\",\"outcome\":\"rejected\",\"kind\":\"request-malformed\",\"message\":\"request is malformed\"}",
+            ),
+        ];
+        for (cid, command, expected) in directional_malformed {
+            let reply = fresh.evaluate(&plan_request(cid, "win-1", &["win-1"], command));
+            assert_eq!(reply, expected, "{cid}");
+        }
+    }
+    #[test]
+    fn verify_echo_typed_boundary_wire_golden() {
+        // Byte-level golden for the verify echo boundary (workspace-send
+        // route): malformed nested preconditions/operation reject as
+        // `verify-invalid` before any pending handling, `verified: false`
+        // diverges before echo parsing, and the exact echo still commits.
+        // Literals recorded from the production `evaluate` path (offline, no
+        // host mutation); the typed `SyncCommand` conversion must reproduce
+        // them byte-exact.
+        let source = vec![
+            workspace_entry("win-1", "ws-1", 0),
+            workspace_entry("win-2", "ws-1", 100),
+        ];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let mut planner = Planner::new();
+        let planned = parse_reply(&planner.evaluate(&workspace_request(
+            "gold-verify-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source.clone(),
+            target.clone(),
+            workspace_send_body(),
+        )));
+        assert_eq!(planned["outcome"], "planned", "{planned}");
+        let base = planned["base_revision"].as_u64().expect("base");
+        let (post_source, post_target) = observation_from_geometry(&planned["desired_geometry"]);
+        let post = |cid: &str, command: serde_json::Value| {
+            workspace_request(
+                cid,
+                "owner-1",
+                "gen-1",
+                base,
+                "",
+                post_source.clone(),
+                post_target.clone(),
+                command,
+            )
+        };
+        assert_eq!(
+            planner.evaluate(&post("gold-verify-1", workspace_ack_body())),
+            format!(
+                "{{\"v\":1,\"correlation_id\":\"gold-verify-1\",\"outcome\":\"acknowledged\",\"kind\":\"send-to-workspace\",\"base_revision\":{base}}}"
+            ),
+        );
+        let good_pre = planned["preconditions"].clone();
+        let good_op = planned["operation"].clone();
+        // Malformed nested echoes reject as `verify-invalid` before any
+        // pending handling, so the staged pending survives every probe below
+        // and the exact echo still commits afterwards.
+        let malformed = [
+            (
+                "gold-verify-2",
+                serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": "window-observed", "operation": good_op}),
+                "{\"v\":1,\"correlation_id\":\"gold-verify-2\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"preconditions are invalid\"}",
+            ),
+            (
+                "gold-verify-3",
+                serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": ["window-observed", 7], "operation": good_op}),
+                "{\"v\":1,\"correlation_id\":\"gold-verify-3\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"preconditions are invalid\"}",
+            ),
+            (
+                "gold-verify-4",
+                serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": ["bogus-token"], "operation": good_op}),
+                "{\"v\":1,\"correlation_id\":\"gold-verify-4\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"preconditions are invalid\"}",
+            ),
+            (
+                "gold-verify-5",
+                serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": [], "operation": good_op}),
+                "{\"v\":1,\"correlation_id\":\"gold-verify-5\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"preconditions are invalid\"}",
+            ),
+            (
+                "gold-verify-6",
+                serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": good_pre, "operation": []}),
+                "{\"v\":1,\"correlation_id\":\"gold-verify-6\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"operation is invalid\"}",
+            ),
+            (
+                "gold-verify-7",
+                serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": good_pre, "operation": {"op": "move-tiled", "leaf": "leaf-win-1", "source_output": "out-1", "source_workspace": "ws-1", "target_output": "out-1", "target_workspace": "ws-2"}}),
+                "{\"v\":1,\"correlation_id\":\"gold-verify-7\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"operation is invalid\"}",
+            ),
+            (
+                "gold-verify-8",
+                serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": good_pre, "operation": {"op": "move-tiled", "leaf": "leaf-win-1", "source_output": "out-1", "source_workspace": "ws-1", "target_output": "out-1", "target_workspace": "ws-2", "window": ""}}),
+                "{\"v\":1,\"correlation_id\":\"gold-verify-8\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"operation is invalid\"}",
+            ),
+            (
+                "gold-verify-9",
+                serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": good_pre, "operation": {"op": "move", "leaf": "leaf-win-1", "source_output": "out-1", "source_workspace": "ws-1", "target_output": "out-1", "target_workspace": "ws-2", "window": "win-1"}}),
+                "{\"v\":1,\"correlation_id\":\"gold-verify-9\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"operation is invalid\"}",
+            ),
+        ];
+        for (cid, command, expected) in malformed {
+            assert_eq!(planner.evaluate(&post(cid, command)), expected, "{cid}");
+        }
+        // The `verified` flag gates before echo parsing: an unverified report
+        // with garbage echoes diverges as postcondition-unverified, never
+        // `verify-invalid`.
+        assert_eq!(
+            planner.evaluate(&post(
+                "gold-verify-10",
+                serde_json::json!({"op": "send-to-workspace-verify", "verified": false, "preconditions": [7], "operation": []}),
+            )),
+            "{\"v\":1,\"correlation_id\":\"gold-verify-10\",\"outcome\":\"diverged\",\"kind\":\"postcondition-unverified\",\"message\":\"adapter did not verify postconditions\"}",
+        );
+        // The exact echo still commits after every probe above: echo parsing
+        // never consumed the pending.
+        assert_eq!(
+            planner.evaluate(&post(
+                "gold-verify-1",
+                workspace_verify_body(good_pre.clone(), good_op.clone()),
+            )),
+            format!(
+                "{{\"v\":1,\"correlation_id\":\"gold-verify-1\",\"outcome\":\"committed\",\"kind\":\"send-to-workspace\",\"base_revision\":{}}}",
+                base + 1
+            ),
+        );
+        // Echo parsing precedes pending checks: malformed echoes on a planner
+        // with no pending report `verify-invalid`, never `no-pending`.
+        let mut fresh = Planner::new();
+        assert_eq!(
+            fresh.evaluate(&post(
+                "gold-verify-11",
+                serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": [7], "operation": good_op}),
+            )),
+            "{\"v\":1,\"correlation_id\":\"gold-verify-11\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"preconditions are invalid\"}",
+        );
+        // Extra fencing fields stay lenient: the exact echo plus one unknown
+        // nested field still commits on a freshly staged lifecycle.
+        let mut lenient = Planner::new();
+        let staged = parse_reply(&lenient.evaluate(&workspace_request(
+            "gold-verify-12",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source,
+            target,
+            workspace_send_body(),
+        )));
+        assert_eq!(staged["outcome"], "planned", "{staged}");
+        let staged_base = staged["base_revision"].as_u64().expect("base");
+        let (lenient_source, lenient_target) =
+            observation_from_geometry(&staged["desired_geometry"]);
+        let lenient_post = |cid: &str, command: serde_json::Value| {
+            workspace_request(
+                cid,
+                "owner-1",
+                "gen-1",
+                staged_base,
+                "",
+                lenient_source.clone(),
+                lenient_target.clone(),
+                command,
+            )
+        };
+        assert_eq!(
+            parse_reply(&lenient.evaluate(&lenient_post("gold-verify-12", workspace_ack_body())))["outcome"],
+            "acknowledged",
+        );
+        let mut extra_op = staged["operation"].clone();
+        extra_op["bogus"] = serde_json::json!(1);
+        assert_eq!(
+            lenient.evaluate(&lenient_post(
+                "gold-verify-12",
+                workspace_verify_body(staged["preconditions"].clone(), extra_op),
+            )),
+            format!(
+                "{{\"v\":1,\"correlation_id\":\"gold-verify-12\",\"outcome\":\"committed\",\"kind\":\"send-to-workspace\",\"base_revision\":{}}}",
+                staged_base + 1
+            ),
+        );
     }
     #[test]
     fn planner_snapshot_detail_registry_is_unique() {
@@ -11494,8 +12201,8 @@ mod tests {
             output: OutputId("out-keep".to_owned()),
             workspace: WorkspaceId("ws-away".to_owned()),
         };
-        assert!(planner.sessions.contains_key(&source_key), "{reseeded}");
-        assert!(planner.sessions.contains_key(&target_key), "{reseeded}");
+        assert!(planner.engine.contains(&source_key), "{reseeded}");
+        assert!(planner.engine.contains(&target_key), "{reseeded}");
         assert_geometry_covers(&reseeded, &["win-k", "win-k2"]);
         // Source is untouched and still reconciles on its own domain.
         let source_again = parse_reply(&planner.evaluate(&retained_request_for_domain(
@@ -11703,8 +12410,8 @@ mod tests {
             workspace: WorkspaceId("ws-9".to_owned()),
         };
         let before = planner
-            .sessions
-            .get(&source_key)
+            .engine
+            .session(&source_key)
             .expect("source retained")
             .clone();
         assert_eq!(before.exception_count(), 1, "{floated}");
@@ -11739,7 +12446,10 @@ mod tests {
             output: OutputId("out-survivor".to_owned()),
             workspace: WorkspaceId("ws-9".to_owned()),
         };
-        let after = planner.sessions.get(&target_key).expect("target retained");
+        let after = planner
+            .engine
+            .session(&target_key)
+            .expect("target retained");
         // One admit applied on the relocated tree: revision advances by
         // exactly one (relocation itself adds zero).
         assert_eq!(after.accepted_revision(), before_revision + 1, "{moved}");
@@ -11792,8 +12502,8 @@ mod tests {
             workspace: WorkspaceId("ws-9".to_owned()),
         };
         let before = planner
-            .sessions
-            .get(&source_key)
+            .engine
+            .session(&source_key)
             .expect("source retained")
             .clone();
         let before_revision = before.accepted_revision();
@@ -11812,12 +12522,15 @@ mod tests {
         )));
         assert_eq!(moved["outcome"], "planned", "{moved}");
         assert_eq!(planner.retained_domains(), 1, "{moved}");
-        assert!(!planner.sessions.contains_key(&source_key), "{moved}");
+        assert!(!planner.engine.contains(&source_key), "{moved}");
         let target_key = DomainKey {
             output: OutputId("out-survivor".to_owned()),
             workspace: WorkspaceId("ws-9".to_owned()),
         };
-        let after = planner.sessions.get(&target_key).expect("target retained");
+        let after = planner
+            .engine
+            .session(&target_key)
+            .expect("target retained");
         assert_eq!(after.accepted_revision(), before_revision, "{moved}");
         // Topology shares and window set are preserved; only output homing
         // moves to the survivor.
