@@ -177,12 +177,16 @@ Only meaningful pending or active work is listed.
   records, including bounded failure and timeout phases, without transport
   behavior changes. Typecheck, production build, all 919 KWin tests, and
   independent review pass; corrected two pre-existing stale logging assertions.
-  Next: ordinary Plan apply/verify phase visibility, followed by silent tray
-  owner/refusal/publication failures. Ambient topology and native signals must
-  not inherit unrelated request IDs. Whole-system coverage and live capture
+  Delivered ordinary Plan reply/validation/observation/application/terminal
+  diagnostics with aggregate setter outcomes. Ordinary routes have no ack/verify
+  protocol; application logs do not prove remote commit or rendered state.
+  Typecheck, production build, all 929 KWin tests, and independent review pass.
+  Next: silent tray owner/refusal/publication failures. Ambient topology and
+  native signals must not inherit unrelated request IDs. Whole-system coverage and live capture
   behavior remain unproven.
   [cancellation observability](changes/archive/correlated-pending-observability.md)
   [activation observability](changes/archive/plan-transport-activation-observability.md)
+  [application observability](changes/archive/plan-apply-verify-observability.md)
   [coverage assessment](changes/observability-coverage-assessment.md)
 - P1 | Recoverable window handling | User requires logged problems and continued
   window handling, never a permanently disabled window/domain after a tiling

@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { describe, it } from "node:test";
 
 import {
+    DirectionalObservation,
     KeepAboveWriteOutcome,
     MaximizeClearOutcome,
     PLAN_CONTRACT_VERSION,
@@ -14,6 +15,7 @@ import {
     PLAN_SERVICE,
     PlanAdapter,
     PlanAdapterEnv,
+    PlanDirection,
     PlanObserved,
     planFingerprint,
 } from "../src/plan-adapter";
@@ -1635,19 +1637,28 @@ describe("plan adapter client self-resize reconcile", () => {
         const logsBefore = mocks.logs.length;
         mocks.callbacks[1]?.(rejectedReply(corr, "snapshot-invalid"));
         const freshLogs = mocks.logs.slice(logsBefore);
-        assert.equal(freshLogs.length, 2);
-        assert.ok(freshLogs[0]?.includes("kind=reconcile") && freshLogs[0]?.includes("outcome=rejected"));
-        assert.equal(freshLogs[1], "plasma-auto-tiler:plan:rejected kind=snapshot-invalid");
+        assert.equal(freshLogs.length, 5);
+        assert.equal(freshLogs[0], `plasma-auto-tiler:plan:cmd=${corr} kind=reconcile windows=2 component=cosmic-plan route=plan stage=reply correlation=${corr} generation=gen-1 revision=0 event=reply outcome=received cause=-`);
+        assert.equal(freshLogs[1], `plasma-auto-tiler:plan:cmd=${corr} kind=reconcile windows=2 component=cosmic-plan route=plan stage=reply correlation=${corr} generation=gen-1 revision=0 event=validate outcome=rejected cause=snapshot-invalid`);
+        assert.equal(freshLogs[2], `plasma-auto-tiler:plan:cmd=${corr} kind=reconcile windows=2 component=cosmic-plan route=plan stage=terminal correlation=${corr} generation=gen-1 revision=0 event=settled outcome=rejected cause=validate`);
+        assert.ok(freshLogs[3]?.includes("kind=reconcile") && freshLogs[3]?.includes("outcome=rejected"));
+        assert.equal(freshLogs[4], "plasma-auto-tiler:plan:rejected kind=snapshot-invalid");
         fire(mocks, "geometry");
         runDebounce(mocks);
         const corr2 = plannerPayload(mocks, 2)["correlation_id"] as string;
         const logsBefore2 = mocks.logs.length;
         mocks.callbacks[2]?.(plannedReply(corr2, [{ window: "win-a", rect: allocA }, { window: "win-b", rect: allocB }], "win-a-leaf"));
         const fresh2 = mocks.logs.slice(logsBefore2);
-        assert.equal(fresh2.length, 3);
-        assert.equal(fresh2[0], "plasma-auto-tiler:plan:write window=win-b resource_class=unknown disposition=skip-already-equal rect=600,0,600,800");
-        assert.equal(fresh2[1], "plasma-auto-tiler:plan:write window=win-a resource_class=unknown disposition=written rect=0,0,600,800");
-        assert.ok(fresh2[2]?.includes("kind=reconcile") && fresh2[2]?.includes("outcome=planned-applied"));
+        assert.equal(fresh2.length, 9);
+        assert.equal(fresh2[0], `plasma-auto-tiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=reply correlation=${corr2} generation=gen-1 revision=0 event=reply outcome=received cause=-`);
+        assert.equal(fresh2[1], `plasma-auto-tiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=reply correlation=${corr2} generation=gen-1 revision=2 event=validate outcome=validated cause=-`);
+        assert.equal(fresh2[2], `plasma-auto-tiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=observe correlation=${corr2} generation=gen-1 revision=2 event=observe outcome=matched cause=-`);
+        assert.equal(fresh2[3], `plasma-auto-tiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=apply correlation=${corr2} generation=gen-1 revision=2 event=apply outcome=started cause=-`);
+        assert.equal(fresh2[4], "plasma-auto-tiler:plan:write window=win-b resource_class=unknown disposition=skip-already-equal rect=600,0,600,800");
+        assert.equal(fresh2[5], "plasma-auto-tiler:plan:write window=win-a resource_class=unknown disposition=written rect=0,0,600,800");
+        assert.equal(fresh2[6], `plasma-auto-tiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=apply correlation=${corr2} generation=gen-1 revision=2 event=setters outcome=applied cause=skipped-equal`);
+        assert.equal(fresh2[7], `plasma-auto-tiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=terminal correlation=${corr2} generation=gen-1 revision=2 event=settled outcome=applied cause=setters`);
+        assert.ok(fresh2[8]?.includes("kind=reconcile") && fresh2[8]?.includes("outcome=planned-applied"));
         assert.ok(
             mocks.logs.some(
                 (line) =>
@@ -1826,7 +1837,7 @@ describe("plan adapter bounded diagnostics", () => {
         for (const line of mocks.logs) {
             assert.match(
                 line,
-                /^plasma-auto-tiler:plan:(cmd=\S+ kind=(admit|remove|move|focus|resize|reconcile|pointer-resize) windows=\d+ outcome=\S+|cmd=(gen-1-p\d+) kind=(focus|move) windows=2 component=cosmic-plan route=plan stage=(request correlation=\3 generation=gen-1 revision=0 event=dispatch outcome=started|activate correlation=\3 generation=gen-1 revision=0 event=(presence outcome=(presence-requested|present)|resolve outcome=(resolve-requested|owner-pinned)|send outcome=(send-requested|request-sent))) cause=-|rejected kind=[a-z-]+( detail=[a-z-]+)?|write window=\S+ resource_class=\S+ disposition=(written|skip-fullscreen|skip-maximized|skip-already-equal|write-failed) rect=[^ ]+|busy-refused kind=(focus|move|resize)|(focus|move|resize|pointer)-refused-[a-z-]+|maximize-refused-signal|scope-transition [^ ]+|work-area-reprojection selected=retained|echo-fence-(armed|consumed|cleared-equality|mismatched)|reconcile-parked)$/,
+                /^plasma-auto-tiler:plan:(cmd=\S+ kind=(admit|remove|move|focus|resize|reconcile|pointer-resize) windows=\d+ outcome=\S+|cmd=(gen-1-p\d+) kind=(focus|move) windows=2 component=cosmic-plan route=plan stage=(request correlation=\3 generation=gen-1 revision=0 event=dispatch outcome=started|activate correlation=\3 generation=gen-1 revision=0 event=(presence outcome=(presence-requested|present)|resolve outcome=(resolve-requested|owner-pinned)|send outcome=(send-requested|request-sent))) cause=-|cmd=(gen-1-p\d+) kind=(focus|move) windows=2 component=cosmic-plan route=plan stage=(?:reply correlation=\10 generation=gen-1 revision=0 event=reply outcome=received cause=-|reply correlation=\10 generation=gen-1 revision=(?:0|2|unavailable) event=validate outcome=validated cause=-|reply correlation=\10 generation=gen-1 revision=0 event=validate outcome=rejected cause=snapshot-invalid|reply correlation=\10 generation=gen-1 revision=0 event=validate outcome=(?:malformed|stale) cause=(?:service-fault|precondition-mismatch|correlation-mismatch|stale-dropped)|observe correlation=\10 generation=gen-1 revision=(?:2|unavailable) event=observe outcome=(?:matched cause=-|mismatched cause=stale-scope)|apply correlation=\10 generation=gen-1 revision=(?:2|unavailable) event=apply outcome=started cause=-|apply correlation=\10 generation=gen-1 revision=(?:2|unavailable) event=setters outcome=applied cause=(?:-|skipped-fullscreen|skipped-maximized|skipped-floating|skipped-equal|skipped-mixed)|apply correlation=\10 generation=gen-1 revision=(?:2|unavailable) event=setters outcome=write-failed cause=(?:write-failed|precondition-mismatch)|terminal correlation=\10 generation=gen-1 revision=(?:0|2|unavailable) event=settled outcome=(?:applied cause=(?:setters|apply)|rejected cause=validate|timeout cause=reply|uncertain cause=(?:validate|observe|apply|setters)))|rejected kind=[a-z-]+( detail=[a-z-]+)?|write window=\S+ resource_class=\S+ disposition=(written|skip-fullscreen|skip-maximized|skip-floating|skip-already-equal|write-failed|float-written|float-write-failed) rect=[^ ]+|busy-refused kind=(focus|move|resize)|(focus|move|resize|pointer)-refused-[a-z-]+|maximize-refused-signal|scope-transition [^ ]+|work-area-reprojection selected=retained|echo-fence-(armed|consumed|cleared-equality|mismatched)|reconcile-parked)$/,
                 line,
             );
             assert.ok(!line.includes("owner-1"), line);
@@ -5397,5 +5408,378 @@ describe("plan entry workspace-send echo wiring", () => {
         assert.equal(observed, 1, "echo fires exactly once through the connectable signal");
         detach();
         assert.equal(seam.handlers.length, 0, "one-shot detach releases the echo subscription");
+    });
+});
+
+describe("plan ordinary lifecycle diagnostics", () => {
+    const succA = { x: 0, y: 0, w: 500, h: 500 };
+    const succB = { x: 500, y: 0, w: 100, h: 100 };
+
+    function lifecycle(mocks: Mocks): string[] {
+        return mocks.logs.filter((l) => l.includes("stage=reply") || l.includes("stage=apply") || l.includes("stage=observe") || l.includes("stage=terminal"));
+    }
+
+    function driveMove(mocks: Mocks, refs: { a: object; b: object; c: object }): { adapter: PlanAdapter; correlation: string } {
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 100, h: 100 }, "win-b": { x: 100, y: 0, w: 500, h: 500 } },
+            });
+        const adapter = enableAdapter(mocks);
+        adapter.requestMove("right");
+        const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+        return { adapter, correlation };
+    }
+
+    it("emits success phases in order with shared correlation/generation/revision and exact native order", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const { adapter, correlation } = driveMove(mocks, refs);
+        const dbusBefore = mocks.dbusCalls.length;
+        mocks.callbacks[0]?.(plannedReply(correlation, [{ window: "win-a", rect: succA }, { window: "win-b", rect: succB }], "win-b-leaf"));
+        assert.equal(mocks.dbusCalls.length, dbusBefore, "no new D-Bus during apply");
+        assert.equal(mocks.geometries.length, 2, "both members actuate");
+        assert.equal(mocks.geometries[0]?.target, refs.a, "grow-before-shrink writes grower first");
+        assert.equal(mocks.geometries[1]?.target, refs.b);
+        assert.deepEqual(mocks.actives, [refs.b], "single focus write to resolved target");
+        assert.equal(adapter.isInFlight, false);
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=planned-applied")));
+        const lines = lifecycle(mocks);
+        const idx = (frag: string): number => lines.findIndex((l) => l.includes(frag));
+        const order = ["event=reply outcome=received", "event=validate outcome=validated", "event=observe outcome=matched", "event=apply outcome=started", "event=setters outcome=applied", "event=settled outcome=applied"];
+        let last = -1;
+        for (const frag of order) {
+            const at = idx(frag);
+            assert.ok(at > last, `${frag} in order: ${lines.join("\n")}`);
+            last = at;
+        }
+        for (const line of lines) {
+            assert.ok(line.includes(`cmd=${correlation}`), line);
+            assert.ok(line.includes(`correlation=${correlation}`), line);
+            assert.ok(line.includes("generation=gen-1"), line);
+            assert.ok(line.includes("component=cosmic-plan"), line);
+            assert.ok(line.includes("route=plan"), line);
+        }
+        assert.ok(lines.some((l) => l.includes("event=reply") && l.includes("revision=0")), "received uses request revision");
+        assert.ok(lines.some((l) => l.includes("event=validate") && l.includes("outcome=validated") && l.includes("revision=2")), "validated carries base revision");
+        assert.ok(lines.some((l) => l.includes("event=settled") && l.includes("outcome=applied") && l.includes("cause=setters") && l.includes("revision=2")), "terminal applied with last phase setters");
+        for (const line of lines) {
+            assert.ok(!line.includes("win-a") && !line.includes("win-b"), `no window id leak: ${line}`);
+            assert.ok(!line.includes("owner-1"), `no owner leak: ${line}`);
+            assert.ok(!line.includes("500,500") && !line.includes("100,100"), `no geometry leak: ${line}`);
+        }
+        assert.ok(!lines.some((l) => l.includes("ack") || l.includes("verify") || l.includes("verified")), "ordinary route has no ack/verify");
+    });
+
+    it("distinguishes malformed, refused, and stale replies with terminal last phase", () => {
+        for (const [name, replyOf, validateFrag, terminalFrag] of [
+            ["malformed-json", (_c: string): unknown => "{bad", "outcome=malformed", "outcome=uncertain cause=validate"],
+            ["refused", (c: string): unknown => rejectedReply(c, "snapshot-invalid"), "outcome=rejected", "outcome=rejected cause=validate"],
+            ["correlation-stale", (_c: string): unknown => plannedReply("gen-1-p9999", [{ window: "win-a", rect: succA }, { window: "win-b", rect: succB }], null), "outcome=stale", "outcome=uncertain cause=validate"],
+        ] as const) {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            const { adapter, correlation } = driveMove(mocks, refs);
+            const geoBefore = mocks.geometries.length;
+            mocks.callbacks[0]?.(replyOf(correlation));
+            assert.equal(mocks.geometries.length, geoBefore, `${name}: no native writes`);
+            assert.equal(adapter.isInFlight, false, `${name}: terminal`);
+            const lines = lifecycle(mocks);
+            assert.ok(lines.some((l) => l.includes("event=reply") && l.includes("outcome=received")), `${name}: received`);
+            assert.ok(lines.some((l) => l.includes("event=validate") && l.includes(validateFrag)), `${name}: ${lines.join("\n")}`);
+            assert.ok(lines.some((l) => l.includes("event=settled") && l.includes(terminalFrag)), `${name}: ${lines.join("\n")}`);
+        }
+        {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            let version = 0;
+            mocks.observeImpl = () =>
+                makeObserved(refs, {
+                    focused: refs.a,
+                    fingerprint: version === 0 ? "fp-1" : "fp-2",
+                    rects: version === 0
+                        ? { "win-a": { x: 0, y: 0, w: 100, h: 100 }, "win-b": { x: 100, y: 0, w: 500, h: 500 } }
+                        : { "win-a": { x: 5, y: 5, w: 100, h: 100 }, "win-b": { x: 100, y: 0, w: 500, h: 500 } },
+                });
+            const adapter = enableAdapter(mocks);
+            adapter.requestFocus("left");
+            const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+            version = 1;
+            fire(mocks, "geometry");
+            runDebounce(mocks);
+            mocks.callbacks[0]?.(plannedReply(correlation, [{ window: "win-a", rect: succA }, { window: "win-b", rect: succB }], null));
+            assert.equal(mocks.geometries.length, 0, "epoch-stale never writes");
+            const lines = lifecycle(mocks);
+            assert.ok(lines.some((l) => l.includes("event=validate") && l.includes("outcome=stale")), lines.join("\n"));
+            assert.ok(lines.some((l) => l.includes("event=settled") && l.includes("outcome=uncertain") && l.includes("cause=validate")), lines.join("\n"));
+            assert.equal(adapter.isEnabled, true);
+        }
+    });
+
+    it("fails one setter logging-only with unchanged order/count and terminal uncertain", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const { adapter, correlation } = driveMove(mocks, refs);
+        mocks.geometryImpl = (target): boolean => target !== refs.b;
+        mocks.callbacks[0]?.(plannedReply(correlation, [{ window: "win-a", rect: succA }, { window: "win-b", rect: succB }], "win-b-leaf"));
+        assert.equal(mocks.geometries.length, 2, "both setters attempted in order");
+        assert.equal(mocks.geometries[0]?.target, refs.a);
+        assert.equal(mocks.geometries[1]?.target, refs.b);
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=write-failed")));
+        const lines = lifecycle(mocks);
+        assert.ok(lines.some((l) => l.includes("event=setters") && l.includes("outcome=write-failed")), lines.join("\n"));
+        assert.ok(lines.some((l) => l.includes("event=settled") && l.includes("outcome=uncertain") && l.includes("cause=setters")), lines.join("\n"));
+        assert.equal(adapter.isInFlight, false);
+        assert.ok(!mocks.logs.some((l) => l.includes("outcome=planned-applied") && l.includes(`cmd=${correlation}`)));
+    });
+
+    it("aggregates fullscreen, maximize, and float skips without per-window normal geometry", () => {
+        {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, fullscreen: { "win-b": true } });
+            const adapter = enableAdapter(mocks);
+            adapter.requestMove("right");
+            const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+            mocks.callbacks[0]?.(plannedReply(correlation, [{ window: "win-a", rect: succA }, { window: "win-b", rect: succB }], "win-a-leaf"));
+            assert.ok(!mocks.geometries.some((g) => g.target === refs.b), "fullscreen never actuated");
+            const lines = lifecycle(mocks);
+            assert.ok(lines.some((l) => l.includes("event=setters") && l.includes("outcome=applied") && l.includes("skipped-fullscreen")), lines.join("\n"));
+            assert.equal(adapter.isInFlight, false);
+        }
+        {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, maximized: { "win-b": true } });
+            const adapter = enableAdapter(mocks);
+            adapter.requestMove("right");
+            const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+            mocks.callbacks[0]?.(plannedReply(correlation, [{ window: "win-a", rect: succA }, { window: "win-b", rect: succB }], "win-a-leaf"));
+            assert.ok(!mocks.geometries.some((g) => g.target === refs.b), "maximized never actuated");
+            const lines = lifecycle(mocks);
+            assert.ok(lines.some((l) => l.includes("event=setters") && l.includes("outcome=applied") && l.includes("skipped-maximized")), lines.join("\n"));
+            assert.equal(adapter.isInFlight, false);
+        }
+        {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            mocks.observeImpl = () => makeObserved(refs, { focused: refs.a });
+            const adapter = enableAdapter(mocks);
+            adapter.requestMove("right");
+            const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+            mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, floating: { "win-b": true } });
+            mocks.callbacks[0]?.(plannedReply(correlation, [{ window: "win-a", rect: succA }, { window: "win-b", rect: succB }], "win-a-leaf"));
+            assert.ok(!mocks.geometries.some((g) => g.target === refs.b), "floating drift never actuated");
+            const lines = lifecycle(mocks);
+            assert.ok(lines.some((l) => l.includes("event=setters") && l.includes("outcome=applied") && l.includes("skipped-floating")), lines.join("\n"));
+            assert.equal(adapter.isInFlight, false);
+        }
+    });
+
+    it("aggregates skipped-equal and skipped-mixed in one bounded setters line", () => {
+        {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            mocks.observeImpl = () =>
+                makeObserved(refs, {
+                    focused: refs.a,
+                    rects: { "win-a": { x: 0, y: 0, w: 100, h: 100 }, "win-b": { x: 100, y: 0, w: 500, h: 500 } },
+                });
+            const adapter = enableAdapter(mocks);
+            adapter.requestMove("right");
+            const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+            mocks.callbacks[0]?.(
+                plannedReply(
+                    correlation,
+                    [
+                        { window: "win-a", rect: { x: 0, y: 0, w: 100, h: 100 } },
+                        { window: "win-b", rect: { x: 100, y: 0, w: 400, h: 500 } },
+                    ],
+                    "win-b-leaf",
+                ),
+            );
+            assert.equal(mocks.geometries.length, 1, "unchanged member skipped, changed member written");
+            assert.equal(mocks.geometries[0]?.target, refs.b);
+            const lines = lifecycle(mocks);
+            const setters = lines.filter((l) => l.includes("event=setters"));
+            assert.equal(setters.length, 1, `exactly one aggregate setters line: ${lines.join("\n")}`);
+            assert.ok(setters[0]?.includes("outcome=applied") && setters[0]?.includes("cause=skipped-equal"), setters.join("\n"));
+            assert.equal(adapter.isInFlight, false);
+        }
+        {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            mocks.observeImpl = () =>
+                makeObserved(refs, {
+                    focused: refs.a,
+                    rects: { "win-a": { x: 0, y: 0, w: 100, h: 100 }, "win-b": { x: 100, y: 0, w: 500, h: 500 } },
+                    fullscreen: { "win-b": true },
+                });
+            const adapter = enableAdapter(mocks);
+            adapter.requestMove("right");
+            const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+            mocks.callbacks[0]?.(
+                plannedReply(
+                    correlation,
+                    [
+                        { window: "win-a", rect: { x: 0, y: 0, w: 100, h: 100 } },
+                        { window: "win-b", rect: { x: 100, y: 0, w: 400, h: 500 } },
+                    ],
+                    "win-a-leaf",
+                ),
+            );
+            assert.ok(!mocks.geometries.some((g) => g.target === refs.b), "fullscreen never actuated");
+            assert.equal(mocks.geometries.length, 0, "unchanged member skipped, fullscreen skipped: no writes");
+            const lines = lifecycle(mocks);
+            const setters = lines.filter((l) => l.includes("event=setters"));
+            assert.equal(setters.length, 1, `exactly one aggregate setters line: ${lines.join("\n")}`);
+            assert.ok(setters[0]?.includes("outcome=applied") && setters[0]?.includes("cause=skipped-mixed"), setters.join("\n"));
+            assert.equal(adapter.isInFlight, false);
+        }
+    });
+
+    it("covers observation mismatch and timeout with last phase and no ack/verify", () => {
+        {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            const { adapter, correlation } = driveMove(mocks, refs);
+            mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, fingerprint: "fp-other", rects: { "win-a": { x: 9, y: 9, w: 50, h: 50 }, "win-b": { x: 100, y: 0, w: 500, h: 500 } } });
+            mocks.callbacks[0]?.(plannedReply(correlation, [{ window: "win-a", rect: succA }, { window: "win-b", rect: succB }], "win-b-leaf"));
+            assert.equal(mocks.geometries.length, 0);
+            const lines = lifecycle(mocks);
+            assert.ok(lines.some((l) => l.includes("stage=observe") && l.includes("outcome=mismatched")), lines.join("\n"));
+            assert.ok(lines.some((l) => l.includes("stage=terminal") && l.includes("outcome=uncertain") && l.includes("cause=observe")), lines.join("\n"));
+            assert.ok(mocks.logs.some((l) => l.includes("outcome=stale-scope")));
+            assert.equal(adapter.isInFlight, false);
+        }
+        {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            const { adapter, correlation } = driveMove(mocks, refs);
+            runTimers(mocks);
+            assert.equal(mocks.geometries.length, 0);
+            const lines = lifecycle(mocks);
+            const terminals = lines.filter((l) => l.includes("stage=terminal"));
+            assert.equal(terminals.length, 1, `exactly one ordinary terminal: ${lines.join("\n")}`);
+            assert.equal(terminals[0], `plasma-auto-tiler:plan:cmd=${correlation} kind=move windows=2 component=cosmic-plan route=plan stage=terminal correlation=${correlation} generation=gen-1 revision=0 event=settled outcome=timeout cause=reply`);
+            assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")));
+            assert.ok(!mocks.logs.some((l) => l.includes("ack") || l.includes("verify") || l.includes("verified")), "timeout path has no ack/verify");
+            assert.equal(adapter.isInFlight, false);
+            void correlation;
+        }
+    });
+
+    it("emits no ordinary terminal for activation-phase timeouts", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const held: Array<(reply: unknown) => void> = [];
+        const origCall = mocks.env.callDbus;
+        (mocks.env as { callDbus: PlanAdapterEnv["callDbus"] }).callDbus = ((service, path, iface, method, payload, callback): void => {
+            if (method === "NameHasOwner") {
+                held.push(callback);
+                return;
+            }
+            return origCall(service, path, iface, method, payload, callback);
+        }) as PlanAdapterEnv["callDbus"];
+        const adapter = enableAdapter(mocks);
+        adapter.requestMove("right");
+        assert.equal(held.length, 1, "presence lookup held");
+        runTimers(mocks);
+        assert.equal(mocks.geometries.length, 0);
+        assert.ok(mocks.logs.some((l) => l.includes("stage=activate") && l.includes("event=timeout") && l.includes("outcome=timeout")), mocks.logs.join("\n"));
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")));
+        assert.ok(!lifecycle(mocks).some((l) => l.includes("stage=terminal")), `activation timeout stays outside ordinary records: ${mocks.logs.join("\n")}`);
+        assert.equal(adapter.isInFlight, false);
+    });
+
+    it("keeps R4 pre-staging cancel boundaries outside ordinary records", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const bounds = { x: 0, y: 0, w: 1200, h: 800 };
+        const domains = Object.freeze([
+            Object.freeze({ output: "out-1", workspace: "ws-1", bounds, gap: DOMAIN_GAP, outerGap: OUTER_DOMAIN_GAP, adjacent: Object.freeze({ right: "out-2" }) }),
+            Object.freeze({ output: "out-2", workspace: "ws-2", bounds, gap: DOMAIN_GAP, outerGap: OUTER_DOMAIN_GAP, adjacent: Object.freeze({ left: "out-1" }) }),
+        ]);
+        const twoDomain = (): PlanObserved => ({
+            domainOutput: "out-1",
+            domainWorkspace: "ws-1",
+            domainBounds: bounds,
+            domainGap: DOMAIN_GAP,
+            domainOuterGap: OUTER_DOMAIN_GAP,
+            focusedId: "win-a",
+            domains,
+            windows: Object.freeze([
+                Object.freeze({ id: "win-a", ref: refs.a, rect: { x: 0, y: 0, w: 100, h: 100 }, output: "out-1", workspace: "ws-1", fullscreen: false, maximized: false }),
+                Object.freeze({ id: "win-x", ref: refs.b, rect: { x: 0, y: 0, w: 100, h: 100 }, output: "out-2", workspace: "ws-2", fullscreen: false, maximized: false }),
+            ]),
+            activeRef: refs.a,
+            fingerprint: "fp-r4",
+            revalidate: () => true,
+        });
+        mocks.observeImpl = twoDomain;
+        (mocks.env as { observeDirectional?: (direction: PlanDirection) => DirectionalObservation }).observeDirectional = () => ({ status: "ready", observed: twoDomain() });
+        const adapter = enableAdapter(mocks);
+        adapter.requestMove("right");
+        const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+        runTimers(mocks);
+        assert.ok(mocks.logs.some((l) => l.includes(`cmd=${correlation}`) && l.includes("stage=cancel") && l.includes("event=attempt") && l.includes("outcome=cancel-requested")), mocks.logs.join("\n"));
+        assert.ok(!lifecycle(mocks).some((l) => l.includes("stage=terminal")), `cancel wait owns the flight, no ordinary terminal: ${mocks.logs.join("\n")}`);
+        assert.ok(!lifecycle(mocks).some((l) => l.includes("stage=reply")), "no ordinary reply record without a reply");
+        assert.equal(mocks.geometries.length, 0, "no native writes before staging");
+        assert.equal(adapter.isInFlight, true, "cancel wait retains the flight");
+        adapter.disable();
+    });
+
+    it("keeps duplicate and late callbacks inert without acceptance or completion", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const { adapter, correlation } = driveMove(mocks, refs);
+        const reply = plannedReply(correlation, [{ window: "win-a", rect: succA }, { window: "win-b", rect: succB }], "win-b-leaf");
+        mocks.callbacks[0]?.(reply);
+        const lifecycleBefore = lifecycle(mocks).length;
+        const logsBefore = mocks.logs.length;
+        const geoCount = mocks.geometries.length;
+        mocks.callbacks[0]?.(reply);
+        assert.equal(mocks.geometries.length, geoCount, "duplicate never rewrites");
+        assert.equal(lifecycle(mocks).length, lifecycleBefore, "duplicate emits no lifecycle record at all");
+        assert.equal(mocks.logs.length, logsBefore, "duplicate emits no log line at all");
+        assert.equal(adapter.isInFlight, false);
+    });
+
+    it("carries unavailable revision truthfully and survives logger throws", () => {
+        {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            const { correlation } = driveMove(mocks, refs);
+            const noRev = JSON.stringify({
+                v: 1,
+                correlation_id: correlation,
+                outcome: "planned",
+                desired_geometry: [
+                    { window: "win-a", leaf: "win-a-leaf", output: "out-1", workspace: "ws-1", rect: succA },
+                    { window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: succB },
+                ],
+            });
+            mocks.callbacks[0]?.(noRev);
+            const lines = lifecycle(mocks);
+            assert.ok(lines.some((l) => l.includes("event=validate") && l.includes("outcome=validated") && l.includes("revision=unavailable")), lines.join("\n"));
+            assert.ok(lines.some((l) => l.includes("event=settled") && l.includes("outcome=applied") && l.includes("revision=unavailable")), lines.join("\n"));
+        }
+        {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            const { adapter, correlation } = driveMove(mocks, refs);
+            const origLog = mocks.env.log;
+            (mocks.env as { log: (message: string) => void }).log = (): void => {
+                throw new Error("log-boom");
+            };
+            mocks.callbacks[0]?.(plannedReply(correlation, [{ window: "win-a", rect: succA }, { window: "win-b", rect: succB }], "win-b-leaf"));
+            assert.equal(mocks.geometries.length, 2, "throws never change native count");
+            assert.equal(mocks.geometries[0]?.target, refs.a);
+            assert.equal(mocks.geometries[1]?.target, refs.b);
+            assert.deepEqual(mocks.actives, [refs.b]);
+            assert.equal(adapter.isInFlight, false, "throws never wedge flight");
+            (mocks.env as { log: (message: string) => void }).log = origLog;
+        }
     });
 });

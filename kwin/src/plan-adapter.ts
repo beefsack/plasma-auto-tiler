@@ -4353,6 +4353,13 @@ export class PlanAdapter {
         if (lost !== null && this.tryStartR4Cancel(lost, flight, session, "timeout")) {
             return;
         }
+        // Ordinary reply-wait timeout only: the Planner send completed
+        // (activationStep 5) and the reply never arrived. Activation-phase
+        // timeouts (steps 1-4, 0) stay exclusively with the existing activate
+        // diagnostics above and never emit an ordinary terminal.
+        if (lost !== null && this.activationStep === 5) {
+            this.ordinaryTerminal(lost, null, "timeout", "reply");
+        }
         this.clearTimer();
         this.inFlight = false;
         this.pending = null;
@@ -4397,7 +4404,10 @@ export class PlanAdapter {
         }
         this.callbackSeen = true;
         this.clearTimer();
+        this.lifecycleDiag(flightState, "reply", "reply", "received", "-");
         if (typeof reply !== "string" || reply.length > PLAN_MAX_REPLY_BYTES) {
+            this.lifecycleDiag(flightState, "reply", "validate", "malformed", "service-fault");
+            this.ordinaryTerminal(flightState, null, "uncertain", "validate");
             this.failFlight(flightState, "service-fault");
             return;
         }
@@ -4406,29 +4416,42 @@ export class PlanAdapter {
             parsed = JSON.parse(reply);
         } catch (error) {
             void error;
+            this.lifecycleDiag(flightState, "reply", "validate", "malformed", "service-fault");
+            this.ordinaryTerminal(flightState, null, "uncertain", "validate");
             this.failFlight(flightState, "service-fault");
             return;
         }
         if (!isRecord(parsed)) {
+            this.lifecycleDiag(flightState, "reply", "validate", "malformed", "service-fault");
+            this.ordinaryTerminal(flightState, null, "uncertain", "validate");
             this.failFlight(flightState, "service-fault");
             return;
         }
         if (parsed["v"] !== PLAN_CONTRACT_VERSION) {
+            this.lifecycleDiag(flightState, "reply", "validate", "malformed", "service-fault");
+            this.ordinaryTerminal(flightState, null, "uncertain", "validate");
             this.failFlight(flightState, "service-fault");
             return;
         }
         if (parsed["correlation_id"] !== flightState.correlation) {
+            this.lifecycleDiag(flightState, "reply", "validate", "stale", "correlation-mismatch");
+            this.ordinaryTerminal(flightState, null, "uncertain", "validate");
             this.failFlight(flightState, "correlation-mismatch");
             return;
         }
         const outcome = parsed["outcome"];
         if (outcome === "diverged") {
+            const kind = sanitizeKind(parsed["kind"]);
+            this.lifecycleDiag(flightState, "reply", "validate", "rejected", kind);
+            this.ordinaryTerminal(flightState, null, "rejected", "validate");
             this.failFlight(flightState, sanitizeKind(parsed["kind"]), false);
             return;
         }
         if (outcome === "rejected") {
             const kind = sanitizeKind(parsed["kind"]);
             const detail = sanitizeDetail(parsed["detail"]);
+            this.lifecycleDiag(flightState, "reply", "validate", "rejected", kind);
+            this.ordinaryTerminal(flightState, null, "rejected", "validate");
             if (isUniqueOwner(this.pinnedOwner) && this.knownOwner === null) {
                 this.knownOwner = this.pinnedOwner;
             }
@@ -4447,11 +4470,15 @@ export class PlanAdapter {
             return;
         }
         if (outcome !== "planned") {
+            this.lifecycleDiag(flightState, "reply", "validate", "malformed", "service-fault");
+            this.ordinaryTerminal(flightState, null, "uncertain", "validate");
             this.failFlight(flightState, "service-fault");
             return;
         }
         // Fence stale replies: a newer observation arrived after dispatch.
         if (flightState.epoch !== this.epoch) {
+            this.lifecycleDiag(flightState, "reply", "validate", "stale", "stale-dropped");
+            this.ordinaryTerminal(flightState, null, "uncertain", "validate");
             if (isUniqueOwner(this.pinnedOwner) && this.knownOwner === null) {
                 this.knownOwner = this.pinnedOwner;
             }
@@ -4470,13 +4497,18 @@ export class PlanAdapter {
         }
         const planned = validatePlanned(parsed, flightState.correlation);
         if (planned === null) {
+            this.lifecycleDiag(flightState, "reply", "validate", "malformed", "precondition-mismatch");
+            this.ordinaryTerminal(flightState, null, "uncertain", "validate");
             this.failFlight(flightState, "precondition-mismatch");
             return;
         }
         if (!this.geometryCovers(planned, flightState)) {
+            this.lifecycleDiag(flightState, "reply", "validate", "malformed", "precondition-mismatch", this.ordinaryRevision(planned, flightState));
+            this.ordinaryTerminal(flightState, planned, "uncertain", "validate");
             this.failFlight(flightState, "precondition-mismatch");
             return;
         }
+        this.lifecycleDiag(flightState, "reply", "validate", "validated", "-", this.ordinaryRevision(planned, flightState));
         this.applyPlanned(planned, flightState);
     }
 
@@ -4581,6 +4613,7 @@ export class PlanAdapter {
             flightState.workAreaReprojection !== true &&
             this.interactiveResizeActive()
         ) {
+            this.ordinaryTerminal(flightState, planned, "uncertain", "validate");
             this.discardInteractiveReconcile();
             this.finishFlight();
             return;
@@ -4603,38 +4636,51 @@ export class PlanAdapter {
               ? this.freshHiddenFor(flightState.snapshot)
               : this.freshObserved();
         if (fresh === null) {
+            this.lifecycleDiag(flightState, "observe", "observe", "mismatched", "stale-scope", this.ordinaryRevision(planned, flightState));
+            this.ordinaryTerminal(flightState, planned, "uncertain", "observe");
             this.failFlight(flightState, "stale-scope");
             return;
         }
         if (flightState.workAreaReprojection) {
             const freshSnapshot = this.carriedSnapshot(fresh);
             if (!sameReprojectionScope(freshSnapshot, flightState.snapshot)) {
+                this.lifecycleDiag(flightState, "observe", "observe", "mismatched", "stale-scope", this.ordinaryRevision(planned, flightState));
+                this.ordinaryTerminal(flightState, planned, "uncertain", "observe");
                 this.failFlight(flightState, "stale-scope");
                 return;
             }
+            this.lifecycleDiag(flightState, "observe", "observe", "matched", "-", this.ordinaryRevision(planned, flightState));
             this.writeGeometries(planned, flightState, fresh);
             return;
         }
         if (flightState.op === "pointer-resize") {
             const source = flightState.pointerSource;
             if (source === null) {
+                this.lifecycleDiag(flightState, "observe", "observe", "mismatched", "stale-scope", this.ordinaryRevision(planned, flightState));
+                this.ordinaryTerminal(flightState, planned, "uncertain", "observe");
                 this.failFlight(flightState, "stale-scope");
                 return;
             }
             const freshSnapshot = this.carriedSnapshot(fresh);
             if (!rectsEqualExceptSource(freshSnapshot, flightState.snapshot, source)) {
+                this.lifecycleDiag(flightState, "observe", "observe", "mismatched", "stale-scope", this.ordinaryRevision(planned, flightState));
+                this.ordinaryTerminal(flightState, planned, "uncertain", "observe");
                 this.failFlight(flightState, "stale-scope");
                 return;
             }
+            this.lifecycleDiag(flightState, "observe", "observe", "matched", "-", this.ordinaryRevision(planned, flightState));
             this.writeGeometries(planned, flightState, fresh);
             return;
         }
         if (flightState.op === "toggle-float") {
             const freshSnapshot = this.carriedSnapshot(fresh);
             if (!snapshotsEqual(freshSnapshot, flightState.snapshot)) {
+                this.lifecycleDiag(flightState, "observe", "observe", "mismatched", "stale-scope", this.ordinaryRevision(planned, flightState));
+                this.ordinaryTerminal(flightState, planned, "uncertain", "observe");
                 this.failFlight(flightState, "stale-scope");
                 return;
             }
+            this.lifecycleDiag(flightState, "observe", "observe", "matched", "-", this.ordinaryRevision(planned, flightState));
             this.writeGeometries(planned, flightState, fresh);
             return;
         }
@@ -4644,17 +4690,23 @@ export class PlanAdapter {
                 !snapshotsEqual(freshSnapshot, flightState.snapshot) &&
                 !(flightState.op === "admit" && snapshotsEqualAllowingAdmissionMaximize(freshSnapshot, flightState.snapshot, flightState.admissionMaximizeClears))
             ) {
+                this.lifecycleDiag(flightState, "observe", "observe", "mismatched", "stale-scope", this.ordinaryRevision(planned, flightState));
+                this.ordinaryTerminal(flightState, planned, "uncertain", "observe");
                 this.failFlight(flightState, "stale-scope");
                 return;
             }
+            this.lifecycleDiag(flightState, "observe", "observe", "matched", "-", this.ordinaryRevision(planned, flightState));
             this.writeGeometries(planned, flightState, fresh);
             return;
         }
         const freshSnapshot = this.carriedSnapshot(fresh);
         if (!matchesRemovalSnapshot(freshSnapshot, flightState.snapshot, flightState.removed)) {
+            this.lifecycleDiag(flightState, "observe", "observe", "mismatched", "stale-scope", this.ordinaryRevision(planned, flightState));
+            this.ordinaryTerminal(flightState, planned, "uncertain", "observe");
             this.failFlight(flightState, "stale-scope");
             return;
         }
+        this.lifecycleDiag(flightState, "observe", "observe", "matched", "-", this.ordinaryRevision(planned, flightState));
         this.writeGeometries(planned, flightState, fresh);
     }
 
@@ -4738,11 +4790,13 @@ export class PlanAdapter {
         const operation = planned.operation;
         const focus = planned.focus;
         if (operation === null || operation.op !== "focus" || focus === null) {
+            this.ordinaryTerminal(flightState, planned, "uncertain", "apply");
             this.failFlight(flightState, "precondition-mismatch");
             return;
         }
         const domains = flightState.snapshot.domains;
         if (domains === undefined || domains.length !== 2) {
+            this.ordinaryTerminal(flightState, planned, "uncertain", "apply");
             this.failFlight(flightState, "precondition-mismatch");
             return;
         }
@@ -4762,6 +4816,8 @@ export class PlanAdapter {
             }
         }
         if (targetRef === undefined || targetEntry === undefined) {
+            this.lifecycleDiag(flightState, "observe", "observe", "mismatched", "stale-scope", this.ordinaryRevision(planned, flightState));
+            this.ordinaryTerminal(flightState, planned, "uncertain", "observe");
             this.failFlight(flightState, "stale-scope");
             return;
         }
@@ -4772,6 +4828,7 @@ export class PlanAdapter {
             targetEntry.floating === true ||
             targetEntry.sticky === true
         ) {
+            this.ordinaryTerminal(flightState, planned, "uncertain", "apply");
             this.failFlight(flightState, "precondition-mismatch");
             return;
         }
@@ -4785,6 +4842,7 @@ export class PlanAdapter {
             }
         }
         if (!leafMatches) {
+            this.ordinaryTerminal(flightState, planned, "uncertain", "apply");
             this.failFlight(flightState, "precondition-mismatch");
             return;
         }
@@ -4804,6 +4862,8 @@ export class PlanAdapter {
                 focused = false;
             }
             if (!focused) {
+                this.lifecycleDiag(flightState, "apply", "setters", "write-failed", "write-failed", this.ordinaryRevision(planned, flightState));
+                this.ordinaryTerminal(flightState, planned, "uncertain", "setters");
                 this.failFlight(flightState, "write-failed");
                 return;
             }
@@ -4815,6 +4875,7 @@ export class PlanAdapter {
         this.pending = null;
         this.pinnedOwner = null;
         this.activationStep = 0;
+        this.ordinaryTerminal(flightState, planned, "applied", "apply");
         this.diag(flightState.op, flightState.correlation, flightState.windowCount, "planned-applied");
         this.finishFlight();
     }
@@ -5155,17 +5216,20 @@ export class PlanAdapter {
     ): void {
         // Production cross-output routes: fenced before any native write.
         if (flightState.op === "focus" && this.isCrossFocus(planned, flightState)) {
+            this.lifecycleDiag(flightState, "apply", "apply", "started", "-", this.ordinaryRevision(planned, flightState));
             this.applyCrossFocus(planned, flightState, current);
             return;
         }
         // Production R4 cross-output move: the first `planned` reply stages
         // but never commits. Native transfer plus accepted ack plus verified
         // verify complete it asynchronously; the shared single-flight stays
-        // held throughout with no replay.
+        // held throughout with no replay. Ordinary lifecycle stays silent here:
+        // R4 owns its transfer/ack/verify diagnostics.
         if (flightState.op === "move" && this.isCrossMove(planned, flightState)) {
             this.beginR4Transfer(planned, flightState, current);
             return;
         }
+        this.lifecycleDiag(flightState, "apply", "apply", "started", "-", this.ordinaryRevision(planned, flightState));
         // A cross operation on a same-domain plan, or a cross-domain plan
         // without its exact operation, never actuates: fail closed before
         // any write. No looser alternate plan is accepted for either op:
@@ -5181,10 +5245,12 @@ export class PlanAdapter {
                     planned.focus.domainOutput === source.output &&
                     planned.focus.domainWorkspace === source.workspace;
                 if (!(focusOnSource && planned.operation === null)) {
+                    this.ordinaryTerminal(flightState, planned, "uncertain", "apply");
                     this.failFlight(flightState, "precondition-mismatch");
                     return;
                 }
             } else if (planned.operation !== null) {
+                this.ordinaryTerminal(flightState, planned, "uncertain", "apply");
                 this.failFlight(flightState, "precondition-mismatch");
                 return;
             }
@@ -5210,6 +5276,10 @@ export class PlanAdapter {
             resourceClassById.set(entry.id, isOpaqueId(entry.resourceClass) ? entry.resourceClass : "unknown");
         }
         const ordered = orderGeometryWrites(oldById, planned.geometry);
+        const orderedById = new Set<string>();
+        for (const entry of ordered) {
+            orderedById.add(entry.window);
+        }
         // Focus is focus-only: never rewrite geometry, only move the active
         // window. Matches the standalone focus adapter single-write contract;
         // move/admit/remove/resize still apply complete geometries above.
@@ -5222,10 +5292,6 @@ export class PlanAdapter {
             // the stable opaque window id and target rect. Fullscreen takes
             // precedence over maximize, and either overlay state takes
             // precedence over equality.
-            const orderedById = new Set<string>();
-            for (const entry of ordered) {
-                orderedById.add(entry.window);
-            }
             for (const entry of planned.geometry) {
                 if (fullscreenById.has(entry.window)) {
                     this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "skip-fullscreen", entry.rect);
@@ -5243,6 +5309,8 @@ export class PlanAdapter {
                 }
                 const target = byRef.get(entry.window);
                 if (target === undefined) {
+                    this.lifecycleDiag(flightState, "apply", "setters", "write-failed", "precondition-mismatch", this.ordinaryRevision(planned, flightState));
+                    this.ordinaryTerminal(flightState, planned, "uncertain", "setters");
                     this.failFlight(flightState, "precondition-mismatch");
                     return;
                 }
@@ -5274,6 +5342,8 @@ export class PlanAdapter {
                 }
                 if (!written) {
                     this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "write-failed", entry.rect);
+                    this.lifecycleDiag(flightState, "apply", "setters", "write-failed", "write-failed", this.ordinaryRevision(planned, flightState));
+                    this.ordinaryTerminal(flightState, planned, "uncertain", "setters");
                     this.failFlight(flightState, "write-failed");
                     return;
                 }
@@ -5303,10 +5373,14 @@ export class PlanAdapter {
                 const target = byRef.get(transition.window);
                 if (floatGeometry === null || target === undefined) {
                     this.writeDiag(transition.window, resourceClassById.get(transition.window) ?? "unknown", "float-write-failed", floatGeometry?.rect ?? { x: 0, y: 0, w: 1, h: 1 });
+                    this.lifecycleDiag(flightState, "apply", "setters", "write-failed", "write-failed", this.ordinaryRevision(planned, flightState));
+                    this.ordinaryTerminal(flightState, planned, "uncertain", "setters");
                     this.failFlight(flightState, "write-failed");
                     return;
                 }
                 if (!this.ensureKeepAbove(target, transition.window, resourceClassById.get(transition.window) ?? "unknown")) {
+                    this.lifecycleDiag(flightState, "apply", "setters", "write-failed", "write-failed", this.ordinaryRevision(planned, flightState));
+                    this.ordinaryTerminal(flightState, planned, "uncertain", "setters");
                     this.failFlight(flightState, "write-failed");
                     return;
                 }
@@ -5321,22 +5395,43 @@ export class PlanAdapter {
                 if (!written) {
                     this.restoreKeepAbove(transition.window, resourceClassById.get(transition.window) ?? "unknown");
                     this.writeDiag(transition.window, resourceClassById.get(transition.window) ?? "unknown", "float-write-failed", floatGeometry.rect);
+                    this.lifecycleDiag(flightState, "apply", "setters", "write-failed", "write-failed", this.ordinaryRevision(planned, flightState));
+                    this.ordinaryTerminal(flightState, planned, "uncertain", "setters");
                     this.failFlight(flightState, "write-failed");
                     return;
                 }
                 this.writeDiag(transition.window, resourceClassById.get(transition.window) ?? "unknown", "float-written", floatGeometry.rect);
-                try { this.env.setFloating?.(transition.window, true); } catch (error) { void error; this.failFlight(flightState, "write-failed"); return; }
-            } else if (transition !== null) {
-                if (!this.restoreKeepAbove(transition.window, resourceClassById.get(transition.window) ?? "unknown")) {
+                try {
+                    this.env.setFloating?.(transition.window, true);
+                } catch (error) {
+                    void error;
+                    this.lifecycleDiag(flightState, "apply", "setters", "write-failed", "write-failed", this.ordinaryRevision(planned, flightState));
+                    this.ordinaryTerminal(flightState, planned, "uncertain", "setters");
                     this.failFlight(flightState, "write-failed");
                     return;
                 }
-                try { this.env.setFloating?.(transition.window, false); } catch (error) { void error; this.failFlight(flightState, "write-failed"); return; }
+            } else if (transition !== null) {
+                if (!this.restoreKeepAbove(transition.window, resourceClassById.get(transition.window) ?? "unknown")) {
+                    this.lifecycleDiag(flightState, "apply", "setters", "write-failed", "write-failed", this.ordinaryRevision(planned, flightState));
+                    this.ordinaryTerminal(flightState, planned, "uncertain", "setters");
+                    this.failFlight(flightState, "write-failed");
+                    return;
+                }
+                try {
+                    this.env.setFloating?.(transition.window, false);
+                } catch (error) {
+                    void error;
+                    this.lifecycleDiag(flightState, "apply", "setters", "write-failed", "write-failed", this.ordinaryRevision(planned, flightState));
+                    this.ordinaryTerminal(flightState, planned, "uncertain", "setters");
+                    this.failFlight(flightState, "write-failed");
+                    return;
+                }
             }
             const sticky = flightState.stickyTarget;
             if (sticky !== null) {
                 const target = current.windows.find((entry) => entry.id === sticky.window);
                 if (target === undefined) {
+                    this.ordinaryTerminal(flightState, planned, "uncertain", "apply");
                     this.failFlight(flightState, "precondition-mismatch");
                     return;
                 }
@@ -5352,10 +5447,14 @@ export class PlanAdapter {
                 const floatRef = byRef.get(floatTransition.window);
                 if (floatRef === undefined) {
                     this.logToken(`${LOG_PREFIX}:float-focus-stale window=${floatTransition.window} resource_class=${resourceClassById.get(floatTransition.window) ?? "unknown"}`);
+                    this.lifecycleDiag(flightState, "observe", "observe", "mismatched", "stale-scope", this.ordinaryRevision(planned, flightState));
+                    this.ordinaryTerminal(flightState, planned, "uncertain", "observe");
                     this.failFlight(flightState, "stale-scope");
                     return;
                 }
                 if (!this.retainFloatFocus(floatTransition.window, floatRef, resourceClassById.get(floatTransition.window) ?? "unknown")) {
+                    this.lifecycleDiag(flightState, "apply", "setters", "write-failed", "write-failed", this.ordinaryRevision(planned, flightState));
+                    this.ordinaryTerminal(flightState, planned, "uncertain", "setters");
                     this.failFlight(flightState, "write-failed");
                     return;
                 }
@@ -5397,6 +5496,8 @@ export class PlanAdapter {
                             focused = false;
                         }
                         if (!focused) {
+                            this.lifecycleDiag(flightState, "apply", "setters", "write-failed", "write-failed", this.ordinaryRevision(planned, flightState));
+                            this.ordinaryTerminal(flightState, planned, "uncertain", "setters");
                             this.failFlight(flightState, "write-failed");
                             return;
                         }
@@ -5470,6 +5571,7 @@ export class PlanAdapter {
                     // without evicting the foreground baseline. Fail closed without
                     // clearing accounting (which would retry forever): count the
                     // terminal attempt so the domain parks boundedly instead.
+                    this.ordinaryTerminal(flightState, planned, "uncertain", "setters");
                     this.failFlight(flightState, "cap-race");
                     return;
                 }
@@ -5511,6 +5613,24 @@ export class PlanAdapter {
         }
         if (isUniqueOwner(this.pinnedOwner)) {
             this.knownOwner = this.pinnedOwner;
+        }
+        if (flightState.op !== "focus") {
+            const skips = new Set<string>();
+            for (const entry of planned.geometry) {
+                if (fullscreenById.has(entry.window)) {
+                    skips.add("skipped-fullscreen");
+                } else if (maximizedById.has(entry.window)) {
+                    skips.add("skipped-maximized");
+                } else if (floatingById.has(entry.window) && flightState.floatTarget?.window !== entry.window) {
+                    skips.add("skipped-floating");
+                } else if (!orderedById.has(entry.window)) {
+                    skips.add("skipped-equal");
+                }
+            }
+            this.lifecycleDiag(flightState, "apply", "setters", "applied", this.skipSummary(skips), this.ordinaryRevision(planned, flightState));
+            this.ordinaryTerminal(flightState, planned, "applied", "setters");
+        } else {
+            this.ordinaryTerminal(flightState, planned, "applied", "apply");
         }
         this.inFlight = false;
         this.pending = null;
@@ -6600,7 +6720,7 @@ export class PlanAdapter {
         event: string,
         outcome: string,
         cause: string,
-        revision = flight.requestRevision,
+        revision: number | string = flight.requestRevision,
     ): void {
         try {
             const isR4 =
@@ -6608,12 +6728,51 @@ export class PlanAdapter {
                 (flight.direction === "left" || flight.direction === "right") &&
                 flight.snapshot.domains !== undefined &&
                 flight.snapshot.domains.length === 2;
+            const revisionText = typeof revision === "number" ? String(revision) : revision;
             this.env.log(
-                `${LOG_PREFIX}:cmd=${flight.correlation} kind=${flight.op} windows=${String(flight.windowCount)} component=${isR4 ? "cosmic-directional" : "cosmic-plan"} route=${isR4 ? "directional-r4" : "plan"} stage=${stage} correlation=${flight.correlation} generation=${this.generation} revision=${String(revision)} event=${event} outcome=${sanitizeKind(outcome)} cause=${cause === "-" ? "-" : sanitizeKind(cause)}`,
+                `${LOG_PREFIX}:cmd=${flight.correlation} kind=${flight.op} windows=${String(flight.windowCount)} component=${isR4 ? "cosmic-directional" : "cosmic-plan"} route=${isR4 ? "directional-r4" : "plan"} stage=${stage} correlation=${flight.correlation} generation=${this.generation} revision=${revisionText} event=${event} outcome=${sanitizeKind(outcome)} cause=${cause === "-" ? "-" : sanitizeKind(cause)}`,
             );
         } catch (error) {
             void error;
         }
+    }
+
+    // Ordinary Plan reply/apply lifecycle (logging only, after Planner send).
+    // Truthful revision: the request revision before a planned reply is known;
+    // the planned base revision after validation, or the unavailable placeholder
+    // when the validated reply omits it. Never carries ids, owners, payloads,
+    // geometry, or exceptions. Late/stale/duplicate callbacks return before any
+    // line and never look successful. The ordinary route has no ack/verify:
+    // only R4 stages those, so no ack/verify lines exist here.
+    private ordinaryRevision(planned: PlannedReply | null, flight: PendingFlight): number | string {
+        if (planned === null) {
+            return flight.requestRevision;
+        }
+        return planned.baseRevision === null ? "unavailable" : planned.baseRevision;
+    }
+
+    private ordinaryTerminal(
+        flight: PendingFlight,
+        planned: PlannedReply | null,
+        outcome: string,
+        lastPhase: string,
+    ): void {
+        this.lifecycleDiag(flight, "terminal", "settled", outcome, lastPhase, this.ordinaryRevision(planned, flight));
+    }
+
+    // Bounded aggregate skip summary for one ordinary geometry application.
+    // One fixed token, never per-window geometry or ids.
+    private skipSummary(kinds: ReadonlySet<string>): string {
+        if (kinds.size === 0) {
+            return "-";
+        }
+        if (kinds.size > 1) {
+            return "skipped-mixed";
+        }
+        for (const kind of kinds) {
+            return kind;
+        }
+        return "-";
     }
 
     private logToken(message: string): void {
