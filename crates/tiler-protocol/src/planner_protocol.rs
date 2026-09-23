@@ -30,25 +30,15 @@
 //! transaction against a fresh complete observation without mutating,
 //! acknowledging, verifying, rebinding, or advancing anything.
 
-use std::collections::BTreeMap;
-
 use serde::{Deserialize, Serialize};
 
-use tiler_core::contract::{
-    AckOutcome, AdapterAck, FocusCapabilities, LifecycleCapabilities, LifecycleOperation,
-    LifecyclePostObservation, LifecyclePrecondition, Observation,
-};
-use tiler_core::directional::{
-    Capabilities, Direction, Node, NodeId, OutputId, WindowId, WindowLink, WorkspaceId,
-};
+use tiler_core::bounds::{is_opaque_id, rect_contained, valid_carried_rect};
+use tiler_core::contract::{LifecycleOperation, LifecyclePrecondition};
+use tiler_core::directional::{Direction, NodeId, OutputId, WindowId, WorkspaceId};
 use tiler_core::engine::Engine;
-use tiler_core::geometry::{Rect, project};
+use tiler_core::geometry::Rect;
 use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
-use tiler_core::reconcile::{AckError, CancelUnackedError, VerifyError};
-use tiler_core::session::{
-    DesiredGeometry, DomainKey, ExceptionFlags, ObservedWindow, OutputDomain, ProposeError,
-    RefusalKind, Session, SessionCommand, SessionObservation, SessionPlan,
-};
+use tiler_core::session::{DomainKey, OutputDomain, RefusalKind};
 
 /// Planner protocol contract version (JSON string v1).
 pub const PLAN_CONTRACT_VERSION: u32 = 1;
@@ -56,10 +46,10 @@ pub const PLAN_CONTRACT_VERSION: u32 = 1;
 pub const PLAN_MAX_REQUEST_BYTES: usize = 64 * 1024;
 /// Bounded reply cap (mirrors the portable service bound).
 pub const PLAN_MAX_REPLY_BYTES: usize = 64 * 1024;
-/// Opaque id bound.
-pub const PLAN_MAX_ID_LEN: usize = 128;
-/// Observed window bound.
-pub const PLAN_MAX_WINDOWS: usize = 64;
+/// Opaque id bound (single source: [`tiler_core::bounds::MAX_OPAQUE_ID_LEN`]).
+pub const PLAN_MAX_ID_LEN: usize = tiler_core::bounds::MAX_OPAQUE_ID_LEN;
+/// Observed window bound (single source: [`tiler_core::bounds::MAX_OBSERVED_WINDOWS`]).
+pub const PLAN_MAX_WINDOWS: usize = tiler_core::bounds::MAX_OBSERVED_WINDOWS;
 /// Revision bound (inclusive, shared with contract).
 pub const PLAN_MAX_REVISION: u64 = 1_000_000;
 
@@ -75,43 +65,11 @@ const MSG_REVISION: &str = "revision is invalid";
 const MSG_OPAQUE_ID: &str = "opaque id is invalid";
 const MSG_OBSERVATION: &str = "observation does not cover the known window set";
 const MSG_CROSS_DOMAIN: &str = "input output or workspace does not match a logical domain";
-const MSG_AMBIGUOUS: &str = "window placement is ambiguous";
 const MSG_DIRECTION: &str = "direction is invalid";
 
-/// Bounded coordinate extent for carried work-area/window geometry.
-const GEOMETRY_BOUND: i32 = 16384;
-/// Bounded gap extent for carried work-area geometry.
-const GEOMETRY_MAX_GAP: i32 = 64;
-
-fn valid_carried_rect(x: i32, y: i32, w: i32, h: i32) -> bool {
-    w > 0
-        && h > 0
-        && (-GEOMETRY_BOUND..=GEOMETRY_BOUND).contains(&x)
-        && (-GEOMETRY_BOUND..=GEOMETRY_BOUND).contains(&y)
-        && w <= GEOMETRY_BOUND
-        && h <= GEOMETRY_BOUND
-        && (i64::from(x) + i64::from(w) <= i64::from(i32::MAX))
-        && (i64::from(y) + i64::from(h) <= i64::from(i32::MAX))
-}
-
-fn rect_contained(inner: Rect, outer: Rect) -> bool {
-    let inner_right = i64::from(inner.x) + i64::from(inner.w);
-    let inner_bottom = i64::from(inner.y) + i64::from(inner.h);
-    let outer_right = i64::from(outer.x) + i64::from(outer.w);
-    let outer_bottom = i64::from(outer.y) + i64::from(outer.h);
-    inner.x >= outer.x
-        && inner.y >= outer.y
-        && inner_right <= outer_right
-        && inner_bottom <= outer_bottom
-}
-
-fn is_opaque_id(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= PLAN_MAX_ID_LEN
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
-}
+/// Bounded gap extent for carried work-area geometry
+/// (single source: [`tiler_core::bounds::MAX_GAP`]).
+const GEOMETRY_MAX_GAP: i32 = tiler_core::bounds::MAX_GAP;
 
 /// Canonical production directional fingerprint (FNV-1a 32-bit) over the
 /// full two-domain evidence, byte-identical to the adapter's
@@ -638,22 +596,6 @@ fn focus_reply(domain: &DomainKey, leaf: &NodeId) -> FocusReplyBody {
         domain_output: domain.output.0.clone(),
         domain_workspace: domain.workspace.0.clone(),
         leaf: leaf.0.clone(),
-    }
-}
-
-fn propose_failure(kind: ProposeError, correlation_id: String) -> String {
-    match kind {
-        ProposeError::PendingExists => rejected(
-            correlation_id,
-            "pending-exists",
-            "complete the pending plan before proposing",
-        ),
-        ProposeError::Diverged(reason) => {
-            rejected(correlation_id, reason.as_str(), reason.message())
-        }
-        ProposeError::Refused(reason) => {
-            rejected(correlation_id, reason.as_str(), reason.message())
-        }
     }
 }
 
@@ -1281,45 +1223,6 @@ fn validated_op(ctx: &Validated) -> String {
         .to_owned()
 }
 
-fn observed_windows(request: &RequestDto) -> Vec<ObservedWindow> {
-    request
-        .windows
-        .iter()
-        .map(|entry| ObservedWindow {
-            window: WindowId(entry.window.clone()),
-            output: OutputId(entry.output.clone()),
-            workspace: WorkspaceId(entry.workspace.clone()),
-            floating: entry.floating,
-            fullscreen: false,
-            maximized: false,
-            sticky: false,
-        })
-        .collect()
-}
-
-fn observation_for(base: u64, ctx: &Validated) -> SessionObservation {
-    SessionObservation {
-        observation: Observation::new(
-            ctx.owner.clone(),
-            ctx.generation.clone(),
-            base,
-            ctx.request.fingerprint,
-        ),
-        windows: observed_windows(&ctx.request),
-    }
-}
-
-fn acknowledge(session: &mut Session, ctx: &Validated, base: u64) -> bool {
-    let ack = tiler_core::contract::AdapterAck::new(
-        ctx.correlation.clone(),
-        ctx.owner.clone(),
-        ctx.generation.clone(),
-        base,
-        tiler_core::contract::AckOutcome::Accepted,
-    );
-    session.acknowledge(&ack).is_ok()
-}
-
 /// Wire token for a directional move precondition (production cross-output
 /// route). Matches the portable movement-service vocabulary exactly.
 fn move_precondition_str(value: tiler_core::directional::Precondition) -> &'static str {
@@ -1442,23 +1345,386 @@ fn planned_reply(
     })
 }
 
-fn snapshot_windows_leaf_map(
-    session: &Session,
-    domain_key: &DomainKey,
-) -> std::collections::BTreeMap<String, String> {
-    session
-        .snapshot()
-        .windows
-        .into_iter()
-        .filter(|l| l.output == domain_key.output && l.workspace == domain_key.workspace)
-        .map(|l| (l.leaf.0, l.window.0))
-        .collect()
+/// Typed pure-projection serializer for the reconcile/update-gaps family:
+/// funnels a [`tiler_core::boundary::ProjectionPlan`] through the exact
+/// [`planned_reply`] wire shape, so output stays byte identical. Detail
+/// `kind`/`capability` tokens come from the core plan (single source).
+fn planned_projection_reply(
+    correlation_id: &str,
+    plan: &tiler_core::boundary::ProjectionPlan,
+) -> String {
+    planned_reply(
+        correlation_id,
+        plan.base_revision,
+        serde_json::json!({
+            "kind": plan.kind.kind_str(),
+            "capability": plan.kind.capability_str(),
+        }),
+        &plan.geometry,
+        match (&plan.focus_domain, &plan.focus_leaf) {
+            (Some(domain), Some(leaf)) => Some((domain, leaf)),
+            _ => None,
+        },
+    )
+}
+
+/// Typed versioned-tiled serializer for the admit/remove/toggle-float family:
+/// funnels a [`tiler_core::boundary::TiledPlan`] through the exact planned
+/// wire shape, so output stays byte identical. Detail
+/// `kind`/`policy_version`/`capability` tokens come from the core plan
+/// (single source); only kinds with fixed literal capabilities route here.
+fn planned_tiled_reply(correlation_id: &str, plan: &tiler_core::boundary::TiledPlan) -> String {
+    if plan.float_window.is_some() || plan.float_rect.is_some() {
+        return planned_float_reply(correlation_id, plan);
+    }
+    planned_reply(
+        correlation_id,
+        plan.base_revision,
+        serde_json::json!({
+            "kind": plan.kind.kind_str(),
+            "policy_version": plan.policy_version,
+            "capability": plan
+                .kind
+                .capability_str()
+                .expect("tiled reply kinds carry literal capabilities"),
+        }),
+        &plan.geometry,
+        match (&plan.focus_domain, &plan.focus_leaf) {
+            (Some(domain), Some(leaf)) => Some((domain, leaf)),
+            _ => None,
+        },
+    )
+}
+
+/// Byte-exact intentional-float serializer: the legacy float wire shape
+/// driven by a [`tiler_core::boundary::TiledPlan`] (single source).
+fn planned_float_reply(correlation_id: &str, plan: &tiler_core::boundary::TiledPlan) -> String {
+    serialize_bounded(&PlanReply {
+        v: PLAN_CONTRACT_VERSION,
+        correlation_id: correlation_id.to_owned(),
+        outcome: "planned",
+        kind: None,
+        message: None,
+        base_revision: Some(plan.base_revision),
+        detail: Some(serde_json::json!({
+            "kind": plan.kind.kind_str(),
+            "policy_version": plan.policy_version,
+            "capability": plan
+                .kind
+                .capability_str()
+                .expect("tiled reply kinds carry literal capabilities"),
+        })),
+        desired_geometry: Some(plan.geometry.iter().map(geometry_reply).collect()),
+        desired_focus: match (&plan.focus_domain, &plan.focus_leaf) {
+            (Some(domain), Some(leaf)) => Some(focus_reply(domain, leaf)),
+            _ => None,
+        },
+        float_geometry: match (&plan.float_window, &plan.float_rect) {
+            (Some(window), Some(rect)) => Some(FloatReplyBody {
+                window: window.0.clone(),
+                rect: RectDto {
+                    x: rect.x,
+                    y: rect.y,
+                    w: rect.w,
+                    h: rect.h,
+                },
+            }),
+            _ => None,
+        },
+        preconditions: None,
+        operation: None,
+    })
+}
+
+/// Byte-exact local/cross move serializer driven by a
+/// [`tiler_core::boundary::MovePlanReply`] (single source). Detail key order
+/// (`kind`, `rule`, `capability`, `direction`) and the R4 cross operation
+/// echo match the legacy shapes exactly; rule/capability `Debug` tokens are
+/// formatted here in protocol from the same typed values.
+fn serialize_move_reply(
+    correlation_id: &str,
+    plan: &tiler_core::boundary::MovePlanReply,
+) -> String {
+    let detail = serde_json::json!({
+        "kind": "move",
+        "rule": format!("{:?}", plan.rule),
+        "capability": format!("{:?}", plan.capability),
+        "direction": direction_str(plan.direction),
+    });
+    let focus = Some((&plan.focus_domain, &plan.focus_leaf));
+    let Some(cross) = &plan.cross else {
+        return planned_reply(
+            correlation_id,
+            plan.base_revision,
+            detail,
+            &plan.geometry,
+            focus,
+        );
+    };
+    let operation_value = serde_json::json!({
+        "op": "move",
+        "rule": format!("{:?}", cross.rule),
+        "capability": format!("{:?}", plan.capability),
+        "direction": direction_str(cross.intent_direction),
+        "window": cross.intent_window.0,
+        "leaf": cross.intent_leaf.0,
+        "source_output": cross.source_output.0,
+        "source_workspace": cross.source_workspace.0,
+        "target_output": cross.target_output.0,
+        "target_workspace": cross.target_workspace.0,
+        "source_root_child_index": cross.source_root_child_index,
+        "target": match cross.target {
+            tiler_core::directional::CrossOutputTarget::Empty => "empty",
+            tiler_core::directional::CrossOutputTarget::Occupied => "occupied",
+        },
+    });
+    let preconditions: Vec<&'static str> = cross
+        .preconditions
+        .iter()
+        .map(|p| move_precondition_str(*p))
+        .collect();
+    serialize_bounded(&PlanReply {
+        v: PLAN_CONTRACT_VERSION,
+        correlation_id: correlation_id.to_owned(),
+        outcome: "planned",
+        kind: None,
+        message: None,
+        base_revision: Some(plan.base_revision),
+        detail: Some(detail),
+        desired_geometry: Some(plan.geometry.iter().map(geometry_reply).collect()),
+        desired_focus: focus.map(|(domain, leaf)| focus_reply(domain, leaf)),
+        float_geometry: None,
+        preconditions: Some(preconditions),
+        operation: Some(operation_value),
+    })
+}
+
+/// Byte-exact local/cross focus serializer driven by a
+/// [`tiler_core::boundary::FocusPlanReply`] (single source). Detail key order
+/// (`kind`, `capability`, `direction`, `to_window`, plus `cross_output` for
+/// crossed plans) and the cross operation echo match the legacy shapes
+/// exactly; precondition tokens derive from the carried operation.
+fn serialize_focus_reply(
+    correlation_id: &str,
+    plan: &tiler_core::boundary::FocusPlanReply,
+) -> String {
+    let focus = Some((&plan.focus_domain, &plan.focus_leaf));
+    let Some(operation) = &plan.cross_operation else {
+        return planned_reply(
+            correlation_id,
+            plan.base_revision,
+            serde_json::json!({
+                "kind": "focus",
+                "capability": "directional-focus",
+                "direction": direction_str(plan.direction),
+                "to_window": plan.to_window.0,
+            }),
+            &plan.geometry,
+            focus,
+        );
+    };
+    cross_focus_planned_reply(
+        correlation_id,
+        plan.base_revision,
+        serde_json::json!({
+            "kind": "focus",
+            "capability": "directional-focus",
+            "direction": direction_str(plan.direction),
+            "to_window": plan.to_window.0,
+            "cross_output": true,
+        }),
+        &plan.geometry,
+        (&plan.focus_domain, &plan.focus_leaf),
+        operation,
+    )
+}
+
+/// Byte-exact keyboard/pointer resize serializer driven by a
+/// [`tiler_core::boundary::ResizePlanReply`] (single source). Detail key
+/// order matches the legacy shapes exactly; exactly one of mode/boundary is
+/// set by construction.
+fn serialize_resize_reply(
+    correlation_id: &str,
+    plan: &tiler_core::boundary::ResizePlanReply,
+) -> String {
+    let focus = Some((&plan.focus_domain, &plan.focus_leaf));
+    let operation = &plan.operation;
+    if let Some(mode) = plan.mode {
+        return planned_reply(
+            correlation_id,
+            plan.base_revision,
+            serde_json::json!({
+                "kind": "resize",
+                "capability": "keyboard-resize",
+                "direction": direction_str(plan.direction),
+                "mode": mode.as_str(),
+                "target_group": operation.target_group.0,
+                "focused_index": operation.focused_index,
+                "neighbor_index": operation.neighbor_index,
+                "old_shares": operation.old_shares,
+                "new_shares": operation.new_shares,
+            }),
+            &plan.geometry,
+            focus,
+        );
+    }
+    debug_assert!(plan.boundary.is_some(), "pointer plans carry a boundary");
+    planned_reply(
+        correlation_id,
+        plan.base_revision,
+        serde_json::json!({
+            "kind": "pointer-resize",
+            "capability": "pointer-resize",
+            "direction": direction_str(plan.direction),
+            "boundary": plan.boundary.unwrap_or(0),
+            "target_group": operation.target_group.0,
+            "focused_index": operation.focused_index,
+            "neighbor_index": operation.neighbor_index,
+            "old_shares": operation.old_shares,
+            "new_shares": operation.new_shares,
+        }),
+        &plan.geometry,
+        focus,
+    )
+}
+
+/// Byte-exact workspace-send serializer driven by a
+/// [`tiler_core::boundary::SendWorkspacePlan`] (single source). Detail key
+/// order (`kind`, `policy_version`, `capability`), the `move-tiled` operation
+/// echo, and precondition tokens match the legacy shape exactly. The plan
+/// constructor guarantees the `MoveTiled` operation, so the legacy
+/// `move-op-invalid` fallback stays with the caller at its exact position.
+fn serialize_send_workspace_reply(
+    correlation_id: &str,
+    plan: &tiler_core::boundary::SendWorkspacePlan,
+) -> String {
+    let tiler_core::boundary::SendWorkspacePlan {
+        operation:
+            LifecycleOperation::MoveTiled {
+                window,
+                leaf,
+                source_output,
+                source_workspace,
+                target_output,
+                target_workspace,
+            },
+        ..
+    } = &plan
+    else {
+        unreachable!("SendWorkspacePlan always carries MoveTiled");
+    };
+    let operation_value = serde_json::json!({
+        "op": "move-tiled",
+        "window": window.0,
+        "leaf": leaf.0,
+        "source_output": source_output.0,
+        "source_workspace": source_workspace.0,
+        "target_output": target_output.0,
+        "target_workspace": target_workspace.0,
+    });
+    let preconditions: Vec<&'static str> = plan
+        .preconditions
+        .iter()
+        .map(|p| lifecycle_precondition_str(*p))
+        .collect();
+    serialize_bounded(&PlanReply {
+        v: PLAN_CONTRACT_VERSION,
+        correlation_id: correlation_id.to_owned(),
+        outcome: "planned",
+        kind: Some("send-to-workspace".to_owned()),
+        message: None,
+        base_revision: Some(plan.base_revision),
+        detail: Some(serde_json::json!({
+            "kind": "send-to-workspace",
+            "policy_version": plan.policy_version,
+            "capability": "move-tiled",
+        })),
+        desired_geometry: Some(plan.geometry.iter().map(geometry_reply).collect()),
+        desired_focus: match (&plan.focus_domain, &plan.focus_leaf) {
+            (Some(d), Some(l)) => Some(focus_reply(d, l)),
+            _ => None,
+        },
+        float_geometry: None,
+        preconditions: Some(preconditions),
+        operation: Some(operation_value),
+    })
+}
+
+/// Shared typed-reply choke point: every [`tiler_core::boundary::CoreReply`]
+/// variant serializes here through the exact legacy wire shapes, so output
+/// stays byte identical. Rejection/status/ack/commit/cancel arms reuse their
+/// existing tiny serializers (single source); transaction orchestration
+/// itself never crosses.
+fn serialize_core_reply(ctx: &Validated, reply: &tiler_core::boundary::CoreReply) -> String {
+    use tiler_core::boundary::CoreReply;
+    let cid = ctx.request.correlation_id.clone();
+    match reply {
+        CoreReply::Projection(plan) => planned_projection_reply(&cid, plan),
+        CoreReply::Tiled(plan) => planned_tiled_reply(&cid, plan),
+        CoreReply::SendWorkspace(plan) => serialize_send_workspace_reply(&cid, plan),
+        CoreReply::MoveDirectional(plan) => serialize_move_reply(&cid, plan),
+        CoreReply::FocusDirectional(plan) => serialize_focus_reply(&cid, plan),
+        CoreReply::Resize(plan) => serialize_resize_reply(&cid, plan),
+        CoreReply::ActiveGroup(found) => serialize_active_group_found(ctx, found),
+        CoreReply::NoGroup {
+            base_revision,
+            reason,
+        } => no_group_reply(ctx, *base_revision, reason.as_str()),
+        CoreReply::Rejected { kind, message } => rejected(cid, kind, message),
+        CoreReply::SnapshotInvalid { message, detail } => snapshot_invalid(cid, message, detail),
+        CoreReply::Diverged(reason) => diverged_reply(&cid, *reason),
+        CoreReply::Status {
+            base_revision,
+            status,
+        } => status_reply(&cid, *base_revision, status.as_str()),
+        CoreReply::Acknowledged {
+            base_revision,
+            kind,
+        } => serialize_bounded(&PlanReply {
+            v: PLAN_CONTRACT_VERSION,
+            correlation_id: cid,
+            outcome: "acknowledged",
+            kind: Some(kind.kind_str().to_owned()),
+            message: None,
+            base_revision: Some(*base_revision),
+            detail: None,
+            desired_geometry: None,
+            desired_focus: None,
+            float_geometry: None,
+            preconditions: None,
+            operation: None,
+        }),
+        CoreReply::Committed { revision, kind } => serialize_bounded(&PlanReply {
+            v: PLAN_CONTRACT_VERSION,
+            correlation_id: cid,
+            outcome: "committed",
+            kind: Some(kind.kind_str().to_owned()),
+            message: None,
+            base_revision: Some(*revision),
+            detail: None,
+            desired_geometry: None,
+            desired_focus: None,
+            float_geometry: None,
+            preconditions: None,
+            operation: None,
+        }),
+        CoreReply::Cancelled {
+            base_revision,
+            kind,
+        } => cancelled_reply(&cid, kind.kind_str(), *base_revision),
+    }
 }
 
 /// Planned workspace-send reply: carries the full affected geometry plus the
 /// exact operation/preconditions the adapter must echo back in the verify
-/// post-observation.
-fn workspace_planned_reply(correlation_id: &str, plan: &SessionPlan) -> String {
+/// post-observation. Legacy byte oracle for the typed
+/// [`serialize_send_workspace_reply`] funnel; production routes through
+/// [`serialize_core_reply`].
+#[cfg(test)]
+fn workspace_planned_reply(
+    correlation_id: &str,
+    plan: &tiler_core::session::SessionPlan,
+) -> String {
     let operation = match &plan.dispatch.operation {
         LifecycleOperation::MoveTiled {
             window,
@@ -1513,36 +1779,6 @@ fn workspace_planned_reply(correlation_id: &str, plan: &SessionPlan) -> String {
     })
 }
 
-/// Rebuild admission target for one seed step: the currently focused target
-/// leaf's projected rectangle, or the output geometry when the rebuilt domain
-/// is still empty (or focus does not resolve there). COSMIC `map_to_tree`
-/// splits the last active target node, never the newly admitted window, so
-/// rebuilding from each window's own observed rect inverts portrait splits to
-/// left/right (and landscape splits to top/bottom). Caller window geometry
-/// never selects the axis here; projection failure falls back to the output
-/// geometry and the later desired-geometry projection still fails closed.
-fn seed_target_bounds(session: &Session, domain: &OutputDomain) -> Rect {
-    let key = DomainKey {
-        output: domain.id.clone(),
-        workspace: domain.workspace.clone(),
-    };
-    let (focus_domain, focus_leaf) = session.focus();
-    if focus_domain.as_ref() == Some(&key)
-        && let Some(leaf) = focus_leaf.as_ref()
-        && let Some(tree) = session
-            .snapshot()
-            .domains
-            .into_iter()
-            .find(|d| d.output == key.output && d.workspace == key.workspace)
-            .and_then(|d| d.tree)
-        && let Ok(projected) = project(&tree, domain.bounds, domain.gap)
-        && let Some(target) = projected.iter().find(|entry| &entry.leaf == leaf)
-    {
-        return target.rect;
-    }
-    domain.bounds
-}
-
 /// Convert carried wire windows to the portable near-strip fitter.
 fn engine_window_from_dto(entry: &ObservedDto) -> tiler_core::seed::EngineWindow {
     tiler_core::seed::EngineWindow {
@@ -1560,200 +1796,12 @@ fn engine_window_from_dto(entry: &ObservedDto) -> tiler_core::seed::EngineWindow
     }
 }
 
-fn observed_dto_from_engine(entry: &tiler_core::seed::EngineWindow) -> ObservedDto {
-    ObservedDto {
-        window: entry.window.0.clone(),
-        output: entry.output.0.clone(),
-        workspace: entry.workspace.0.clone(),
-        rect: RectDto {
-            x: entry.rect.x,
-            y: entry.rect.y,
-            w: entry.rect.w,
-            h: entry.rect.h,
-        },
-        floating: entry.floating,
-        fit_excluded: entry.fit_excluded,
-    }
-}
-
-fn try_flat_strip_fit(
-    domain: &OutputDomain,
-    windows: &[ObservedDto],
-) -> Option<(Node, Vec<WindowLink>)> {
-    let engine: Vec<tiler_core::seed::EngineWindow> =
-        windows.iter().map(engine_window_from_dto).collect();
-    tiler_core::seed::try_flat_strip_fit(domain, &engine)
-}
-
-/// Rebuild ephemeral authoritative topology from the normalized observation.
-///
-/// Admits the observed spatial order, with the focused window last, through
-/// the retained session lifecycle path only. The split axis derives from the
-/// rebuild target at each step (see [`seed_target_bounds`]); opaque window
-/// ids never determine topology.
-fn seed_session(
-    owner: &OwnerId,
-    generation: &GenerationId,
-    fingerprint: u64,
-    domain: &OutputDomain,
-    seed_order: &[ObservedDto],
-) -> Option<Session> {
-    let mut session = Session::new(
-        owner.clone(),
-        generation.clone(),
-        0,
-        fingerprint,
-        vec![domain.clone()],
-    )
-    .ok()?;
-    for (index, entry) in seed_order.iter().enumerate() {
-        let base = session.accepted_revision();
-        let mut observed: Vec<ObservedWindow> = session
-            .snapshot()
-            .windows
-            .iter()
-            .map(|l| ObservedWindow {
-                window: l.window.clone(),
-                output: l.output.clone(),
-                workspace: l.workspace.clone(),
-                floating: false,
-                fullscreen: false,
-                maximized: false,
-                sticky: false,
-            })
-            .collect();
-        observed.extend(session.exception_observed());
-        observed.push(ObservedWindow {
-            window: WindowId(entry.window.clone()),
-            output: OutputId(entry.output.clone()),
-            workspace: WorkspaceId(entry.workspace.clone()),
-            floating: false,
-            fullscreen: false,
-            maximized: false,
-            sticky: false,
-        });
-        let correlation_text = format!("seed-{index:04}");
-        let correlation = CorrelationId::parse(&correlation_text)?;
-        let observation = SessionObservation {
-            observation: Observation::new(owner.clone(), generation.clone(), base, fingerprint),
-            windows: observed,
-        };
-        let command = SessionCommand::Admit {
-            window: WindowId(entry.window.clone()),
-            output: OutputId(entry.output.clone()),
-            workspace: WorkspaceId(entry.workspace.clone()),
-            exceptions: ExceptionFlags::none(),
-            exception_behavior: None,
-            placement_bounds: seed_target_bounds(&session, domain),
-        };
-        let plan = session
-            .propose(
-                &command,
-                &observation,
-                &correlation,
-                &LifecycleCapabilities::full(),
-            )
-            .ok()?;
-        let ack = tiler_core::contract::AdapterAck::new(
-            correlation.clone(),
-            owner.clone(),
-            generation.clone(),
-            base,
-            tiler_core::contract::AckOutcome::Accepted,
-        );
-        session.acknowledge(&ack).ok()?;
-        session
-            .verify_lifecycle(&tiler_core::contract::LifecyclePostObservation::new(
-                Observation::new(owner.clone(), generation.clone(), base, base),
-                correlation,
-                true,
-                plan.dispatch.preconditions.clone(),
-                plan.dispatch.operation.clone(),
-            ))
-            .ok()?;
-    }
-    Some(session)
-}
-
-fn spatial_with_focus_last(
-    windows: Vec<ObservedDto>,
-    focused: &str,
-    allow_tied_observations: bool,
-) -> Option<Vec<ObservedDto>> {
-    let engine: Vec<tiler_core::seed::EngineWindow> =
-        windows.iter().map(engine_window_from_dto).collect();
-    let ordered = tiler_core::seed::order_spatial_with_focus_last(
-        engine,
-        &WindowId(focused.to_owned()),
-        allow_tied_observations,
-    )?;
-    Some(ordered.iter().map(observed_dto_from_engine).collect())
-}
-
-/// One retained pending two-domain workspace-send Session for the standalone
-/// dev-only route. Bound to owner/generation/correlation/base revision; no
-/// owner rebind during pending. Pending mismatch, loss, refused ack, or failed
-/// verification is terminal divergence with no Legacy fallback. The retained
-/// desired geometry is exactly the expected post-observation: a bare
-/// `verified: true` never commits unless every desired window is observed once
-/// with the expected output, workspace, and rectangle. The retained pre-image
-/// is the exact normalized dispatch-time observation (focused window plus the
-/// complete source/target window sets with carried rectangles); it is bounded
-/// by the request window/entry bounds and lives exactly as long as the
-/// pending. `request_revision` is the revision the dispatching request
-/// carried (distinct from the seeded `base_revision`); cancellation must echo
-/// it, never a base learned from a stale probe.
-#[derive(Debug)]
-struct WorkspacePending {
-    owner: OwnerId,
-    generation: GenerationId,
-    correlation: CorrelationId,
-    base_revision: u64,
-    request_revision: u64,
-    session: Session,
-    desired_geometry: Vec<DesiredGeometry>,
-    pre_focused: String,
-    pre_windows: Vec<ObservedDto>,
-    pre_target_windows: Vec<ObservedDto>,
-}
-
-/// One retained pending two-domain directional R4 cross-output move. Bound to
-/// owner/generation/correlation/base revision plus the source/target pair
-/// keys and outer gaps; no owner rebind during pending and no new topology
-/// seeding. R4 proposes once and retains the pair Session (with its single
-/// reconciler pending slot) until an exact accepted `directional-move-ack`
-/// and a matching verified `directional-move-verify` post-observation commit
-/// it via `Session::verify_move` then split/store the canonical sessions
-/// once. Pending mismatch, refused ack, failed verification, or
-/// identity/correlation/revision loss is terminal `diverged` with no commit.
-/// R1-R3 never stage this pending and stay synchronous. The retained
-/// pre-image and `request_revision` follow the [`WorkspacePending`] contract.
-#[derive(Debug)]
-struct DirectionalMovePending {
-    owner: OwnerId,
-    generation: GenerationId,
-    correlation: CorrelationId,
-    base_revision: u64,
-    request_revision: u64,
-    session: Session,
-    source_key: DomainKey,
-    target_key: DomainKey,
-    source_outer_gap: i32,
-    target_outer_gap: i32,
-    desired_geometry: Vec<DesiredGeometry>,
-    operation: tiler_core::directional::MoveOperation,
-    preconditions: Vec<tiler_core::directional::Precondition>,
-    pre_focused: String,
-    pre_windows: Vec<ObservedDto>,
-}
-
 /// Validated workspace-send route input: the target domain plus the exact
 /// mover binding. The source domain is the already-validated request domain.
 #[derive(Debug)]
 struct WorkspaceInput {
     target_domain: OutputDomain,
     target_key: DomainKey,
-    target_windows: Vec<ObservedDto>,
     window: WindowId,
 }
 
@@ -1779,18 +1827,6 @@ fn parse_lifecycle_precondition(value: &str) -> Option<LifecyclePrecondition> {
             Some(LifecyclePrecondition::AdapterMustVerifyPostconditions)
         }
         _ => None,
-    }
-}
-
-fn observed_from_dto(entry: &ObservedDto) -> ObservedWindow {
-    ObservedWindow {
-        window: WindowId(entry.window.clone()),
-        output: OutputId(entry.output.clone()),
-        workspace: WorkspaceId(entry.workspace.clone()),
-        floating: entry.floating,
-        fullscreen: false,
-        maximized: false,
-        sticky: false,
     }
 }
 
@@ -1855,178 +1891,6 @@ fn cancelled_reply(correlation_id: &str, kind: &'static str, base_revision: u64)
         preconditions: None,
         operation: None,
     })
-}
-
-/// One admission step of the two-domain workspace seed: propose/ack/verify
-/// one tiled window into its exact source or target domain.
-fn seed_workspace_admit(
-    session: &mut Session,
-    owner: &OwnerId,
-    generation: &GenerationId,
-    fingerprint: u64,
-    domain: &OutputDomain,
-    entry: &ObservedDto,
-    index: usize,
-) -> Option<()> {
-    let base = session.accepted_revision();
-    let mut observed: Vec<ObservedWindow> = session
-        .snapshot()
-        .windows
-        .iter()
-        .map(|l| ObservedWindow {
-            window: l.window.clone(),
-            output: l.output.clone(),
-            workspace: l.workspace.clone(),
-            floating: false,
-            fullscreen: false,
-            maximized: false,
-            sticky: false,
-        })
-        .collect();
-    observed.extend(session.exception_observed());
-    observed.push(observed_from_dto(entry));
-    let correlation = CorrelationId::parse(&format!("seed-{index:04}"))?;
-    let observation = SessionObservation {
-        observation: Observation::new(owner.clone(), generation.clone(), base, fingerprint),
-        windows: observed,
-    };
-    let command = SessionCommand::Admit {
-        window: WindowId(entry.window.clone()),
-        output: OutputId(entry.output.clone()),
-        workspace: WorkspaceId(entry.workspace.clone()),
-        exceptions: ExceptionFlags::none(),
-        exception_behavior: None,
-        placement_bounds: seed_target_bounds(session, domain),
-    };
-    let plan = session
-        .propose(
-            &command,
-            &observation,
-            &correlation,
-            &LifecycleCapabilities::full(),
-        )
-        .ok()?;
-    let ack = AdapterAck::new(
-        correlation.clone(),
-        owner.clone(),
-        generation.clone(),
-        base,
-        AckOutcome::Accepted,
-    );
-    session.acknowledge(&ack).ok()?;
-    session
-        .verify_lifecycle(&LifecyclePostObservation::new(
-            Observation::new(owner.clone(), generation.clone(), base, fingerprint),
-            correlation,
-            true,
-            plan.dispatch.preconditions.clone(),
-            plan.dispatch.operation.clone(),
-        ))
-        .ok()?;
-    Some(())
-}
-
-/// Rebuild the authoritative two-domain workspace topology from the observed
-/// source and target spatial orders (source first, then target). Mirrors
-/// [`seed_session`]; the mover is admitted into its source domain and focus is
-/// synced to it by the caller before the workspace move proposes.
-fn seed_workspace_session(
-    owner: &OwnerId,
-    generation: &GenerationId,
-    fingerprint: u64,
-    source_domain: &OutputDomain,
-    target_domain: &OutputDomain,
-    source_order: &[ObservedDto],
-    target_order: &[ObservedDto],
-) -> Option<Session> {
-    let mut session = Session::new(
-        owner.clone(),
-        generation.clone(),
-        0,
-        fingerprint,
-        vec![source_domain.clone(), target_domain.clone()],
-    )
-    .ok()?;
-    for (index, entry) in source_order.iter().enumerate() {
-        seed_workspace_admit(
-            &mut session,
-            owner,
-            generation,
-            fingerprint,
-            source_domain,
-            entry,
-            index,
-        )?;
-    }
-    for (index, entry) in target_order.iter().enumerate() {
-        seed_workspace_admit(
-            &mut session,
-            owner,
-            generation,
-            fingerprint,
-            target_domain,
-            entry,
-            source_order.len() + index,
-        )?;
-    }
-    Some(session)
-}
-
-/// Complete workspace observation covering every known source and target
-/// window at the given base revision.
-fn workspace_observation(base: u64, ctx: &Validated, input: &WorkspaceInput) -> SessionObservation {
-    let mut windows: Vec<ObservedWindow> =
-        ctx.request.windows.iter().map(observed_from_dto).collect();
-    windows.extend(input.target_windows.iter().map(observed_from_dto));
-    SessionObservation {
-        observation: Observation::new(
-            ctx.owner.clone(),
-            ctx.generation.clone(),
-            base,
-            ctx.request.fingerprint,
-        ),
-        windows,
-    }
-}
-
-/// Complete post-observation validation against the retained plan: every
-/// desired window must be carried exactly once (source plus target) with the
-/// expected output, workspace, and rectangle. Any missing, duplicate, extra,
-/// mis-homed, or mis-sized window fails closed so a bare `verified: true`
-/// never commits a divergent state.
-fn workspace_post_matches(pending: &WorkspacePending, ctx: &Validated) -> bool {
-    let mut observed: std::collections::HashMap<&str, &ObservedDto> =
-        std::collections::HashMap::with_capacity(
-            ctx.request.windows.len() + ctx.request.target_windows.len(),
-        );
-    for entry in ctx
-        .request
-        .windows
-        .iter()
-        .chain(ctx.request.target_windows.iter())
-    {
-        if observed.insert(entry.window.as_str(), entry).is_some() {
-            return false;
-        }
-    }
-    if observed.len() != pending.desired_geometry.len() {
-        return false;
-    }
-    for desired in &pending.desired_geometry {
-        let Some(entry) = observed.get(desired.window.0.as_str()) else {
-            return false;
-        };
-        if entry.output != desired.output.0
-            || entry.workspace != desired.workspace.0
-            || entry.rect.x != desired.rect.x
-            || entry.rect.y != desired.rect.y
-            || entry.rect.w != desired.rect.w
-            || entry.rect.h != desired.rect.h
-        {
-            return false;
-        }
-    }
-    true
 }
 
 /// Deferred raw echo of a verify command's nested `preconditions`/`operation`.
@@ -2233,144 +2097,6 @@ fn parse_directional_move_operation(
     Some((operation, echo))
 }
 
-/// Exact normalized pre-image match against the dispatch-time observation:
-/// focused window plus every carried window exactly once with identical
-/// output, workspace, rectangle, and flags. Order-insensitive like the post
-/// predicates (adapter enumeration order is not significant), but otherwise
-/// byte-exact: any missing, duplicate, extra, mis-homed, mis-sized, or
-/// flag-divergent entry fails closed. Pure function, no mutation.
-fn pre_image_matches(
-    pre_focused: &str,
-    pre_windows: &[ObservedDto],
-    pre_target_windows: &[ObservedDto],
-    ctx: &Validated,
-) -> bool {
-    if ctx.request.focused_window != pre_focused {
-        return false;
-    }
-    let mut retained: std::collections::HashMap<&str, &ObservedDto> =
-        std::collections::HashMap::with_capacity(pre_windows.len() + pre_target_windows.len());
-    for entry in pre_windows.iter().chain(pre_target_windows.iter()) {
-        if retained.insert(entry.window.as_str(), entry).is_some() {
-            return false;
-        }
-    }
-    let mut observed: std::collections::HashMap<&str, &ObservedDto> =
-        std::collections::HashMap::with_capacity(
-            ctx.request.windows.len() + ctx.request.target_windows.len(),
-        );
-    for entry in ctx
-        .request
-        .windows
-        .iter()
-        .chain(ctx.request.target_windows.iter())
-    {
-        if observed.insert(entry.window.as_str(), entry).is_some() {
-            return false;
-        }
-    }
-    if observed.len() != retained.len() {
-        return false;
-    }
-    for (id, want) in &retained {
-        let Some(got) = observed.get(id) else {
-            return false;
-        };
-        if *got != *want {
-            return false;
-        }
-    }
-    true
-}
-
-/// Complete directional post-observation validation against the retained R4
-/// plan: every desired window must be carried exactly once (source plus
-/// target homed entries in `windows`) with the expected output, workspace,
-/// and rectangle. Any missing, duplicate, extra, mis-homed, or mis-sized
-/// window fails closed so a bare `verified: true` never commits.
-fn directional_post_matches(pending: &DirectionalMovePending, ctx: &Validated) -> bool {
-    let mut observed: std::collections::HashMap<&str, &ObservedDto> =
-        std::collections::HashMap::with_capacity(ctx.request.windows.len());
-    for entry in ctx.request.windows.iter() {
-        if observed.insert(entry.window.as_str(), entry).is_some() {
-            return false;
-        }
-    }
-    if observed.len() != pending.desired_geometry.len() {
-        return false;
-    }
-    for desired in &pending.desired_geometry {
-        let Some(entry) = observed.get(desired.window.0.as_str()) else {
-            return false;
-        };
-        if entry.output != desired.output.0
-            || entry.workspace != desired.workspace.0
-            || entry.rect.x != desired.rect.x
-            || entry.rect.y != desired.rect.y
-            || entry.rect.w != desired.rect.w
-            || entry.rect.h != desired.rect.h
-        {
-            return false;
-        }
-    }
-    true
-}
-
-/// Whether a validated request touches either key of a live directional R4
-/// pair: its source domain key, any carried directional domain key, or (for
-/// the workspace route) its target domain matches the pair.
-fn ctx_affects_pair(ctx: &Validated, pending: &DirectionalMovePending) -> bool {
-    if ctx.domain_key == pending.source_key || ctx.domain_key == pending.target_key {
-        return true;
-    }
-    if let Some(keys) = ctx.directional_keys.as_ref() {
-        for key in keys {
-            if *key == pending.source_key || *key == pending.target_key {
-                return true;
-            }
-        }
-    }
-    if let Some(target) = ctx.request.target_domain.as_ref() {
-        if (target.output == pending.source_key.output.0
-            && target.workspace == pending.source_key.workspace.0)
-            || (target.output == pending.target_key.output.0
-                && target.workspace == pending.target_key.workspace.0)
-        {
-            return true;
-        }
-    }
-    false
-}
-
-fn session_domain_matches(session: &Session, domain: &OutputDomain) -> bool {
-    session
-        .domains()
-        .iter()
-        .find(|d| d.id == domain.id && d.workspace == domain.workspace)
-        .is_some_and(|d| {
-            d.bounds == domain.bounds && d.gap == domain.gap && d.adjacent == domain.adjacent
-        })
-}
-
-fn session_usable(session: &Session) -> bool {
-    session.divergence().is_none() && !session.has_pending()
-}
-
-/// A committed session with no tiled members and no deferred exceptions holds
-/// no topology and must not consume a domain slot.
-fn committed_session_is_empty(session: &Session) -> bool {
-    session.snapshot().windows.is_empty() && session.exception_count() == 0
-}
-
-fn needs_rebuild(error: &ProposeError) -> bool {
-    match error {
-        ProposeError::Diverged(_) => true,
-        ProposeError::Refused(RefusalKind::PartialObservation) => true,
-        ProposeError::PendingExists => false,
-        ProposeError::Refused(_) => false,
-    }
-}
-
 /// Authoritative live-tree planner (D4).
 ///
 /// Retains one committed [`Session`] per logical domain across `DescribePlan`
@@ -2381,7 +2107,7 @@ fn needs_rebuild(error: &ProposeError) -> bool {
 /// and complete window set remain unchanged; owner/generation change (adapter
 /// restart), terminal divergence, pending residue, or membership divergence
 /// (`Diverged`/`partial-observation`) discard that domain's retained state and
-/// rebuild once via the [`seed_session`] path. If the rebuild cannot safely
+/// rebuild once via the [`tiler_core::seed::seed_session`] path. If the rebuild cannot safely
 /// infer topology (`ambiguous-placement`), reject rather than wedge. Each
 /// successful plan is acknowledged then verified in the same call, so no
 /// pending crosses calls and no stale data crosses domains/owner/generation.
@@ -2407,8 +2133,6 @@ fn needs_rebuild(error: &ProposeError) -> bool {
 #[derive(Debug, Default)]
 pub struct Planner {
     engine: Engine,
-    workspace_pending: Option<WorkspacePending>,
-    directional_pending: Option<DirectionalMovePending>,
 }
 
 impl Planner {
@@ -2449,12 +2173,14 @@ impl Planner {
     /// mid-flight; legacy requests are unchanged except that any pending
     /// (workspace or directional) blocks all other plan operations. The
     /// read-only status phases dispatch alongside ack/verify (before the
-    /// binding sync and the pending conflict boundary) and take `&self` so
-    /// they cannot mutate, acknowledge, verify, clear, rebind, or advance
-    /// any retained state or topology. The cancellation phases dispatch at
-    /// the same boundary but take `&mut self`: on exact pre-image proof they
-    /// withdraw only the matching unacknowledged pending and its staged
-    /// desired state, preserving everything committed.
+    /// binding sync and the pending conflict boundary) through the
+    /// Engine-owned read-only typed entry point (`inspect` takes `&self`, so
+    /// status cannot mutate, acknowledge, verify, clear, rebind, or advance
+    /// any retained state or topology). The cancellation phases dispatch at
+    /// the same boundary through the mutating entry point (`handle` takes
+    /// `&mut self`): on exact pre-image
+    /// proof they withdraw only the matching unacknowledged pending and its
+    /// staged desired state, preserving everything committed.
     pub fn evaluate(&mut self, request_json: &str) -> String {
         let ctx = match validate_request(request_json) {
             Ok(ctx) => ctx,
@@ -2511,7 +2237,14 @@ impl Planner {
                         placement_bounds,
                     ),
                     Ok(SyncCommand::Remove { window }) => self.evaluate_remove_inner(&ctx, &window),
-                    Ok(SyncCommand::ActiveGroup {}) => self.evaluate_active_group_inner(&ctx),
+                    Ok(command @ SyncCommand::ActiveGroup {}) => {
+                        // Production typed-boundary route: convert the
+                        // already-decoded command after all fences, then run
+                        // the typed active-group body (no second parse).
+                        let core_command =
+                            core_command_from_sync(&command).expect("non-verify sync op converts");
+                        self.evaluate_active_group_typed(&ctx, &core_command)
+                    }
                     // Unreachable: the outer string guard admits only the five
                     // ops above, so no other variant can decode here.
                     Ok(_) => rejected(
@@ -2538,385 +2271,31 @@ impl Planner {
         }
     }
 
-    fn take_usable_session(
-        &mut self,
-        domain_key: &DomainKey,
-        domain: &OutputDomain,
-    ) -> Option<Session> {
-        self.engine.take_usable_session(domain_key, domain)
-    }
-
     /// Pending conflict boundary for every non-ack/verify plan operation.
     ///
-    /// Directional R4 pending: terminal `diverged` on pending divergence or
-    /// owner/generation loss for any operation (so a stale identity never
-    /// silently rebinds around the live pair); otherwise the standalone
-    /// workspace-send route is blocked entirely and ordinary plans affecting
-    /// either pair key are rejected as `pending-exists`. Unrelated domains
-    /// stay usable, mirroring the workspace route's existing relocation
-    /// behavior.
-    ///
-    /// Workspace pending: existing single-domain behavior is preserved
-    /// untouched; only new directional two-domain moves are blocked here
-    /// (diverged on pending divergence/identity loss, else `pending-exists`).
-    /// The second-send guard stays inside `evaluate_workspace_request`.
+    /// Codec/envelope stays here (validated op token, directional keys, raw
+    /// target scope); the outcome itself is the Engine-owned
+    /// [`tiler_core::engine::Engine::pending_conflict`] typed entry point,
+    /// serialized here so wire bytes stay identical. See the Engine docs for
+    /// the exact fence order.
     fn pending_conflict_reply(&self, ctx: &Validated) -> Option<String> {
-        let cid = ctx.request.correlation_id.clone();
         let op = validated_op(ctx);
-        if let Some(pending) = &self.directional_pending {
-            if let Some(reason) = pending.session.divergence() {
-                return Some(diverged_reply(&cid, reason));
-            }
-            if pending.owner != ctx.owner || pending.generation != ctx.generation {
-                return Some(diverged_reply(
-                    &cid,
-                    tiler_core::contract::DivergenceKind::OwnerMismatch,
-                ));
-            }
-            if op == "send-to-workspace" {
-                return Some(rejected(
-                    cid,
-                    "pending-exists",
-                    "complete the pending plan before proposing",
-                ));
-            }
-            if op != "active-group" && ctx_affects_pair(ctx, pending) {
-                return Some(rejected(
-                    cid,
-                    "pending-exists",
-                    "complete the pending plan before proposing",
-                ));
-            }
-            return None;
-        }
-        if let Some(pending) = &self.workspace_pending {
-            // Only two-domain directional moves enter the conflict zone; all
-            // other operations keep their existing behavior.
-            if op != "move" || directional_pair(ctx).is_none() {
-                return None;
-            }
-            if let Some(reason) = pending.session.divergence() {
-                return Some(diverged_reply(&cid, reason));
-            }
-            if pending.owner != ctx.owner || pending.generation != ctx.generation {
-                return Some(diverged_reply(
-                    &cid,
-                    tiler_core::contract::DivergenceKind::OwnerMismatch,
-                ));
-            }
-            return Some(rejected(
-                cid,
-                "pending-exists",
-                "complete the pending plan before proposing",
-            ));
-        }
-        None
-    }
-
-    fn store_committed(&mut self, domain_key: DomainKey, session: Session, outer_gap: i32) {
-        self.engine.store_committed(domain_key, session, outer_gap);
-    }
-
-    fn canonical_component_domain(domain: &OutputDomain) -> OutputDomain {
-        OutputDomain {
-            id: domain.id.clone(),
-            workspace: domain.workspace.clone(),
-            bounds: domain.bounds,
-            gap: domain.gap,
-            adjacent: BTreeMap::new(),
-        }
-    }
-
-    /// Assemble a temporary directional view solely from canonical per-domain
-    /// sessions. This deliberately never infers a tree from current geometry:
-    /// selected cross-output paths require retained authoritative state.
-    fn canonical_directional_pair(
-        &mut self,
-        source_domain: &OutputDomain,
-        source_key: &DomainKey,
-        target_domain: &OutputDomain,
-        target_key: &DomainKey,
-    ) -> Result<Session, &'static str> {
-        let source_component = Self::canonical_component_domain(source_domain);
-        let target_component = Self::canonical_component_domain(target_domain);
-        // Cross-domain pairing must never discard a canonical component merely
-        // because an adjacent work area changed. A normal reconcile owns that
-        // update; this selected path fails closed without spatial rebuilding.
-        let source = self
-            .engine
-            .session(source_key)
-            .filter(|session| {
-                session_usable(session)
-                    && !committed_session_is_empty(session)
-                    && session_domain_matches(session, &source_component)
-            })
-            .cloned()
-            .ok_or("canonical-source-unavailable")?;
-        let target = match self.engine.session(target_key) {
-            None => None,
-            Some(session)
-                if session_usable(session)
-                    && !committed_session_is_empty(session)
-                    && session_domain_matches(session, &target_component) =>
-            {
-                Some(session.clone())
-            }
-            Some(_) => return Err("canonical-pair-unusable"),
-        };
-        Session::paired_from_canonical(
-            &source,
-            target.as_ref(),
-            vec![source_domain.clone(), target_domain.clone()],
-        )
-        .map_err(|error| match error {
-            tiler_core::session::CanonicalPairError::MismatchedIdentity => {
-                "canonical-pair-identity-mismatch"
-            }
-            tiler_core::session::CanonicalPairError::UnusableInput => "canonical-pair-unusable",
-            tiler_core::session::CanonicalPairError::DomainMismatch => {
-                "canonical-pair-domain-mismatch"
-            }
-            tiler_core::session::CanonicalPairError::DuplicateState => {
-                "canonical-pair-duplicate-state"
-            }
-        })
-    }
-
-    /// Return a terminal two-domain transaction to the sole canonical state
-    /// authority. The pair is never retained after this boundary.
-    fn store_canonical_directional_pair(
-        &mut self,
-        source_key: DomainKey,
-        target_key: DomainKey,
-        pair: Session,
-        source_outer_gap: i32,
-    ) -> bool {
-        let Ok((source, target)) = pair.split_canonical_pair() else {
-            return false;
-        };
-        let target_outer_gap = self.engine.outer_gap(&target_key).unwrap_or(0);
-        self.store_committed(source_key, source, source_outer_gap);
-        if let Some(target) = target {
-            self.store_committed(target_key, target, target_outer_gap);
-        } else {
-            self.engine.remove(&target_key);
-        }
-        true
-    }
-
-    /// Portable output relocation: when no usable session exists for the
-    /// target key, move a usable retained session with the same workspace id
-    /// from a different output to the target, preserving topology, shares,
-    /// focus, exceptions, and revision. Updates domain bounds/gap plus window
-    /// and exception homing. Session-local only, no history. A target session
-    /// that existed at the start of request handling is never removed or
-    /// superseded to permit source relocation: `try_relocate_for_target`
-    /// returns false without mutation if `sessions` contains the target,
-    /// even when that target is empty, unusable, or mismatched (normal
-    /// target cleanup/seeding owns that slot). Fails closed with no source
-    /// mutation when no single usable non-empty source exists, when a
-    /// standalone workspace-send or directional R4 move is pending, when the
-    /// request outer gap is out of range, or when the move itself refuses. The
-    /// insert honors
-    /// normal `store_committed` constraints (never retain empty, never exceed
-    /// `MAX_DOMAINS`) without the all-domain clearing eviction: at capacity
-    /// the relocation fails closed and the source is restored. The standalone
-    /// workspace-send route is untouched.
-    fn try_relocate_for_target(
-        &mut self,
-        target_key: &DomainKey,
-        target_domain: &OutputDomain,
-        request_outer_gap: i32,
-    ) -> bool {
-        if self.workspace_pending.is_some() || self.directional_pending.is_some() {
-            return false;
-        }
-        if request_outer_gap < 0 || request_outer_gap > GEOMETRY_MAX_GAP {
-            return false;
-        }
-        // Target collision: a session that exists for the target at handling
-        // start is never removed or superseded for relocation, even if it is
-        // empty, unusable, or mismatched. Normal target cleanup/seeding owns
-        // that slot.
-        if self.engine.contains(target_key) {
-            return false;
-        }
-        let mut source_key: Option<DomainKey> = None;
-        for key in self.engine.keys() {
-            if key.workspace == target_key.workspace && key.output != target_key.output {
-                if source_key.is_some() {
-                    // Ambiguous source: fail closed, no mutation.
-                    return false;
-                }
-                source_key = Some(key.clone());
-            }
-        }
-        let Some(source) = source_key else {
-            return false;
-        };
-        let Some(session) = self.engine.session(&source) else {
-            return false;
-        };
-        if !session_usable(session) {
-            return false;
-        }
-        // Pending-desired and drag residue refuse like the session does;
-        // `session_usable` covers divergence/pending, these cover the rest.
-        if session.has_pending_desired() || session.has_drag() {
-            return false;
-        }
-        if committed_session_is_empty(session) {
-            return false;
-        }
-        // Validate the move on a clone first: no retained mutation yet.
-        let mut moved = session.clone();
-        if !moved.relocate_domain(&source, target_key, target_domain.bounds, target_domain.gap) {
-            return false;
-        }
-        if committed_session_is_empty(&moved) {
-            return false;
-        }
-        // All validation passed: mutate. Capacity was freed by removing the
-        // source; insert under normal constraints without all-clear.
-        let backup_session = session.clone();
-        let backup_outer = self.engine.outer_gap(&source);
-        self.engine.remove(&source);
-        if self.engine.len() >= tiler_core::session::MAX_DOMAINS {
-            // Fail closed, restore source, no clearing.
-            match backup_outer {
-                Some(gap) => self.engine.insert_raw(source, backup_session, gap),
-                None => self.engine.insert_session_only(source, backup_session),
-            }
-            return false;
-        }
+        let directional_keys = ctx.directional_keys.as_deref();
+        let raw_target = ctx
+            .request
+            .target_domain
+            .as_ref()
+            .map(|target| (target.output.as_str(), target.workspace.as_str()));
         self.engine
-            .insert_raw(target_key.clone(), moved, request_outer_gap);
-        true
-    }
-
-    /// Shared retained propose/commit: try the usable retained session, then
-    /// rebuild once from `seed_order`. `ambiguous_as_snapshot` selects the
-    /// fail-closed kind when no safe order exists (admit/remove use
-    /// `ambiguous-placement`; directional ops reuse the `snapshot-invalid`
-    /// mapping).
-    fn run_retained<R>(
-        &mut self,
-        ctx: &Validated,
-        seed_order: Option<Vec<ObservedDto>>,
-        ambiguous_as_snapshot: bool,
-        propose: impl Fn(&mut Session, &SessionObservation) -> Result<R, ProposeError>,
-        reply: impl Fn(&R) -> String,
-        commit: impl Fn(&mut Session, &R, &Validated, u64) -> bool,
-    ) -> String {
-        let cid = ctx.request.correlation_id.clone();
-        // Target presence at handling start: normal target processing/seeding
-        // owns that slot. Source relocation is attempted only when no target
-        // session existed, even if normal cleanup removes a stale target
-        // below. This preserves existing non-hotplug behavior.
-        let target_existed = self.engine.contains(&ctx.domain_key);
-        if let Some(mut session) = self.take_usable_session(&ctx.domain_key, &ctx.domain) {
-            let base = session.accepted_revision();
-            let observation = observation_for(base, ctx);
-            match propose(&mut session, &observation) {
-                Ok(plan) => {
-                    let text = reply(&plan);
-                    if commit(&mut session, &plan, ctx, base) {
-                        self.store_committed(
-                            ctx.domain_key.clone(),
-                            session,
-                            ctx.request.domain.outer_gap,
-                        );
-                        return text;
-                    }
-                    self.engine.remove(&ctx.domain_key);
-                    return snapshot_invalid(cid, MSG_OBSERVATION, "commit-rejected");
-                }
-                Err(error) if needs_rebuild(&error) => {
-                    self.engine.remove(&ctx.domain_key);
-                }
-                Err(error) => {
-                    return propose_failure(error, cid.clone());
-                }
-            }
-        } else if !target_existed {
-            // Displaced workspace relocation: same workspace id observed on a
-            // different output (monitor disconnect/reconnect) reuses the
-            // retained tree instead of reseeding, preserving CURRENT contents
-            // convergence through the normal propose path below. A rejected
-            // follow-up leaves retained state untouched: the source backup is
-            // restored before falling through or replying.
-            let backup_engine = self.engine.clone();
-            if self.try_relocate_for_target(
+            .pending_conflict(
+                op.as_str(),
+                &ctx.owner,
+                &ctx.generation,
                 &ctx.domain_key,
-                &ctx.domain,
-                ctx.request.domain.outer_gap,
-            ) {
-                if let Some(mut session) = self.take_usable_session(&ctx.domain_key, &ctx.domain) {
-                    let base = session.accepted_revision();
-                    let observation = observation_for(base, ctx);
-                    match propose(&mut session, &observation) {
-                        Ok(plan) => {
-                            let text = reply(&plan);
-                            if commit(&mut session, &plan, ctx, base) {
-                                self.store_committed(
-                                    ctx.domain_key.clone(),
-                                    session,
-                                    ctx.request.domain.outer_gap,
-                                );
-                                return text;
-                            }
-                            // Commit rejected: restore source, no mutation.
-                            self.engine = backup_engine;
-                            return snapshot_invalid(cid, MSG_OBSERVATION, "commit-rejected");
-                        }
-                        Err(error) if needs_rebuild(&error) => {
-                            // Rebuild path: restore source, then fall through
-                            // to seed the target from scratch.
-                            self.engine = backup_engine;
-                        }
-                        Err(error) => {
-                            self.engine = backup_engine;
-                            return propose_failure(error, cid.clone());
-                        }
-                    }
-                } else {
-                    // Relocated target unusable: restore source, fall through.
-                    self.engine = backup_engine;
-                }
-            }
-        }
-        let Some(order) = seed_order else {
-            if ambiguous_as_snapshot {
-                return snapshot_invalid(cid, MSG_OBSERVATION, "missing-seed-order");
-            }
-            return rejected(cid, "ambiguous-placement", MSG_AMBIGUOUS);
-        };
-        let Some(mut session) = seed_session(
-            &ctx.owner,
-            &ctx.generation,
-            ctx.request.fingerprint,
-            &ctx.domain,
-            &order,
-        ) else {
-            return snapshot_invalid(cid, MSG_OBSERVATION, "seed-failed");
-        };
-        let base = session.accepted_revision();
-        let observation = observation_for(base, ctx);
-        match propose(&mut session, &observation) {
-            Ok(plan) => {
-                let text = reply(&plan);
-                if commit(&mut session, &plan, ctx, base) {
-                    self.store_committed(
-                        ctx.domain_key.clone(),
-                        session,
-                        ctx.request.domain.outer_gap,
-                    );
-                    return text;
-                }
-                snapshot_invalid(cid, MSG_OBSERVATION, "commit-rejected")
-            }
-            Err(error) => propose_failure(error, cid),
-        }
+                directional_keys,
+                raw_target,
+            )
+            .map(|reply| serialize_core_reply(ctx, &reply))
     }
 
     /// Direct-evaluator compatibility wrapper (test-only): exact legacy
@@ -3022,155 +2401,19 @@ impl Planner {
             }
             None => None,
         };
-        // Flat strip fit: truly fresh domains only (no retained session at
-        // all, including empty/pending/diverged/mismatch slots which stay on
-        // `run_retained`), `admit` only, no explicit placement bounds, and the
-        // admitted window is the focused window. The fitted topology still
-        // goes through the real proposal/acknowledgement/`verify_lifecycle`
-        // commit path with pre-commit base revision 0. Anything unsupported
-        // falls through to the normal seed/reflow below, independently per
-        // foreground or background domain through this same admit route.
-        if placement_explicit.is_none()
-            && window == ctx.request.focused_window.as_str()
-            && self.engine.session(&ctx.domain_key).is_none()
-            && let Some((tree, links)) = try_flat_strip_fit(&ctx.domain, &ctx.request.windows)
-            && let Some(focus_leaf) = links
-                .iter()
-                .find(|l| l.window.0.as_str() == window)
-                .map(|l| l.leaf.clone())
-        {
-            if let Ok(mut fitted) = Session::new(
-                ctx.owner.clone(),
-                ctx.generation.clone(),
-                0,
-                ctx.request.fingerprint,
-                vec![ctx.domain.clone()],
-            ) {
-                let base = fitted.accepted_revision();
-                let observation = observation_for(base, ctx);
-                let window = WindowId(window.to_owned());
-                let output = OutputId(output.to_owned());
-                let workspace = WorkspaceId(workspace.to_owned());
-                if let Ok(plan) = fitted.propose_fitted_admit(
-                    tree,
-                    links,
-                    focus_leaf,
-                    &window,
-                    &output,
-                    &workspace,
-                    &observation,
-                    &ctx.correlation,
-                    &LifecycleCapabilities::full(),
-                ) {
-                    let text = planned_reply(
-                        &ctx.request.correlation_id,
-                        plan.dispatch.base_revision,
-                        serde_json::json!({
-                            "kind": "admit",
-                            "policy_version": plan.dispatch.policy_version,
-                            "capability": "admit-tiled",
-                        }),
-                        &plan.desired_geometry,
-                        match (&plan.desired_focus_domain, &plan.desired_focus_leaf) {
-                            (Some(d), Some(l)) => Some((d, l)),
-                            _ => None,
-                        },
-                    );
-                    if acknowledge(&mut fitted, ctx, base) {
-                        let post = tiler_core::contract::LifecyclePostObservation::new(
-                            Observation::new(
-                                ctx.owner.clone(),
-                                ctx.generation.clone(),
-                                base,
-                                ctx.request.fingerprint,
-                            ),
-                            ctx.correlation.clone(),
-                            true,
-                            plan.dispatch.preconditions.clone(),
-                            plan.dispatch.operation.clone(),
-                        );
-                        if fitted.verify_lifecycle(&post).is_ok() {
-                            self.store_committed(
-                                ctx.domain_key.clone(),
-                                fitted,
-                                ctx.request.domain.outer_gap,
-                            );
-                            return text;
-                        }
-                    }
-                }
-            }
-        }
-        let seed_order = spatial_with_focus_last(
-            ctx.request
-                .windows
-                .iter()
-                .filter(|w| w.window.as_str() != window)
-                .cloned()
-                .collect(),
-            &ctx.request.focused_window,
-            true,
-        );
-        let window = WindowId(window.to_owned());
-        let output = OutputId(output.to_owned());
-        let workspace = WorkspaceId(workspace.to_owned());
-        let domain = ctx.domain.clone();
-        self.run_retained(
-            ctx,
-            seed_order,
-            false,
-            |session, observation| {
-                let placement =
-                    placement_explicit.unwrap_or_else(|| seed_target_bounds(session, &domain));
-                session.propose(
-                    &SessionCommand::Admit {
-                        window: window.clone(),
-                        output: output.clone(),
-                        workspace: workspace.clone(),
-                        exceptions: ExceptionFlags::none(),
-                        exception_behavior: None,
-                        placement_bounds: placement,
-                    },
-                    observation,
-                    &ctx.correlation,
-                    &LifecycleCapabilities::full(),
-                )
-            },
-            |plan| {
-                planned_reply(
-                    &ctx.request.correlation_id,
-                    plan.dispatch.base_revision,
-                    serde_json::json!({
-                        "kind": "admit",
-                        "policy_version": plan.dispatch.policy_version,
-                        "capability": "admit-tiled",
-                    }),
-                    &plan.desired_geometry,
-                    match (&plan.desired_focus_domain, &plan.desired_focus_leaf) {
-                        (Some(d), Some(l)) => Some((d, l)),
-                        _ => None,
-                    },
-                )
-            },
-            |session, plan, c, base| {
-                if !acknowledge(session, c, base) {
-                    return false;
-                }
-                let post = tiler_core::contract::LifecyclePostObservation::new(
-                    Observation::new(
-                        c.owner.clone(),
-                        c.generation.clone(),
-                        base,
-                        c.request.fingerprint,
-                    ),
-                    c.correlation.clone(),
-                    true,
-                    plan.dispatch.preconditions.clone(),
-                    plan.dispatch.operation.clone(),
-                );
-                session.verify_lifecycle(&post).is_ok()
-            },
-        )
+        // Engine-owned admit orchestration: the validated placement crosses in
+        // the typed command; fit fallback, seed ordering, relocation,
+        // propose/commit, and store run in `Engine::handle`. Serialization
+        // funnels through the typed choke point.
+        let core_command = tiler_core::boundary::CoreCommand::Admit {
+            window: WindowId(window.to_owned()),
+            output: OutputId(output.to_owned()),
+            workspace: WorkspaceId(workspace.to_owned()),
+            placement_bounds: placement_explicit,
+        };
+        let event = core_event(ctx, &core_command);
+        let reply = self.engine.handle(&event);
+        serialize_core_reply(ctx, &reply)
     }
 
     /// Direct-evaluator compatibility wrapper (test-only): exact legacy
@@ -3205,61 +2448,15 @@ impl Planner {
                 "remove-window-invalid",
             );
         }
-        let seed_order = spatial_with_focus_last(
-            ctx.request.windows.clone(),
-            &ctx.request.focused_window,
-            false,
-        );
-        let window = WindowId(window.to_owned());
-        self.run_retained(
-            ctx,
-            seed_order,
-            false,
-            |session, observation| {
-                session.propose(
-                    &SessionCommand::Remove {
-                        window: window.clone(),
-                    },
-                    observation,
-                    &ctx.correlation,
-                    &LifecycleCapabilities::full(),
-                )
-            },
-            |plan| {
-                planned_reply(
-                    &ctx.request.correlation_id,
-                    plan.dispatch.base_revision,
-                    serde_json::json!({
-                        "kind": "remove",
-                        "policy_version": plan.dispatch.policy_version,
-                        "capability": "remove-tiled",
-                    }),
-                    &plan.desired_geometry,
-                    match (&plan.desired_focus_domain, &plan.desired_focus_leaf) {
-                        (Some(d), Some(l)) => Some((d, l)),
-                        _ => None,
-                    },
-                )
-            },
-            |session, plan, c, base| {
-                if !acknowledge(session, c, base) {
-                    return false;
-                }
-                let post = tiler_core::contract::LifecyclePostObservation::new(
-                    Observation::new(
-                        c.owner.clone(),
-                        c.generation.clone(),
-                        base,
-                        c.request.fingerprint,
-                    ),
-                    c.correlation.clone(),
-                    true,
-                    plan.dispatch.preconditions.clone(),
-                    plan.dispatch.operation.clone(),
-                );
-                session.verify_lifecycle(&post).is_ok()
-            },
-        )
+        // Engine-owned remove orchestration: the validated window crosses in
+        // the typed command; seed ordering, relocation, propose/commit, and
+        // store run in `Engine::handle`.
+        let core_command = tiler_core::boundary::CoreCommand::Remove {
+            window: WindowId(window.to_owned()),
+        };
+        let event = core_event(ctx, &core_command);
+        let reply = self.engine.handle(&event);
+        serialize_core_reply(ctx, &reply)
     }
 
     fn evaluate_toggle_float_retained(&mut self, ctx: &Validated) -> String {
@@ -3286,53 +2483,16 @@ impl Planner {
             );
         }
         evaluate_toggle_float_with(ctx, |window, float_rect| {
-            let seed_order = spatial_with_focus_last(
-                ctx.request.windows.clone(),
-                &ctx.request.focused_window,
-                false,
-            );
-            let window = WindowId(window.to_owned());
-            self.run_retained(
-                ctx,
-                seed_order,
-                true,
-                |session, observation| {
-                    session
-                        .propose(
-                            &SessionCommand::ToggleFloat {
-                                window: window.clone(),
-                                float_geometry: float_rect,
-                            },
-                            observation,
-                            &ctx.correlation,
-                            &LifecycleCapabilities::full(),
-                        )
-                        .map(|plan| {
-                            let effective = session.pending_float_geometry(&window);
-                            (plan, effective)
-                        })
-                },
-                |result| float_planned_reply(&ctx.request.correlation_id, &result.0, result.1),
-                |session, result, c, base| {
-                    if !acknowledge(session, c, base) {
-                        return false;
-                    }
-                    session
-                        .verify_lifecycle(&LifecyclePostObservation::new(
-                            Observation::new(
-                                c.owner.clone(),
-                                c.generation.clone(),
-                                base,
-                                c.request.fingerprint,
-                            ),
-                            c.correlation.clone(),
-                            true,
-                            result.0.dispatch.preconditions.clone(),
-                            result.0.dispatch.operation.clone(),
-                        ))
-                        .is_ok()
-                },
-            )
+            // Engine-owned toggle-float orchestration: the validated window
+            // and float rect cross in the typed command; seed ordering,
+            // relocation, propose/commit, and store run in `Engine::handle`.
+            let core_command = tiler_core::boundary::CoreCommand::ToggleFloat {
+                window: window.to_owned(),
+                float_rect,
+            };
+            let event = core_event(ctx, &core_command);
+            let reply = self.engine.handle(&event);
+            serialize_core_reply(ctx, &reply)
         })
     }
 
@@ -3372,7 +2532,7 @@ impl Planner {
             };
         // Production directional route: two-domain observations build one
         // temporary pair from canonical retained domain sessions.
-        // Single-domain legacy requests fall through unchanged.
+        // Single-domain legacy requests run the Engine-owned local path below.
         if directional_pair(ctx).is_some() {
             return self.evaluate_move_directional(ctx, &command);
         }
@@ -3383,70 +2543,25 @@ impl Planner {
                 "move-window-invalid",
             );
         }
-        let Some(direction) = parse_direction(&command.direction) else {
+        if parse_direction(&command.direction).is_none() {
             return rejected(
                 ctx.request.correlation_id.clone(),
                 "direction-invalid",
                 MSG_DIRECTION,
             );
+        }
+        // Engine-owned local orchestration: the validated window/direction
+        // cross opaquely in the typed command; seed ordering, focus sync,
+        // relocation, propose/commit, and store run in `Engine::handle`.
+        // Serialization funnels through the typed choke point.
+        let core_command = tiler_core::boundary::CoreCommand::Move {
+            window: command.window.clone(),
+            direction: command.direction.clone(),
+            cross_output_transfer: command.cross_output_transfer,
         };
-        let seed_order = spatial_with_focus_last(
-            ctx.request.windows.clone(),
-            &ctx.request.focused_window,
-            false,
-        );
-        let window = WindowId(command.window.clone());
-        self.run_retained(
-            ctx,
-            seed_order,
-            true,
-            |session, observation| {
-                let _ = session.sync_focus_from_window(
-                    &ctx.domain_key,
-                    &WindowId(ctx.request.focused_window.clone()),
-                );
-                session.propose_move(
-                    &ctx.domain_key,
-                    &window,
-                    direction,
-                    observation,
-                    &ctx.correlation,
-                    &Capabilities::full(),
-                )
-            },
-            |plan| {
-                planned_reply(
-                    &ctx.request.correlation_id,
-                    plan.dispatch.base_revision,
-                    serde_json::json!({
-                        "kind": "move",
-                        "rule": format!("{:?}", plan.dispatch.rule),
-                        "capability": format!("{:?}", plan.dispatch.required_capability),
-                        "direction": direction_str(direction),
-                    }),
-                    &plan.desired_geometry,
-                    Some((&plan.desired_focus_domain, &plan.desired_focus_leaf)),
-                )
-            },
-            |session, plan, c, base| {
-                if !acknowledge(session, c, base) {
-                    return false;
-                }
-                let post = tiler_core::contract::PostObservation::new(
-                    Observation::new(
-                        c.owner.clone(),
-                        c.generation.clone(),
-                        base,
-                        c.request.fingerprint,
-                    ),
-                    c.correlation.clone(),
-                    true,
-                    plan.dispatch.preconditions.clone(),
-                    plan.dispatch.operation.clone(),
-                );
-                session.verify_move(&post).is_ok()
-            },
-        )
+        let event = core_event(ctx, &core_command);
+        let reply = self.engine.handle(&event);
+        serialize_core_reply(ctx, &reply)
     }
 
     fn evaluate_focus_retained(&mut self, ctx: &Validated) -> String {
@@ -3486,7 +2601,7 @@ impl Planner {
         // Production directional route: two-domain observations try local
         // focus first, then the exhausted Left/Right cross-output proposal
         // against a temporary pair built from canonical domain state.
-        // Single-domain legacy requests fall through unchanged.
+        // Single-domain legacy requests run the Engine-owned local path below.
         if directional_pair(ctx).is_some() {
             return self.evaluate_focus_directional(ctx, &command);
         }
@@ -3497,483 +2612,82 @@ impl Planner {
                 "focus-window-invalid",
             );
         }
-        let Some(direction) = parse_direction(&command.direction) else {
+        if parse_direction(&command.direction).is_none() {
             return rejected(
                 ctx.request.correlation_id.clone(),
                 "direction-invalid",
                 MSG_DIRECTION,
             );
+        }
+        // Engine-owned local orchestration: the validated window/direction
+        // cross opaquely in the typed command; seed ordering, focus sync,
+        // relocation, propose/commit, and store run in `Engine::handle`
+        // (local only, no cross fallback). Serialization funnels through the
+        // typed choke point.
+        let core_command = tiler_core::boundary::CoreCommand::Focus {
+            window: command.window.clone(),
+            direction: command.direction.clone(),
+            cross_output_transfer: command.cross_output_transfer,
         };
-        let seed_order = spatial_with_focus_last(
-            ctx.request.windows.clone(),
-            &ctx.request.focused_window,
-            false,
-        );
-        let window = WindowId(command.window.clone());
-        self.run_retained(
-            ctx,
-            seed_order,
-            true,
-            |session, observation| {
-                let _ = session.sync_focus_from_window(
-                    &ctx.domain_key,
-                    &WindowId(ctx.request.focused_window.clone()),
-                );
-                session.propose_focus(
-                    &ctx.domain_key,
-                    &window,
-                    direction,
-                    observation,
-                    &ctx.correlation,
-                    &FocusCapabilities::full(),
-                )
-            },
-            |plan| {
-                planned_reply(
-                    &ctx.request.correlation_id,
-                    plan.dispatch.base_revision,
-                    serde_json::json!({
-                        "kind": "focus",
-                        "capability": "directional-focus",
-                        "direction": direction_str(direction),
-                        "to_window": plan.dispatch.operation.to_window.0,
-                    }),
-                    &plan.desired_geometry,
-                    Some((&plan.desired_focus_domain, &plan.desired_focus_leaf)),
-                )
-            },
-            |session, plan, c, base| {
-                if !acknowledge(session, c, base) {
-                    return false;
-                }
-                let post = tiler_core::contract::FocusPostObservation::new(
-                    Observation::new(
-                        c.owner.clone(),
-                        c.generation.clone(),
-                        base,
-                        c.request.fingerprint,
-                    ),
-                    c.correlation.clone(),
-                    true,
-                    plan.dispatch.preconditions.clone(),
-                    plan.dispatch.operation.clone(),
-                );
-                session.verify_focus(&post).is_ok()
-            },
-        )
+        let event = core_event(ctx, &core_command);
+        let reply = self.engine.handle(&event);
+        serialize_core_reply(ctx, &reply)
     }
 
-    /// Production directional move: retained two-domain session, existing
-    /// local R1/R2/R3 first (S21 no-cross preserved) and committed
-    /// synchronously exactly as before, crossing only at the actual output
-    /// boundary via the multi-domain R4 planner (S20/S22/S23). R4 cross-output
-    /// transfers no longer acknowledge/verify/split synchronously: they
-    /// propose once and retain a [`DirectionalMovePending`] pair Session until
-    /// an exact accepted `directional-move-ack` and a matching verified
-    /// `directional-move-verify` post-observation commit it. Complete
-    /// source+target geometry, focus follow, and the existing
-    /// owner/generation/revision/correlation/single-pending/total-observation/
-    /// duplicate/stale/visibility safeguards apply. Up/Down never cross (the
-    /// directional core gates R4 to Left/Right).
+    /// Production directional move: envelope, tagged decoding, pair scope
+    /// shape, mover binding, and parsed-direction/op validation stay here at
+    /// their exact positions; planning, R4 staging, and the R1-R3 synchronous
+    /// commit are the Engine-owned [`tiler_core::engine::Engine::handle`]
+    /// typed entry point over the validated pair. Serialization funnels
+    /// through the typed [`serialize_core_reply`] choke point.
     fn evaluate_move_directional(&mut self, ctx: &Validated, command: &DirectedCommand) -> String {
         let cid = ctx.request.correlation_id.clone();
         if !is_opaque_id(&command.window) {
             return snapshot_invalid(cid, MSG_OPAQUE_ID, "move-window-invalid");
         }
-        let Some(direction) = parse_direction(&command.direction) else {
+        if parse_direction(&command.direction).is_none() {
             return rejected(cid, "direction-invalid", MSG_DIRECTION);
-        };
-        let Some((source_domain, source_key, target_domain, target_key)) = directional_pair(ctx)
-        else {
+        }
+        if directional_pair(ctx).is_none() {
             return snapshot_invalid(cid, MSG_OBSERVATION, "domain-invalid");
-        };
-        let window = WindowId(command.window.clone());
-        let mut session = match self.canonical_directional_pair(
-            source_domain,
-            source_key,
-            target_domain,
-            target_key,
-        ) {
-            Ok(session) => session,
-            Err(detail) => return snapshot_invalid(cid, MSG_OBSERVATION, detail),
-        };
-        let base = session.accepted_revision();
-        let observation = observation_for(base, ctx);
-        match self.propose_directional_move(
-            &mut session,
-            ctx,
-            command,
-            source_key,
-            &window,
-            direction,
-            &observation,
-        ) {
-            Ok(plan) => {
-                // R4 cross-output: stage the async pending, never sync-commit.
-                if matches!(
-                    plan.dispatch.operation,
-                    tiler_core::directional::MoveOperation::CrossOutput { .. }
-                ) {
-                    // Global boundary already blocks when either pending
-                    // exists, but refuse here as well without mutation when a
-                    // wedged or live pending is present.
-                    if let Some(pending) = &self.directional_pending {
-                        if let Some(reason) = pending.session.divergence() {
-                            return diverged_reply(&cid, reason);
-                        }
-                        return rejected(
-                            cid,
-                            "pending-exists",
-                            "complete the pending plan before proposing",
-                        );
-                    }
-                    if let Some(pending) = &self.workspace_pending {
-                        if let Some(reason) = pending.session.divergence() {
-                            return diverged_reply(&cid, reason);
-                        }
-                        return rejected(
-                            cid,
-                            "pending-exists",
-                            "complete the pending plan before proposing",
-                        );
-                    }
-                    let target_outer_gap = ctx
-                        .raw
-                        .get("domains")
-                        .and_then(serde_json::Value::as_array)
-                        .and_then(|entries| entries.get(1))
-                        .and_then(|entry| entry.get("outer_gap"))
-                        .and_then(serde_json::Value::as_i64)
-                        .filter(|gap| (0..=i64::from(GEOMETRY_MAX_GAP)).contains(gap))
-                        .map(|gap| gap as i32)
-                        .unwrap_or(0);
-                    let text = self.move_directional_reply(ctx, direction, &plan);
-                    self.directional_pending = Some(DirectionalMovePending {
-                        owner: ctx.owner.clone(),
-                        generation: ctx.generation.clone(),
-                        correlation: ctx.correlation.clone(),
-                        base_revision: base,
-                        request_revision: ctx.request.revision,
-                        session,
-                        source_key: source_key.clone(),
-                        target_key: target_key.clone(),
-                        source_outer_gap: ctx.request.domain.outer_gap,
-                        target_outer_gap,
-                        desired_geometry: plan.desired_geometry.clone(),
-                        operation: plan.dispatch.operation.clone(),
-                        preconditions: plan.dispatch.preconditions.clone(),
-                        pre_focused: ctx.request.focused_window.clone(),
-                        pre_windows: ctx.request.windows.clone(),
-                    });
-                    return text;
-                }
-                // R1-R3 local: synchronous acknowledge/verify/split, unchanged.
-                let text = self.move_directional_reply(ctx, direction, &plan);
-                if self.commit_move_directional(&mut session, ctx, &plan, base) {
-                    if self.store_canonical_directional_pair(
-                        source_key.clone(),
-                        target_key.clone(),
-                        session,
-                        ctx.request.domain.outer_gap,
-                    ) {
-                        return text;
-                    }
-                }
-                snapshot_invalid(cid, MSG_OBSERVATION, "commit-rejected")
-            }
-            Err(error) => propose_failure(error, cid),
         }
+        let core_command = core_command_from_sync(&SyncCommand::Move {
+            window: command.window.clone(),
+            direction: command.direction.clone(),
+            cross_output_transfer: command.cross_output_transfer,
+        })
+        .expect("move sync op converts");
+        let event = core_event(ctx, &core_command);
+        let reply = self.engine.handle(&event);
+        serialize_core_reply(ctx, &reply)
     }
 
-    fn propose_directional_move(
-        &self,
-        session: &mut Session,
-        ctx: &Validated,
-        command: &DirectedCommand,
-        source_key: &DomainKey,
-        window: &WindowId,
-        direction: Direction,
-        observation: &SessionObservation,
-    ) -> Result<tiler_core::session::SessionMovePlan, ProposeError> {
-        let _ = session
-            .sync_focus_from_window(source_key, &WindowId(ctx.request.focused_window.clone()));
-        let mut capabilities = Capabilities::full();
-        capabilities.cross_output_transfer = command.cross_output_transfer;
-        session.propose_move(
-            source_key,
-            window,
-            direction,
-            observation,
-            &ctx.correlation,
-            &capabilities,
-        )
-    }
-
-    /// Production directional move reply. R4 cross-output plans carry the
-    /// exact operation/preconditions the adapter must fence (source, target,
-    /// direction, mover, target workspace, R4 rule, transfer capability);
-    /// local R1/R2/R3 plans carry neither, like the legacy route.
-    fn move_directional_reply(
-        &self,
-        ctx: &Validated,
-        direction: Direction,
-        plan: &tiler_core::session::SessionMovePlan,
-    ) -> String {
-        let detail = serde_json::json!({
-            "kind": "move",
-            "rule": format!("{:?}", plan.dispatch.rule),
-            "capability": format!("{:?}", plan.dispatch.required_capability),
-            "direction": direction_str(direction),
-        });
-        let focus = Some((&plan.desired_focus_domain, &plan.desired_focus_leaf));
-        match &plan.dispatch.operation {
-            tiler_core::directional::MoveOperation::CrossOutput {
-                rule,
-                target_output,
-                target_workspace,
-                source_root_child_index,
-                target,
-            } => {
-                let Some((_, source_key, _, _)) = directional_pair(ctx) else {
-                    return snapshot_invalid(
-                        ctx.request.correlation_id.clone(),
-                        MSG_OBSERVATION,
-                        "domain-invalid",
-                    );
-                };
-                let operation_value = serde_json::json!({
-                    "op": "move",
-                    "rule": format!("{rule:?}"),
-                    "capability": format!("{:?}", plan.dispatch.required_capability),
-                    "direction": direction_str(plan.dispatch.intent.direction),
-                    "window": plan.dispatch.intent.focused_window.0,
-                    "leaf": plan.dispatch.intent.focused_leaf.0,
-                    "source_output": source_key.output.0,
-                    "source_workspace": source_key.workspace.0,
-                    "target_output": target_output.0,
-                    "target_workspace": target_workspace.0,
-                    "source_root_child_index": source_root_child_index,
-                    "target": match target {
-                        tiler_core::directional::CrossOutputTarget::Empty => "empty",
-                        tiler_core::directional::CrossOutputTarget::Occupied => "occupied",
-                    },
-                });
-                let preconditions: Vec<&'static str> = plan
-                    .dispatch
-                    .preconditions
-                    .iter()
-                    .map(|p| move_precondition_str(*p))
-                    .collect();
-                serialize_bounded(&PlanReply {
-                    v: PLAN_CONTRACT_VERSION,
-                    correlation_id: ctx.request.correlation_id.clone(),
-                    outcome: "planned",
-                    kind: None,
-                    message: None,
-                    base_revision: Some(plan.dispatch.base_revision),
-                    detail: Some(detail),
-                    desired_geometry: Some(
-                        plan.desired_geometry.iter().map(geometry_reply).collect(),
-                    ),
-                    desired_focus: focus.map(|(domain, leaf)| focus_reply(domain, leaf)),
-                    float_geometry: None,
-                    preconditions: Some(preconditions),
-                    operation: Some(operation_value),
-                })
-            }
-            _ => planned_reply(
-                &ctx.request.correlation_id,
-                plan.dispatch.base_revision,
-                detail,
-                &plan.desired_geometry,
-                focus,
-            ),
-        }
-    }
-
-    fn commit_move_directional(
-        &self,
-        session: &mut Session,
-        ctx: &Validated,
-        plan: &tiler_core::session::SessionMovePlan,
-        base: u64,
-    ) -> bool {
-        if !acknowledge(session, ctx, base) {
-            return false;
-        }
-        let post = tiler_core::contract::PostObservation::new(
-            Observation::new(
-                ctx.owner.clone(),
-                ctx.generation.clone(),
-                base,
-                ctx.request.fingerprint,
-            ),
-            ctx.correlation.clone(),
-            true,
-            plan.dispatch.preconditions.clone(),
-            plan.dispatch.operation.clone(),
-        );
-        session.verify_move(&post).is_ok()
-    }
-
-    /// Production directional focus: local focus first; on local `Unchanged`
-    /// and Left/Right call `Session::propose_cross_output_focus` to the
-    /// adjacent output's current workspace last-focused leaf. Up/Down stay
-    /// local (no vertical crossing). Exactly one focus actuation downstream;
-    /// no geometry/layout/window membership writes.
+    /// Production directional focus: envelope, tagged decoding, pair scope
+    /// shape, and parsed-direction/op validation stay here at their exact
+    /// positions; planning and the synchronous commit are the Engine-owned
+    /// [`tiler_core::engine::Engine::handle`] typed entry point. Exactly one
+    /// focus actuation downstream; no geometry/layout/window membership
+    /// writes.
     fn evaluate_focus_directional(&mut self, ctx: &Validated, command: &DirectedCommand) -> String {
         let cid = ctx.request.correlation_id.clone();
         if !is_opaque_id(&command.window) {
             return snapshot_invalid(cid, MSG_OPAQUE_ID, "focus-window-invalid");
         }
-        let Some(direction) = parse_direction(&command.direction) else {
+        if parse_direction(&command.direction).is_none() {
             return rejected(cid, "direction-invalid", MSG_DIRECTION);
-        };
-        let Some((source_domain, source_key, target_domain, target_key)) = directional_pair(ctx)
-        else {
+        }
+        if directional_pair(ctx).is_none() {
             return snapshot_invalid(cid, MSG_OBSERVATION, "domain-invalid");
-        };
-        let window = WindowId(command.window.clone());
-        let mut session = match self.canonical_directional_pair(
-            source_domain,
-            source_key,
-            target_domain,
-            target_key,
-        ) {
-            Ok(session) => session,
-            Err(detail) => return snapshot_invalid(cid, MSG_OBSERVATION, detail),
-        };
-        let base = session.accepted_revision();
-        let observation = observation_for(base, ctx);
-        match self.propose_directional_focus(
-            &mut session,
-            ctx,
-            source_key,
-            &window,
-            direction,
-            &observation,
-        ) {
-            Ok((plan, crossed)) => {
-                let text = self.focus_directional_reply(ctx, direction, &plan, crossed);
-                if self.commit_focus_directional(&mut session, ctx, &plan, base) {
-                    if self.store_canonical_directional_pair(
-                        source_key.clone(),
-                        target_key.clone(),
-                        session,
-                        ctx.request.domain.outer_gap,
-                    ) {
-                        return text;
-                    }
-                }
-                snapshot_invalid(cid, MSG_OBSERVATION, "commit-rejected")
-            }
-            Err(error) => propose_failure(error, cid),
         }
-    }
-
-    fn propose_directional_focus(
-        &self,
-        session: &mut Session,
-        ctx: &Validated,
-        source_key: &DomainKey,
-        window: &WindowId,
-        direction: Direction,
-        observation: &SessionObservation,
-    ) -> Result<(tiler_core::session::SessionFocusPlan, bool), ProposeError> {
-        let _ = session
-            .sync_focus_from_window(source_key, &WindowId(ctx.request.focused_window.clone()));
-        // Local first: any local target wins (no cross).
-        match session.propose_focus(
-            source_key,
-            window,
-            direction,
-            observation,
-            &ctx.correlation,
-            &FocusCapabilities::full(),
-        ) {
-            Ok(plan) => Ok((plan, false)),
-            Err(ProposeError::Refused(RefusalKind::Unchanged))
-                if matches!(direction, Direction::Left | Direction::Right) =>
-            {
-                // Exhausted horizontal edge: cross to the adjacent output's
-                // current workspace last-focused leaf. Up/Down never reach
-                // here (local Unchanged stays terminal for them).
-                session
-                    .propose_cross_output_focus(
-                        source_key,
-                        window,
-                        direction,
-                        observation,
-                        &ctx.correlation,
-                        &FocusCapabilities::full(),
-                    )
-                    .map(|plan| (plan, true))
-            }
-            Err(other) => Err(other),
-        }
-    }
-
-    fn focus_directional_reply(
-        &self,
-        ctx: &Validated,
-        direction: Direction,
-        plan: &tiler_core::session::SessionFocusPlan,
-        crossed: bool,
-    ) -> String {
-        if crossed {
-            cross_focus_planned_reply(
-                &ctx.request.correlation_id,
-                plan.dispatch.base_revision,
-                serde_json::json!({
-                    "kind": "focus",
-                    "capability": "directional-focus",
-                    "direction": direction_str(direction),
-                    "to_window": plan.dispatch.operation.to_window.0,
-                    "cross_output": true,
-                }),
-                &plan.desired_geometry,
-                (&plan.desired_focus_domain, &plan.desired_focus_leaf),
-                &plan.dispatch.operation,
-            )
-        } else {
-            planned_reply(
-                &ctx.request.correlation_id,
-                plan.dispatch.base_revision,
-                serde_json::json!({
-                    "kind": "focus",
-                    "capability": "directional-focus",
-                    "direction": direction_str(direction),
-                    "to_window": plan.dispatch.operation.to_window.0,
-                }),
-                &plan.desired_geometry,
-                Some((&plan.desired_focus_domain, &plan.desired_focus_leaf)),
-            )
-        }
-    }
-
-    fn commit_focus_directional(
-        &self,
-        session: &mut Session,
-        ctx: &Validated,
-        plan: &tiler_core::session::SessionFocusPlan,
-        base: u64,
-    ) -> bool {
-        if !acknowledge(session, ctx, base) {
-            return false;
-        }
-        let post = tiler_core::contract::FocusPostObservation::new(
-            Observation::new(
-                ctx.owner.clone(),
-                ctx.generation.clone(),
-                base,
-                ctx.request.fingerprint,
-            ),
-            ctx.correlation.clone(),
-            true,
-            plan.dispatch.preconditions.clone(),
-            plan.dispatch.operation.clone(),
-        );
-        session.verify_focus(&post).is_ok()
+        let core_command = core_command_from_sync(&SyncCommand::Focus {
+            window: command.window.clone(),
+            direction: command.direction.clone(),
+            cross_output_transfer: command.cross_output_transfer,
+        })
+        .expect("focus sync op converts");
+        let event = core_event(ctx, &core_command);
+        let reply = self.engine.handle(&event);
+        serialize_core_reply(ctx, &reply)
     }
 
     fn evaluate_resize_retained(&mut self, ctx: &Validated) -> String {
@@ -4012,88 +2726,34 @@ impl Planner {
                 "resize-window-invalid",
             );
         }
-        let Some(direction) = parse_direction(&direction_raw) else {
+        if parse_direction(&direction_raw).is_none() {
             return rejected(
                 ctx.request.correlation_id.clone(),
                 "direction-invalid",
                 MSG_DIRECTION,
             );
-        };
-        let Some(mode) = parse_mode(&mode_raw) else {
+        }
+        if parse_mode(&mode_raw).is_none() {
             return rejected(
                 ctx.request.correlation_id.clone(),
                 "direction-invalid",
                 MSG_DIRECTION,
             );
+        }
+        // Engine-owned keyboard-resize orchestration: the validated
+        // window/direction/mode cross opaquely in the typed command;
+        // seed ordering, focus sync, keyboard-gated propose/commit, and
+        // store run in `Engine::handle`. Serialization funnels through the
+        // typed choke point.
+        let core_command = tiler_core::boundary::CoreCommand::Resize {
+            window: window_raw,
+            direction: direction_raw,
+            mode: mode_raw,
+            press_index,
         };
-        let seed_order = spatial_with_focus_last(
-            ctx.request.windows.clone(),
-            &ctx.request.focused_window,
-            false,
-        );
-        let window = WindowId(window_raw);
-        let capabilities = tiler_core::contract::ResizeCapabilities {
-            keyboard_resize: true,
-            pointer_resize: false,
-        };
-        self.run_retained(
-            ctx,
-            seed_order,
-            true,
-            |session, observation| {
-                let _ = session.sync_focus_from_window(
-                    &ctx.domain_key,
-                    &WindowId(ctx.request.focused_window.clone()),
-                );
-                session.propose_resize(
-                    &ctx.domain_key,
-                    &window,
-                    direction,
-                    mode,
-                    press_index,
-                    observation,
-                    &ctx.correlation,
-                    &capabilities,
-                )
-            },
-            |plan| {
-                planned_reply(
-                    &ctx.request.correlation_id,
-                    plan.dispatch.base_revision,
-                    serde_json::json!({
-                        "kind": "resize",
-                        "capability": "keyboard-resize",
-                        "direction": direction_str(direction),
-                        "mode": mode.as_str(),
-                        "target_group": plan.dispatch.operation.target_group.0,
-                        "focused_index": plan.dispatch.operation.focused_index,
-                        "neighbor_index": plan.dispatch.operation.neighbor_index,
-                        "old_shares": plan.dispatch.operation.old_shares,
-                        "new_shares": plan.dispatch.operation.new_shares,
-                    }),
-                    &plan.desired_geometry,
-                    Some((&plan.desired_focus_domain, &plan.desired_focus_leaf)),
-                )
-            },
-            |session, plan, c, base| {
-                if !acknowledge(session, c, base) {
-                    return false;
-                }
-                let post = tiler_core::contract::ResizePostObservation::new(
-                    Observation::new(
-                        c.owner.clone(),
-                        c.generation.clone(),
-                        base,
-                        c.request.fingerprint,
-                    ),
-                    c.correlation.clone(),
-                    true,
-                    plan.dispatch.preconditions.clone(),
-                    plan.dispatch.operation.clone(),
-                );
-                session.verify_resize(&post).is_ok()
-            },
-        )
+        let event = core_event(ctx, &core_command);
+        let reply = self.engine.handle(&event);
+        serialize_core_reply(ctx, &reply)
     }
 
     fn evaluate_pointer_resize_retained(&mut self, ctx: &Validated) -> String {
@@ -4131,80 +2791,26 @@ impl Planner {
                 "pointer-resize-window-invalid",
             );
         }
-        let Some(direction) = parse_direction(&direction_raw) else {
+        if parse_direction(&direction_raw).is_none() {
             return rejected(
                 ctx.request.correlation_id.clone(),
                 "direction-invalid",
                 MSG_DIRECTION,
             );
+        }
+        // Engine-owned pointer-resize orchestration: the validated
+        // window/direction plus the opaquely carried boundary cross in the
+        // typed command; seed ordering, focus sync, pointer-gated
+        // propose/commit, and store run in `Engine::handle`. Serialization
+        // funnels through the typed choke point.
+        let core_command = tiler_core::boundary::CoreCommand::PointerResize {
+            window: window_raw,
+            direction: direction_raw,
+            boundary,
         };
-        let seed_order = spatial_with_focus_last(
-            ctx.request.windows.clone(),
-            &ctx.request.focused_window,
-            false,
-        );
-        let window = WindowId(window_raw);
-        let capabilities = tiler_core::contract::ResizeCapabilities {
-            keyboard_resize: false,
-            pointer_resize: true,
-        };
-        self.run_retained(
-            ctx,
-            seed_order,
-            true,
-            |session, observation| {
-                let _ = session.sync_focus_from_window(
-                    &ctx.domain_key,
-                    &WindowId(ctx.request.focused_window.clone()),
-                );
-                session.propose_pointer_resize(
-                    &ctx.domain_key,
-                    &window,
-                    direction,
-                    boundary,
-                    observation,
-                    &ctx.correlation,
-                    &capabilities,
-                )
-            },
-            |plan| {
-                planned_reply(
-                    &ctx.request.correlation_id,
-                    plan.dispatch.base_revision,
-                    serde_json::json!({
-                        "kind": "pointer-resize",
-                        "capability": "pointer-resize",
-                        "direction": direction_str(direction),
-                        "boundary": boundary,
-                        "target_group": plan.dispatch.operation.target_group.0,
-                        "focused_index": plan.dispatch.operation.focused_index,
-                        "neighbor_index": plan.dispatch.operation.neighbor_index,
-                        "old_shares": plan.dispatch.operation.old_shares,
-                        "new_shares": plan.dispatch.operation.new_shares,
-                    }),
-                    &plan.desired_geometry,
-                    Some((&plan.desired_focus_domain, &plan.desired_focus_leaf)),
-                )
-            },
-            |session, plan, c, base| {
-                if !acknowledge(session, c, base) {
-                    return false;
-                }
-                let post = tiler_core::contract::ResizePostObservation::new(
-                    Observation::new(
-                        c.owner.clone(),
-                        c.generation.clone(),
-                        base,
-                        c.request.fingerprint,
-                    ),
-                    c.correlation.clone(),
-                    true,
-                    plan.dispatch.preconditions.clone(),
-                    plan.dispatch.operation.clone(),
-                );
-                session.verify_resize(&post).is_ok()
-            },
-        )
+        let event = core_event(ctx, &core_command);
+        let reply = self.engine.handle(&event);
+        serialize_core_reply(ctx, &reply)
     }
 
     /// Direct-evaluator compatibility wrapper (test-only): exact legacy
@@ -4234,246 +2840,13 @@ impl Planner {
     /// dispatch boundaries and calls here directly; the retained wrapper
     /// above preserves the exact direct-evaluator invalid-op behavior.
     fn evaluate_reconcile_inner(&mut self, ctx: &Validated) -> String {
-        let cid = ctx.request.correlation_id.clone();
-        // Displaced workspace relocation for reconcile: same workspace id on
-        // a different output reuses the retained tree. No retained mutation
-        // occurs on any rejection: outer-gap is pre-validated against the
-        // source before mutating, and any later rejection restores the source.
-        let backup_engine = self.engine.clone();
-        let mut relocated_here = false;
-        if !self.engine.contains(&ctx.domain_key) {
-            // Pre-validate outer-gap against the unique source so a mismatch
-            // fails closed with no mutation (target collision inside
-            // `try_relocate_for_target` likewise mutates nothing).
-            let mut source_key: Option<DomainKey> = None;
-            for key in self.engine.keys() {
-                if key.workspace == ctx.domain_key.workspace && key.output != ctx.domain_key.output
-                {
-                    if source_key.is_some() {
-                        source_key = None;
-                        break;
-                    }
-                    source_key = Some(key.clone());
-                }
-            }
-            let outer_ok = match &source_key {
-                Some(source) => {
-                    self.engine.outer_gap_ref(source).copied() == Some(ctx.request.domain.outer_gap)
-                }
-                None => false,
-            };
-            if outer_ok {
-                relocated_here = self.try_relocate_for_target(
-                    &ctx.domain_key,
-                    &ctx.domain,
-                    ctx.request.domain.outer_gap,
-                );
-            }
-        }
-        // Restore helper: any rejection below with `relocated_here` set
-        // returns retained state to the pre-request backup.
-        macro_rules! restore_on_reject {
-            () => {
-                if relocated_here {
-                    self.engine = backup_engine.clone();
-                }
-            };
-        }
-        let Some(session) = self.engine.session(&ctx.domain_key).cloned() else {
-            restore_on_reject!();
-            return rejected(
-                cid,
-                RefusalKind::UnknownDomain.as_str(),
-                RefusalKind::UnknownDomain.message(),
-            );
-        };
-        if let Some(reason) = session.divergence() {
-            restore_on_reject!();
-            return rejected(cid, reason.as_str(), reason.message());
-        }
-        if session.has_pending() || session.has_pending_desired() || session.has_drag() {
-            restore_on_reject!();
-            return rejected(
-                cid,
-                "pending-exists",
-                "complete the pending plan before proposing",
-            );
-        }
-        let Some(retained_domain) = session
-            .domains()
-            .iter()
-            .find(|d| d.key() == ctx.domain_key)
-            .cloned()
-        else {
-            restore_on_reject!();
-            return rejected(
-                cid,
-                RefusalKind::UnknownDomain.as_str(),
-                RefusalKind::UnknownDomain.message(),
-            );
-        };
-        if retained_domain.gap != ctx.domain.gap {
-            restore_on_reject!();
-            return rejected(
-                cid,
-                "domain-mismatch",
-                "domain gap does not match retained state",
-            );
-        }
-        if self.engine.outer_gap_ref(&ctx.domain_key).copied() != Some(ctx.request.domain.outer_gap)
-        {
-            restore_on_reject!();
-            return rejected(
-                cid,
-                "domain-mismatch",
-                "domain outer gap does not match retained state",
-            );
-        }
-        let bounds_changed = retained_domain.bounds != ctx.domain.bounds;
-        let snapshot = session.snapshot();
-        let mut known: std::collections::BTreeSet<String> = snapshot
-            .windows
-            .iter()
-            .map(|l| l.window.0.clone())
-            .collect();
-        for entry in session.exception_observed() {
-            known.insert(entry.window.0.clone());
-        }
-        let observed: std::collections::BTreeSet<String> = ctx
-            .request
-            .windows
-            .iter()
-            .map(|w| w.window.clone())
-            .collect();
-        if observed != known {
-            restore_on_reject!();
-            return rejected(
-                cid,
-                RefusalKind::PartialObservation.as_str(),
-                RefusalKind::PartialObservation.message(),
-            );
-        }
-        // Empty retained domain: no tree, no windows, no focus. Projecting
-        // nothing preserves allocation trivially without touching state.
-        let domain_view = snapshot.domains.into_iter().find(|d| {
-            d.output.0 == ctx.domain_key.output.0 && d.workspace.0 == ctx.domain_key.workspace.0
-        });
-        let tree = domain_view.and_then(|d| d.tree);
-        let Some(tree) = tree else {
-            if known.is_empty() && observed.is_empty() {
-                if bounds_changed {
-                    if let Some(session) = self.engine.session_mut(&ctx.domain_key) {
-                        session.reproject_domain(&ctx.domain_key, ctx.domain.bounds);
-                    }
-                }
-                return planned_reply(
-                    &cid,
-                    session.accepted_revision(),
-                    serde_json::json!({
-                        "kind": "reconcile",
-                        "capability": "reconcile-geometry",
-                    }),
-                    &[],
-                    None,
-                );
-            }
-            restore_on_reject!();
-            return rejected(
-                cid,
-                RefusalKind::MalformedTopology.as_str(),
-                RefusalKind::MalformedTopology.message(),
-            );
-        };
-        let (focus_domain, focus_leaf) = session.focus();
-        let (Some(focus_domain), Some(focus_leaf)) = (focus_domain, focus_leaf) else {
-            restore_on_reject!();
-            return rejected(
-                cid,
-                RefusalKind::FocusMismatch.as_str(),
-                RefusalKind::FocusMismatch.message(),
-            );
-        };
-        if focus_domain != ctx.domain_key {
-            restore_on_reject!();
-            return rejected(
-                cid,
-                RefusalKind::FocusMismatch.as_str(),
-                RefusalKind::FocusMismatch.message(),
-            );
-        }
-        let Ok(projected) = project(&tree, ctx.domain.bounds, retained_domain.gap) else {
-            restore_on_reject!();
-            return rejected(
-                cid,
-                RefusalKind::MalformedTopology.as_str(),
-                RefusalKind::MalformedTopology.message(),
-            );
-        };
-        let leaf_to_window: std::collections::BTreeMap<String, String> =
-            snapshot_windows_leaf_map(&session, &ctx.domain_key);
-        // Rebuild authoritative desired geometry from retained topology only;
-        // observed client rectangles are never adopted and shares are untouched.
-        let mut geometry: Vec<tiler_core::session::DesiredGeometry> =
-            Vec::with_capacity(projected.len());
-        for leaf in projected {
-            let Some(window) = leaf_to_window.get(&leaf.leaf.0) else {
-                restore_on_reject!();
-                return rejected(
-                    cid,
-                    RefusalKind::MalformedTopology.as_str(),
-                    RefusalKind::MalformedTopology.message(),
-                );
-            };
-            if leaf.rect.w <= 0 || leaf.rect.h <= 0 {
-                restore_on_reject!();
-                return rejected(
-                    cid,
-                    RefusalKind::MalformedTopology.as_str(),
-                    RefusalKind::MalformedTopology.message(),
-                );
-            }
-            geometry.push(tiler_core::session::DesiredGeometry {
-                window: WindowId(window.clone()),
-                leaf: leaf.leaf.clone(),
-                output: ctx.domain_key.output.clone(),
-                workspace: ctx.domain_key.workspace.clone(),
-                rect: leaf.rect,
-            });
-        }
-        geometry.sort_by(|a, b| {
-            a.output
-                .0
-                .cmp(&b.output.0)
-                .then(a.workspace.0.cmp(&b.workspace.0))
-                .then(a.leaf.0.cmp(&b.leaf.0))
-        });
-        // Geometry covers tiled leaves only; floating/fullscreen/maximized
-        // exceptions remain membership (known/observed) but are never
-        // projected. Comparing against known (tiled plus exceptions) would
-        // reject every reconcile with an intentional float as malformed.
-        if geometry.len() != leaf_to_window.len() {
-            restore_on_reject!();
-            return rejected(
-                cid,
-                RefusalKind::MalformedTopology.as_str(),
-                RefusalKind::MalformedTopology.message(),
-            );
-        }
-        if bounds_changed {
-            if let Some(session) = self.engine.session_mut(&ctx.domain_key) {
-                session.reproject_domain(&ctx.domain_key, ctx.domain.bounds);
-            }
-        }
-        planned_reply(
-            &cid,
-            session.accepted_revision(),
-            serde_json::json!({
-                "kind": "reconcile",
-                "capability": "reconcile-geometry",
-            }),
-            &geometry,
-            Some((&focus_domain, &focus_leaf)),
-        )
+        // Engine-owned reconcile orchestration: relocation, fences,
+        // membership, projection, and reprojection run in `Engine::handle`.
+        // Serialization funnels through the typed choke point.
+        let core_command = tiler_core::boundary::CoreCommand::Reconcile;
+        let event = core_event(ctx, &core_command);
+        let reply = self.engine.handle(&event);
+        serialize_core_reply(ctx, &reply)
     }
 
     /// Deliberate retained gap-update reprojection for the interim tiler
@@ -4493,190 +2866,13 @@ impl Planner {
     /// Production update-gaps body without a second command parse/op check.
     /// Same boundary contract as [`Self::evaluate_reconcile_inner`].
     fn evaluate_update_gaps_inner(&mut self, ctx: &Validated) -> String {
-        let cid = ctx.request.correlation_id.clone();
-        let Some(session) = self.engine.session(&ctx.domain_key).cloned() else {
-            return rejected(
-                cid,
-                RefusalKind::UnknownDomain.as_str(),
-                RefusalKind::UnknownDomain.message(),
-            );
-        };
-        if let Some(reason) = session.divergence() {
-            return rejected(cid, reason.as_str(), reason.message());
-        }
-        if session.has_pending() || session.has_pending_desired() || session.has_drag() {
-            return rejected(
-                cid,
-                "pending-exists",
-                "complete the pending plan before proposing",
-            );
-        }
-        if session
-            .domains()
-            .iter()
-            .find(|d| d.key() == ctx.domain_key)
-            .is_none()
-        {
-            return rejected(
-                cid,
-                RefusalKind::UnknownDomain.as_str(),
-                RefusalKind::UnknownDomain.message(),
-            );
-        }
-        let snapshot = session.snapshot();
-        let mut known: std::collections::BTreeSet<String> = snapshot
-            .windows
-            .iter()
-            .map(|l| l.window.0.clone())
-            .collect();
-        for entry in session.exception_observed() {
-            known.insert(entry.window.0.clone());
-        }
-        let observed: std::collections::BTreeSet<String> = ctx
-            .request
-            .windows
-            .iter()
-            .map(|w| w.window.clone())
-            .collect();
-        if observed != known {
-            return rejected(
-                cid,
-                RefusalKind::PartialObservation.as_str(),
-                RefusalKind::PartialObservation.message(),
-            );
-        }
-        // Empty retained domain: no tree, no windows, no focus. Adopt the new
-        // gap state trivially without touching anything else.
-        let domain_view = snapshot.domains.into_iter().find(|d| {
-            d.output.0 == ctx.domain_key.output.0 && d.workspace.0 == ctx.domain_key.workspace.0
-        });
-        let tree = domain_view.and_then(|d| d.tree);
-        let Some(tree) = tree else {
-            if known.is_empty() && observed.is_empty() {
-                if let Some(session) = self.engine.session_mut(&ctx.domain_key)
-                    && !session.update_domain_gaps(
-                        &ctx.domain_key,
-                        ctx.domain.bounds,
-                        ctx.domain.gap,
-                    )
-                {
-                    return rejected(
-                        cid,
-                        RefusalKind::MalformedTopology.as_str(),
-                        RefusalKind::MalformedTopology.message(),
-                    );
-                }
-                self.engine
-                    .set_outer_gap(ctx.domain_key.clone(), ctx.request.domain.outer_gap);
-                return planned_reply(
-                    &cid,
-                    session.accepted_revision(),
-                    serde_json::json!({
-                        "kind": "update-gaps",
-                        "capability": "update-gaps-geometry",
-                    }),
-                    &[],
-                    None,
-                );
-            }
-            return rejected(
-                cid,
-                RefusalKind::MalformedTopology.as_str(),
-                RefusalKind::MalformedTopology.message(),
-            );
-        };
-        let (focus_domain, focus_leaf) = session.focus();
-        let (Some(focus_domain), Some(focus_leaf)) = (focus_domain, focus_leaf) else {
-            return rejected(
-                cid,
-                RefusalKind::FocusMismatch.as_str(),
-                RefusalKind::FocusMismatch.message(),
-            );
-        };
-        if focus_domain != ctx.domain_key {
-            return rejected(
-                cid,
-                RefusalKind::FocusMismatch.as_str(),
-                RefusalKind::FocusMismatch.message(),
-            );
-        }
-        // Project the retained tree with the NEW inner gap into the NEW
-        // outer-inset bounds before mutating anything; observed client
-        // rectangles are never adopted and shares are untouched.
-        let Ok(projected) = project(&tree, ctx.domain.bounds, ctx.domain.gap) else {
-            return rejected(
-                cid,
-                RefusalKind::MalformedTopology.as_str(),
-                RefusalKind::MalformedTopology.message(),
-            );
-        };
-        let leaf_to_window: std::collections::BTreeMap<String, String> =
-            snapshot_windows_leaf_map(&session, &ctx.domain_key);
-        let mut geometry: Vec<tiler_core::session::DesiredGeometry> =
-            Vec::with_capacity(projected.len());
-        for leaf in projected {
-            let Some(window) = leaf_to_window.get(&leaf.leaf.0) else {
-                return rejected(
-                    cid,
-                    RefusalKind::MalformedTopology.as_str(),
-                    RefusalKind::MalformedTopology.message(),
-                );
-            };
-            if leaf.rect.w <= 0 || leaf.rect.h <= 0 {
-                return rejected(
-                    cid,
-                    RefusalKind::MalformedTopology.as_str(),
-                    RefusalKind::MalformedTopology.message(),
-                );
-            }
-            geometry.push(tiler_core::session::DesiredGeometry {
-                window: WindowId(window.clone()),
-                leaf: leaf.leaf.clone(),
-                output: ctx.domain_key.output.clone(),
-                workspace: ctx.domain_key.workspace.clone(),
-                rect: leaf.rect,
-            });
-        }
-        geometry.sort_by(|a, b| {
-            a.output
-                .0
-                .cmp(&b.output.0)
-                .then(a.workspace.0.cmp(&b.workspace.0))
-                .then(a.leaf.0.cmp(&b.leaf.0))
-        });
-        // Same tiled-only projection as reconcile: exceptions stay in
-        // known/observed membership but never appear in geometry.
-        if geometry.len() != leaf_to_window.len() {
-            return rejected(
-                cid,
-                RefusalKind::MalformedTopology.as_str(),
-                RefusalKind::MalformedTopology.message(),
-            );
-        }
-        let mut session = session;
-        if !session.update_domain_gaps(&ctx.domain_key, ctx.domain.bounds, ctx.domain.gap) {
-            return rejected(
-                cid,
-                RefusalKind::MalformedTopology.as_str(),
-                RefusalKind::MalformedTopology.message(),
-            );
-        }
-        let revision = session.accepted_revision();
-        self.store_committed(
-            ctx.domain_key.clone(),
-            session,
-            ctx.request.domain.outer_gap,
-        );
-        planned_reply(
-            &cid,
-            revision,
-            serde_json::json!({
-                "kind": "update-gaps",
-                "capability": "update-gaps-geometry",
-            }),
-            &geometry,
-            Some((&focus_domain, &focus_leaf)),
-        )
+        // Engine-owned update-gaps orchestration: fences, membership,
+        // projection, and gap adoption run in `Engine::handle`.
+        // Serialization funnels through the typed choke point.
+        let core_command = tiler_core::boundary::CoreCommand::UpdateGaps;
+        let event = core_event(ctx, &core_command);
+        let reply = self.engine.handle(&event);
+        serialize_core_reply(ctx, &reply)
     }
 
     /// Retained read-only active-group highlight query over the existing
@@ -4728,36 +2924,42 @@ impl Planner {
         self.evaluate_active_group_inner(ctx)
     }
 
-    /// Production active-group body without a second command parse/op check.
-    /// Same boundary contract as [`Self::evaluate_reconcile_inner`].
+    /// Direct-evaluator compatibility entry (test-only): shared focus-sync
+    /// fences plus the typed resolution over a freshly built event.
+    #[cfg(test)]
     fn evaluate_active_group_inner(&mut self, ctx: &Validated) -> String {
-        let Some(mut session) = self.engine.session(&ctx.domain_key).cloned() else {
-            return no_group_reply(ctx, None, "no-session");
-        };
-        // Align retained focus from the valid observed snapshot before
-        // resolving the immediate parent group. Focus-only sync: no topology
-        // or geometry mutation. Fails closed on divergence, pending/drag
-        // residue, unknown/exception/cross-domain windows, or domain
-        // bounds/gap mismatch (then the resolver still replies fail-closed
-        // `no-group` without persisting).
-        let focused = WindowId(ctx.request.focused_window.clone());
-        if !focused.0.is_empty()
-            && let Some(retained_domain) = session
-                .domains()
-                .iter()
-                .find(|domain| domain.key() == ctx.domain_key)
-            && retained_domain.bounds == ctx.domain.bounds
-            && retained_domain.gap == ctx.domain.gap
-        {
-            let before = session.focus();
-            if session.sync_focus_from_window(&ctx.domain_key, &focused)
-                && session.focus() != before
-                && let Some(stored) = self.engine.session_mut(&ctx.domain_key)
-            {
-                *stored = session.clone();
-            }
-        }
-        active_group_response(&session, ctx)
+        let event = core_event(ctx, &tiler_core::boundary::CoreCommand::ActiveGroup);
+        self.evaluate_active_group_with_event(ctx, &event)
+    }
+
+    /// Production typed active-group body: `core_command` is the total
+    /// conversion of the already-decoded [`SyncCommand`] after all fences.
+    /// Focus-sync plus read-only resolution run in
+    /// `tiler_core::engine::Engine::handle`; serialization funnels through the
+    /// typed choke point.
+    fn evaluate_active_group_typed(
+        &mut self,
+        ctx: &Validated,
+        core_command: &tiler_core::boundary::CoreCommand,
+    ) -> String {
+        debug_assert!(matches!(
+            core_command,
+            tiler_core::boundary::CoreCommand::ActiveGroup
+        ));
+        let event = core_event(ctx, core_command);
+        self.evaluate_active_group_with_event(ctx, &event)
+    }
+
+    /// Shared active-group body over a total [`tiler_core::boundary::CoreEvent`]:
+    /// Engine-owned focus-sync plus read-only resolution. Both production and
+    /// test entries funnel here.
+    fn evaluate_active_group_with_event(
+        &mut self,
+        ctx: &Validated,
+        event: &tiler_core::boundary::CoreEvent,
+    ) -> String {
+        let reply = self.engine.handle(event);
+        serialize_core_reply(ctx, &reply)
     }
 
     /// Shared standalone workspace-send target scope: optional `target_domain`
@@ -4976,7 +3178,6 @@ impl Planner {
         Ok(WorkspaceInput {
             target_domain,
             target_key,
-            target_windows: ctx.request.target_windows.clone(),
             window: WindowId(window),
         })
     }
@@ -4985,97 +3186,50 @@ impl Planner {
     /// observation, propose the same-output distinct-workspace move, and retain
     /// exactly one pending Session. Never auto-acknowledges: the adapter must
     /// send an exact accepted ack and then a matching verified post-observation.
+    ///
+    /// Codec/scope stays here (shared target scope, tagged command decode,
+    /// mover binding in [`Planner::validate_workspace_input`]); the pending
+    /// outcome and the seed/propose/stage plan itself are the Engine-owned
+    /// [`tiler_core::engine::Engine::handle`] typed entry point over the
+    /// validated target scope. The workspace second-send guard runs before
+    /// scope validation so error order is preserved (the Engine re-checks
+    /// defensively inside `handle` with byte-identical replies).
     fn evaluate_workspace_request(&mut self, ctx: &Validated) -> String {
-        let cid = ctx.request.correlation_id.clone();
-        if let Some(pending) = &self.workspace_pending {
-            if let Some(reason) = pending.session.divergence() {
-                return diverged_reply(&cid, reason);
-            }
-            if pending.owner != ctx.owner || pending.generation != ctx.generation {
-                return diverged_reply(&cid, tiler_core::contract::DivergenceKind::OwnerMismatch);
-            }
-            return rejected(
-                cid,
-                "pending-exists",
-                "complete the pending workspace plan before proposing",
-            );
+        if let Some(reply) = self
+            .engine
+            .workspace_request_guard(&ctx.owner, &ctx.generation)
+        {
+            return serialize_core_reply(ctx, &reply);
         }
         let input = match self.validate_workspace_input(ctx) {
             Ok(input) => input,
             Err(reply) => return reply,
         };
-        let Some(source_order) = spatial_with_focus_last(
-            ctx.request.windows.clone(),
-            &ctx.request.focused_window,
-            false,
-        ) else {
-            return rejected(cid, "ambiguous-placement", MSG_AMBIGUOUS);
+        let core_command = tiler_core::boundary::CoreCommand::SendToWorkspace {
+            window: input.window.0.clone(),
+            target_output: input.target_key.output.0.clone(),
+            target_workspace: input.target_key.workspace.0.clone(),
         };
-        let Some(target_order) = spatial_with_focus_last(input.target_windows.clone(), "", false)
-        else {
-            return rejected(cid, "ambiguous-placement", MSG_AMBIGUOUS);
-        };
-        let Some(mut session) = seed_workspace_session(
-            &ctx.owner,
-            &ctx.generation,
-            ctx.request.fingerprint,
-            &ctx.domain,
-            &input.target_domain,
-            &source_order,
-            &target_order,
-        ) else {
-            return snapshot_invalid(cid, MSG_OBSERVATION, "seed-failed");
-        };
-        let focused = WindowId(ctx.request.focused_window.clone());
-        if !session.sync_focus_from_window(&ctx.domain_key, &focused) {
-            return rejected(
-                cid,
-                RefusalKind::FocusMismatch.as_str(),
-                RefusalKind::FocusMismatch.message(),
-            );
-        }
-        let base = session.accepted_revision();
-        let observation = workspace_observation(base, ctx, &input);
-        let session_command = SessionCommand::MoveToWorkspace {
-            window: input.window.clone(),
-            target_output: input.target_key.output.clone(),
-            target_workspace: input.target_key.workspace.clone(),
-        };
-        match session.propose(
-            &session_command,
-            &observation,
-            &ctx.correlation,
-            &LifecycleCapabilities::full(),
-        ) {
-            Ok(plan) => {
-                let text = workspace_planned_reply(&ctx.request.correlation_id, &plan);
-                self.workspace_pending = Some(WorkspacePending {
-                    owner: ctx.owner.clone(),
-                    generation: ctx.generation.clone(),
-                    correlation: ctx.correlation.clone(),
-                    base_revision: base,
-                    request_revision: ctx.request.revision,
-                    session,
-                    desired_geometry: plan.desired_geometry.clone(),
-                    pre_focused: ctx.request.focused_window.clone(),
-                    pre_windows: ctx.request.windows.clone(),
-                    pre_target_windows: ctx.request.target_windows.clone(),
-                });
-                text
-            }
-            Err(error) => propose_failure(error, cid),
-        }
+        let mut event = core_event(ctx, &core_command);
+        event.target_domain = Some((input.target_domain, input.target_key));
+        let reply = self.engine.handle(&event);
+        serialize_core_reply(ctx, &reply)
     }
 
     /// Workspace-send acknowledgement phase: exact accepted acknowledgement
     /// against the retained pending Session. Refused ack or binding mismatch is
     /// terminal divergence.
+    ///
+    /// Codec stays here (tagged decode with the original `ack-op-invalid` /
+    /// parse-error fences); the outcome and the fenced acknowledge itself are
+    /// the Engine-owned [`Engine::handle`] typed entry point, which retains
+    /// the pending for verify.
     fn evaluate_workspace_ack(&mut self, ctx: &Validated) -> String {
         let cid = ctx.request.correlation_id.clone();
-        // Strict tagged decode first (see `SyncCommand`); pending and binding
-        // checks below are untouched.
-        let ack_outcome = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
-            Ok(SyncCommand::SendToWorkspaceAck { ack_outcome }) => ack_outcome,
+        // Strict tagged decode first (see `SyncCommand`); the outcome,
+        // pending, and binding transition below is Engine-owned.
+        let command = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+            Ok(command @ SyncCommand::SendToWorkspaceAck { .. }) => command,
             Ok(_) => {
                 return snapshot_invalid(cid, MSG_OPAQUE_ID, "ack-op-invalid");
             }
@@ -5087,69 +3241,27 @@ impl Planner {
                 return rejected(valid_correlation_echo(&ctx.raw), kind, message);
             }
         };
-        let outcome = match ack_outcome.as_str() {
-            "accepted" => AckOutcome::Accepted,
-            "refused-capability" => AckOutcome::RefusedCapability,
-            "partial-application" => AckOutcome::PartialApplication,
-            "adapter-lost" => AckOutcome::AdapterLost,
-            _ => {
-                return rejected(cid, "ack-refused", "acknowledgement outcome is invalid");
-            }
-        };
-        let Some(pending) = &mut self.workspace_pending else {
-            return rejected(cid, "no-pending", "no workspace plan is pending");
-        };
-        if let Some(reason) = pending.session.divergence() {
-            return diverged_reply(&cid, reason);
-        }
-        if pending.owner != ctx.owner || pending.generation != ctx.generation {
-            return diverged_reply(&cid, tiler_core::contract::DivergenceKind::OwnerMismatch);
-        }
-        if pending.correlation != ctx.correlation {
-            return diverged_reply(
-                &cid,
-                tiler_core::contract::DivergenceKind::CorrelationMismatch,
-            );
-        }
-        if ctx.request.revision != pending.base_revision {
-            return diverged_reply(&cid, tiler_core::contract::DivergenceKind::StaleRevision);
-        }
-        let ack = AdapterAck::new(
-            ctx.correlation.clone(),
-            ctx.owner.clone(),
-            ctx.generation.clone(),
-            pending.base_revision,
-            outcome,
-        );
-        match pending.session.acknowledge(&ack) {
-            Ok(_) => serialize_bounded(&PlanReply {
-                v: PLAN_CONTRACT_VERSION,
-                correlation_id: cid,
-                outcome: "acknowledged",
-                kind: Some("send-to-workspace".to_owned()),
-                message: None,
-                base_revision: Some(pending.base_revision),
-                detail: None,
-                desired_geometry: None,
-                desired_focus: None,
-                float_geometry: None,
-                preconditions: None,
-                operation: None,
-            }),
-            Err(AckError::Diverged(reason)) => diverged_reply(&cid, reason),
-            Err(AckError::NoPending) => rejected(cid, "no-pending", "no workspace plan is pending"),
-        }
+        let core_command = core_command_from_sync(&command).expect("non-verify sync op converts");
+        let event = core_event(ctx, &core_command);
+        let reply = self.engine.handle(&event);
+        serialize_core_reply(ctx, &reply)
     }
 
     /// Workspace-send verification phase: exact post-observation (preconditions
     /// and operation echoed from the plan) plus a matching fresh observation
     /// commits the pending Session and advances the revision by exactly one.
     /// Pending mismatch or failed verification is terminal divergence.
+    ///
+    /// Codec and echo parsing stay here (tagged decode with the original
+    /// `verify-op-invalid` / parse-error fences, `verified=false` divergence
+    /// before nested parse, malformed echoes as `verify-invalid`); the fenced
+    /// commit itself is the Engine-owned [`Engine::handle`] typed entry point
+    /// over fully validated serde-free typed echoes.
     fn evaluate_workspace_verify(&mut self, ctx: &Validated) -> String {
         let cid = ctx.request.correlation_id.clone();
-        // Strict tagged decode first (see `SyncCommand`); the verified flag,
-        // precondition/operation echo parsing, and pending checks below are
-        // untouched.
+        // Strict tagged decode first (see `SyncCommand`); the verified flag
+        // and precondition/operation echo parsing below keep their exact
+        // legacy positions before any pending handling.
         let (verified, preconditions_raw, operation_raw) =
             match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
                 Ok(SyncCommand::SendToWorkspaceVerify {
@@ -5180,76 +3292,14 @@ impl Planner {
         let Some(operation) = parse_move_tiled_operation(&operation_raw) else {
             return rejected(cid, "verify-invalid", "operation is invalid");
         };
-        let Some(mut pending) = self.workspace_pending.take() else {
-            return rejected(cid, "no-pending", "no workspace plan is pending");
-        };
-        if let Some(reason) = pending.session.divergence() {
-            self.workspace_pending = Some(pending);
-            return diverged_reply(&cid, reason);
-        }
-        if pending.owner != ctx.owner || pending.generation != ctx.generation {
-            self.workspace_pending = Some(pending);
-            return diverged_reply(&cid, tiler_core::contract::DivergenceKind::OwnerMismatch);
-        }
-        if pending.correlation != ctx.correlation {
-            self.workspace_pending = Some(pending);
-            return diverged_reply(
-                &cid,
-                tiler_core::contract::DivergenceKind::CorrelationMismatch,
-            );
-        }
-        if ctx.request.revision != pending.base_revision {
-            self.workspace_pending = Some(pending);
-            return diverged_reply(&cid, tiler_core::contract::DivergenceKind::StaleRevision);
-        }
-        // Complete source+target post-observation validation against the
-        // retained plan before any lifecycle commit. A bare `verified: true`
-        // must not commit; divergence here is terminal with the pending kept
-        // wedged exactly like a failed lifecycle verification.
-        if !workspace_post_matches(&pending, ctx) {
-            let reason = pending.session.note_postcondition_mismatch();
-            self.workspace_pending = Some(pending);
-            return diverged_reply(&cid, reason);
-        }
-        let post = LifecyclePostObservation::new(
-            Observation::new(
-                ctx.owner.clone(),
-                ctx.generation.clone(),
-                pending.base_revision,
-                ctx.request.fingerprint,
-            ),
-            ctx.correlation.clone(),
-            true,
+        let core_command = tiler_core::boundary::CoreCommand::SendVerify {
+            verified,
             preconditions,
             operation,
-        );
-        match pending.session.verify_lifecycle(&post) {
-            Ok(commit) => {
-                self.workspace_pending = None;
-                serialize_bounded(&PlanReply {
-                    v: PLAN_CONTRACT_VERSION,
-                    correlation_id: cid,
-                    outcome: "committed",
-                    kind: Some("send-to-workspace".to_owned()),
-                    message: None,
-                    base_revision: Some(commit.revision),
-                    detail: None,
-                    desired_geometry: None,
-                    desired_focus: None,
-                    float_geometry: None,
-                    preconditions: None,
-                    operation: None,
-                })
-            }
-            Err(VerifyError::Diverged(reason)) => {
-                self.workspace_pending = Some(pending);
-                diverged_reply(&cid, reason)
-            }
-            Err(_) => {
-                self.workspace_pending = Some(pending);
-                rejected(cid, "verify-rejected", "workspace verification failed")
-            }
-        }
+        };
+        let event = core_event(ctx, &core_command);
+        let reply = self.engine.handle(&event);
+        serialize_core_reply(ctx, &reply)
     }
 
     /// Directional R4 acknowledgement phase: exact accepted acknowledgement
@@ -5257,12 +3307,21 @@ impl Planner {
     /// identity/correlation/revision mismatch is terminal divergence with no
     /// commit and no canonical split. Strict bounded parsing, no new topology
     /// seeding.
+    /// Directional R4 acknowledgement phase: exact accepted acknowledgement
+    /// against the retained pending pair Session. Refused ack or
+    /// identity/correlation/revision mismatch is terminal divergence with no
+    /// commit and no canonical split. Strict bounded parsing, no new topology
+    /// seeding.
+    ///
+    /// Codec stays here (tagged decode with the original `ack-op-invalid` /
+    /// parse-error fences); the outcome and the fenced acknowledge itself are
+    /// the Engine-owned [`Engine::handle`] typed entry point.
     fn evaluate_directional_ack(&mut self, ctx: &Validated) -> String {
         let cid = ctx.request.correlation_id.clone();
-        // Strict tagged decode first (see `SyncCommand`); pending and binding
-        // checks below are untouched.
-        let ack_outcome = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
-            Ok(SyncCommand::DirectionalMoveAck { ack_outcome }) => ack_outcome,
+        // Strict tagged decode first (see `SyncCommand`); the outcome,
+        // pending, and binding transition below is Engine-owned.
+        let command = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+            Ok(command @ SyncCommand::DirectionalMoveAck { .. }) => command,
             Ok(_) => {
                 return snapshot_invalid(cid, MSG_OPAQUE_ID, "ack-op-invalid");
             }
@@ -5274,60 +3333,10 @@ impl Planner {
                 return rejected(valid_correlation_echo(&ctx.raw), kind, message);
             }
         };
-        let outcome = match ack_outcome.as_str() {
-            "accepted" => AckOutcome::Accepted,
-            "refused-capability" => AckOutcome::RefusedCapability,
-            "partial-application" => AckOutcome::PartialApplication,
-            "adapter-lost" => AckOutcome::AdapterLost,
-            _ => {
-                return rejected(cid, "ack-refused", "acknowledgement outcome is invalid");
-            }
-        };
-        let Some(pending) = &mut self.directional_pending else {
-            return rejected(cid, "no-pending", "no directional move is pending");
-        };
-        if let Some(reason) = pending.session.divergence() {
-            return diverged_reply(&cid, reason);
-        }
-        if pending.owner != ctx.owner || pending.generation != ctx.generation {
-            return diverged_reply(&cid, tiler_core::contract::DivergenceKind::OwnerMismatch);
-        }
-        if pending.correlation != ctx.correlation {
-            return diverged_reply(
-                &cid,
-                tiler_core::contract::DivergenceKind::CorrelationMismatch,
-            );
-        }
-        if ctx.request.revision != pending.base_revision {
-            return diverged_reply(&cid, tiler_core::contract::DivergenceKind::StaleRevision);
-        }
-        let ack = AdapterAck::new(
-            ctx.correlation.clone(),
-            ctx.owner.clone(),
-            ctx.generation.clone(),
-            pending.base_revision,
-            outcome,
-        );
-        match pending.session.acknowledge(&ack) {
-            Ok(_) => serialize_bounded(&PlanReply {
-                v: PLAN_CONTRACT_VERSION,
-                correlation_id: cid,
-                outcome: "acknowledged",
-                kind: Some("directional-move".to_owned()),
-                message: None,
-                base_revision: Some(pending.base_revision),
-                detail: None,
-                desired_geometry: None,
-                desired_focus: None,
-                float_geometry: None,
-                preconditions: None,
-                operation: None,
-            }),
-            Err(AckError::Diverged(reason)) => diverged_reply(&cid, reason),
-            Err(AckError::NoPending) => {
-                rejected(cid, "no-pending", "no directional move is pending")
-            }
-        }
+        let core_command = core_command_from_sync(&command).expect("non-verify sync op converts");
+        let event = core_event(ctx, &core_command);
+        let reply = self.engine.handle(&event);
+        serialize_core_reply(ctx, &reply)
     }
 
     /// Directional R4 verification phase: exact post-observation (operation
@@ -5337,11 +3346,17 @@ impl Planner {
     /// Mismatch, refused ack residue, failed verification, or
     /// identity/correlation/revision loss is terminal `diverged` with no
     /// commit. A bare `verified: true` never commits.
+    ///
+    /// Codec and echo parsing stay here (tagged decode with the original
+    /// `verify-op-invalid` / parse-error fences, `verified=false` divergence
+    /// before nested parse, malformed echoes as `verify-invalid`); the fenced
+    /// commit plus canonical split/store is the Engine-owned [`Engine::handle`]
+    /// typed entry point over fully validated serde-free typed echoes.
     fn evaluate_directional_verify(&mut self, ctx: &Validated) -> String {
         let cid = ctx.request.correlation_id.clone();
-        // Strict tagged decode first (see `SyncCommand`); the verified flag,
-        // echo parsing, fenced operation binding, and pending checks below
-        // are untouched.
+        // Strict tagged decode first (see `SyncCommand`); the verified flag
+        // and echo parsing below keep their exact legacy positions before any
+        // pending handling.
         let (verified, preconditions_raw, operation_raw) =
             match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
                 Ok(SyncCommand::DirectionalMoveVerify {
@@ -5372,135 +3387,28 @@ impl Planner {
         let Some((operation, echo)) = parse_directional_move_operation(&operation_raw) else {
             return rejected(cid, "verify-invalid", "operation is invalid");
         };
-        let Some(mut pending) = self.directional_pending.take() else {
-            return rejected(cid, "no-pending", "no directional move is pending");
-        };
-        if let Some(reason) = pending.session.divergence() {
-            self.directional_pending = Some(pending);
-            return diverged_reply(&cid, reason);
-        }
-        if pending.owner != ctx.owner || pending.generation != ctx.generation {
-            self.directional_pending = Some(pending);
-            return diverged_reply(&cid, tiler_core::contract::DivergenceKind::OwnerMismatch);
-        }
-        if pending.correlation != ctx.correlation {
-            self.directional_pending = Some(pending);
-            return diverged_reply(
-                &cid,
-                tiler_core::contract::DivergenceKind::CorrelationMismatch,
-            );
-        }
-        if ctx.request.revision != pending.base_revision {
-            self.directional_pending = Some(pending);
-            return diverged_reply(&cid, tiler_core::contract::DivergenceKind::StaleRevision);
-        }
-        // Exact pending operation/preconditions binding before any commit.
-        if operation != pending.operation || preconditions != pending.preconditions {
-            let reason = pending.session.note_postcondition_mismatch();
-            self.directional_pending = Some(pending);
-            return diverged_reply(&cid, reason);
-        }
-        // Complete source+target post-observation must equal the retained
-        // desired geometry/membership exactly.
-        if !directional_post_matches(&pending, ctx) {
-            let reason = pending.session.note_postcondition_mismatch();
-            self.directional_pending = Some(pending);
-            return diverged_reply(&cid, reason);
-        }
-        // Fenced source/target binding: the echoed operation target must home
-        // to the retained pair, and any carried source binding must match.
-        // Reads the already-validated typed echo DTO (never raw JSON).
-        if let tiler_core::directional::MoveOperation::CrossOutput {
-            target_output,
-            target_workspace,
-            ..
-        } = &pending.operation
-        {
-            if echo.target_output != target_output.0
-                || echo.target_workspace != target_workspace.0
-                || echo.target_output != pending.target_key.output.0
-                || echo.target_workspace != pending.target_key.workspace.0
-                || echo.source_output != pending.source_key.output.0
-                || echo.source_workspace != pending.source_key.workspace.0
-            {
-                let reason = pending.session.note_postcondition_mismatch();
-                self.directional_pending = Some(pending);
-                return diverged_reply(&cid, reason);
-            }
-        }
-        let post = tiler_core::contract::PostObservation::new(
-            Observation::new(
-                ctx.owner.clone(),
-                ctx.generation.clone(),
-                pending.base_revision,
-                ctx.request.fingerprint,
-            ),
-            ctx.correlation.clone(),
-            true,
+        let core_command = tiler_core::boundary::CoreCommand::DirectionalVerify {
+            verified,
             preconditions,
             operation,
-        );
-        match pending.session.verify_move(&post) {
-            Ok(commit) => {
-                let source_key = pending.source_key.clone();
-                let target_key = pending.target_key.clone();
-                let source_outer_gap = pending.source_outer_gap;
-                let target_outer_gap = pending.target_outer_gap;
-                let Ok((source, target)) = pending.session.split_canonical_pair() else {
-                    // Verification already committed the pair. Retain an
-                    // explicit terminal wedge rather than losing canonical
-                    // state and permitting a spatial rebuild around it.
-                    self.directional_pending = Some(pending);
-                    return diverged_reply(
-                        &cid,
-                        tiler_core::contract::DivergenceKind::PostconditionMismatch,
-                    );
-                };
-                self.directional_pending = None;
-                self.store_committed(source_key, source, source_outer_gap);
-                if let Some(target) = target {
-                    self.store_committed(target_key, target, target_outer_gap);
-                } else {
-                    self.engine.remove(&target_key);
-                }
-                serialize_bounded(&PlanReply {
-                    v: PLAN_CONTRACT_VERSION,
-                    correlation_id: cid,
-                    outcome: "committed",
-                    kind: Some("directional-move".to_owned()),
-                    message: None,
-                    base_revision: Some(commit.revision),
-                    detail: None,
-                    desired_geometry: None,
-                    desired_focus: None,
-                    float_geometry: None,
-                    preconditions: None,
-                    operation: None,
-                })
-            }
-            Err(VerifyError::Diverged(reason)) => {
-                self.directional_pending = Some(pending);
-                diverged_reply(&cid, reason)
-            }
-            Err(_) => {
-                self.directional_pending = Some(pending);
-                rejected(cid, "verify-rejected", "directional verification failed")
-            }
-        }
+            echo_source_output: tiler_core::directional::OutputId(echo.source_output),
+            echo_source_workspace: tiler_core::directional::WorkspaceId(echo.source_workspace),
+            echo_target_output: tiler_core::directional::OutputId(echo.target_output),
+            echo_target_workspace: tiler_core::directional::WorkspaceId(echo.target_workspace),
+        };
+        let event = core_event(ctx, &core_command);
+        let reply = self.engine.handle(&event);
+        serialize_core_reply(ctx, &reply)
     }
 
     /// Read-only workspace-send status query: classify the exact retained
     /// [`WorkspacePending`] transaction against a fresh complete observation.
     ///
-    /// Takes `&self`, so classification cannot acknowledge, verify, clear,
-    /// rebind, or advance any retained state, revision, or topology. Envelope
-    /// validation (opaque ids, bounds, containment) is the shared
-    /// [`validate_request`] path; target scope validation is the shared
-    /// [`Planner::workspace_target_scope`] helper without any mover command
-    /// binding. The planned-post predicate is the exact
-    /// [`workspace_post_matches`] pure function (it builds one local map and
-    /// only reads `pending.desired_geometry` plus the carried request, so it
-    /// performs no mutation). Identity mismatch reports `stale` without
+    /// Codec and scope-shape validation stay here (tagged decode, shared
+    /// [`Planner::workspace_target_scope`]); the classification outcome itself
+    /// is the Engine-owned [`Engine::inspect`] typed entry point, which takes
+    /// `&self` so classification cannot mutate, acknowledge, verify, clear,
+    /// rebind, or advance anything. Identity mismatch reports `stale` without
     /// recording divergence; a nonmatching observation reports `unresolved`
     /// (never `mixed`); absent pending reports `no-pending-unknown`, which
     /// cannot imply a commit.
@@ -5508,8 +3416,8 @@ impl Planner {
         let cid = ctx.request.correlation_id.clone();
         // Strict tagged decode first (see `SyncCommand`); the read-only
         // contract below is untouched.
-        match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
-            Ok(SyncCommand::SendToWorkspaceStatus {}) => {}
+        let command = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+            Ok(command @ SyncCommand::SendToWorkspaceStatus {}) => command,
             Ok(_) => {
                 return rejected(cid, "status-op-invalid", "status operation is invalid");
             }
@@ -5520,61 +3428,32 @@ impl Planner {
                 let (kind, message) = classify_parse_error(&error);
                 return rejected(valid_correlation_echo(&ctx.raw), kind, message);
             }
-        }
+        };
         // A `domains` payload on this route is already refused fail-closed by
         // `validate_request` (`domain-invalid`); only the target scope below
         // remains to bind.
-        let (target_domain, _) = match self.workspace_target_scope(ctx) {
+        let (target_domain, target_key) = match self.workspace_target_scope(ctx) {
             Ok(scope) => scope,
             Err(reply) => return reply,
         };
-        let Some(pending) = &self.workspace_pending else {
-            return status_reply(&cid, None, "no-pending-unknown");
-        };
-        if let Some(reason) = pending.session.divergence() {
-            return diverged_reply(&cid, reason);
-        }
-        if pending.owner != ctx.owner
-            || pending.generation != ctx.generation
-            || pending.correlation != ctx.correlation
-            || ctx.request.revision != pending.base_revision
-        {
-            return status_reply(&cid, Some(pending.base_revision), "stale");
-        }
-        // Strict scope binding: the carried source/target domains (projected
-        // bounds and gaps included) must equal the retained pending domains.
-        // Window geometry alone does not prove scope.
-        let retained = pending.session.domains();
-        if retained.len() != 2 || retained[0] != ctx.domain || retained[1] != target_domain {
-            return status_reply(&cid, Some(pending.base_revision), "unresolved");
-        }
-        if !workspace_post_matches(pending, ctx) {
-            return status_reply(&cid, Some(pending.base_revision), "unresolved");
-        }
-        match pending.session.status().state {
-            tiler_core::reconcile::StateKind::PendingAcked => {
-                status_reply(&cid, Some(pending.base_revision), "post-acked")
-            }
-            tiler_core::reconcile::StateKind::PendingUnacked => {
-                status_reply(&cid, Some(pending.base_revision), "post-unacked")
-            }
-            _ => status_reply(&cid, Some(pending.base_revision), "unresolved"),
-        }
+        let core_command = core_command_from_sync(&command).expect("non-verify sync op converts");
+        let mut event = core_event(ctx, &core_command);
+        event.target_domain = Some((target_domain, target_key));
+        let reply = self.engine.inspect(&event);
+        serialize_core_reply(ctx, &reply)
     }
 
     /// Read-only directional R4 status query: classify the exact retained
     /// [`DirectionalMovePending`] transaction against a fresh complete
-    /// observation. Same read-only contract as
-    /// [`Planner::evaluate_workspace_status`]; the planned-post predicate is
-    /// the exact [`directional_post_matches`] pure function (one local map,
-    /// reads only), plus strict carried-pair binding to the retained
-    /// source/target keys and projected domains.
+    /// observation. Codec and pair-shape validation stay here; the outcome is
+    /// the Engine-owned [`Engine::inspect`] typed entry point with the same
+    /// read-only contract as [`Planner::evaluate_workspace_status`].
     fn evaluate_directional_status(&self, ctx: &Validated) -> String {
         let cid = ctx.request.correlation_id.clone();
         // Strict tagged decode first (see `SyncCommand`); the read-only
         // contract below is untouched.
-        match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
-            Ok(SyncCommand::DirectionalMoveStatus {}) => {}
+        let command = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+            Ok(command @ SyncCommand::DirectionalMoveStatus {}) => command,
             Ok(_) => {
                 return rejected(cid, "status-op-invalid", "status operation is invalid");
             }
@@ -5585,43 +3464,14 @@ impl Planner {
                 let (kind, message) = classify_parse_error(&error);
                 return rejected(valid_correlation_echo(&ctx.raw), kind, message);
             }
-        }
-        let Some((source_domain, source_key, target_domain, target_key)) = directional_pair(ctx)
-        else {
+        };
+        if directional_pair(ctx).is_none() {
             return snapshot_invalid(cid, MSG_OBSERVATION, "domain-invalid");
-        };
-        let Some(pending) = &self.directional_pending else {
-            return status_reply(&cid, None, "no-pending-unknown");
-        };
-        if let Some(reason) = pending.session.divergence() {
-            return diverged_reply(&cid, reason);
         }
-        if pending.owner != ctx.owner
-            || pending.generation != ctx.generation
-            || pending.correlation != ctx.correlation
-            || ctx.request.revision != pending.base_revision
-        {
-            return status_reply(&cid, Some(pending.base_revision), "stale");
-        }
-        if source_key != &pending.source_key || target_key != &pending.target_key {
-            return status_reply(&cid, Some(pending.base_revision), "unresolved");
-        }
-        let retained = pending.session.domains();
-        if retained.len() != 2 || retained[0] != *source_domain || retained[1] != *target_domain {
-            return status_reply(&cid, Some(pending.base_revision), "unresolved");
-        }
-        if !directional_post_matches(pending, ctx) {
-            return status_reply(&cid, Some(pending.base_revision), "unresolved");
-        }
-        match pending.session.status().state {
-            tiler_core::reconcile::StateKind::PendingAcked => {
-                status_reply(&cid, Some(pending.base_revision), "post-acked")
-            }
-            tiler_core::reconcile::StateKind::PendingUnacked => {
-                status_reply(&cid, Some(pending.base_revision), "post-unacked")
-            }
-            _ => status_reply(&cid, Some(pending.base_revision), "unresolved"),
-        }
+        let core_command = core_command_from_sync(&command).expect("non-verify sync op converts");
+        let event = core_event(ctx, &core_command);
+        let reply = self.engine.inspect(&event);
+        serialize_core_reply(ctx, &reply)
     }
 
     /// Workspace-send cancellation: withdraw the exact retained
@@ -5629,26 +3479,18 @@ impl Planner {
     /// same-UID transport, that its flight dispatched no native write and its
     /// current complete observation still equals the dispatch-time pre-image.
     ///
-    /// Requires the exact owner/generation/correlation/original-request-
-    /// revision identity, the exact route scope, a non-diverged
-    /// `PendingUnacked` reconciler state with no drag capture, the
-    /// `zero_dispatch` attestation, and byte-exact pre-image equality. On
-    /// success clears only the matching pending, its reconciler pending slot,
-    /// and its staged desired state; committed topology, focus, exceptions,
-    /// retained float geometry, accepted revision/fingerprint, and unrelated
-    /// domains are exactly preserved, and the base/ack/verify paths are
-    /// untouched. Every other state fails closed with no mutation and no
-    /// divergence recorded: started writes can only surface as pre-image or
-    /// scope mismatch (natives already moved), acked plans refuse (an applied
-    /// ack may already have committed elsewhere), and stale/diverged/absent/
-    /// malformed probes change nothing.
+    /// Codec and scope-shape validation stay here (tagged decode, the
+    /// `zero_dispatch` attestation precedence, shared target scope); the fenced
+    /// withdraw itself is the Engine-owned [`Engine::handle`] typed entry
+    /// point, which clears only the matching pending on exact pre-image proof
+    /// and preserves everything committed. Every other state fails closed with
+    /// no mutation and no divergence recorded.
     fn evaluate_workspace_cancel(&mut self, ctx: &Validated) -> String {
         let cid = ctx.request.correlation_id.clone();
         // Strict tagged decode first (see `SyncCommand`); attestation, scope,
         // identity, and withdraw effects below are untouched.
-        let zero_dispatch = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone())
-        {
-            Ok(SyncCommand::SendToWorkspaceCancel { zero_dispatch }) => zero_dispatch,
+        let command = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+            Ok(command @ SyncCommand::SendToWorkspaceCancel { .. }) => command,
             Ok(_) => {
                 return rejected(cid, "cancel-op-invalid", "cancel operation is invalid");
             }
@@ -5659,6 +3501,9 @@ impl Planner {
                 let (kind, message) = classify_parse_error(&error);
                 return rejected(valid_correlation_echo(&ctx.raw), kind, message);
             }
+        };
+        let SyncCommand::SendToWorkspaceCancel { zero_dispatch } = &command else {
+            return rejected(cid, "cancel-op-invalid", "cancel operation is invalid");
         };
         if !zero_dispatch {
             return rejected(cid, "cancel-refused", "adapter attests a native dispatch");
@@ -5666,106 +3511,30 @@ impl Planner {
         // A `domains` payload on this route is already refused fail-closed by
         // `validate_request` (`domain-invalid`); only the target scope below
         // remains to bind.
-        let (target_domain, _) = match self.workspace_target_scope(ctx) {
+        let (target_domain, target_key) = match self.workspace_target_scope(ctx) {
             Ok(scope) => scope,
             Err(reply) => return reply,
         };
-        let Some(pending) = &mut self.workspace_pending else {
-            return rejected(cid, "no-pending", "no workspace plan is pending");
-        };
-        if let Some(reason) = pending.session.divergence() {
-            return diverged_reply(&cid, reason);
-        }
-        if pending.owner != ctx.owner
-            || pending.generation != ctx.generation
-            || pending.correlation != ctx.correlation
-            || ctx.request.revision != pending.request_revision
-        {
-            return rejected(
-                cid,
-                "stale",
-                "cancel identity does not match the pending transaction",
-            );
-        }
-        if pending.session.has_drag() {
-            return rejected(cid, "cancel-refused", "pending plan holds a drag capture");
-        }
-        if !matches!(
-            pending.session.status().state,
-            tiler_core::reconcile::StateKind::PendingUnacked
-        ) {
-            return rejected(
-                cid,
-                "cancel-refused",
-                "pending plan was already acknowledged",
-            );
-        }
-        // Strict scope binding first: the carried source/target domains
-        // (projected bounds and gaps included) must equal the retained pending
-        // domains. Window pre-image alone does not prove scope.
-        let retained = pending.session.domains();
-        if retained.len() != 2 || retained[0] != ctx.domain || retained[1] != target_domain {
-            return rejected(
-                cid,
-                "cancel-mismatch",
-                "current scope does not match the pending transaction",
-            );
-        }
-        if !pre_image_matches(
-            &pending.pre_focused,
-            &pending.pre_windows,
-            &pending.pre_target_windows,
-            ctx,
-        ) {
-            return rejected(
-                cid,
-                "cancel-mismatch",
-                "current observation does not match the dispatch-time pre-image",
-            );
-        }
-        let base = pending.base_revision;
-        match pending
-            .session
-            .cancel_unacked_pending(&ctx.correlation, base)
-        {
-            Ok(()) => {
-                self.workspace_pending = None;
-                cancelled_reply(&cid, "send-to-workspace", base)
-            }
-            Err(CancelUnackedError::Diverged(reason)) => diverged_reply(&cid, reason),
-            Err(CancelUnackedError::NoPending) => {
-                rejected(cid, "no-pending", "no workspace plan is pending")
-            }
-            Err(CancelUnackedError::AlreadyAcknowledged) => rejected(
-                cid,
-                "cancel-refused",
-                "pending plan was already acknowledged",
-            ),
-            Err(CancelUnackedError::DragActive) => {
-                rejected(cid, "cancel-refused", "pending plan holds a drag capture")
-            }
-            Err(CancelUnackedError::BindingMismatch) => rejected(
-                cid,
-                "stale",
-                "cancel identity does not match the pending transaction",
-            ),
-        }
+        let core_command = core_command_from_sync(&command).expect("non-verify sync op converts");
+        let mut event = core_event(ctx, &core_command);
+        event.target_domain = Some((target_domain, target_key));
+        let reply = self.engine.handle(&event);
+        serialize_core_reply(ctx, &reply)
     }
 
     /// Directional R4 cancellation: withdraw the exact retained
     /// [`DirectionalMovePending`] transaction under the same contract as
-    /// [`Planner::evaluate_workspace_cancel`], with the carried pair keys and
-    /// projected domains bound to the retained pair plus byte-exact pre-image
-    /// equality over the combined two-domain window set. On success the pair
+    /// [`Planner::evaluate_workspace_cancel`]. Codec and pair-shape validation
+    /// stay here; the fenced withdraw itself is the Engine-owned
+    /// [`Engine::handle`] typed entry point. On success the pair
     /// pending clears without splitting or storing: canonical sessions are
     /// exactly preserved.
     fn evaluate_directional_cancel(&mut self, ctx: &Validated) -> String {
         let cid = ctx.request.correlation_id.clone();
         // Strict tagged decode first (see `SyncCommand`); attestation, pair
         // binding, identity, and withdraw effects below are untouched.
-        let zero_dispatch = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone())
-        {
-            Ok(SyncCommand::DirectionalMoveCancel { zero_dispatch }) => zero_dispatch,
+        let command = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+            Ok(command @ SyncCommand::DirectionalMoveCancel { .. }) => command,
             Ok(_) => {
                 return rejected(cid, "cancel-op-invalid", "cancel operation is invalid");
             }
@@ -5777,92 +3546,19 @@ impl Planner {
                 return rejected(valid_correlation_echo(&ctx.raw), kind, message);
             }
         };
+        let SyncCommand::DirectionalMoveCancel { zero_dispatch } = &command else {
+            return rejected(cid, "cancel-op-invalid", "cancel operation is invalid");
+        };
         if !zero_dispatch {
             return rejected(cid, "cancel-refused", "adapter attests a native dispatch");
         }
-        let Some((source_domain, source_key, target_domain, target_key)) = directional_pair(ctx)
-        else {
+        if directional_pair(ctx).is_none() {
             return snapshot_invalid(cid, MSG_OBSERVATION, "domain-invalid");
-        };
-        let Some(pending) = &mut self.directional_pending else {
-            return rejected(cid, "no-pending", "no directional move is pending");
-        };
-        if let Some(reason) = pending.session.divergence() {
-            return diverged_reply(&cid, reason);
         }
-        if pending.owner != ctx.owner
-            || pending.generation != ctx.generation
-            || pending.correlation != ctx.correlation
-            || ctx.request.revision != pending.request_revision
-        {
-            return rejected(
-                cid,
-                "stale",
-                "cancel identity does not match the pending transaction",
-            );
-        }
-        if pending.session.has_drag() {
-            return rejected(cid, "cancel-refused", "pending plan holds a drag capture");
-        }
-        if !matches!(
-            pending.session.status().state,
-            tiler_core::reconcile::StateKind::PendingUnacked
-        ) {
-            return rejected(
-                cid,
-                "cancel-refused",
-                "pending plan was already acknowledged",
-            );
-        }
-        if source_key != &pending.source_key || target_key != &pending.target_key {
-            return rejected(
-                cid,
-                "cancel-mismatch",
-                "current scope does not match the pending transaction",
-            );
-        }
-        let retained = pending.session.domains();
-        if retained.len() != 2 || retained[0] != *source_domain || retained[1] != *target_domain {
-            return rejected(
-                cid,
-                "cancel-mismatch",
-                "current scope does not match the pending transaction",
-            );
-        }
-        if !pre_image_matches(&pending.pre_focused, &pending.pre_windows, &[], ctx) {
-            return rejected(
-                cid,
-                "cancel-mismatch",
-                "current observation does not match the dispatch-time pre-image",
-            );
-        }
-        let base = pending.base_revision;
-        match pending
-            .session
-            .cancel_unacked_pending(&ctx.correlation, base)
-        {
-            Ok(()) => {
-                self.directional_pending = None;
-                cancelled_reply(&cid, "directional-move", base)
-            }
-            Err(CancelUnackedError::Diverged(reason)) => diverged_reply(&cid, reason),
-            Err(CancelUnackedError::NoPending) => {
-                rejected(cid, "no-pending", "no directional move is pending")
-            }
-            Err(CancelUnackedError::AlreadyAcknowledged) => rejected(
-                cid,
-                "cancel-refused",
-                "pending plan was already acknowledged",
-            ),
-            Err(CancelUnackedError::DragActive) => {
-                rejected(cid, "cancel-refused", "pending plan holds a drag capture")
-            }
-            Err(CancelUnackedError::BindingMismatch) => rejected(
-                cid,
-                "stale",
-                "cancel identity does not match the pending transaction",
-            ),
-        }
+        let core_command = core_command_from_sync(&command).expect("non-verify sync op converts");
+        let event = core_event(ctx, &core_command);
+        let reply = self.engine.handle(&event);
+        serialize_core_reply(ctx, &reply)
     }
 }
 
@@ -5951,45 +3647,6 @@ fn evaluate_toggle_float_with(
         None => None,
     };
     evaluate(&window, float_rect)
-}
-
-fn float_planned_reply(
-    correlation_id: &str,
-    plan: &SessionPlan,
-    float_rect: Option<Rect>,
-) -> String {
-    serialize_bounded(&PlanReply {
-        v: PLAN_CONTRACT_VERSION,
-        correlation_id: correlation_id.to_owned(),
-        outcome: "planned",
-        kind: None,
-        message: None,
-        base_revision: Some(plan.dispatch.base_revision),
-        detail: Some(serde_json::json!({
-            "kind": "toggle-float",
-            "policy_version": plan.dispatch.policy_version,
-            "capability": "intentional-float",
-        })),
-        desired_geometry: Some(plan.desired_geometry.iter().map(geometry_reply).collect()),
-        desired_focus: match (&plan.desired_focus_domain, &plan.desired_focus_leaf) {
-            (Some(domain), Some(leaf)) => Some(focus_reply(domain, leaf)),
-            _ => None,
-        },
-        float_geometry: float_rect.map(|rect| FloatReplyBody {
-            window: match &plan.dispatch.operation {
-                LifecycleOperation::Remove { window, .. } => window.0.clone(),
-                _ => String::new(),
-            },
-            rect: RectDto {
-                x: rect.x,
-                y: rect.y,
-                w: rect.w,
-                h: rect.h,
-            },
-        }),
-        preconditions: None,
-        operation: None,
-    })
 }
 
 /// Directional move/focus plumbing value for the canonical pair path.
@@ -6161,6 +3818,178 @@ fn is_unknown_variant(error: &serde_json::Error) -> bool {
     error.to_string().contains("unknown variant")
 }
 
+/// Typed core boundary conversion (AR3 slice, deferred for verify).
+///
+/// Maps the already-decoded [`SyncCommand`] into
+/// [`tiler_core::boundary::CoreCommand`] after the existing validation, async
+/// dispatch, pending-conflict, send-dispatch, and binding-sync boundaries.
+/// Total for the synchronous plus ack/status/cancel routes: clones
+/// already-validated values, never validates, never re-parses. Fallible wire
+/// vocabularies (direction/mode/ack outcome) cross opaquely so handler-local
+/// precedence (`not-tiled`, `ack-refused`, `*-op-invalid`) is untouched.
+/// Verify routes are deferred: this returns `None` for both verify variants
+/// because their [`RawEcho`] echoes must parse after the `verified` gate into
+/// fully validated typed fields (malformed as `verify-invalid`) with the typed
+/// verify command constructed directly in the verify evaluators before
+/// [`Engine::handle`]. No fabricated placeholder values exist here or in
+/// tests. Pending, binding, and transaction state never cross. Directional
+/// pair state comes from the validated `directional_domains`/`directional_keys`;
+/// the workspace-send target stays route-local (validated `WorkspaceInput`)
+/// until a later slice moves that orchestration.
+fn core_command_from_sync(command: &SyncCommand) -> Option<tiler_core::boundary::CoreCommand> {
+    use tiler_core::boundary::CoreCommand;
+    use tiler_core::directional::{OutputId, WorkspaceId};
+    match command {
+        SyncCommand::Reconcile {} => Some(CoreCommand::Reconcile),
+        SyncCommand::UpdateGaps {} => Some(CoreCommand::UpdateGaps),
+        SyncCommand::Admit {
+            window,
+            output,
+            workspace,
+            placement_bounds,
+        } => Some(CoreCommand::Admit {
+            window: WindowId(window.clone()),
+            output: OutputId(output.clone()),
+            workspace: WorkspaceId(workspace.clone()),
+            placement_bounds: placement_bounds.as_ref().map(|rect| Rect {
+                x: rect.x,
+                y: rect.y,
+                w: rect.w,
+                h: rect.h,
+            }),
+        }),
+        SyncCommand::Remove { window } => Some(CoreCommand::Remove {
+            window: WindowId(window.clone()),
+        }),
+        SyncCommand::ActiveGroup {} => Some(CoreCommand::ActiveGroup),
+        SyncCommand::Move {
+            window,
+            direction,
+            cross_output_transfer,
+        } => Some(CoreCommand::Move {
+            window: window.clone(),
+            direction: direction.clone(),
+            cross_output_transfer: *cross_output_transfer,
+        }),
+        SyncCommand::Focus {
+            window,
+            direction,
+            cross_output_transfer,
+        } => Some(CoreCommand::Focus {
+            window: window.clone(),
+            direction: direction.clone(),
+            cross_output_transfer: *cross_output_transfer,
+        }),
+        SyncCommand::Resize {
+            window,
+            direction,
+            mode,
+            press_index,
+        } => Some(CoreCommand::Resize {
+            window: window.clone(),
+            direction: direction.clone(),
+            mode: mode.clone(),
+            press_index: *press_index,
+        }),
+        SyncCommand::PointerResize {
+            window,
+            direction,
+            boundary,
+        } => Some(CoreCommand::PointerResize {
+            window: window.clone(),
+            direction: direction.clone(),
+            boundary: *boundary,
+        }),
+        SyncCommand::ToggleFloat { window, float_rect } => Some(CoreCommand::ToggleFloat {
+            window: window.clone(),
+            float_rect: float_rect.as_ref().map(|rect| Rect {
+                x: rect.x,
+                y: rect.y,
+                w: rect.w,
+                h: rect.h,
+            }),
+        }),
+        SyncCommand::SendToWorkspace {
+            window,
+            target_output,
+            target_workspace,
+        } => Some(CoreCommand::SendToWorkspace {
+            window: window.clone(),
+            target_output: target_output.clone(),
+            target_workspace: target_workspace.clone(),
+        }),
+        SyncCommand::SendToWorkspaceAck { ack_outcome } => Some(CoreCommand::SendAck {
+            ack_outcome: ack_outcome.clone(),
+        }),
+        SyncCommand::SendToWorkspaceVerify { .. } => None,
+        SyncCommand::SendToWorkspaceStatus {} => Some(CoreCommand::SendStatus),
+        SyncCommand::SendToWorkspaceCancel { zero_dispatch } => Some(CoreCommand::SendCancel {
+            zero_dispatch: *zero_dispatch,
+        }),
+        SyncCommand::DirectionalMoveAck { ack_outcome } => Some(CoreCommand::DirectionalAck {
+            ack_outcome: ack_outcome.clone(),
+        }),
+        SyncCommand::DirectionalMoveVerify { .. } => None,
+        SyncCommand::DirectionalMoveStatus {} => Some(CoreCommand::DirectionalStatus),
+        SyncCommand::DirectionalMoveCancel { zero_dispatch } => {
+            Some(CoreCommand::DirectionalCancel {
+                zero_dispatch: *zero_dispatch,
+            })
+        }
+    }
+}
+
+/// Total [`tiler_core::boundary::CoreEvent`] construction from validated
+/// state plus an already-decoded command. See
+/// [`core_command_from_sync`] for the precedence contract.
+fn core_event(
+    ctx: &Validated,
+    command: &tiler_core::boundary::CoreCommand,
+) -> tiler_core::boundary::CoreEvent {
+    let directional = match (&ctx.directional_domains, &ctx.directional_keys) {
+        (Some(domains), Some(keys)) => {
+            Some(domains.iter().cloned().zip(keys.iter().cloned()).collect())
+        }
+        _ => None,
+    };
+    let directional_target_outer_gap = ctx
+        .raw
+        .get("domains")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|entries| entries.get(1))
+        .and_then(|entry| entry.get("outer_gap"))
+        .and_then(serde_json::Value::as_i64)
+        .filter(|gap| (0..=i64::from(GEOMETRY_MAX_GAP)).contains(gap))
+        .map(|gap| gap as i32);
+    tiler_core::boundary::CoreEvent {
+        owner: ctx.owner.clone(),
+        generation: ctx.generation.clone(),
+        correlation: ctx.correlation.clone(),
+        revision: ctx.request.revision,
+        fingerprint: ctx.request.fingerprint,
+        domain: ctx.domain.clone(),
+        domain_key: ctx.domain_key.clone(),
+        outer_gap: ctx.request.domain.outer_gap,
+        focused_window: WindowId(ctx.request.focused_window.clone()),
+        windows: ctx
+            .request
+            .windows
+            .iter()
+            .map(engine_window_from_dto)
+            .collect(),
+        directional,
+        directional_target_outer_gap,
+        target_domain: None,
+        target_windows: ctx
+            .request
+            .target_windows
+            .iter()
+            .map(engine_window_from_dto)
+            .collect(),
+        command: command.clone(),
+    }
+}
+
 /// Fixed `no-group` reasons (short lowercase-hyphenated ASCII, never echoes
 /// input). Covers invalid/missing/non-tiled focus, unknown domain/tree,
 /// root-leaf focus, projection failure, and pending/divergence.
@@ -6202,81 +4031,16 @@ fn no_group_reply(ctx: &Validated, base_revision: Option<u64>, reason: &'static 
     })
 }
 
-/// Shared read-only group resolution over one authoritative session (retained
-/// or ephemeral): validates domain binding, focus mapping, and tree presence,
-/// then derives the focused leaf's immediate parent group through
-/// [`tiler_core::active_group::describe_active_group`] using only retained
-/// bounds/gap plus engine projection. Always returns a bounded
-/// `active-group`/`no-group` reply; never mutates. The carried revision is
-/// intentionally not gated: this is a read-only current-state snapshot, so a
-/// lagging or initial-zero caller revision still resolves; freshness is
-/// carried in the returned `base_revision` for downstream ordering. The
-/// `stale-revision` reason token is retained in the closed reason registry
-/// for contract compatibility but is no longer emitted by this resolver.
-/// Carried windows are never topology sources (see retained-route docs).
-fn active_group_response(session: &Session, ctx: &Validated) -> String {
-    let base = session.accepted_revision();
-    if session.divergence().is_some() {
-        return no_group_reply(ctx, Some(base), "diverged");
+/// Byte-exact `active-group` found serializer for the [`serialize_core_reply`]
+/// choke point (single source).
+fn serialize_active_group_found(
+    ctx: &Validated,
+    found: &tiler_core::boundary::ActiveGroupFound,
+) -> String {
+    if found.members.len() > PLAN_MAX_WINDOWS {
+        return no_group_reply(ctx, Some(found.base_revision), "no-parent-group");
     }
-    if session.has_pending() || session.has_pending_desired() || session.has_drag() {
-        return no_group_reply(ctx, Some(base), "pending");
-    }
-    let Some(retained_domain) = session
-        .domains()
-        .iter()
-        .find(|domain| domain.key() == ctx.domain_key)
-        .cloned()
-    else {
-        return no_group_reply(ctx, Some(base), "domain-mismatch");
-    };
-    if retained_domain.bounds != ctx.domain.bounds || retained_domain.gap != ctx.domain.gap {
-        return no_group_reply(ctx, Some(base), "domain-mismatch");
-    }
-    let (focus_domain, focus_leaf) = session.focus();
-    let (Some(focus_domain), Some(focus_leaf)) = (focus_domain, focus_leaf) else {
-        return no_group_reply(ctx, Some(base), "focus-mismatch");
-    };
-    if focus_domain != ctx.domain_key {
-        return no_group_reply(ctx, Some(base), "focus-mismatch");
-    }
-    let snapshot = session.snapshot();
-    let Some(tree) = snapshot
-        .domains
-        .into_iter()
-        .find(|domain| {
-            domain.output == ctx.domain_key.output && domain.workspace == ctx.domain_key.workspace
-        })
-        .and_then(|domain| domain.tree)
-    else {
-        return no_group_reply(ctx, Some(base), "no-tree");
-    };
-    let leaf_to_window: std::collections::BTreeMap<NodeId, WindowId> = snapshot
-        .windows
-        .into_iter()
-        .filter(|link| {
-            link.output == ctx.domain_key.output && link.workspace == ctx.domain_key.workspace
-        })
-        .map(|link| (link.leaf, link.window))
-        .collect();
-    let focused_window = WindowId(ctx.request.focused_window.clone());
-    match leaf_to_window.get(&focus_leaf) {
-        Some(window) if *window == focused_window => {}
-        _ => return no_group_reply(ctx, Some(base), "focus-unmapped"),
-    }
-    let Some(group) = tiler_core::active_group::describe_active_group(
-        &tree,
-        retained_domain.bounds,
-        retained_domain.gap,
-        &focus_leaf,
-        &leaf_to_window,
-    ) else {
-        return no_group_reply(ctx, Some(base), "no-parent-group");
-    };
-    if group.members.len() > PLAN_MAX_WINDOWS {
-        return no_group_reply(ctx, Some(base), "no-parent-group");
-    }
-    let members: Vec<serde_json::Value> = group
+    let members: Vec<serde_json::Value> = found
         .members
         .iter()
         .map(|member| {
@@ -6287,7 +4051,7 @@ fn active_group_response(session: &Session, ctx: &Validated) -> String {
             })
         })
         .collect();
-    let geometry: Vec<GeometryReply> = group
+    let geometry: Vec<GeometryReply> = found
         .members
         .iter()
         .map(|member| GeometryReply {
@@ -6309,21 +4073,21 @@ fn active_group_response(session: &Session, ctx: &Validated) -> String {
         outcome: "active-group",
         kind: Some("active-group".to_owned()),
         message: None,
-        base_revision: Some(base),
+        base_revision: Some(found.base_revision),
         detail: Some(serde_json::json!({
             "kind": "active-group",
             "owner": ctx.owner.as_str(),
             "generation": ctx.generation.as_str(),
             "domain_output": ctx.domain_key.output.0,
             "domain_workspace": ctx.domain_key.workspace.0,
-            "group": group.group.0,
-            "focused_leaf": focus_leaf.0,
-            "focused_window": focused_window.0,
+            "group": found.group.0,
+            "focused_leaf": found.focused_leaf.0,
+            "focused_window": found.focused_window.0,
             "members": members,
-            "bounds": {"x": group.bounds.x, "y": group.bounds.y, "w": group.bounds.w, "h": group.bounds.h},
+            "bounds": {"x": found.bounds.x, "y": found.bounds.y, "w": found.bounds.w, "h": found.bounds.h},
         })),
         desired_geometry: Some(geometry),
-        desired_focus: Some(focus_reply(&ctx.domain_key, &focus_leaf)),
+        desired_focus: Some(focus_reply(&ctx.domain_key, &found.focused_leaf)),
         float_geometry: None,
         preconditions: None,
         operation: None,
@@ -7803,6 +5567,561 @@ mod tests {
             planner.evaluate(&active_group_extra),
             "{\"v\":1,\"correlation_id\":\"gold-ag-2\",\"outcome\":\"rejected\",\"kind\":\"unknown-field\",\"message\":\"request contains an unknown field\"}",
         );
+    }
+    #[test]
+    fn typed_boundary_conversion_covers_all_nineteen_ops_total() {
+        // Fence proof for the AR3 boundary slice: the 17 non-verify wire ops
+        // decode once via `SyncCommand`, then convert into `CoreCommand` with
+        // the identical `op` token. Fallible vocabularies (direction/mode/ack)
+        // cross opaquely. Both verify echoes arrive as deferred `RawEcho`
+        // opaquely at outer decode, defer here (`None`), then parse into fully
+        // validated typed fields after the `verified` gate in the verify
+        // evaluators before `Engine::handle`; production typed verify
+        // construction below uses only real validated echoes, never fabricated
+        // placeholders.
+        let commands = [
+            serde_json::json!({"op": "reconcile"}),
+            serde_json::json!({"op": "update-gaps"}),
+            serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
+            serde_json::json!({"op": "remove", "window": "win-1"}),
+            serde_json::json!({"op": "active-group"}),
+            serde_json::json!({"op": "move", "window": "win-1", "direction": "left"}),
+            serde_json::json!({"op": "focus", "window": "win-1", "direction": "left"}),
+            serde_json::json!({"op": "resize", "window": "win-1", "direction": "left", "mode": "inwards", "press_index": 0}),
+            serde_json::json!({"op": "pointer-resize", "window": "win-1", "direction": "left", "boundary": 10}),
+            serde_json::json!({"op": "toggle-float", "window": "win-1"}),
+            serde_json::json!({"op": "send-to-workspace", "window": "win-1", "target_output": "out-1", "target_workspace": "ws-2"}),
+            serde_json::json!({"op": "send-to-workspace-ack", "ack_outcome": "accepted"}),
+            serde_json::json!({"op": "send-to-workspace-status"}),
+            serde_json::json!({"op": "send-to-workspace-cancel", "zero_dispatch": false}),
+            serde_json::json!({"op": "directional-move-ack", "ack_outcome": "accepted"}),
+            serde_json::json!({"op": "directional-move-status"}),
+            serde_json::json!({"op": "directional-move-cancel", "zero_dispatch": false}),
+        ];
+        assert_eq!(commands.len(), 17);
+        let mut ops = std::collections::HashSet::new();
+        for command in &commands {
+            let decoded: SyncCommand =
+                serde_json::from_value(command.clone()).expect("wire op decodes");
+            let converted = core_command_from_sync(&decoded).expect("non-verify op converts");
+            let expected = command.get("op").and_then(|op| op.as_str()).expect("op");
+            assert_eq!(converted.op(), expected);
+            ops.insert(converted.op());
+        }
+        assert_eq!(ops.len(), 17);
+        // Verify wire tokens decode; conversion defers (`None`).
+        let ws_verify = serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": ["window-observed", "desired-topology-valid", "adapter-must-verify-postconditions"], "operation": {"op": "move-tiled", "window": "win-1", "leaf": "leaf-1", "source_output": "out-1", "source_workspace": "ws-1", "target_output": "out-1", "target_workspace": "ws-2"}});
+        let decoded: SyncCommand =
+            serde_json::from_value(ws_verify.clone()).expect("verify op decodes");
+        assert!(matches!(decoded, SyncCommand::SendToWorkspaceVerify { .. }));
+        assert!(core_command_from_sync(&decoded).is_none());
+        // Production typed construction from the real validated echoes above.
+        if let SyncCommand::SendToWorkspaceVerify {
+            verified,
+            preconditions,
+            operation,
+        } = decoded
+        {
+            let typed_pre = parse_lifecycle_preconditions(&preconditions)
+                .expect("real workspace echoes validate");
+            let typed_op =
+                parse_move_tiled_operation(&operation).expect("real workspace op validates");
+            let typed = tiler_core::boundary::CoreCommand::SendVerify {
+                verified,
+                preconditions: typed_pre,
+                operation: typed_op,
+            };
+            assert_eq!(typed.op(), "send-to-workspace-verify");
+        } else {
+            panic!("expected SendToWorkspaceVerify");
+        }
+        let dir_verify = serde_json::json!({"op": "directional-move-verify", "verified": true, "preconditions": ["focused-leaf-occupied-by-focused-window", "adapter-must-verify-postconditions"], "operation": {"op": "move", "rule": "R4", "capability": "CrossOutputTransfer", "direction": "right", "window": "win-1", "leaf": "leaf-1", "source_output": "out-1", "source_workspace": "ws-1", "target_output": "out-2", "target_workspace": "ws-1", "source_root_child_index": 0, "target": "empty"}});
+        let decoded: SyncCommand =
+            serde_json::from_value(dir_verify.clone()).expect("verify op decodes");
+        assert!(matches!(decoded, SyncCommand::DirectionalMoveVerify { .. }));
+        assert!(core_command_from_sync(&decoded).is_none());
+        if let SyncCommand::DirectionalMoveVerify {
+            verified,
+            preconditions,
+            operation,
+        } = decoded
+        {
+            let typed_pre = parse_directional_preconditions(&preconditions)
+                .expect("real directional echoes validate");
+            let (typed_op, echo) = parse_directional_move_operation(&operation)
+                .expect("real directional op validates");
+            let typed = tiler_core::boundary::CoreCommand::DirectionalVerify {
+                verified,
+                preconditions: typed_pre,
+                operation: typed_op,
+                echo_source_output: tiler_core::directional::OutputId(echo.source_output),
+                echo_source_workspace: tiler_core::directional::WorkspaceId(echo.source_workspace),
+                echo_target_output: tiler_core::directional::OutputId(echo.target_output),
+                echo_target_workspace: tiler_core::directional::WorkspaceId(echo.target_workspace),
+            };
+            assert_eq!(typed.op(), "directional-move-verify");
+        } else {
+            panic!("expected DirectionalMoveVerify");
+        }
+        assert_eq!(ops.len() + 2, 19);
+        // Opaque crossings: unknown direction/mode/ack strings convert without
+        // validation; handlers own precedence. Bogus verify echoes decode
+        // opaquely at the outer `SyncCommand` boundary (deferred `RawEcho`)
+        // yet still defer here; the verify evaluators gate `verified=false`
+        // before nested parsing and map malformed echoes to `verify-invalid`
+        // before any `Engine::handle` transition.
+        let decoded: SyncCommand = serde_json::from_value(
+            serde_json::json!({"op": "move", "window": "win-1", "direction": "sideways"}),
+        )
+        .expect("decodes");
+        assert!(matches!(
+            core_command_from_sync(&decoded).expect("non-verify converts"),
+            tiler_core::boundary::CoreCommand::Move { direction, .. } if direction == "sideways"
+        ));
+        let decoded: SyncCommand = serde_json::from_value(serde_json::json!({
+            "op": "send-to-workspace-verify",
+            "verified": false,
+            "preconditions": "bogus",
+            "operation": "bogus",
+        }))
+        .expect("deferred echo decodes opaquely");
+        assert!(core_command_from_sync(&decoded).is_none());
+    }
+    #[test]
+    fn core_reply_choke_point_matches_legacy_constructors_byte_exact() {
+        // Proof that `serialize_core_reply` is a byte-exact funnel for every
+        // `CoreReply` shape: each arm must equal its legacy constructor.
+        // Production-real arms (Projection, Tiled admit/remove,
+        // ActiveGroup/NoGroup) are additionally covered by wire goldens
+        // through `evaluate`; the remaining arms pin bytes here until their
+        // routes migrate.
+        use tiler_core::boundary::{
+            CoreReply, NoGroupReason, ProjectionKind, ProjectionPlan, TiledKind, TiledPlan,
+            TransactionKind, TransactionStatus,
+        };
+        use tiler_core::contract::DivergenceKind;
+        let request = retained_request(
+            "core-reply-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
+        );
+        let ctx = validate_request(&request).expect("fixture validates");
+        assert_eq!(
+            serialize_core_reply(
+                &ctx,
+                &CoreReply::Rejected {
+                    kind: "unknown-value",
+                    message: MSG_UNKNOWN_VALUE,
+                }
+            ),
+            rejected(
+                "core-reply-1".to_owned(),
+                "unknown-value",
+                MSG_UNKNOWN_VALUE
+            ),
+        );
+        assert_eq!(
+            serialize_core_reply(
+                &ctx,
+                &CoreReply::SnapshotInvalid {
+                    message: MSG_OBSERVATION,
+                    detail: "focused-not-observed",
+                }
+            ),
+            snapshot_invalid(
+                "core-reply-1".to_owned(),
+                MSG_OBSERVATION,
+                "focused-not-observed",
+            ),
+        );
+        assert_eq!(
+            serialize_core_reply(&ctx, &CoreReply::Diverged(DivergenceKind::OwnerMismatch)),
+            diverged_reply("core-reply-1", DivergenceKind::OwnerMismatch),
+        );
+        assert_eq!(
+            serialize_core_reply(
+                &ctx,
+                &CoreReply::Status {
+                    base_revision: Some(3),
+                    status: TransactionStatus::PostUnacked,
+                }
+            ),
+            status_reply("core-reply-1", Some(3), "post-unacked"),
+        );
+        assert_eq!(
+            serialize_core_reply(
+                &ctx,
+                &CoreReply::Status {
+                    base_revision: None,
+                    status: TransactionStatus::NoPendingUnknown,
+                }
+            ),
+            status_reply("core-reply-1", None, "no-pending-unknown"),
+        );
+        assert_eq!(
+            serialize_core_reply(
+                &ctx,
+                &CoreReply::Acknowledged {
+                    base_revision: 3,
+                    kind: TransactionKind::SendToWorkspace,
+                }
+            ),
+            "{\"v\":1,\"correlation_id\":\"core-reply-1\",\"outcome\":\"acknowledged\",\"kind\":\"send-to-workspace\",\"base_revision\":3}",
+        );
+        assert_eq!(
+            serialize_core_reply(
+                &ctx,
+                &CoreReply::Committed {
+                    revision: 4,
+                    kind: TransactionKind::DirectionalMove,
+                }
+            ),
+            "{\"v\":1,\"correlation_id\":\"core-reply-1\",\"outcome\":\"committed\",\"kind\":\"directional-move\",\"base_revision\":4}",
+        );
+        assert_eq!(
+            serialize_core_reply(
+                &ctx,
+                &CoreReply::Cancelled {
+                    base_revision: 3,
+                    kind: TransactionKind::SendToWorkspace,
+                }
+            ),
+            cancelled_reply("core-reply-1", "send-to-workspace", 3),
+        );
+        let projection = ProjectionPlan {
+            base_revision: 2,
+            kind: ProjectionKind::Reconcile,
+            geometry: Vec::new(),
+            focus_domain: None,
+            focus_leaf: None,
+        };
+        assert_eq!(
+            serialize_core_reply(&ctx, &CoreReply::Projection(projection.clone())),
+            planned_projection_reply("core-reply-1", &projection),
+        );
+        let tiled = TiledPlan {
+            base_revision: 2,
+            policy_version: 1,
+            kind: TiledKind::Remove,
+            geometry: Vec::new(),
+            focus_domain: None,
+            focus_leaf: None,
+            float_window: None,
+            float_rect: None,
+        };
+        assert_eq!(
+            serialize_core_reply(&ctx, &CoreReply::Tiled(tiled.clone())),
+            planned_tiled_reply("core-reply-1", &tiled),
+        );
+        assert_eq!(
+            serialize_core_reply(
+                &ctx,
+                &CoreReply::NoGroup {
+                    base_revision: None,
+                    reason: NoGroupReason::NoSession,
+                }
+            ),
+            no_group_reply(&ctx, None, "no-session"),
+        );
+    }
+    #[test]
+    fn sync_family_choke_point_matches_legacy_shapes_byte_exact() {
+        // Byte pins for the migrated sync family (move local/cross, focus
+        // local/cross, keyboard/pointer resize, toggle-float): literals
+        // recorded from the typed serializers, with key order and tokens
+        // verified against the replaced legacy constructors. The matching
+        // production goldens (`typed_sync_codec_move_focus_resize_float_wire_golden`
+        // and friends) prove the same bytes flow end to end.
+        use tiler_core::boundary::{
+            CoreReply, FocusPlanReply, MoveCrossView, MovePlanReply, ResizePlanReply, TiledKind,
+            TiledPlan,
+        };
+        use tiler_core::contract::{FocusOperation, ResizeMode, ResizeOperation};
+        use tiler_core::directional::{Capability, CrossOutputTarget, Direction, Rule};
+        let request = retained_request(
+            "core-sync-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
+        );
+        let ctx = validate_request(&request).expect("fixture validates");
+        let focus_leaf = NodeId::from("leaf-1");
+        let move_local = MovePlanReply {
+            base_revision: 2,
+            rule: Rule::R2a,
+            capability: Capability::SwapNeighbor,
+            direction: Direction::Right,
+            geometry: Vec::new(),
+            focus_domain: ctx.domain_key.clone(),
+            focus_leaf: focus_leaf.clone(),
+            cross: None,
+        };
+        assert_eq!(
+            serialize_core_reply(&ctx, &CoreReply::MoveDirectional(move_local)),
+            "{\"v\":1,\"correlation_id\":\"core-sync-1\",\"outcome\":\"planned\",\"base_revision\":2,\"detail\":{\"capability\":\"SwapNeighbor\",\"direction\":\"right\",\"kind\":\"move\",\"rule\":\"R2a\"},\"desired_geometry\":[],\"desired_focus\":{\"domain_output\":\"out-1\",\"domain_workspace\":\"ws-1\",\"leaf\":\"leaf-1\"}}",
+        );
+        let move_cross = MovePlanReply {
+            base_revision: 2,
+            rule: Rule::R2a,
+            capability: Capability::SwapNeighbor,
+            direction: Direction::Right,
+            geometry: Vec::new(),
+            focus_domain: ctx.domain_key.clone(),
+            focus_leaf: focus_leaf.clone(),
+            cross: Some(MoveCrossView {
+                rule: Rule::R4,
+                intent_direction: Direction::Right,
+                intent_window: WindowId::from("win-1"),
+                intent_leaf: NodeId::from("leaf-1"),
+                source_output: OutputId::from("out-1"),
+                source_workspace: WorkspaceId::from("ws-1"),
+                target_output: OutputId::from("out-2"),
+                target_workspace: WorkspaceId::from("ws-1"),
+                source_root_child_index: 1,
+                target: CrossOutputTarget::Occupied,
+                preconditions: Vec::new(),
+            }),
+        };
+        assert_eq!(
+            serialize_core_reply(&ctx, &CoreReply::MoveDirectional(move_cross)),
+            "{\"v\":1,\"correlation_id\":\"core-sync-1\",\"outcome\":\"planned\",\"base_revision\":2,\"detail\":{\"capability\":\"SwapNeighbor\",\"direction\":\"right\",\"kind\":\"move\",\"rule\":\"R2a\"},\"desired_geometry\":[],\"desired_focus\":{\"domain_output\":\"out-1\",\"domain_workspace\":\"ws-1\",\"leaf\":\"leaf-1\"},\"preconditions\":[],\"operation\":{\"capability\":\"SwapNeighbor\",\"direction\":\"right\",\"leaf\":\"leaf-1\",\"op\":\"move\",\"rule\":\"R4\",\"source_output\":\"out-1\",\"source_root_child_index\":1,\"source_workspace\":\"ws-1\",\"target\":\"occupied\",\"target_output\":\"out-2\",\"target_workspace\":\"ws-1\",\"window\":\"win-1\"}}",
+        );
+        let focus_local = FocusPlanReply {
+            base_revision: 2,
+            direction: Direction::Right,
+            to_window: WindowId::from("win-2"),
+            geometry: Vec::new(),
+            focus_domain: ctx.domain_key.clone(),
+            focus_leaf: focus_leaf.clone(),
+            cross_operation: None,
+        };
+        assert_eq!(
+            serialize_core_reply(&ctx, &CoreReply::FocusDirectional(focus_local)),
+            "{\"v\":1,\"correlation_id\":\"core-sync-1\",\"outcome\":\"planned\",\"base_revision\":2,\"detail\":{\"capability\":\"directional-focus\",\"direction\":\"right\",\"kind\":\"focus\",\"to_window\":\"win-2\"},\"desired_geometry\":[],\"desired_focus\":{\"domain_output\":\"out-1\",\"domain_workspace\":\"ws-1\",\"leaf\":\"leaf-1\"}}",
+        );
+        let focus_cross = FocusPlanReply {
+            base_revision: 2,
+            direction: Direction::Right,
+            to_window: WindowId::from("win-2"),
+            geometry: Vec::new(),
+            focus_domain: ctx.domain_key.clone(),
+            focus_leaf: focus_leaf.clone(),
+            cross_operation: Some(FocusOperation {
+                domain_output: OutputId::from("out-2"),
+                domain_workspace: WorkspaceId::from("ws-1"),
+                from_leaf: NodeId::from("a"),
+                to_leaf: NodeId::from("b"),
+                from_window: WindowId::from("win-1"),
+                to_window: WindowId::from("win-2"),
+                direction: Direction::Right,
+                route: vec![NodeId::from("a"), NodeId::from("b")],
+                cross_source_output: Some(OutputId::from("out-1")),
+                cross_source_workspace: Some(WorkspaceId::from("ws-1")),
+            }),
+        };
+        let cross_text = serialize_core_reply(&ctx, &CoreReply::FocusDirectional(focus_cross));
+        let cross: serde_json::Value = serde_json::from_str(&cross_text).expect("serializes");
+        assert_eq!(cross["outcome"], "planned");
+        assert_eq!(
+            cross["detail"],
+            serde_json::json!({"capability": "directional-focus", "cross_output": true, "direction": "right", "kind": "focus", "to_window": "win-2"}),
+        );
+        assert_eq!(
+            cross["operation"],
+            serde_json::json!({"op": "focus", "domain_output": "out-2", "domain_workspace": "ws-1", "from_leaf": "a", "to_leaf": "b", "from_window": "win-1", "to_window": "win-2", "direction": "right", "route": ["a", "b"], "cross_source_output": "out-1", "cross_source_workspace": "ws-1"}),
+        );
+        let resize_op = ResizeOperation {
+            domain_output: OutputId::from("out-1"),
+            domain_workspace: WorkspaceId::from("ws-1"),
+            focused_leaf: NodeId::from("a"),
+            focused_window: WindowId::from("win-1"),
+            direction: Direction::Right,
+            mode: ResizeMode::Outwards,
+            target_group: NodeId::from("grp"),
+            focused_child: NodeId::from("a"),
+            neighbor_child: NodeId::from("b"),
+            focused_index: 0,
+            neighbor_index: 1,
+            old_shares: vec![1, 1],
+            new_shares: vec![611, 587],
+        };
+        let resize = ResizePlanReply {
+            base_revision: 2,
+            direction: Direction::Right,
+            mode: Some(ResizeMode::Outwards),
+            boundary: None,
+            operation: resize_op.clone(),
+            geometry: Vec::new(),
+            focus_domain: ctx.domain_key.clone(),
+            focus_leaf: focus_leaf.clone(),
+        };
+        assert_eq!(
+            serialize_core_reply(&ctx, &CoreReply::Resize(resize)),
+            "{\"v\":1,\"correlation_id\":\"core-sync-1\",\"outcome\":\"planned\",\"base_revision\":2,\"detail\":{\"capability\":\"keyboard-resize\",\"direction\":\"right\",\"focused_index\":0,\"kind\":\"resize\",\"mode\":\"outwards\",\"neighbor_index\":1,\"new_shares\":[611,587],\"old_shares\":[1,1],\"target_group\":\"grp\"},\"desired_geometry\":[],\"desired_focus\":{\"domain_output\":\"out-1\",\"domain_workspace\":\"ws-1\",\"leaf\":\"leaf-1\"}}",
+        );
+        let pointer = ResizePlanReply {
+            base_revision: 2,
+            direction: Direction::Right,
+            mode: None,
+            boundary: Some(120),
+            operation: resize_op,
+            geometry: Vec::new(),
+            focus_domain: ctx.domain_key.clone(),
+            focus_leaf: focus_leaf.clone(),
+        };
+        assert_eq!(
+            serialize_core_reply(&ctx, &CoreReply::Resize(pointer)),
+            "{\"v\":1,\"correlation_id\":\"core-sync-1\",\"outcome\":\"planned\",\"base_revision\":2,\"detail\":{\"boundary\":120,\"capability\":\"pointer-resize\",\"direction\":\"right\",\"focused_index\":0,\"kind\":\"pointer-resize\",\"neighbor_index\":1,\"new_shares\":[611,587],\"old_shares\":[1,1],\"target_group\":\"grp\"},\"desired_geometry\":[],\"desired_focus\":{\"domain_output\":\"out-1\",\"domain_workspace\":\"ws-1\",\"leaf\":\"leaf-1\"}}",
+        );
+        let float_tiled = TiledPlan {
+            base_revision: 2,
+            policy_version: 1,
+            kind: TiledKind::ToggleFloat,
+            geometry: Vec::new(),
+            focus_domain: None,
+            focus_leaf: None,
+            float_window: Some(WindowId::from("win-1")),
+            float_rect: Some(Rect {
+                x: 240,
+                y: 160,
+                w: 720,
+                h: 480,
+            }),
+        };
+        assert_eq!(
+            serialize_core_reply(&ctx, &CoreReply::Tiled(float_tiled)),
+            "{\"v\":1,\"correlation_id\":\"core-sync-1\",\"outcome\":\"planned\",\"base_revision\":2,\"detail\":{\"capability\":\"intentional-float\",\"kind\":\"toggle-float\",\"policy_version\":1},\"desired_geometry\":[],\"float_geometry\":{\"window\":\"win-1\",\"rect\":{\"x\":240,\"y\":160,\"w\":720,\"h\":480}}}",
+        );
+    }
+    #[test]
+    fn transaction_choke_point_matches_legacy_shapes_byte_exact() {
+        // Byte pins for the migrated transaction family: workspace-send
+        // planned (typed `SendWorkspacePlan` vs the legacy constructor) plus
+        // the ack/commit/cancel/status outcomes for both transaction kinds
+        // that the sync-family test does not cover. The existing workspace
+        // and directional R4 wire goldens prove the same bytes flow end to
+        // end through `evaluate`.
+        use tiler_core::boundary::{
+            CoreReply, SendWorkspacePlan, TransactionKind, TransactionStatus,
+        };
+        use tiler_core::contract::{
+            LifecycleCapability, LifecycleIntent, LifecycleOperation, LifecyclePrecondition,
+        };
+        let request = retained_request(
+            "core-txn-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
+        );
+        let ctx = validate_request(&request).expect("fixture validates");
+        let plan = tiler_core::session::SessionPlan {
+            dispatch: tiler_core::contract::LifecycleDispatch {
+                correlation_id: ctx.correlation.clone(),
+                owner: ctx.owner.clone(),
+                generation: ctx.generation.clone(),
+                base_revision: 2,
+                required_capability: LifecycleCapability::MoveTiled,
+                preconditions: vec![
+                    LifecyclePrecondition::WindowObserved,
+                    LifecyclePrecondition::DesiredTopologyValid,
+                    LifecyclePrecondition::AdapterMustVerifyPostconditions,
+                ],
+                intent: LifecycleIntent::MoveToWorkspace {
+                    window: WindowId::from("win-1"),
+                    target_output: OutputId::from("out-1"),
+                    target_workspace: WorkspaceId::from("ws-2"),
+                },
+                operation: LifecycleOperation::MoveTiled {
+                    window: WindowId::from("win-1"),
+                    leaf: NodeId::from("leaf-1"),
+                    source_output: OutputId::from("out-1"),
+                    source_workspace: WorkspaceId::from("ws-1"),
+                    target_output: OutputId::from("out-1"),
+                    target_workspace: WorkspaceId::from("ws-2"),
+                },
+                policy_version: 1,
+            },
+            desired_snapshot: tiler_core::session::SessionSnapshot {
+                domains: Vec::new(),
+                windows: Vec::new(),
+            },
+            desired_focus_domain: Some(ctx.domain_key.clone()),
+            desired_focus_leaf: Some(NodeId::from("leaf-1")),
+            desired_geometry: Vec::new(),
+        };
+        let typed = SendWorkspacePlan::from_session(&plan).expect("move-tiled builds");
+        assert_eq!(
+            serialize_core_reply(&ctx, &CoreReply::SendWorkspace(typed.clone())),
+            workspace_planned_reply("core-txn-1", &plan),
+        );
+        assert_eq!(
+            serialize_send_workspace_reply("core-txn-1", &typed),
+            workspace_planned_reply("core-txn-1", &plan),
+        );
+        // The non-`MoveTiled` fallback stays a `move-op-invalid` fence.
+        let mut admit = plan.clone();
+        admit.dispatch.operation = LifecycleOperation::Remove {
+            window: WindowId::from("win-1"),
+            leaf: NodeId::from("leaf-1"),
+            output: OutputId::from("out-1"),
+            workspace: WorkspaceId::from("ws-1"),
+        };
+        assert!(SendWorkspacePlan::from_session(&admit).is_none());
+        assert_eq!(
+            serialize_core_reply(
+                &ctx,
+                &CoreReply::Acknowledged {
+                    base_revision: 3,
+                    kind: TransactionKind::DirectionalMove,
+                }
+            ),
+            "{\"v\":1,\"correlation_id\":\"core-txn-1\",\"outcome\":\"acknowledged\",\"kind\":\"directional-move\",\"base_revision\":3}",
+        );
+        assert_eq!(
+            serialize_core_reply(
+                &ctx,
+                &CoreReply::Committed {
+                    revision: 4,
+                    kind: TransactionKind::SendToWorkspace,
+                }
+            ),
+            "{\"v\":1,\"correlation_id\":\"core-txn-1\",\"outcome\":\"committed\",\"kind\":\"send-to-workspace\",\"base_revision\":4}",
+        );
+        assert_eq!(
+            serialize_core_reply(
+                &ctx,
+                &CoreReply::Cancelled {
+                    base_revision: 3,
+                    kind: TransactionKind::DirectionalMove,
+                }
+            ),
+            cancelled_reply("core-txn-1", "directional-move", 3),
+        );
+        for (status, token) in [
+            (TransactionStatus::PostUnacked, "post-unacked"),
+            (TransactionStatus::PostAcked, "post-acked"),
+            (TransactionStatus::Unresolved, "unresolved"),
+            (TransactionStatus::Stale, "stale"),
+        ] {
+            assert_eq!(
+                serialize_core_reply(
+                    &ctx,
+                    &CoreReply::Status {
+                        base_revision: Some(3),
+                        status,
+                    }
+                ),
+                status_reply("core-txn-1", Some(3), token),
+                "{token} funnels byte-exact",
+            );
+        }
     }
     #[test]
     fn typed_sync_codec_move_focus_resize_float_wire_golden() {

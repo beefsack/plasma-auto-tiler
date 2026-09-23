@@ -4,33 +4,71 @@
 //! process imports. Each logical `(OutputId, WorkspaceId)` domain keeps its
 //! own independent [`Session`] (independent revisions, fingerprints,
 //! divergence isolation, pending slot, node identity, and outer-gap handling).
-//! The engine never merges sessions across domains and never alters
-//! fence/binding/transaction ordering: it only owns the world map, the outer
-//! gap map, and the owner/generation binding plus the shared
-//! propose/commit helpers (`take_usable_session`, `store_committed`).
-//!
-//! JSON reply fences, correlation echoes, revision checks, pending/pair
-//! transaction payloads, and ack/verify/status/cancel dispatch stay in the
-//! protocol layer until a typed request/reply boundary exists. A full
-//! `handle(event) -> plan/reply` entry point is therefore intentionally out of
-//! scope here; this module is the typed world-orchestration slice that such an
-//! entry point will later dispatch through.
+//! The engine keeps domains independent while owning seeding, relocation,
+//! pending pair state, and typed request/transaction outcomes. Protocol keeps
+//! envelope validation, ordered ingress fences, nested verify echo parsing,
+//! and wire serialization.
 
 use std::collections::BTreeMap;
 
+use crate::boundary::{
+    ActiveGroupResolution, CoreCommand, CoreEvent, CoreReply, NoGroupReason, ProjectionKind,
+    ProjectionPlan, TransactionKind, TransactionStatus, project_retained_tiled_geometry,
+    resolve_active_group,
+};
+use crate::bounds::{is_gap, is_opaque_id};
+use crate::contract::{
+    AckOutcome, AdapterAck, DivergenceKind, FocusCapabilities, FocusPostObservation,
+    LifecycleCapabilities, LifecycleOperation, LifecyclePostObservation, LifecyclePrecondition,
+    Observation, PostObservation, ResizeCapabilities, ResizeMode, ResizePostObservation,
+};
+use crate::directional::{
+    Capabilities, Direction, MoveOperation, OutputId, Precondition, WindowId, WorkspaceId,
+};
+use crate::geometry::Rect;
 use crate::ids::{GenerationId, OwnerId};
-use crate::session::{DomainKey, MAX_DOMAINS, OutputDomain, Session};
+use crate::pending::{DirectionalMovePending, WorkspacePending};
+use crate::reconcile::{AckError, CancelUnackedError, StateKind, VerifyError};
+use crate::seed::EngineWindow;
+use crate::session::{
+    CanonicalPairError, DomainKey, ExceptionFlags, MAX_DOMAINS, OutputDomain, ProposeError,
+    RefusalKind, Session, SessionCommand, SessionObservation,
+};
 
-/// Portable world engine: per-domain sessions plus binding state.
+/// Wire `kind`/`message` for the generic pending conflict fence.
+///
+/// Mirrors the protocol `pending-exists` rejection exactly; single source for
+/// the Engine-owned conflict outcome so serialization stays byte identical.
+const PENDING_EXISTS_KIND: &str = "pending-exists";
+const PENDING_EXISTS_MESSAGE: &str = "complete the pending plan before proposing";
+/// Wire `message` for the workspace second-send guard.
+///
+/// Distinct from the generic conflict message; preserved exactly.
+const WORKSPACE_PENDING_MESSAGE: &str = "complete the pending workspace plan before proposing";
+/// Wire `kind`/`message` for ambiguous seed order (mirrors `MSG_AMBIGUOUS`).
+const AMBIGUOUS_KIND: &str = "ambiguous-placement";
+const AMBIGUOUS_MESSAGE: &str = "window placement is ambiguous";
+/// Wire `message` for snapshot failures (mirrors `MSG_OBSERVATION`).
+const OBSERVATION_MESSAGE: &str = "observation does not cover the known window set";
+/// Wire `message` for opaque id failures (mirrors `MSG_OPAQUE_ID`).
+const OPAQUE_ID_MESSAGE: &str = "opaque id is invalid";
+/// Wire `kind`/`message` for direction failures (mirrors `MSG_DIRECTION`).
+const DIRECTION_KIND: &str = "direction-invalid";
+const DIRECTION_MESSAGE: &str = "direction is invalid";
+
+/// Portable world engine: per-domain sessions plus binding state and the two
+/// per-route pending pair transactions.
 #[derive(Debug, Clone, Default)]
 pub struct Engine {
     sessions: BTreeMap<DomainKey, Session>,
     outer_gaps: BTreeMap<DomainKey, i32>,
     owner: Option<OwnerId>,
     generation: Option<GenerationId>,
+    workspace_pending: Option<WorkspacePending>,
+    directional_pending: Option<DirectionalMovePending>,
 }
 
-fn session_domain_matches(session: &Session, domain: &OutputDomain) -> bool {
+pub fn session_domain_matches(session: &Session, domain: &OutputDomain) -> bool {
     session
         .domains()
         .iter()
@@ -40,13 +78,13 @@ fn session_domain_matches(session: &Session, domain: &OutputDomain) -> bool {
         })
 }
 
-fn session_usable(session: &Session) -> bool {
+pub fn session_usable(session: &Session) -> bool {
     session.divergence().is_none() && !session.has_pending()
 }
 
 /// A committed session with no tiled members and no deferred exceptions holds
 /// no topology and must not consume a domain slot.
-fn committed_session_is_empty(session: &Session) -> bool {
+pub fn committed_session_is_empty(session: &Session) -> bool {
     session.snapshot().windows.is_empty() && session.exception_count() == 0
 }
 
@@ -78,7 +116,9 @@ impl Engine {
     /// Binding sync: on owner/generation change (adapter restart) discard the
     /// world map and gap map, then rebind. Ordering matches the protocol
     /// boundary exactly; ack/verify/status/cancel dispatch before this call
-    /// so a pending session is never discarded or rebound mid-flight.
+    /// so a pending transaction is never discarded or rebound mid-flight.
+    /// Pending pair state is intentionally preserved here: only the
+    /// ack/verify divergence fences and the cancel withdraw clear it.
     pub fn sync_binding(&mut self, owner: &OwnerId, generation: &GenerationId) {
         let owner_changed = self
             .owner
@@ -219,6 +259,2643 @@ impl Engine {
         self.outer_gaps.insert(domain_key.clone(), outer_gap);
         self.sessions.insert(domain_key, session);
     }
+
+    /// Canonical component view: retained domain identity/bounds/gap with
+    /// adjacency stripped for pair assembly.
+    #[must_use]
+    pub fn canonical_component_domain(domain: &OutputDomain) -> OutputDomain {
+        OutputDomain {
+            id: domain.id.clone(),
+            workspace: domain.workspace.clone(),
+            bounds: domain.bounds,
+            gap: domain.gap,
+            adjacent: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// Unique relocation source for a target key: the single retained domain
+    /// sharing the workspace id on a different output. `None` when missing or
+    /// ambiguous (fail closed, no mutation).
+    #[must_use]
+    pub fn find_unique_source_for_target(&self, target_key: &DomainKey) -> Option<DomainKey> {
+        let mut source_key: Option<DomainKey> = None;
+        for key in self.sessions.keys() {
+            if key.workspace == target_key.workspace && key.output != target_key.output {
+                if source_key.is_some() {
+                    return None;
+                }
+                source_key = Some(key.clone());
+            }
+        }
+        source_key
+    }
+
+    /// Whether the retained outer gap for `key` equals the carried value.
+    #[must_use]
+    pub fn outer_gap_matches(&self, key: &DomainKey, outer_gap: i32) -> bool {
+        self.outer_gaps.get(key).copied() == Some(outer_gap)
+    }
+
+    /// Assemble a temporary directional view solely from canonical per-domain
+    /// sessions. Never infers a tree from current geometry: selected
+    /// cross-output paths require retained authoritative state.
+    pub fn assemble_directional_pair(
+        &self,
+        source_domain: &OutputDomain,
+        source_key: &DomainKey,
+        target_domain: &OutputDomain,
+        target_key: &DomainKey,
+    ) -> Result<Session, &'static str> {
+        let source_component = Self::canonical_component_domain(source_domain);
+        let target_component = Self::canonical_component_domain(target_domain);
+        let source = self
+            .sessions
+            .get(source_key)
+            .filter(|session| {
+                session_usable(session)
+                    && !committed_session_is_empty(session)
+                    && session_domain_matches(session, &source_component)
+            })
+            .cloned()
+            .ok_or("canonical-source-unavailable")?;
+        let target = match self.sessions.get(target_key) {
+            None => None,
+            Some(session)
+                if session_usable(session)
+                    && !committed_session_is_empty(session)
+                    && session_domain_matches(session, &target_component) =>
+            {
+                Some(session.clone())
+            }
+            Some(_) => return Err("canonical-pair-unusable"),
+        };
+        Session::paired_from_canonical(
+            &source,
+            target.as_ref(),
+            vec![source_domain.clone(), target_domain.clone()],
+        )
+        .map_err(|error| match error {
+            CanonicalPairError::MismatchedIdentity => "canonical-pair-identity-mismatch",
+            CanonicalPairError::UnusableInput => "canonical-pair-unusable",
+            CanonicalPairError::DomainMismatch => "canonical-pair-domain-mismatch",
+            CanonicalPairError::DuplicateState => "canonical-pair-duplicate-state",
+        })
+    }
+
+    /// Return a terminal two-domain transaction to the sole canonical state
+    /// authority. The pair is never retained after this boundary.
+    pub fn store_canonical_pair(
+        &mut self,
+        source_key: DomainKey,
+        target_key: DomainKey,
+        pair: Session,
+        source_outer_gap: i32,
+    ) -> bool {
+        let Ok((source, target)) = pair.split_canonical_pair() else {
+            return false;
+        };
+        let target_outer_gap = self.outer_gaps.get(&target_key).copied().unwrap_or(0);
+        self.store_committed(source_key, source, source_outer_gap);
+        if let Some(target) = target {
+            self.store_committed(target_key, target, target_outer_gap);
+        } else {
+            self.sessions.remove(&target_key);
+            self.outer_gaps.remove(&target_key);
+        }
+        true
+    }
+
+    /// Borrow the retained workspace-send pending, if any.
+    #[must_use]
+    pub fn workspace_pending(&self) -> Option<&WorkspacePending> {
+        self.workspace_pending.as_ref()
+    }
+
+    /// Mutably borrow the retained workspace-send pending, if any.
+    #[must_use]
+    pub fn workspace_pending_mut(&mut self) -> Option<&mut WorkspacePending> {
+        self.workspace_pending.as_mut()
+    }
+
+    /// Borrow the retained directional R4 pending, if any.
+    #[must_use]
+    pub fn directional_pending(&self) -> Option<&DirectionalMovePending> {
+        self.directional_pending.as_ref()
+    }
+
+    /// Mutably borrow the retained directional R4 pending, if any.
+    #[must_use]
+    pub fn directional_pending_mut(&mut self) -> Option<&mut DirectionalMovePending> {
+        self.directional_pending.as_mut()
+    }
+
+    /// Stage a workspace-send pending (exactly one live transaction per route).
+    pub fn set_workspace_pending(&mut self, pending: WorkspacePending) {
+        self.workspace_pending = Some(pending);
+    }
+
+    /// Take the workspace-send pending, restoring it on fence failure.
+    pub fn take_workspace_pending(&mut self) -> Option<WorkspacePending> {
+        self.workspace_pending.take()
+    }
+
+    /// Restore a taken workspace-send pending after a fence failure.
+    pub fn restore_workspace_pending(&mut self, pending: WorkspacePending) {
+        self.workspace_pending = Some(pending);
+    }
+
+    /// Withdraw a settled workspace-send pending.
+    pub fn clear_workspace_pending(&mut self) {
+        self.workspace_pending = None;
+    }
+
+    /// Stage a directional R4 pending (exactly one live transaction per route).
+    pub fn set_directional_pending(&mut self, pending: DirectionalMovePending) {
+        self.directional_pending = Some(pending);
+    }
+
+    /// Take the directional R4 pending, restoring it on fence failure.
+    pub fn take_directional_pending(&mut self) -> Option<DirectionalMovePending> {
+        self.directional_pending.take()
+    }
+
+    /// Restore a taken directional R4 pending after a fence failure.
+    pub fn restore_directional_pending(&mut self, pending: DirectionalMovePending) {
+        self.directional_pending = Some(pending);
+    }
+
+    /// Withdraw a settled directional R4 pending.
+    pub fn clear_directional_pending(&mut self) {
+        self.directional_pending = None;
+    }
+
+    /// Whether any pending pair transaction is live (workspace or directional).
+    #[must_use]
+    pub fn has_any_pending(&self) -> bool {
+        self.workspace_pending.is_some() || self.directional_pending.is_some()
+    }
+
+    /// Engine-owned pending conflict boundary for every non-ack/verify plan
+    /// operation.
+    ///
+    /// Serde-free and portable: `op` is the already-validated wire op token
+    /// (empty when missing/non-string, exactly like the protocol envelope),
+    /// `directional_keys` the validated directional keys when present, and
+    /// `raw_target` the carried `(output, workspace)` target scope when the
+    /// request carries one. No validation, no parsing, no scope shaping here;
+    /// protocol keeps envelope validation and wire serialization.
+    ///
+    /// Fence order and wire strings match the legacy protocol handler exactly:
+    /// directional pending first (diverged on pending divergence or
+    /// owner/generation loss, else `pending-exists` for the workspace route or
+    /// for ordinary plans affecting either pair key; unrelated domains stay
+    /// usable), then workspace pending (only two-domain directional moves
+    /// enter the conflict zone, diverged on divergence/identity loss, else
+    /// `pending-exists`). The second-send guard stays in
+    /// [`Engine::workspace_request_guard`]; ack/verify/status/cancel never
+    /// reach here.
+    #[must_use]
+    pub fn pending_conflict(
+        &self,
+        op: &str,
+        owner: &OwnerId,
+        generation: &GenerationId,
+        domain_key: &DomainKey,
+        directional_keys: Option<&[DomainKey]>,
+        raw_target: Option<(&str, &str)>,
+    ) -> Option<CoreReply> {
+        if let Some(pending) = self.directional_pending.as_ref() {
+            if let Some(reason) = pending.session().divergence() {
+                return Some(CoreReply::Diverged(reason));
+            }
+            if pending.owner() != owner || pending.generation() != generation {
+                return Some(CoreReply::Diverged(DivergenceKind::OwnerMismatch));
+            }
+            if op == "send-to-workspace" {
+                return Some(CoreReply::Rejected {
+                    kind: PENDING_EXISTS_KIND,
+                    message: PENDING_EXISTS_MESSAGE,
+                });
+            }
+            if op != "active-group" && pending.affects(domain_key, directional_keys, raw_target) {
+                return Some(CoreReply::Rejected {
+                    kind: PENDING_EXISTS_KIND,
+                    message: PENDING_EXISTS_MESSAGE,
+                });
+            }
+            return None;
+        }
+        if let Some(pending) = self.workspace_pending.as_ref() {
+            let has_pair = directional_keys.is_some_and(|keys| keys.len() == 2);
+            if op != "move" || !has_pair {
+                return None;
+            }
+            if let Some(reason) = pending.session().divergence() {
+                return Some(CoreReply::Diverged(reason));
+            }
+            if pending.owner() != owner || pending.generation() != generation {
+                return Some(CoreReply::Diverged(DivergenceKind::OwnerMismatch));
+            }
+            return Some(CoreReply::Rejected {
+                kind: PENDING_EXISTS_KIND,
+                message: PENDING_EXISTS_MESSAGE,
+            });
+        }
+        None
+    }
+
+    /// Engine-owned workspace second-send guard.
+    ///
+    /// Runs before target-scope validation in protocol (preserving the legacy
+    /// error order): diverged on pending divergence or owner/generation loss,
+    /// else the workspace-specific `pending-exists` rejection. `None` when no
+    /// workspace pending is live.
+    #[must_use]
+    pub fn workspace_request_guard(
+        &self,
+        owner: &OwnerId,
+        generation: &GenerationId,
+    ) -> Option<CoreReply> {
+        let pending = self.workspace_pending.as_ref()?;
+        if let Some(reason) = pending.session().divergence() {
+            return Some(CoreReply::Diverged(reason));
+        }
+        if pending.owner() != owner || pending.generation() != generation {
+            return Some(CoreReply::Diverged(DivergenceKind::OwnerMismatch));
+        }
+        Some(CoreReply::Rejected {
+            kind: PENDING_EXISTS_KIND,
+            message: WORKSPACE_PENDING_MESSAGE,
+        })
+    }
+
+    /// Typed world-level entry points for the status/cancellation/ack/verify phases.
+    ///
+    /// Protocol keeps envelope validation, tagged command decoding, target and
+    /// pair scope shape validation, nested verify echo parsing
+    /// (`verified=false` divergence before parse, malformed echoes as
+    /// `verify-invalid`), correlation echoes, and wire serialization: by the
+    /// time an event reaches here the command decoded, the workspace target
+    /// (or the directional pair) shape-checked, the verify echoes fully
+    /// validated into typed fields, and `!zero_dispatch` already refused on
+    /// the protocol side so scope errors keep their original precedence. Core
+    /// owns every outcome below and the one-shot state transition: pending
+    /// absence, divergence, owner/generation/correlation/revision identity,
+    /// ack outcome, drag capture, acknowledged state, retained scope binding,
+    /// pre/post-image matching, operation/echo binding, Session verify, and
+    /// the commit/split/store or cancelling withdraw itself.
+    ///
+    /// [`Engine::inspect`] serves the read-only status phases through `&self`,
+    /// so callers cannot mutate, acknowledge, verify, clear, rebind, or
+    /// advance anything. [`Engine::handle`] serves the mutating ack,
+    /// cancellation, and verification phases: ack acknowledges exactly the
+    /// matching pending in place (pending retained for verify); cancel arms
+    /// withdraw exactly the matching unacknowledged pending plus its staged
+    /// reconciler slot, preserving everything committed; verify commits
+    /// exactly the matching acknowledged pending on exact post-observation
+    /// proof then splits/stores (directional) or advances (workspace);
+    /// every other state fails closed with no mutation and no divergence
+    /// recorded beyond the typed reply.
+    pub fn inspect(&self, event: &CoreEvent) -> CoreReply {
+        match &event.command {
+            CoreCommand::SendStatus => self.workspace_status(event),
+            CoreCommand::DirectionalStatus => self.directional_status(event),
+            _ => CoreReply::Rejected {
+                kind: "unknown-value",
+                message: "request contains an unknown value",
+            },
+        }
+    }
+
+    /// Typed world-level entry point for the mutating ack/cancellation/verify
+    /// phases plus the workspace-send, reconcile, update-gaps, and
+    /// active-group request phases. Ack, cancellation, verification,
+    /// workspace-request, reconcile, update-gaps, and active-group commands
+    /// transition through `&mut self`; status commands route to
+    /// [`Engine::inspect`] and never mutate.
+    ///
+    /// The workspace request arm owns the pending outcome and the one-shot
+    /// staging: directional block first (generic `pending-exists`), then the
+    /// workspace second-send guard (workspace-specific `pending-exists`), then
+    /// the seed/propose/stage plan. Protocol keeps envelope validation,
+    /// target-scope shape validation, tagged command decoding, mover binding,
+    /// and wire serialization; by the time an event reaches here the target
+    /// scope is shape-checked and the command decoded, and protocol calls the
+    /// guard before scope validation so error order is preserved (the internal
+    /// re-check below is defensive and byte-identical).
+    pub fn handle(&mut self, event: &CoreEvent) -> CoreReply {
+        match &event.command {
+            CoreCommand::SendStatus | CoreCommand::DirectionalStatus => self.inspect(event),
+            CoreCommand::Reconcile => self.reconcile_request(event),
+            CoreCommand::UpdateGaps => self.update_gaps_request(event),
+            CoreCommand::SendToWorkspace { .. } => self.workspace_request(event),
+            CoreCommand::ActiveGroup => self.active_group_request(event),
+            CoreCommand::Admit { .. } => self.admit_request(event),
+            CoreCommand::Remove { .. } => self.remove_request(event),
+            CoreCommand::ToggleFloat { .. } => self.toggle_float_request(event),
+            CoreCommand::Move { .. } => self.directional_move_request(event),
+            CoreCommand::Focus { .. } => self.directional_focus_request(event),
+            CoreCommand::Resize { .. } => self.resize_request(event),
+            CoreCommand::PointerResize { .. } => self.pointer_resize_request(event),
+            CoreCommand::SendAck { ack_outcome } => self.workspace_ack(event, ack_outcome),
+            CoreCommand::DirectionalAck { ack_outcome } => self.directional_ack(event, ack_outcome),
+            CoreCommand::SendCancel { zero_dispatch } => {
+                self.workspace_cancel(event, *zero_dispatch)
+            }
+            CoreCommand::DirectionalCancel { zero_dispatch } => {
+                self.directional_cancel(event, *zero_dispatch)
+            }
+            CoreCommand::SendVerify {
+                verified,
+                preconditions,
+                operation,
+            } => self.workspace_verify(event, *verified, preconditions, operation),
+            CoreCommand::DirectionalVerify {
+                verified,
+                preconditions,
+                operation,
+                echo_source_output,
+                echo_source_workspace,
+                echo_target_output,
+                echo_target_workspace,
+            } => self.directional_verify(
+                event,
+                *verified,
+                preconditions,
+                operation,
+                echo_source_output,
+                echo_source_workspace,
+                echo_target_output,
+                echo_target_workspace,
+            ),
+        }
+    }
+
+    /// Reconcile request phase: retained-tree projection with displaced
+    /// workspace relocation and work-area reprojection.
+    ///
+    /// Fence order matches the legacy protocol handler exactly: unknown
+    /// session (`unknown-domain`), divergence (as rejection, never terminal),
+    /// pending/drag (`pending-exists`), retained domain binding
+    /// (`unknown-domain`), inner-gap and outer-gap binding (`domain-mismatch`
+    /// with the exact message), membership (`partial-observation`, retained
+    /// windows plus deferred exceptions against the carried set), empty-domain
+    /// projection (reproject on bounds change, else `malformed-topology`),
+    /// focus binding (`focus-mismatch`), pure projection
+    /// (`malformed-topology` on shape failure), then work-area reprojection on
+    /// bounds change. Relocation is atomic: the outer gap is pre-validated
+    /// against the unique source before mutating, and any later rejection
+    /// restores the pre-request world exactly.
+    fn reconcile_request(&mut self, event: &CoreEvent) -> CoreReply {
+        let backup = self.clone();
+        let mut relocated_here = false;
+        if !self.contains(&event.domain_key) {
+            let outer_ok = match self.find_unique_source_for_target(&event.domain_key) {
+                Some(source) => self.outer_gap_matches(&source, event.outer_gap),
+                None => false,
+            };
+            if outer_ok {
+                relocated_here =
+                    self.try_relocate_for_target(&event.domain_key, &event.domain, event.outer_gap);
+            }
+        }
+        let restore = |engine: &mut Self, backup: &Self, relocated: bool| {
+            if relocated {
+                *engine = backup.clone();
+            }
+        };
+        let Some(session) = self.session(&event.domain_key).cloned() else {
+            restore(self, &backup, relocated_here);
+            return CoreReply::Rejected {
+                kind: RefusalKind::UnknownDomain.as_str(),
+                message: RefusalKind::UnknownDomain.message(),
+            };
+        };
+        if let Some(reason) = session.divergence() {
+            restore(self, &backup, relocated_here);
+            return CoreReply::Rejected {
+                kind: reason.as_str(),
+                message: reason.message(),
+            };
+        }
+        if session.has_pending() || session.has_pending_desired() || session.has_drag() {
+            restore(self, &backup, relocated_here);
+            return CoreReply::Rejected {
+                kind: PENDING_EXISTS_KIND,
+                message: PENDING_EXISTS_MESSAGE,
+            };
+        }
+        let Some(retained_domain) = session
+            .domains()
+            .iter()
+            .find(|d| d.key() == event.domain_key)
+            .cloned()
+        else {
+            restore(self, &backup, relocated_here);
+            return CoreReply::Rejected {
+                kind: RefusalKind::UnknownDomain.as_str(),
+                message: RefusalKind::UnknownDomain.message(),
+            };
+        };
+        if retained_domain.gap != event.domain.gap {
+            restore(self, &backup, relocated_here);
+            return CoreReply::Rejected {
+                kind: "domain-mismatch",
+                message: "domain gap does not match retained state",
+            };
+        }
+        if self.outer_gap_ref(&event.domain_key).copied() != Some(event.outer_gap) {
+            restore(self, &backup, relocated_here);
+            return CoreReply::Rejected {
+                kind: "domain-mismatch",
+                message: "domain outer gap does not match retained state",
+            };
+        }
+        let bounds_changed = retained_domain.bounds != event.domain.bounds;
+        let snapshot = session.snapshot();
+        let mut known: std::collections::BTreeSet<String> = snapshot
+            .windows
+            .iter()
+            .map(|l| l.window.0.clone())
+            .collect();
+        for entry in session.exception_observed() {
+            known.insert(entry.window.0.clone());
+        }
+        let observed: std::collections::BTreeSet<String> =
+            event.windows.iter().map(|w| w.window.0.clone()).collect();
+        if observed != known {
+            restore(self, &backup, relocated_here);
+            return CoreReply::Rejected {
+                kind: RefusalKind::PartialObservation.as_str(),
+                message: RefusalKind::PartialObservation.message(),
+            };
+        }
+        let domain_view = snapshot.domains.into_iter().find(|d| {
+            d.output.0 == event.domain_key.output.0 && d.workspace.0 == event.domain_key.workspace.0
+        });
+        if domain_view.and_then(|d| d.tree).is_none() {
+            if known.is_empty() && observed.is_empty() {
+                if bounds_changed {
+                    self.reproject_retained(&event.domain_key, event.domain.bounds);
+                }
+                return CoreReply::Projection(ProjectionPlan {
+                    base_revision: session.accepted_revision(),
+                    kind: ProjectionKind::Reconcile,
+                    geometry: Vec::new(),
+                    focus_domain: None,
+                    focus_leaf: None,
+                });
+            }
+            restore(self, &backup, relocated_here);
+            return CoreReply::Rejected {
+                kind: RefusalKind::MalformedTopology.as_str(),
+                message: RefusalKind::MalformedTopology.message(),
+            };
+        }
+        let (focus_domain, focus_leaf) = session.focus();
+        let (Some(focus_domain), Some(focus_leaf)) = (focus_domain, focus_leaf) else {
+            restore(self, &backup, relocated_here);
+            return CoreReply::Rejected {
+                kind: RefusalKind::FocusMismatch.as_str(),
+                message: RefusalKind::FocusMismatch.message(),
+            };
+        };
+        if focus_domain != event.domain_key {
+            restore(self, &backup, relocated_here);
+            return CoreReply::Rejected {
+                kind: RefusalKind::FocusMismatch.as_str(),
+                message: RefusalKind::FocusMismatch.message(),
+            };
+        }
+        let Some(plan) = project_retained_tiled_geometry(
+            &session,
+            &event.domain_key,
+            event.domain.bounds,
+            retained_domain.gap,
+            Some((focus_domain.clone(), focus_leaf.clone())),
+            ProjectionKind::Reconcile,
+        ) else {
+            restore(self, &backup, relocated_here);
+            return CoreReply::Rejected {
+                kind: RefusalKind::MalformedTopology.as_str(),
+                message: RefusalKind::MalformedTopology.message(),
+            };
+        };
+        if bounds_changed {
+            self.reproject_retained(&event.domain_key, event.domain.bounds);
+        }
+        CoreReply::Projection(plan)
+    }
+
+    /// Update-gaps request phase: deliberate gap-update reprojection.
+    ///
+    /// Same fence order as [`Engine::reconcile_request`] minus relocation:
+    /// unknown session, divergence (as rejection), pending/drag, domain
+    /// binding, membership, empty-domain gap adoption, focus binding, pure
+    /// projection with the new inner gap into the new bounds before mutating,
+    /// then gap adoption plus store. Never seeds, relocates, resets, or
+    /// reseeds: an unknown domain refuses so the normal admit path seeds it.
+    fn update_gaps_request(&mut self, event: &CoreEvent) -> CoreReply {
+        let Some(session) = self.session(&event.domain_key).cloned() else {
+            return CoreReply::Rejected {
+                kind: RefusalKind::UnknownDomain.as_str(),
+                message: RefusalKind::UnknownDomain.message(),
+            };
+        };
+        if let Some(reason) = session.divergence() {
+            return CoreReply::Rejected {
+                kind: reason.as_str(),
+                message: reason.message(),
+            };
+        }
+        if session.has_pending() || session.has_pending_desired() || session.has_drag() {
+            return CoreReply::Rejected {
+                kind: PENDING_EXISTS_KIND,
+                message: PENDING_EXISTS_MESSAGE,
+            };
+        }
+        if session
+            .domains()
+            .iter()
+            .find(|d| d.key() == event.domain_key)
+            .is_none()
+        {
+            return CoreReply::Rejected {
+                kind: RefusalKind::UnknownDomain.as_str(),
+                message: RefusalKind::UnknownDomain.message(),
+            };
+        }
+        let snapshot = session.snapshot();
+        let mut known: std::collections::BTreeSet<String> = snapshot
+            .windows
+            .iter()
+            .map(|l| l.window.0.clone())
+            .collect();
+        for entry in session.exception_observed() {
+            known.insert(entry.window.0.clone());
+        }
+        let observed: std::collections::BTreeSet<String> =
+            event.windows.iter().map(|w| w.window.0.clone()).collect();
+        if observed != known {
+            return CoreReply::Rejected {
+                kind: RefusalKind::PartialObservation.as_str(),
+                message: RefusalKind::PartialObservation.message(),
+            };
+        }
+        let domain_view = snapshot.domains.into_iter().find(|d| {
+            d.output.0 == event.domain_key.output.0 && d.workspace.0 == event.domain_key.workspace.0
+        });
+        if domain_view.and_then(|d| d.tree).is_none() {
+            if known.is_empty() && observed.is_empty() {
+                let base = session.accepted_revision();
+                if let Some(stored) = self.session_mut(&event.domain_key)
+                    && !stored.update_domain_gaps(
+                        &event.domain_key,
+                        event.domain.bounds,
+                        event.domain.gap,
+                    )
+                {
+                    return CoreReply::Rejected {
+                        kind: RefusalKind::MalformedTopology.as_str(),
+                        message: RefusalKind::MalformedTopology.message(),
+                    };
+                }
+                self.set_outer_gap(event.domain_key.clone(), event.outer_gap);
+                return CoreReply::Projection(ProjectionPlan {
+                    base_revision: base,
+                    kind: ProjectionKind::UpdateGaps,
+                    geometry: Vec::new(),
+                    focus_domain: None,
+                    focus_leaf: None,
+                });
+            }
+            return CoreReply::Rejected {
+                kind: RefusalKind::MalformedTopology.as_str(),
+                message: RefusalKind::MalformedTopology.message(),
+            };
+        }
+        let (focus_domain, focus_leaf) = session.focus();
+        let (Some(focus_domain), Some(focus_leaf)) = (focus_domain, focus_leaf) else {
+            return CoreReply::Rejected {
+                kind: RefusalKind::FocusMismatch.as_str(),
+                message: RefusalKind::FocusMismatch.message(),
+            };
+        };
+        if focus_domain != event.domain_key {
+            return CoreReply::Rejected {
+                kind: RefusalKind::FocusMismatch.as_str(),
+                message: RefusalKind::FocusMismatch.message(),
+            };
+        }
+        let Some(mut plan) = project_retained_tiled_geometry(
+            &session,
+            &event.domain_key,
+            event.domain.bounds,
+            event.domain.gap,
+            Some((focus_domain.clone(), focus_leaf.clone())),
+            ProjectionKind::UpdateGaps,
+        ) else {
+            return CoreReply::Rejected {
+                kind: RefusalKind::MalformedTopology.as_str(),
+                message: RefusalKind::MalformedTopology.message(),
+            };
+        };
+        let mut session = session;
+        if !session.update_domain_gaps(&event.domain_key, event.domain.bounds, event.domain.gap) {
+            return CoreReply::Rejected {
+                kind: RefusalKind::MalformedTopology.as_str(),
+                message: RefusalKind::MalformedTopology.message(),
+            };
+        }
+        plan.base_revision = session.accepted_revision();
+        self.store_committed(event.domain_key.clone(), session, event.outer_gap);
+        CoreReply::Projection(plan)
+    }
+
+    /// Active-group request phase: focus-only retained sync plus read-only
+    /// resolution.
+    ///
+    /// Aligns retained focus from the valid observed snapshot before resolving
+    /// the immediate parent group. Focus-only sync: no topology or geometry
+    /// mutation. Fails closed on divergence, pending/drag residue,
+    /// unknown/exception/cross-domain windows, or domain bounds/gap mismatch
+    /// (then the resolver still replies fail-closed `no-group` without
+    /// persisting). The carried revision is never a staleness gate: this is a
+    /// current-state snapshot whose authoritative `base_revision` is returned
+    /// for downstream ordering. Protocol keeps envelope validation, tagged
+    /// command decoding, and wire serialization; by the time an event reaches
+    /// here the command decoded and the observation validated.
+    fn active_group_request(&mut self, event: &CoreEvent) -> CoreReply {
+        let Some(mut session) = self.session(&event.domain_key).cloned() else {
+            return CoreReply::NoGroup {
+                base_revision: None,
+                reason: NoGroupReason::NoSession,
+            };
+        };
+        if !event.focused_window.0.is_empty()
+            && let Some(retained_domain) = session
+                .domains()
+                .iter()
+                .find(|domain| domain.key() == event.domain_key)
+            && retained_domain.bounds == event.domain.bounds
+            && retained_domain.gap == event.domain.gap
+        {
+            let before = session.focus();
+            if session.sync_focus_from_window(&event.domain_key, &event.focused_window)
+                && session.focus() != before
+                && let Some(stored) = self.session_mut(&event.domain_key)
+            {
+                *stored = session.clone();
+            }
+        }
+        match resolve_active_group(Some(&session), event) {
+            ActiveGroupResolution::Found(found) => CoreReply::ActiveGroup(found),
+            ActiveGroupResolution::NoGroup {
+                base_revision,
+                reason,
+            } => CoreReply::NoGroup {
+                base_revision,
+                reason,
+            },
+        }
+    }
+
+    /// Read-only workspace-send status classification over the retained
+    /// [`WorkspacePending`]. Never mutates, acknowledges, verifies, clears,
+    /// rebinds, or advances anything.
+    fn workspace_status(&self, event: &CoreEvent) -> CoreReply {
+        let Some(pending) = self.workspace_pending.as_ref() else {
+            return CoreReply::Status {
+                base_revision: None,
+                status: TransactionStatus::NoPendingUnknown,
+            };
+        };
+        if let Some(reason) = pending.session().divergence() {
+            return CoreReply::Diverged(reason);
+        }
+        if pending.owner() != &event.owner
+            || pending.generation() != &event.generation
+            || pending.correlation() != &event.correlation
+            || event.revision != pending.base_revision()
+        {
+            return CoreReply::Status {
+                base_revision: Some(pending.base_revision()),
+                status: TransactionStatus::Stale,
+            };
+        }
+        let unresolved = |pending: &WorkspacePending| CoreReply::Status {
+            base_revision: Some(pending.base_revision()),
+            status: TransactionStatus::Unresolved,
+        };
+        let Some((target_domain, _)) = event.target_domain.as_ref() else {
+            return unresolved(pending);
+        };
+        let retained = pending.session().domains();
+        if retained.len() != 2 || retained[0] != event.domain || retained[1] != *target_domain {
+            return unresolved(pending);
+        }
+        if !pending.post_matches(&event.windows, &event.target_windows) {
+            return unresolved(pending);
+        }
+        match pending.session().status().state {
+            StateKind::PendingAcked => CoreReply::Status {
+                base_revision: Some(pending.base_revision()),
+                status: TransactionStatus::PostAcked,
+            },
+            StateKind::PendingUnacked => CoreReply::Status {
+                base_revision: Some(pending.base_revision()),
+                status: TransactionStatus::PostUnacked,
+            },
+            _ => unresolved(pending),
+        }
+    }
+
+    /// Read-only directional R4 status classification over the retained
+    /// [`DirectionalMovePending`]. Same read-only contract as
+    /// [`Engine::workspace_status`].
+    fn directional_status(&self, event: &CoreEvent) -> CoreReply {
+        let Some(pending) = self.directional_pending.as_ref() else {
+            return CoreReply::Status {
+                base_revision: None,
+                status: TransactionStatus::NoPendingUnknown,
+            };
+        };
+        if let Some(reason) = pending.session().divergence() {
+            return CoreReply::Diverged(reason);
+        }
+        if pending.owner() != &event.owner
+            || pending.generation() != &event.generation
+            || pending.correlation() != &event.correlation
+            || event.revision != pending.base_revision()
+        {
+            return CoreReply::Status {
+                base_revision: Some(pending.base_revision()),
+                status: TransactionStatus::Stale,
+            };
+        }
+        let unresolved = |pending: &DirectionalMovePending| CoreReply::Status {
+            base_revision: Some(pending.base_revision()),
+            status: TransactionStatus::Unresolved,
+        };
+        let Some(pair) = event.directional.as_ref().filter(|pair| pair.len() == 2) else {
+            return unresolved(pending);
+        };
+        let (source_domain, source_key) = &pair[0];
+        let (target_domain, target_key) = &pair[1];
+        if source_key != pending.source_key() || target_key != pending.target_key() {
+            return unresolved(pending);
+        }
+        let retained = pending.session().domains();
+        if retained.len() != 2 || retained[0] != *source_domain || retained[1] != *target_domain {
+            return unresolved(pending);
+        }
+        if !pending.post_matches(&event.windows) {
+            return unresolved(pending);
+        }
+        match pending.session().status().state {
+            StateKind::PendingAcked => CoreReply::Status {
+                base_revision: Some(pending.base_revision()),
+                status: TransactionStatus::PostAcked,
+            },
+            StateKind::PendingUnacked => CoreReply::Status {
+                base_revision: Some(pending.base_revision()),
+                status: TransactionStatus::PostUnacked,
+            },
+            _ => unresolved(pending),
+        }
+    }
+
+    /// Workspace-send request phase: rebuild the two-domain session from the
+    /// observation, propose the same-output distinct-workspace move, and retain
+    /// exactly one pending session. Never auto-acknowledges.
+    ///
+    /// Fence order matches the legacy protocol handler exactly: directional
+    /// block (diverged on divergence/identity loss, else generic
+    /// `pending-exists`), then the workspace second-send guard (diverged on
+    /// divergence/identity loss, else the workspace-specific `pending-exists`),
+    /// then seed order (`ambiguous-placement`), workspace seed (`seed-failed`),
+    /// focus sync (`focus-mismatch`), propose (mapped to `Rejected` with the
+    /// exact kind/message, including divergences as rejections like the legacy
+    /// `propose_failure`), and the `MoveTiled` shape gate
+    /// (`move-op-invalid`). On success stages exactly one [`WorkspacePending`]
+    /// with the dispatch-time pre-image and returns the typed
+    /// `SendWorkspace` plan. Protocol keeps target-scope shape validation,
+    /// tagged command decoding, mover binding, and wire serialization; the
+    /// mover binding (focused non-empty, window == focused, command target ==
+    /// scope) is already checked there, so this trusts the carried
+    /// `target_domain` and command fields beyond presence/shape.
+    fn workspace_request(&mut self, event: &CoreEvent) -> CoreReply {
+        if let Some(pending) = self.directional_pending.as_ref() {
+            if let Some(reason) = pending.session().divergence() {
+                return CoreReply::Diverged(reason);
+            }
+            if pending.owner() != &event.owner || pending.generation() != &event.generation {
+                return CoreReply::Diverged(DivergenceKind::OwnerMismatch);
+            }
+            return CoreReply::Rejected {
+                kind: PENDING_EXISTS_KIND,
+                message: PENDING_EXISTS_MESSAGE,
+            };
+        }
+        if let Some(reply) = self.workspace_request_guard(&event.owner, &event.generation) {
+            return reply;
+        }
+        let CoreCommand::SendToWorkspace {
+            window,
+            target_output,
+            target_workspace,
+        } = &event.command
+        else {
+            return CoreReply::Rejected {
+                kind: "unknown-value",
+                message: "request contains an unknown value",
+            };
+        };
+        let Some((target_domain, target_key)) = event.target_domain.as_ref() else {
+            return CoreReply::Rejected {
+                kind: "workspace-target-invalid",
+                message: "target workspace domain is missing",
+            };
+        };
+        if target_output != &target_key.output.0 || target_workspace != &target_key.workspace.0 {
+            return CoreReply::Rejected {
+                kind: "target-mismatch",
+                message: "command target does not match the target domain",
+            };
+        }
+        if event.focused_window.0.is_empty() {
+            return CoreReply::Rejected {
+                kind: "absent-focus",
+                message: "no focused window is observed",
+            };
+        }
+        if window != &event.focused_window.0 {
+            return CoreReply::Rejected {
+                kind: "focus-mismatch",
+                message: "the moved window is not the focused window",
+            };
+        }
+        let Some(source_order) = crate::seed::order_spatial_with_focus_last(
+            event.windows.clone(),
+            &event.focused_window,
+            false,
+        ) else {
+            return CoreReply::Rejected {
+                kind: AMBIGUOUS_KIND,
+                message: AMBIGUOUS_MESSAGE,
+            };
+        };
+        let empty_focus = WindowId(String::new());
+        let Some(target_order) = crate::seed::order_spatial_with_focus_last(
+            event.target_windows.clone(),
+            &empty_focus,
+            false,
+        ) else {
+            return CoreReply::Rejected {
+                kind: AMBIGUOUS_KIND,
+                message: AMBIGUOUS_MESSAGE,
+            };
+        };
+        let Some(mut session) = crate::seed::seed_workspace_session(
+            &event.owner,
+            &event.generation,
+            event.fingerprint,
+            &event.domain,
+            target_domain,
+            &source_order,
+            &target_order,
+        ) else {
+            return CoreReply::SnapshotInvalid {
+                message: OBSERVATION_MESSAGE,
+                detail: "seed-failed",
+            };
+        };
+        if !session.sync_focus_from_window(&event.domain_key, &event.focused_window) {
+            let kind = RefusalKind::FocusMismatch;
+            return CoreReply::Rejected {
+                kind: kind.as_str(),
+                message: kind.message(),
+            };
+        }
+        let base = session.accepted_revision();
+        let observation = crate::seed::workspace_observation_for(
+            &event.owner,
+            &event.generation,
+            base,
+            event.fingerprint,
+            &event.windows,
+            &event.target_windows,
+        );
+        let session_command = SessionCommand::MoveToWorkspace {
+            window: crate::directional::WindowId(window.clone()),
+            target_output: target_key.output.clone(),
+            target_workspace: target_key.workspace.clone(),
+        };
+        match session.propose(
+            &session_command,
+            &observation,
+            &event.correlation,
+            &LifecycleCapabilities::full(),
+        ) {
+            Ok(plan) => {
+                let Some(typed) = crate::boundary::SendWorkspacePlan::from_session(&plan) else {
+                    return CoreReply::SnapshotInvalid {
+                        message: OBSERVATION_MESSAGE,
+                        detail: "move-op-invalid",
+                    };
+                };
+                let geometry = plan.desired_geometry.clone();
+                self.workspace_pending = Some(WorkspacePending::new(
+                    event.owner.clone(),
+                    event.generation.clone(),
+                    event.correlation.clone(),
+                    base,
+                    event.revision,
+                    session,
+                    geometry,
+                    event.focused_window.clone(),
+                    event.windows.clone(),
+                    event.target_windows.clone(),
+                ));
+                CoreReply::SendWorkspace(typed)
+            }
+            Err(error) => CoreReply::Rejected {
+                kind: error.kind(),
+                message: error.message(),
+            },
+        }
+    }
+
+    /// Shared retained propose/commit: try the usable retained session, then
+    /// rebuild once from `seed_order`. `ambiguous_as_snapshot` selects the
+    /// fail-closed kind when no safe order exists (admit/remove use
+    /// `ambiguous-placement`; toggle-float reuses the `snapshot-invalid`
+    /// mapping). Mirrors the legacy protocol `run_retained` exactly, over the
+    /// typed [`CoreEvent`]: target presence gates relocation, usable sessions
+    /// propose directly, rebuilds fall back to relocation then seeding, and
+    /// every outcome maps to the identical typed [`CoreReply`].
+    fn run_retained<R>(
+        &mut self,
+        event: &CoreEvent,
+        seed_order: Option<Vec<EngineWindow>>,
+        ambiguous_as_snapshot: bool,
+        propose: impl Fn(&mut Session, &SessionObservation) -> Result<R, ProposeError>,
+        reply: impl Fn(&R) -> CoreReply,
+        commit: impl Fn(&mut Session, &R, &CoreEvent, u64) -> bool,
+    ) -> CoreReply {
+        let target_existed = self.contains(&event.domain_key);
+        if let Some(mut session) = self.take_usable_session(&event.domain_key, &event.domain) {
+            let base = session.accepted_revision();
+            let observation = crate::seed::session_observation_for(
+                &event.owner,
+                &event.generation,
+                base,
+                event.fingerprint,
+                &event.windows,
+            );
+            match propose(&mut session, &observation) {
+                Ok(plan) => {
+                    let typed = reply(&plan);
+                    if commit(&mut session, &plan, event, base) {
+                        self.store_committed(event.domain_key.clone(), session, event.outer_gap);
+                        return typed;
+                    }
+                    self.remove(&event.domain_key);
+                    return CoreReply::SnapshotInvalid {
+                        message: OBSERVATION_MESSAGE,
+                        detail: "commit-rejected",
+                    };
+                }
+                Err(error) if engine_needs_rebuild(&error) => {
+                    self.remove(&event.domain_key);
+                }
+                Err(error) => {
+                    return CoreReply::Rejected {
+                        kind: error.kind(),
+                        message: error.message(),
+                    };
+                }
+            }
+        } else if !target_existed {
+            let backup = self.clone();
+            if self.try_relocate_for_target(&event.domain_key, &event.domain, event.outer_gap) {
+                if let Some(mut session) =
+                    self.take_usable_session(&event.domain_key, &event.domain)
+                {
+                    let base = session.accepted_revision();
+                    let observation = crate::seed::session_observation_for(
+                        &event.owner,
+                        &event.generation,
+                        base,
+                        event.fingerprint,
+                        &event.windows,
+                    );
+                    match propose(&mut session, &observation) {
+                        Ok(plan) => {
+                            let typed = reply(&plan);
+                            if commit(&mut session, &plan, event, base) {
+                                self.store_committed(
+                                    event.domain_key.clone(),
+                                    session,
+                                    event.outer_gap,
+                                );
+                                return typed;
+                            }
+                            *self = backup;
+                            return CoreReply::SnapshotInvalid {
+                                message: OBSERVATION_MESSAGE,
+                                detail: "commit-rejected",
+                            };
+                        }
+                        Err(error) if engine_needs_rebuild(&error) => {
+                            *self = backup;
+                        }
+                        Err(error) => {
+                            *self = backup;
+                            return CoreReply::Rejected {
+                                kind: error.kind(),
+                                message: error.message(),
+                            };
+                        }
+                    }
+                } else {
+                    *self = backup;
+                }
+            }
+        }
+        let Some(order) = seed_order else {
+            if ambiguous_as_snapshot {
+                return CoreReply::SnapshotInvalid {
+                    message: OBSERVATION_MESSAGE,
+                    detail: "missing-seed-order",
+                };
+            }
+            return CoreReply::Rejected {
+                kind: AMBIGUOUS_KIND,
+                message: AMBIGUOUS_MESSAGE,
+            };
+        };
+        let Some(mut session) = crate::seed::seed_session(
+            &event.owner,
+            &event.generation,
+            event.fingerprint,
+            &event.domain,
+            &order,
+        ) else {
+            return CoreReply::SnapshotInvalid {
+                message: OBSERVATION_MESSAGE,
+                detail: "seed-failed",
+            };
+        };
+        let base = session.accepted_revision();
+        let observation = crate::seed::session_observation_for(
+            &event.owner,
+            &event.generation,
+            base,
+            event.fingerprint,
+            &event.windows,
+        );
+        match propose(&mut session, &observation) {
+            Ok(plan) => {
+                let typed = reply(&plan);
+                if commit(&mut session, &plan, event, base) {
+                    self.store_committed(event.domain_key.clone(), session, event.outer_gap);
+                    return typed;
+                }
+                CoreReply::SnapshotInvalid {
+                    message: OBSERVATION_MESSAGE,
+                    detail: "commit-rejected",
+                }
+            }
+            Err(error) => CoreReply::Rejected {
+                kind: error.kind(),
+                message: error.message(),
+            },
+        }
+    }
+
+    /// Synchronous acknowledge plus `verify_lifecycle` commit for one
+    /// retained lifecycle plan. Mirrors the legacy protocol commit closure
+    /// exactly.
+    fn commit_lifecycle(
+        session: &mut Session,
+        plan: &crate::session::SessionPlan,
+        event: &CoreEvent,
+        base: u64,
+    ) -> bool {
+        if !engine_acknowledge(session, event, base) {
+            return false;
+        }
+        let post = LifecyclePostObservation::new(
+            Observation::new(
+                event.owner.clone(),
+                event.generation.clone(),
+                base,
+                event.fingerprint,
+            ),
+            event.correlation.clone(),
+            true,
+            plan.dispatch.preconditions.clone(),
+            plan.dispatch.operation.clone(),
+        );
+        session.verify_lifecycle(&post).is_ok()
+    }
+
+    /// Admit request phase: propose one tiled admission through the shared
+    /// retained lifecycle, with the flat-strip fit fast path for truly fresh
+    /// domains.
+    ///
+    /// Protocol keeps tagged command decoding, opaque window/output/workspace
+    /// checks, cross-domain binding, carried-bounds validation,
+    /// partial-observation, and placement-bounds validation at their exact
+    /// positions; by the time an event reaches here those fences passed and
+    /// the command carries the validated placement. This owns the fit
+    /// fallback, seed ordering (focused last, ties allowed, admitted member
+    /// excluded), seeding, relocation, propose/commit, and store.
+    fn admit_request(&mut self, event: &CoreEvent) -> CoreReply {
+        use crate::boundary::{TiledKind, TiledPlan};
+        let CoreCommand::Admit {
+            window,
+            output,
+            workspace,
+            placement_bounds,
+        } = &event.command
+        else {
+            return CoreReply::Rejected {
+                kind: "unknown-value",
+                message: "request contains an unknown value",
+            };
+        };
+        if placement_bounds.is_none()
+            && window.0 == event.focused_window.0
+            && self.session(&event.domain_key).is_none()
+            && let Some((tree, links)) =
+                crate::seed::try_flat_strip_fit(&event.domain, &event.windows)
+            && let Some(focus_leaf) = links
+                .iter()
+                .find(|l| l.window.0 == window.0)
+                .map(|l| l.leaf.clone())
+        {
+            if let Ok(mut fitted) = Session::new(
+                event.owner.clone(),
+                event.generation.clone(),
+                0,
+                event.fingerprint,
+                vec![event.domain.clone()],
+            ) {
+                let base = fitted.accepted_revision();
+                let observation = crate::seed::session_observation_for(
+                    &event.owner,
+                    &event.generation,
+                    base,
+                    event.fingerprint,
+                    &event.windows,
+                );
+                if let Ok(plan) = fitted.propose_fitted_admit(
+                    tree,
+                    links,
+                    focus_leaf,
+                    window,
+                    output,
+                    workspace,
+                    &observation,
+                    &event.correlation,
+                    &LifecycleCapabilities::full(),
+                ) {
+                    let typed =
+                        CoreReply::Tiled(TiledPlan::from_lifecycle(TiledKind::Admit, &plan));
+                    if Self::commit_lifecycle(&mut fitted, &plan, event, base) {
+                        self.store_committed(event.domain_key.clone(), fitted, event.outer_gap);
+                        return typed;
+                    }
+                }
+            }
+        }
+        let seed_order = crate::seed::order_spatial_with_focus_last(
+            event
+                .windows
+                .iter()
+                .filter(|w| w.window != *window)
+                .cloned()
+                .collect(),
+            &event.focused_window,
+            true,
+        );
+        let window = window.clone();
+        let output = output.clone();
+        let workspace = workspace.clone();
+        let domain = event.domain.clone();
+        let placement_explicit = *placement_bounds;
+        self.run_retained(
+            event,
+            seed_order,
+            false,
+            |session, observation| {
+                let placement = placement_explicit
+                    .unwrap_or_else(|| crate::seed::seed_target_bounds(session, &domain));
+                session.propose(
+                    &SessionCommand::Admit {
+                        window: window.clone(),
+                        output: output.clone(),
+                        workspace: workspace.clone(),
+                        exceptions: ExceptionFlags::none(),
+                        exception_behavior: None,
+                        placement_bounds: placement,
+                    },
+                    observation,
+                    &event.correlation,
+                    &LifecycleCapabilities::full(),
+                )
+            },
+            |plan| CoreReply::Tiled(TiledPlan::from_lifecycle(TiledKind::Admit, plan)),
+            Self::commit_lifecycle,
+        )
+    }
+
+    /// Remove request phase through the shared retained lifecycle.
+    ///
+    /// Protocol keeps tagged decoding and the opaque window check at their
+    /// exact positions; this owns seed ordering, seeding, relocation,
+    /// propose/commit, and store.
+    fn remove_request(&mut self, event: &CoreEvent) -> CoreReply {
+        use crate::boundary::{TiledKind, TiledPlan};
+        let CoreCommand::Remove { window } = &event.command else {
+            return CoreReply::Rejected {
+                kind: "unknown-value",
+                message: "request contains an unknown value",
+            };
+        };
+        let seed_order = crate::seed::order_spatial_with_focus_last(
+            event.windows.clone(),
+            &event.focused_window,
+            false,
+        );
+        let window = window.clone();
+        self.run_retained(
+            event,
+            seed_order,
+            false,
+            |session, observation| {
+                session.propose(
+                    &SessionCommand::Remove {
+                        window: window.clone(),
+                    },
+                    observation,
+                    &event.correlation,
+                    &LifecycleCapabilities::full(),
+                )
+            },
+            |plan| CoreReply::Tiled(TiledPlan::from_lifecycle(TiledKind::Remove, plan)),
+            Self::commit_lifecycle,
+        )
+    }
+
+    /// Toggle-float request phase through the shared retained lifecycle.
+    ///
+    /// Protocol keeps the raw-window floating `not-tiled` probe, tagged
+    /// decoding, opaque window checks, carried-bounds validation, and
+    /// partial-observation at their exact positions; this owns seed ordering,
+    /// seeding, relocation, propose/commit, and store, including the
+    /// pending-float effective rectangle.
+    fn toggle_float_request(&mut self, event: &CoreEvent) -> CoreReply {
+        use crate::boundary::TiledPlan;
+        let CoreCommand::ToggleFloat { window, float_rect } = &event.command else {
+            return CoreReply::Rejected {
+                kind: "unknown-value",
+                message: "request contains an unknown value",
+            };
+        };
+        let seed_order = crate::seed::order_spatial_with_focus_last(
+            event.windows.clone(),
+            &event.focused_window,
+            false,
+        );
+        let window = WindowId(window.clone());
+        let float_rect = *float_rect;
+        self.run_retained(
+            event,
+            seed_order,
+            true,
+            |session, observation| {
+                session
+                    .propose(
+                        &SessionCommand::ToggleFloat {
+                            window: window.clone(),
+                            float_geometry: float_rect,
+                        },
+                        observation,
+                        &event.correlation,
+                        &LifecycleCapabilities::full(),
+                    )
+                    .map(|plan| {
+                        let effective = session.pending_float_geometry(&window);
+                        (plan, effective)
+                    })
+            },
+            |result| CoreReply::Tiled(TiledPlan::for_toggle_float(&result.0, result.1)),
+            |session, result, e, base| Self::commit_lifecycle(session, &result.0, e, base),
+        )
+    }
+
+    /// Directional move request phase: two-domain pair planning with R4
+    /// staging, plus the legacy single-domain local path. Protocol keeps
+    /// envelope validation, tagged command decoding, pair scope shape
+    /// validation, mover binding, parsed-direction/op validation, and wire
+    /// serialization at their exact positions; by the time an event reaches
+    /// here the command decoded and the pair shape-checked. This owns the
+    /// planning outcome and the one-shot transition: canonical pair assembly,
+    /// focus sync, capability-gated propose, R4 pending staging, and the
+    /// R1-R3 synchronous acknowledge/verify/split/store. Single-domain
+    /// observations (no two-entry pair) run the local retained
+    /// propose/commit through [`Engine::local_move_request`], preserving the
+    /// legacy `run_retained` order exactly.
+    ///
+    /// Fence order matches the legacy protocol handler exactly: window opaque
+    /// (`move-window-invalid`), parsed direction (`direction-invalid`), pair
+    /// presence (`domain-invalid`), canonical assembly (`canonical-*`),
+    /// propose (mapped to `Rejected` with the exact kind/message, including
+    /// divergences as rejections like the legacy `propose_failure`), R4
+    /// pending guards (diverged on divergence/identity loss, else
+    /// `pending-exists`), then staging or the R1-R3 sync commit
+    /// (`commit-rejected` on failure).
+    fn directional_move_request(&mut self, event: &CoreEvent) -> CoreReply {
+        use crate::boundary::{MoveCrossView, MovePlanReply};
+        let CoreCommand::Move {
+            window,
+            direction,
+            cross_output_transfer,
+        } = &event.command
+        else {
+            return CoreReply::Rejected {
+                kind: "unknown-value",
+                message: "request contains an unknown value",
+            };
+        };
+        if event
+            .directional
+            .as_ref()
+            .is_none_or(|pair| pair.len() != 2)
+        {
+            return self.local_move_request(event, window, direction);
+        }
+        if !is_opaque_id(window) {
+            return CoreReply::SnapshotInvalid {
+                message: OPAQUE_ID_MESSAGE,
+                detail: "move-window-invalid",
+            };
+        }
+        let Some(direction) = parse_engine_direction(direction) else {
+            return CoreReply::Rejected {
+                kind: DIRECTION_KIND,
+                message: DIRECTION_MESSAGE,
+            };
+        };
+        let Some(pair) = event.directional.as_ref().filter(|pair| pair.len() == 2) else {
+            return CoreReply::SnapshotInvalid {
+                message: OBSERVATION_MESSAGE,
+                detail: "domain-invalid",
+            };
+        };
+        let (source_domain, source_key) = &pair[0];
+        let (target_domain, target_key) = &pair[1];
+        let window = WindowId(window.clone());
+        let mut session = match self.assemble_directional_pair(
+            source_domain,
+            source_key,
+            target_domain,
+            target_key,
+        ) {
+            Ok(session) => session,
+            Err(detail) => {
+                return CoreReply::SnapshotInvalid {
+                    message: OBSERVATION_MESSAGE,
+                    detail,
+                };
+            }
+        };
+        let base = session.accepted_revision();
+        let observation = crate::seed::session_observation_for(
+            &event.owner,
+            &event.generation,
+            base,
+            event.fingerprint,
+            &event.windows,
+        );
+        let _ = session.sync_focus_from_window(source_key, &event.focused_window.clone());
+        let mut capabilities = Capabilities::full();
+        capabilities.cross_output_transfer = *cross_output_transfer;
+        match session.propose_move(
+            source_key,
+            &window,
+            direction,
+            &observation,
+            &event.correlation,
+            &capabilities,
+        ) {
+            Ok(plan) => {
+                if matches!(plan.dispatch.operation, MoveOperation::CrossOutput { .. }) {
+                    if let Some(pending) = self.directional_pending.as_ref() {
+                        if let Some(reason) = pending.session().divergence() {
+                            return CoreReply::Diverged(reason);
+                        }
+                        return CoreReply::Rejected {
+                            kind: PENDING_EXISTS_KIND,
+                            message: PENDING_EXISTS_MESSAGE,
+                        };
+                    }
+                    if let Some(pending) = self.workspace_pending.as_ref() {
+                        if let Some(reason) = pending.session().divergence() {
+                            return CoreReply::Diverged(reason);
+                        }
+                        return CoreReply::Rejected {
+                            kind: PENDING_EXISTS_KIND,
+                            message: PENDING_EXISTS_MESSAGE,
+                        };
+                    }
+                    let target_outer_gap = event
+                        .directional_target_outer_gap
+                        .filter(|gap| is_gap(*gap))
+                        .unwrap_or(0);
+                    let Some(typed) =
+                        MovePlanReply::from_cross(&plan, &source_key.output, &source_key.workspace)
+                    else {
+                        return CoreReply::SnapshotInvalid {
+                            message: OBSERVATION_MESSAGE,
+                            detail: "domain-invalid",
+                        };
+                    };
+                    let cross: &MoveCrossView = typed.cross.as_ref().expect("cross builds");
+                    let _ = cross;
+                    self.directional_pending = Some(DirectionalMovePending::new(
+                        event.owner.clone(),
+                        event.generation.clone(),
+                        event.correlation.clone(),
+                        base,
+                        event.revision,
+                        session,
+                        source_key.clone(),
+                        target_key.clone(),
+                        event.outer_gap,
+                        target_outer_gap,
+                        plan.desired_geometry.clone(),
+                        plan.dispatch.operation.clone(),
+                        plan.dispatch.preconditions.clone(),
+                        event.focused_window.clone(),
+                        event.windows.clone(),
+                    ));
+                    CoreReply::MoveDirectional(typed)
+                } else {
+                    let typed = MovePlanReply::from_local(direction, &plan);
+                    if Self::commit_directional_move(&mut session, event, &plan, base) {
+                        let source_key = source_key.clone();
+                        let target_key = target_key.clone();
+                        let source_outer_gap = event.outer_gap;
+                        if self.store_canonical_pair(
+                            source_key,
+                            target_key,
+                            session,
+                            source_outer_gap,
+                        ) {
+                            return CoreReply::MoveDirectional(typed);
+                        }
+                    }
+                    CoreReply::SnapshotInvalid {
+                        message: OBSERVATION_MESSAGE,
+                        detail: "commit-rejected",
+                    }
+                }
+            }
+            Err(error) => CoreReply::Rejected {
+                kind: error.kind(),
+                message: error.message(),
+            },
+        }
+    }
+
+    /// Synchronous acknowledge/verify/split for an R1-R3 directional move
+    /// plan. Mirrors the legacy protocol commit helper exactly.
+    fn commit_directional_move(
+        session: &mut Session,
+        event: &CoreEvent,
+        plan: &crate::session::SessionMovePlan,
+        base: u64,
+    ) -> bool {
+        let ack = AdapterAck::new(
+            event.correlation.clone(),
+            event.owner.clone(),
+            event.generation.clone(),
+            base,
+            AckOutcome::Accepted,
+        );
+        if session.acknowledge(&ack).is_err() {
+            return false;
+        }
+        let post = PostObservation::new(
+            Observation::new(
+                event.owner.clone(),
+                event.generation.clone(),
+                base,
+                event.fingerprint,
+            ),
+            event.correlation.clone(),
+            true,
+            plan.dispatch.preconditions.clone(),
+            plan.dispatch.operation.clone(),
+        );
+        session.verify_move(&post).is_ok()
+    }
+
+    /// Directional focus request phase: two-domain pair planning with local
+    /// first then exhausted Left/Right cross, plus the legacy single-domain
+    /// local path. Same ownership contract as
+    /// [`Engine::directional_move_request`]: protocol keeps envelope,
+    /// tagged decoding, pair scope shape, parsed-direction/op validation, and
+    /// serialization; this owns assembly, focus sync, propose, and the
+    /// synchronous acknowledge/verify/split/store. Single-domain observations
+    /// (no two-entry pair) run the local retained propose/commit through
+    /// [`Engine::local_focus_request`], preserving the legacy `run_retained`
+    /// order exactly.
+    ///
+    /// Fence order matches the legacy protocol handler exactly: window opaque
+    /// (`focus-window-invalid`), parsed direction (`direction-invalid`), pair
+    /// presence (`domain-invalid`), canonical assembly (`canonical-*`),
+    /// propose (mapped like `propose_failure`), then the sync commit
+    /// (`commit-rejected` on failure).
+    fn directional_focus_request(&mut self, event: &CoreEvent) -> CoreReply {
+        use crate::boundary::FocusPlanReply;
+        let CoreCommand::Focus {
+            window, direction, ..
+        } = &event.command
+        else {
+            return CoreReply::Rejected {
+                kind: "unknown-value",
+                message: "request contains an unknown value",
+            };
+        };
+        if event
+            .directional
+            .as_ref()
+            .is_none_or(|pair| pair.len() != 2)
+        {
+            return self.local_focus_request(event, window, direction);
+        }
+        if !is_opaque_id(window) {
+            return CoreReply::SnapshotInvalid {
+                message: OPAQUE_ID_MESSAGE,
+                detail: "focus-window-invalid",
+            };
+        }
+        let Some(direction) = parse_engine_direction(direction) else {
+            return CoreReply::Rejected {
+                kind: DIRECTION_KIND,
+                message: DIRECTION_MESSAGE,
+            };
+        };
+        let Some(pair) = event.directional.as_ref().filter(|pair| pair.len() == 2) else {
+            return CoreReply::SnapshotInvalid {
+                message: OBSERVATION_MESSAGE,
+                detail: "domain-invalid",
+            };
+        };
+        let (source_domain, source_key) = &pair[0];
+        let (target_domain, target_key) = &pair[1];
+        let window = WindowId(window.clone());
+        let mut session = match self.assemble_directional_pair(
+            source_domain,
+            source_key,
+            target_domain,
+            target_key,
+        ) {
+            Ok(session) => session,
+            Err(detail) => {
+                return CoreReply::SnapshotInvalid {
+                    message: OBSERVATION_MESSAGE,
+                    detail,
+                };
+            }
+        };
+        let base = session.accepted_revision();
+        let observation = crate::seed::session_observation_for(
+            &event.owner,
+            &event.generation,
+            base,
+            event.fingerprint,
+            &event.windows,
+        );
+        let _ = session.sync_focus_from_window(source_key, &event.focused_window.clone());
+        let (plan, crossed) = match session.propose_focus(
+            source_key,
+            &window,
+            direction,
+            &observation,
+            &event.correlation,
+            &FocusCapabilities::full(),
+        ) {
+            Ok(plan) => (plan, false),
+            Err(ProposeError::Refused(RefusalKind::Unchanged))
+                if matches!(direction, Direction::Left | Direction::Right) =>
+            {
+                match session.propose_cross_output_focus(
+                    source_key,
+                    &window,
+                    direction,
+                    &observation,
+                    &event.correlation,
+                    &FocusCapabilities::full(),
+                ) {
+                    Ok(plan) => (plan, true),
+                    Err(error) => {
+                        return CoreReply::Rejected {
+                            kind: error.kind(),
+                            message: error.message(),
+                        };
+                    }
+                }
+            }
+            Err(error) => {
+                return CoreReply::Rejected {
+                    kind: error.kind(),
+                    message: error.message(),
+                };
+            }
+        };
+        let typed = if crossed {
+            FocusPlanReply::from_cross(direction, &plan)
+        } else {
+            FocusPlanReply::from_local(direction, &plan)
+        };
+        if Self::commit_directional_focus(&mut session, event, &plan, base) {
+            let source_key = source_key.clone();
+            let target_key = target_key.clone();
+            let source_outer_gap = event.outer_gap;
+            if self.store_canonical_pair(source_key, target_key, session, source_outer_gap) {
+                return CoreReply::FocusDirectional(typed);
+            }
+        }
+        CoreReply::SnapshotInvalid {
+            message: OBSERVATION_MESSAGE,
+            detail: "commit-rejected",
+        }
+    }
+
+    /// Synchronous acknowledge/verify/split for a directional focus plan.
+    /// Mirrors the legacy protocol commit helper exactly.
+    fn commit_directional_focus(
+        session: &mut Session,
+        event: &CoreEvent,
+        plan: &crate::session::SessionFocusPlan,
+        base: u64,
+    ) -> bool {
+        let ack = AdapterAck::new(
+            event.correlation.clone(),
+            event.owner.clone(),
+            event.generation.clone(),
+            base,
+            AckOutcome::Accepted,
+        );
+        if session.acknowledge(&ack).is_err() {
+            return false;
+        }
+        let post = FocusPostObservation::new(
+            Observation::new(
+                event.owner.clone(),
+                event.generation.clone(),
+                base,
+                event.fingerprint,
+            ),
+            event.correlation.clone(),
+            true,
+            plan.dispatch.preconditions.clone(),
+            plan.dispatch.operation.clone(),
+        );
+        session.verify_focus(&post).is_ok()
+    }
+
+    /// Legacy single-domain move through the shared retained lifecycle.
+    ///
+    /// Protocol keeps tagged command decoding, the directional-pair branch,
+    /// window/direction authorization, and wire serialization at their exact
+    /// positions; by the time an event reaches here the command decoded. This
+    /// owns seed ordering, focus sync, capability-gated propose, relocation,
+    /// commit, and store, preserving the legacy `run_retained` order exactly
+    /// (ambiguous seed as `snapshot-invalid`/`missing-seed-order`, full
+    /// capabilities so the carried transfer flag stays transport-only).
+    fn local_move_request(
+        &mut self,
+        event: &CoreEvent,
+        window: &str,
+        direction: &str,
+    ) -> CoreReply {
+        use crate::boundary::MovePlanReply;
+        if !is_opaque_id(window) {
+            return CoreReply::SnapshotInvalid {
+                message: OPAQUE_ID_MESSAGE,
+                detail: "move-window-invalid",
+            };
+        }
+        let Some(direction) = parse_engine_direction(direction) else {
+            return CoreReply::Rejected {
+                kind: DIRECTION_KIND,
+                message: DIRECTION_MESSAGE,
+            };
+        };
+        let seed_order = crate::seed::order_spatial_with_focus_last(
+            event.windows.clone(),
+            &event.focused_window,
+            false,
+        );
+        let window = WindowId(window.to_owned());
+        self.run_retained(
+            event,
+            seed_order,
+            true,
+            |session, observation| {
+                let _ = session.sync_focus_from_window(&event.domain_key, &event.focused_window);
+                session.propose_move(
+                    &event.domain_key,
+                    &window,
+                    direction,
+                    observation,
+                    &event.correlation,
+                    &Capabilities::full(),
+                )
+            },
+            |plan| CoreReply::MoveDirectional(MovePlanReply::from_local(direction, plan)),
+            |session, plan, event, base| Self::commit_directional_move(session, event, plan, base),
+        )
+    }
+
+    /// Legacy single-domain focus through the shared retained lifecycle.
+    ///
+    /// Same ownership contract as [`Engine::local_move_request`]: protocol
+    /// keeps tagged decoding, the directional-pair branch, and
+    /// window/direction authorization; this owns seed ordering, focus sync,
+    /// propose (local only, no cross fallback), commit, and store.
+    fn local_focus_request(
+        &mut self,
+        event: &CoreEvent,
+        window: &str,
+        direction: &str,
+    ) -> CoreReply {
+        use crate::boundary::FocusPlanReply;
+        if !is_opaque_id(window) {
+            return CoreReply::SnapshotInvalid {
+                message: OPAQUE_ID_MESSAGE,
+                detail: "focus-window-invalid",
+            };
+        }
+        let Some(direction) = parse_engine_direction(direction) else {
+            return CoreReply::Rejected {
+                kind: DIRECTION_KIND,
+                message: DIRECTION_MESSAGE,
+            };
+        };
+        let seed_order = crate::seed::order_spatial_with_focus_last(
+            event.windows.clone(),
+            &event.focused_window,
+            false,
+        );
+        let window = WindowId(window.to_owned());
+        self.run_retained(
+            event,
+            seed_order,
+            true,
+            |session, observation| {
+                let _ = session.sync_focus_from_window(&event.domain_key, &event.focused_window);
+                session.propose_focus(
+                    &event.domain_key,
+                    &window,
+                    direction,
+                    observation,
+                    &event.correlation,
+                    &FocusCapabilities::full(),
+                )
+            },
+            |plan| CoreReply::FocusDirectional(FocusPlanReply::from_local(direction, plan)),
+            |session, plan, event, base| Self::commit_directional_focus(session, event, plan, base),
+        )
+    }
+
+    /// Legacy keyboard resize through the shared retained lifecycle.
+    ///
+    /// Protocol keeps tagged command decoding, window/direction/mode
+    /// authorization, and wire serialization at their exact positions; this
+    /// owns seed ordering, focus sync, keyboard-gated propose, commit, and
+    /// store. Mode failures map to `direction-invalid` exactly like the
+    /// legacy handler, and resize shares flow through the typed
+    /// [`crate::boundary::ResizePlanReply`] unchanged.
+    fn resize_request(&mut self, event: &CoreEvent) -> CoreReply {
+        use crate::boundary::ResizePlanReply;
+        let CoreCommand::Resize {
+            window,
+            direction,
+            mode,
+            press_index,
+        } = &event.command
+        else {
+            return CoreReply::Rejected {
+                kind: "unknown-value",
+                message: "request contains an unknown value",
+            };
+        };
+        if !is_opaque_id(window) {
+            return CoreReply::SnapshotInvalid {
+                message: OPAQUE_ID_MESSAGE,
+                detail: "resize-window-invalid",
+            };
+        }
+        let Some(direction) = parse_engine_direction(direction) else {
+            return CoreReply::Rejected {
+                kind: DIRECTION_KIND,
+                message: DIRECTION_MESSAGE,
+            };
+        };
+        let Some(mode) = parse_engine_mode(mode) else {
+            return CoreReply::Rejected {
+                kind: DIRECTION_KIND,
+                message: DIRECTION_MESSAGE,
+            };
+        };
+        let seed_order = crate::seed::order_spatial_with_focus_last(
+            event.windows.clone(),
+            &event.focused_window,
+            false,
+        );
+        let window = WindowId(window.to_owned());
+        let press_index = *press_index;
+        self.run_retained(
+            event,
+            seed_order,
+            true,
+            |session, observation| {
+                let _ = session.sync_focus_from_window(&event.domain_key, &event.focused_window);
+                session.propose_resize(
+                    &event.domain_key,
+                    &window,
+                    direction,
+                    mode,
+                    press_index,
+                    observation,
+                    &event.correlation,
+                    &ResizeCapabilities {
+                        keyboard_resize: true,
+                        pointer_resize: false,
+                    },
+                )
+            },
+            |plan| CoreReply::Resize(ResizePlanReply::from_keyboard(direction, mode, plan)),
+            |session, plan, event, base| Self::commit_resize(session, event, plan, base),
+        )
+    }
+
+    /// Legacy pointer resize through the shared retained lifecycle.
+    ///
+    /// Same ownership contract as [`Engine::resize_request`] with the pointer
+    /// capability gate and carried boundary; the boundary crosses opaquely
+    /// with no authorization beyond the tagged decode, exactly like the
+    /// legacy handler.
+    fn pointer_resize_request(&mut self, event: &CoreEvent) -> CoreReply {
+        use crate::boundary::ResizePlanReply;
+        let CoreCommand::PointerResize {
+            window,
+            direction,
+            boundary,
+        } = &event.command
+        else {
+            return CoreReply::Rejected {
+                kind: "unknown-value",
+                message: "request contains an unknown value",
+            };
+        };
+        if !is_opaque_id(window) {
+            return CoreReply::SnapshotInvalid {
+                message: OPAQUE_ID_MESSAGE,
+                detail: "pointer-resize-window-invalid",
+            };
+        }
+        let Some(direction) = parse_engine_direction(direction) else {
+            return CoreReply::Rejected {
+                kind: DIRECTION_KIND,
+                message: DIRECTION_MESSAGE,
+            };
+        };
+        let seed_order = crate::seed::order_spatial_with_focus_last(
+            event.windows.clone(),
+            &event.focused_window,
+            false,
+        );
+        let window = WindowId(window.to_owned());
+        let boundary = *boundary;
+        self.run_retained(
+            event,
+            seed_order,
+            true,
+            |session, observation| {
+                let _ = session.sync_focus_from_window(&event.domain_key, &event.focused_window);
+                session.propose_pointer_resize(
+                    &event.domain_key,
+                    &window,
+                    direction,
+                    boundary,
+                    observation,
+                    &event.correlation,
+                    &ResizeCapabilities {
+                        keyboard_resize: false,
+                        pointer_resize: true,
+                    },
+                )
+            },
+            |plan| CoreReply::Resize(ResizePlanReply::from_pointer(direction, boundary, plan)),
+            |session, plan, event, base| Self::commit_resize(session, event, plan, base),
+        )
+    }
+
+    /// Synchronous acknowledge/verify for a retained resize plan. Mirrors the
+    /// legacy protocol commit closure exactly.
+    fn commit_resize(
+        session: &mut Session,
+        event: &CoreEvent,
+        plan: &crate::session::SessionResizePlan,
+        base: u64,
+    ) -> bool {
+        if !engine_acknowledge(session, event, base) {
+            return false;
+        }
+        let post = ResizePostObservation::new(
+            Observation::new(
+                event.owner.clone(),
+                event.generation.clone(),
+                base,
+                event.fingerprint,
+            ),
+            event.correlation.clone(),
+            true,
+            plan.dispatch.preconditions.clone(),
+            plan.dispatch.operation.clone(),
+        );
+        session.verify_resize(&post).is_ok()
+    }
+
+    /// Workspace-send acknowledgement: exact accepted acknowledgement
+    /// against the retained pending session. Fence order matches the legacy
+    /// protocol handler: ack outcome, pending absence, divergence,
+    /// owner/generation, correlation, revision, then the in-place acknowledge.
+    /// Refused ack outcome is a rejection; identity loss is terminal
+    /// divergence. On success the pending is retained for verify.
+    fn workspace_ack(&mut self, event: &CoreEvent, ack_outcome: &str) -> CoreReply {
+        use crate::contract::DivergenceKind;
+        let outcome = match ack_outcome {
+            "accepted" => AckOutcome::Accepted,
+            "refused-capability" => AckOutcome::RefusedCapability,
+            "partial-application" => AckOutcome::PartialApplication,
+            "adapter-lost" => AckOutcome::AdapterLost,
+            _ => {
+                return CoreReply::Rejected {
+                    kind: "ack-refused",
+                    message: "acknowledgement outcome is invalid",
+                };
+            }
+        };
+        let Some(pending) = self.workspace_pending.as_mut() else {
+            return CoreReply::Rejected {
+                kind: "no-pending",
+                message: "no workspace plan is pending",
+            };
+        };
+        if let Some(reason) = pending.session().divergence() {
+            return CoreReply::Diverged(reason);
+        }
+        if pending.owner() != &event.owner || pending.generation() != &event.generation {
+            return CoreReply::Diverged(DivergenceKind::OwnerMismatch);
+        }
+        if pending.correlation() != &event.correlation {
+            return CoreReply::Diverged(DivergenceKind::CorrelationMismatch);
+        }
+        if event.revision != pending.base_revision() {
+            return CoreReply::Diverged(DivergenceKind::StaleRevision);
+        }
+        let base = pending.base_revision();
+        let ack = AdapterAck::new(
+            event.correlation.clone(),
+            event.owner.clone(),
+            event.generation.clone(),
+            base,
+            outcome,
+        );
+        match pending.session_mut().acknowledge(&ack) {
+            Ok(_) => CoreReply::Acknowledged {
+                base_revision: base,
+                kind: TransactionKind::SendToWorkspace,
+            },
+            Err(AckError::Diverged(reason)) => CoreReply::Diverged(reason),
+            Err(AckError::NoPending) => CoreReply::Rejected {
+                kind: "no-pending",
+                message: "no workspace plan is pending",
+            },
+        }
+    }
+
+    /// Directional R4 acknowledgement: same contract as
+    /// [`Engine::workspace_ack`] against the retained pair session. No new
+    /// topology seeding; the pending is retained for verify.
+    fn directional_ack(&mut self, event: &CoreEvent, ack_outcome: &str) -> CoreReply {
+        use crate::contract::DivergenceKind;
+        let outcome = match ack_outcome {
+            "accepted" => AckOutcome::Accepted,
+            "refused-capability" => AckOutcome::RefusedCapability,
+            "partial-application" => AckOutcome::PartialApplication,
+            "adapter-lost" => AckOutcome::AdapterLost,
+            _ => {
+                return CoreReply::Rejected {
+                    kind: "ack-refused",
+                    message: "acknowledgement outcome is invalid",
+                };
+            }
+        };
+        let Some(pending) = self.directional_pending.as_mut() else {
+            return CoreReply::Rejected {
+                kind: "no-pending",
+                message: "no directional move is pending",
+            };
+        };
+        if let Some(reason) = pending.session().divergence() {
+            return CoreReply::Diverged(reason);
+        }
+        if pending.owner() != &event.owner || pending.generation() != &event.generation {
+            return CoreReply::Diverged(DivergenceKind::OwnerMismatch);
+        }
+        if pending.correlation() != &event.correlation {
+            return CoreReply::Diverged(DivergenceKind::CorrelationMismatch);
+        }
+        if event.revision != pending.base_revision() {
+            return CoreReply::Diverged(DivergenceKind::StaleRevision);
+        }
+        let base = pending.base_revision();
+        let ack = AdapterAck::new(
+            event.correlation.clone(),
+            event.owner.clone(),
+            event.generation.clone(),
+            base,
+            outcome,
+        );
+        match pending.session_mut().acknowledge(&ack) {
+            Ok(_) => CoreReply::Acknowledged {
+                base_revision: base,
+                kind: TransactionKind::DirectionalMove,
+            },
+            Err(AckError::Diverged(reason)) => CoreReply::Diverged(reason),
+            Err(AckError::NoPending) => CoreReply::Rejected {
+                kind: "no-pending",
+                message: "no directional move is pending",
+            },
+        }
+    }
+
+    /// Workspace-send cancellation: withdraw the exact retained
+    /// [`WorkspacePending`] only on exact identity, unacked state,
+    /// zero-dispatch attestation, retained scope binding, and byte-exact
+    /// pre-image proof. Fence order matches the legacy protocol handler:
+    /// zero-dispatch, divergence, identity, drag, acknowledged state, scope
+    /// binding, pre-image, then the one-shot withdraw.
+    fn workspace_cancel(&mut self, event: &CoreEvent, zero_dispatch: bool) -> CoreReply {
+        if !zero_dispatch {
+            return CoreReply::Rejected {
+                kind: "cancel-refused",
+                message: "adapter attests a native dispatch",
+            };
+        }
+        let Some(pending) = self.workspace_pending.as_ref() else {
+            return CoreReply::Rejected {
+                kind: "no-pending",
+                message: "no workspace plan is pending",
+            };
+        };
+        if let Some(reason) = pending.session().divergence() {
+            return CoreReply::Diverged(reason);
+        }
+        if pending.owner() != &event.owner
+            || pending.generation() != &event.generation
+            || pending.correlation() != &event.correlation
+            || event.revision != pending.request_revision()
+        {
+            return CoreReply::Rejected {
+                kind: "stale",
+                message: "cancel identity does not match the pending transaction",
+            };
+        }
+        if pending.session().has_drag() {
+            return CoreReply::Rejected {
+                kind: "cancel-refused",
+                message: "pending plan holds a drag capture",
+            };
+        }
+        if !matches!(pending.session().status().state, StateKind::PendingUnacked) {
+            return CoreReply::Rejected {
+                kind: "cancel-refused",
+                message: "pending plan was already acknowledged",
+            };
+        }
+        let Some((target_domain, _)) = event.target_domain.as_ref() else {
+            return CoreReply::Rejected {
+                kind: "cancel-mismatch",
+                message: "current scope does not match the pending transaction",
+            };
+        };
+        let retained = pending.session().domains();
+        if retained.len() != 2 || retained[0] != event.domain || retained[1] != *target_domain {
+            return CoreReply::Rejected {
+                kind: "cancel-mismatch",
+                message: "current scope does not match the pending transaction",
+            };
+        }
+        if !pending.pre_image_matches(&event.focused_window, &event.windows, &event.target_windows)
+        {
+            return CoreReply::Rejected {
+                kind: "cancel-mismatch",
+                message: "current observation does not match the dispatch-time pre-image",
+            };
+        }
+        let base = pending.base_revision();
+        let correlation = event.correlation.clone();
+        let Some(pending_mut) = self.workspace_pending.as_mut() else {
+            return CoreReply::Rejected {
+                kind: "no-pending",
+                message: "no workspace plan is pending",
+            };
+        };
+        match pending_mut
+            .session_mut()
+            .cancel_unacked_pending(&correlation, base)
+        {
+            Ok(()) => {
+                self.workspace_pending = None;
+                CoreReply::Cancelled {
+                    base_revision: base,
+                    kind: TransactionKind::SendToWorkspace,
+                }
+            }
+            Err(CancelUnackedError::Diverged(reason)) => CoreReply::Diverged(reason),
+            Err(CancelUnackedError::NoPending) => CoreReply::Rejected {
+                kind: "no-pending",
+                message: "no workspace plan is pending",
+            },
+            Err(CancelUnackedError::AlreadyAcknowledged) => CoreReply::Rejected {
+                kind: "cancel-refused",
+                message: "pending plan was already acknowledged",
+            },
+            Err(CancelUnackedError::DragActive) => CoreReply::Rejected {
+                kind: "cancel-refused",
+                message: "pending plan holds a drag capture",
+            },
+            Err(CancelUnackedError::BindingMismatch) => CoreReply::Rejected {
+                kind: "stale",
+                message: "cancel identity does not match the pending transaction",
+            },
+        }
+    }
+
+    /// Directional R4 cancellation: withdraw the exact retained
+    /// [`DirectionalMovePending`] under the same contract as
+    /// [`Engine::workspace_cancel`], with the carried pair keys and projected
+    /// domains bound to the retained pair plus pre-image equality over the
+    /// combined two-domain window set. On success the pair pending clears
+    /// without splitting or storing: canonical sessions are exactly preserved.
+    fn directional_cancel(&mut self, event: &CoreEvent, zero_dispatch: bool) -> CoreReply {
+        if !zero_dispatch {
+            return CoreReply::Rejected {
+                kind: "cancel-refused",
+                message: "adapter attests a native dispatch",
+            };
+        }
+        let Some(pending) = self.directional_pending.as_ref() else {
+            return CoreReply::Rejected {
+                kind: "no-pending",
+                message: "no directional move is pending",
+            };
+        };
+        if let Some(reason) = pending.session().divergence() {
+            return CoreReply::Diverged(reason);
+        }
+        if pending.owner() != &event.owner
+            || pending.generation() != &event.generation
+            || pending.correlation() != &event.correlation
+            || event.revision != pending.request_revision()
+        {
+            return CoreReply::Rejected {
+                kind: "stale",
+                message: "cancel identity does not match the pending transaction",
+            };
+        }
+        if pending.session().has_drag() {
+            return CoreReply::Rejected {
+                kind: "cancel-refused",
+                message: "pending plan holds a drag capture",
+            };
+        }
+        if !matches!(pending.session().status().state, StateKind::PendingUnacked) {
+            return CoreReply::Rejected {
+                kind: "cancel-refused",
+                message: "pending plan was already acknowledged",
+            };
+        }
+        let Some(pair) = event.directional.as_ref().filter(|pair| pair.len() == 2) else {
+            return CoreReply::Rejected {
+                kind: "cancel-mismatch",
+                message: "current scope does not match the pending transaction",
+            };
+        };
+        let (source_domain, source_key) = &pair[0];
+        let (target_domain, target_key) = &pair[1];
+        if source_key != pending.source_key() || target_key != pending.target_key() {
+            return CoreReply::Rejected {
+                kind: "cancel-mismatch",
+                message: "current scope does not match the pending transaction",
+            };
+        }
+        let retained = pending.session().domains();
+        if retained.len() != 2 || retained[0] != *source_domain || retained[1] != *target_domain {
+            return CoreReply::Rejected {
+                kind: "cancel-mismatch",
+                message: "current scope does not match the pending transaction",
+            };
+        }
+        if !pending.pre_image_matches(&event.focused_window, &event.windows) {
+            return CoreReply::Rejected {
+                kind: "cancel-mismatch",
+                message: "current observation does not match the dispatch-time pre-image",
+            };
+        }
+        let base = pending.base_revision();
+        let correlation = event.correlation.clone();
+        let Some(pending_mut) = self.directional_pending.as_mut() else {
+            return CoreReply::Rejected {
+                kind: "no-pending",
+                message: "no directional move is pending",
+            };
+        };
+        match pending_mut
+            .session_mut()
+            .cancel_unacked_pending(&correlation, base)
+        {
+            Ok(()) => {
+                self.directional_pending = None;
+                CoreReply::Cancelled {
+                    base_revision: base,
+                    kind: TransactionKind::DirectionalMove,
+                }
+            }
+            Err(CancelUnackedError::Diverged(reason)) => CoreReply::Diverged(reason),
+            Err(CancelUnackedError::NoPending) => CoreReply::Rejected {
+                kind: "no-pending",
+                message: "no directional move is pending",
+            },
+            Err(CancelUnackedError::AlreadyAcknowledged) => CoreReply::Rejected {
+                kind: "cancel-refused",
+                message: "pending plan was already acknowledged",
+            },
+            Err(CancelUnackedError::DragActive) => CoreReply::Rejected {
+                kind: "cancel-refused",
+                message: "pending plan holds a drag capture",
+            },
+            Err(CancelUnackedError::BindingMismatch) => CoreReply::Rejected {
+                kind: "stale",
+                message: "cancel identity does not match the pending transaction",
+            },
+        }
+    }
+
+    /// Workspace-send verification: exact post-observation (typed preconditions
+    /// and operation already validated in protocol after the `verified` gate)
+    /// plus a matching fresh observation commits the pending session and
+    /// advances the revision by exactly one. Pending mismatch or failed
+    /// verification is terminal divergence. Fence order matches the legacy
+    /// protocol handler: verified gate, pending existence, divergence,
+    /// owner/generation, correlation, revision, post-observation geometry,
+    /// then the lifecycle commit.
+    fn workspace_verify(
+        &mut self,
+        event: &CoreEvent,
+        verified: bool,
+        preconditions: &[LifecyclePrecondition],
+        operation: &LifecycleOperation,
+    ) -> CoreReply {
+        use crate::contract::DivergenceKind;
+        if !verified {
+            return CoreReply::Diverged(DivergenceKind::PostconditionUnverified);
+        }
+        let Some(mut pending) = self.take_workspace_pending() else {
+            return CoreReply::Rejected {
+                kind: "no-pending",
+                message: "no workspace plan is pending",
+            };
+        };
+        if let Some(reason) = pending.session().divergence() {
+            self.restore_workspace_pending(pending);
+            return CoreReply::Diverged(reason);
+        }
+        if pending.owner() != &event.owner || pending.generation() != &event.generation {
+            self.restore_workspace_pending(pending);
+            return CoreReply::Diverged(DivergenceKind::OwnerMismatch);
+        }
+        if pending.correlation() != &event.correlation {
+            self.restore_workspace_pending(pending);
+            return CoreReply::Diverged(DivergenceKind::CorrelationMismatch);
+        }
+        if event.revision != pending.base_revision() {
+            self.restore_workspace_pending(pending);
+            return CoreReply::Diverged(DivergenceKind::StaleRevision);
+        }
+        if !pending.post_matches(&event.windows, &event.target_windows) {
+            let reason = pending.session_mut().note_postcondition_mismatch();
+            self.restore_workspace_pending(pending);
+            return CoreReply::Diverged(reason);
+        }
+        let post = LifecyclePostObservation::new(
+            Observation::new(
+                event.owner.clone(),
+                event.generation.clone(),
+                pending.base_revision(),
+                event.fingerprint,
+            ),
+            event.correlation.clone(),
+            true,
+            preconditions.to_vec(),
+            operation.clone(),
+        );
+        match pending.session_mut().verify_lifecycle(&post) {
+            Ok(commit) => {
+                self.clear_workspace_pending();
+                CoreReply::Committed {
+                    revision: commit.revision,
+                    kind: TransactionKind::SendToWorkspace,
+                }
+            }
+            Err(VerifyError::Diverged(reason)) => {
+                self.restore_workspace_pending(pending);
+                CoreReply::Diverged(reason)
+            }
+            Err(_) => {
+                self.restore_workspace_pending(pending);
+                CoreReply::Rejected {
+                    kind: "verify-rejected",
+                    message: "workspace verification failed",
+                }
+            }
+        }
+    }
+
+    /// Directional R4 verification: exact post-observation (typed operation
+    /// and preconditions already validated in protocol after the `verified`
+    /// gate) plus a complete matching source+target observation commits via
+    /// `Session::verify_move`, then splits/stores the canonical sessions once
+    /// and replies `committed`. Fence order matches the legacy protocol
+    /// handler: verified gate, pending existence, divergence,
+    /// owner/generation, correlation, revision, operation/preconditions
+    /// binding, post-observation geometry, fenced echo source/target binding,
+    /// then the move commit plus canonical split/store.
+    #[allow(clippy::too_many_arguments)]
+    fn directional_verify(
+        &mut self,
+        event: &CoreEvent,
+        verified: bool,
+        preconditions: &[Precondition],
+        operation: &MoveOperation,
+        echo_source_output: &OutputId,
+        echo_source_workspace: &WorkspaceId,
+        echo_target_output: &OutputId,
+        echo_target_workspace: &WorkspaceId,
+    ) -> CoreReply {
+        use crate::contract::DivergenceKind;
+        if !verified {
+            return CoreReply::Diverged(DivergenceKind::PostconditionUnverified);
+        }
+        let Some(mut pending) = self.take_directional_pending() else {
+            return CoreReply::Rejected {
+                kind: "no-pending",
+                message: "no directional move is pending",
+            };
+        };
+        if let Some(reason) = pending.session().divergence() {
+            self.restore_directional_pending(pending);
+            return CoreReply::Diverged(reason);
+        }
+        if pending.owner() != &event.owner || pending.generation() != &event.generation {
+            self.restore_directional_pending(pending);
+            return CoreReply::Diverged(DivergenceKind::OwnerMismatch);
+        }
+        if pending.correlation() != &event.correlation {
+            self.restore_directional_pending(pending);
+            return CoreReply::Diverged(DivergenceKind::CorrelationMismatch);
+        }
+        if event.revision != pending.base_revision() {
+            self.restore_directional_pending(pending);
+            return CoreReply::Diverged(DivergenceKind::StaleRevision);
+        }
+        if *operation != *pending.operation() || *preconditions != *pending.preconditions() {
+            let reason = pending.session_mut().note_postcondition_mismatch();
+            self.restore_directional_pending(pending);
+            return CoreReply::Diverged(reason);
+        }
+        if !pending.post_matches(&event.windows) {
+            let reason = pending.session_mut().note_postcondition_mismatch();
+            self.restore_directional_pending(pending);
+            return CoreReply::Diverged(reason);
+        }
+        if let MoveOperation::CrossOutput {
+            target_output,
+            target_workspace,
+            ..
+        } = pending.operation()
+        {
+            if echo_target_output.0 != target_output.0
+                || echo_target_workspace.0 != target_workspace.0
+                || echo_target_output.0 != pending.target_key().output.0
+                || echo_target_workspace.0 != pending.target_key().workspace.0
+                || echo_source_output.0 != pending.source_key().output.0
+                || echo_source_workspace.0 != pending.source_key().workspace.0
+            {
+                let reason = pending.session_mut().note_postcondition_mismatch();
+                self.restore_directional_pending(pending);
+                return CoreReply::Diverged(reason);
+            }
+        }
+        let post = PostObservation::new(
+            Observation::new(
+                event.owner.clone(),
+                event.generation.clone(),
+                pending.base_revision(),
+                event.fingerprint,
+            ),
+            event.correlation.clone(),
+            true,
+            preconditions.to_vec(),
+            operation.clone(),
+        );
+        match pending.session_mut().verify_move(&post) {
+            Ok(commit) => {
+                let source_key = pending.source_key().clone();
+                let target_key = pending.target_key().clone();
+                let source_outer_gap = pending.source_outer_gap();
+                let target_outer_gap = pending.target_outer_gap();
+                let Ok((source, target)) = pending.session().split_canonical_pair() else {
+                    self.restore_directional_pending(pending);
+                    return CoreReply::Diverged(DivergenceKind::PostconditionMismatch);
+                };
+                self.clear_directional_pending();
+                self.store_committed(source_key, source, source_outer_gap);
+                if let Some(target) = target {
+                    self.store_committed(target_key, target, target_outer_gap);
+                } else {
+                    self.sessions.remove(&target_key);
+                    self.outer_gaps.remove(&target_key);
+                }
+                CoreReply::Committed {
+                    revision: commit.revision,
+                    kind: TransactionKind::DirectionalMove,
+                }
+            }
+            Err(VerifyError::Diverged(reason)) => {
+                self.restore_directional_pending(pending);
+                CoreReply::Diverged(reason)
+            }
+            Err(_) => {
+                self.restore_directional_pending(pending);
+                CoreReply::Rejected {
+                    kind: "verify-rejected",
+                    message: "directional verification failed",
+                }
+            }
+        }
+    }
+
+    /// Portable output relocation: when no usable session exists for the
+    /// target key, move a usable retained session with the same workspace id
+    /// from a different output to the target, preserving topology, shares,
+    /// focus, exceptions, and revision. Fails closed with no mutation while
+    /// either pending pair transaction is live (the caller-owned pending scope
+    /// now lives here, so no flag crosses). Target collision, unique source, capacity
+    /// rollback, and empty-session rules match the legacy behavior exactly.
+    pub fn try_relocate_for_target(
+        &mut self,
+        target_key: &DomainKey,
+        target_domain: &OutputDomain,
+        request_outer_gap: i32,
+    ) -> bool {
+        if self.has_any_pending() {
+            return false;
+        }
+        if !is_gap(request_outer_gap) {
+            return false;
+        }
+        if self.sessions.contains_key(target_key) {
+            return false;
+        }
+        let mut source_key: Option<DomainKey> = None;
+        for key in self.sessions.keys() {
+            if key.workspace == target_key.workspace && key.output != target_key.output {
+                if source_key.is_some() {
+                    return false;
+                }
+                source_key = Some(key.clone());
+            }
+        }
+        let Some(source) = source_key else {
+            return false;
+        };
+        let Some(session) = self.sessions.get(&source).cloned() else {
+            return false;
+        };
+        if !session_usable(&session) {
+            return false;
+        }
+        if session.has_pending_desired() || session.has_drag() {
+            return false;
+        }
+        if committed_session_is_empty(&session) {
+            return false;
+        }
+        let mut moved = session.clone();
+        if !moved.relocate_domain(&source, target_key, target_domain.bounds, target_domain.gap) {
+            return false;
+        }
+        if committed_session_is_empty(&moved) {
+            return false;
+        }
+        let backup_session = session;
+        let backup_outer = self.outer_gaps.get(&source).copied();
+        self.sessions.remove(&source);
+        self.outer_gaps.remove(&source);
+        if self.sessions.len() >= MAX_DOMAINS {
+            match backup_outer {
+                Some(gap) => {
+                    self.outer_gaps.insert(source.clone(), gap);
+                    self.sessions.insert(source, backup_session);
+                }
+                None => {
+                    self.sessions.insert(source, backup_session);
+                }
+            }
+            return false;
+        }
+        self.outer_gaps
+            .insert(target_key.clone(), request_outer_gap);
+        self.sessions.insert(target_key.clone(), moved);
+        true
+    }
+
+    /// Hotplug reprojection: update retained bounds for `key` without touching
+    /// topology, shares, membership, focus, or revision. `false` when unknown.
+    pub fn reproject_retained(&mut self, key: &DomainKey, bounds: Rect) -> bool {
+        let Some(session) = self.sessions.get_mut(key) else {
+            return false;
+        };
+        session.reproject_domain(key, bounds);
+        true
+    }
+}
+
+/// Retained rebuild gate mirroring the protocol `needs_rebuild`: diverged or
+/// partial-observation proposals discard and rebuild once, everything else
+/// fails closed.
+fn engine_needs_rebuild(error: &ProposeError) -> bool {
+    match error {
+        ProposeError::Diverged(_) => true,
+        ProposeError::Refused(RefusalKind::PartialObservation) => true,
+        ProposeError::PendingExists => false,
+        ProposeError::Refused(_) => false,
+    }
+}
+
+/// Synchronous acknowledge helper mirroring the protocol commit closure.
+fn engine_acknowledge(session: &mut Session, event: &CoreEvent, base: u64) -> bool {
+    let ack = AdapterAck::new(
+        event.correlation.clone(),
+        event.owner.clone(),
+        event.generation.clone(),
+        base,
+        AckOutcome::Accepted,
+    );
+    session.acknowledge(&ack).is_ok()
+}
+
+/// Parsed-direction gate mirroring the protocol vocabulary.
+fn parse_engine_direction(value: &str) -> Option<Direction> {
+    match value {
+        "left" => Some(Direction::Left),
+        "right" => Some(Direction::Right),
+        "up" => Some(Direction::Up),
+        "down" => Some(Direction::Down),
+        _ => None,
+    }
+}
+
+/// Parsed-mode gate mirroring the protocol vocabulary.
+fn parse_engine_mode(value: &str) -> Option<ResizeMode> {
+    match value {
+        "inwards" => Some(ResizeMode::Inwards),
+        "outwards" => Some(ResizeMode::Outwards),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -313,5 +2990,932 @@ mod tests {
         engine.insert_raw(key.clone(), session, 0);
         assert!(engine.take_usable_session(&key, &d).is_none());
         assert!(!engine.contains(&key));
+    }
+
+    #[test]
+    fn relocate_refuses_pending_gap_collision_and_ambiguity() {
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let d = domain("out", "ws");
+        let key = d.key();
+        let session = new_session(&owner, &gen_id, d.clone());
+        engine.insert_raw(key.clone(), session, 5);
+        let target = domain("out-2", "ws");
+        let target_key = target.key();
+        // Empty source refuses (no topology to preserve).
+        assert!(!engine.try_relocate_for_target(&target_key, &target, 0));
+        assert!(!engine.contains(&target_key));
+        assert!(engine.contains(&key));
+        // Out-of-range outer gap refuses.
+        assert!(!engine.try_relocate_for_target(&target_key, &target, 65));
+        assert!(!engine.try_relocate_for_target(&target_key, &target, -1));
+        // Target collision refuses even though the target slot is empty.
+        engine.insert_raw(
+            target_key.clone(),
+            new_session(&owner, &gen_id, target.clone()),
+            0,
+        );
+        assert!(!engine.try_relocate_for_target(&target_key, &target, 0));
+        engine.remove(&target_key);
+        // Ambiguous sources refuse.
+        engine.insert_raw(
+            domain("out-3", "ws").key(),
+            new_session(&owner, &gen_id, domain("out-3", "ws")),
+            0,
+        );
+        assert_eq!(engine.find_unique_source_for_target(&target_key), None);
+        assert!(!engine.try_relocate_for_target(&target_key, &target, 0));
+    }
+
+    #[test]
+    fn relocate_refuses_while_either_pending_is_live() {
+        use crate::directional::{OutputId, WindowId, WorkspaceId};
+        use crate::ids::CorrelationId;
+        use crate::pending::WorkspacePending;
+        use crate::seed::EngineWindow;
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let source_domain = domain("out", "ws");
+        let source_key = source_domain.key();
+        let order = vec![EngineWindow {
+            window: WindowId("win-1".to_owned()),
+            output: OutputId("out".to_owned()),
+            workspace: WorkspaceId("ws".to_owned()),
+            rect: Rect {
+                x: 0,
+                y: 0,
+                w: 10,
+                h: 10,
+            },
+            floating: false,
+            fit_excluded: false,
+        }];
+        let seeded =
+            crate::seed::seed_session(&owner, &gen_id, 7, &source_domain, &order).expect("seeds");
+        engine.insert_raw(source_key.clone(), seeded.clone(), 3);
+        let target = domain("out-2", "ws");
+        let target_key = target.key();
+        engine.set_workspace_pending(WorkspacePending::new(
+            owner.clone(),
+            gen_id.clone(),
+            CorrelationId::parse("corr-1").expect("valid"),
+            0,
+            0,
+            seeded,
+            Vec::new(),
+            WindowId("win-1".to_owned()),
+            order.clone(),
+            Vec::new(),
+        ));
+        assert!(engine.has_any_pending());
+        assert!(!engine.try_relocate_for_target(&target_key, &target, 0));
+        assert!(!engine.contains(&target_key));
+        assert!(engine.contains(&source_key));
+        engine.clear_workspace_pending();
+        assert!(engine.try_relocate_for_target(&target_key, &target, 0));
+    }
+
+    #[test]
+    fn relocate_moves_seeded_topology_with_outer_gap() {
+        use crate::directional::{OutputId, WorkspaceId};
+        use crate::seed::{EngineWindow, seed_session};
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let source_domain = domain("out", "ws");
+        let source_key = source_domain.key();
+        let order = vec![EngineWindow {
+            window: crate::directional::WindowId("win-1".to_owned()),
+            output: OutputId("out".to_owned()),
+            workspace: WorkspaceId("ws".to_owned()),
+            rect: Rect {
+                x: 0,
+                y: 0,
+                w: 10,
+                h: 10,
+            },
+            floating: false,
+            fit_excluded: false,
+        }];
+        let seeded = seed_session(&owner, &gen_id, 7, &source_domain, &order).expect("seeds");
+        let revision = seeded.accepted_revision();
+        engine.insert_raw(source_key.clone(), seeded, 3);
+        let target_domain = OutputDomain {
+            id: OutputId("out-2".to_owned()),
+            workspace: WorkspaceId("ws".to_owned()),
+            bounds: Rect {
+                x: 0,
+                y: 0,
+                w: 800,
+                h: 600,
+            },
+            gap: 0,
+            adjacent: BTreeMap::new(),
+        };
+        let target_key = target_domain.key();
+        assert_eq!(
+            engine.find_unique_source_for_target(&target_key),
+            Some(source_key.clone())
+        );
+        assert!(engine.outer_gap_matches(&source_key, 3));
+        assert!(!engine.outer_gap_matches(&source_key, 0));
+        assert!(engine.try_relocate_for_target(&target_key, &target_domain, 9));
+        assert!(!engine.contains(&source_key));
+        assert!(engine.contains(&target_key));
+        assert_eq!(engine.outer_gap(&target_key), Some(9));
+        let moved = engine.session(&target_key).expect("moved");
+        assert_eq!(moved.accepted_revision(), revision);
+        assert_eq!(moved.snapshot().windows.len(), 1);
+    }
+
+    #[test]
+    fn canonical_pair_helpers_stay_typed() {
+        let mut anchored = domain("out", "ws");
+        anchored.adjacent = BTreeMap::from([(
+            crate::directional::Direction::Right,
+            crate::directional::OutputId("out-2".to_owned()),
+        )]);
+        let stripped = Engine::canonical_component_domain(&anchored);
+        assert!(stripped.adjacent.is_empty());
+        assert_eq!(stripped.bounds, anchored.bounds);
+        let engine = Engine::new();
+        let target = domain("out-2", "ws");
+        assert_eq!(
+            engine
+                .assemble_directional_pair(&anchored, &anchored.key(), &target, &target.key())
+                .unwrap_err(),
+            "canonical-source-unavailable"
+        );
+    }
+
+    #[test]
+    fn reproject_updates_bounds_only() {
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let d = domain("out", "ws");
+        let key = d.key();
+        engine.insert_raw(key.clone(), new_session(&owner, &gen_id, d), 0);
+        let next = Rect {
+            x: 0,
+            y: 0,
+            w: 1024,
+            h: 768,
+        };
+        assert!(engine.reproject_retained(&key, next));
+        assert_eq!(
+            engine.session(&key).expect("kept").domains()[0].bounds,
+            next
+        );
+        assert!(!engine.reproject_retained(&domain("missing", "ws").key(), next));
+    }
+
+    mod handle_tests {
+        use super::*;
+        use crate::boundary::{
+            CoreCommand, CoreEvent, CoreReply, TransactionKind, TransactionStatus,
+        };
+        use crate::directional::{OutputId, WindowId, WorkspaceId};
+        use crate::ids::CorrelationId;
+
+        fn pair_domains() -> (OutputDomain, OutputDomain) {
+            (domain("out", "ws"), domain("out", "ws-2"))
+        }
+
+        fn staged_workspace_engine() -> (Engine, OutputDomain, OutputDomain) {
+            let mut engine = Engine::new();
+            let owner = OwnerId::parse("owner-a").expect("valid");
+            let gen_id = GenerationId::parse("gen-1").expect("valid");
+            let correlation = CorrelationId::parse("corr-1").expect("valid");
+            let (source, target) = pair_domains();
+            let session = Session::new(
+                owner.clone(),
+                gen_id.clone(),
+                0,
+                7,
+                vec![source.clone(), target.clone()],
+            )
+            .expect("session");
+            engine.set_workspace_pending(WorkspacePending::new(
+                owner,
+                gen_id,
+                correlation,
+                0,
+                0,
+                session,
+                Vec::new(),
+                WindowId("focus".to_owned()),
+                Vec::new(),
+                Vec::new(),
+            ));
+            (engine, source, target)
+        }
+
+        fn workspace_event(
+            source: &OutputDomain,
+            target: &OutputDomain,
+            command: CoreCommand,
+        ) -> CoreEvent {
+            let (source_key, target_key) = (source.key(), target.key());
+            CoreEvent {
+                owner: OwnerId::parse("owner-a").expect("valid"),
+                generation: GenerationId::parse("gen-1").expect("valid"),
+                correlation: CorrelationId::parse("corr-1").expect("valid"),
+                revision: 0,
+                fingerprint: 7,
+                domain: source.clone(),
+                domain_key: source_key,
+                outer_gap: 0,
+                focused_window: WindowId("focus".to_owned()),
+                windows: Vec::new(),
+                directional: None,
+                directional_target_outer_gap: None,
+                target_domain: Some((target.clone(), target_key)),
+                target_windows: Vec::new(),
+                command,
+            }
+        }
+
+        #[test]
+        fn workspace_status_without_pending_is_unknown() {
+            let engine = Engine::new();
+            let (source, target) = pair_domains();
+            let event = workspace_event(&source, &target, CoreCommand::SendStatus);
+            assert_eq!(
+                engine.inspect(&event),
+                CoreReply::Status {
+                    base_revision: None,
+                    status: TransactionStatus::NoPendingUnknown,
+                }
+            );
+        }
+
+        #[test]
+        fn workspace_cancel_without_pending_is_no_pending() {
+            let mut engine = Engine::new();
+            let (source, target) = pair_domains();
+            let event = workspace_event(
+                &source,
+                &target,
+                CoreCommand::SendCancel {
+                    zero_dispatch: true,
+                },
+            );
+            assert_eq!(
+                engine.handle(&event),
+                CoreReply::Rejected {
+                    kind: "no-pending",
+                    message: "no workspace plan is pending",
+                }
+            );
+        }
+
+        #[test]
+        fn workspace_status_is_read_only_and_repeated() {
+            let (engine, source, target) = staged_workspace_engine();
+            let event = workspace_event(&source, &target, CoreCommand::SendStatus);
+            // Fresh two-domain session is Verified (never PendingAcked), so a
+            // fully matching empty observation classifies `unresolved`; the
+            // point here is the repeat is identical and the pending survives.
+            // `inspect` takes `&self`, so this test cannot mutate by construction.
+            let first = engine.inspect(&event);
+            let second = engine.inspect(&event);
+            assert_eq!(first, second);
+            assert_eq!(
+                first,
+                CoreReply::Status {
+                    base_revision: Some(0),
+                    status: TransactionStatus::Unresolved,
+                }
+            );
+            assert!(engine.workspace_pending().is_some());
+        }
+
+        #[test]
+        fn workspace_status_scope_mismatch_is_unresolved() {
+            let (engine, source, _) = staged_workspace_engine();
+            let other_target = domain("out", "ws-3");
+            let event = workspace_event(&source, &other_target, CoreCommand::SendStatus);
+            assert_eq!(
+                engine.inspect(&event),
+                CoreReply::Status {
+                    base_revision: Some(0),
+                    status: TransactionStatus::Unresolved,
+                }
+            );
+            assert!(engine.workspace_pending().is_some());
+        }
+
+        #[test]
+        fn workspace_status_stale_identity_leaves_pending() {
+            let (engine, source, target) = staged_workspace_engine();
+            let mut event = workspace_event(&source, &target, CoreCommand::SendStatus);
+            event.correlation = CorrelationId::parse("corr-2").expect("valid");
+            assert_eq!(
+                engine.inspect(&event),
+                CoreReply::Status {
+                    base_revision: Some(0),
+                    status: TransactionStatus::Stale,
+                }
+            );
+            assert!(engine.workspace_pending().is_some());
+        }
+
+        #[test]
+        fn workspace_cancel_refuses_native_dispatch_without_mutation() {
+            let (mut engine, source, target) = staged_workspace_engine();
+            let event = workspace_event(
+                &source,
+                &target,
+                CoreCommand::SendCancel {
+                    zero_dispatch: false,
+                },
+            );
+            assert_eq!(
+                engine.handle(&event),
+                CoreReply::Rejected {
+                    kind: "cancel-refused",
+                    message: "adapter attests a native dispatch",
+                }
+            );
+            assert!(engine.workspace_pending().is_some());
+        }
+
+        #[test]
+        fn workspace_cancel_stale_identity_leaves_pending() {
+            let (mut engine, source, target) = staged_workspace_engine();
+            let mut event = workspace_event(
+                &source,
+                &target,
+                CoreCommand::SendCancel {
+                    zero_dispatch: true,
+                },
+            );
+            event.revision = 9;
+            assert_eq!(
+                engine.handle(&event),
+                CoreReply::Rejected {
+                    kind: "stale",
+                    message: "cancel identity does not match the pending transaction",
+                }
+            );
+            assert!(engine.workspace_pending().is_some());
+        }
+
+        #[test]
+        fn workspace_cancel_acknowledged_state_precedes_scope_binding() {
+            // Fence order mirrors the legacy handler: the acknowledged-state
+            // refusal fires before scope binding, so a never-proposed session
+            // reports cancel-refused even when the carried scope also differs.
+            // True scope-mismatch with a live unacked pending is covered by
+            // the protocol wire goldens.
+            let (mut engine, source, _) = staged_workspace_engine();
+            let other_target = domain("out", "ws-3");
+            let event = workspace_event(
+                &source,
+                &other_target,
+                CoreCommand::SendCancel {
+                    zero_dispatch: true,
+                },
+            );
+            assert_eq!(
+                engine.handle(&event),
+                CoreReply::Rejected {
+                    kind: "cancel-refused",
+                    message: "pending plan was already acknowledged",
+                }
+            );
+            assert!(engine.workspace_pending().is_some());
+        }
+
+        #[test]
+        fn workspace_cancel_refuses_verified_session_without_mutation() {
+            // The staged session never proposed, so its reconciler holds no
+            // unacked pending: the withdraw refuses as already-acknowledged
+            // and the live transaction stays exactly intact.
+            let (mut engine, source, target) = staged_workspace_engine();
+            let event = workspace_event(
+                &source,
+                &target,
+                CoreCommand::SendCancel {
+                    zero_dispatch: true,
+                },
+            );
+            assert_eq!(
+                engine.handle(&event),
+                CoreReply::Rejected {
+                    kind: "cancel-refused",
+                    message: "pending plan was already acknowledged",
+                }
+            );
+            assert!(engine.workspace_pending().is_some());
+        }
+
+        fn staged_directional_engine() -> (Engine, OutputDomain, DomainKey, OutputDomain, DomainKey)
+        {
+            use crate::directional::MoveOperation;
+            let mut engine = Engine::new();
+            let owner = OwnerId::parse("owner-a").expect("valid");
+            let gen_id = GenerationId::parse("gen-1").expect("valid");
+            let correlation = CorrelationId::parse("corr-1").expect("valid");
+            let source = domain("out", "ws");
+            let target = domain("out-2", "ws");
+            let (source_key, target_key) = (source.key(), target.key());
+            let session = Session::new(
+                owner.clone(),
+                gen_id.clone(),
+                0,
+                7,
+                vec![source.clone(), target.clone()],
+            )
+            .expect("session");
+            engine.set_directional_pending(DirectionalMovePending::new(
+                owner,
+                gen_id,
+                correlation,
+                0,
+                0,
+                session,
+                source_key.clone(),
+                target_key.clone(),
+                0,
+                0,
+                Vec::new(),
+                MoveOperation::SwapNeighbor {
+                    rule: crate::directional::Rule::R2a,
+                    container: crate::directional::NodeId::from("root"),
+                    neighbor: crate::directional::NodeId::from("n"),
+                },
+                Vec::new(),
+                WindowId("focus".to_owned()),
+                Vec::new(),
+            ));
+            (engine, source, source_key, target, target_key)
+        }
+
+        fn directional_event(
+            source: &OutputDomain,
+            source_key: &DomainKey,
+            target: &OutputDomain,
+            target_key: &DomainKey,
+            command: CoreCommand,
+        ) -> CoreEvent {
+            CoreEvent {
+                owner: OwnerId::parse("owner-a").expect("valid"),
+                generation: GenerationId::parse("gen-1").expect("valid"),
+                correlation: CorrelationId::parse("corr-1").expect("valid"),
+                revision: 0,
+                fingerprint: 7,
+                domain: source.clone(),
+                domain_key: source_key.clone(),
+                outer_gap: 0,
+                focused_window: WindowId("focus".to_owned()),
+                windows: Vec::new(),
+                directional: Some(vec![
+                    (source.clone(), source_key.clone()),
+                    (target.clone(), target_key.clone()),
+                ]),
+                directional_target_outer_gap: Some(0),
+                target_domain: None,
+                target_windows: Vec::new(),
+                command,
+            }
+        }
+
+        #[test]
+        fn directional_status_without_pending_is_unknown() {
+            let engine = Engine::new();
+            let source = domain("out", "ws");
+            let target = domain("out-2", "ws");
+            let (source_key, target_key) = (source.key(), target.key());
+            let event = directional_event(
+                &source,
+                &source_key,
+                &target,
+                &target_key,
+                CoreCommand::DirectionalStatus,
+            );
+            assert_eq!(
+                engine.inspect(&event),
+                CoreReply::Status {
+                    base_revision: None,
+                    status: TransactionStatus::NoPendingUnknown,
+                }
+            );
+        }
+
+        #[test]
+        fn directional_cancel_without_pending_is_no_pending() {
+            let mut engine = Engine::new();
+            let source = domain("out", "ws");
+            let target = domain("out-2", "ws");
+            let (source_key, target_key) = (source.key(), target.key());
+            let event = directional_event(
+                &source,
+                &source_key,
+                &target,
+                &target_key,
+                CoreCommand::DirectionalCancel {
+                    zero_dispatch: true,
+                },
+            );
+            assert_eq!(
+                engine.handle(&event),
+                CoreReply::Rejected {
+                    kind: "no-pending",
+                    message: "no directional move is pending",
+                }
+            );
+        }
+
+        #[test]
+        fn directional_status_key_mismatch_is_unresolved_and_read_only() {
+            let (engine, source, _, target, target_key) = staged_directional_engine();
+            let wrong_source_key = domain("out-9", "ws").key();
+            let event = directional_event(
+                &source,
+                &wrong_source_key,
+                &target,
+                &target_key,
+                CoreCommand::DirectionalStatus,
+            );
+            let first = engine.inspect(&event);
+            assert_eq!(
+                first,
+                CoreReply::Status {
+                    base_revision: Some(0),
+                    status: TransactionStatus::Unresolved,
+                }
+            );
+            assert_eq!(engine.inspect(&event), first);
+            assert!(engine.directional_pending().is_some());
+        }
+
+        #[test]
+        fn directional_cancel_refuses_native_dispatch_and_stale_without_mutation() {
+            let (mut engine, source, source_key, target, target_key) = staged_directional_engine();
+            let refused = directional_event(
+                &source,
+                &source_key,
+                &target,
+                &target_key,
+                CoreCommand::DirectionalCancel {
+                    zero_dispatch: false,
+                },
+            );
+            assert_eq!(
+                engine.handle(&refused),
+                CoreReply::Rejected {
+                    kind: "cancel-refused",
+                    message: "adapter attests a native dispatch",
+                }
+            );
+            let mut stale = directional_event(
+                &source,
+                &source_key,
+                &target,
+                &target_key,
+                CoreCommand::DirectionalCancel {
+                    zero_dispatch: true,
+                },
+            );
+            stale.owner = OwnerId::parse("owner-b").expect("valid");
+            assert_eq!(
+                engine.handle(&stale),
+                CoreReply::Rejected {
+                    kind: "stale",
+                    message: "cancel identity does not match the pending transaction",
+                }
+            );
+            assert!(engine.directional_pending().is_some());
+        }
+
+        #[test]
+        fn directional_cancel_acknowledged_state_precedes_key_binding() {
+            // Same fence order as the workspace route: acknowledged-state
+            // refusal fires before key/scope binding. True key-mismatch with
+            // a live unacked pending is covered by the protocol wire goldens.
+            let (mut engine, source, _, target, target_key) = staged_directional_engine();
+            let wrong_source_key = domain("out-9", "ws").key();
+            let event = directional_event(
+                &source,
+                &wrong_source_key,
+                &target,
+                &target_key,
+                CoreCommand::DirectionalCancel {
+                    zero_dispatch: true,
+                },
+            );
+            assert_eq!(
+                engine.handle(&event),
+                CoreReply::Rejected {
+                    kind: "cancel-refused",
+                    message: "pending plan was already acknowledged",
+                }
+            );
+            assert!(engine.directional_pending().is_some());
+        }
+
+        #[test]
+        fn cancelled_reply_kinds_classify_routes() {
+            assert_eq!(
+                TransactionKind::SendToWorkspace.kind_str(),
+                "send-to-workspace"
+            );
+            assert_eq!(
+                TransactionKind::DirectionalMove.kind_str(),
+                "directional-move"
+            );
+            let _ = (OutputId("o".to_owned()), WorkspaceId("w".to_owned()));
+        }
+
+        #[test]
+        fn workspace_ack_invalid_outcome_precedes_no_pending() {
+            let mut engine = Engine::new();
+            let (source, target) = pair_domains();
+            let event = workspace_event(
+                &source,
+                &target,
+                CoreCommand::SendAck {
+                    ack_outcome: "bogus".to_owned(),
+                },
+            );
+            assert_eq!(
+                engine.handle(&event),
+                CoreReply::Rejected {
+                    kind: "ack-refused",
+                    message: "acknowledgement outcome is invalid",
+                }
+            );
+            assert!(engine.workspace_pending().is_none());
+        }
+
+        #[test]
+        fn workspace_ack_without_pending_is_no_pending() {
+            let mut engine = Engine::new();
+            let (source, target) = pair_domains();
+            let event = workspace_event(
+                &source,
+                &target,
+                CoreCommand::SendAck {
+                    ack_outcome: "accepted".to_owned(),
+                },
+            );
+            assert_eq!(
+                engine.handle(&event),
+                CoreReply::Rejected {
+                    kind: "no-pending",
+                    message: "no workspace plan is pending",
+                }
+            );
+        }
+
+        #[test]
+        fn workspace_ack_stale_identity_diverges_without_mutation() {
+            use crate::contract::DivergenceKind;
+            let (mut engine, source, target) = staged_workspace_engine();
+            let mut event = workspace_event(
+                &source,
+                &target,
+                CoreCommand::SendAck {
+                    ack_outcome: "accepted".to_owned(),
+                },
+            );
+            event.correlation = CorrelationId::parse("corr-2").expect("valid");
+            assert_eq!(
+                engine.handle(&event),
+                CoreReply::Diverged(DivergenceKind::CorrelationMismatch)
+            );
+            assert!(engine.workspace_pending().is_some());
+        }
+
+        #[test]
+        fn directional_ack_invalid_outcome_precedes_no_pending() {
+            let mut engine = Engine::new();
+            let source = domain("out", "ws");
+            let target = domain("out-2", "ws");
+            let (source_key, target_key) = (source.key(), target.key());
+            let event = directional_event(
+                &source,
+                &source_key,
+                &target,
+                &target_key,
+                CoreCommand::DirectionalAck {
+                    ack_outcome: "bogus".to_owned(),
+                },
+            );
+            assert_eq!(
+                engine.handle(&event),
+                CoreReply::Rejected {
+                    kind: "ack-refused",
+                    message: "acknowledgement outcome is invalid",
+                }
+            );
+            assert!(engine.directional_pending().is_none());
+        }
+
+        #[test]
+        fn directional_ack_without_pending_is_no_pending() {
+            let mut engine = Engine::new();
+            let source = domain("out", "ws");
+            let target = domain("out-2", "ws");
+            let (source_key, target_key) = (source.key(), target.key());
+            let event = directional_event(
+                &source,
+                &source_key,
+                &target,
+                &target_key,
+                CoreCommand::DirectionalAck {
+                    ack_outcome: "accepted".to_owned(),
+                },
+            );
+            assert_eq!(
+                engine.handle(&event),
+                CoreReply::Rejected {
+                    kind: "no-pending",
+                    message: "no directional move is pending",
+                }
+            );
+        }
+
+        #[test]
+        fn directional_ack_stale_identity_diverges_without_mutation() {
+            use crate::contract::DivergenceKind;
+            let (mut engine, source, source_key, target, target_key) = staged_directional_engine();
+            let mut event = directional_event(
+                &source,
+                &source_key,
+                &target,
+                &target_key,
+                CoreCommand::DirectionalAck {
+                    ack_outcome: "accepted".to_owned(),
+                },
+            );
+            event.revision = 9;
+            assert_eq!(
+                engine.handle(&event),
+                CoreReply::Diverged(DivergenceKind::StaleRevision)
+            );
+            assert!(engine.directional_pending().is_some());
+        }
+
+        #[test]
+        fn pending_conflict_without_pending_is_none() {
+            let engine = Engine::new();
+            let key = domain("out", "ws").key();
+            let owner = OwnerId::parse("owner-a").expect("valid");
+            let gen_id = GenerationId::parse("gen-1").expect("valid");
+            assert!(
+                engine
+                    .pending_conflict("reconcile", &owner, &gen_id, &key, None, None)
+                    .is_none()
+            );
+            assert!(
+                engine
+                    .pending_conflict("send-to-workspace", &owner, &gen_id, &key, None, None)
+                    .is_none()
+            );
+            assert!(engine.workspace_request_guard(&owner, &gen_id).is_none());
+        }
+
+        #[test]
+        fn pending_conflict_directional_blocks_send_unconditionally() {
+            let (engine, source, source_key, _, _) = staged_directional_engine();
+            let owner = OwnerId::parse("owner-a").expect("valid");
+            let gen_id = GenerationId::parse("gen-1").expect("valid");
+            assert_eq!(
+                engine.pending_conflict(
+                    "send-to-workspace",
+                    &owner,
+                    &gen_id,
+                    &source_key,
+                    None,
+                    Some(("out", "ws-2")),
+                ),
+                Some(CoreReply::Rejected {
+                    kind: "pending-exists",
+                    message: "complete the pending plan before proposing",
+                })
+            );
+            assert!(
+                engine
+                    .pending_conflict("active-group", &owner, &gen_id, &source_key, None, None)
+                    .is_none(),
+                "active-group never conflicts"
+            );
+            assert_eq!(
+                engine.pending_conflict("reconcile", &owner, &gen_id, &source_key, None, None,),
+                Some(CoreReply::Rejected {
+                    kind: "pending-exists",
+                    message: "complete the pending plan before proposing",
+                }),
+                "request domain touching the pair blocks"
+            );
+            let _ = source;
+        }
+
+        #[test]
+        fn pending_conflict_workspace_blocks_only_paired_move() {
+            let (engine, _, _) = staged_workspace_engine();
+            let key = domain("out", "ws").key();
+            let pair = [domain("out", "ws").key(), domain("out-2", "ws").key()];
+            let owner = OwnerId::parse("owner-a").expect("valid");
+            let gen_id = GenerationId::parse("gen-1").expect("valid");
+            assert!(
+                engine
+                    .pending_conflict("reconcile", &owner, &gen_id, &key, None, None)
+                    .is_none(),
+                "ordinary plans keep existing behavior under workspace pending"
+            );
+            assert!(
+                engine
+                    .pending_conflict("move", &owner, &gen_id, &key, None, None)
+                    .is_none(),
+                "single-domain move keeps existing behavior"
+            );
+            assert_eq!(
+                engine.pending_conflict("move", &owner, &gen_id, &key, Some(&pair), None),
+                Some(CoreReply::Rejected {
+                    kind: "pending-exists",
+                    message: "complete the pending plan before proposing",
+                })
+            );
+        }
+
+        #[test]
+        fn workspace_request_guard_uses_workspace_specific_message() {
+            let (engine, _, _) = staged_workspace_engine();
+            let owner = OwnerId::parse("owner-a").expect("valid");
+            let gen_id = GenerationId::parse("gen-1").expect("valid");
+            assert_eq!(
+                engine.workspace_request_guard(&owner, &gen_id),
+                Some(CoreReply::Rejected {
+                    kind: "pending-exists",
+                    message: "complete the pending workspace plan before proposing",
+                })
+            );
+        }
+
+        #[test]
+        fn workspace_request_handle_blocks_directional_before_workspace_guard() {
+            let (mut engine, source, target) = staged_workspace_engine();
+            let owner = OwnerId::parse("owner-a").expect("valid");
+            let gen_id = GenerationId::parse("gen-1").expect("valid");
+            let correlation = CorrelationId::parse("corr-9").expect("valid");
+            let session = Session::new(
+                owner.clone(),
+                gen_id.clone(),
+                0,
+                7,
+                vec![domain("out-2", "ws"), domain("out-3", "ws")],
+            )
+            .expect("session");
+            engine.set_directional_pending(DirectionalMovePending::new(
+                owner,
+                gen_id,
+                correlation,
+                0,
+                0,
+                session,
+                domain("out-2", "ws").key(),
+                domain("out-3", "ws").key(),
+                0,
+                0,
+                Vec::new(),
+                crate::directional::MoveOperation::SwapNeighbor {
+                    rule: crate::directional::Rule::R2a,
+                    container: crate::directional::NodeId::from("root"),
+                    neighbor: crate::directional::NodeId::from("n"),
+                },
+                Vec::new(),
+                WindowId("focus".to_owned()),
+                Vec::new(),
+            ));
+            let event = workspace_event(
+                &source,
+                &target,
+                CoreCommand::SendToWorkspace {
+                    window: "focus".to_owned(),
+                    target_output: "out".to_owned(),
+                    target_workspace: "ws-2".to_owned(),
+                },
+            );
+            assert_eq!(
+                engine.handle(&event),
+                CoreReply::Rejected {
+                    kind: "pending-exists",
+                    message: "complete the pending plan before proposing",
+                },
+                "directional block precedes the workspace guard with the generic message"
+            );
+            assert!(engine.workspace_pending().is_some());
+            assert!(engine.directional_pending().is_some());
+        }
     }
 }

@@ -95,8 +95,8 @@ use crate::geometry::{Rect, project};
 use crate::ids::{CorrelationId, GenerationId, OwnerId};
 use crate::reconcile::{AckApplied, AckError, Commit, Reconciler, StatusView, VerifyError};
 
-/// Observed-window vector bound.
-pub const MAX_OBSERVED_WINDOWS: usize = 64;
+/// Observed-window vector bound (single source: [`crate::bounds`]).
+pub use crate::bounds::MAX_OBSERVED_WINDOWS;
 /// Logical domain bound.
 pub const MAX_DOMAINS: usize = 16;
 

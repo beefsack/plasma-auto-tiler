@@ -6,18 +6,6 @@ Architecture review program: immediate next priority, in listed order. Section
 references are to [the review](research/architecture-review/review.md). Verify
 each review claim before acting; it was a static sampling review.
 
-- P0 | AR3 Typed Engine behind current wire format | 7.6, 4.3.4-5: world-level
-  `Engine::handle(Event) -> Plan`; per-domain map, paired sessions, seeding,
-  fitting, relocation become internals; typed serde `Command`/`Reply` enums
-  replace string dispatch and hand validation. `DescribePlan` wire unchanged.
-  Planner single-flight `busy` coupling documented. Green partial migration:
-  all 19 operations decode through strict tagged serde, byte-exact goldens
-  cover command and transaction wire, and portable core owns near-strip fitting,
-  seed ordering, per-domain world map, binding and outer gaps. Pending/pair
-  orchestration, remaining seeding/hotplug and typed plan/reply boundary still
-  live in protocol; Engine::handle is not yet implemented. Preserve independent
-  per-domain revisions, divergence and pending semantics; pair/split removal
-  remains deferred to AR11. [record](changes/architecture-review-ar3-typed-engine.md)
 - P0 | AR4 Single observation `sync` | 7.7: core derives removals, admissions,
   domain changes, flag transitions, and drift from one observation; removes TS
   membership baselines, `hiddenIntentFor`, and reconcile counters/thresholds.

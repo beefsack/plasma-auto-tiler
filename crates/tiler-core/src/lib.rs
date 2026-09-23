@@ -3,12 +3,15 @@
 //! outside the core; a core rectangle never encodes host-specific frame insets.
 
 pub mod active_group;
+pub mod boundary;
+pub mod bounds;
 pub mod contract;
 pub mod cosmic_v1;
 pub mod directional;
 pub mod engine;
 pub mod geometry;
 pub mod ids;
+pub mod pending;
 pub mod reconcile;
 pub mod seed;
 pub mod session;

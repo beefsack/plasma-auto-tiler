@@ -8,12 +8,17 @@
 //! outer-gap handling (via the already-inset [`OutputDomain::bounds`]) match
 //! the planner protocol behavior exactly.
 
+use crate::bounds::{rect_contained, valid_carried_rect};
+use crate::contract::{
+    AckOutcome, AdapterAck, LifecycleCapabilities, LifecyclePostObservation, Observation,
+};
 use crate::directional::{Axis, Node, NodeId, OutputId, WindowId, WindowLink, WorkspaceId};
 use crate::geometry::{Rect, project};
-use crate::session::{MAX_OBSERVED_WINDOWS, OutputDomain};
-
-/// Bounded carried-geometry extent (mirrors the planner wire bound).
-const GEOMETRY_BOUND: i32 = 16384;
+use crate::ids::{CorrelationId, GenerationId, OwnerId};
+use crate::session::{
+    DesiredGeometry, DomainKey, ExceptionFlags, MAX_OBSERVED_WINDOWS, ObservedWindow, OutputDomain,
+    Session, SessionCommand, SessionObservation,
+};
 
 /// Serde-free observed window for seed ordering and strip fitting.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,28 +29,6 @@ pub struct EngineWindow {
     pub rect: Rect,
     pub floating: bool,
     pub fit_excluded: bool,
-}
-
-fn valid_carried_rect(x: i32, y: i32, w: i32, h: i32) -> bool {
-    w > 0
-        && h > 0
-        && (-GEOMETRY_BOUND..=GEOMETRY_BOUND).contains(&x)
-        && (-GEOMETRY_BOUND..=GEOMETRY_BOUND).contains(&y)
-        && w <= GEOMETRY_BOUND
-        && h <= GEOMETRY_BOUND
-        && (i64::from(x) + i64::from(w) <= i64::from(i32::MAX))
-        && (i64::from(y) + i64::from(h) <= i64::from(i32::MAX))
-}
-
-fn rect_contained(inner: Rect, outer: Rect) -> bool {
-    let inner_right = i64::from(inner.x) + i64::from(inner.w);
-    let inner_bottom = i64::from(inner.y) + i64::from(inner.h);
-    let outer_right = i64::from(outer.x) + i64::from(outer.w);
-    let outer_bottom = i64::from(outer.y) + i64::from(outer.h);
-    inner.x >= outer.x
-        && inner.y >= outer.y
-        && inner_right <= outer_right
-        && inner_bottom <= outer_bottom
 }
 
 /// Deterministic near-strip fit over the current admission's complete
@@ -233,6 +216,323 @@ pub fn order_spatial_with_focus_last(
     Some(windows)
 }
 
+/// Rebuild placement target for one admission step: the focused leaf's
+/// projected rectangle, or the output geometry when the rebuilt domain is
+/// still empty (or focus does not resolve there).
+#[must_use]
+pub fn seed_target_bounds(session: &Session, domain: &OutputDomain) -> Rect {
+    let key = DomainKey {
+        output: domain.id.clone(),
+        workspace: domain.workspace.clone(),
+    };
+    let (focus_domain, focus_leaf) = session.focus();
+    if focus_domain.as_ref() == Some(&key)
+        && let Some(leaf) = focus_leaf.as_ref()
+        && let Some(tree) = session
+            .snapshot()
+            .domains
+            .into_iter()
+            .find(|d| d.output == key.output && d.workspace == key.workspace)
+            .and_then(|d| d.tree)
+        && let Ok(projected) = project(&tree, domain.bounds, domain.gap)
+        && let Some(target) = projected.iter().find(|entry| &entry.leaf == leaf)
+    {
+        return target.rect;
+    }
+    domain.bounds
+}
+
+/// Portable observed-window mapping: tiled seed observations carry no
+/// exception flags beyond the carried floating bit.
+#[must_use]
+pub fn observed_window_from_engine(entry: &EngineWindow) -> ObservedWindow {
+    ObservedWindow {
+        window: entry.window.clone(),
+        output: entry.output.clone(),
+        workspace: entry.workspace.clone(),
+        floating: entry.floating,
+        fullscreen: false,
+        maximized: false,
+        sticky: false,
+    }
+}
+
+/// Portable session observation over one complete carried window set.
+#[must_use]
+pub fn session_observation_for(
+    owner: &OwnerId,
+    generation: &GenerationId,
+    base: u64,
+    fingerprint: u64,
+    windows: &[EngineWindow],
+) -> SessionObservation {
+    SessionObservation {
+        observation: Observation::new(owner.clone(), generation.clone(), base, fingerprint),
+        windows: windows.iter().map(observed_window_from_engine).collect(),
+    }
+}
+
+/// Portable two-domain workspace observation (source first, then target).
+#[must_use]
+pub fn workspace_observation_for(
+    owner: &OwnerId,
+    generation: &GenerationId,
+    base: u64,
+    fingerprint: u64,
+    source: &[EngineWindow],
+    target: &[EngineWindow],
+) -> SessionObservation {
+    let mut windows: Vec<ObservedWindow> = Vec::with_capacity(source.len() + target.len());
+    windows.extend(source.iter().map(observed_window_from_engine));
+    windows.extend(target.iter().map(observed_window_from_engine));
+    SessionObservation {
+        observation: Observation::new(owner.clone(), generation.clone(), base, fingerprint),
+        windows,
+    }
+}
+
+/// Portable post-observation match: every desired window must be carried
+/// exactly once (source plus target) with the expected output, workspace,
+/// and rectangle.
+#[must_use]
+pub fn workspace_post_matches(
+    desired_geometry: &[DesiredGeometry],
+    source: &[EngineWindow],
+    target: &[EngineWindow],
+) -> bool {
+    let mut observed: std::collections::HashMap<&str, &EngineWindow> =
+        std::collections::HashMap::with_capacity(source.len() + target.len());
+    for entry in source.iter().chain(target.iter()) {
+        if observed.insert(entry.window.0.as_str(), entry).is_some() {
+            return false;
+        }
+    }
+    if observed.len() != desired_geometry.len() {
+        return false;
+    }
+    for desired in desired_geometry {
+        let Some(entry) = observed.get(desired.window.0.as_str()) else {
+            return false;
+        };
+        if entry.output != desired.output
+            || entry.workspace != desired.workspace
+            || entry.rect != desired.rect
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// Rebuild ephemeral authoritative topology from the normalized observation.
+///
+/// Admits the observed spatial order, with the focused window last, through
+/// the retained session lifecycle path only. The split axis derives from the
+/// rebuild target at each step (see [`seed_target_bounds`]); opaque window
+/// ids never determine topology. Correlations are `seed-{index:04}`,
+/// revisions advance one commit per member, and ack/verify follow the
+/// retained lifecycle path exactly.
+#[must_use]
+pub fn seed_session(
+    owner: &OwnerId,
+    generation: &GenerationId,
+    fingerprint: u64,
+    domain: &OutputDomain,
+    seed_order: &[EngineWindow],
+) -> Option<Session> {
+    let mut session = Session::new(
+        owner.clone(),
+        generation.clone(),
+        0,
+        fingerprint,
+        vec![domain.clone()],
+    )
+    .ok()?;
+    for (index, entry) in seed_order.iter().enumerate() {
+        let base = session.accepted_revision();
+        let mut observed: Vec<ObservedWindow> = session
+            .snapshot()
+            .windows
+            .iter()
+            .map(|l| ObservedWindow {
+                window: l.window.clone(),
+                output: l.output.clone(),
+                workspace: l.workspace.clone(),
+                floating: false,
+                fullscreen: false,
+                maximized: false,
+                sticky: false,
+            })
+            .collect();
+        observed.extend(session.exception_observed());
+        observed.push(ObservedWindow {
+            window: entry.window.clone(),
+            output: entry.output.clone(),
+            workspace: entry.workspace.clone(),
+            floating: false,
+            fullscreen: false,
+            maximized: false,
+            sticky: false,
+        });
+        let correlation_text = format!("seed-{index:04}");
+        let correlation = CorrelationId::parse(&correlation_text)?;
+        let observation = SessionObservation {
+            observation: Observation::new(owner.clone(), generation.clone(), base, fingerprint),
+            windows: observed,
+        };
+        let command = SessionCommand::Admit {
+            window: entry.window.clone(),
+            output: entry.output.clone(),
+            workspace: entry.workspace.clone(),
+            exceptions: ExceptionFlags::none(),
+            exception_behavior: None,
+            placement_bounds: seed_target_bounds(&session, domain),
+        };
+        let plan = session
+            .propose(
+                &command,
+                &observation,
+                &correlation,
+                &LifecycleCapabilities::full(),
+            )
+            .ok()?;
+        let ack = AdapterAck::new(
+            correlation.clone(),
+            owner.clone(),
+            generation.clone(),
+            base,
+            AckOutcome::Accepted,
+        );
+        session.acknowledge(&ack).ok()?;
+        session
+            .verify_lifecycle(&LifecyclePostObservation::new(
+                Observation::new(owner.clone(), generation.clone(), base, base),
+                correlation,
+                true,
+                plan.dispatch.preconditions.clone(),
+                plan.dispatch.operation.clone(),
+            ))
+            .ok()?;
+    }
+    Some(session)
+}
+
+/// One admission step of the two-domain workspace seed: propose/ack/verify
+/// one tiled window into its exact source or target domain.
+pub fn seed_workspace_admit(
+    session: &mut Session,
+    owner: &OwnerId,
+    generation: &GenerationId,
+    fingerprint: u64,
+    domain: &OutputDomain,
+    entry: &EngineWindow,
+    index: usize,
+) -> Option<()> {
+    let base = session.accepted_revision();
+    let mut observed: Vec<ObservedWindow> = session
+        .snapshot()
+        .windows
+        .iter()
+        .map(|l| ObservedWindow {
+            window: l.window.clone(),
+            output: l.output.clone(),
+            workspace: l.workspace.clone(),
+            floating: false,
+            fullscreen: false,
+            maximized: false,
+            sticky: false,
+        })
+        .collect();
+    observed.extend(session.exception_observed());
+    observed.push(observed_window_from_engine(entry));
+    let correlation = CorrelationId::parse(&format!("seed-{index:04}"))?;
+    let observation = SessionObservation {
+        observation: Observation::new(owner.clone(), generation.clone(), base, fingerprint),
+        windows: observed,
+    };
+    let command = SessionCommand::Admit {
+        window: entry.window.clone(),
+        output: entry.output.clone(),
+        workspace: entry.workspace.clone(),
+        exceptions: ExceptionFlags::none(),
+        exception_behavior: None,
+        placement_bounds: seed_target_bounds(session, domain),
+    };
+    let plan = session
+        .propose(
+            &command,
+            &observation,
+            &correlation,
+            &LifecycleCapabilities::full(),
+        )
+        .ok()?;
+    let ack = AdapterAck::new(
+        correlation.clone(),
+        owner.clone(),
+        generation.clone(),
+        base,
+        AckOutcome::Accepted,
+    );
+    session.acknowledge(&ack).ok()?;
+    session
+        .verify_lifecycle(&LifecyclePostObservation::new(
+            Observation::new(owner.clone(), generation.clone(), base, fingerprint),
+            correlation,
+            true,
+            plan.dispatch.preconditions.clone(),
+            plan.dispatch.operation.clone(),
+        ))
+        .ok()?;
+    Some(())
+}
+
+/// Rebuild the authoritative two-domain workspace topology from the observed
+/// source and target spatial orders (source first, then target). Mirrors
+/// [`seed_session`]; the mover is admitted into its source domain and focus is
+/// synced to it by the caller before the workspace move proposes.
+#[must_use]
+pub fn seed_workspace_session(
+    owner: &OwnerId,
+    generation: &GenerationId,
+    fingerprint: u64,
+    source_domain: &OutputDomain,
+    target_domain: &OutputDomain,
+    source_order: &[EngineWindow],
+    target_order: &[EngineWindow],
+) -> Option<Session> {
+    let mut session = Session::new(
+        owner.clone(),
+        generation.clone(),
+        0,
+        fingerprint,
+        vec![source_domain.clone(), target_domain.clone()],
+    )
+    .ok()?;
+    for (index, entry) in source_order.iter().enumerate() {
+        seed_workspace_admit(
+            &mut session,
+            owner,
+            generation,
+            fingerprint,
+            source_domain,
+            entry,
+            index,
+        )?;
+    }
+    for (index, entry) in target_order.iter().enumerate() {
+        seed_workspace_admit(
+            &mut session,
+            owner,
+            generation,
+            fingerprint,
+            target_domain,
+            entry,
+            source_order.len() + index,
+        )?;
+    }
+    Some(session)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,5 +612,66 @@ mod tests {
             window("focus", 50, 0, 10, 10),
         ];
         assert!(order_spatial_with_focus_last(windows, &focused, false).is_none());
+    }
+
+    fn ids() -> (OwnerId, GenerationId) {
+        (
+            OwnerId::parse("owner-a").expect("valid"),
+            GenerationId::parse("gen-1").expect("valid"),
+        )
+    }
+
+    #[test]
+    fn seed_session_advances_one_revision_per_member() {
+        let (owner, generation) = ids();
+        let domain = domain();
+        let order = vec![window("a", 0, 0, 10, 10), window("b", 20, 0, 10, 10)];
+        let session = seed_session(&owner, &generation, 7, &domain, &order).expect("seeds");
+        assert_eq!(session.accepted_revision(), 2);
+        assert_eq!(session.snapshot().windows.len(), 2);
+        assert!(seed_target_bounds(&session, &domain).w > 0);
+    }
+
+    #[test]
+    fn seed_workspace_session_covers_both_domains() {
+        let (owner, generation) = ids();
+        let source = domain();
+        let target = OutputDomain {
+            id: OutputId("out-2".to_owned()),
+            workspace: WorkspaceId("ws".to_owned()),
+            bounds: Rect {
+                x: 0,
+                y: 0,
+                w: 300,
+                h: 100,
+            },
+            gap: 0,
+            adjacent: BTreeMap::new(),
+        };
+        let source_win = window("a", 0, 0, 10, 10);
+        let mut target_win = window("b", 0, 0, 10, 10);
+        target_win.output = OutputId("out-2".to_owned());
+        let session = seed_workspace_session(
+            &owner,
+            &generation,
+            7,
+            &source,
+            &target,
+            std::slice::from_ref(&source_win),
+            std::slice::from_ref(&target_win),
+        )
+        .expect("seeds");
+        assert_eq!(session.accepted_revision(), 2);
+        assert_eq!(session.domains().len(), 2);
+        let observation = workspace_observation_for(
+            &owner,
+            &generation,
+            2,
+            7,
+            &[source_win.clone()],
+            &[target_win.clone()],
+        );
+        assert_eq!(observation.windows.len(), 2);
+        assert!(!workspace_post_matches(&[], &[source_win], &[target_win]));
     }
 }

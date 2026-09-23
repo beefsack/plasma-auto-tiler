@@ -778,6 +778,12 @@ Historical implementation detail is recoverable in Git history.
   into canonical per-domain sessions. Timeout, stale scope, wrong output,
   failed write, identity loss, or partial proof terminate without replay or
   commit. No live KWin output-switch acceptance is claimed.
+- The portable world Engine owns independent per-domain Sessions, outer gaps,
+  seeding, relocation, and the existing workspace/R4 pending pair state behind
+  typed events and replies. Do not merge per-domain revisions, fingerprints,
+  divergence, pending scope, or node identities into one permanent Session.
+  Keep transient pair assembly/split until AR11 selects a transaction model;
+  this architecture change does not select new transaction semantics.
 - A KWin fork or patch is rejected. The project must operate within existing
   KDE/Plasma/KWin. The Rust-engine/direct-geometry direction above is the
   selected replacement architecture; the bounded adapter remains active only

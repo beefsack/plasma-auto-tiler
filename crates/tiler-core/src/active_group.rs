@@ -13,13 +13,14 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::bounds::is_opaque_id;
 use crate::directional::{Node, NodeId, WindowId};
 use crate::geometry::{Rect, project};
 
-/// Portable member bound (mirrors the planner observed-window bound).
-pub const MAX_ACTIVE_GROUP_MEMBERS: usize = 64;
-/// Opaque id bound (mirrors the planner opaque id bound).
-pub const MAX_ACTIVE_GROUP_ID_LEN: usize = 128;
+/// Portable member bound (single source: [`crate::bounds`]).
+pub const MAX_ACTIVE_GROUP_MEMBERS: usize = crate::bounds::MAX_OBSERVED_WINDOWS;
+/// Opaque id bound (single source: [`crate::bounds`]).
+pub const MAX_ACTIVE_GROUP_ID_LEN: usize = crate::bounds::MAX_OPAQUE_ID_LEN;
 
 /// One projected group member: opaque window/leaf identities plus the
 /// engine-projected rectangle (never a native/client rectangle).
@@ -38,14 +39,6 @@ pub struct ActiveGroup {
     pub group: NodeId,
     pub members: Vec<ActiveGroupMember>,
     pub bounds: Rect,
-}
-
-fn is_opaque_id(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= MAX_ACTIVE_GROUP_ID_LEN
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
 }
 
 /// Immediate parent [`Node::Group`] of the focused leaf: the direct container
