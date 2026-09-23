@@ -1651,7 +1651,8 @@ describe("plan adapter client self-resize reconcile", () => {
         assert.ok(
             mocks.logs.some(
                 (line) =>
-                    line.includes(`cmd=${corr2}`) && line.includes("outcome=dispatch") && line.includes("kind=reconcile"),
+                    line ===
+                    `plasma-auto-tiler:plan:cmd=${corr2} kind=reconcile windows=2 component=cosmic-plan route=plan stage=request correlation=${corr2} generation=gen-1 revision=0 event=dispatch outcome=started cause=-`,
             ),
             "route entry line for the dispatched reconcile",
         );
@@ -1825,7 +1826,7 @@ describe("plan adapter bounded diagnostics", () => {
         for (const line of mocks.logs) {
             assert.match(
                 line,
-                /^plasma-auto-tiler:plan:(cmd=\S+ kind=(admit|remove|move|focus|resize|reconcile|pointer-resize) windows=\d+ outcome=\S+|rejected kind=[a-z-]+( detail=[a-z-]+)?|write window=\S+ resource_class=\S+ disposition=(written|skip-fullscreen|skip-maximized|skip-already-equal|write-failed) rect=[^ ]+|busy-refused kind=(focus|move|resize)|(focus|move|resize|pointer)-refused-[a-z-]+|maximize-refused-signal|scope-transition [^ ]+|work-area-reprojection selected=retained|echo-fence-(armed|consumed|cleared-equality|mismatched)|reconcile-parked)$/,
+                /^plasma-auto-tiler:plan:(cmd=\S+ kind=(admit|remove|move|focus|resize|reconcile|pointer-resize) windows=\d+ outcome=\S+|cmd=(gen-1-p\d+) kind=(focus|move) windows=2 component=cosmic-plan route=plan stage=(request correlation=\3 generation=gen-1 revision=0 event=dispatch outcome=started|activate correlation=\3 generation=gen-1 revision=0 event=(presence outcome=(presence-requested|present)|resolve outcome=(resolve-requested|owner-pinned)|send outcome=(send-requested|request-sent))) cause=-|rejected kind=[a-z-]+( detail=[a-z-]+)?|write window=\S+ resource_class=\S+ disposition=(written|skip-fullscreen|skip-maximized|skip-already-equal|write-failed) rect=[^ ]+|busy-refused kind=(focus|move|resize)|(focus|move|resize|pointer)-refused-[a-z-]+|maximize-refused-signal|scope-transition [^ ]+|work-area-reprojection selected=retained|echo-fence-(armed|consumed|cleared-equality|mismatched)|reconcile-parked)$/,
                 line,
             );
             assert.ok(!line.includes("owner-1"), line);

@@ -522,3 +522,581 @@ function answerRecoveryActivationFailure(mocks: Mocks): void {
         }
     }
 }
+
+describe("plan activation correlated diagnostics", () => {
+    function activateLines(mocks: Mocks): string[] {
+        return mocks.logs.filter((l) => l.includes("stage=activate"));
+    }
+
+    function correlationOf(mocks: Mocks, planIndex: number): string {
+        return (payloadOf(mocks, planIndex)["correlation_id"] as string) ?? "";
+    }
+
+    it("present owner pins and hands off with shared correlation/generation/revision", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = enableAdapter(mocks);
+        adapter.requestFocus("left");
+        assert.equal(mocks.dbusCalls.length, 1);
+        mocks.callbacks[0]?.(true);
+        assert.equal(mocks.dbusCalls.length, 2);
+        mocks.callbacks[1]?.(":1.5");
+        assert.equal(mocks.dbusCalls.length, 3);
+        assert.equal(mocks.dbusCalls[2]?.method, PLAN_METHOD);
+        const correlation = correlationOf(mocks, 2);
+        assert.ok(correlation.startsWith("gen-1-p"));
+        const lines = activateLines(mocks);
+        assert.ok(lines.some((l) => l.includes("event=presence") && l.includes("outcome=present")), lines.join("\n"));
+        assert.ok(lines.some((l) => l.includes("event=resolve") && l.includes("outcome=owner-pinned")), lines.join("\n"));
+        assert.ok(lines.some((l) => l.includes("event=send") && l.includes("outcome=request-sent")), lines.join("\n"));
+        for (const line of lines) {
+            assert.ok(line.includes(`correlation=${correlation}`), line);
+            assert.ok(line.includes("generation=gen-1"), line);
+            assert.ok(line.includes("revision=0"), line);
+            assert.ok(line.includes("component=cosmic-plan"), line);
+            assert.ok(line.includes("route=plan"), line);
+        }
+        // Existing behavior preserved: same call order/count and dispatch line.
+        assert.ok(mocks.logs.some((l) => l.includes("event=dispatch") && l.includes("outcome=started")), lines.join("\n"));
+        adapter.disable();
+    });
+
+    it("absent name runs start request/result then pins with exact call counts", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = enableAdapter(mocks);
+        adapter.requestFocus("left");
+        mocks.callbacks[0]?.(false);
+        assert.equal(mocks.dbusCalls[1]?.method, PLAN_START_METHOD);
+        const before = mocks.dbusCalls.length;
+        mocks.callbacks[1]?.(1);
+        assert.equal(mocks.dbusCalls[2]?.method, PLAN_GET_OWNER_METHOD);
+        mocks.callbacks[2]?.(":1.9");
+        assert.equal(mocks.dbusCalls[3]?.method, PLAN_METHOD);
+        assert.equal(mocks.dbusCalls.length, before + 2);
+        const lines = activateLines(mocks);
+        assert.ok(lines.some((l) => l.includes("event=presence") && l.includes("outcome=absent")), lines.join("\n"));
+        assert.ok(lines.some((l) => l.includes("event=start") && l.includes("outcome=start-requested")), lines.join("\n"));
+        assert.ok(lines.some((l) => l.includes("event=start-result") && l.includes("outcome=start-primary")), lines.join("\n"));
+        assert.ok(lines.some((l) => l.includes("event=resolve") && l.includes("outcome=owner-pinned")), lines.join("\n"));
+        assert.ok(lines.some((l) => l.includes("event=send") && l.includes("outcome=request-sent")), lines.join("\n"));
+        // Absent-path continuity: every activate line shares the handed-off
+        // correlation/generation/revision/component/route.
+        const correlation = correlationOf(mocks, 3);
+        assert.ok(correlation.startsWith("gen-1-p"), correlation);
+        for (const line of lines) {
+            assert.ok(line.includes(`correlation=${correlation}`), line);
+            assert.ok(line.includes("generation=gen-1"), line);
+            assert.ok(line.includes("revision=0"), line);
+            assert.ok(line.includes("component=cosmic-plan"), line);
+            assert.ok(line.includes("route=plan"), line);
+        }
+        adapter.disable();
+        {
+            const refs2 = makeRefs();
+            const mocks2 = mockEnv(refs2);
+            const adapter2 = enableAdapter(mocks2);
+            adapter2.requestFocus("left");
+            mocks2.callbacks[0]?.(false);
+            mocks2.callbacks[1]?.(2);
+            mocks2.callbacks[2]?.(":1.9");
+            assert.equal(mocks2.dbusCalls[3]?.method, PLAN_METHOD);
+            assert.ok(
+                activateLines(mocks2).some((l) => l.includes("event=start-result") && l.includes("outcome=start-already")),
+                activateLines(mocks2).join("\n"),
+            );
+            adapter2.disable();
+        }
+    });
+
+    it("distinguishes malformed presence/start/owner replies without DescribePlan", () => {
+        for (const bad of [1, 0, "true", null, undefined]) {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            const adapter = enableAdapter(mocks);
+            adapter.requestFocus("left");
+            mocks.callbacks[0]?.(bad);
+            assert.ok(!mocks.dbusCalls.some((c) => c.method === PLAN_METHOD));
+            assert.ok(mocks.logs.some((l) => l.includes("outcome=no-planner")));
+            assert.ok(activateLines(mocks).some((l) => l.includes("event=presence") && l.includes("outcome=presence-malformed")));
+            assert.equal(mocks.dbusCalls.length, 1);
+            adapter.disable();
+        }
+        for (const bad of [0, 3, "1", null]) {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            const adapter = enableAdapter(mocks);
+            adapter.requestFocus("left");
+            mocks.callbacks[0]?.(false);
+            mocks.callbacks[1]?.(bad);
+            assert.ok(!mocks.dbusCalls.some((c) => c.method === PLAN_METHOD));
+            assert.ok(mocks.logs.some((l) => l.includes("outcome=no-planner")));
+            const lines = activateLines(mocks);
+            const expected = typeof bad === "number" ? "start-refused" : "start-malformed";
+            assert.ok(lines.some((l) => l.includes("event=start-result") && l.includes(`outcome=${expected}`)), lines.join("\n"));
+            adapter.disable();
+        }
+        for (const bad of ["not-owner", "", 42, null]) {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            const adapter = enableAdapter(mocks);
+            adapter.requestFocus("left");
+            mocks.callbacks[0]?.(true);
+            mocks.callbacks[1]?.(bad);
+            assert.ok(!mocks.dbusCalls.some((c) => c.method === PLAN_METHOD));
+            assert.ok(mocks.logs.some((l) => l.includes("outcome=no-planner")));
+            assert.ok(activateLines(mocks).some((l) => l.includes("event=resolve") && l.includes("outcome=owner-malformed")));
+            adapter.disable();
+        }
+        {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            const adapter = enableAdapter(mocks);
+            adapter.requestFocus("left");
+            mocks.callbacks[0]?.(false);
+            mocks.callbacks[1]?.(2);
+            mocks.callbacks[2]?.("bad-owner");
+            assert.ok(!mocks.dbusCalls.some((c) => c.method === PLAN_METHOD));
+            assert.ok(activateLines(mocks).some((l) => l.includes("event=resolve") && l.includes("outcome=owner-malformed")));
+            adapter.disable();
+        }
+    });
+
+    it("distinguishes thrown activation calls without changing terminal behavior", () => {
+        {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            const adapter = enableAdapter(mocks);
+            const orig = mocks.env.callDbus;
+            (mocks.env as { callDbus: PlanAdapterEnv["callDbus"] }).callDbus = ((service, path, iface, method, payload, callback): void => {
+                if (method === PLAN_GET_OWNER_METHOD) {
+                    throw new Error("resolve-boom");
+                }
+                return orig(service, path, iface, method, payload, callback);
+            }) as PlanAdapterEnv["callDbus"];
+            adapter.requestFocus("left");
+            mocks.callbacks[0]?.(true);
+            assert.ok(!mocks.dbusCalls.some((c) => c.method === PLAN_METHOD));
+            assert.ok(mocks.logs.some((l) => l.includes("outcome=no-planner")));
+            const lines = activateLines(mocks);
+            assert.ok(lines.some((l) => l.includes("event=resolve") && l.includes("outcome=resolve-requested")), lines.join("\n"));
+            assert.ok(lines.some((l) => l.includes("event=resolve") && l.includes("outcome=resolve-throw")), lines.join("\n"));
+            assert.ok(!lines.some((l) => l.includes("outcome=owner-pinned")), lines.join("\n"));
+            assert.ok(!lines.some((l) => l.includes("outcome=request-sent")), lines.join("\n"));
+            adapter.disable();
+        }
+        {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            const adapter = enableAdapter(mocks);
+            const orig = mocks.env.callDbus;
+            (mocks.env as { callDbus: PlanAdapterEnv["callDbus"] }).callDbus = ((service, path, iface, method, payload, callback): void => {
+                if (method === PLAN_START_METHOD) {
+                    throw new Error("start-boom");
+                }
+                return orig(service, path, iface, method, payload, callback);
+            }) as PlanAdapterEnv["callDbus"];
+            adapter.requestFocus("left");
+            mocks.callbacks[0]?.(false);
+            assert.ok(!mocks.dbusCalls.some((c) => c.method === PLAN_METHOD));
+            const lines = activateLines(mocks);
+            assert.ok(lines.some((l) => l.includes("event=start") && l.includes("outcome=start-requested")), lines.join("\n"));
+            assert.ok(lines.some((l) => l.includes("event=start") && l.includes("outcome=start-throw")), lines.join("\n"));
+            assert.ok(!lines.some((l) => l.includes("outcome=start-primary") || l.includes("outcome=start-already")), lines.join("\n"));
+            assert.ok(!lines.some((l) => l.includes("outcome=owner-pinned")), lines.join("\n"));
+            assert.ok(!lines.some((l) => l.includes("outcome=request-sent")), lines.join("\n"));
+            adapter.disable();
+        }
+        {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            const adapter = enableAdapter(mocks);
+            const orig = mocks.env.callDbus;
+            (mocks.env as { callDbus: PlanAdapterEnv["callDbus"] }).callDbus = ((service, path, iface, method, payload, callback): void => {
+                if (method === PLAN_METHOD) {
+                    throw new Error("send-boom");
+                }
+                return orig(service, path, iface, method, payload, callback);
+            }) as PlanAdapterEnv["callDbus"];
+            adapter.requestFocus("left");
+            mocks.callbacks[0]?.(true);
+            mocks.callbacks[1]?.(":1.5");
+            const lines = activateLines(mocks);
+            assert.ok(lines.some((l) => l.includes("event=send") && l.includes("outcome=send-requested")), lines.join("\n"));
+            assert.ok(lines.some((l) => l.includes("event=send") && l.includes("outcome=send-throw")), lines.join("\n"));
+            assert.ok(!lines.some((l) => l.includes("outcome=request-sent")), lines.join("\n"));
+            assert.ok(mocks.logs.some((l) => l.includes("outcome=owner-loss")));
+            adapter.disable();
+        }
+        {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            const adapter = enableAdapter(mocks);
+            const orig = mocks.env.callDbus;
+            (mocks.env as { callDbus: PlanAdapterEnv["callDbus"] }).callDbus = (() => {
+                throw new Error("presence-boom");
+            }) as PlanAdapterEnv["callDbus"];
+            void orig;
+            adapter.requestFocus("left");
+            assert.ok(mocks.logs.some((l) => l.includes("outcome=dbus-failed")));
+            const lines = activateLines(mocks);
+            assert.ok(lines.some((l) => l.includes("event=presence") && l.includes("outcome=presence-requested")), lines.join("\n"));
+            assert.ok(lines.some((l) => l.includes("event=presence") && l.includes("outcome=presence-throw")), lines.join("\n"));
+            assert.ok(!lines.some((l) => l.includes("outcome=present")), lines.join("\n"));
+            assert.ok(!lines.some((l) => l.includes("outcome=owner-pinned")), lines.join("\n"));
+            assert.ok(!lines.some((l) => l.includes("outcome=request-sent")), lines.join("\n"));
+            adapter.disable();
+        }
+    });
+
+    it("logs initiation before each D-Bus call even with synchronous callbacks", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = enableAdapter(mocks);
+        const orig = mocks.env.callDbus;
+        const seen: string[] = [];
+        (mocks.env as { callDbus: PlanAdapterEnv["callDbus"] }).callDbus = ((service, path, iface, method, payload, callback): void => {
+            seen.push(method);
+            if (method === PLAN_HAS_OWNER_METHOD) {
+                callback(true);
+                return;
+            }
+            if (method === PLAN_GET_OWNER_METHOD) {
+                callback(":1.5");
+                return;
+            }
+            return orig(service, path, iface, method, payload, callback);
+        }) as PlanAdapterEnv["callDbus"];
+        adapter.requestFocus("left");
+        assert.deepEqual(seen, [PLAN_HAS_OWNER_METHOD, PLAN_GET_OWNER_METHOD, PLAN_METHOD]);
+        assert.equal(mocks.dbusCalls.length, 1);
+        assert.equal(mocks.dbusCalls[0]?.method, PLAN_METHOD);
+        const lines = activateLines(mocks);
+        const at = (event: string, outcome: string): number =>
+            lines.findIndex((l) => l.includes(`event=${event}`) && l.includes(`outcome=${outcome}`));
+        const presenceRequested = at("presence", "presence-requested");
+        const present = at("presence", "present");
+        const resolveRequested = at("resolve", "resolve-requested");
+        const pinned = at("resolve", "owner-pinned");
+        const sendRequested = at("send", "send-requested");
+        const sent = at("send", "request-sent");
+        assert.ok(presenceRequested >= 0 && present > presenceRequested, lines.join("\n"));
+        assert.ok(resolveRequested > present && pinned > resolveRequested, lines.join("\n"));
+        assert.ok(sendRequested > pinned && sent > sendRequested, lines.join("\n"));
+        adapter.disable();
+        const refs2 = makeRefs();
+        const mocks2 = mockEnv(refs2);
+        const adapter2 = enableAdapter(mocks2);
+        const orig2 = mocks2.env.callDbus;
+        (mocks2.env as { callDbus: PlanAdapterEnv["callDbus"] }).callDbus = ((service, path, iface, method, payload, callback): void => {
+            if (method === PLAN_HAS_OWNER_METHOD) {
+                callback(false);
+                return;
+            }
+            if (method === PLAN_START_METHOD) {
+                callback(1);
+                return;
+            }
+            if (method === PLAN_GET_OWNER_METHOD) {
+                callback(":1.9");
+                return;
+            }
+            return orig2(service, path, iface, method, payload, callback);
+        }) as PlanAdapterEnv["callDbus"];
+        adapter2.requestFocus("left");
+        assert.equal(mocks2.dbusCalls.length, 1);
+        assert.equal(mocks2.dbusCalls[0]?.method, PLAN_METHOD);
+        const lines2 = activateLines(mocks2);
+        const at2 = (event: string, outcome: string): number =>
+            lines2.findIndex((l) => l.includes(`event=${event}`) && l.includes(`outcome=${outcome}`));
+        assert.ok(at2("presence", "presence-requested") >= 0, lines2.join("\n"));
+        assert.ok(at2("presence", "absent") > at2("presence", "presence-requested"), lines2.join("\n"));
+        assert.ok(at2("start", "start-requested") > at2("presence", "absent"), lines2.join("\n"));
+        assert.ok(at2("start-result", "start-primary") > at2("start", "start-requested"), lines2.join("\n"));
+        assert.ok(at2("resolve", "resolve-requested") > at2("start-result", "start-primary"), lines2.join("\n"));
+        assert.ok(at2("resolve", "owner-pinned") > at2("resolve", "resolve-requested"), lines2.join("\n"));
+        assert.ok(at2("send", "send-requested") > at2("resolve", "owner-pinned"), lines2.join("\n"));
+        assert.ok(at2("send", "request-sent") > at2("send", "send-requested"), lines2.join("\n"));
+        adapter2.disable();
+    });
+
+    it("distinguishes name-loss and owner-change with existing recovery intact", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = enableAdapter(mocks);
+        establishBaseline(mocks, adapter, ":1.5");
+        const base = mocks.dbusCalls.length;
+        adapter.requestFocus("left");
+        mocks.callbacks[base]?.(false);
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=owner-absent")));
+        assert.ok(activateLines(mocks).some((l) => l.includes("event=presence") && l.includes("outcome=name-loss")));
+        assert.ok(mocks.logs.some((l) => l.includes("plan:recovery") && l.includes("reason=absent")));
+        adapter.disable();
+        const refs2 = makeRefs();
+        const mocks2 = mockEnv(refs2);
+        const adapter2 = enableAdapter(mocks2);
+        establishBaseline(mocks2, adapter2, ":1.5");
+        const base2 = mocks2.dbusCalls.length;
+        adapter2.requestFocus("left");
+        mocks2.callbacks[base2]?.(true);
+        mocks2.callbacks[base2 + 1]?.(":1.9");
+        assert.ok(mocks2.logs.some((l) => l.includes("outcome=owner-changed")));
+        assert.ok(activateLines(mocks2).some((l) => l.includes("event=resolve") && l.includes("outcome=owner-changed")));
+        assert.ok(mocks2.logs.some((l) => l.includes("plan:recovery") && l.includes("reason=changed")));
+        adapter2.disable();
+    });
+
+    it("logs activation-phase timeouts distinctly and ignores late/duplicate callbacks", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = enableAdapter(mocks);
+        adapter.requestFocus("left");
+        const presenceCallback = mocks.callbacks[0] as (reply: unknown) => void;
+        fireTimeout(mocks);
+        const lines = activateLines(mocks);
+        assert.ok(lines.some((l) => l.includes("event=timeout") && l.includes("outcome=timeout") && l.includes("cause=presence")), lines.join("\n"));
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")));
+        const countAfterTimeout = mocks.dbusCalls.length;
+        const logsAfterTimeout = mocks.logs.length;
+        presenceCallback(true);
+        assert.equal(mocks.dbusCalls.length, countAfterTimeout);
+        assert.equal(mocks.logs.length, logsAfterTimeout);
+        assert.ok(!activateLines(mocks).some((l) => l.includes("outcome=owner-pinned") || l.includes("outcome=request-sent")));
+        adapter.disable();
+        const refs2 = makeRefs();
+        const mocks2 = mockEnv(refs2);
+        const adapter2 = enableAdapter(mocks2);
+        adapter2.requestFocus("left");
+        mocks2.callbacks[0]?.(true);
+        fireTimeout(mocks2);
+        assert.ok(activateLines(mocks2).some((l) => l.includes("event=timeout") && l.includes("cause=resolve")), activateLines(mocks2).join("\n"));
+        const ownerCallback = mocks2.callbacks[1] as (reply: unknown) => void;
+        const logsBefore = mocks2.logs.length;
+        ownerCallback(":1.5");
+        assert.equal(mocks2.logs.length, logsBefore);
+        adapter2.disable();
+        {
+            const refs3 = makeRefs();
+            const mocks3 = mockEnv(refs3);
+            const adapter3 = enableAdapter(mocks3);
+            adapter3.requestFocus("left");
+            mocks3.callbacks[0]?.(false);
+            fireTimeout(mocks3);
+            assert.ok(
+                activateLines(mocks3).some((l) => l.includes("event=timeout") && l.includes("outcome=timeout") && l.endsWith("cause=start")),
+                activateLines(mocks3).join("\n"),
+            );
+            adapter3.disable();
+        }
+        {
+            const refs4 = makeRefs();
+            const mocks4 = mockEnv(refs4);
+            const adapter4 = enableAdapter(mocks4);
+            adapter4.requestFocus("left");
+            mocks4.callbacks[0]?.(false);
+            mocks4.callbacks[1]?.(1);
+            fireTimeout(mocks4);
+            const lines4 = activateLines(mocks4);
+            assert.ok(
+                lines4.some((l) => l.includes("event=timeout") && l.includes("outcome=timeout") && l.includes("cause=start-resolve")),
+                lines4.join("\n"),
+            );
+            adapter4.disable();
+        }
+    });
+
+    it("emits no raw owners/services/payloads and survives a throwing logger", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = enableAdapter(mocks);
+        adapter.requestFocus("left");
+        mocks.callbacks[0]?.(false);
+        mocks.callbacks[1]?.(1);
+        mocks.callbacks[2]?.(":1.9");
+        const forbidden = [":1.9", ":1.5", "org.plasmaautotiler", "org.freedesktop", "DescribePlan", "win-a", "win-b", "fp-1", "600,0", "resolve-boom", "start-boom", "send-boom", "presence-boom", "logger-boom"];
+        for (const line of activateLines(mocks)) {
+            for (const token of forbidden) {
+                assert.ok(!line.includes(token), `${token} leaked in: ${line}`);
+            }
+        }
+        adapter.disable();
+        {
+            const refsT = makeRefs();
+            const mocksT = mockEnv(refsT);
+            const adapterT = enableAdapter(mocksT);
+            const origT = mocksT.env.callDbus;
+            (mocksT.env as { callDbus: PlanAdapterEnv["callDbus"] }).callDbus = ((service, path, iface, method, payload, callback): void => {
+                if (method === PLAN_METHOD) {
+                    throw new Error("send-boom");
+                }
+                return origT(service, path, iface, method, payload, callback);
+            }) as PlanAdapterEnv["callDbus"];
+            adapterT.requestFocus("left");
+            mocksT.callbacks[0]?.(true);
+            mocksT.callbacks[1]?.(":1.5");
+            for (const line of mocksT.logs) {
+                assert.ok(!line.includes("send-boom"), line);
+            }
+            adapterT.disable();
+        }
+        const refs2 = makeRefs();
+        const mocks2 = mockEnv(refs2);
+        const adapter2 = enableAdapter(mocks2);
+        let throws = 1;
+        const origLog = mocks2.env.log;
+        (mocks2.env as { log: PlanAdapterEnv["log"] }).log = ((message: string): void => {
+            if (message.includes("stage=activate") && throws > 0) {
+                throws -= 1;
+                throw new Error("logger-boom");
+            }
+            return origLog(message);
+        }) as PlanAdapterEnv["log"];
+        adapter2.requestFocus("left");
+        mocks2.callbacks[0]?.(true);
+        mocks2.callbacks[1]?.(":1.5");
+        assert.equal(mocks2.dbusCalls[2]?.method, PLAN_METHOD);
+        assert.equal(adapter2.isInFlight, true);
+        adapter2.disable();
+        {
+            const refs3 = makeRefs();
+            const mocks3 = mockEnv(refs3);
+            const adapter3 = enableAdapter(mocks3);
+            const origLog3 = mocks3.env.log;
+            (mocks3.env as { log: PlanAdapterEnv["log"] }).log = ((message: string): void => {
+                if (message.includes("outcome=request-sent")) {
+                    throw new Error("logger-boom");
+                }
+                return origLog3(message);
+            }) as PlanAdapterEnv["log"];
+            adapter3.requestFocus("left");
+            mocks3.callbacks[0]?.(true);
+            mocks3.callbacks[1]?.(":1.5");
+            assert.equal(mocks3.dbusCalls[2]?.method, PLAN_METHOD);
+            assert.equal(adapter3.isInFlight, true);
+            assert.ok(!activateLines(mocks3).some((l) => l.includes("outcome=send-throw")), activateLines(mocks3).join("\n"));
+            const planIndex = mocks3.dbusCalls.findIndex((c) => c.method === PLAN_METHOD);
+            const correlation3 = correlationOf(mocks3, planIndex);
+            mocks3.callbacks[planIndex]?.(plannedReply(correlation3));
+            assert.equal(adapter3.isInFlight, false);
+            adapter3.disable();
+        }
+    });
+
+    it("keeps stale token/session and duplicate-after-success callbacks silent", () => {
+        {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            const adapter = enableAdapter(mocks);
+            adapter.requestFocus("left");
+            mocks.callbacks[0]?.(true);
+            const logsAfterFirst = mocks.logs.length;
+            const callsAfterFirst = mocks.dbusCalls.length;
+            mocks.callbacks[0]?.(true);
+            assert.equal(mocks.dbusCalls.length, callsAfterFirst);
+            assert.equal(mocks.logs.length, logsAfterFirst);
+            mocks.callbacks[1]?.(":1.5");
+            const logsAfterPin = mocks.logs.length;
+            mocks.callbacks[1]?.(":1.5");
+            assert.equal(mocks.logs.length, logsAfterPin);
+            adapter.disable();
+        }
+        {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            const adapter = enableAdapter(mocks);
+            establishBaseline(mocks, adapter, ":1.5");
+            const base = mocks.dbusCalls.length;
+            adapter.requestFocus("left");
+            const stalePresence = mocks.callbacks[base] as (reply: unknown) => void;
+            mocks.callbacks[base]?.(true);
+            mocks.callbacks[base + 1]?.(":1.5");
+            fireTimeout(mocks);
+            const probeIndex = mocks.dbusCalls.length - 1;
+            assert.equal(mocks.dbusCalls[probeIndex]?.method, PLAN_HAS_OWNER_METHOD);
+            mocks.callbacks[probeIndex]?.(false);
+            drainRecovery(mocks);
+            const logsAfterRecovery = mocks.logs.length;
+            const callsAfterRecovery = mocks.dbusCalls.length;
+            stalePresence(true);
+            assert.equal(mocks.dbusCalls.length, callsAfterRecovery);
+            assert.equal(mocks.logs.length, logsAfterRecovery);
+            adapter.disable();
+        }
+    });
+
+    it("maps directional R4 flights to the cosmic-directional route", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        (mocks.env as { observeDirectional?: PlanAdapterEnv["observeDirectional"] }).observeDirectional = () => ({
+            status: "ready",
+            observed: {
+                domainOutput: "out-1",
+                domainWorkspace: "ws-1",
+                domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
+                domainGap: 8,
+                domainOuterGap: 8,
+                focusedId: "win-a",
+                domains: Object.freeze([
+                    Object.freeze({
+                        output: "out-1",
+                        workspace: "ws-1",
+                        bounds: { x: 0, y: 0, w: 1200, h: 800 },
+                        gap: 8,
+                        outerGap: 8,
+                        adjacent: Object.freeze({ right: "out-2" }),
+                    }),
+                    Object.freeze({
+                        output: "out-2",
+                        workspace: "ws-2",
+                        bounds: { x: 1200, y: 0, w: 800, h: 600 },
+                        gap: 8,
+                        outerGap: 8,
+                        adjacent: Object.freeze({ left: "out-1" }),
+                    }),
+                ]),
+                windows: Object.freeze([
+                    Object.freeze({
+                        id: "win-a",
+                        ref: refs.a,
+                        rect: { x: 0, y: 0, w: 100, h: 100 },
+                        output: "out-1",
+                        workspace: "ws-1",
+                        fullscreen: false,
+                        maximized: false,
+                        floating: false,
+                        sticky: false,
+                        resourceClass: "unknown",
+                    }),
+                    Object.freeze({
+                        id: "win-b",
+                        ref: refs.b,
+                        rect: { x: 1200, y: 0, w: 100, h: 100 },
+                        output: "out-2",
+                        workspace: "ws-2",
+                        fullscreen: false,
+                        maximized: false,
+                        floating: false,
+                        sticky: false,
+                        resourceClass: "unknown",
+                    }),
+                ]),
+                activeRef: refs.a,
+                fingerprint: "dir-fp-1",
+                revalidate: () => true,
+            },
+        });
+        const adapter = enableAdapter(mocks);
+        adapter.requestMove("left");
+        assert.equal(mocks.dbusCalls[0]?.method, PLAN_HAS_OWNER_METHOD);
+        mocks.callbacks[0]?.(true);
+        mocks.callbacks[1]?.(":1.5");
+        assert.equal(mocks.dbusCalls[2]?.method, PLAN_METHOD);
+        const lines = activateLines(mocks);
+        assert.ok(lines.length > 0, mocks.logs.join("\n"));
+        for (const line of lines) {
+            assert.ok(line.includes("component=cosmic-directional"), line);
+            assert.ok(line.includes("route=directional-r4"), line);
+        }
+        adapter.disable();
+    });
+});

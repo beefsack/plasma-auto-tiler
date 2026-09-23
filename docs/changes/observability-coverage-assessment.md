@@ -16,7 +16,7 @@
 | Active component | Normal evidence and sink | Trace/correlation | Main diagnostic limit |
 | --- | --- | --- | --- |
 | Planner `DescribePlan` | Bounded `plan-summary` ingress/egress and fixed early exits on Planner stderr (`src/planner_service.rs:139-158,283-358`; `src/planner_protocol.rs:447-521`) | `shape` counts/fingerprint only under `PLASMA_AUTO_TILER_TRACE=1`; validated request correlation joins KWin | One terminal summary does not separately name native apply/verify; that truth belongs to KWin. |
-| Plan admission, removal, reconcile, directional, resize | KWin `plan:cmd`, bounded refusals, scope/reconcile and shortcut tokens (`kwin/src/plan-adapter.ts:3881,5999-6235,6522-6633`; `kwin/src/entry.ts:51-56`) | Normal lifecycle correlation for dispatch/cancellation; write constraints and rectangles are trace/failure-only | Activation/pinning steps and ordinary apply/verify phase boundaries are compressed into terminal tokens. |
+| Plan admission, removal, reconcile, directional, resize | KWin `plan:cmd`, bounded transport initiation/activation/owner-pin/send lifecycle, refusals, scope/reconcile and shortcut tokens (`kwin/src/plan-adapter.ts:3881-4137,6593-6616`; `kwin/src/entry.ts:51-56`) | Normal lifecycle correlation joins Planner ingress/egress; write constraints and rectangles are trace/failure-only | Ordinary apply/verify phase boundaries are compressed into terminal tokens. |
 | Workspace send and native topology | Embedded production `WorkspaceSendAdapter` has correlated route diagnostics (`kwin/src/workspace-send-adapter.ts:3564-3616`; `kwin/src/plan-adapter-entry.ts:2553-2562,3118-3342`) while `workspace-native` emits always-on displacement/return/navigation/cleanup tokens (`workspace-native.ts:628-719,1200-1352,1682-1752,1980-2466`) | Send correlation is real; ambient topology tokens deliberately have none | Native topology signals cannot truthfully inherit an unrelated or absent send correlation. |
 | Native border/group/oracle handoffs | Bounded eligibility/epoch/revision/reason diagnostics (`kwin/native-effect/activewindowborder.cpp:522-568`; `kwin/src/active-border-initial.ts:246-462`; `kwin/src/active-group-highlight.ts:680-811`) | Drag pull failures are normal tokens and verdict detail is trace-only (`kwin/src/drag-oracle-pull.ts:75-109`); group correlation is local | Initial-maximize epoch/revision is freshness, not request lineage; asynchronous signals have no natural shared request ID. |
 | Settings and shortcuts | Structured `plasmaautotiler.shortcut op/stage/outcome` KCM logging (`kwin/native-effect/shortcutreconciler.cpp:2173-2224`) | Existing journal query is separate from `just dev` capture | Category and KWin PID differ, so the standard KWin filter intentionally excludes it. |
@@ -30,7 +30,7 @@
   is production-reachable through that entry; only its standalone entry helper,
   and standalone focus/movement/resize adapters, are parked.
 - Existing geometry evidence is bounded counts, dispositions, and trace/failure
-  rectangles (`kwin/src/plan-adapter.ts:6566-6633`); the approved principle
+  rectangles (`kwin/src/plan-adapter.ts:6627-6676`); the approved principle
   does not require, and this assessment does not recommend, raw/native D-Bus
   payload capture.
 - Planner/status/cancel lifecycle observability is the completed preceding
@@ -38,40 +38,32 @@
 
 ## Priority Gaps
 
-1. Planner transport activation/pinning has real Plan correlation but no
-   normal records for name presence, service start, owner pin, or send. A
-   `no-planner` terminal cannot distinguish the failing boundary.
-2. Ordinary Plan commands compress accepted/applied/verified/uncertain into
+1. Ordinary Plan commands compress accepted/applied/verified/uncertain into
    terminal adapter tokens. This obscures post-plan native uncertainty outside
    the specialized workspace-send path.
-3. Ambient workspace topology has useful uncorrelated normal records. Its
+2. Ambient workspace topology has useful uncorrelated normal records. Its
    output/hotplug signals must not be attributed to a coincident send flight
    without a source-backed causal handle.
-4. Tray state is externally observable but its owner, refusal, and
+3. Tray state is externally observable but its owner, refusal, and
    publication-failure lifecycle is intentionally silent. This blocks support
    diagnosis when no D-Bus signal is seen.
-5. Drag/oracle signals are correctly local and asynchronous. A new shared ID
+4. Drag/oracle signals are correctly local and asynchronous. A new shared ID
    would be fictitious unless a concrete Plan request is dispatched; keep the
    local verdict identity otherwise.
 
-## Recommended Next Slice
+## Completed Recommendation
 
-- Add normal-level Plan transport lifecycle records at the existing KWin
-  `NameHasOwner`, `StartServiceByName`, `GetNameOwner`, owner-pin, and Planner
-  request-send boundaries (`kwin/src/plan-adapter.ts:3940-4089`). Reuse the
-  already real Plan correlation, generation, request revision, bounded stage,
-  and outcome fields; do not change activation, recovery, or fallback logic.
-- This is the smallest coherent slice because the identifiers already exist at
-  every boundary and the resulting records identify exactly which bounded
-  activation/transport step produced `no-planner` or ownership loss.
-- Verify with focused activation tests that each expected boundary retains the
-  dispatch correlation and that malformed/owner-loss/timeout paths remain
-  fail-closed with no raw owner, payload, geometry, or logger-dependent change.
+- Completed normal-level Plan transport lifecycle records at the existing
+  KWin `NameHasOwner`, `StartServiceByName`, `GetNameOwner`, owner-pin, and
+  Planner request-send boundaries. See
+  `docs/changes/archive/plan-transport-activation-observability.md` for the exact
+  fields, bounded event/outcome vocabulary, capture commands, evidence, and
+  limitations.
 
 ## Decisions And Limits
 
-- No material product, security, API, or policy decision is needed for the
-  recommended slice.
+- No material product, security, API, or policy decision was needed for the
+  completed slice.
 - Source review only: no live KWin, Plasma, D-Bus, runtime journal, or residue
   inspection occurred. Existing tests were inventoried but not rerun because
   this assessment changes documentation only.

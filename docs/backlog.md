@@ -173,13 +173,16 @@ Only meaningful pending or active work is listed.
   original cause, and later command dispatch. Fixed uncorrelated summaries cover
   Planner early exits without parsing rejected input. Offline Rust/KWin tests,
   typecheck/build, and independent review pass. Wider source assessment is
-  complete. Next: correlated Plan activation/owner-pinning/request-send records
-  to distinguish transport boundaries currently collapsed into `no-planner`.
-  Then address ordinary Plan apply/verify phase visibility and silent tray
+  complete. Delivered normal correlated Plan activation/owner-pinning/send
+  records, including bounded failure and timeout phases, without transport
+  behavior changes. Typecheck, production build, all 919 KWin tests, and
+  independent review pass; corrected two pre-existing stale logging assertions.
+  Next: ordinary Plan apply/verify phase visibility, followed by silent tray
   owner/refusal/publication failures. Ambient topology and native signals must
   not inherit unrelated request IDs. Whole-system coverage and live capture
   behavior remain unproven.
   [cancellation observability](changes/archive/correlated-pending-observability.md)
+  [activation observability](changes/archive/plan-transport-activation-observability.md)
   [coverage assessment](changes/observability-coverage-assessment.md)
 - P1 | Recoverable window handling | User requires logged problems and continued
   window handling, never a permanently disabled window/domain after a tiling

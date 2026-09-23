@@ -3908,6 +3908,10 @@ export class PlanAdapter {
         // distinguished first. Strict boolean only; anything else is terminal
         // no-planner with no recovery and no retry.
         try {
+            const presenceFlight = this.pending;
+            if (presenceFlight !== null) {
+                this.activateDiag(presenceFlight, "presence", "presence-requested");
+            }
             this.env.callDbus(
                 PLAN_DBUS_SERVICE,
                 PLAN_DBUS_OBJECT,
@@ -3919,6 +3923,10 @@ export class PlanAdapter {
         } catch (error) {
             void error;
             this.clearTimer();
+            const lostPresence = this.pending;
+            if (lostPresence !== null) {
+                this.activateDiag(lostPresence, "presence", "presence-throw");
+            }
             this.inFlight = false;
             this.pending = null;
             this.activationStep = 0;
@@ -3941,8 +3949,10 @@ export class PlanAdapter {
             return;
         }
         if (reply === true) {
+            this.activateDiag(flightState, "presence", "present");
             this.activationStep = 2;
             try {
+                this.activateDiag(flightState, "resolve", "resolve-requested");
                 this.env.callDbus(
                     PLAN_DBUS_SERVICE,
                     PLAN_DBUS_OBJECT,
@@ -3953,11 +3963,13 @@ export class PlanAdapter {
                 );
             } catch (error) {
                 void error;
+                this.activateDiag(flightState, "resolve", "resolve-throw");
                 this.failActivation(flightState, "no-planner");
             }
             return;
         }
         if (reply !== false) {
+            this.activateDiag(flightState, "presence", "presence-malformed");
             this.failActivation(flightState, "no-planner");
             return;
         }
@@ -3967,6 +3979,7 @@ export class PlanAdapter {
         // prior owner this is initial activation: proceed to one bounded start.
         if (this.knownOwner !== null) {
             const lost = flightState;
+            this.activateDiag(lost, "presence", "name-loss");
             this.clearTimer();
             this.inFlight = false;
             this.pending = null;
@@ -3977,8 +3990,10 @@ export class PlanAdapter {
             this.triggerRecovery("absent");
             return;
         }
+        this.activateDiag(flightState, "presence", "absent");
         this.activationStep = 3;
         try {
+            this.activateDiag(flightState, "start", "start-requested");
             this.env.callDbus(
                 PLAN_DBUS_SERVICE,
                 PLAN_DBUS_OBJECT,
@@ -3989,6 +4004,7 @@ export class PlanAdapter {
             );
         } catch (error) {
             void error;
+            this.activateDiag(flightState, "start", "start-throw");
             this.failActivation(flightState, "no-planner");
         }
     }
@@ -4002,6 +4018,7 @@ export class PlanAdapter {
             return;
         }
         if (!isUniqueOwner(reply)) {
+            this.activateDiag(flightState, "resolve", "owner-malformed");
             this.failActivation(flightState, "no-planner");
             return;
         }
@@ -4010,6 +4027,7 @@ export class PlanAdapter {
         // recovery, never replaying the old command.
         if (this.knownOwner !== null && reply !== this.knownOwner) {
             const lost = flightState;
+            this.activateDiag(lost, "resolve", "owner-changed");
             this.clearTimer();
             this.inFlight = false;
             this.pending = null;
@@ -4022,6 +4040,7 @@ export class PlanAdapter {
         }
         this.pinnedOwner = reply;
         this.knownOwner = reply;
+        this.activateDiag(flightState, "resolve", "owner-pinned");
         this.activationStep = 5;
         this.sendPlannerRequest(flight, session);
     }
@@ -4035,11 +4054,22 @@ export class PlanAdapter {
             return;
         }
         if (reply !== PLAN_START_PRIMARY && reply !== PLAN_START_ALREADY) {
+            this.activateDiag(
+                flightState,
+                "start-result",
+                typeof reply === "number" ? "start-refused" : "start-malformed",
+            );
             this.failActivation(flightState, "no-planner");
             return;
         }
+        this.activateDiag(
+            flightState,
+            "start-result",
+            reply === PLAN_START_PRIMARY ? "start-primary" : "start-already",
+        );
         this.activationStep = 4;
         try {
+            this.activateDiag(flightState, "resolve", "resolve-requested");
             this.env.callDbus(
                 PLAN_DBUS_SERVICE,
                 PLAN_DBUS_OBJECT,
@@ -4050,6 +4080,7 @@ export class PlanAdapter {
             );
         } catch (error) {
             void error;
+            this.activateDiag(flightState, "resolve", "resolve-throw");
             this.failActivation(flightState, "no-planner");
         }
     }
@@ -4063,6 +4094,7 @@ export class PlanAdapter {
             return;
         }
         if (!isUniqueOwner(reply)) {
+            this.activateDiag(flightState, "resolve", "owner-malformed");
             this.failActivation(flightState, "no-planner");
             return;
         }
@@ -4070,6 +4102,7 @@ export class PlanAdapter {
         if (this.knownOwner === null) {
             this.knownOwner = reply;
         }
+        this.activateDiag(flightState, "resolve", "owner-pinned");
         this.activationStep = 5;
         this.sendPlannerRequest(flight, session);
     }
@@ -4085,6 +4118,7 @@ export class PlanAdapter {
         this.callbackSeen = false;
         try {
             const target = this.pinnedOwner as string;
+            this.activateDiag(flightState, "send", "send-requested");
             this.env.callDbus(
                 target,
                 PLAN_OBJECT,
@@ -4093,8 +4127,10 @@ export class PlanAdapter {
                 flightState.requestPayload,
                 (reply) => this.onRequestReply(reply, flight, session),
             );
+            this.activateDiag(flightState, "send", "request-sent");
         } catch (error) {
             void error;
+            this.activateDiag(flightState, "send", "send-throw");
             this.failFlight(flightState, "owner-loss");
         }
     }
@@ -4300,6 +4336,17 @@ export class PlanAdapter {
             return;
         }
         const lost = this.pending;
+        if (lost !== null && this.activationStep >= 1 && this.activationStep <= 4) {
+            const phase =
+                this.activationStep === 1
+                    ? "presence"
+                    : this.activationStep === 2
+                      ? "resolve"
+                      : this.activationStep === 3
+                        ? "start"
+                        : "start-resolve";
+            this.activateDiag(lost, "timeout", "timeout", phase);
+        }
         // Pre-staging R4-shape flights get one cancel attempt before the
         // terminal teardown below; everything else keeps the established path
         // unchanged (including the probe and flight chaining that follow).
@@ -6533,6 +6580,20 @@ export class PlanAdapter {
     // Normal-level lifecycle context for cancellable R4 flights. Retains the
     // established plan:cmd prefix while making the route independently
     // attributable without payload or trace logging.
+    // Normal-level correlated activation transport diagnostics (logging
+    // only). One bounded `lifecycleDiag` line per accepted activation
+    // boundary: presence lookup response, start request/result, unique-owner
+    // resolution/pin, planner request handoff, and activation-phase timeout.
+    // Reuses correlation/generation/request-revision plus the shared
+    // component/route mapping. Never carries raw owners, services,
+    // exceptions, payloads, or native ids. Pre-call records mark initiation;
+    // callback records follow flight/token/session/step fencing. Stale, late,
+    // or duplicate callbacks return before logging and never look successful.
+    // Best effort: logger faults are swallowed and never change control flow.
+    private activateDiag(flight: PendingFlight, event: string, outcome: string, cause = "-"): void {
+        this.lifecycleDiag(flight, "activate", event, outcome, cause);
+    }
+
     private lifecycleDiag(
         flight: PendingFlight,
         stage: string,
