@@ -20,7 +20,7 @@
 | Workspace send and native topology | Embedded production `WorkspaceSendAdapter` has correlated route diagnostics (`kwin/src/workspace-send-adapter.ts:3564-3616`; `kwin/src/plan-adapter-entry.ts:2553-2562,3118-3342`) while `workspace-native` emits always-on displacement/return/navigation/cleanup tokens (`workspace-native.ts:628-719,1200-1352,1682-1752,1980-2466`) | Send correlation is real; ambient topology tokens deliberately have none | Native topology signals cannot truthfully inherit an unrelated or absent send correlation. |
 | Native border/group/oracle handoffs | Bounded eligibility/epoch/revision/reason diagnostics (`kwin/native-effect/activewindowborder.cpp:522-568`; `kwin/src/active-border-initial.ts:246-462`; `kwin/src/active-group-highlight.ts:680-811`) | Drag pull failures are normal tokens and verdict detail is trace-only (`kwin/src/drag-oracle-pull.ts:75-109`); group correlation is local | Initial-maximize epoch/revision is freshness, not request lineage; asynchronous signals have no natural shared request ID. |
 | Settings and shortcuts | Structured `plasmaautotiler.shortcut op/stage/outcome` KCM logging (`kwin/native-effect/shortcutreconciler.cpp:2173-2224`) | Existing journal query is separate from `just dev` capture | Category and KWin PID differ, so the standard KWin filter intentionally excludes it. |
-| Tray publication/service | D-Bus state signals and CLI stdout/stderr; publisher and endpoint lifecycle loggers are intentionally empty/silent (`kwin/src/tray-publisher.ts:27-112`; `src/tray_endpoint.rs:351-386`) | Generation/revision are protocol state, not logged correlation | Owner/refusal/publication failures lack a bounded visible lifecycle record. |
+| Tray publication/service | Bounded KWin publisher send-initiation/failure records reach the KWin journal; endpoint owner/publication/projection records use endpoint stderr (`kwin/src/tray-publisher.ts`; `src/tray_endpoint.rs`; `src/tray.rs`) | Revision is snapshot identity only; no request lineage or panel-visibility claim | `just dev` captures KWin, not the separately owned Rust tray endpoint stderr. |
 | Development capture | `just dev verbose` normal summaries; `just dev trace` enables trace at `justfile:851-852` and merges Planner stderr with exact KWin-PID journal records at `justfile:1095-1099` | Prefix-filtered only; no raw D-Bus payload capture | Does not collect shortcut KCM-category messages. |
 
 ## Production Boundary
@@ -39,12 +39,9 @@
 ## Priority Gaps
 
 1. Ambient workspace topology has useful uncorrelated normal records. Its
-   output/hotplug signals must not be attributed to a coincident send flight
-   without a source-backed causal handle.
-2. Tray state is externally observable but its owner, refusal, and
-   publication-failure lifecycle is intentionally silent. This blocks support
-   diagnosis when no D-Bus signal is seen.
-3. Drag/oracle signals are correctly local and asynchronous. A new shared ID
+    output/hotplug signals must not be attributed to a coincident send flight
+    without a source-backed causal handle.
+2. Drag/oracle signals are correctly local and asynchronous. A new shared ID
    would be fictitious unless a concrete Plan request is dispatched; keep the
    local verdict identity otherwise.
 
@@ -59,8 +56,13 @@
 - Completed normal-level ordinary Plan reply validation, fresh observation,
   application/setter, and terminal lifecycle records. Ordinary routes have no
   ack/verify protocol; see
-  `docs/changes/archive/plan-apply-verify-observability.md`
-  for the exact fields, evidence, and limits.
+  `docs/changes/archive/plan-apply-verify-observability.md` for the exact
+  fields, evidence, and limits.
+- Completed bounded tray owner/refusal/publication diagnostics. KWin records
+  distinguish send initiation from endpoint acceptance; endpoint projection
+  records describe SNI signal emission, not panel visibility. See
+  `docs/changes/archive/tray-publication-observability.md` for exact fields,
+  capture limits, and evidence.
 
 ## Decisions And Limits
 

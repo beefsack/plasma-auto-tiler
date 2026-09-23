@@ -181,12 +181,18 @@ Only meaningful pending or active work is listed.
   diagnostics with aggregate setter outcomes. Ordinary routes have no ack/verify
   protocol; application logs do not prove remote commit or rendered state.
   Typecheck, production build, all 929 KWin tests, and independent review pass.
-  Next: silent tray owner/refusal/publication failures. Ambient topology and
-  native signals must not inherit unrelated request IDs. Whole-system coverage and live capture
-  behavior remain unproven.
+  Delivered tray owner/publication/refusal/failure/recovery diagnostics with
+  repeated-heartbeat noise suppressed. Validated generation/revision/enabled
+  joins snapshot identity across KWin/Rust, not individual heartbeat causality.
+  Typecheck, 937 KWin tests, full Rust tests, and independent review pass.
+  Next: establish a reliable queryable sink for autostarted Rust tray diagnostics;
+  source establishes only inherited stderr, while `just dev` captures KWin and
+  Planner, not tray stderr. Ambient topology and native signals must not inherit
+  unrelated request IDs. Whole-system coverage and live capture remain unproven.
   [cancellation observability](changes/archive/correlated-pending-observability.md)
   [activation observability](changes/archive/plan-transport-activation-observability.md)
   [application observability](changes/archive/plan-apply-verify-observability.md)
+  [tray observability](changes/archive/tray-publication-observability.md)
   [coverage assessment](changes/observability-coverage-assessment.md)
 - P1 | Recoverable window handling | User requires logged problems and continued
   window handling, never a permanently disabled window/domain after a tiling

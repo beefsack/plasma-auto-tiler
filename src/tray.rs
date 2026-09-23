@@ -9,7 +9,7 @@ use serde::Serialize;
 use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, StructureBuilder, Type, Value};
 
-use crate::tray_endpoint::TrayState;
+use crate::tray_endpoint::{TrayState, emit_tray_diag, status_projected_line};
 
 pub const STATUS_NOTIFIER_ITEM_OBJECT: &str = "/StatusNotifierItem";
 pub const MENU_OBJECT: &str = "/Menu";
@@ -241,6 +241,9 @@ impl TrayProjection {
     }
 
     pub async fn emit_changed(&self, connection: &zbus::Connection) -> zbus::Result<()> {
+        // Signals and status recording keep their exact order and behavior
+        // under the notification lock; the already-built bounded projection
+        // line is emitted only after the explicit guard release below.
         let _notification_guard = self.notification_lock.lock().await;
         let status = self.status().to_owned();
         if !self.should_emit_status(&status) {
@@ -291,7 +294,14 @@ impl TrayProjection {
             )
             .await?;
 
+        // Best-effort only: built solely on an actual projected-status
+        // change (the early return above keeps steady state silent), and
+        // describes the emitted signals, never final panel visibility. The
+        // write happens after the notification lock releases below.
+        let pending = status_projected_line(&status);
         self.remember_status(status);
+        drop(_notification_guard);
+        emit_tray_diag(&pending);
         Ok(())
     }
 

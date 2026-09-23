@@ -101,11 +101,25 @@ describe("shipped artifact smoke execution", () => {
         }
         assert.ok(!stub.diagnostics.some((entry) => entry.includes("legacy-engine-removed")));
         // Slice 1 inert observer is production-started: the empty-window stub
-        // has no finished subscription, so the only permitted route-diag line
-        // is the single bounded no-windows entry rejection.
+        // has no finished subscription, so the only permitted drag route-diag
+        // line is the single bounded no-windows entry rejection. Tray startup
+        // additionally emits exactly its two bounded records (lifecycle start
+        // plus fire-and-forget send initiation); nothing else may log. The
+        // bridge send line carries the production snapshot identity
+        // (generation token, revision 0, enabled false); the token is random
+        // per process, so it is matched by pattern, never by value.
         const routeDiag = stub.diagnostics.filter((entry) => entry.includes("plasma-auto-tiler:route-diag"));
-        assert.ok(routeDiag.length <= 1);
-        assert.ok(routeDiag.every((entry) => entry === "plasma-auto-tiler:route-diag:drag-entry-no-windows"));
+        const dragDiag = routeDiag.filter((entry) => !entry.includes("component=tray "));
+        assert.ok(dragDiag.length <= 1);
+        assert.ok(dragDiag.every((entry) => entry === "plasma-auto-tiler:route-diag:drag-entry-no-windows"));
+        const trayDiag = routeDiag.filter((entry) => entry.includes("component=tray "));
+        assert.equal(trayDiag.length, 2);
+        assert.equal(trayDiag[0], "plasma-auto-tiler:route-diag component=tray stage=tray event=started outcome=ok");
+        assert.ok(trayDiag[1] !== undefined);
+        assert.match(
+            trayDiag[1],
+            /^plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=[a-z0-9-]{1,32} revision=0 enabled=false$/,
+        );
         assert.ok(!stub.diagnostics.some((entry) => entry.includes("drag-attach")));
         assert.ok(!bundle.includes("TileController"));
         assert.ok(bundle.includes(PLAN_METHOD_TOKEN));
