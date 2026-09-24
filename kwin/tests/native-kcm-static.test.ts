@@ -190,7 +190,7 @@ describe("native KCM static contract", () => {
         assert.match(logic, /QRectF activeBorderInnerRect\(/);
         assert.match(effect, /const QRectF innerRect = activeBorderInnerRect\(state\.innerRect, gap\)/);
         assert.match(effect, /setInnerRect\(window \? window->windowItem\(\)->mapFromScene\(innerRect\) : RectF\(\)\)/);
-        assert.match(effect, /const bool visible = state\.visible && initialOk/);
+        assert.match(effect, /const bool visible = state\.visible;/);
         assert.match(effect, /setVisible\(visible\)/);
         assert.match(effect, /addRepaintFull\(\)/);
     });

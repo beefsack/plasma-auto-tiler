@@ -1,6 +1,7 @@
 # Unified lifecycle/service/ABI validation: exactly one exported KWin
-# effect plugin hosts the active border, group overlay, initial-maximize
-# handoff, and drag oracle. No second effect, factory, or metadata.
+# effect plugin hosts the active border, group overlay, and drag oracle.
+# Maximize observation seeds directly from the native committed
+# maximizeMode(); no script handoff. No second effect, factory, or metadata.
 #
 # Required inputs:
 #   SOURCE_FILE - activewindowborder.cpp

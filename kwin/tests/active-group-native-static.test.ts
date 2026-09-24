@@ -19,14 +19,18 @@ function countMatches(body: string, pattern: RegExp): number {
 
 describe("active-group native static contract", () => {
     it("exposes setter, clear, and a read-only status query through the effect-owned endpoint", () => {
-        assert.equal(countMatches(effectImpl, /Q_SCRIPTABLE/g), 7);
+        assert.equal(countMatches(effectImpl, /Q_SCRIPTABLE/g), 4);
         assert.match(effectImpl, /SetGroupHighlight/);
         assert.match(effectImpl, /ClearGroupHighlight/);
         assert.match(effectImpl, /GetGroupHighlightStatus/);
-        assert.match(effectImpl, /SetInitialMaximizeState/);
-        assert.match(effectImpl, /ClearInitialMaximizeState/);
-        assert.match(effectImpl, /GetInitialMaximizeEpoch/);
         assert.match(effectImpl, /LastVerdict/);
+        // No script maximize handoff: observation seeds directly from the
+        // native committed maximizeMode().
+        assert.doesNotMatch(effectImpl, /SetInitialMaximizeState/);
+        assert.doesNotMatch(effectImpl, /ClearInitialMaximizeState/);
+        assert.doesNotMatch(effectImpl, /GetInitialMaximizeEpoch/);
+        assert.doesNotMatch(effectImpl, /initial_maximize_/);
+        assert.doesNotMatch(effectImpl, /InitialMaximize/);
         assert.match(effectHeader, /groupHighlightStatus\(\) const/);
         assert.match(effectImpl, /Q_CLASSINFO\("D-Bus Interface", "org\.plasmaautotiler\.ActiveBorder1"\)/);
         assert.match(effectImpl, /QDBusConnection::sessionBus/);
@@ -57,7 +61,8 @@ describe("active-group native static contract", () => {
         assert.match(effectImpl, /m_borderItem\.setParentItem\(effects->scene\(\)->overlayItem\(\)\)/);
         assert.match(effectImpl, /const QRectF innerRect = activeBorderInnerRect\(state\.innerRect, gap\)/);
         assert.match(effectImpl, /m_borderItem\.setInnerRect\(window \? window->windowItem\(\)->mapFromScene\(innerRect\) : RectF\(\)\)/);
-        assert.match(effectImpl, /const bool visible = state\.visible && initialOk/);
+        assert.match(effectImpl, /const bool visible = state\.visible;/);
+        assert.doesNotMatch(effectImpl, /initialOk/);
         assert.match(effectImpl, /m_borderItem\.setVisible\(visible\)/);
     });
 
@@ -77,26 +82,38 @@ describe("active-group native static contract", () => {
         assert.match(effectImpl, /updateGroupVisibility/);
     });
 
-    it("hides both borders until the exact current window confirms normal", () => {
-        assert.match(effectHeader, /InitialMaximizeState m_initialState/);
-        assert.match(effectHeader, /QString m_initialEpoch/);
-        assert.match(effectHeader, /initialMaximizeEpoch\(\) const/);
-        assert.match(effectImpl, /initial_maximize_state_init/);
-        assert.match(effectImpl, /initial_maximize_apply/);
-        assert.match(effectImpl, /initial_maximize_clear/);
-        assert.match(effectImpl, /initial_maximize_is_confirmed/);
-        assert.match(effectImpl, /initial_maximize_allows_display/);
-        assert.match(effectImpl, /QUuid::createUuid/);
-        assert.match(effectImpl, /m_initialEpoch/);
-        assert.match(logic, /activeBorderInitialGate/);
-        // Script state never mutates native maximize tracking.
-        assert.doesNotMatch(effectImpl, /m_maximizedWindows\.insert\(.*initial/i);
+    it("seeds maximize observation directly from committed mode with transitions authoritative", () => {
+        // Each observed window seeds m_maximizedWindows from window()->maximizeMode().
+        assert.match(effectImpl, /maximizeMode\(\)/);
+        assert.match(effectImpl, /activeBorderSeedMaximized/);
+        assert.match(logic, /activeBorderSeedMaximized/);
+        assert.doesNotMatch(logic, /activeBorderInitialGate/);
+        // Any maximize axis suppresses both borders; fullscreen stays
+        // suppressed independently via live isFullScreen().
+        assert.match(effectImpl, /m_maximizedWindows\.insert\(window\)/);
+        assert.match(effectImpl, /observe-seed/);
+        // Native transition signals stay authoritative after the seed.
+        assert.match(effectImpl, /windowMaximizedStateChanged/);
+        assert.match(effectImpl, /windowMaximizedStateAboutToChange/);
+        assert.match(effectImpl, /updateMaximizedState/);
+        // No script handoff residue anywhere in the native contract.
+        assert.doesNotMatch(effectHeader, /InitialMaximizeState/);
+        assert.doesNotMatch(effectHeader, /m_initialEpoch/);
+        assert.doesNotMatch(effectHeader, /initialMaximizeEpoch/);
+        assert.doesNotMatch(effectHeader, /clearInitialGate/);
+        assert.doesNotMatch(effectHeader, /isInitialConfirmedNormal/);
+        assert.doesNotMatch(effectImpl, /QUuid::createUuid/);
+        assert.doesNotMatch(effectImpl, /m_initialEpoch/);
+        assert.doesNotMatch(effectImpl, /clearInitialGate/);
+        assert.doesNotMatch(effectImpl, /isInitialConfirmedNormal/);
+        assert.doesNotMatch(effectImpl, /emitActiveBorderApply/);
         // No Qt JSON parsing: strict POD arrives through the Rust staticlib.
         assert.doesNotMatch(effectImpl, /QJsonDocument/);
-        assert.match(ffi, /InitialMaximizeState/);
-        assert.match(ffi, /initial_maximize_apply/);
-        assert.match(rust, /active_window/);
-        assert.match(rust, /maximize_mode/);
+        assert.doesNotMatch(ffi, /InitialMaximizeState/);
+        assert.doesNotMatch(ffi, /initial_maximize_/);
+        assert.doesNotMatch(rust, /initial_maximize_/);
+        assert.doesNotMatch(rust, /InitialMaximize/);
+        assert.doesNotMatch(rust, /maximize_mode/);
     });
 
     it("binds focus, clears on activation, and fails closed on endpoint loss", () => {
@@ -108,8 +125,6 @@ describe("active-group native static contract", () => {
         // Focus activation clears immediately before async refresh.
         assert.match(effectImpl, /windowActivated/);
         assert.match(effectImpl, /clearGroupHighlight/);
-        // Deleted/closed tracked windows clear initial authority as well.
-        assert.match(effectImpl, /clearInitialGate/);
         // Registration failure fails closed with no retry.
         assert.match(effectHeader, /m_groupDbusAvailable/);
         assert.match(effectImpl, /m_groupDbusAvailable/);
@@ -184,11 +199,11 @@ describe("active-group native static contract", () => {
         assert.match(validator, /GROUP_LOGIC/);
         assert.match(validator, /SetGroupHighlight/);
         assert.match(validator, /ClearGroupHighlight/);
-        assert.match(validator, /SetInitialMaximizeState/);
-        assert.match(validator, /ClearInitialMaximizeState/);
-        assert.match(validator, /GetInitialMaximizeEpoch/);
         assert.match(validator, /LastVerdict/);
-        assert.match(validator, /initial_maximize_apply/);
+        assert.doesNotMatch(validator, /SetInitialMaximizeState/);
+        assert.doesNotMatch(validator, /ClearInitialMaximizeState/);
+        assert.doesNotMatch(validator, /GetInitialMaximizeEpoch/);
+        assert.doesNotMatch(validator, /initial_maximize_/);
         assert.match(validator, /mouseChanged/);
         assert.match(validator, /MetaModifier/);
         assert.match(validator, /OutlinedBorderItem/);
@@ -258,15 +273,16 @@ describe("active-border visibility diagnostics", () => {
         return body.slice(start, end + 3);
     }
 
-    it("emits bounded endpoint, apply, and visible shapes from fixed sites", () => {
+    it("emits bounded endpoint, observe-seed, and visible shapes from fixed sites", () => {
         assert.match(effectImpl, /Q_LOGGING_CATEGORY\(lcActiveBorder,\s*"plasmaautotiler\.activeborder"\)/);
         assert.match(effectImpl, /qCInfo\(lcActiveBorder\)\.noquote\(\)/);
         assert.match(effectImpl, /plasma-auto-tiler:active-border:endpoint available=/);
-        assert.match(effectImpl, /plasma-auto-tiler:active-border:initial-apply code=/);
+        assert.match(effectImpl, /plasma-auto-tiler:active-border:observe-seed maximized=/);
         assert.match(effectImpl, /plasma-auto-tiler:active-border:visible vis=/);
         assert.match(effectImpl, /emitActiveBorderEndpoint\(\)/);
-        assert.match(effectImpl, /emitActiveBorderApply\(code\)/);
         assert.match(effectImpl, /emitActiveBorderVisible\(visible,/);
+        assert.doesNotMatch(effectImpl, /initial-apply/);
+        assert.doesNotMatch(effectImpl, /emitActiveBorderApply/);
         assert.match(effectHeader, /m_borderDiagEmitted/);
         assert.match(effectHeader, /m_borderDiagVisible/);
         assert.match(effectHeader, /emitActiveBorderVisible\(bool visible, const char \*reason\)/);
@@ -278,17 +294,16 @@ describe("active-border visibility diagnostics", () => {
             "fullscreen",
             "maximized",
             "endpoint-unavailable",
-            "initial-unconfirmed",
         ]) {
             assert.ok(effectImpl.includes(`"${token}"`), token);
         }
-        // Endpoint once after registration, apply after the Rust apply call
-        // including the stale early return, visible inside updateBorder.
+        assert.ok(!effectImpl.includes('"initial-unconfirmed"'), "initial-unconfirmed");
+        // Endpoint once after registration, seed inside subscribeMaximize,
+        // visible inside updateBorder.
         const ctorEndpoint = effectImpl.indexOf("emitActiveBorderEndpoint();");
         assert.ok(ctorEndpoint > effectImpl.indexOf("m_groupDbusAvailable = groupRegistered"));
-        const applyCall = effectImpl.indexOf("emitActiveBorderApply(code);");
-        assert.ok(applyCall > effectImpl.indexOf("initial_maximize_apply("));
-        assert.ok(effectImpl.indexOf("if (code == 2)", applyCall) > applyCall);
+        const seedLog = effectImpl.indexOf("plasma-auto-tiler:active-border:observe-seed");
+        assert.ok(seedLog > effectImpl.indexOf("void ActiveWindowBorderEffect::subscribeMaximize("));
         const updateBorderBody = functionBody(effectImpl, "void ActiveWindowBorderEffect::updateBorder()");
         assert.match(updateBorderBody, /emitActiveBorderVisible\(visible,/);
     });
@@ -326,24 +341,26 @@ describe("active-border visibility diagnostics", () => {
         assert.doesNotMatch(groupBody, /lcActiveBorder/);
     });
 
-    it("uses fixed bounded fields with no identity, epoch, payload, or geometry", () => {
-        const applyBody = functionBody(effectImpl, "void ActiveWindowBorderEffect::emitActiveBorderApply(");
-        assert.match(applyBody, /code=%1 confirmed=%2/);
+    it("uses fixed bounded fields with no identity, payload, or geometry", () => {
+        const seedMarker = "plasma-auto-tiler:active-border:observe-seed";
+        const seedAt = effectImpl.indexOf(seedMarker);
+        assert.ok(seedAt >= 0, seedMarker);
+        const subscribeBody = functionBody(effectImpl, "void ActiveWindowBorderEffect::subscribeMaximize(");
+        assert.ok(subscribeBody.includes(seedMarker), seedMarker);
+        assert.match(subscribeBody, /maximized=%1 fullscreen=%2/);
         const visibleBody = functionBody(effectImpl, "void ActiveWindowBorderEffect::emitActiveBorderVisible(");
         assert.match(visibleBody, /vis=%1 reason=%2/);
         const endpointBody = functionBody(effectImpl, "void ActiveWindowBorderEffect::emitActiveBorderEndpoint(");
         assert.match(endpointBody, /endpoint available=%1/);
-        for (const body of [applyBody, visibleBody, endpointBody]) {
+        for (const body of [subscribeBody, visibleBody, endpointBody]) {
             for (const forbidden of [
                 /internalId/,
                 /WithoutBraces/,
                 /payloadBytes/,
-                /epochBytes/,
                 /activeBytes/,
                 /frameGeometry/,
                 /windowItem/,
                 /mapFromScene/,
-                /active_window/,
                 /maximize_mode/,
                 /generation/,
                 /QUuid::createUuid/,

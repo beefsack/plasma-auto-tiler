@@ -4,7 +4,6 @@ import { join, resolve } from "node:path";
 import { describe, it } from "node:test";
 
 import { observeSendTarget, startPlanAdapterEntry } from "../src/plan-adapter-entry";
-import { INITIAL_MAXIMIZE_EPOCH_METHOD } from "../src/active-border-initial";
 import { WORKSPACE_SEND_HAS_OWNER_METHOD } from "../src/workspace-send-adapter";
 import {
     ensureTrailingEmptyDesktop,
@@ -621,10 +620,6 @@ describe("workspace production entry routing and handoff", () => {
                 const reply = typeof callback === "function" ? callback : typeof payload === "function" ? payload : null;
                 if (method === WORKSPACE_SEND_HAS_OWNER_METHOD) {
                     reply?.(true);
-                    return;
-                }
-                if (method === INITIAL_MAXIMIZE_EPOCH_METHOD) {
-                    reply?.("01234567-89ab-cdef-0123-456789abcdef");
                     return;
                 }
                 mocks.dbusCalls.push({ service, method, payload });

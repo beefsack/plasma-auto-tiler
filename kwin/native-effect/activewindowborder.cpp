@@ -62,22 +62,6 @@ public Q_SLOTS:
             m_effect->clearGroupHighlight();
         }
     }
-    Q_SCRIPTABLE void SetInitialMaximizeState(const QString &payload)
-    {
-        if (m_effect) {
-            m_effect->applyInitialMaximizeState(payload);
-        }
-    }
-    Q_SCRIPTABLE void ClearInitialMaximizeState(const QString &payload)
-    {
-        if (m_effect) {
-            m_effect->clearInitialMaximizeState(payload);
-        }
-    }
-    Q_SCRIPTABLE QString GetInitialMaximizeEpoch()
-    {
-        return m_effect ? m_effect->initialMaximizeEpoch() : QString();
-    }
     Q_SCRIPTABLE QString GetGroupHighlightStatus()
     {
         return m_effect ? m_effect->groupHighlightStatus() : QStringLiteral("v=1;rx=0;ok=0;parse_rej=0;focus_mm=0;stale=0;clr=0;has=0;ord=0;first=0;meta=0;foc=0;ep=0;gl=0;vis=0");
@@ -171,9 +155,9 @@ QRect oracleMoveResizeRect(EffectWindow *window)
 // Single fixed reason token for the computed active-border visibility. Order
 // matches updateBorder() evaluation so exactly one token distinguishes the
 // first suppressing gate: endpoint, window presence, deleted, minimized,
-// fullscreen, maximized, then the initial confirmation gate.
+// fullscreen, then maximized.
 const char *activeBorderDiagReason(bool hasWindow, bool deleted, bool minimized, bool fullScreen, bool nativeMaximized,
-    bool dbusAvailable, bool initialOk)
+    bool dbusAvailable)
 {
     if (!dbusAvailable) {
         return "endpoint-unavailable";
@@ -193,9 +177,6 @@ const char *activeBorderDiagReason(bool hasWindow, bool deleted, bool minimized,
     if (nativeMaximized) {
         return "maximized";
     }
-    if (!initialOk) {
-        return "initial-unconfirmed";
-    }
     return "eligible";
 }
 
@@ -211,11 +192,6 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
 
     m_groupDbusObject = new GroupHighlightObject(this, this);
     group_highlight_state_init(&m_groupState);
-    initial_maximize_state_init(&m_initialState);
-    // Fresh bounded epoch per effect instance from public Qt facilities: a
-    // QUuid without braces is lowercase hex plus dashes, which fits the
-    // strict generation alphabet. Old script generations can never equal it.
-    m_initialEpoch = QUuid::createUuid().toString(QUuid::WithoutBraces);
     // Fail closed with no false endpoint expectation and no live retry: the
     // group stays unavailable/clear unless both the well-known service and
     // object register. Visibility and apply paths gate on this flag.
@@ -234,7 +210,6 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
     m_groupDbusAvailable = groupRegistered;
     if (!m_groupDbusAvailable) {
         group_highlight_clear(&m_groupState);
-        initial_maximize_clear(&m_initialState);
     }
     // Transition diagnostic only: endpoint availability once, after
     // registration. Never affects gate, visibility, or repaint decisions.
@@ -277,9 +252,6 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
         if (!m_isOpenGL) {
             return;
         }
-        // A deleted tracked/active window clears initial authority: its
-        // confirmation must never authorize a later window.
-        clearInitialGate();
         if (m_trackedWindow == window) {
             setTrackedWindow(nullptr);
         }
@@ -293,14 +265,14 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
         if (!m_isOpenGL) {
             return;
         }
-        // A closed active window clears initial authority immediately.
-        clearInitialGate();
         updateBorder();
         updateGroupVisibility();
     });
     // Global maximize tracking and the oracle observe every window,
-    // including when the active border cannot render. Windows already
-    // maximized before effect load emit no transition and stay unknown.
+    // including when the active border cannot render. Each observed window
+    // seeds its committed maximizeMode() directly: windows already maximized
+    // before effect load emit no transition, so the seed is authoritative
+    // until native transition signals update it.
     for (EffectWindow *window : effects->stackingOrder()) {
         subscribeMaximize(window);
         attachOracleWindow(window);
@@ -323,10 +295,8 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
     connect(effects, &EffectsHandler::windowActivated, this, [this](EffectWindow *) {
         // Focus activation clears the old group immediately before any
         // asynchronous script refresh, so no stale group renders under the
-        // new active focus while Meta is held. The initial gate clears too:
-        // the new window stays hidden until its own normal confirmation.
+        // new active focus while Meta is held.
         clearGroupHighlight();
-        clearInitialGate();
         setTrackedWindow(effects->activeWindow());
         updateBorder();
         updateGroupVisibility();
@@ -430,6 +400,39 @@ void ActiveWindowBorderEffect::subscribeMaximize(EffectWindow *window)
         [this](EffectWindow *changed, bool horizontal, bool vertical) {
             updateMaximizedState(changed, activeBorderIsMaximized(horizontal, vertical));
         });
+    // Direct-read seed from the native committed maximizeMode(): until a
+    // Wayland client acknowledges its maximize configure it stays rendered
+    // at normal geometry. Acknowledgement updates committed mode through the
+    // changed signal; about-to-change can still hide earlier on a request.
+    // A null inner window seeds normal.
+    // Native transition signals stay authoritative after this seed.
+    bool seededMaximized = false;
+    try {
+        if (Window *inner = window->window()) {
+            seededMaximized = activeBorderSeedMaximized(static_cast<int>(inner->maximizeMode()));
+        }
+    } catch (...) {
+        seededMaximized = false;
+    }
+    if (seededMaximized) {
+        m_maximizedWindows.insert(window);
+    } else {
+        m_maximizedWindows.remove(window);
+    }
+    bool seedFullScreen = false;
+    try {
+        seedFullScreen = window->isFullScreen();
+    } catch (...) {
+        seedFullScreen = false;
+    }
+    // Bounded per-window observation seed log: two scalars only, no native
+    // identifiers, geometry, or payload.
+    try {
+        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:active-border:observe-seed maximized=%1 fullscreen=%2")
+                .arg(seededMaximized ? 1 : 0)
+                .arg(seedFullScreen ? 1 : 0));
+    } catch (...) {
+    }
 }
 
 void ActiveWindowBorderEffect::unsubscribeMaximize(EffectWindow *window)
@@ -616,76 +619,6 @@ void ActiveWindowBorderEffect::updateMaximizedState(EffectWindow *window, bool m
     }
 }
 
-void ActiveWindowBorderEffect::applyInitialMaximizeState(const QString &payload)
-{
-    handleInitialPayload(payload);
-}
-
-void ActiveWindowBorderEffect::clearInitialMaximizeState(const QString &payload)
-{
-    // The clear shape carries its own bounded JSON (active_window null);
-    // route it through the same strict gate so malformed clears also hide.
-    handleInitialPayload(payload);
-}
-
-QString ActiveWindowBorderEffect::initialMaximizeEpoch() const
-{
-    return m_initialEpoch;
-}
-
-void ActiveWindowBorderEffect::handleInitialPayload(const QString &payload)
-{
-    // Unavailable endpoint never authorizes: fail closed.
-    if (!m_groupDbusAvailable) {
-        clearInitialGate();
-        updateBorder();
-        updateGroupVisibility();
-        return;
-    }
-    // QObject/D-Bus boundary: QString payload, exact live native active
-    // identity, and the live per-instance epoch to UTF-8 bytes. Epoch,
-    // ordering, and identity policy lives in Rust. Script state never
-    // mutates m_maximizedWindows here.
-    const QByteArray payloadBytes = payload.toUtf8();
-    EffectWindow *active = effects->activeWindow();
-    QByteArray activeBytes;
-    if (active != nullptr) {
-        activeBytes = active->internalId().toString(QUuid::WithoutBraces).toUtf8();
-    }
-    const QByteArray epochBytes = m_initialEpoch.toUtf8();
-    const bool hadConfirmed = m_initialState.confirmed_normal != 0;
-    const uint8_t *payloadPtr = payloadBytes.isEmpty() ? nullptr : reinterpret_cast<const uint8_t *>(payloadBytes.constData());
-    const uint8_t *activePtr = activeBytes.isEmpty() ? nullptr : reinterpret_cast<const uint8_t *>(activeBytes.constData());
-    const uint8_t *epochPtr = epochBytes.isEmpty() ? nullptr : reinterpret_cast<const uint8_t *>(epochBytes.constData());
-    const int32_t code = initial_maximize_apply(&m_initialState, payloadPtr, static_cast<size_t>(payloadBytes.size()), activePtr,
-        static_cast<size_t>(activeBytes.size()), epochPtr, static_cast<size_t>(epochBytes.size()));
-    // Transition diagnostic only (including stale code 2). Never affects the
-    // gate, visibility, or repaint decision below.
-    emitActiveBorderApply(code);
-    if (code == 2) {
-        // Stale/out-of-order cannot authorize the current window: preserve.
-        return;
-    }
-    updateBorder();
-    updateGroupVisibility();
-    if ((m_initialState.confirmed_normal != 0) != hadConfirmed && m_isOpenGL) {
-        effects->addRepaintFull();
-    } else if (m_isOpenGL) {
-        effects->addRepaintFull();
-    }
-}
-
-void ActiveWindowBorderEffect::clearInitialGate()
-{
-    // Rust preserves the order within the stream; only the gate hides.
-    initial_maximize_clear(&m_initialState);
-}
-
-bool ActiveWindowBorderEffect::isInitialConfirmedNormal() const
-{
-    return initial_maximize_is_confirmed(&m_initialState) != 0;
-}
-
 void ActiveWindowBorderEffect::logActiveBorderDiag(const QString &message)
 {
     // Diagnostic path only: swallow every failure and never branch caller
@@ -701,19 +634,6 @@ void ActiveWindowBorderEffect::emitActiveBorderEndpoint()
     try {
         logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:active-border:endpoint available=%1")
                 .arg(m_groupDbusAvailable ? 1 : 0));
-    } catch (...) {
-    }
-}
-
-void ActiveWindowBorderEffect::emitActiveBorderApply(int32_t code)
-{
-    // Fixed bounded fields only: apply return code and confirmed boolean.
-    // No payload, epoch, window identity, or geometry.
-    try {
-        const bool confirmed = isInitialConfirmedNormal();
-        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:active-border:initial-apply code=%1 confirmed=%2")
-                .arg(code)
-                .arg(confirmed ? 1 : 0));
     } catch (...) {
     }
 }
@@ -750,19 +670,14 @@ void ActiveWindowBorderEffect::updateBorder()
         window ? window->isMinimized() : false,
         fullScreen,
         nativeMaximized);
-    // Hide-until-confirmed: the exact current window must hold a valid
-    // script normal confirmation. A delayed script zero never overrides a
-    // live native maximize/fullscreen signal. Policy lives in Rust; the
-    // header inline mirrors the same truth table for offline unit tests.
-    const bool initialOk = initial_maximize_allows_display(isInitialConfirmedNormal() ? 1 : 0, fullScreen ? 1 : 0,
-                               nativeMaximized ? 1 : 0, m_groupDbusAvailable ? 1 : 0)
-        != 0;
-    const bool visible = state.visible && initialOk;
+    // Native maximize/fullscreen signals stay authoritative: any seeded or
+    // transitioned maximize axis plus live fullscreen suppresses the border.
+    const bool visible = state.visible;
     // Transition diagnostic only: first evaluation plus visibility flips.
-    // Never affects the border, gate, or repaint decision below.
+    // Never affects the border or repaint decision below.
     emitActiveBorderVisible(visible,
         activeBorderDiagReason(window != nullptr, window ? window->isDeleted() : false, window ? window->isMinimized() : false,
-            fullScreen, nativeMaximized, m_groupDbusAvailable, initialOk));
+            fullScreen, nativeMaximized, m_groupDbusAvailable));
     const qreal gap = ActiveBorderConfig::borderGap();
     const QRectF innerRect = activeBorderInnerRect(state.innerRect, gap);
     m_borderItem.setInnerRect(window ? window->windowItem()->mapFromScene(innerRect) : RectF());
@@ -879,22 +794,14 @@ void ActiveWindowBorderEffect::updateGroupVisibility()
         return;
     }
     // Fail-closed endpoint gate plus the passive Meta gate plus live focus
-    // eligibility (fullscreen/minimized/hidden/deleted/non-tiled hide
+    // eligibility (fullscreen/minimized/hidden/deleted/maximized hide
     // immediately via the tracked-signal connections above). Member validity
     // is never derived native-side: only the carried union bounds render.
     // Policy lives in Rust; C++ supplies POD observer flags and renders.
-    // Both borders additionally require the initial normal confirmation for
-    // the exact current window; the group stream stays independently ordered.
     const bool groupShow = group_highlight_is_visible(&m_groupState, m_metaHeld ? 1 : 0, m_firstMouseSeen ? 1 : 0,
                                isGroupFocusEligible() ? 1 : 0, m_groupDbusAvailable ? 1 : 0)
         == 1;
-    EffectWindow *active = effects->activeWindow();
-    const bool nativeMaximized = active ? m_maximizedWindows.contains(active) : true;
-    const bool fullScreen = active ? active->isFullScreen() : true;
-    const bool initialOk = initial_maximize_allows_display(isInitialConfirmedNormal() ? 1 : 0, fullScreen ? 1 : 0,
-                               nativeMaximized ? 1 : 0, m_groupDbusAvailable ? 1 : 0)
-        != 0;
-    const bool show = groupShow && initialOk;
+    const bool show = groupShow;
     if (show != m_groupVisible) {
         m_groupVisible = show;
         m_groupItem.setVisible(show);

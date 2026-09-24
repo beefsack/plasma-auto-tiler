@@ -39,9 +39,6 @@ decisions of 2026-09-24 are recorded under
   effect mouse interception blocks all clicks; plausible first prototype is
   project-owned layer-shell surfaces confined to positive-width gaps, with a
   native KWin input filter as fallback. Needs a Rust split-boundary request.
-- P0 | AR9 Initial maximize direct read | 7.2. Approved: seed maximize state in
-  the effect via `window()->maximizeMode()`; remove the script epoch handshake,
-  `active-border-initial.ts`, and the Rust `initial_maximize_*` half.
 - P0 | AR10 Cargo-built effect Rust | 7.3, after AR8/AR9. Approved: replace the
   bare-`rustc` effect build with a Cargo workspace staticlib built from CMake
   (e.g. Corrosion), using serde/core types; delete the hand-written parser.
@@ -94,12 +91,10 @@ Existing work:
   user starts a fresh Plasma session with rebuilt native effect and supplies the
   exact combined trace if it recurs.
   [diagnostics](changes/archive/active-border-visibility-diagnostics.md)
-- P1 | Initial border state confirmation live gate | Implemented default-hidden
-  visibility with exact active-window identity, effect-instance epoch, ordered
-  script observations, and native maximise veto. Missing/stale state stays hidden;
-  fullscreen/any maximise suppress both outlines. Effect activation after script
-  startup waits for the next focus/maximise publication without polling.
-  Rust/native/TypeScript checks pass; user fresh-session visual acceptance remains.
+- P1 | Initial border state confirmation live gate | The effect seeds committed
+  native `maximizeMode()` for each window at load/addition; later native
+  transitions update it. Fullscreen/any maximise suppress both outlines. User
+  fresh-session visual acceptance after native delivery remains.
 - P0 | Immediate single-output focus: fullscreen, maximise, float, sticky float |
   User-selected next scope on the laptop. Verify shortcut delivery, entry/exit,
   retained tiling restoration for fullscreen/maximise, floating placement and

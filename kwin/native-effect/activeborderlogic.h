@@ -33,21 +33,22 @@ inline bool activeBorderIsMaximized(bool horizontal, bool vertical)
     return horizontal || vertical;
 }
 
+// Direct-read observation seed from the native committed maximizeMode()
+// (KWin::MaximizeMode: 0 restore, 1 vertical, 2 horizontal, 3 full). Any
+// nonzero axis suppresses both borders; fullscreen stays suppressed
+// independently via the live isFullScreen() observation. No script handoff,
+// no epoch, no polling.
+inline bool activeBorderSeedMaximized(int maximizeMode)
+{
+    return maximizeMode != 0;
+}
+
 inline ActiveBorderState activeBorderState(bool hasWindow, const QRectF &frameGeometry, bool deleted, bool minimized, bool fullScreen, bool maximized)
 {
     if (!hasWindow || deleted || minimized || fullScreen || maximized) {
         return {false, QRectF()};
     }
     return {true, frameGeometry};
-}
-
-// Hide-until-confirmed initial gate for both native borders. The script must
-// confirm the exact current active window is normal (maximize_mode 0); an
-// unknown startup, unavailable endpoint, fullscreen, or any native maximize
-// keeps both borders hidden even when a delayed script zero is on record.
-inline bool activeBorderInitialGate(bool confirmedNormal, bool fullScreen, bool nativeMaximized, bool endpointUsable)
-{
-    return confirmedNormal && !fullScreen && !nativeMaximized && endpointUsable;
 }
 
 } // namespace KWin

@@ -19,9 +19,9 @@ the corresponding item ships; each such entry names its replacement.
   "native workspaces" mode of a future per-platform choice between native and
   project-managed workspaces. Moving the workspace model and remaining
   portable policy to core is deferred until a non-KWin host needs it.
-- Initial maximize (AR9): the effect seeds each window's maximize state from
-  `window()->maximizeMode()` when it starts observing it, replacing the
-  script hide-until-confirmed handoff and its epoch endpoints.
+- Initial maximize (AR9, shipped): the effect seeds each observed window from
+  committed `window()->maximizeMode()`; native transitions then update it.
+  The script epoch handoff and its endpoints are retired.
 - Effect Rust build (AR10): effect Rust is built by Cargo as a workspace
   staticlib invoked from CMake, reusing serde and core types; the bare-`rustc`
   build and hand-written JSON parser are retired. Rust keeps group visibility
@@ -69,32 +69,18 @@ the corresponding item ships; each such entry names its replacement.
   geometry changes. The user manually accepted active-border suppression on
   2026-09-21 and additionally requires the Meta-held group outline to hide
   while maximized: neither outline may be visible.
-- Public effect observation covers every window from effect load and later
-  additions. KWin exposes maximize transitions but no initial EffectWindow
-  maximize getter, so a window already maximized before effect load remains an
-  unclassifiable pre-load edge; no polling, private API, geometry heuristic, or
-  default-hide fallback is selected. Replaced by the AR9 direct read (see
-  Architecture Direction) when it ships.
-- Approved hide-until-confirmed initial handoff (replaced by AR9 when it
-  ships): both native borders stay
-  hidden until a valid current script confirmation says the exact active
-  native window is normal (`maximize_mode: 0`) over the effect-owned
-  ActiveBorder endpoint (`SetInitialMaximizeState`/`ClearInitialMaximizeState`
-  with strict bounded JSON through the existing group-highlight Rust FFI).
-  The payload generation carries a per-effect-instance epoch minted from
-  public Qt facilities and fetched via `GetInitialMaximizeEpoch` before any
-  publish, re-read on every lifecycle input so a reloaded effect rebinds;
-  any other generation is rejected before authorization, and
-  deleted/closed windows clear initial authority. Unknown/unavailable never
-  falls back to normal; fullscreen/any maximize suppress both borders with
-  native signals authoritative over any delayed script zero. The narrow
-  script publisher reads only public activeWindow, normalWindow, internalId,
-  and maximizeMode. No geometry inference, polling, timers, or private APIs
-  are selected. Approved 2026-09-21: the Slice 1 drag oracle is folded into
-  the surviving `plasma-auto-tiler-active-border` effect plugin (one exported
-  effect hosting active border, group overlay, initial-maximize handoff, and
-  drag oracle); no second `plasma-auto-tiler-drag-oracle` effect, factory,
-  metadata, or KCM entry remains.
+- Effect observation seeds every window on load and addition from its committed
+  native maximize mode; any maximize axis or fullscreen suppresses both
+  outlines. Native transition signals remain authoritative. Orchestrator
+  decision applying the user-approved AR9: a Wayland maximize configure not
+  yet acknowledged leaves the window rendered normal, so the committed normal
+  seed reflects that geometry; acknowledgement emits the observed maximize
+  signal. Requested mode could hide a normally rendered border indefinitely
+  if the client never acknowledges. No polling, timers, or geometry heuristics.
+- Approved 2026-09-21: the Slice 1 drag oracle is folded into the surviving
+  `plasma-auto-tiler-active-border` effect plugin (one exported effect hosting
+  active border, group overlay, and drag oracle); no second
+  `plasma-auto-tiler-drag-oracle` effect, factory, metadata, or KCM entry remains.
 - The outline never clips, reshapes, or changes window textures. Plasma 6.5+
   decoration-driven rounded corners remain the selected corner solution.
 - The shipped border uses two effect-owned automatic-lifetime

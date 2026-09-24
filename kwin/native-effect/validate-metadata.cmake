@@ -107,7 +107,7 @@ foreach(GROUP_FORBIDDEN_FFI "QString" "QRect" "QUuid" "EffectWindow" "qreal" "QB
         message(FATAL_ERROR "group-highlight FFI validation failed: '${GROUP_FORBIDDEN_FFI}' must not cross into Rust")
     endif()
 endforeach()
-foreach(GROUP_SYMBOL "group_highlight_state_init" "group_highlight_apply" "group_highlight_clear" "group_highlight_focus_matches" "group_highlight_focus_eligible" "group_highlight_is_visible" "group_highlight_rect" "group_highlight_status" "initial_maximize_state_init" "initial_maximize_apply" "initial_maximize_clear" "initial_maximize_is_confirmed" "initial_maximize_allows_display" "initial_maximize_status")
+foreach(GROUP_SYMBOL "group_highlight_state_init" "group_highlight_apply" "group_highlight_clear" "group_highlight_focus_matches" "group_highlight_focus_eligible" "group_highlight_is_visible" "group_highlight_rect" "group_highlight_status")
     string(FIND "${GROUP_FFI_TEXT}" "${GROUP_SYMBOL}" GROUP_FFI_SYMBOL_POS)
     if(GROUP_FFI_SYMBOL_POS EQUAL -1)
         message(FATAL_ERROR "group-highlight FFI validation failed: '${GROUP_SYMBOL}' missing from FFI header")
@@ -117,7 +117,7 @@ foreach(GROUP_SYMBOL "group_highlight_state_init" "group_highlight_apply" "group
         message(FATAL_ERROR "group-highlight FFI validation failed: '${GROUP_SYMBOL}' missing from Rust source")
     endif()
 endforeach()
-foreach(GROUP_POD "GroupHighlightState" "GroupHighlightRect" "GroupHighlightStatus" "InitialMaximizeState" "InitialMaximizeStatus")
+foreach(GROUP_POD "GroupHighlightState" "GroupHighlightRect" "GroupHighlightStatus")
     string(FIND "${GROUP_FFI_TEXT}" "${GROUP_POD}" GROUP_POD_FFI_POS)
     if(GROUP_POD_FFI_POS EQUAL -1)
         message(FATAL_ERROR "group-highlight FFI validation failed: '${GROUP_POD}' missing from FFI header")
@@ -133,10 +133,10 @@ endforeach()
 # revision bound and the carried-geometry bound.
 string(REGEX MATCHALL "catch_unwind" GROUP_UNWIND_MATCHES "${GROUP_RUST_TEXT}")
 list(LENGTH GROUP_UNWIND_MATCHES GROUP_UNWIND_COUNT)
-if(GROUP_UNWIND_COUNT LESS 14)
-    message(FATAL_ERROR "group-highlight Rust validation failed: expected catch_unwind on every export (14), found ${GROUP_UNWIND_COUNT}")
+if(GROUP_UNWIND_COUNT LESS 9)
+    message(FATAL_ERROR "group-highlight Rust validation failed: expected catch_unwind on every export (9), found ${GROUP_UNWIND_COUNT}")
 endif()
-foreach(GROUP_REQUIRED "correlation" "revision" "focused_window" "9007199254740991" "16384" "order_initialized" "active_window" "maximize_mode")
+foreach(GROUP_REQUIRED "correlation" "revision" "focused_window" "9007199254740991" "16384" "order_initialized")
     string(FIND "${GROUP_RUST_TEXT}" "${GROUP_REQUIRED}" GROUP_REQUIRED_POS)
     if(GROUP_REQUIRED_POS EQUAL -1)
         message(FATAL_ERROR "group-highlight Rust validation failed: '${GROUP_REQUIRED}' not found in policy source")
@@ -159,7 +159,7 @@ foreach(GROUP_MOVED "parseGroupHighlightPayload" "acceptGroupHighlightOrder" "Pa
         message(FATAL_ERROR "group-highlight layering validation failed: '${GROUP_MOVED}' must not exist in shared logic (policy lives in Rust)")
     endif()
 endforeach()
-foreach(GROUP_FFI_USE "group_highlight_state_init" "group_highlight_apply" "group_highlight_clear" "group_highlight_is_visible" "group_highlight_focus_eligible" "group_highlight_rect" "group_highlight_status" "initial_maximize_state_init" "initial_maximize_apply" "initial_maximize_clear" "initial_maximize_is_confirmed" "initial_maximize_allows_display")
+foreach(GROUP_FFI_USE "group_highlight_state_init" "group_highlight_apply" "group_highlight_clear" "group_highlight_is_visible" "group_highlight_focus_eligible" "group_highlight_rect" "group_highlight_status")
     string(FIND "${GROUP_IMPL_TEXT}" "${GROUP_FFI_USE}" GROUP_FFI_USE_POS)
     if(GROUP_FFI_USE_POS EQUAL -1)
         message(FATAL_ERROR "group-highlight wiring validation failed: '${GROUP_FFI_USE}' not found in implementation")
@@ -174,10 +174,10 @@ endforeach()
 
 string(REGEX MATCHALL "Q_SCRIPTABLE" GROUP_SCRIPTABLE_MATCHES "${GROUP_IMPL_TEXT}")
 list(LENGTH GROUP_SCRIPTABLE_MATCHES GROUP_SCRIPTABLE_COUNT)
-if(NOT GROUP_SCRIPTABLE_COUNT EQUAL 7)
-    message(FATAL_ERROR "group-highlight D-Bus validation failed: expected group setter, group clear, read-only status, initial set/clear, the initial epoch getter, plus the folded LastVerdict Q_SCRIPTABLE methods, found ${GROUP_SCRIPTABLE_COUNT}")
+if(NOT GROUP_SCRIPTABLE_COUNT EQUAL 4)
+    message(FATAL_ERROR "group-highlight D-Bus validation failed: expected group setter, group clear, read-only status, plus the folded LastVerdict Q_SCRIPTABLE methods, found ${GROUP_SCRIPTABLE_COUNT}")
 endif()
-foreach(GROUP_METHOD SetGroupHighlight ClearGroupHighlight GetGroupHighlightStatus SetInitialMaximizeState ClearInitialMaximizeState GetInitialMaximizeEpoch LastVerdict)
+foreach(GROUP_METHOD SetGroupHighlight ClearGroupHighlight GetGroupHighlightStatus LastVerdict)
     string(FIND "${GROUP_IMPL_TEXT}" "${GROUP_METHOD}" GROUP_METHOD_POS)
     if(GROUP_METHOD_POS EQUAL -1)
         message(FATAL_ERROR "group-highlight D-Bus validation failed: ${GROUP_METHOD} not found")
@@ -230,10 +230,10 @@ endforeach()
 # Focus activation must clear the old group immediately; fullscreen/minimized
 # transitions must update visibility via the owned tracked signals; the
 # accepted payload's focused_window must bind to the live active internalId;
-# registration failure must fail closed with no retry. The initial handoff
-# additionally pins a per-instance epoch: deleted/closed windows clear its
-# authority and only the live epoch authorizes.
-foreach(GROUP_BINDING "m_groupDbusAvailable" "internalId" "group_highlight_focus_matches" "group_highlight_focus_eligible" "windowClosed" "clearGroupHighlight" "GetInitialMaximizeEpoch" "createUuid" "m_initialEpoch" "clearInitialGate")
+# registration failure must fail closed with no retry. Maximize observation
+# seeds directly from the native committed maximizeMode(); native transition
+# signals stay authoritative after the seed.
+foreach(GROUP_BINDING "m_groupDbusAvailable" "internalId" "group_highlight_focus_matches" "group_highlight_focus_eligible" "windowClosed" "clearGroupHighlight" "maximizeMode" "activeBorderSeedMaximized" "observe-seed")
     string(FIND "${GROUP_IMPL_TEXT}" "${GROUP_BINDING}" GROUP_BINDING_POS)
     if(GROUP_BINDING_POS EQUAL -1)
         string(FIND "${GROUP_RUST_TEXT}" "${GROUP_BINDING}" GROUP_BINDING_RUST_POS)
@@ -265,7 +265,7 @@ endforeach()
 
 # Offline state coverage must exist through the Rust FFI and must poison the
 # session bus before any Qt setup, mirroring the native KCM tests.
-foreach(GROUP_COVERAGE "group_highlight_apply" "group_highlight_clear" "group_highlight_is_visible" "group_highlight_focus_eligible" "group_highlight_focus_matches" "group_highlight_rect" "group_highlight_status" "initial_maximize_apply" "initial_maximize_clear" "initial_maximize_is_confirmed" "initial_maximize_allows_display" "DBUS_SESSION_BUS_ADDRESS")
+foreach(GROUP_COVERAGE "group_highlight_apply" "group_highlight_clear" "group_highlight_is_visible" "group_highlight_focus_eligible" "group_highlight_focus_matches" "group_highlight_rect" "group_highlight_status" "DBUS_SESSION_BUS_ADDRESS")
     string(FIND "${GROUP_TEST_TEXT}" "${GROUP_COVERAGE}" GROUP_COVERAGE_POS)
     if(GROUP_COVERAGE_POS EQUAL -1)
         message(FATAL_ERROR "group-highlight test validation failed: '${GROUP_COVERAGE}' not covered by the offline test")

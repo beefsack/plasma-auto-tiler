@@ -27,12 +27,6 @@ static_assert(offsetof(GroupHighlightState, generation) == 160, "GroupHighlightS
 static_assert(offsetof(GroupHighlightState, correlation) == 232, "GroupHighlightState layout drift");
 static_assert(offsetof(GroupHighlightState, rect) == 360, "GroupHighlightState layout drift");
 static_assert(offsetof(GroupHighlightState, focused) == 384, "GroupHighlightState layout drift");
-static_assert(sizeof(InitialMaximizeState) == 416, "InitialMaximizeState layout drift");
-static_assert(sizeof(InitialMaximizeStatus) == 56, "InitialMaximizeStatus layout drift");
-static_assert(offsetof(InitialMaximizeState, last_revision) == 8, "InitialMaximizeState layout drift");
-static_assert(offsetof(InitialMaximizeState, owner) == 24, "InitialMaximizeState layout drift");
-static_assert(offsetof(InitialMaximizeState, generation) == 160, "InitialMaximizeState layout drift");
-static_assert(offsetof(InitialMaximizeState, active) == 232, "InitialMaximizeState layout drift");
 
 namespace
 {
@@ -259,135 +253,6 @@ void nullStateIsUsageError()
     CHECK(group_highlight_rect(nullptr, nullptr) == -1);
 }
 
-const char *kInitialUuid = "01234567-89ab-cdef-0123-456789abcdef";
-const char *kInitialEpoch = "gen-1";
-const char *kOldEpoch = "gen-0";
-
-std::string initialSetEpoch(const std::string &generation, uint64_t revision, int mode)
-{
-    return "{\"v\":1,\"owner\":\"owner-1\",\"generation\":\"" + generation + "\",\"revision\":" + std::to_string(revision)
-        + ",\"active_window\":\"" + kInitialUuid + "\",\"maximize_mode\":" + std::to_string(mode) + "}";
-}
-
-std::string initialSet(uint64_t revision, int mode)
-{
-    return initialSetEpoch(kInitialEpoch, revision, mode);
-}
-
-std::string initialClear(uint64_t revision)
-{
-    return "{\"v\":1,\"owner\":\"owner-1\",\"generation\":\"gen-1\",\"revision\":" + std::to_string(revision)
-        + ",\"active_window\":null}";
-}
-
-int32_t applyInitial(InitialMaximizeState *state, const std::string &payload, const char *live, const char *epoch = kInitialEpoch)
-{
-    const uint8_t *payloadPtr = payload.empty() ? nullptr : reinterpret_cast<const uint8_t *>(payload.data());
-    const size_t liveLen = live == nullptr ? 0 : std::strlen(live);
-    const uint8_t *livePtr = liveLen == 0 ? nullptr : reinterpret_cast<const uint8_t *>(live);
-    const size_t epochLen = epoch == nullptr ? 0 : std::strlen(epoch);
-    const uint8_t *epochPtr = epochLen == 0 ? nullptr : reinterpret_cast<const uint8_t *>(epoch);
-    return initial_maximize_apply(state, payloadPtr, payload.size(), livePtr, liveLen, epochPtr, epochLen);
-}
-
-void initialStartupUnknownHides()
-{
-    InitialMaximizeState state{};
-    CHECK(initial_maximize_state_init(&state) == 0);
-    CHECK(initial_maximize_is_confirmed(&state) == 0);
-    CHECK(initial_maximize_allows_display(0, 0, 0, 1) == 0);
-}
-
-void initialNormalZeroConfirmsExactLiveOnly()
-{
-    InitialMaximizeState state{};
-    CHECK(initial_maximize_state_init(&state) == 0);
-    CHECK(applyInitial(&state, initialSet(0, 0), kInitialUuid) == 1);
-    CHECK(initial_maximize_is_confirmed(&state) != 0);
-    CHECK(initial_maximize_allows_display(1, 0, 0, 1) == 1);
-    // Stale old revision cannot authorize or erase the current gate.
-    CHECK(applyInitial(&state, initialSet(0, 0), kInitialUuid) == 2);
-    CHECK(initial_maximize_is_confirmed(&state) != 0);
-}
-
-void initialModesFullscreenAndNativeMaxSuppress()
-{
-    for (int mode = 1; mode <= 3; ++mode) {
-        InitialMaximizeState state{};
-        CHECK(initial_maximize_state_init(&state) == 0);
-        CHECK(applyInitial(&state, initialSet(0, mode), kInitialUuid) == 1);
-        CHECK(initial_maximize_is_confirmed(&state) == 0);
-        CHECK(initial_maximize_allows_display(0, 0, 0, 1) == 0);
-    }
-    InitialMaximizeState state{};
-    CHECK(initial_maximize_state_init(&state) == 0);
-    CHECK(applyInitial(&state, initialSet(0, 0), kInitialUuid) == 1);
-    // Fullscreen suppresses a confirmed normal gate.
-    CHECK(initial_maximize_allows_display(1, 1, 0, 1) == 0);
-    // A delayed script zero cannot override live native maximize.
-    CHECK(initial_maximize_allows_display(1, 0, 1, 1) == 0);
-    CHECK(initial_maximize_allows_display(1, 0, 0, 0) == 0);
-}
-
-void initialOldEpochRejectedBeforeAuthorization()
-{
-    // An old script generation for the same active id is rejected before
-    // ordering, identity, or mode authorization, on a fresh effect state and
-    // on a currently confirmed gate alike.
-    InitialMaximizeState fresh{};
-    CHECK(initial_maximize_state_init(&fresh) == 0);
-    CHECK(applyInitial(&fresh, initialSetEpoch(kOldEpoch, 9, 0), kInitialUuid, kInitialEpoch) == 2);
-    CHECK(initial_maximize_is_confirmed(&fresh) == 0);
-    CHECK(fresh.order_initialized == 0);
-    InitialMaximizeState state{};
-    CHECK(initial_maximize_state_init(&state) == 0);
-    CHECK(applyInitial(&state, initialSet(5, 0), kInitialUuid) == 1);
-    CHECK(applyInitial(&state, initialSetEpoch(kOldEpoch, 9, 0), kInitialUuid, kInitialEpoch) == 2);
-    CHECK(initial_maximize_is_confirmed(&state) != 0);
-    CHECK(state.last_revision == 5);
-    // A different owner under the live epoch is stale, never a new stream.
-    const std::string foreign =
-        "{\"v\":1,\"owner\":\"owner-2\",\"generation\":\"gen-1\",\"revision\":9,\"active_window\":\"01234567-89ab-cdef-0123-456789abcdef\",\"maximize_mode\":0}";
-    CHECK(applyInitial(&state, foreign, kInitialUuid) == 2);
-    CHECK(initial_maximize_is_confirmed(&state) != 0);
-}
-
-void initialIdentityMismatchAndClearHide()
-{
-    InitialMaximizeState state{};
-    CHECK(initial_maximize_state_init(&state) == 0);
-    CHECK(applyInitial(&state, initialSet(0, 0), kInitialUuid) == 1);
-    // Old window id cannot authorize the current live window.
-    CHECK(applyInitial(&state, initialSet(1, 0), "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") == 3);
-    CHECK(initial_maximize_is_confirmed(&state) == 0);
-    // Same current zero restores only for the same live window.
-    CHECK(applyInitial(&state, initialSet(1, 0), kInitialUuid) == 1);
-    CHECK(initial_maximize_is_confirmed(&state) != 0);
-    // No live active window reads as an identity mismatch: hidden.
-    CHECK(applyInitial(&state, initialSet(2, 0), nullptr) == 3);
-    CHECK(initial_maximize_is_confirmed(&state) == 0);
-    // An accepted Clear terminates the stream so a restarted script begins
-    // safely at revision 0 under the same epoch.
-    CHECK(applyInitial(&state, initialClear(3), kInitialUuid) == 1);
-    CHECK(initial_maximize_is_confirmed(&state) == 0);
-    CHECK(state.order_initialized == 0);
-    CHECK(applyInitial(&state, initialSet(0, 0), kInitialUuid) == 1);
-    CHECK(initial_maximize_is_confirmed(&state) != 0);
-    CHECK(initial_maximize_clear(&state) == 1);
-    CHECK(initial_maximize_clear(&state) == 0);
-    // Malformed hides without resetting the stream.
-    CHECK(applyInitial(&state, "not-json", kInitialUuid) == 0);
-    CHECK(state.order_initialized != 0);
-}
-
-void initialNullStateIsUsageError()
-{
-    CHECK(initial_maximize_state_init(nullptr) == -1);
-    CHECK(initial_maximize_clear(nullptr) == -1);
-    CHECK(initial_maximize_is_confirmed(nullptr) == 0);
-    CHECK(initial_maximize_status(nullptr, nullptr) == -1);
-}
-
 } // namespace
 
 int main(int argc, char **argv)
@@ -409,12 +274,6 @@ int main(int argc, char **argv)
     modifierVisibilityRequiresFirstSignalAndMetaAndEligibility();
     statusClassifiesReceiptsWithoutMutation();
     nullStateIsUsageError();
-    initialStartupUnknownHides();
-    initialNormalZeroConfirmsExactLiveOnly();
-    initialModesFullscreenAndNativeMaxSuppress();
-    initialOldEpochRejectedBeforeAuthorization();
-    initialIdentityMismatchAndClearHide();
-    initialNullStateIsUsageError();
 
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);

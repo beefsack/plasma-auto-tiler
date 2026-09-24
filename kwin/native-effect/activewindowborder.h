@@ -36,9 +36,6 @@ public:
     void applyGroupHighlight(const QString &payload);
     void clearGroupHighlight();
     QString groupHighlightStatus() const;
-    void applyInitialMaximizeState(const QString &payload);
-    void clearInitialMaximizeState(const QString &payload);
-    QString initialMaximizeEpoch() const;
 
 private:
     friend class OraclePressSpy;
@@ -102,20 +99,8 @@ private:
     // holds it by value and forwards QString-to-UTF8 bytes plus POD
     // observer flags. Rendering reads the POD rect back out.
     GroupHighlightState m_groupState{};
-    // Hide-until-confirmed initial maximize gate, same staticlib pattern.
-    // Never mutates m_maximizedWindows: native transition signals stay
-    // authoritative and override any delayed script zero. m_initialEpoch is
-    // minted once per effect instance; every handoff payload generation must
-    // equal it exactly, so an old script generation can never authorize a
-    // new effect.
-    InitialMaximizeState m_initialState{};
-    QString m_initialEpoch;
-    void handleInitialPayload(const QString &payload);
-    void clearInitialGate();
-    bool isInitialConfirmedNormal() const;
     void logActiveBorderDiag(const QString &message);
     void emitActiveBorderEndpoint();
-    void emitActiveBorderApply(int32_t code);
     void emitActiveBorderVisible(bool visible, const char *reason);
     bool m_groupVisible = false;
     bool m_metaHeld = false;

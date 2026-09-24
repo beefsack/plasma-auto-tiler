@@ -131,26 +131,56 @@ void gapAppliesToVisibleBorderState()
     CHECK(KWin::activeBorderInnerRect(state.innerRect, 2.0) == QRectF(-2.0, -2.0, 104.0, 104.0));
 }
 
-void initialGateStartupUnknownStaysHidden()
+void seedMaximizedMapsCommittedMaximizeMode()
 {
-    // No script confirmation yet: both borders hidden even when the native
-    // window itself is eligible.
-    CHECK(!KWin::activeBorderInitialGate(false, false, false, true));
-    CHECK(!KWin::activeBorderInitialGate(false, false, false, false));
+    // Direct-read seed: committed maximizeMode() 0 restores, any nonzero
+    // axis (vertical/horizontal/full) suppresses both borders.
+    CHECK(!KWin::activeBorderSeedMaximized(0));
+    CHECK(KWin::activeBorderSeedMaximized(1));
+    CHECK(KWin::activeBorderSeedMaximized(2));
+    CHECK(KWin::activeBorderSeedMaximized(3));
 }
 
-void initialGateNormalZeroShowsOnlyWhenUsable()
+void normalObservationStartShowsThenMaximizes()
 {
-    CHECK(KWin::activeBorderInitialGate(true, false, false, true));
-    CHECK(!KWin::activeBorderInitialGate(true, false, false, false));
+    // Observation start with a normal seed shows; a subsequent native
+    // maximize transition hides; the restore transition shows again.
+    // Transitions stay authoritative after the seed.
+    CHECK(KWin::activeBorderState(true, QRectF(0.0, 0.0, 100.0, 100.0), false, false, false,
+        KWin::activeBorderSeedMaximized(0))
+            .visible);
+    CHECK(!KWin::activeBorderState(true, QRectF(0.0, 0.0, 100.0, 100.0), false, false, false, true).visible);
+    CHECK(KWin::activeBorderState(true, QRectF(0.0, 0.0, 100.0, 100.0), false, false, false, false).visible);
 }
 
-void initialGateFullscreenAndAnyMaximizeSuppress()
+void maximizedObservationStartHidesUntilRestore()
 {
-    CHECK(!KWin::activeBorderInitialGate(true, true, false, true));
-    // A delayed script zero cannot override a live native maximize signal.
-    CHECK(!KWin::activeBorderInitialGate(true, false, true, true));
-    CHECK(!KWin::activeBorderInitialGate(true, true, true, true));
+    // A window already maximized before effect load seeds hidden and stays
+    // hidden across a repeated maximized signal until restore.
+    CHECK(!KWin::activeBorderState(true, QRectF(0.0, 0.0, 1920.0, 1080.0), false, false, false,
+        KWin::activeBorderSeedMaximized(3))
+            .visible);
+    CHECK(!KWin::activeBorderState(true, QRectF(0.0, 0.0, 1920.0, 1080.0), false, false, false,
+        KWin::activeBorderIsMaximized(true, true))
+            .visible);
+    CHECK(KWin::activeBorderState(true, QRectF(0.0, 0.0, 1920.0, 1080.0), false, false, false,
+        KWin::activeBorderIsMaximized(false, false))
+            .visible);
+}
+
+void fullscreenObservationStartHidesRegardlessOfSeed()
+{
+    // Fullscreen stays suppressed independently: even a normal seed hides
+    // while fullscreen, and un-fullscreen restores when normal.
+    CHECK(!KWin::activeBorderState(true, QRectF(0.0, 0.0, 1920.0, 1080.0), false, false, true,
+        KWin::activeBorderSeedMaximized(0))
+            .visible);
+    CHECK(!KWin::activeBorderState(true, QRectF(0.0, 0.0, 1920.0, 1080.0), false, false, true,
+        KWin::activeBorderSeedMaximized(3))
+            .visible);
+    CHECK(KWin::activeBorderState(true, QRectF(0.0, 0.0, 1920.0, 1080.0), false, false, false,
+        KWin::activeBorderSeedMaximized(0))
+            .visible);
 }
 
 void pressResizeBindingMapsSlotsInOrder()
@@ -209,9 +239,10 @@ int main()
     zeroGapKeepsFrameAsInnerRect();
     positiveGapExpandsInnerRect();
     gapAppliesToVisibleBorderState();
-    initialGateStartupUnknownStaysHidden();
-    initialGateNormalZeroShowsOnlyWhenUsable();
-    initialGateFullscreenAndAnyMaximizeSuppress();
+    seedMaximizedMapsCommittedMaximizeMode();
+    normalObservationStartShowsThenMaximizes();
+    maximizedObservationStartHidesUntilRestore();
+    fullscreenObservationStartHidesRegardlessOfSeed();
     pressResizeBindingMapsSlotsInOrder();
     pressDefaultBindingIsAltRight();
     pressAgeGateBoundsTwoSecondsMonotonic();
