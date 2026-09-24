@@ -883,9 +883,10 @@ the corresponding item ships; each such entry names its replacement.
 ## Tray
 
 - Use a portable Rust StatusNotifierItem carrier with the KWin backend first;
-  fail closed without a watcher. The bridge is whitelisted, outbound
-  state-snapshot based, reconnecting, idempotent, and has no shell, input, or
-  helper-to-KWin action route. The KCM remains the settings owner.
+  fail closed without a watcher. The bridge is outbound state-snapshot based,
+  reconnecting, idempotent, with no KWin executable allowlist, and has no
+  shell, input, or helper-to-KWin action route. The KCM remains the settings
+  owner.
 - Snapshot publication requires the sender's unique D-Bus name to equal the
   current `org.kde.KWin` name owner. Owner loss or replacement clears the old
   snapshot; the tray remains available for the new owner's snapshot.

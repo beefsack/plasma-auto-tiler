@@ -105,10 +105,10 @@ Existing work:
   and maximise suppression for the Meta-held group outline. Existing three-row
   shortcut journals remain recoverable. Typecheck, 815 KWin tests, script/native
   builds, and 26 native CTest cases pass. The other agent's changes were docs
-  only and were reviewed. Native public maximize signals now track all windows,
-  but cannot classify a window already maximised before effect load. The
-  initial observation now comes from the approved script-confirmation gate,
-  remaining hidden until confirmed rather than guessing native state.
+  only and were reviewed. Native public maximize signals track all windows,
+  and the effect seeds each observed window from committed native
+  `maximizeMode()` on load/addition with native transitions authoritative;
+  the script-confirmation gate and its epoch handoff are retired.
   Sticky float uses native all-desktops semantics (empty native desktop list);
   sticky-off selects the current desktop. Static review and regression establish
   no explicit workspace switch on sticky-on, but the user's workspace 1 to 4
