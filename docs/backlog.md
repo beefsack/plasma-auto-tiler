@@ -435,7 +435,11 @@ Existing work:
   currently produce the same catalog; KWin 6.7.5 scripting cannot unregister
   or rebind shortcuts; live `workspaceMode` needs product semantics for
   layouts, numbering, view and focus; generic post-Save script reload is not
-  recommended. Awaiting user answers to the note's four questions.
+  recommended. User decision (2026-09-25): hide `shortcutProfile` from the
+  Configure page until real profiles exist, keep the single COSMIC-style
+  catalog, leave any saved value untouched in `kwinrc`, and fold profiles into
+  "Post-MVP tiling profiles"; this removes it from the launch blocker. Not yet
+  implemented.
   [investigation](changes/reliability-condition-investigation.md)
   [live settings research](research/live-settings-after-ar15.md)
 - P2 | Interim runtime configuration reload | PARTIAL: the gap-only portion is
@@ -553,5 +557,6 @@ Existing work:
   [foundations](changes/archive/delivered-foundations.md)
 - P3 | Post-MVP tiling profiles | Required when adding other tiling types such
   as Hyprland: selectable profiles must cover both the tiling behavior/algorithm
-  and matching shortcuts. Deferred beyond MVP, not an optional shortcut-only
+  and matching shortcuts. Includes re-exposing `shortcutProfile` (hidden
+  2026-09-25) with distinct catalogs and live switching. Deferred beyond MVP, not an optional shortcut-only
   preset feature. [change](changes/shortcuts.md)
