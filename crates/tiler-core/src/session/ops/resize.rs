@@ -325,18 +325,50 @@ impl super::super::Session {
         }
     }
 
+    /// Pointer-only observation binding tolerates overlay flags on tiled
+    /// members other than the dragged window; keyboard paths remain strict.
+    fn pointer_observation_matches(&self, observed: &[ObservedWindow], window: &WindowId) -> bool {
+        let by_id: BTreeMap<&WindowId, &ObservedWindow> =
+            observed.iter().map(|w| (&w.window, w)).collect();
+        for (id, link) in &self.windows {
+            let Some(entry) = by_id.get(id) else {
+                return false;
+            };
+            if entry.output != link.output || entry.workspace != link.workspace {
+                return false;
+            }
+            if *id == *window && entry.flags().any() {
+                return false;
+            }
+        }
+        for (id, record) in &self.exceptions {
+            let Some(entry) = by_id.get(id) else {
+                return false;
+            };
+            if entry.output != record.output
+                || entry.workspace != record.workspace
+                || entry.flags() != record.flags
+            {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Propose COSMIC pointer pixel resize for the selected exact
     /// opaque `(domain, window)` pair.
     ///
     /// Rust derives the target matching-axis split boundary and the two
     /// adjacent shares itself; the caller never supplies shares. Inputs are
-    /// the captured focused tiled source/domain, the intentional `direction`
-    /// selecting which adjacent boundary of the focused leaf moves, and the
+    /// the requested tiled window/domain (need not be the active window),
+    /// the intentional `direction` selecting which adjacent boundary of the
+    /// requested leaf moves, and the
     /// absolute `proposed_boundary` coordinate in domain work-area
     /// space along the matching axis (`x` for horizontal, `y` for vertical).
     /// Structural preconditions are the complete session observation plus
-    /// the accepted topology/membership/focus/capability binding, exactly
-    /// like [`Session::propose_resize`].
+    /// the accepted topology/membership/capability binding; unlike
+    /// [`Session::propose_resize`], the requested window need not equal the
+    /// active focused window and active/remembered focus is preserved exactly.
     ///
     /// Derivation: nearest matching-axis ancestor with a direct neighbor in
     /// `direction` (keyboard ancestor rule, outward on exhausted pairs);
@@ -411,7 +443,7 @@ impl super::super::Session {
         if observed_ids != known {
             return Err(ProposeError::Refused(RefusalKind::PartialObservation));
         }
-        if !self.observed_known_match(&session_observation.windows, None) {
+        if !self.pointer_observation_matches(&session_observation.windows, window) {
             return Err(ProposeError::Refused(RefusalKind::PartialObservation));
         }
         if !self.windows.contains_key(window) && !self.exceptions.contains_key(window) {
@@ -434,13 +466,34 @@ impl super::super::Session {
         if self.exceptions.contains_key(&focused_window) {
             return Err(ProposeError::Refused(RefusalKind::NotTiled));
         }
-        if window != &focused_window {
+        // Pointer-only decoupling: observed overlay flags on the ACTIVE window
+        // never reject a valid inactive dragged target (active/remembered
+        // focus is preserved exactly). The active check below only binds the
+        // coincident case, where the dragged window's own check refuses
+        // identically.
+        if focused_window == *window
+            && let Some(entry) = session_observation
+                .windows
+                .iter()
+                .find(|w| w.window == focused_window)
+            && entry.flags().any()
+        {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        }
+        // Pointer-only decoupling: the dragged window need not be active.
+        // Derive the resize target from its retained link; active focus is
+        // preserved exactly (never synced to the dragged window here).
+        let Some(target_link) = self.windows.get(window).cloned() else {
+            return Err(ProposeError::Refused(RefusalKind::UnknownWindow));
+        };
+        if target_link.output != domain.output || target_link.workspace != domain.workspace {
             return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
         }
+        let target_leaf = target_link.leaf.clone();
         if let Some(entry) = session_observation
             .windows
             .iter()
-            .find(|w| w.window == focused_window)
+            .find(|w| w.window == *window)
             && entry.flags().any()
         {
             return Err(ProposeError::Refused(RefusalKind::NotTiled));
@@ -467,6 +520,9 @@ impl super::super::Session {
         let Some(tree) = self.trees.get(domain).cloned().flatten() else {
             return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
         };
+        if !collect_leaves(&tree).contains(&target_leaf) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
         // Project the accepted topology once: source of truth for group
         // extents and adjacent pixel sizes.
         let accepted_geometry =
@@ -482,7 +538,7 @@ impl super::super::Session {
         let Some(pointer) = derive_pointer_shares(
             self.policy(),
             &tree,
-            &focused_leaf,
+            &target_leaf,
             direction,
             proposed_boundary,
             &own_domain,
@@ -569,16 +625,16 @@ impl super::super::Session {
         let intent = ResizeIntent {
             domain_output: domain.output.clone(),
             domain_workspace: domain.workspace.clone(),
-            focused_leaf: focused_leaf.clone(),
-            focused_window: focused_window.clone(),
+            focused_leaf: target_leaf.clone(),
+            focused_window: window.clone(),
             direction,
             mode,
         };
         let operation = ResizeOperation {
             domain_output: domain.output.clone(),
             domain_workspace: domain.workspace.clone(),
-            focused_leaf: focused_leaf.clone(),
-            focused_window: focused_window.clone(),
+            focused_leaf: target_leaf.clone(),
+            focused_window: window.clone(),
             direction,
             mode,
             target_group: target.group_id.clone(),
@@ -641,7 +697,8 @@ impl super::super::Session {
     /// through the single pending slot.
     ///
     /// Structural preconditions match [`Session::propose_pointer_resize`]
-    /// exactly (topology/membership/focus/capability binding). Derivation
+    /// exactly (topology/membership/capability binding; requested window
+    /// need not be active, active/remembered focus preserved). Derivation
     /// runs per axis in a fixed horizontal-then-vertical order: the
     /// horizontal boundary derives against the accepted topology, applies to
     /// a tree clone, the intermediate topology is re-projected, and the
@@ -713,7 +770,7 @@ impl super::super::Session {
         if observed_ids != known {
             return Err(ProposeError::Refused(RefusalKind::PartialObservation));
         }
-        if !self.observed_known_match(&session_observation.windows, None) {
+        if !self.pointer_observation_matches(&session_observation.windows, window) {
             return Err(ProposeError::Refused(RefusalKind::PartialObservation));
         }
         if !self.windows.contains_key(window) && !self.exceptions.contains_key(window) {
@@ -736,13 +793,34 @@ impl super::super::Session {
         if self.exceptions.contains_key(&focused_window) {
             return Err(ProposeError::Refused(RefusalKind::NotTiled));
         }
-        if window != &focused_window {
+        // Pointer-only decoupling: observed overlay flags on the ACTIVE window
+        // never reject a valid inactive dragged target (active/remembered
+        // focus is preserved exactly). The active check below only binds the
+        // coincident case, where the dragged window's own check refuses
+        // identically.
+        if focused_window == *window
+            && let Some(entry) = session_observation
+                .windows
+                .iter()
+                .find(|w| w.window == focused_window)
+            && entry.flags().any()
+        {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        }
+        // Pointer-only decoupling: the dragged window need not be active.
+        // Derive the resize target from its retained link; active focus is
+        // preserved exactly (never synced to the dragged window here).
+        let Some(target_link) = self.windows.get(window).cloned() else {
+            return Err(ProposeError::Refused(RefusalKind::UnknownWindow));
+        };
+        if target_link.output != domain.output || target_link.workspace != domain.workspace {
             return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
         }
+        let target_leaf = target_link.leaf.clone();
         if let Some(entry) = session_observation
             .windows
             .iter()
-            .find(|w| w.window == focused_window)
+            .find(|w| w.window == *window)
             && entry.flags().any()
         {
             return Err(ProposeError::Refused(RefusalKind::NotTiled));
@@ -763,6 +841,9 @@ impl super::super::Session {
         let Some(tree) = self.trees.get(domain).cloned().flatten() else {
             return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
         };
+        if !collect_leaves(&tree).contains(&target_leaf) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
         let accepted_geometry =
             project_output_geometry(Some(&own_domain), Some(&tree), &self.windows, domain)
                 .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
@@ -777,7 +858,7 @@ impl super::super::Session {
         let Some(pointer_h) = derive_pointer_shares(
             self.policy(),
             &tree,
-            &focused_leaf,
+            &target_leaf,
             direction_h,
             boundary_h,
             &own_domain,
@@ -822,7 +903,7 @@ impl super::super::Session {
         let Some(pointer_v) = derive_pointer_shares(
             self.policy(),
             &intermediate_tree,
-            &focused_leaf,
+            &target_leaf,
             direction_v,
             boundary_v,
             &own_domain,
@@ -914,8 +995,8 @@ impl super::super::Session {
         let operation_h = ResizeOperation {
             domain_output: domain.output.clone(),
             domain_workspace: domain.workspace.clone(),
-            focused_leaf: focused_leaf.clone(),
-            focused_window: focused_window.clone(),
+            focused_leaf: target_leaf.clone(),
+            focused_window: window.clone(),
             direction: direction_h,
             mode: mode_h,
             target_group: target_h.group_id.clone(),
@@ -930,8 +1011,8 @@ impl super::super::Session {
             intent: ResizeIntent {
                 domain_output: domain.output.clone(),
                 domain_workspace: domain.workspace.clone(),
-                focused_leaf: focused_leaf.clone(),
-                focused_window: focused_window.clone(),
+                focused_leaf: target_leaf.clone(),
+                focused_window: window.clone(),
                 direction: direction_h,
                 mode: mode_h,
             },
@@ -942,8 +1023,8 @@ impl super::super::Session {
         let operation_v = ResizeOperation {
             domain_output: domain.output.clone(),
             domain_workspace: domain.workspace.clone(),
-            focused_leaf: focused_leaf.clone(),
-            focused_window: focused_window.clone(),
+            focused_leaf: target_leaf.clone(),
+            focused_window: window.clone(),
             direction: direction_v,
             mode: mode_v,
             target_group: target_v.group_id.clone(),
@@ -958,8 +1039,8 @@ impl super::super::Session {
             intent: ResizeIntent {
                 domain_output: domain.output.clone(),
                 domain_workspace: domain.workspace.clone(),
-                focused_leaf: focused_leaf.clone(),
-                focused_window: focused_window.clone(),
+                focused_leaf: target_leaf.clone(),
+                focused_window: window.clone(),
                 direction: direction_v,
                 mode: mode_v,
             },

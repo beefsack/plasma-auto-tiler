@@ -926,6 +926,14 @@ ships.
   self-resizing client; corner drags use both axes. Reject only when no usable
   grabbed edge remains (including cancellation, zero movement, or lost window
   identity). The strict opposite-edge-fixed rule is superseded.
+- User accepted the Orchestrator's follow-up recommendations (2026-09-24): a
+  completed pointer drag may resize an inactive tiled window without changing
+  active, focused or remembered focus; keyboard resize and other operations
+  retain their focus rules. On adapter or Planner rejection, converge to the
+  retained layout with one bounded, drag-correlated reconcile, without retry
+  or loop. For a start well inside the window, follow KWin's exact
+  Meta+right-drag thirds (including its center branch); starts at the frame
+  edge retain the nearest-edge and corner-zone rule.
 - The drag oracle hosted in the disabled-by-default unified
   `plasma-auto-tiler-active-border` native effect records final drag geometry;
   after that effect's explicit enable, the

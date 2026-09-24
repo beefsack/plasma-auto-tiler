@@ -4104,13 +4104,17 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             // adapter under its own plan correlation.
             try {
                 let accepted = false;
+                // Drag correlation travels as optional entry request metadata:
+                // adapter-validation or Planner rejection of this drop then
+                // converges once via a drag-correlated reconcile (no retry).
+                // Cancelled/zero-move never reach here (strict no-op above).
                 if (resolved.targets.length === 2) {
                     const first = resolved.targets[0] as { direction: string; boundary: number };
                     const second = resolved.targets[1] as { direction: string; boundary: number };
-                    accepted = adapter.requestPointerResize(verdict.windowIdentity, first.direction, first.boundary, second.direction, second.boundary);
+                    accepted = adapter.requestPointerResize(verdict.windowIdentity, first.direction, first.boundary, second.direction, second.boundary, verdict.correlation);
                 } else {
                     const only = resolved.targets[0] as { direction: string; boundary: number };
-                    accepted = adapter.requestPointerResize(verdict.windowIdentity, only.direction, only.boundary);
+                    accepted = adapter.requestPointerResize(verdict.windowIdentity, only.direction, only.boundary, undefined, undefined, verdict.correlation);
                 }
                 try {
                     const targetText = resolved.targets.map((t) => `${t.direction}:${String(t.boundary)}`).join(",");

@@ -763,7 +763,12 @@ describe("slice 2 entry finish consumes the captured start", () => {
         fireAll(world.signals["finishedA"]);
         assert.equal(mocks.oracleCalls.length, 1);
         (mocks.oracleCalls[0] as (reply: unknown) => void)(movedWinA("drag-1"));
-        assert.equal(mocks.planCalls.length, 0, "fullscreen target never dispatched");
+        assert.ok(
+            mocks.planCalls.every((call) => !(call.payload.includes("pointer-resize"))),
+            "fullscreen target never dispatches a pointer plan",
+        );
+        assert.equal(mocks.planCalls.length, 1, "refused drop converges once via a correlated reconcile");
+        assert.deepEqual((JSON.parse(mocks.planCalls[0]?.payload as string) as Record<string, unknown>)["command"], { op: "reconcile" });
         assert.ok(
             mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-fullscreen"),
             "exact source-grounded refusal token from the adapter",
@@ -771,6 +776,10 @@ describe("slice 2 entry finish consumes the captured start", () => {
         assert.ok(
             mocks.logs.some((line) => line.includes("drag-dispatched") && line.includes("correlation=drag-1") && line.includes("accepted=false")),
             "correlated dispatch line reports the refusal honestly",
+        );
+        assert.ok(
+            mocks.logs.some((line) => line.includes("drag-rejected") && line.includes("correlation=drag-1") && line.includes("reason=fullscreen")),
+            "correlated refusal reason for the follow-up",
         );
         assert.ok(
             !mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-derive-invalid"),
@@ -790,7 +799,11 @@ describe("slice 2 entry finish consumes the captured start", () => {
         fireAll(world.signals["finishedA"]);
         assert.equal(mocks.oracleCalls.length, 1);
         (mocks.oracleCalls[0] as (reply: unknown) => void)(movedWinA("drag-1"));
-        assert.equal(mocks.planCalls.length, 0, "maximized target never dispatched");
+        assert.ok(
+            mocks.planCalls.every((call) => !(call.payload.includes("pointer-resize"))),
+            "maximized target never dispatches a pointer plan",
+        );
+        assert.equal(mocks.planCalls.length, 1, "refused drop converges once via a correlated reconcile");
         assert.ok(
             mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-maximize"),
             "exact source-grounded refusal token from the adapter",

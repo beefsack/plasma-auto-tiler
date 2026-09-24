@@ -795,6 +795,11 @@ fn capability_pending_stale_failures() {
         ),
         Err(ProposeError::Refused(RefusalKind::UnknownWindow))
     );
+    // Pointer-only decoupling: an inactive tiled window no longer refuses as
+    // focus-mismatch. win-1 is the left leaf while win-2 is active; Left has
+    // no neighbor for the leftmost leaf, so it refuses as unchanged (not
+    // focus-mismatch). Keyboard resize of the same inactive window still
+    // refuses as focus-mismatch (checked in the drag-23 regression below).
     assert_eq!(
         q.propose_pointer_resize(
             &qk,
@@ -805,7 +810,7 @@ fn capability_pending_stale_failures() {
             &correlation("x-focus"),
             &ResizeCapabilities::full()
         ),
-        Err(ProposeError::Refused(RefusalKind::FocusMismatch))
+        Err(ProposeError::Refused(RefusalKind::Unchanged))
     );
 }
 
@@ -1233,4 +1238,304 @@ fn corner_refuses_same_axis_pair_as_malformed() {
         "{refused:?}"
     );
     assert!(!s.has_pending());
+}
+
+#[test]
+fn drag23_inactive_corner_resize_preserves_focus() {
+    // drag-23: 1528x1016 domain, root H [win-1 | V[win-2 (top Ghostty,
+    // active) | win-3 (bottom Kate, dragged)]]. One corner plan on the
+    // inactive bottom leaf moves left+up from (680,538,848,478) to
+    // (397,315,1131,701); active/remembered focus is preserved and keyboard
+    // resize of the inactive window still refuses.
+    use tiler_core::contract::ResizeMode;
+    let mut s = Session::new(
+        owner(),
+        generation(),
+        0,
+        7,
+        vec![domain("out-1", "ws-1", 1528, 1016, 0)],
+    )
+    .expect("session");
+    admit_commit(&mut s, "win-1", true, "c-1");
+    admit_commit(&mut s, "win-2", true, "c-2");
+    admit_commit(&mut s, "win-3", false, "c-3");
+    focus_up_commit(&mut s, "f-1");
+    let k = key("out-1", "ws-1");
+    let active = focused_window(&s, &k);
+    assert_eq!(active.0, "win-2");
+    let dragged = WindowId("win-3".to_owned());
+    // Stage the log start geometry (680,538,848,478) for the dragged leaf.
+    let stage = corner_commit(
+        &mut s,
+        &k,
+        &dragged,
+        Direction::Left,
+        680,
+        Direction::Up,
+        538,
+        "drag23-stage",
+    );
+    let stage_geom = |window: &str| {
+        stage
+            .desired_geometry
+            .iter()
+            .find(|g| g.window.0 == window)
+            .unwrap_or_else(|| panic!("stage geometry for {window}"))
+            .rect
+    };
+    assert_eq!(
+        stage_geom("win-3"),
+        Rect {
+            x: 680,
+            y: 538,
+            w: 848,
+            h: 478
+        }
+    );
+    assert_eq!(focused_window(&s, &k).0, "win-2");
+    let before_focus = s.focus();
+    let base = s.accepted_revision();
+    // One plan: left+up to the log final geometry.
+    let plan = corner_commit(
+        &mut s,
+        &k,
+        &dragged,
+        Direction::Left,
+        397,
+        Direction::Up,
+        315,
+        "drag23-final",
+    );
+    assert_eq!(s.accepted_revision(), base + 1);
+    assert!(!s.has_pending());
+    // Both split axes project for all siblings.
+    let geom = |window: &str| {
+        plan.desired_geometry
+            .iter()
+            .find(|g| g.window.0 == window)
+            .unwrap_or_else(|| panic!("geometry for {window}"))
+            .rect
+    };
+    assert_eq!(
+        geom("win-3"),
+        Rect {
+            x: 397,
+            y: 315,
+            w: 1131,
+            h: 701
+        }
+    );
+    assert_eq!(
+        geom("win-2"),
+        Rect {
+            x: 397,
+            y: 0,
+            w: 1131,
+            h: 315
+        }
+    );
+    assert_eq!(
+        geom("win-1"),
+        Rect {
+            x: 0,
+            y: 0,
+            w: 397,
+            h: 1016
+        }
+    );
+    // No focus/remembered changes across the plan: reply and session focus
+    // equal the pre-plan active focus, and the active window is unchanged.
+    assert_eq!(
+        (
+            Some(plan.desired_focus_domain.clone()),
+            Some(plan.desired_focus_leaf.clone())
+        ),
+        before_focus
+    );
+    assert_eq!(s.focus(), before_focus);
+    assert_eq!(focused_window(&s, &k).0, "win-2");
+    // Post-observation binds the committed revision with no pending.
+    assert_eq!(plan.dispatch.base_revision, base);
+    // Keyboard resize of the inactive dragged window still refuses.
+    let obs = complete_obs(&s);
+    assert_eq!(
+        s.propose_resize(
+            &k,
+            &dragged,
+            Direction::Left,
+            ResizeMode::Inwards,
+            0,
+            &obs,
+            &correlation("drag23-kb"),
+            &ResizeCapabilities::full(),
+        ),
+        Err(ProposeError::Refused(RefusalKind::FocusMismatch))
+    );
+    assert!(!s.has_pending());
+}
+
+#[test]
+fn pointer_resize_inactive_target_with_overlay_active_plans() {
+    use tiler_core::contract::ResizeMode;
+    // Active window observed fullscreen/floating/sticky must not reject a
+    // valid inactive tiled drag; the dragged window's own flags still
+    // refuse, focus is preserved, and keyboard is unchanged.
+    for flag in ["fullscreen", "floating", "sticky"] {
+        let mut s = single_session();
+        admit_commit(&mut s, "win-1", true, &format!("c-1-{flag}"));
+        admit_commit(&mut s, "win-2", true, &format!("c-2-{flag}"));
+        let k = key("out-1", "ws-1");
+        assert_eq!(focused_window(&s, &k).0, "win-2");
+        let before_focus = s.focus();
+        let mut obs = complete_obs(&s);
+        for w in obs.windows.iter_mut() {
+            if w.window.0 == "win-2" {
+                match flag {
+                    "fullscreen" => w.fullscreen = true,
+                    "floating" => w.floating = true,
+                    _ => w.sticky = true,
+                }
+            }
+        }
+        // Layout [1,1] over 800px: shared edge at 400. Inactive win-1 grows
+        // right to 410, mirroring the focused Left@390 derivation.
+        let base = s.accepted_revision();
+        let plan = s
+            .propose_pointer_resize(
+                &k,
+                &WindowId("win-1".to_owned()),
+                Direction::Right,
+                410,
+                &obs,
+                &correlation("overlay-active"),
+                &ResizeCapabilities::full(),
+            )
+            .unwrap_or_else(|e| panic!("inactive drag with {flag} active: {e:?}"));
+        assert_eq!(plan.resize_plan.operation.new_shares, vec![409, 389]);
+        let left = plan
+            .desired_geometry
+            .iter()
+            .find(|g| g.window.0 == "win-1")
+            .expect("win-1 geometry");
+        assert_eq!(left.rect.x + left.rect.w, 410);
+        assert_eq!(
+            (
+                Some(plan.desired_focus_domain.clone()),
+                Some(plan.desired_focus_leaf.clone())
+            ),
+            before_focus
+        );
+        assert_eq!(s.focus(), before_focus);
+        assert_eq!(focused_window(&s, &k).0, "win-2");
+        assert!(s.has_pending(), "pointer stages exactly one pending plan");
+        s.acknowledge(&AdapterAck::new(
+            correlation("overlay-active"),
+            owner(),
+            generation(),
+            base,
+            AckOutcome::Accepted,
+        ))
+        .expect("ack");
+        let commit = s
+            .verify_resize(&ResizePostObservation::new(
+                Observation::new(owner(), generation(), base, 960 + base),
+                correlation("overlay-active"),
+                true,
+                plan.dispatch.preconditions.clone(),
+                plan.dispatch.operation.clone(),
+            ))
+            .expect("verify pointer");
+        assert_eq!(commit.revision, base + 1);
+        assert_eq!(s.focus(), before_focus);
+        assert!(!s.has_pending());
+        // The dragged window itself flagged still refuses (partial
+        // observation, exactly like the shared match).
+        let mut flagged = complete_obs(&s);
+        for w in flagged.windows.iter_mut() {
+            if w.window.0 == "win-1" {
+                w.fullscreen = true;
+            }
+        }
+        assert_eq!(
+            s.propose_pointer_resize(
+                &k,
+                &WindowId("win-1".to_owned()),
+                Direction::Right,
+                410,
+                &flagged,
+                &correlation("overlay-dragged"),
+                &ResizeCapabilities::full(),
+            ),
+            Err(ProposeError::Refused(RefusalKind::PartialObservation))
+        );
+        assert!(!s.has_pending());
+        // Keyboard resize of the inactive window still refuses focus binding.
+        let clean = complete_obs(&s);
+        assert_eq!(
+            s.propose_resize(
+                &k,
+                &WindowId("win-1".to_owned()),
+                Direction::Right,
+                ResizeMode::Outwards,
+                0,
+                &clean,
+                &correlation("overlay-kb"),
+                &ResizeCapabilities::full(),
+            ),
+            Err(ProposeError::Refused(RefusalKind::FocusMismatch))
+        );
+        assert!(!s.has_pending());
+    }
+}
+
+#[test]
+fn pointer_corner_inactive_target_with_overlay_active_plans() {
+    // Corner variant of the overlay-active decoupling: root H [win-1 |
+    // V[win-2 (active, observed fullscreen) | win-3 (dragged)]]. One corner
+    // plan on the inactive bottom leaf moves its left edge to 390 and its
+    // top edge to 290 with active/remembered focus preserved.
+    let (mut s, k, active) = nested_focus_win2();
+    assert_eq!(active.0, "win-2");
+    let before_focus = s.focus();
+    let mut obs = complete_obs(&s);
+    for w in obs.windows.iter_mut() {
+        if w.window.0 == "win-2" {
+            w.fullscreen = true;
+        }
+    }
+    let plan = s
+        .propose_pointer_resize_corner(
+            &k,
+            &WindowId("win-3".to_owned()),
+            Direction::Left,
+            390,
+            Direction::Up,
+            290,
+            &obs,
+            &correlation("overlay-corner"),
+            &ResizeCapabilities::full(),
+        )
+        .expect("inactive corner drag with overlay active");
+    assert!(
+        s.has_pending(),
+        "corner stages exactly one pending transaction"
+    );
+    let geom = |window: &str| {
+        plan.desired_geometry
+            .iter()
+            .find(|g| g.window.0 == window)
+            .unwrap_or_else(|| panic!("geometry for {window}"))
+            .rect
+    };
+    assert_eq!(geom("win-3").x, 390);
+    assert_eq!(geom("win-3").y, 290);
+    assert_eq!(
+        (
+            Some(plan.desired_focus_domain.clone()),
+            Some(plan.desired_focus_leaf.clone())
+        ),
+        before_focus
+    );
+    assert_eq!(s.focus(), before_focus);
+    assert_eq!(focused_window(&s, &k).0, "win-2");
 }

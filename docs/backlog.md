@@ -8,16 +8,31 @@ each review claim before acting; it was a static sampling review. User
 decisions of 2026-09-24 are recorded under
 [Architecture Direction](decisions.md#architecture-direction).
 
-- P0 | Drop-intent edge drag | Offline implementation and regressions complete:
-  start-pointer grab detection, oracle final grabbed-edge targets, ignored
-  secondary deltas and one dual-axis corner request. Next: user accepts on live
-  Wayland Firefox (including opposite-edge jitter), a size-increment client,
-  corner, Esc and zero-move drags. AR8 oracle measurement remains separate.
-- P1 | Ghostty drag and gap-drag research | Read-only: why Ghostty cannot be
-  edge-dragged; whether KWin's modifier right-drag resize works for it and
-  reaches drop-intent handling; which routes exist for a native gap-drag
-  anchor (dragging the gap between tiled windows moves their split) and their
-  reliability/cost. Decide gap drag after this.
+- P1 | Drop-intent edge drag live cases | User accepted inactive-target resize,
+  rejected-drop convergence and KWin-thirds interior grabs (2026-09-24).
+  Offline implementation and cancellation/coverage/one-shot regressions pass
+  (Rust 593, KWin 784). See [completed follow-up](changes/archive/drop-intent-drag-live-followup.md).
+  Next: user live acceptance of inactive Meta+right corner and rejected-drop
+  convergence, edge/corner/center-third starts, isolated members, Esc,
+  zero-move and size-increment clients; AR8 remains separate.
+- P2 | Live sibling reflow while dragging | User request, not high priority.
+  Research: no project per-step sibling writer found in history; the
+  remembered behavior is likely KWin Custom Tile native reflow (hypothesis).
+  Sound route: throttled read-only Rust projection for preview writes plus the
+  existing single finish commit, est. several hundred to ~1,000 lines with
+  write-fighting and echo-ordering risk. Deferred as not light.
+- P3 | In-drag opposite-edge flicker | User observation, not critical: Firefox's
+  right edge briefly follows a left-edge drag then snaps back; Kate icons
+  flicker ~1 px. Static check: the project makes no per-step geometry write or
+  reconcile during interactive resize; treated as native/client behavior.
+- P3 | Gap-drag anchor | Deferred by user (2026-09-24) for later
+  experimentation, including the gap-0 behavior decision. Research complete
+  (read-only). User confirms Ghostty uses `window-decoration = false`
+  deliberately, which removes edge grabs; KWin's default Meta+right-drag
+  resize works and reaches the drop-intent path. Gap-drag routes: script cannot;
+  effect mouse interception blocks all clicks; plausible first prototype is
+  project-owned layer-shell surfaces confined to positive-width gaps, with a
+  native KWin input filter as fallback. Needs a Rust split-boundary request.
 - P0 | AR8 Drag oracle measurement | 7.1: trace-mode finish/first-change/verdict
   logging instrumented offline. Next: user captures ~20 Wayland edge drags,
   incl. a size-increment terminal and Esc cancellation, using

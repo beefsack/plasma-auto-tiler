@@ -62,29 +62,49 @@ export function formatDragOracleVerdict(verdict: Pick<DragOracleVerdict, "cancel
 // only, Finished carries no edge or cancel flag (window.h, window.cpp).
 // The effect route (EffectWindow windowStart/Step/FinishUserMovedResized,
 // EffectsHandler mouseChanged) likewise carries no grabbed edge. No
-// reliable KWin-reported grabbed edge exists on either route, and no
-// KWin-pinned corner-handle size is reachable from the available
-// interfaces or the repo's pinned-source docs, so identification uses the
-// nearest edge(s) to workspace.cursorPos at start with a corner only when
-// the pointer sits within a small fixed radius of both physical edges.
-// The radius is absolute pixels, not a window fraction: a proportional
-// zone (e.g. outer thirds) misclassifies ordinary edge grips on wide or
-// tall windows, where most of the edge lies hundreds of pixels from the
-// corner. 16px is conservative: a corner classification means the pointer
-// is unambiguously on both edges, while genuine corner presses (pointer
-// essentially on the corner pixel at grab) are captured. A corner press
-// just outside the radius reads single-axis (partial intent applies);
+// reliable KWin-reported grabbed edge exists on either route, and the
+// cursor at Started can trail the grab by Qt startDragDistance, so
+// identification uses workspace.cursorPos at start.
+//
+// Two regimes: near the frame the existing nearest-edge rule holds with a
+// corner only when the pointer sits within a small fixed radius of both
+// physical edges. The radius is absolute pixels, not a window fraction: a
+// proportional zone (e.g. outer thirds) misclassifies ordinary edge grips
+// on wide or tall windows, where most of the edge lies hundreds of pixels
+// from the corner. 16px is conservative: a corner classification means the
+// pointer is unambiguously on both edges, while genuine corner presses
+// (pointer essentially on the corner pixel at grab) are captured. A corner
+// press just outside the radius reads single-axis (partial intent applies);
 // an edge grip just inside still reads corner (the whole corner then
 // refuses only if an axis is truly unusable). Stepped geometry is never
 // used as grabbed intent.
+//
+// Well inside the rectangle (pointer actually inside the starting frame
+// and minimum distance to any starting frame side at least 64px) the press
+// cannot be an edge grip: Breeze 6.7.5 None borders carry an invisible
+// snap(largeSpacing) left/right/bottom resize strip and other decorations
+// vary in thickness, with largeSpacing itself font/scale dependent, so no
+// exact universal border bound exists. 64px is a conservative heuristic
+// for typical sizeNone/normal decoration at 1-2x plus Qt drag distance:
+// beyond it an edge grip is implausible, so the press is a Meta+right-drag
+// resize and follows KWin 6.7.5 exact Meta+right gravity (window.cpp: local
+// offset truncated to int, compared against qreal thirds per window.h:
+// x < w/3 and x >= 2w/3, y < h/3 or y >= 2h/3, y-center branch choosing
+// left when x < w/2 else right). Oversized borders or high scale can exceed
+// 64px: those stay a heuristic miss, never a crash. Outside the frame or
+// below 64px the nearest-edge rule above is kept: absolute distances from
+// an outside pointer must never select thirds.
 export const ORACLE_CORNER_RADIUS_PX = 16;
-export type OracleGrabSource = "nearest-pointer";
+export const ORACLE_KWIN_THIRDS_MIN_EDGE_PX = 64;
+export type OracleGrabSource = "nearest-pointer" | "kwin-thirds";
 export interface OracleGrabbed { readonly horizontal: "left" | "right" | null; readonly vertical: "up" | "down" | null; }
 export interface OraclePointer { readonly x: number; readonly y: number; }
 export function identifyGrabbedEdges(start: DragOracleFinalRect, pointer: OraclePointer | null): { grabbed: OracleGrabbed; source: OracleGrabSource } | null {
     try {
         if (pointer === null) return null;
         if (!Number.isSafeInteger(pointer.x) || !Number.isSafeInteger(pointer.y)) return null;
+        if (!Number.isSafeInteger(start.x) || !Number.isSafeInteger(start.y) || !Number.isSafeInteger(start.w) || !Number.isSafeInteger(start.h)) return null;
+        if (start.w <= 0 || start.h <= 0) return null;
         const px = pointer.x;
         const py = pointer.y;
         const dLeft = Math.abs(px - start.x);
@@ -92,6 +112,34 @@ export function identifyGrabbedEdges(start: DragOracleFinalRect, pointer: Oracle
         const dUp = Math.abs(py - start.y);
         const dDown = Math.abs(py - (start.y + start.h));
         for (const d of [dLeft, dRight, dUp, dDown]) if (!Number.isFinite(d)) return null;
+        const minEdge = Math.min(dLeft, dRight, dUp, dDown);
+        // Interior Meta+right-drag: KWin 6.7.5 exact thirds gravity. The
+        // local offset truncates to int, but the thirds/half thresholds
+        // stay qreal (window.h): compare the integer offset against the
+        // floating division exactly. Gated on the pointer actually sitting
+        // inside the starting frame, so outside presses (whose absolute
+        // distances can exceed the gate) never read as thirds.
+        const inside = px >= start.x && px < start.x + start.w && py >= start.y && py < start.y + start.h;
+        if (inside && minEdge >= ORACLE_KWIN_THIRDS_MIN_EDGE_PX) {
+            const lx = Math.trunc(px - start.x);
+            const ly = Math.trunc(py - start.y);
+            const thirdW = start.w / 3;
+            const twoThirdW = (2 * start.w) / 3;
+            const thirdH = start.h / 3;
+            const twoThirdH = (2 * start.h) / 3;
+            const halfW = start.w / 2;
+            const xLeft = lx < thirdW;
+            const xRight = lx >= twoThirdW;
+            const yTop = ly < thirdH;
+            const yBottom = ly >= twoThirdH;
+            if (yTop || yBottom) {
+                const horizontal = xLeft ? "left" : xRight ? "right" : null;
+                const vertical = yTop ? "up" : "down";
+                return { grabbed: { horizontal: horizontal as "left" | "right" | null, vertical: vertical as "up" | "down" }, source: "kwin-thirds" };
+            }
+            const horizontal = lx < halfW ? "left" : "right";
+            return { grabbed: { horizontal: horizontal as "left" | "right", vertical: null }, source: "kwin-thirds" };
+        }
         const hNearest = dLeft <= dRight ? "left" : "right";
         const vNearest = dUp <= dDown ? "up" : "down";
         const dH = hNearest === "left" ? dLeft : dRight;

@@ -833,6 +833,12 @@ function isCorrelationId(value: unknown): value is string {
     );
 }
 
+// Drag-N correlation for drop-intent follow-up: validated closed vocabulary
+// only (drag-<digits>), never titles, ids, or payload bytes.
+function isDragCorrelation(value: unknown): value is string {
+    return typeof value === "string" && value.length > 0 && value.length <= PLAN_MAX_CORRELATION_LEN && /^drag-[0-9]+$/.test(value);
+}
+
 function isDirection(value: unknown): value is PlanDirection {
     return value === "left" || value === "right" || value === "up" || value === "down";
 }
@@ -1538,6 +1544,15 @@ interface PendingFlight {
     readonly removed: string | null;
     readonly windowCount: number;
     readonly pointerSource: string | null;
+    // Drop-intent correlation: set only on pointer-resize flights dispatched
+    // from a non-cancelled oracle drop (drag-N). Rejection or terminal
+    // failure of such a flight feeds the coalesced per-domain restore
+    // marker below, never a per-drag queue.
+    readonly dragSource?: string | null;
+    // Domain key of the restore marker this reconcile was dispatched for.
+    // Never a drag correlation: satisfaction and failure terminals resolve
+    // through the marker map, so overlapping drops share one dispatch.
+    readonly restoreMarker?: string | null;
     readonly workAreaReprojection: boolean;
     readonly admissionMaximizeClears: ReadonlyArray<string>;
     readonly floatTarget: { readonly window: string; readonly floating: boolean } | null;
@@ -1610,6 +1625,11 @@ interface AutoIntent {
     readonly removed: string | null;
     readonly body: Record<string, unknown>;
     readonly pointerSource?: string | null;
+    readonly dragSource?: string | null;
+    // Domain key of the restore marker this reconcile converges. Set only
+    // on marker reconciles built by maybeDispatchDragRestore; never queued
+    // through superseding intents.
+    readonly restoreMarker?: string | null;
     readonly workAreaReprojection?: boolean;
     readonly admissionMaximizeClears?: ReadonlyArray<string>;
     readonly floatTarget?: { readonly window: string; readonly floating: boolean } | null;
@@ -1624,6 +1644,35 @@ interface PointerEcho {
     readonly scope: PlanSnapshot;
     readonly neighbours: ReadonlyArray<{ window: string; rect: PlanRect }>;
 }
+
+// Coalesced restore marker for rejected drops in one exact domain. `drags`
+// carries every rejected drag-N correlation still needing its own terminal
+// log; `dispatched` records that the marker's single reconcile attempt was
+// used (sent or attempted), so no second dispatch ever follows.
+interface DragRestoreMarker {
+    readonly output: string;
+    readonly workspace: string;
+    readonly drags: string[];
+    dispatched: boolean;
+}
+
+// Bound on correlations coalesced into one marker, and on markers overall
+// (sharing the planner's bounded-domain cap). Overflow fails closed with a
+// truthful correlated `unavailable` terminal naming `plan=none`, never a
+// silent drop and never a fabricated success.
+const MAX_DRAG_RESTORE_DRAGS = 64;
+// Bound on ops whose successful application satisfies a marker: exactly the
+// ops that write/apply a domain's full retained/projected geometry.
+// Focus-only and toggle-float plans never satisfy, however they settle.
+const DRAG_RESTORE_SATISFYING_OPS: ReadonlySet<PlanOp> = new Set([
+    "admit",
+    "remove",
+    "move",
+    "resize",
+    "reconcile",
+    "update-gaps",
+    "pointer-resize",
+]);
 
 function snapshotsEqualAllowingAdmissionMaximize(
     fresh: PlanSnapshot,
@@ -1756,6 +1805,22 @@ export class PlanAdapter {
     // failed cancellation runs the exact terminal path the original failure
     // would have run.
     private cancelOutcome = "";
+    // Coalesced per-domain restore markers for rejected drops. Each rejected
+    // drop (adapter-validation refusal, Planner rejection, terminal failure
+    // of its pointer flight, or a superseded deferred pointer that never
+    // dispatched) appends its validated drag-N correlation to the marker
+    // scoped to the drop's exact output/workspace. Overlapping rejected
+    // drops share one marker; every correlation gets its own terminal log
+    // naming the satisfying or failing plan correlation. Drops with no
+    // domain evidence at all fail closed immediately with an `unavailable`
+    // terminal and never create a marker, so no unrelated plan can satisfy
+    // them. Markers never ride the single deferred slot: while it is busy
+    // the marker persists, and exactly one existing-route reconcile
+    // dispatches per marker when free, unless an applied plan for the same
+    // domain already satisfied it. A failed marker reconcile logs one
+    // terminal per drag and never retries. Keyed exactly like
+    // lastGoodByDomain.
+    private dragRestore = new Map<string, DragRestoreMarker>();
 
     constructor(private readonly env: PlanAdapterEnv) {}
 
@@ -1816,6 +1881,7 @@ export class PlanAdapter {
         this.deferredAuto = null;
         this.epoch = 0;
         this.lastGoodByDomain.clear();
+        this.settleDragRestoreUnavailable();
         this.reconcileAttempts = 0;
         this.parked = false;
         this.backgroundAttempts.clear();
@@ -1856,6 +1922,7 @@ export class PlanAdapter {
         this.clearR4Flight();
         this.deferredAuto = null;
         this.lastGoodByDomain.clear();
+        this.settleDragRestoreUnavailable();
         this.reconcileAttempts = 0;
         this.parked = false;
         this.backgroundAttempts.clear();
@@ -2713,22 +2780,35 @@ export class PlanAdapter {
     // requests); single-axis wire shape is unchanged. Defers through the
     // single pending slot when a flight is active, never bypasses it,
     // retries, or guesses.
-    requestPointerResize(windowId: unknown, direction: unknown, boundary: unknown, direction2?: unknown, boundary2?: unknown): boolean {
+    // Drop-intent callers pass their drag-N correlation as optional entry
+    // metadata (6th arg). A drag-correlated refusal or terminal failure
+    // feeds the coalesced per-domain restore marker, which converges once
+    // through a single existing-route reconcile (or through any superseding
+    // applied plan for the same domain). Calls without a drag correlation
+    // behave exactly as before (no marker, no follow-up).
+    requestPointerResize(windowId: unknown, direction: unknown, boundary: unknown, direction2?: unknown, boundary2?: unknown, dragCorrelation?: unknown): boolean {
+        const drag = isDragCorrelation(dragCorrelation) ? (dragCorrelation as string) : null;
+        const refuseDrag = (reason: string, output?: string, workspace?: string): false => {
+            if (drag !== null) {
+                this.noteDragRejected(drag, reason, typeof windowId === "string" ? windowId : null, output, workspace);
+            }
+            return false;
+        };
         if (!this.enabled) {
             this.logToken(`${LOG_PREFIX}:pointer-refused-disabled`);
-            return false;
+            return refuseDrag("disabled");
         }
         if (!isOpaqueId(windowId)) {
             this.logToken(`${LOG_PREFIX}:pointer-refused-identity`);
-            return false;
+            return refuseDrag("identity");
         }
         if (!isDirection(direction)) {
             this.logToken(`${LOG_PREFIX}:pointer-refused-direction`);
-            return false;
+            return refuseDrag("direction");
         }
         if (!isFiniteInt(boundary) || (boundary as number) < -16384 || (boundary as number) > 16384) {
             this.logToken(`${LOG_PREFIX}:pointer-refused-boundary`);
-            return false;
+            return refuseDrag("boundary");
         }
         // Corner second axis is both-or-neither; a half-present pair, an
         // unparsable second direction, or a same-axis pair binds the exact
@@ -2738,30 +2818,30 @@ export class PlanAdapter {
         if (corner) {
             if (!isDirection(direction2)) {
                 this.logToken(`${LOG_PREFIX}:pointer-refused-direction`);
-                return false;
+                return refuseDrag("direction");
             }
             if (!isFiniteInt(boundary2) || (boundary2 as number) < -16384 || (boundary2 as number) > 16384) {
                 this.logToken(`${LOG_PREFIX}:pointer-refused-boundary`);
-                return false;
+                return refuseDrag("boundary");
             }
             const horizontal = (value: string): boolean => value === "left" || value === "right";
             if (horizontal(direction as string) === horizontal(direction2 as string)) {
                 this.logToken(`${LOG_PREFIX}:pointer-refused-direction`);
-                return false;
+                return refuseDrag("direction");
             }
         }
         if (this.blockedBySend()) {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=pointer-resize`);
-            return false;
+            return refuseDrag("busy");
         }
         if (this.r4Flight !== null) {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=pointer-resize`);
-            return false;
+            return refuseDrag("busy");
         }
         const observed = this.freshObserved();
         if (observed === null) {
             this.logToken(`${LOG_PREFIX}:pointer-refused-observe`);
-            return false;
+            return refuseDrag("observe");
         }
         let found = false;
         for (const entry of observed.windows) {
@@ -2772,15 +2852,15 @@ export class PlanAdapter {
         }
         if (!found) {
             this.logToken(`${LOG_PREFIX}:pointer-refused-absent`);
-            return false;
+            return refuseDrag("absent", observed.domainOutput, observed.domainWorkspace);
         }
         if (this.windowIsFullscreen(observed, windowId as string)) {
             this.logToken(`${LOG_PREFIX}:pointer-refused-fullscreen`);
-            return false;
+            return refuseDrag("fullscreen", observed.domainOutput, observed.domainWorkspace);
         }
         if (this.windowIsMaximized(observed, windowId as string)) {
             this.logToken(`${LOG_PREFIX}:pointer-refused-maximize`);
-            return false;
+            return refuseDrag("maximize", observed.domainOutput, observed.domainWorkspace);
         }
         const snapshot = this.carriedSnapshot(observed);
         this.noteObservation(snapshot.fingerprint);
@@ -2792,10 +2872,16 @@ export class PlanAdapter {
                 ? { op: "pointer-resize", window: windowId as string, direction, boundary, direction2, boundary2 }
                 : { op: "pointer-resize", window: windowId as string, direction, boundary },
             pointerSource: windowId as string,
+            ...(drag !== null ? { dragSource: drag } : {}),
         };
         // A final-geometry pointer route is selected ahead of the ordinary
         // finish resync. Do not let that resync restore the old split first.
+        // A deferred drag pointer superseded here never dispatched: fold its
+        // drop into the restore marker instead of losing it. The marker (not
+        // the slot) owns convergence, so ordinary slot clearing below is
+        // unchanged.
         this.clearDebounce();
+        this.absorbDeferredDragIntent(this.deferredAuto, false);
         if (this.deferredAuto?.op === "reconcile" && this.deferredAuto.workAreaReprojection !== true) {
             this.deferredAuto = null;
         }
@@ -2805,7 +2891,495 @@ export class PlanAdapter {
             return true;
         }
         this.dispatch(intent);
-        return this.inFlight;
+        const flight = this.pending;
+        const ours =
+            flight !== null &&
+            flight.op === "pointer-resize" &&
+            flight.pointerSource === (windowId as string) &&
+            (drag === null ? flight.dragSource == null : this.dragSourceOf(flight) === drag);
+        if (!ours) {
+            // Dispatch never installed our pointer flight (send-blocked, R4
+            // race, interactive guard, or synchronous transport failure): the
+            // dispatch failure paths already fed the marker when they ran
+            // (deduped below), so just report refusal. A synchronous failure
+            // that already dispatched the marker must not report accepted.
+            // A deferred pointer would have returned true above, so this is
+            // not the deferral path.
+            if (drag !== null) {
+                this.noteDragRejected(drag, "dispatch-failed", typeof windowId === "string" ? windowId : null, snapshot.domainOutput, snapshot.domainWorkspace);
+            }
+            return false;
+        }
+        return true;
+    }
+
+    // Drop-intent correlation reader: validated drag-N only, never titles,
+    // ids, or payload bytes. A pointer flight carries dragSource (the drop
+    // that dispatched it); marker reconciles carry a domain key instead.
+    private dragSourceOf(flightState: PendingFlight): string | null {
+        const drag = flightState.dragSource;
+        return typeof drag === "string" && isDragCorrelation(drag) ? drag : null;
+    }
+
+    private dragRestoreKey(output: string, workspace: string): string {
+        return `${output}\u0000${workspace}`;
+    }
+
+    // Resolve the domain scope for a rejected drop. Prefers the explicit
+    // output/workspace (exact observation-time evidence), then the retained
+    // domain holding the dragged window id (exact historical evidence, immune
+    // to a foreground desktop switch between the drop and this refusal), then
+    // a fresh observation only when it actually contains the dragged window.
+    // An invalid (null) or unknown (unmatched) window never falls back to an
+    // unrelated domain: that drop fails closed with an `unavailable` terminal
+    // (bound by the caller), never an unscoped marker that any unrelated plan
+    // could satisfy.
+    private dragRestoreDomain(
+        windowId: string | null,
+        output?: string,
+        workspace?: string,
+    ): { output: string; workspace: string } | null {
+        if (
+            typeof output === "string" &&
+            typeof workspace === "string" &&
+            output.length > 0 &&
+            workspace.length > 0
+        ) {
+            return { output, workspace };
+        }
+        if (windowId === null) {
+            return null;
+        }
+        try {
+            for (const snapshot of this.lastGoodByDomain.values()) {
+                if (snapshot.windows.some((entry) => entry.id === windowId)) {
+                    return { output: snapshot.domainOutput, workspace: snapshot.domainWorkspace };
+                }
+            }
+        } catch (error) {
+            void error;
+        }
+        try {
+            const observed = this.freshObserved();
+            if (observed !== null && observed.windows.some((entry) => entry.id === windowId)) {
+                return { output: observed.domainOutput, workspace: observed.domainWorkspace };
+            }
+        } catch (error) {
+            void error;
+        }
+        return null;
+    }
+
+    // Record a rejected drop in its domain marker. Every rejected drag-N
+    // gets exactly one `drag-rejected` line; overlapping drops share the
+    // marker and each later gets its own settled terminal naming the same
+    // plan correlation. When `dispatchNow` is true (no superseding intent
+    // is being installed right after) a free slot dispatches the marker's
+    // single reconcile immediately, otherwise the marker persists until the
+    // finishFlight chain finds a free slot. Logging is best-effort and
+    // never changes control flow.
+    private noteDragRejected(
+        drag: unknown,
+        reason: string,
+        windowId: string | null = null,
+        output?: string,
+        workspace?: string,
+        dispatchNow = true,
+    ): void {
+        if (!isDragCorrelation(drag)) {
+            return;
+        }
+        const id = drag as string;
+        const kind = sanitizeKind(reason);
+        try {
+            const domain = this.dragRestoreDomain(windowId, output, workspace);
+            if (domain === null) {
+                // Fail closed with no marker at all: without domain evidence
+                // no plan may ever claim this drop, so bind the terminal now
+                // with an honest `plan=none` instead of a fabricated success.
+                this.logToken(`${LOG_PREFIX}:drag-rejected correlation=${id} reason=${kind}`);
+                this.logToken(`${LOG_PREFIX}:drag-reconcile-settled correlation=${id} outcome=unavailable plan=none`);
+                return;
+            }
+            const key = this.dragRestoreKey(domain.output, domain.workspace);
+            let marker = this.dragRestore.get(key);
+            if (marker === undefined) {
+                if (this.dragRestore.size >= PLAN_MAX_DOMAINS) {
+                    this.logToken(`${LOG_PREFIX}:drag-rejected correlation=${id} reason=${kind}`);
+                    this.logToken(`${LOG_PREFIX}:drag-reconcile-settled correlation=${id} outcome=unavailable plan=none`);
+                    return;
+                }
+                marker = {
+                    output: domain.output,
+                    workspace: domain.workspace,
+                    drags: [],
+                    dispatched: false,
+                };
+                this.dragRestore.set(key, marker);
+            }
+            const known = marker.drags.indexOf(id) >= 0;
+            if (!known) {
+                this.logToken(`${LOG_PREFIX}:drag-rejected correlation=${id} reason=${kind}`);
+                if (marker.drags.length >= MAX_DRAG_RESTORE_DRAGS) {
+                    this.logToken(`${LOG_PREFIX}:drag-reconcile-settled correlation=${id} outcome=unavailable plan=none`);
+                    return;
+                }
+                marker.drags.push(id);
+            }
+            if (marker.dispatched) {
+                if (!known) {
+                    this.logToken(`${LOG_PREFIX}:drag-reconcile correlation=${id} dispatch=shared`);
+                }
+                return;
+            }
+            if (!dispatchNow) {
+                return;
+            }
+            const outcome = this.maybeDispatchDragRestore();
+            if (outcome === "deferred" && !known) {
+                this.logToken(`${LOG_PREFIX}:drag-reconcile correlation=${id} dispatch=deferred`);
+            } else if (outcome === "failed" && !known) {
+                this.logToken(`${LOG_PREFIX}:drag-reconcile correlation=${id} dispatch=failed`);
+            }
+        } catch (error) {
+            void error;
+        }
+    }
+
+    // Fold a deferred intent being superseded or cleared into the marker
+    // map: a deferred drag pointer never dispatched, so its drop joins the
+    // marker instead of vanishing. A queued marker reconcile never exists
+    // (markers dispatch straight through), so nothing else needs carrying.
+    // When `dispatchNow` is false the caller installs a superseding intent
+    // right after, which will satisfy or fail the marker on its own.
+    private absorbDeferredDragIntent(intent: AutoIntent | null, dispatchNow: boolean): void {
+        if (intent === null) {
+            return;
+        }
+        try {
+            if (
+                intent.op === "pointer-resize" &&
+                typeof intent.dragSource === "string" &&
+                isDragCorrelation(intent.dragSource)
+            ) {
+                this.noteDragRejected(
+                    intent.dragSource,
+                    "superseded",
+                    intent.pointerSource ?? null,
+                    intent.snapshot.domainOutput,
+                    intent.snapshot.domainWorkspace,
+                    dispatchNow,
+                );
+            }
+        } catch (error) {
+            void error;
+        }
+    }
+
+    // Dispatch the single reconcile for the oldest undispatched marker whose
+    // domain is currently observed, through the existing dispatch route.
+    // Returns the disposition for per-drag logging by the caller. Exactly one
+    // dispatch per marker: the flag is set before dispatching, so a
+    // never-sent attempt still consumes it (logged `dispatch=failed`, kept
+    // pending for a later applied plan or recovery, never retried in a
+    // loop). A marker whose domain is not currently observed persists
+    // untouched until its domain is visible again; it never blocks an
+    // eligible later marker for the observed domain.
+    private maybeDispatchDragRestore(): "dispatched" | "deferred" | "failed" | "none" {
+        try {
+            if (!this.enabled) {
+                return "none";
+            }
+            let anyPending = false;
+            for (const entry of this.dragRestore.values()) {
+                if (!entry.dispatched) {
+                    anyPending = true;
+                    break;
+                }
+            }
+            if (!anyPending) {
+                return "none";
+            }
+            if (
+                this.inFlight ||
+                this.r4Flight !== null ||
+                this.blockedBySend() ||
+                this.interactiveResizeActive() ||
+                this.deferredAuto !== null
+            ) {
+                return "deferred";
+            }
+            // Bounded reconcile parking applies to marker dispatches exactly
+            // like ordinary ones: the marker persists until unparked, never
+            // discarded and never retried in a loop.
+            if (this.parked || this.reconcileAttempts >= MAX_RECONCILE_ATTEMPTS) {
+                return "deferred";
+            }
+            const observed = this.freshObserved();
+            if (observed === null) {
+                return "failed";
+            }
+            let key: string | null = null;
+            let marker: DragRestoreMarker | undefined = undefined;
+            for (const entry of this.dragRestore.entries()) {
+                if (entry[1].dispatched) {
+                    continue;
+                }
+                if (observed.domainOutput !== entry[1].output || observed.domainWorkspace !== entry[1].workspace) {
+                    // The marked domain is not currently observed: persist
+                    // untouched until its domain is visible again, never
+                    // satisfy or dispatch against an unrelated domain.
+                    continue;
+                }
+                key = entry[0];
+                marker = entry[1];
+                break;
+            }
+            if (key === null || marker === undefined) {
+                return "deferred";
+            }
+            const snapshot = this.carriedSnapshot(observed);
+            try {
+                this.noteObservation(snapshot.fingerprint);
+            } catch (error) {
+                void error;
+            }
+            const intent: AutoIntent = {
+                op: "reconcile",
+                snapshot,
+                removed: null,
+                body: { op: "reconcile" },
+                restoreMarker: key,
+            };
+            marker.dispatched = true;
+            this.dispatch(intent);
+            if (this.inFlight) {
+                for (const drag of marker.drags) {
+                    try {
+                        this.logToken(`${LOG_PREFIX}:drag-reconcile correlation=${drag} dispatch=dispatched`);
+                    } catch (error) {
+                        void error;
+                    }
+                }
+                return "dispatched";
+            }
+            // Never sent: the dispatch failure paths bind their own exact
+            // marker terminal (with the allocated plan correlation, or an
+            // honest `plan=none` when none was allocated). Bind it here only
+            // as a last-resort guard so no path strands the marker.
+            if (this.dragRestore.get(key) !== undefined) {
+                this.failMarkerDispatch(intent, "dispatch-failed", null);
+            }
+            return "failed";
+        } catch (error) {
+            void error;
+            return "failed";
+        }
+    }
+
+    // Satisfy markers through actual application only: the first subsequent
+    // plan in the satisfying op set whose applied geometry covers ALL tiled
+    // members of the flight domain clears that domain's marker, logging one
+    // terminal per drag naming the satisfying plan correlation. Coverage is
+    // the full wanted set (mirroring geometryCovers: non-floating members
+    // homed to the flight domain, minus removals), so a partial geometry
+    // never satisfies. Members skipped at write time (fullscreen, maximized,
+    // or unrelated floating) are excluded from the restored count and never
+    // produce an `applied` restoring claim: the marker's own reconcile then
+    // settles a truthful `partial` terminal naming its plan with
+    // covered=R/W and no retry, while another plan's partial application
+    // leaves the marker pending to dispatch once the slot is free.
+    // Focus-only, toggle-float, and unrelated-domain plans never satisfy.
+    // Call only on the applied path, never on dispatch or reply.
+    private satisfyDragRestore(flightState: PendingFlight, planned: PlannedReply, current: PlanObserved): void {
+        try {
+            if (!DRAG_RESTORE_SATISFYING_OPS.has(flightState.op)) {
+                return;
+            }
+            const domainOutput = flightState.snapshot.domainOutput;
+            const domainWorkspace = flightState.snapshot.domainWorkspace;
+            const homed = planned.geometry.every(
+                (entry) =>
+                    entry.output === domainOutput &&
+                    entry.workspace === domainWorkspace,
+            );
+            if (!homed) {
+                return;
+            }
+            const key = this.dragRestoreKey(domainOutput, domainWorkspace);
+            const marker = this.dragRestore.get(key);
+            if (marker === undefined) {
+                return;
+            }
+            const wanted: string[] = [];
+            for (const entry of flightState.snapshot.windows) {
+                if (entry.output !== domainOutput || entry.workspace !== domainWorkspace) {
+                    continue;
+                }
+                if (flightState.removed !== null && entry.id === flightState.removed) {
+                    continue;
+                }
+                if (
+                    entry.floating === true &&
+                    !(flightState.floatTarget !== null && flightState.floatTarget.window === entry.id && flightState.floatTarget.floating === false)
+                ) {
+                    continue;
+                }
+                wanted.push(entry.id);
+            }
+            const plannedIds = new Set<string>();
+            for (const entry of planned.geometry) {
+                plannedIds.add(entry.window);
+            }
+            const skipped = new Set<string>();
+            for (const entry of current.windows) {
+                if (entry.output !== domainOutput || entry.workspace !== domainWorkspace) {
+                    continue;
+                }
+                if (entry.fullscreen) {
+                    skipped.add(entry.id);
+                } else if (entry.maximized) {
+                    skipped.add(entry.id);
+                } else if (entry.floating === true && flightState.floatTarget?.window !== entry.id) {
+                    skipped.add(entry.id);
+                }
+            }
+            let covered = 0;
+            for (const id of wanted) {
+                if (plannedIds.has(id) && !skipped.has(id)) {
+                    covered += 1;
+                }
+            }
+            if (covered === wanted.length) {
+                this.dragRestore.delete(key);
+                for (const drag of marker.drags) {
+                    try {
+                        this.logToken(
+                            `${LOG_PREFIX}:drag-reconcile-settled correlation=${drag} outcome=applied plan=${flightState.correlation} covered=${covered}/${wanted.length}`,
+                        );
+                    } catch (error) {
+                        void error;
+                    }
+                }
+                return;
+            }
+            if (flightState.restoreMarker === key) {
+                // The marker's own reconcile could not restore every tiled
+                // member: bind the truthful partial terminal naming this plan
+                // with the covered count, then clear with no retry.
+                this.dragRestore.delete(key);
+                for (const drag of marker.drags) {
+                    try {
+                        this.logToken(
+                            `${LOG_PREFIX}:drag-reconcile-settled correlation=${drag} outcome=partial plan=${flightState.correlation} covered=${covered}/${wanted.length}`,
+                        );
+                    } catch (error) {
+                        void error;
+                    }
+                }
+                return;
+            }
+            // Another plan's partial application never satisfies: the marker
+            // stays pending (re-armed, never consumed) to dispatch once the
+            // slot is free.
+            marker.dispatched = false;
+            for (const drag of marker.drags) {
+                try {
+                    this.logToken(
+                        `${LOG_PREFIX}:drag-reconcile correlation=${drag} dispatch=pending covered=${covered}/${wanted.length}`,
+                    );
+                } catch (error) {
+                    void error;
+                }
+            }
+        } catch (error) {
+            void error;
+        }
+    }
+
+    // Terminal for a marker reconcile that never became a flight (payload
+    // build/oversize failure, timer/dispatch transport failure): one exact
+    // terminal per drag naming the allocated plan correlation, or an honest
+    // `plan=none` when none was allocated. The marker clears with no retry
+    // and no silent loss; ordinary intents are untouched (no restore key).
+    private failMarkerDispatch(intent: AutoIntent, outcome: string, plan: string | null): void {
+        try {
+            const key = intent.restoreMarker;
+            if (typeof key !== "string") {
+                return;
+            }
+            const marker = this.dragRestore.get(key);
+            if (marker === undefined) {
+                return;
+            }
+            this.dragRestore.delete(key);
+            const cause = sanitizeKind(outcome);
+            const planToken = typeof plan === "string" && isCorrelationId(plan) ? plan : "none";
+            for (const drag of marker.drags) {
+                try {
+                    this.logToken(
+                        `${LOG_PREFIX}:drag-reconcile-settled correlation=${drag} outcome=${cause} plan=${planToken}`,
+                    );
+                } catch (error) {
+                    void error;
+                }
+            }
+        } catch (error) {
+            void error;
+        }
+    }
+
+    // Teardown for enable/disable lifecycle resets: every pending marker gets
+    // one correlated `unavailable` terminal per drag before clearing, so no
+    // drop is silently lost across the reset. Best-effort logging only, never
+    // changes control flow.
+    private settleDragRestoreUnavailable(): void {
+        try {
+            for (const marker of this.dragRestore.values()) {
+                for (const drag of marker.drags) {
+                    try {
+                        this.logToken(
+                            `${LOG_PREFIX}:drag-reconcile-settled correlation=${drag} outcome=unavailable plan=none`,
+                        );
+                    } catch (error) {
+                        void error;
+                    }
+                }
+            }
+        } catch (error) {
+            void error;
+        }
+        this.dragRestore.clear();
+    }
+
+    // Terminal for a dispatched marker reconcile that itself failed: one
+    // correlated terminal per drag naming the failed plan correlation, then
+    // the marker clears with no retry. Ordinary flight failures leave
+    // pending markers untouched for the finishFlight chain.
+    private failDragRestore(flightState: PendingFlight, outcome: string): void {
+        try {
+            const key = flightState.restoreMarker;
+            if (typeof key !== "string") {
+                return;
+            }
+            const marker = this.dragRestore.get(key);
+            if (marker === undefined) {
+                return;
+            }
+            this.dragRestore.delete(key);
+            const cause = sanitizeKind(outcome);
+            for (const drag of marker.drags) {
+                try {
+                    this.logToken(
+                        `${LOG_PREFIX}:drag-reconcile-settled correlation=${drag} outcome=${cause} plan=${flightState.correlation}`,
+                    );
+                } catch (error) {
+                    void error;
+                }
+            }
+        } catch (error) {
+            void error;
+        }
     }
 
     requestResync(): void {
@@ -2815,6 +3389,7 @@ export class PlanAdapter {
     setInteractiveResizeActive(active: boolean): void {
         if (active) {
             this.clearDebounce();
+            this.absorbDeferredDragIntent(this.deferredAuto, true);
             if (this.deferredAuto?.op === "reconcile" && this.deferredAuto.workAreaReprojection !== true) {
                 this.deferredAuto = null;
             }
@@ -2901,6 +3476,30 @@ export class PlanAdapter {
         this.pinnedOwner = null;
         this.activationStep = 0;
         this.diag(flight.op, flight.correlation, flight.windowCount, "interactive-resize-suppressed");
+        // A suppressed marker reconcile is a cancellation, never a failure:
+        // re-arm the same marker pending (not dispatched) so the next
+        // same-domain applied plan can satisfy it, a rejected drop can
+        // trigger its single follow-up, or a free slot can dispatch it for a
+        // different domain. Genuine failed reconciles still terminate through
+        // failDragRestore with no retry.
+        try {
+            const key = flight.restoreMarker;
+            if (typeof key === "string") {
+                const marker = this.dragRestore.get(key);
+                if (marker !== undefined) {
+                    marker.dispatched = false;
+                    for (const drag of marker.drags) {
+                        try {
+                            this.logToken(`${LOG_PREFIX}:drag-reconcile correlation=${drag} dispatch=cancelled`);
+                        } catch (error) {
+                            void error;
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            void error;
+        }
     }
 
     private onSignal(kind?: PlanSignal, target?: object): void {
@@ -3011,6 +3610,11 @@ export class PlanAdapter {
             return;
         }
         if (this.blockedBySend()) {
+            // Send blockage never discards restore markers: the marker map
+            // owns convergence, so the slot clear below only touches the
+            // ordinary deferred intent after folding any deferred drag
+            // pointer into its marker.
+            this.absorbDeferredDragIntent(this.deferredAuto, true);
             this.deferredAuto = null;
             return;
         }
@@ -3032,6 +3636,9 @@ export class PlanAdapter {
         if (previous === null) {
             this.reconcileAttempts = 0;
             this.parked = false;
+            // Membership takes the slot; a deferred drag pointer it replaces
+            // joins its domain marker (the new intent satisfies it on apply).
+            this.absorbDeferredDragIntent(this.deferredAuto, false);
             this.deferredAuto = {
                 op: "admit",
                 snapshot: freshSnapshot,
@@ -3136,6 +3743,9 @@ export class PlanAdapter {
             this.reconcileAttempts = 0;
             this.parked = false;
             this.pointerEcho = null;
+            // Membership takes the slot; a deferred drag pointer it replaces
+            // joins its domain marker (the new intent satisfies it on apply).
+            this.absorbDeferredDragIntent(this.deferredAuto, false);
             this.deferredAuto = intent;
             if (this.inFlight) {
                 return;
@@ -3154,6 +3764,9 @@ export class PlanAdapter {
             this.pointerEcho = null;
             this.reconcileAttempts = 0;
             this.parked = false;
+            // Redundant queued reconciles clear; a deferred drag pointer is
+            // folded into its marker first and converges through the marker.
+            this.absorbDeferredDragIntent(this.deferredAuto, true);
             if (this.deferredAuto !== null && this.deferredAuto.op === "reconcile") {
                 this.deferredAuto = null;
             }
@@ -3182,6 +3795,7 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:work-area-reprojection selected=retained`);
             this.pointerEcho = null;
             this.resetReconcileState();
+            this.absorbDeferredDragIntent(this.deferredAuto, false);
             this.deferredAuto = {
                 op: "reconcile",
                 snapshot: this.reprojectionSnapshot(fresh, previous),
@@ -3212,6 +3826,7 @@ export class PlanAdapter {
                 `${LOG_PREFIX}:gap-reprojection selected=retained inner=${String(oldInner)}->${String(freshSnapshot.domainGap)} outer=${String(oldOuter)}->${String(freshSnapshot.domainOuterGap)}`,
             );
             this.pointerEcho = null;
+            this.absorbDeferredDragIntent(this.deferredAuto, false);
             this.deferredAuto = {
                 op: "update-gaps",
                 snapshot: freshSnapshot,
@@ -3271,6 +3886,7 @@ export class PlanAdapter {
                 this.setLastGood(freshSnapshot);
                 this.reconcileAttempts = 0;
                 this.parked = false;
+                this.absorbDeferredDragIntent(this.deferredAuto, true);
                 if (this.deferredAuto !== null && this.deferredAuto.op === "reconcile") {
                     this.deferredAuto = null;
                 }
@@ -3291,11 +3907,18 @@ export class PlanAdapter {
             return;
         }
         if (this.interactiveResizeActive()) {
+            // A deferred drag pointer waits out the live gesture inside its
+            // marker; ordinary queued reconciles keep the established clear.
+            this.absorbDeferredDragIntent(this.deferredAuto, true);
             if (this.deferredAuto?.op === "reconcile" && this.deferredAuto.workAreaReprojection !== true) {
                 this.deferredAuto = null;
             }
             return;
         }
+        // Ordinary drift converge. A deferred drag pointer superseded here
+        // joins its domain marker (the fresh reconcile below satisfies it on
+        // apply); the slot itself carries no drag binding.
+        this.absorbDeferredDragIntent(this.deferredAuto, false);
         this.deferredAuto = {
             op: "reconcile",
             snapshot: freshSnapshot,
@@ -3866,9 +4489,16 @@ export class PlanAdapter {
             });
         } catch (error) {
             void error;
+            // Unbuildable payload: no plan correlation was created, so bind
+            // the exact marker failure now with an honest `plan=none`.
+            this.failMarkerDispatch(intent, "dispatch-failed", null);
             return;
         }
         if (payload.length > PLAN_MAX_REQUEST_BYTES) {
+            // Oversize payload: no flight was created, so bind the exact
+            // marker failure now with an honest `plan=none`. The allocated
+            // correlation never left the adapter and names nothing.
+            this.failMarkerDispatch(intent, "dispatch-failed", null);
             return;
         }
         const isRecovery = this.nextIsRecovery;
@@ -3883,6 +4513,8 @@ export class PlanAdapter {
             removed: intent.removed,
             windowCount: sortedIds.length,
             pointerSource: intent.pointerSource ?? null,
+            dragSource: intent.dragSource ?? null,
+            restoreMarker: intent.restoreMarker ?? null,
             workAreaReprojection: intent.workAreaReprojection === true,
             admissionMaximizeClears: intent.admissionMaximizeClears ?? Object.freeze([]),
             floatTarget: intent.floatTarget ?? null,
@@ -3925,6 +4557,13 @@ export class PlanAdapter {
             } else {
                 this.noteReconcileTerminal(intent.op, intent.workAreaReprojection === true);
             }
+            // A never-sent pointer joins its marker (persisting for a later
+            // free moment); a never-sent marker attempt binds its exact
+            // failure naming the allocated plan correlation.
+            if (typeof intent.dragSource === "string" && isDragCorrelation(intent.dragSource)) {
+                this.noteDragRejected(intent.dragSource, "timer-failed", intent.pointerSource ?? null, intent.snapshot.domainOutput, intent.snapshot.domainWorkspace);
+            }
+            this.failMarkerDispatch(intent, "timer-failed", correlation);
             this.finishFlight();
             return;
         }
@@ -3961,6 +4600,13 @@ export class PlanAdapter {
             } else {
                 this.noteReconcileTerminal(intent.op, intent.workAreaReprojection === true);
             }
+            // A never-sent pointer joins its marker (persisting for a later
+            // free moment); a never-sent marker attempt binds its exact
+            // failure naming the allocated plan correlation.
+            if (typeof intent.dragSource === "string" && isDragCorrelation(intent.dragSource)) {
+                this.noteDragRejected(intent.dragSource, "dbus-failed", intent.pointerSource ?? null, intent.snapshot.domainOutput, intent.snapshot.domainWorkspace);
+            }
+            this.failMarkerDispatch(intent, "dbus-failed", correlation);
             this.finishFlight();
         }
     }
@@ -4171,6 +4817,22 @@ export class PlanAdapter {
         this.activationStep = 0;
         this.diag(flightState.op, flightState.correlation, flightState.windowCount, outcome);
         this.noteTerminalFor(flightState);
+        // Activation never sent the command: a pointer joins its marker
+        // (persisting for a later free moment, with exactly one reconcile
+        // attempt overall); a marker attempt binds its exact failure naming
+        // the allocated plan correlation.
+        const dragPointer = this.dragSourceOf(flightState);
+        if (dragPointer !== null) {
+            this.noteDragRejected(
+                dragPointer,
+                outcome,
+                flightState.pointerSource,
+                flightState.snapshot.domainOutput,
+                flightState.snapshot.domainWorkspace,
+            );
+        } else {
+            this.failDragRestore(flightState, outcome);
+        }
         this.finishFlight();
     }
 
@@ -4315,8 +4977,16 @@ export class PlanAdapter {
         this.backgroundAttempts.clear();
         this.backgroundParked.clear();
         this.pointerEcho = null;
+        this.absorbDeferredDragIntent(this.deferredAuto, false);
         this.deferredAuto = null;
         this.logToken(`${LOG_PREFIX}:recovery reason=${reason} outcome=confirmed-loss`);
+        // Recovery tears down every flight without terminals: a dispatched
+        // marker attempt never settled, so every marker gets one fresh
+        // attempt afterwards instead of sticking consumed. Drags themselves
+        // are preserved, never silently discarded.
+        for (const marker of this.dragRestore.values()) {
+            marker.dispatched = false;
+        }
         this.nextIsRecovery = true;
         try {
             this.refreshNow();
@@ -4399,6 +5069,14 @@ export class PlanAdapter {
                 this.noteBackgroundTerminal(lost.snapshot);
             } else {
                 this.noteReconcileTerminal(lost.op, lost.workAreaReprojection);
+            }
+            // A timed-out pointer feeds its marker; a timed-out marker
+            // reconcile gets one terminal per drag naming this plan.
+            const dragPointer = this.dragSourceOf(lost);
+            if (dragPointer !== null) {
+                this.noteDragRejected(dragPointer, "timeout", lost.pointerSource, lost.snapshot.domainOutput, lost.snapshot.domainWorkspace);
+            } else {
+                this.failDragRestore(lost, "timeout");
             }
             this.maybeProbeAfterTerminal(lost);
             this.finishFlight();
@@ -4491,6 +5169,15 @@ export class PlanAdapter {
             } else {
                 this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
             }
+            // A Planner-rejected drag pointer feeds its domain marker for one
+            // bounded converge; a rejected marker reconcile itself only logs
+            // its correlated terminal naming this plan (no retry/loop).
+            const dragPointer = this.dragSourceOf(flightState);
+            if (dragPointer !== null) {
+                this.noteDragRejected(dragPointer, kind, flightState.pointerSource, flightState.snapshot.domainOutput, flightState.snapshot.domainWorkspace);
+            } else {
+                this.failDragRestore(flightState, "rejected");
+            }
             this.finishFlight();
             return;
         }
@@ -4516,6 +5203,14 @@ export class PlanAdapter {
                 this.noteBackgroundTerminal(flightState.snapshot);
             } else {
                 this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
+            }
+            // A stale drag pointer feeds its marker; a stale marker
+            // reconcile gets one terminal per drag naming this plan.
+            const dragPointer = this.dragSourceOf(flightState);
+            if (dragPointer !== null) {
+                this.noteDragRejected(dragPointer, "stale-dropped", flightState.pointerSource, flightState.snapshot.domainOutput, flightState.snapshot.domainWorkspace);
+            } else {
+                this.failDragRestore(flightState, "stale-dropped");
             }
             this.finishFlight();
             return;
@@ -5662,6 +6357,10 @@ export class PlanAdapter {
         this.pinnedOwner = null;
         this.activationStep = 0;
         this.diag(flightState.op, flightState.correlation, flightState.windowCount, "planned-applied");
+        // Marker satisfaction through actual application only: the first
+        // subsequent plan that applies this domain's full geometry clears
+        // the marker with one terminal per drag naming this plan.
+        this.satisfyDragRestore(flightState, planned, current);
         // Exactly one observational active-group refresh after an actual
         // successful geometry-plan boundary, even when focus is unchanged.
         // Geometry writes emit no highlight signal, so without this edge the
@@ -6638,6 +7337,16 @@ export class PlanAdapter {
         } else {
             this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
         }
+        // Drop-intent converge for every terminal failure class, not just
+        // Planner rejection (diverged/malformed/stale/timeout/fault): a
+        // failed pointer feeds its marker, while a failed marker reconcile
+        // gets one terminal per drag naming this plan (no retry).
+        const dragPointer = this.dragSourceOf(flightState);
+        if (dragPointer !== null) {
+            this.noteDragRejected(dragPointer, outcome, flightState.pointerSource, flightState.snapshot.domainOutput, flightState.snapshot.domainWorkspace);
+        } else {
+            this.failDragRestore(flightState, outcome);
+        }
         // Ambiguous terminal failures (timeout already probed via onTimeout;
         // service-fault, correlation mismatch, precondition mismatch, stale
         // scope, write failure, owner loss) may lead to one bounded identity
@@ -6673,9 +7382,20 @@ export class PlanAdapter {
                 next.workAreaReprojection !== true &&
                 (this.interactiveResizeActive() || this.parked || this.reconcileAttempts >= MAX_RECONCILE_ATTEMPTS)
             ) {
+                // Parked/interactive guard drops the deferred intent without
+                // touching markers: a deferred drag pointer folded into its
+                // marker persists there, and any pending marker dispatches
+                // once the slot is free again.
+                this.absorbDeferredDragIntent(next, true);
                 return;
             }
             this.dispatch(next);
+        }
+        // Converge one pending restore marker when idle: exactly one
+        // existing-route reconcile per marker, unless an applied plan
+        // already satisfied it. No retries, no queues, no slot bypass.
+        if (!this.inFlight && this.deferredAuto === null && this.r4Flight === null && this.activeProbe === 0) {
+            this.maybeDispatchDragRestore();
         }
         if (!this.inFlight && this.deferredAuto === null && !this.chainingHidden) {
             this.chainingHidden = true;
