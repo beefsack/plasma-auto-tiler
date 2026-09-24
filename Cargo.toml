@@ -1,3 +1,3 @@
 [workspace]
-members = ["crates/tiler-core", "crates/tiler-protocol", "crates/plasma-auto-tiler"]
+members = ["crates/tiler-core", "crates/tiler-protocol", "crates/plasma-auto-tiler", "crates/tiler-kwin-effect-ffi"]
 resolver = "2"

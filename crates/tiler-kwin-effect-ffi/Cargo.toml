@@ -1,0 +1,13 @@
+[package]
+name = "tiler-kwin-effect-ffi"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "tiler_kwin_effect_ffi"
+crate-type = ["staticlib"]
+
+[dependencies]
+tiler-core = { path = "../tiler-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

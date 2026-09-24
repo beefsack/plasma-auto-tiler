@@ -170,11 +170,15 @@ exit 2
 EOF
   chmod +x "$FAKE_BIN/nix"
 
-  # Fake portable rustc only (CMake native sources use bare rustc; cargo and
-  # outer cmake are not needed and deliberately absent).
-  mkdir -p "$STORE_ROOT/hash-rustc/bin"
+  # Fake portable cargo+rustc from the project dev shell nixpkgs Rust, kept
+  # in distinct store bin dirs to exercise multi-dir injection (real dev
+  # shell canonicalizes to distinct cargo/rustc stores behind one wrapper).
+  # Outer cmake is deliberately absent (must come from nix develop).
+  mkdir -p "$STORE_ROOT/hash-rustc/bin" "$STORE_ROOT/hash-cargo/bin"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$STORE_ROOT/hash-rustc/bin/rustc"
   chmod +x "$STORE_ROOT/hash-rustc/bin/rustc"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$STORE_ROOT/hash-cargo/bin/cargo"
+  chmod +x "$STORE_ROOT/hash-cargo/bin/cargo"
 }
 
 setup_provenance() {
@@ -217,6 +221,7 @@ run_builder() {
     "PATH=$FAKE_BIN:$PATH" \
     "NIX_BIN=$FAKE_BIN/nix" "JQ_BIN=$REAL_JQ" \
     "RUSTC_BIN=$STORE_ROOT/hash-rustc/bin/rustc" \
+    "CARGO_BIN=$STORE_ROOT/hash-cargo/bin/cargo" \
     "PLASMA_AUTO_TILER_HOST_KWIN_BIN=$HOST_BIN_DIR/kwin_wayland" \
     "PLASMA_AUTO_TILER_STORE_ROOT=$STORE_ROOT" \
     "PLASMA_AUTO_TILER_REPO_ROOT=$WORK/repo" \
@@ -314,6 +319,8 @@ assert_contains "nix develop" "help develop cost"
 assert_contains "nix build <host-drv>^dev --no-link" "help exact dev realization"
 assert_contains "nix build --dry-run" "help no auto dry-run"
 assert_contains "RUSTC_BIN" "help rustc"
+assert_contains "CARGO_BIN" "help cargo"
+assert_contains "cargo+rustc" "help cargo rustc injected"
 assert_contains "expected-identity" "help expected-identity"
 assert_contains "must resolve within" "help host cmake"
 
@@ -410,12 +417,13 @@ assert_contains "dev_output=$FAKE_DEV_OUT" "resolve unrealized dev line"
 assert_contains "kwin_config=$FAKE_DEV_OUT/lib/cmake/KWin/KWinConfig.cmake" "resolve unrealized config metadata-selected"
 printf '# fake KWinConfig\n' > "$FAKE_DEV_OUT/lib/cmake/KWin/KWinConfig.cmake"
 
-# build: executes inner script with host-native cmake, explicit rustc path,
-# KWin_DIR, strips pinned env; no outer cmake/cargo needed or injected.
+# build: executes inner script with host-native cmake, explicit cargo+rustc
+# paths, KWin_DIR, strips pinned env; outer cmake never injected.
 reset_state
 export FAKE_BUILD_DIR="$WORK/build-out"
 IDENT_OUT="$(env "PATH=$FAKE_BIN:$PATH" "NIX_BIN=$FAKE_BIN/nix" "JQ_BIN=$REAL_JQ" \
   "RUSTC_BIN=$STORE_ROOT/hash-rustc/bin/rustc" \
+  "CARGO_BIN=$STORE_ROOT/hash-cargo/bin/cargo" \
   "PLASMA_AUTO_TILER_HOST_KWIN_BIN=$HOST_BIN_DIR/kwin_wayland" \
   "PLASMA_AUTO_TILER_STORE_ROOT=$STORE_ROOT" "PLASMA_AUTO_TILER_REPO_ROOT=$WORK/repo" \
   "FAKE_STATE_DIR=$WORK/state" "FAKE_NIX_LOG=$NIX_LOG" \
@@ -426,11 +434,12 @@ set +e
 env "PATH=$FAKE_BIN:$PATH" \
   "NIX_BIN=$FAKE_BIN/nix" "JQ_BIN=$REAL_JQ" \
   "RUSTC_BIN=$STORE_ROOT/hash-rustc/bin/rustc" \
+  "CARGO_BIN=$STORE_ROOT/hash-cargo/bin/cargo" \
   "PLASMA_AUTO_TILER_HOST_KWIN_BIN=$HOST_BIN_DIR/kwin_wayland" \
   "PLASMA_AUTO_TILER_STORE_ROOT=$STORE_ROOT" "PLASMA_AUTO_TILER_REPO_ROOT=$WORK/repo" \
   "PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR=/tmp/pinned-kwin-cmake" \
   "DOGFOOD_KWIN_DEV_CMAKE_DIR=/tmp/pinned-dogfood" \
-  "CMAKE_BIN=/tmp/pinned-cmake" "CARGO_BIN=/tmp/pinned-cargo" \
+  "CMAKE_BIN=/tmp/pinned-cmake" \
   "FAKE_STATE_DIR=$WORK/state" "FAKE_NIX_LOG=$NIX_LOG" \
   "FAKE_HOST_NATIVE_BIN=$HOST_NATIVE_BIN" "FAKE_HOST_CMAKE_LOG=$HOST_CMAKE_LOG" \
   "FAKE_DRV=$FAKE_DRV" "FAKE_STORE_PATH=$FAKE_STORE_PATH" "FAKE_DEV_OUT=$FAKE_DEV_OUT" \
@@ -441,6 +450,7 @@ check_exit 0 "build ok host cmake"
 assert_nix_log_contains "develop $FAKE_DRV --command" "build uses host drv dev shell"
 assert_nix_log_contains "build $FAKE_DRV^dev --no-link" "build realizes exact dev output"
 assert_nix_log_contains "$STORE_ROOT/hash-rustc/bin" "build injects rustc store dir"
+assert_nix_log_contains "$STORE_ROOT/hash-cargo/bin" "build injects cargo store dir"
 assert_nix_log_missing "/tmp/pinned-kwin-cmake" "build strips pinned cmake dir"
 assert_nix_log_missing "/tmp/pinned-dogfood" "build strips dogfood pinned dir"
 assert_nix_log_missing "LEAKED_PINNED" "build env has no pinned leak"
@@ -452,6 +462,7 @@ assert_host_cmake_log_contains "host-cmake -S" "host cmake configure ran"
 assert_host_cmake_log_contains "-DKWin_DIR=$FAKE_DEV_OUT/lib/cmake/KWin" "host cmake explicit resolved KWin dev dir"
 assert_host_cmake_log_contains "saw-KWin_DIR" "host cmake saw KWin_DIR"
 assert_host_cmake_log_contains "$STORE_ROOT/hash-rustc/bin" "host cmake PATH has explicit rustc"
+assert_host_cmake_log_contains "$STORE_ROOT/hash-cargo/bin" "host cmake PATH has explicit cargo"
 if [[ -f "$FAKE_BUILD_DIR/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so" ]]; then
   PASS=$((PASS + 1))
 else
@@ -460,7 +471,8 @@ else
 fi
 unset FAKE_BUILD_DIR
 
-# build: outer CMAKE_BIN/CARGO_BIN are ignored (host cmake still used).
+# build: outer CMAKE_BIN is ignored (host cmake still used). CARGO_BIN is
+# an explicit tool path (not ignored): the valid store cargo below succeeds.
 reset_state
 export FAKE_BUILD_DIR="$WORK/build-outer-ignored"
 printf '#!/usr/bin/env bash\necho outer-cmake-should-never-run >&2\nexit 1\n' > "$WORK/failing-cmake"
@@ -469,7 +481,8 @@ set +e
 env "PATH=$FAKE_BIN:$PATH" \
   "NIX_BIN=$FAKE_BIN/nix" "JQ_BIN=$REAL_JQ" \
   "RUSTC_BIN=$STORE_ROOT/hash-rustc/bin/rustc" \
-  "CMAKE_BIN=$WORK/failing-cmake" "CARGO_BIN=$WORK/failing-cmake" \
+  "CARGO_BIN=$STORE_ROOT/hash-cargo/bin/cargo" \
+  "CMAKE_BIN=$WORK/failing-cmake" \
   "PLASMA_AUTO_TILER_HOST_KWIN_BIN=$HOST_BIN_DIR/kwin_wayland" \
   "PLASMA_AUTO_TILER_STORE_ROOT=$STORE_ROOT" "PLASMA_AUTO_TILER_REPO_ROOT=$WORK/repo" \
   "FAKE_STATE_DIR=$WORK/state" "FAKE_NIX_LOG=$NIX_LOG" \
@@ -478,10 +491,31 @@ env "PATH=$FAKE_BIN:$PATH" \
   "$BASH_PATH" "$BUILDER" build --source "$WORK/src" --build-dir "$FAKE_BUILD_DIR" >"$OUTPUT" 2>&1
 EXIT=$?
 set -e
-check_exit 0 "build ignores outer cmake/cargo"
+check_exit 0 "build ignores outer cmake"
 assert_host_cmake_log_contains "host-cmake -S" "host cmake ran despite failing outer cmake"
 assert_nix_log_missing "LEAKED_CMAKE_BIN" "outer cmake never reaches nix develop"
 assert_nix_log_missing "LEAKED_CARGO_BIN" "outer cargo never reaches nix develop"
+unset FAKE_BUILD_DIR
+
+# build: outer CARGO_BIN outside the store fails closed (explicit tool path
+# must be under the store; no impure fallback).
+reset_state
+export FAKE_BUILD_DIR="$WORK/build-outer-cargo-impure"
+set +e
+env "PATH=$FAKE_BIN:$PATH" \
+  "NIX_BIN=$FAKE_BIN/nix" "JQ_BIN=$REAL_JQ" \
+  "RUSTC_BIN=$STORE_ROOT/hash-rustc/bin/rustc" \
+  "CARGO_BIN=$WORK/failing-cmake" \
+  "PLASMA_AUTO_TILER_HOST_KWIN_BIN=$HOST_BIN_DIR/kwin_wayland" \
+  "PLASMA_AUTO_TILER_STORE_ROOT=$STORE_ROOT" "PLASMA_AUTO_TILER_REPO_ROOT=$WORK/repo" \
+  "FAKE_STATE_DIR=$WORK/state" "FAKE_NIX_LOG=$NIX_LOG" \
+  "FAKE_HOST_NATIVE_BIN=$HOST_NATIVE_BIN" "FAKE_HOST_CMAKE_LOG=$HOST_CMAKE_LOG" \
+  "FAKE_DRV=$FAKE_DRV" "FAKE_STORE_PATH=$FAKE_STORE_PATH" "FAKE_DEV_OUT=$FAKE_DEV_OUT" \
+  "$BASH_PATH" "$BUILDER" build --source "$WORK/src" --build-dir "$FAKE_BUILD_DIR" >"$OUTPUT" 2>&1
+EXIT=$?
+set -e
+check_exit 1 "build outer cargo impure refused"
+assert_contains "cargo is not under" "build outer cargo impure msg"
 unset FAKE_BUILD_DIR
 
 # build: CARGO_BIN leaked inside the dev shell fails closed via the inner
@@ -494,6 +528,7 @@ set +e
 env "PATH=$FAKE_BIN:$PATH" \
   "NIX_BIN=$FAKE_BIN/nix" "JQ_BIN=$REAL_JQ" \
   "RUSTC_BIN=$STORE_ROOT/hash-rustc/bin/rustc" \
+  "CARGO_BIN=$STORE_ROOT/hash-cargo/bin/cargo" \
   "PLASMA_AUTO_TILER_HOST_KWIN_BIN=$HOST_BIN_DIR/kwin_wayland" \
   "PLASMA_AUTO_TILER_STORE_ROOT=$STORE_ROOT" "PLASMA_AUTO_TILER_REPO_ROOT=$WORK/repo" \
   "FAKE_STATE_DIR=$WORK/state" "FAKE_NIX_LOG=$NIX_LOG" \
@@ -522,6 +557,7 @@ set +e
 env "PATH=$FAKE_BIN:$PATH" \
   "NIX_BIN=$FAKE_BIN/nix" "JQ_BIN=$REAL_JQ" \
   "RUSTC_BIN=$STORE_ROOT/hash-rustc/bin/rustc" \
+  "CARGO_BIN=$STORE_ROOT/hash-cargo/bin/cargo" \
   "PLASMA_AUTO_TILER_HOST_KWIN_BIN=$HOST_BIN_DIR/kwin_wayland" \
   "PLASMA_AUTO_TILER_STORE_ROOT=$STORE_ROOT" "PLASMA_AUTO_TILER_REPO_ROOT=$WORK/repo" \
   "FAKE_STATE_DIR=$WORK/state" "FAKE_NIX_LOG=$NIX_LOG" \
@@ -544,6 +580,7 @@ set +e
 env "PATH=$FAKE_BIN:$PATH" \
   "NIX_BIN=$FAKE_BIN/nix" "JQ_BIN=$REAL_JQ" \
   "RUSTC_BIN=$STORE_ROOT/hash-rustc/bin/rustc" \
+  "CARGO_BIN=$STORE_ROOT/hash-cargo/bin/cargo" \
   "PLASMA_AUTO_TILER_HOST_KWIN_BIN=$HOST_BIN_DIR/kwin_wayland" \
   "PLASMA_AUTO_TILER_STORE_ROOT=$STORE_ROOT" "PLASMA_AUTO_TILER_REPO_ROOT=$WORK/repo" \
   "FAKE_STATE_DIR=$WORK/state" "FAKE_NIX_LOG=$NIX_LOG" \
@@ -569,6 +606,7 @@ set +e
 env "PATH=$FAKE_BIN:$PATH" \
   "NIX_BIN=$FAKE_BIN/nix" "JQ_BIN=$REAL_JQ" \
   "RUSTC_BIN=$STORE_ROOT/hash-rustc/bin/rustc" \
+  "CARGO_BIN=$STORE_ROOT/hash-cargo/bin/cargo" \
   "PLASMA_AUTO_TILER_HOST_KWIN_BIN=$HOST_BIN_DIR/kwin_wayland" \
   "PLASMA_AUTO_TILER_STORE_ROOT=$STORE_ROOT" "PLASMA_AUTO_TILER_REPO_ROOT=$WORK/repo" \
   "FAKE_STATE_DIR=$WORK/state" "FAKE_NIX_LOG=$NIX_LOG" \
@@ -589,6 +627,7 @@ chmod +x "$WORK/impure-rustc"
 set +e
 env "PATH=$FAKE_BIN:$PATH" "NIX_BIN=$FAKE_BIN/nix" "JQ_BIN=$REAL_JQ" \
   "RUSTC_BIN=$WORK/impure-rustc" \
+  "CARGO_BIN=$STORE_ROOT/hash-cargo/bin/cargo" \
   "PLASMA_AUTO_TILER_HOST_KWIN_BIN=$HOST_BIN_DIR/kwin_wayland" \
   "PLASMA_AUTO_TILER_STORE_ROOT=$STORE_ROOT" "PLASMA_AUTO_TILER_REPO_ROOT=$WORK/repo" \
   "FAKE_STATE_DIR=$WORK/state" "FAKE_NIX_LOG=$NIX_LOG" \
@@ -600,6 +639,43 @@ set -e
 check_exit 1 "build impure rustc"
 assert_contains "is not under" "build impure rustc msg"
 
+# build: portable cargo outside the store fails closed.
+reset_state
+printf '#!/usr/bin/env bash\nexit 0\n' > "$WORK/impure-cargo"
+chmod +x "$WORK/impure-cargo"
+set +e
+env "PATH=$FAKE_BIN:$PATH" "NIX_BIN=$FAKE_BIN/nix" "JQ_BIN=$REAL_JQ" \
+  "RUSTC_BIN=$STORE_ROOT/hash-rustc/bin/rustc" \
+  "CARGO_BIN=$WORK/impure-cargo" \
+  "PLASMA_AUTO_TILER_HOST_KWIN_BIN=$HOST_BIN_DIR/kwin_wayland" \
+  "PLASMA_AUTO_TILER_STORE_ROOT=$STORE_ROOT" "PLASMA_AUTO_TILER_REPO_ROOT=$WORK/repo" \
+  "FAKE_STATE_DIR=$WORK/state" "FAKE_NIX_LOG=$NIX_LOG" \
+  "FAKE_HOST_NATIVE_BIN=$HOST_NATIVE_BIN" "FAKE_HOST_CMAKE_LOG=$HOST_CMAKE_LOG" \
+  "FAKE_DRV=$FAKE_DRV" "FAKE_STORE_PATH=$FAKE_STORE_PATH" "FAKE_DEV_OUT=$FAKE_DEV_OUT" \
+  "$BASH_PATH" "$BUILDER" build --source "$WORK/src" --build-dir "$WORK/build-impure-cargo" >"$OUTPUT" 2>&1
+EXIT=$?
+set -e
+check_exit 1 "build impure cargo"
+assert_contains "cargo is not under" "build impure cargo msg"
+
+# build: missing cargo fails closed (explicit CARGO_BIN not executable).
+reset_state
+set +e
+env "PATH=$FAKE_BIN:$PATH" \
+  "NIX_BIN=$FAKE_BIN/nix" "JQ_BIN=$REAL_JQ" \
+  "RUSTC_BIN=$STORE_ROOT/hash-rustc/bin/rustc" \
+  "CARGO_BIN=$WORK/src" \
+  "PLASMA_AUTO_TILER_HOST_KWIN_BIN=$HOST_BIN_DIR/kwin_wayland" \
+  "PLASMA_AUTO_TILER_STORE_ROOT=$STORE_ROOT" "PLASMA_AUTO_TILER_REPO_ROOT=$WORK/repo" \
+  "FAKE_STATE_DIR=$WORK/state" "FAKE_NIX_LOG=$NIX_LOG" \
+  "FAKE_HOST_NATIVE_BIN=$HOST_NATIVE_BIN" "FAKE_HOST_CMAKE_LOG=$HOST_CMAKE_LOG" \
+  "FAKE_DRV=$FAKE_DRV" "FAKE_STORE_PATH=$FAKE_STORE_PATH" "FAKE_DEV_OUT=$FAKE_DEV_OUT" \
+  "$BASH_PATH" "$BUILDER" build --source "$WORK/src" --build-dir "$WORK/build-missing-cargo" >"$OUTPUT" 2>&1
+EXIT=$?
+set -e
+check_exit 1 "build missing cargo"
+assert_contains "cargo is not under" "build missing cargo msg"
+
 # build: exact dev realization failure fails closed before develop.
 reset_state
 export FAKE_BUILD_DIR="$WORK/build-dev-realize-fail"
@@ -608,6 +684,7 @@ set +e
 env "PATH=$FAKE_BIN:$PATH" \
   "NIX_BIN=$FAKE_BIN/nix" "JQ_BIN=$REAL_JQ" \
   "RUSTC_BIN=$STORE_ROOT/hash-rustc/bin/rustc" \
+  "CARGO_BIN=$STORE_ROOT/hash-cargo/bin/cargo" \
   "PLASMA_AUTO_TILER_HOST_KWIN_BIN=$HOST_BIN_DIR/kwin_wayland" \
   "PLASMA_AUTO_TILER_STORE_ROOT=$STORE_ROOT" "PLASMA_AUTO_TILER_REPO_ROOT=$WORK/repo" \
   "FAKE_STATE_DIR=$WORK/state" "FAKE_NIX_LOG=$NIX_LOG" \
@@ -629,6 +706,7 @@ set +e
 env "PATH=$FAKE_BIN:$PATH" \
   "NIX_BIN=$FAKE_BIN/nix" "JQ_BIN=$REAL_JQ" \
   "RUSTC_BIN=$STORE_ROOT/hash-rustc/bin/rustc" \
+  "CARGO_BIN=$STORE_ROOT/hash-cargo/bin/cargo" \
   "PLASMA_AUTO_TILER_HOST_KWIN_BIN=$HOST_BIN_DIR/kwin_wayland" \
   "PLASMA_AUTO_TILER_STORE_ROOT=$STORE_ROOT" "PLASMA_AUTO_TILER_REPO_ROOT=$WORK/repo" \
   "FAKE_STATE_DIR=$WORK/state" "FAKE_NIX_LOG=$NIX_LOG" \

@@ -22,10 +22,11 @@ the corresponding item ships; each such entry names its replacement.
 - Initial maximize (AR9, shipped): the effect seeds each observed window from
   committed `window()->maximizeMode()`; native transitions then update it.
   The script epoch handoff and its endpoints are retired.
-- Effect Rust build (AR10): effect Rust is built by Cargo as a workspace
-  staticlib invoked from CMake, reusing serde and core types; the bare-`rustc`
-  build and hand-written JSON parser are retired. Rust keeps group visibility
-  policy.
+- Effect Rust build (AR10, shipped): CMake invokes Cargo to build the workspace
+  `tiler-kwin-effect-ffi` staticlib, using serde for strict JSON parsing and
+  `tiler-core` validation gates. The bare-`rustc` build and hand-written JSON
+  parser are retired. Rust keeps group visibility and drag verdict policy;
+  the POD-only C ABI and panic containment remain.
 - Size hints (AR12): observed windows carry min/max size hints; projection
   honours minimums by taking space from siblings, marks unsatisfiable windows
   overconstrained rather than reasserting them, and reconcile accepts
@@ -182,8 +183,8 @@ the corresponding item ships; each such entry names its replacement.
   `scripts/nix-host-kwin-build.sh` resolves
   `/run/current-system/sw/bin/kwin_wayland` to its exact derivation and
   matching `dev` output, explicitly realizes that exact output, and builds
-   inside `nix develop <host-drv>` with only explicit `/nix/store` rustc
-   injected and `-DKWin_DIR=<resolved-dev>/lib/cmake/KWin`;
+  inside `nix develop <host-drv>` with explicit `/nix/store` Cargo and rustc
+  injected and `-DKWin_DIR=<resolved-dev>/lib/cmake/KWin`;
   legacy pinned CMake dirs never drive or leak. `just build-native-effect`
   and dogfood `effect-install` route through that builder with
   identity-keyed build dirs and fail closed on missing provenance. The former

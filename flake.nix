@@ -49,8 +49,8 @@
           ./kwin/native-effect/activewindowborder.h
           ./kwin/native-effect/activewindowborder.cpp
           ./kwin/native-effect/activeborderlogic.h
+          ./kwin/native-effect/oraclepress.h
           ./kwin/native-effect/group_highlight_ffi.h
-          ./kwin/native-effect/group_highlight.rs
           ./kwin/native-effect/activeborderconfig_module.json
           ./kwin/native-effect/activeborderconfig_module.h
           ./kwin/native-effect/activeborderconfig_module.cpp
@@ -60,8 +60,17 @@
           ./kwin/native-effect/shortcutreconciler.h
           ./kwin/native-effect/shortcutreconciler.cpp
           ./kwin/native-effect/drag_oracle_ffi.h
-          ./kwin/native-effect/drag_oracle.rs
           ./kwin/native-effect/validate-unified-lifecycle.cmake
+          ./Cargo.toml
+          ./Cargo.lock
+          ./crates/tiler-kwin-effect-ffi
+          ./crates/tiler-core
+          # Remaining workspace members: Cargo requires every member
+          # manifest+targets to resolve the workspace even when building
+          # only -p tiler-kwin-effect-ffi. Unrelated trees (kwin script,
+          # tray assets, test-fixtures) stay excluded.
+          ./crates/tiler-protocol
+          ./crates/plasma-auto-tiler
         ];
       };
 
@@ -72,6 +81,13 @@
         let
           kde = pkgs.kdePackages;
           kwinDev = kwin.dev;
+          # Offline Cargo vendor from the workspace lockfile (caller pkgs,
+          # not a pinned dev toolchain). CMake invokes cargo with
+          # CARGO_NET_OFFLINE=true (see below); this vendor dir backs the
+          # crates-io replacement so no network is needed at build time.
+          cargoVendor = pkgs.rustPlatform.importCargoLock {
+            lockFile = ./Cargo.lock;
+          };
         in
         pkgs.stdenv.mkDerivation {
           pname = "plasma-auto-tiler-native-effect";
@@ -83,9 +99,25 @@
             pkgs.cmake
             pkgs.ninja
             pkgs.pkg-config
+            pkgs.cargo
             pkgs.rustc
             kde.extra-cmake-modules
           ];
+          # Cargo offline via caller pkgs vendor (no network at build time).
+          # CARGO_HOME carries the vendored-sources replacement; CMake adds
+          # --offline when CARGO_NET_OFFLINE=true so the lockfile/vendor
+          # contract fails closed instead of hitting the network.
+          env.CARGO_NET_OFFLINE = "true";
+          preConfigure = ''
+            export CARGO_HOME="$NIX_BUILD_TOP/cargo-home"
+            mkdir -p "$CARGO_HOME"
+            cat > "$CARGO_HOME/config.toml" <<EOF
+            [source.crates-io]
+            replace-with = "vendored-sources"
+            [source.vendored-sources]
+            directory = "${cargoVendor}"
+            EOF
+          '';
           buildInputs = [
             kwin
             kwinDev

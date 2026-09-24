@@ -126,7 +126,7 @@ foreach(LEGACY_TOKEN "dragoracle.h" "dragoracle.cpp" "dragoracle-metadata.json" 
         message(FATAL_ERROR "unified build validation failed: legacy token '${LEGACY_TOKEN}' must not remain in CMakeLists.txt")
     endif()
 endforeach()
-foreach(SURVIVOR_TOKEN "plasma-auto-tiler-active-border" "libgroup_highlight.a" "libdrag_oracle.a" "Qt6::DBus" "drag_oracle_ffi.h" "plasma-auto-tiler-drag-oracle-rs" "plasma-auto-tiler-drag-oracle-test-bin" "native-effect-drag-oracle-rs" "native-effect-unified-lifecycle")
+foreach(SURVIVOR_TOKEN "plasma-auto-tiler-active-border" "libtiler_kwin_effect_ffi.a" "Qt6::DBus" "drag_oracle_ffi.h" "plasma-auto-tiler-effect-ffi-rs" "native-effect-drag-oracle-rs" "native-effect-group-highlight-rs" "native-effect-unified-lifecycle")
     string(FIND "${CMAKE}" "${SURVIVOR_TOKEN}" SURVIVOR_POS)
     if(SURVIVOR_POS EQUAL -1)
         message(FATAL_ERROR "unified build validation failed: '${SURVIVOR_TOKEN}' missing from CMakeLists.txt")

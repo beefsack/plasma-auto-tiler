@@ -90,7 +90,7 @@ endif()
 # cannot dispatch effect-defined setters, so the effect must own its
 # well-known service/path/interface exactly like the drag oracle. Group
 # policy (payload parsing, ordering, focus, visibility, state) lives in the
-# std-only Rust staticlib behind a minimal POD C ABI; C++ is limited to the
+# Cargo workspace Rust staticlib behind a minimal POD C ABI; C++ is limited to the
 # QObject/D-Bus QString-to-UTF8 boundary, Qt signal POD observation and
 # native identity, plus effect lifetime/repaint/render.
 file(READ "${GROUP_HEADER}" GROUP_HEADER_TEXT)

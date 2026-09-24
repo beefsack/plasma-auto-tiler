@@ -20,13 +20,16 @@ set -euo pipefail
 # host derivation dev shell:
 #   nix build <host-drv>^dev --no-link
 #   nix develop <host-drv> --command bash -c 'cmake configure + build'
-# with only validated portable rustc injected by explicit /nix/store bin
-# dir and explicit -DKWin_DIR=<dev>/lib/cmake/KWin. Outer cmake/cargo are
+# with only validated portable cargo+rustc injected by explicit /nix/store
+# bin dir(s) and explicit -DKWin_DIR=<dev>/lib/cmake/KWin. Outer cmake is
 # never required and never injected: cmake must resolve within the original
-# host `nix develop <drv>` environment. The inner shell requires the exact
-# KWinConfig.cmake from the selected realized dev output
-# before configure, and asserts the inner cmake is host-native (not an
-# injected pinned cmake) while rustc resolves from the explicit injected path.
+# host `nix develop <drv>` environment. Cargo/rustc come from the existing
+# project dev shell nixpkgs Rust (CARGO_BIN/RUSTC_BIN or PATH lookup, both
+# verified under /nix/store); no toolchain channel/target change. The inner
+# shell requires the exact KWinConfig.cmake from the selected realized dev
+# output before configure, and asserts the inner cmake is host-native (not
+# an injected pinned cmake) while cargo and rustc resolve from the explicit
+# injected path(s).
 # The legacy PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR (and DOGFOOD_KWIN_DEV_CMAKE_DIR)
 # can neither drive nor leak into the native build: it is unset on entry,
 # stripped from the `nix develop` environment, and unset again inside the
@@ -60,12 +63,13 @@ DEFAULT_HOST_BIN="/run/current-system/sw/bin/kwin_wayland"
 DEFAULT_STORE_ROOT="/nix/store"
 
 # The legacy pinned CMake dir must neither drive nor leak. Unset on entry.
-# Outer cmake/cargo are never used: unset so they cannot leak into the host
-# dev shell either (cmake must come from `nix develop <drv>` itself).
+# Outer cmake is never used: unset so it cannot leak into the host dev shell
+# (cmake must come from `nix develop <drv>` itself). CARGO_BIN is a
+# legitimate explicit cargo path (like RUSTC_BIN) and is resolved in
+# cmd_build; only the legacy pinned env plus CMAKE_BIN are stripped here.
 unset PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR 2>/dev/null || true
 unset DOGFOOD_KWIN_DEV_CMAKE_DIR 2>/dev/null || true
 unset CMAKE_BIN 2>/dev/null || true
-unset CARGO_BIN 2>/dev/null || true
 
 TOOL=""
 
@@ -100,12 +104,14 @@ Commands:
       nix develop <host-drv> --command bash -c 'cmake -S ... -B ... \
         -DKWin_DIR=<resolved-dev>/lib/cmake/KWin -DBUILD_TESTING=OFF; \
         cmake --build ...'
-    with only validated current-shell rustc injected by explicit /nix/store
-    bin dir. Outer cmake/cargo are never required and never injected; cmake
-    must resolve within the original host `nix develop <drv>` environment
-    (asserted host-native, not an injected pinned cmake). Inside that
-    environment, the exact KWinConfig.cmake from the selected realized dev
-    output is required before configure. The legacy
+    with only validated current-shell cargo+rustc injected by explicit
+    /nix/store bin dir(s). Outer cmake is never required and never
+    injected; cmake must resolve within the original host
+    `nix develop <drv>` environment (asserted host-native, not an injected
+    pinned cmake). Cargo/rustc come from the existing project dev shell
+    nixpkgs Rust (verified under /nix/store, no channel/target change).
+    Inside that environment, the exact KWinConfig.cmake from the selected
+    realized dev output is required before configure. The legacy
     PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR / DOGFOOD_KWIN_DEV_CMAKE_DIR are
     stripped and never passed to cmake. First use may realize the selected dev
     output closure (network/store cost).
@@ -116,10 +122,10 @@ Environment (test-only overrides; production defaults are NixOS paths):
   PLASMA_AUTO_TILER_HOST_KWIN_BIN  host kwin_wayland path
   PLASMA_AUTO_TILER_STORE_ROOT     store prefix (default /nix/store)
   PLASMA_AUTO_TILER_REPO_ROOT      repo root for default dirs
-  NIX_BIN, JQ_BIN, RUSTC_BIN
+  NIX_BIN, JQ_BIN, RUSTC_BIN, CARGO_BIN
     explicit tool paths (must be executable); otherwise PATH lookup.
-    Only rustc is injected (CMake native sources use bare rustc; cargo is
-    not needed). There is no CMAKE_BIN/CARGO_BIN: outer cmake/cargo are
+    Cargo and rustc are both required for the AR10 Cargo workspace
+    staticlib and both are injected. There is no CMAKE_BIN: outer cmake is
     unsupported and ignored.
 
 Cost: `resolve` never realizes; `build` realizes the exact dev output with
@@ -194,7 +200,7 @@ do_resolve() {
   fi
 
   local drv=""
-  if ! drv="$("$nix_bin" path-info --derivation -- "$store_path" 2>/dev/null)"; then
+  if ! drv="$(env -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN "$nix_bin" path-info --derivation -- "$store_path" 2>/dev/null)"; then
     echo "error: could not identify exact derivation for host store path: $store_path (nix path-info --derivation failed); refusing" >&2
     return 1
   fi
@@ -217,7 +223,7 @@ do_resolve() {
   fi
 
   local drv_json=""
-  if ! drv_json="$("$nix_bin" derivation show -- "$drv" 2>/dev/null)"; then
+  if ! drv_json="$(env -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN "$nix_bin" derivation show -- "$drv" 2>/dev/null)"; then
     echo "error: could not read derivation metadata for: $drv (nix derivation show failed); refusing" >&2
     return 1
   fi
@@ -324,11 +330,12 @@ cmd_resolve() {
     esac
   done
   # Strip legacy pinned env even if exported after script entry (paranoia).
-  # Outer cmake/cargo are unsupported: strip so they cannot leak.
+  # Outer cmake is unsupported: strip so it cannot leak. CARGO_BIN/RUSTC_BIN
+  # are legitimate explicit tool paths and are left alone (resolve needs
+  # neither; build resolves them).
   unset PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR 2>/dev/null || true
   unset DOGFOOD_KWIN_DEV_CMAKE_DIR 2>/dev/null || true
   unset CMAKE_BIN 2>/dev/null || true
-  unset CARGO_BIN 2>/dev/null || true
   require_tool NIX_BIN nix
   local nix_bin="$TOOL"
   require_tool JQ_BIN jq
@@ -377,7 +384,6 @@ cmd_build() {
   unset PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR 2>/dev/null || true
   unset DOGFOOD_KWIN_DEV_CMAKE_DIR 2>/dev/null || true
   unset CMAKE_BIN 2>/dev/null || true
-  unset CARGO_BIN 2>/dev/null || true
   require_tool NIX_BIN nix
   local nix_bin="$TOOL"
   require_tool JQ_BIN jq
@@ -388,23 +394,42 @@ cmd_build() {
     exit 1
   fi
 
-  # Validate portable current-shell rustc only (CMake native sources use bare
-  # rustc; cargo is not needed) and inject by explicit store bin dir.
+  # Validate portable current-shell cargo+rustc from the existing project
+  # dev shell nixpkgs Rust (no toolchain channel/target change) and inject
+  # by explicit /nix/store bin dir(s). Both are required for the AR10 Cargo
+  # workspace staticlib; fail closed on missing cargo or non-store paths.
+  require_tool CARGO_BIN cargo
+  local cargo_bin="$TOOL"
   require_tool RUSTC_BIN rustc
   local rustc_bin="$TOOL"
-  local rustc_real=""
+  local cargo_real="" rustc_real=""
+  cargo_real="$(canonicalize "$cargo_bin")" || exit 1
   rustc_real="$(canonicalize "$rustc_bin")" || exit 1
-  case "$rustc_real" in
+  case "$cargo_real" in
     "$store_root"/*) ;;
     *)
-      echo "error: portable tool is not under $store_root: $rustc_real; enter the project dev shell so rustc resolves to an explicit /nix/store path (no impure fallback)" >&2
+      echo "error: cargo is not under $store_root: $cargo_real; enter the project dev shell so cargo resolves to an explicit /nix/store path (no impure fallback)" >&2
       exit 1
       ;;
   esac
-  local rustc_dir=""
+  case "$rustc_real" in
+    "$store_root"/*) ;;
+    *)
+      echo "error: rustc is not under $store_root: $rustc_real; enter the project dev shell so rustc resolves to an explicit /nix/store path (no impure fallback)" >&2
+      exit 1
+      ;;
+  esac
+  local cargo_dir="" rustc_dir=""
+  cargo_dir="$(dirname -- "$cargo_real")"
   rustc_dir="$(dirname -- "$rustc_real")"
-  [[ -d "$rustc_dir" ]] || { echo "error: tool bin dir not found: $rustc_dir" >&2; exit 1; }
-  local injected_path="$rustc_dir"
+  [[ -d "$cargo_dir" ]] || { echo "error: cargo bin dir not found: $cargo_dir" >&2; exit 1; }
+  [[ -d "$rustc_dir" ]] || { echo "error: rustc bin dir not found: $rustc_dir" >&2; exit 1; }
+  local injected_path=""
+  if [[ "$cargo_dir" == "$rustc_dir" ]]; then
+    injected_path="$cargo_dir"
+  else
+    injected_path="$cargo_dir:$rustc_dir"
+  fi
 
   mkdir -p -- "$build_dir" || { echo "error: could not create build directory: $build_dir" >&2; exit 1; }
 
@@ -414,17 +439,19 @@ cmd_build() {
 
   # Realize the exact selected output before entering the original host dev
   # shell. `nix develop <drv>` alone does not necessarily realize split outputs.
-  if ! "$nix_bin" build "$RES_DRV^dev" --no-link; then
+  if ! env -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN "$nix_bin" build "$RES_DRV^dev" --no-link; then
     echo "error: could not realize exact dev output: $RES_DEV_OUT (nix build $RES_DRV^dev failed); refusing (no fallback attempted)" >&2
     exit 1
   fi
 
   # Build inside the ORIGINAL host derivation dev shell. Valid Nix CLI:
   # `nix develop <drv> --command <cmd> <args...>`. Strip the legacy pinned
-  # env (and any outer CMAKE_BIN/CARGO_BIN) from the outer environment and
-  # again inside the shell; cmake resolves from the host dev shell itself
-  # and receives only the resolved -DKWin_DIR. KWinConfig is required inside
-  # after the exact dev output has been realized.
+  # env (and any outer CMAKE_BIN/CARGO_BIN override) from the outer
+  # environment and again inside the shell; cmake resolves from the host dev
+  # shell itself and receives only the resolved -DKWin_DIR. Cargo/rustc
+  # resolve from the explicit injected /nix/store bin dir(s). KWinConfig is
+  # required inside after the exact dev output has been realized. No
+  # toolchain channel/target change: no RUSTUP_TOOLCHAIN, no --target.
   if ! env -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN \
     "$nix_bin" develop "$RES_DRV" --command bash -c '
       set -euo pipefail
@@ -434,6 +461,14 @@ cmd_build() {
       unset DOGFOOD_KWIN_DEV_CMAKE_DIR 2>/dev/null || true
       unset CMAKE_BIN 2>/dev/null || true
       unset CARGO_BIN 2>/dev/null || true
+      under_injected() {
+        local p="$1" d
+        local IFS=":"
+        for d in $injected; do
+          case "$p" in "$d"/*) return 0 ;; esac
+        done
+        return 1
+      }
       if [[ -n "${PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR:-}" ]]; then
         echo "error: pinned PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR leaked into host dev shell; refusing" >&2
         exit 1
@@ -447,7 +482,7 @@ cmd_build() {
         exit 1
       fi
       if [[ -n "${CARGO_BIN:-}" ]]; then
-        echo "error: pinned CARGO_BIN leaked into host dev shell; refusing (cargo is not used; only explicit rustc is injected)" >&2
+        echo "error: pinned CARGO_BIN leaked into host dev shell; refusing (cargo must resolve from explicit injected PATH, not an override)" >&2
         exit 1
       fi
       if [[ ! -f "$kwin_dir/KWinConfig.cmake" ]]; then
@@ -460,25 +495,30 @@ cmd_build() {
         exit 1
       fi
       cmake_real="$(readlink -f -- "$cmake_path" 2>/dev/null || printf "%s" "$cmake_path")"
-      case "$cmake_real" in
-        "$injected"/*)
-          echo "error: inner cmake resolves to injected path ($cmake_real); refusing (cmake must be host-native from nix develop)" >&2
-          exit 1
-          ;;
-      esac
+      if under_injected "$cmake_real"; then
+        echo "error: inner cmake resolves to injected path ($cmake_real); refusing (cmake must be host-native from nix develop)" >&2
+        exit 1
+      fi
+      cargo_path="$(command -v cargo 2>/dev/null || true)"
+      if [[ -z "$cargo_path" ]]; then
+        echo "error: cargo not found even with explicit injected path; refusing (enter the project dev shell so cargo resolves to /nix/store)" >&2
+        exit 1
+      fi
+      cargo_real="$(readlink -f -- "$cargo_path" 2>/dev/null || printf "%s" "$cargo_path")"
+      if ! under_injected "$cargo_real"; then
+        echo "error: cargo does not resolve from explicit injected path ($cargo_real not under $injected); refusing" >&2
+        exit 1
+      fi
       rustc_path="$(command -v rustc 2>/dev/null || true)"
       if [[ -z "$rustc_path" ]]; then
         echo "error: rustc not found even with explicit injected path; refusing" >&2
         exit 1
       fi
       rustc_real="$(readlink -f -- "$rustc_path" 2>/dev/null || printf "%s" "$rustc_path")"
-      case "$rustc_real" in
-        "$injected"/*) ;;
-        *)
-          echo "error: rustc does not resolve from explicit injected path ($rustc_real not under $injected); refusing" >&2
-          exit 1
-          ;;
-      esac
+      if ! under_injected "$rustc_real"; then
+        echo "error: rustc does not resolve from explicit injected path ($rustc_real not under $injected); refusing" >&2
+        exit 1
+      fi
       cmake -S "$src" -B "$bdir" -DKWin_DIR="$kwin_dir" -DBUILD_TESTING=OFF
       cmake --build "$bdir"
     ' _ "$injected_path" "$source_dir" "$build_dir" "$RES_KWIN_CMAKE_DIR"; then

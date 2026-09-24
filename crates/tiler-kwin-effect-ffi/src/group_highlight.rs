@@ -1,4 +1,4 @@
-// Temporary active-group highlight policy: std-only Rust staticlib.
+// Active-group highlight policy: Cargo workspace staticlib (AR10).
 //
 // Rust owns group payload parsing/validation, strict schema version checks,
 // numeric/id validation, ordering lifecycle, focus matching/visibility
@@ -31,6 +31,22 @@
 //   `isTargetRect` gate and the planner carried-geometry bound).
 // - Payload bytes are 1..=4096 (matches the bridge 4096 cap).
 //
+// Parsing is `serde_json` into deny-unknown-fields structs plus the same
+// range/alphabet gates as before. Behavioral notes versus the retired
+// hand-written parser:
+// - Duplicate keys reject: serde struct deserialization reports a duplicate
+//   field, preserving the previous seen-bit rejection (last-wins is NOT
+//   accepted).
+// - Trailing non-whitespace data rejects (`serde_json::from_slice` errors),
+//   preserving the previous trailing-data rejection; surrounding whitespace
+//   stays accepted.
+// - Non-UTF8 bytes reject, preserving the previous UTF-8 gate.
+// - Leading-zero numbers (e.g. `01`) reject at the JSON grammar level,
+//   preserving the previous strict-digits rejection.
+// - Float/exponent numbers for integer fields (e.g. `1.0`, `1e0`, `1.5`)
+//   reject via integer deserialization, preserving the previous
+//   fraction/exponent rejection.
+//
 // Ordering lifecycle (models the actual script bridge, not lexical order):
 // - Order state is scoped by (owner, generation). A payload whose owner or
 //   generation differs from the stored stream is a new stream: it accepts
@@ -56,7 +72,18 @@ pub const GROUP_HIGHLIGHT_COORD_MAX: i32 = 16384;
 pub const GROUP_HIGHLIGHT_SIZE_MAX: i32 = 16384;
 pub const GROUP_HIGHLIGHT_MAX_REVISION: u64 = 9007199254740991;
 
-use std::convert::TryFrom;
+// Single-source gates: the FFI array bounds stay local (C layout), but the
+// acceptance alphabets and geometry bounds reuse tiler-core so policy cannot
+// drift from the planner.
+const _: () = assert!(GROUP_HIGHLIGHT_MAX_ID_LEN == tiler_core::bounds::MAX_OPAQUE_ID_LEN);
+const _: () = assert!(GROUP_HIGHLIGHT_MAX_ID_LEN == tiler_core::ids::MAX_OWNER_LEN);
+const _: () = assert!(GROUP_HIGHLIGHT_MAX_ID_LEN == tiler_core::ids::MAX_CORRELATION_LEN);
+const _: () = assert!(GROUP_HIGHLIGHT_MAX_GENERATION_LEN == tiler_core::ids::MAX_GENERATION_LEN);
+const _: () = assert!(GROUP_HIGHLIGHT_COORD_MIN == -tiler_core::bounds::GEOMETRY_BOUND);
+const _: () = assert!(GROUP_HIGHLIGHT_COORD_MAX == tiler_core::bounds::GEOMETRY_BOUND);
+const _: () = assert!(GROUP_HIGHLIGHT_SIZE_MAX == tiler_core::bounds::GEOMETRY_BOUND);
+
+use serde::Deserialize;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,7 +144,12 @@ impl GroupHighlightState {
             generation: [0u8; GROUP_HIGHLIGHT_MAX_GENERATION_LEN],
             correlation_len: 0,
             correlation: [0u8; GROUP_HIGHLIGHT_MAX_ID_LEN],
-            rect: GroupHighlightRect { x: 0, y: 0, w: 0, h: 0 },
+            rect: GroupHighlightRect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+            },
             focused_len: 0,
             focused: [0u8; GROUP_HIGHLIGHT_MAX_ID_LEN],
             receipts: 0,
@@ -143,591 +175,103 @@ impl GroupHighlightState {
 
     fn clear_display(&mut self) {
         self.has_group = 0;
-        self.rect = GroupHighlightRect { x: 0, y: 0, w: 0, h: 0 };
+        self.rect = GroupHighlightRect {
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+        };
         self.focused_len = 0;
     }
 }
 
-fn is_opaque_id(bytes: &[u8]) -> bool {
-    if bytes.is_empty() || bytes.len() > GROUP_HIGHLIGHT_MAX_ID_LEN {
-        return false;
-    }
-    bytes
-        .iter()
-        .all(|b| b.is_ascii_alphanumeric() || *b == b'-' || *b == b'_' || *b == b'.')
+// Wire shape of the script bridge payload. `deny_unknown_fields` rejects
+// unknown keys, missing keys fail as missing fields, and duplicate keys fail
+// as duplicate fields, preserving the exact-8-keys contract.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GroupPayload {
+    v: u32,
+    correlation_id: String,
+    owner: String,
+    generation: String,
+    revision: u64,
+    group: String,
+    focused_window: String,
+    bounds: GroupBounds,
 }
 
-fn is_generation_id(bytes: &[u8]) -> bool {
-    if bytes.is_empty() || bytes.len() > GROUP_HIGHLIGHT_MAX_GENERATION_LEN {
-        return false;
-    }
-    bytes
-        .iter()
-        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GroupBounds {
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
 }
 
-struct Parsed<'a> {
-    correlation: &'a [u8],
-    owner: &'a [u8],
-    generation: &'a [u8],
-    group: &'a [u8],
-    focused: &'a [u8],
+struct Parsed {
+    correlation: String,
+    owner: String,
+    generation: String,
+    // Retained for test introspection and contract parity with the retired
+    // hand-written parser; the display policy keys on rect/focus/order only.
+    #[allow(dead_code)]
+    group: String,
+    focused: String,
     revision: u64,
     rect: GroupHighlightRect,
 }
 
-struct Cursor<'a> {
-    bytes: &'a [u8],
-    pos: usize,
-}
-
-impl<'a> Cursor<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, pos: 0 }
-    }
-
-    fn skip_ws(&mut self) {
-        while self.pos < self.bytes.len() {
-            match self.bytes[self.pos] {
-                b' ' | b'\t' | b'\n' | b'\r' => self.pos += 1,
-                _ => break,
-            }
-        }
-    }
-
-    fn expect_byte(&mut self, want: u8) -> bool {
-        if self.pos < self.bytes.len() && self.bytes[self.pos] == want {
-            self.pos += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn peek(&self) -> Option<u8> {
-        self.bytes.get(self.pos).copied()
-    }
-}
-
-fn hex_val(b: u8) -> Option<u32> {
-    match b {
-        b'0'..=b'9' => Some((b - b'0') as u32),
-        b'a'..=b'f' => Some((b - b'a' + 10) as u32),
-        b'A'..=b'F' => Some((b - b'A' + 10) as u32),
-        _ => None,
-    }
-}
-
-fn encode_utf8(code: u32, out: &mut [u8], at: usize) -> Option<usize> {
-    if code <= 0x7F {
-        if at >= out.len() {
-            return None;
-        }
-        out[at] = code as u8;
-        Some(1)
-    } else if code <= 0x7FF {
-        if at + 1 >= out.len() {
-            return None;
-        }
-        out[at] = (0xC0 | (code >> 6)) as u8;
-        out[at + 1] = (0x80 | (code & 0x3F)) as u8;
-        Some(2)
-    } else if code <= 0xFFFF {
-        if code >= 0xD800 && code <= 0xDFFF {
-            return None;
-        }
-        if at + 2 >= out.len() {
-            return None;
-        }
-        out[at] = (0xE0 | (code >> 12)) as u8;
-        out[at + 1] = (0x80 | ((code >> 6) & 0x3F)) as u8;
-        out[at + 2] = (0x80 | (code & 0x3F)) as u8;
-        Some(3)
-    } else if code <= 0x10FFFF {
-        if at + 3 >= out.len() {
-            return None;
-        }
-        out[at] = (0xF0 | (code >> 18)) as u8;
-        out[at + 1] = (0x80 | ((code >> 12) & 0x3F)) as u8;
-        out[at + 2] = (0x80 | ((code >> 6) & 0x3F)) as u8;
-        out[at + 3] = (0x80 | (code & 0x3F)) as u8;
-        Some(4)
-    } else {
-        None
-    }
-}
-
-// Decodes one JSON string starting at the opening quote. Advances past the
-// closing quote. Decoded bytes land in `out`; returns the decoded length.
-// Fails on any malformed string or when the decoded value would overflow
-// `out` (caller sizes `out` so overflow means the id bound is exceeded and
-// the payload fails closed).
-fn decode_string(cursor: &mut Cursor<'_>, out: &mut [u8]) -> Option<usize> {
-    if !cursor.expect_byte(b'"') {
-        return None;
-    }
-    let mut at = 0usize;
-    loop {
-        let b = cursor.peek()?;
-        if b == b'"' {
-            cursor.pos += 1;
-            return Some(at);
-        }
-        if b == b'\\' {
-            cursor.pos += 1;
-            let e = cursor.peek()?;
-            match e {
-                b'"' => {
-                    if at >= out.len() {
-                        return None;
-                    }
-                    out[at] = b'"';
-                    at += 1;
-                    cursor.pos += 1;
-                }
-                b'\\' => {
-                    if at >= out.len() {
-                        return None;
-                    }
-                    out[at] = b'\\';
-                    at += 1;
-                    cursor.pos += 1;
-                }
-                b'/' => {
-                    if at >= out.len() {
-                        return None;
-                    }
-                    out[at] = b'/';
-                    at += 1;
-                    cursor.pos += 1;
-                }
-                b'b' => {
-                    if at >= out.len() {
-                        return None;
-                    }
-                    out[at] = 0x08;
-                    at += 1;
-                    cursor.pos += 1;
-                }
-                b'f' => {
-                    if at >= out.len() {
-                        return None;
-                    }
-                    out[at] = 0x0C;
-                    at += 1;
-                    cursor.pos += 1;
-                }
-                b'n' => {
-                    if at >= out.len() {
-                        return None;
-                    }
-                    out[at] = b'\n';
-                    at += 1;
-                    cursor.pos += 1;
-                }
-                b'r' => {
-                    if at >= out.len() {
-                        return None;
-                    }
-                    out[at] = b'\r';
-                    at += 1;
-                    cursor.pos += 1;
-                }
-                b't' => {
-                    if at >= out.len() {
-                        return None;
-                    }
-                    out[at] = b'\t';
-                    at += 1;
-                    cursor.pos += 1;
-                }
-                b'u' => {
-                    cursor.pos += 1;
-                    if cursor.pos + 4 > cursor.bytes.len() {
-                        return None;
-                    }
-                    let mut unit: u32 = 0;
-                    for i in 0..4 {
-                        unit = unit * 16 + hex_val(cursor.bytes[cursor.pos + i])?;
-                    }
-                    cursor.pos += 4;
-                    let code: u32 = if unit >= 0xD800 && unit <= 0xDBFF {
-                        if cursor.pos + 6 > cursor.bytes.len()
-                            || cursor.bytes[cursor.pos] != b'\\'
-                            || cursor.bytes[cursor.pos + 1] != b'u'
-                        {
-                            return None;
-                        }
-                        let mut low: u32 = 0;
-                        for i in 0..4 {
-                            low = low * 16 + hex_val(cursor.bytes[cursor.pos + 2 + i])?;
-                        }
-                        if !(0xDC00..=0xDFFF).contains(&low) {
-                            return None;
-                        }
-                        cursor.pos += 6;
-                        0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00)
-                    } else if (0xDC00..=0xDFFF).contains(&unit) {
-                        return None;
-                    } else {
-                        unit
-                    };
-                    let wrote = encode_utf8(code, out, at)?;
-                    at += wrote;
-                }
-                _ => return None,
-            }
-        } else if b < 0x20 {
-            return None;
-        } else {
-            if at >= out.len() {
-                return None;
-            }
-            out[at] = b;
-            at += 1;
-            cursor.pos += 1;
-        }
-    }
-}
-
-// Captures one JSON number token per the JSON grammar. Returns the raw
-// token slice. Integer-only callers additionally reject fraction/exponent
-// parts to mirror serde integer decoding.
-fn capture_number<'b>(cursor: &mut Cursor<'b>) -> Option<&'b [u8]> {
-    let start = cursor.pos;
-    if cursor.peek() == Some(b'-') {
-        cursor.pos += 1;
-    }
-    let int_start = cursor.pos;
-    while matches!(cursor.peek(), Some(b'0'..=b'9')) {
-        cursor.pos += 1;
-    }
-    if cursor.pos == int_start {
-        return None;
-    }
-    if matches!(cursor.peek(), Some(b'.')) {
-        cursor.pos += 1;
-        let frac_start = cursor.pos;
-        while matches!(cursor.peek(), Some(b'0'..=b'9')) {
-            cursor.pos += 1;
-        }
-        if cursor.pos == frac_start {
-            return None;
-        }
-    }
-    if matches!(cursor.peek(), Some(b'e' | b'E')) {
-        cursor.pos += 1;
-        if matches!(cursor.peek(), Some(b'+' | b'-')) {
-            cursor.pos += 1;
-        }
-        let exp_start = cursor.pos;
-        while matches!(cursor.peek(), Some(b'0'..=b'9')) {
-            cursor.pos += 1;
-        }
-        if cursor.pos == exp_start {
-            return None;
-        }
-    }
-    Some(&cursor.bytes[start..cursor.pos])
-}
-
-fn has_fraction_or_exponent(token: &[u8]) -> bool {
-    token.iter().any(|b| *b == b'.' || *b == b'e' || *b == b'E')
-}
-
-fn strict_int_digits(token: &[u8]) -> Option<&[u8]> {
-    if has_fraction_or_exponent(token) {
-        return None;
-    }
-    let digits = token.strip_prefix(b"-".as_slice()).unwrap_or(token);
-    if digits.is_empty() || !digits.iter().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    if digits.len() > 1 && digits[0] == b'0' {
-        return None;
-    }
-    Some(digits)
-}
-
-fn parse_revision(token: &[u8]) -> Option<u64> {
-    if token.starts_with(b"-") {
-        return None;
-    }
-    let digits = strict_int_digits(token)?;
-    if digits.len() > 1 && digits[0] == b'0' {
-        return None;
-    }
-    let mut value: u64 = 0;
-    for b in digits {
-        value = value.checked_mul(10)?.checked_add((b - b'0') as u64)?;
-    }
-    if value > GROUP_HIGHLIGHT_MAX_REVISION {
-        return None;
-    }
-    Some(value)
-}
-
-fn parse_coord(token: &[u8]) -> Option<i32> {
-    let negative = token.starts_with(b"-");
-    let digits = strict_int_digits(token)?;
-    if digits.len() > 1 && digits[0] == b'0' {
-        return None;
-    }
-    let mut value: i64 = 0;
-    for b in digits {
-        value = value.checked_mul(10)?.checked_add((b - b'0') as i64)?;
-    }
-    if negative {
-        value = value.checked_neg()?;
-    }
-    if value < i64::from(GROUP_HIGHLIGHT_COORD_MIN) || value > i64::from(GROUP_HIGHLIGHT_COORD_MAX) {
-        return None;
-    }
-    i32::try_from(value).ok()
-}
-
-fn parse_size(token: &[u8]) -> Option<i32> {
-    if token.starts_with(b"-") {
-        return None;
-    }
-    let digits = strict_int_digits(token)?;
-    if digits.len() > 1 && digits[0] == b'0' {
-        return None;
-    }
-    let mut value: i64 = 0;
-    for b in digits {
-        value = value.checked_mul(10)?.checked_add((b - b'0') as i64)?;
-    }
-    if value < 1 || value > i64::from(GROUP_HIGHLIGHT_SIZE_MAX) {
-        return None;
-    }
-    i32::try_from(value).ok()
-}
-
-const KEY_V: u16 = 1 << 0;
-const KEY_CORRELATION: u16 = 1 << 1;
-const KEY_OWNER: u16 = 1 << 2;
-const KEY_GENERATION: u16 = 1 << 3;
-const KEY_REVISION: u16 = 1 << 4;
-const KEY_GROUP: u16 = 1 << 5;
-const KEY_FOCUSED: u16 = 1 << 6;
-const KEY_BOUNDS: u16 = 1 << 7;
-const ALL_KEYS: u16 = KEY_V | KEY_CORRELATION | KEY_OWNER | KEY_GENERATION | KEY_REVISION | KEY_GROUP | KEY_FOCUSED | KEY_BOUNDS;
-
-const BOUND_X: u8 = 1 << 0;
-const BOUND_Y: u8 = 1 << 1;
-const BOUND_W: u8 = 1 << 2;
-const BOUND_H: u8 = 1 << 3;
-const ALL_BOUNDS: u8 = BOUND_X | BOUND_Y | BOUND_W | BOUND_H;
-
-fn parse_bounds(cursor: &mut Cursor<'_>) -> Option<GroupHighlightRect> {
-    if !cursor.expect_byte(b'{') {
-        return None;
-    }
-    let mut seen: u8 = 0;
-    let mut x: i32 = 0;
-    let mut y: i32 = 0;
-    let mut w: i32 = 0;
-    let mut h: i32 = 0;
-    cursor.skip_ws();
-    if cursor.peek() == Some(b'}') {
-        return None;
-    }
-    loop {
-        cursor.skip_ws();
-        let mut key = [0u8; 8];
-        let key_len = decode_string(cursor, &mut key)?;
-        let key_slice = &key[..key_len];
-        cursor.skip_ws();
-        if !cursor.expect_byte(b':') {
-            return None;
-        }
-        cursor.skip_ws();
-        let token = capture_number(cursor)?;
-        if key_slice == b"x" {
-            if seen & BOUND_X != 0 {
-                return None;
-            }
-            seen |= BOUND_X;
-            x = parse_coord(token)?;
-        } else if key_slice == b"y" {
-            if seen & BOUND_Y != 0 {
-                return None;
-            }
-            seen |= BOUND_Y;
-            y = parse_coord(token)?;
-        } else if key_slice == b"w" {
-            if seen & BOUND_W != 0 {
-                return None;
-            }
-            seen |= BOUND_W;
-            w = parse_size(token)?;
-        } else if key_slice == b"h" {
-            if seen & BOUND_H != 0 {
-                return None;
-            }
-            seen |= BOUND_H;
-            h = parse_size(token)?;
-        } else {
-            return None;
-        }
-        cursor.skip_ws();
-        match cursor.peek() {
-            Some(b',') => {
-                cursor.pos += 1;
-            }
-            Some(b'}') => {
-                cursor.pos += 1;
-                break;
-            }
-            _ => return None,
-        }
-    }
-    if seen != ALL_BOUNDS {
-        return None;
-    }
-    Some(GroupHighlightRect { x, y, w, h })
-}
-
-fn parse_payload<'a>(
-    bytes: &'a [u8],
-    correlation: &'a mut [u8],
-    owner: &'a mut [u8],
-    generation: &'a mut [u8],
-    group: &'a mut [u8],
-    focused: &'a mut [u8],
-) -> Option<Parsed<'a>> {
+fn parse_payload(bytes: &[u8]) -> Option<Parsed> {
     if bytes.is_empty() || bytes.len() > GROUP_HIGHLIGHT_MAX_JSON {
         return None;
     }
-    if std::str::from_utf8(bytes).is_err() {
+    let payload: GroupPayload = serde_json::from_slice(bytes).ok()?;
+    if payload.v != 1 {
         return None;
     }
-    let mut cursor = Cursor::new(bytes);
-    cursor.skip_ws();
-    if !cursor.expect_byte(b'{') {
+    if payload.revision > GROUP_HIGHLIGHT_MAX_REVISION {
         return None;
     }
-    let mut seen: u16 = 0;
-    let mut version_ok = false;
-    let mut revision: u64 = 0;
-    let mut revision_seen = false;
-    let mut rect = GroupHighlightRect { x: 0, y: 0, w: 0, h: 0 };
-    let mut rect_seen = false;
-    let mut correlation_len = 0usize;
-    let mut owner_len = 0usize;
-    let mut generation_len = 0usize;
-    let mut group_len = 0usize;
-    let mut focused_len = 0usize;
-    cursor.skip_ws();
-    if cursor.peek() == Some(b'}') {
+    if !tiler_core::ids::is_correlation_id(&payload.correlation_id) {
         return None;
     }
-    loop {
-        cursor.skip_ws();
-        let mut key = [0u8; 32];
-        let key_len = decode_string(&mut cursor, &mut key)?;
-        let key_slice = &key[..key_len];
-        cursor.skip_ws();
-        if !cursor.expect_byte(b':') {
-            return None;
-        }
-        cursor.skip_ws();
-        if key_slice == b"v" {
-            if seen & KEY_V != 0 {
-                return None;
-            }
-            seen |= KEY_V;
-            let token = capture_number(&mut cursor)?;
-            if token != b"1" {
-                return None;
-            }
-            version_ok = true;
-        } else if key_slice == b"correlation_id" {
-            if seen & KEY_CORRELATION != 0 {
-                return None;
-            }
-            seen |= KEY_CORRELATION;
-            correlation_len = decode_string(&mut cursor, correlation)?;
-        } else if key_slice == b"owner" {
-            if seen & KEY_OWNER != 0 {
-                return None;
-            }
-            seen |= KEY_OWNER;
-            owner_len = decode_string(&mut cursor, owner)?;
-        } else if key_slice == b"generation" {
-            if seen & KEY_GENERATION != 0 {
-                return None;
-            }
-            seen |= KEY_GENERATION;
-            generation_len = decode_string(&mut cursor, generation)?;
-        } else if key_slice == b"revision" {
-            if seen & KEY_REVISION != 0 {
-                return None;
-            }
-            seen |= KEY_REVISION;
-            let token = capture_number(&mut cursor)?;
-            revision = parse_revision(token)?;
-            revision_seen = true;
-        } else if key_slice == b"group" {
-            if seen & KEY_GROUP != 0 {
-                return None;
-            }
-            seen |= KEY_GROUP;
-            group_len = decode_string(&mut cursor, group)?;
-        } else if key_slice == b"focused_window" {
-            if seen & KEY_FOCUSED != 0 {
-                return None;
-            }
-            seen |= KEY_FOCUSED;
-            focused_len = decode_string(&mut cursor, focused)?;
-        } else if key_slice == b"bounds" {
-            if seen & KEY_BOUNDS != 0 {
-                return None;
-            }
-            seen |= KEY_BOUNDS;
-            rect = parse_bounds(&mut cursor)?;
-            rect_seen = true;
-        } else {
-            return None;
-        }
-        cursor.skip_ws();
-        match cursor.peek() {
-            Some(b',') => {
-                cursor.pos += 1;
-            }
-            Some(b'}') => {
-                cursor.pos += 1;
-                break;
-            }
-            _ => return None,
-        }
-    }
-    cursor.skip_ws();
-    if cursor.pos != cursor.bytes.len() {
+    if !tiler_core::ids::is_owner_id(&payload.owner) {
         return None;
     }
-    if seen != ALL_KEYS || !version_ok || !revision_seen || !rect_seen {
+    if !tiler_core::ids::is_generation_id(&payload.generation) {
         return None;
     }
-    let out = Parsed {
-        correlation: &correlation[..correlation_len],
-        owner: &owner[..owner_len],
-        generation: &generation[..generation_len],
-        group: &group[..group_len],
-        focused: &focused[..focused_len],
-        revision,
-        rect,
-    };
-    if !is_opaque_id(out.correlation)
-        || !is_opaque_id(out.owner)
-        || !is_generation_id(out.generation)
-        || !is_opaque_id(out.group)
-        || !is_opaque_id(out.focused)
-    {
+    if !tiler_core::bounds::is_opaque_id(&payload.group) {
         return None;
     }
-    Some(out)
+    if !tiler_core::bounds::is_opaque_id(&payload.focused_window) {
+        return None;
+    }
+    // Carried-geometry bound: x/y in -16384..=16384, w/h in 1..=16384.
+    if !tiler_core::bounds::valid_carried_rect(
+        payload.bounds.x,
+        payload.bounds.y,
+        payload.bounds.w,
+        payload.bounds.h,
+    ) {
+        return None;
+    }
+    Some(Parsed {
+        correlation: payload.correlation_id,
+        owner: payload.owner,
+        generation: payload.generation,
+        group: payload.group,
+        focused: payload.focused_window,
+        revision: payload.revision,
+        rect: GroupHighlightRect {
+            x: payload.bounds.x,
+            y: payload.bounds.y,
+            w: payload.bounds.w,
+            h: payload.bounds.h,
+        },
+    })
 }
 
 // Splits a correlation into its non-numeric head and trailing decimal
@@ -767,19 +311,20 @@ fn correlation_is_newer(new_corr: &[u8], old_corr: &[u8]) -> bool {
     }
 }
 
-fn same_stream(state: &GroupHighlightState, parsed: &Parsed<'_>) -> bool {
-    state.owner_bytes() == parsed.owner && state.generation_bytes() == parsed.generation
+fn same_stream(state: &GroupHighlightState, parsed: &Parsed) -> bool {
+    state.owner_bytes() == parsed.owner.as_bytes()
+        && state.generation_bytes() == parsed.generation.as_bytes()
 }
 
-fn store_stream(state: &mut GroupHighlightState, parsed: &Parsed<'_>) {
+fn store_stream(state: &mut GroupHighlightState, parsed: &Parsed) {
     state.order_initialized = 1;
     state.last_revision = parsed.revision;
     state.owner_len = parsed.owner.len();
-    state.owner[..parsed.owner.len()].copy_from_slice(parsed.owner);
+    state.owner[..parsed.owner.len()].copy_from_slice(parsed.owner.as_bytes());
     state.generation_len = parsed.generation.len();
-    state.generation[..parsed.generation.len()].copy_from_slice(parsed.generation);
+    state.generation[..parsed.generation.len()].copy_from_slice(parsed.generation.as_bytes());
     state.correlation_len = parsed.correlation.len();
-    state.correlation[..parsed.correlation.len()].copy_from_slice(parsed.correlation);
+    state.correlation[..parsed.correlation.len()].copy_from_slice(parsed.correlation.as_bytes());
 }
 
 // Returns true when the payload may display: it is newer than the stored
@@ -787,7 +332,7 @@ fn store_stream(state: &mut GroupHighlightState, parsed: &Parsed<'_>) {
 // only after the payload fully accepts (parse, order, and focus match), so
 // a focus-mismatched payload clears the display without advancing the
 // high-water mark within the stream.
-fn order_allows(state: &GroupHighlightState, parsed: &Parsed<'_>) -> bool {
+fn order_allows(state: &GroupHighlightState, parsed: &Parsed) -> bool {
     if state.order_initialized == 0 {
         return true;
     }
@@ -800,10 +345,10 @@ fn order_allows(state: &GroupHighlightState, parsed: &Parsed<'_>) -> bool {
     if parsed.revision < state.last_revision {
         return false;
     }
-    if parsed.correlation == state.correlation_bytes() {
+    if parsed.correlation.as_bytes() == state.correlation_bytes() {
         return false;
     }
-    correlation_is_newer(parsed.correlation, state.correlation_bytes())
+    correlation_is_newer(parsed.correlation.as_bytes(), state.correlation_bytes())
 }
 
 fn slice_of(ptr: *const u8, len: usize) -> Option<&'static [u8]> {
@@ -823,12 +368,7 @@ fn slice_of(ptr: *const u8, len: usize) -> Option<&'static [u8]> {
 
 fn apply_inner(state: &mut GroupHighlightState, payload: &[u8], active: &[u8]) -> i32 {
     state.receipts = state.receipts.saturating_add(1);
-    let mut correlation = [0u8; GROUP_HIGHLIGHT_MAX_ID_LEN];
-    let mut owner = [0u8; GROUP_HIGHLIGHT_MAX_ID_LEN];
-    let mut generation = [0u8; GROUP_HIGHLIGHT_MAX_GENERATION_LEN];
-    let mut group = [0u8; GROUP_HIGHLIGHT_MAX_ID_LEN];
-    let mut focused = [0u8; GROUP_HIGHLIGHT_MAX_ID_LEN];
-    let parsed = match parse_payload(payload, &mut correlation, &mut owner, &mut generation, &mut group, &mut focused) {
+    let parsed = match parse_payload(payload) {
         Some(parsed) => parsed,
         None => {
             state.parse_rejected = state.parse_rejected.saturating_add(1);
@@ -840,7 +380,7 @@ fn apply_inner(state: &mut GroupHighlightState, payload: &[u8], active: &[u8]) -
         state.stale_ignored = state.stale_ignored.saturating_add(1);
         return 2;
     }
-    if !focus_matches(parsed.focused, active) {
+    if !focus_matches(parsed.focused.as_bytes(), active) {
         // Focus mismatch clears the display but preserves the order: a
         // payload that never displayed must not advance the high-water mark
         // within the stream.
@@ -853,7 +393,7 @@ fn apply_inner(state: &mut GroupHighlightState, payload: &[u8], active: &[u8]) -
     state.has_group = 1;
     state.rect = parsed.rect;
     state.focused_len = parsed.focused.len();
-    state.focused[..parsed.focused.len()].copy_from_slice(parsed.focused);
+    state.focused[..parsed.focused.len()].copy_from_slice(parsed.focused.as_bytes());
     1
 }
 
@@ -875,14 +415,20 @@ pub fn focus_eligible(
     has_window && !deleted && !minimized && !fullscreen && !hidden && !maximized
 }
 
-pub fn should_show(has_group: bool, meta_held: bool, first_signal_seen: bool, focus_ok: bool, endpoint_usable: bool) -> bool {
+pub fn should_show(
+    has_group: bool,
+    meta_held: bool,
+    first_signal_seen: bool,
+    focus_ok: bool,
+    endpoint_usable: bool,
+) -> bool {
     has_group && meta_held && first_signal_seen && focus_ok && endpoint_usable
 }
 
 // Apply codes: 1 accepted (display updated), 2 ignored stale/out-of-order
 // (display preserved), 0 parse-rejected (display cleared), 3 focus-mismatched
 // (display cleared), -1 usage error (null state).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn group_highlight_state_init(state: *mut GroupHighlightState) -> i32 {
     match std::panic::catch_unwind(|| {
         if state.is_null() {
@@ -899,7 +445,7 @@ pub extern "C" fn group_highlight_state_init(state: *mut GroupHighlightState) ->
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn group_highlight_apply(
     state: *mut GroupHighlightState,
     payload_ptr: *const u8,
@@ -948,7 +494,7 @@ pub extern "C" fn group_highlight_apply(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn group_highlight_clear(state: *mut GroupHighlightState) -> i32 {
     match std::panic::catch_unwind(|| {
         if state.is_null() {
@@ -966,8 +512,13 @@ pub extern "C" fn group_highlight_clear(state: *mut GroupHighlightState) -> i32 
     }
 }
 
-#[no_mangle]
-pub extern "C" fn group_highlight_focus_matches(focused_ptr: *const u8, focused_len: usize, active_ptr: *const u8, active_len: usize) -> u8 {
+#[unsafe(no_mangle)]
+pub extern "C" fn group_highlight_focus_matches(
+    focused_ptr: *const u8,
+    focused_len: usize,
+    active_ptr: *const u8,
+    active_len: usize,
+) -> u8 {
     match std::panic::catch_unwind(|| {
         let focused = match slice_of(focused_ptr, focused_len) {
             Some(focused) => focused,
@@ -988,7 +539,7 @@ pub extern "C" fn group_highlight_focus_matches(focused_ptr: *const u8, focused_
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn group_highlight_focus_eligible(
     has_window: u8,
     deleted: u8,
@@ -1012,7 +563,7 @@ pub extern "C" fn group_highlight_focus_eligible(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn group_highlight_is_visible(
     state: *const GroupHighlightState,
     meta_held: u8,
@@ -1039,8 +590,11 @@ pub extern "C" fn group_highlight_is_visible(
     }
 }
 
-#[no_mangle]
-pub extern "C" fn group_highlight_rect(state: *const GroupHighlightState, out: *mut GroupHighlightRect) -> i32 {
+#[unsafe(no_mangle)]
+pub extern "C" fn group_highlight_rect(
+    state: *const GroupHighlightState,
+    out: *mut GroupHighlightRect,
+) -> i32 {
     match std::panic::catch_unwind(|| {
         if state.is_null() || out.is_null() {
             return -1;
@@ -1060,8 +614,11 @@ pub extern "C" fn group_highlight_rect(state: *const GroupHighlightState, out: *
     }
 }
 
-#[no_mangle]
-pub extern "C" fn group_highlight_status(state: *const GroupHighlightState, out: *mut GroupHighlightStatus) -> i32 {
+#[unsafe(no_mangle)]
+pub extern "C" fn group_highlight_status(
+    state: *const GroupHighlightState,
+    out: *mut GroupHighlightStatus,
+) -> i32 {
     match std::panic::catch_unwind(|| {
         if state.is_null() || out.is_null() {
             return -1;
@@ -1099,12 +656,7 @@ mod tests {
     }
 
     fn parse_ok(bytes: &[u8]) -> bool {
-        let mut correlation = [0u8; GROUP_HIGHLIGHT_MAX_ID_LEN];
-        let mut owner = [0u8; GROUP_HIGHLIGHT_MAX_ID_LEN];
-        let mut generation = [0u8; GROUP_HIGHLIGHT_MAX_GENERATION_LEN];
-        let mut group = [0u8; GROUP_HIGHLIGHT_MAX_ID_LEN];
-        let mut focused = [0u8; GROUP_HIGHLIGHT_MAX_ID_LEN];
-        parse_payload(bytes, &mut correlation, &mut owner, &mut generation, &mut group, &mut focused).is_some()
+        parse_payload(bytes).is_some()
     }
 
     fn apply(state: &mut GroupHighlightState, correlation: &str, revision: u64) -> i32 {
@@ -1116,18 +668,12 @@ mod tests {
     #[test]
     fn valid_payload_parses_with_union_bounds() {
         let bytes = payload("gen-1-g0", 2);
-        let mut correlation = [0u8; GROUP_HIGHLIGHT_MAX_ID_LEN];
-        let mut owner = [0u8; GROUP_HIGHLIGHT_MAX_ID_LEN];
-        let mut generation = [0u8; GROUP_HIGHLIGHT_MAX_GENERATION_LEN];
-        let mut group = [0u8; GROUP_HIGHLIGHT_MAX_ID_LEN];
-        let mut focused = [0u8; GROUP_HIGHLIGHT_MAX_ID_LEN];
-        let parsed = parse_payload(&bytes, &mut correlation, &mut owner, &mut generation, &mut group, &mut focused)
-            .expect("valid payload parses");
-        assert_eq!(parsed.correlation, b"gen-1-g0");
-        assert_eq!(parsed.owner, b"owner-1");
-        assert_eq!(parsed.generation, b"gen-1");
-        assert_eq!(parsed.group, b"group-1");
-        assert_eq!(parsed.focused, b"win-2");
+        let parsed = parse_payload(&bytes).expect("valid payload parses");
+        assert_eq!(parsed.correlation, "gen-1-g0");
+        assert_eq!(parsed.owner, "owner-1");
+        assert_eq!(parsed.generation, "gen-1");
+        assert_eq!(parsed.group, "group-1");
+        assert_eq!(parsed.focused, "win-2");
         assert_eq!(parsed.revision, 2);
         assert_eq!(
             parsed.rect,
@@ -1153,6 +699,10 @@ mod tests {
         ));
         assert!(!parse_ok(
             br#"{"v":1.0,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+        ));
+        // Exponent form of one is still a float token, not the integer 1.
+        assert!(!parse_ok(
+            br#"{"v":1e0,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
         ));
     }
 
@@ -1198,6 +748,67 @@ mod tests {
     }
 
     #[test]
+    fn strict_number_forms_rejected() {
+        // Leading zeros are not valid JSON numbers and were rejected by the
+        // strict-digits gate before.
+        assert!(!parse_ok(
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":01,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+        ));
+        // Exponent-form integers decode as float, never as the integer field.
+        assert!(!parse_ok(
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":1e2,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+        ));
+        // Wrong JSON types for typed fields reject.
+        assert!(!parse_ok(
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":"0","group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+        ));
+        assert!(!parse_ok(
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":"0","y":0,"w":1,"h":1}}"#
+        ));
+        assert!(!parse_ok(
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":null,"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+        ));
+        // Non-object roots and nested unknown keys reject.
+        assert!(!parse_ok(br#"[]"#));
+        assert!(!parse_ok(
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1,"z":0}}"#
+        ));
+        // Non-UTF8 bytes reject.
+        assert!(!parse_ok(&[0x7b, 0x22, 0x76, 0x22, 0xff, 0x7d]));
+    }
+
+    #[test]
+    fn duplicate_keys_rejected() {
+        // The hand-written parser rejected duplicates via seen-bits; serde
+        // must report duplicate fields instead of last-wins.
+        assert!(!parse_ok(
+            br#"{"v":1,"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+        ));
+        assert!(!parse_ok(
+            br#"{"v":1,"correlation_id":"a","correlation_id":"b","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+        ));
+        assert!(!parse_ok(
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"revision":1,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+        ));
+        assert!(!parse_ok(
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0,"x":1,"y":0,"w":1,"h":1}}"#
+        ));
+        assert!(!parse_ok(
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"w":2,"h":1}}"#
+        ));
+        // A duplicated payload through the FFI clears the display and counts
+        // as parse-rejected, never as an accepted update.
+        let mut state = GroupHighlightState::zero();
+        assert_eq!(apply(&mut state, "gen-1-g1", 3), 1);
+        let dup = br#"{"v":1,"correlation_id":"gen-1-g2","owner":"owner-1","generation":"gen-1","revision":4,"revision":4,"group":"group-1","focused_window":"win-2","bounds":{"x":0,"y":0,"w":1200,"h":800}}"#;
+        assert_eq!(apply_inner(&mut state, dup, b"win-2"), 0);
+        assert_eq!(state.has_group, 0);
+        assert_eq!(state.parse_rejected, 1);
+        // Order is preserved: the next valid sequence still passes.
+        assert_eq!(apply(&mut state, "gen-1-g2", 4), 1);
+    }
+
+    #[test]
     fn oversize_and_trailing_data_rejected() {
         let mut big = payload("gen-1-g0", 0);
         big.extend(vec![b' '; GROUP_HIGHLIGHT_MAX_JSON]);
@@ -1206,6 +817,18 @@ mod tests {
         trailing.extend(b" ");
         trailing.extend(b"{}");
         assert!(!parse_ok(&trailing));
+        // Exactly the 4096-byte cap still parses when the shape is valid.
+        let mut padded = payload("gen-1-g0", 0);
+        let room = GROUP_HIGHLIGHT_MAX_JSON - padded.len();
+        assert!(room > 2);
+        padded.pop();
+        padded.extend(vec![b' '; room]);
+        padded.push(b'}');
+        assert_eq!(padded.len(), GROUP_HIGHLIGHT_MAX_JSON);
+        assert!(parse_ok(&padded));
+        // One byte over the cap rejects even with trailing whitespace only.
+        padded.push(b' ');
+        assert!(!parse_ok(&padded));
     }
 
     #[test]
@@ -1257,7 +880,10 @@ mod tests {
     fn clear_preserves_order_within_stream() {
         let mut state = GroupHighlightState::zero();
         assert_eq!(apply(&mut state, "gen-1-g5", 7), 1);
-        assert_eq!(group_highlight_clear(&mut state as *mut GroupHighlightState), 1);
+        assert_eq!(
+            group_highlight_clear(&mut state as *mut GroupHighlightState),
+            1
+        );
         assert_eq!(state.has_group, 0);
         assert_eq!(state.order_initialized, 1);
         assert_eq!(state.last_revision, 7);
@@ -1309,28 +935,34 @@ mod tests {
         assert_eq!(group_highlight_state_init(std::ptr::null_mut()), -1);
         let bytes = payload("gen-1-g0", 0);
         assert_eq!(
-            group_highlight_apply(std::ptr::null_mut(), bytes.as_ptr(), bytes.len(), b"win-2".as_ptr(), 5),
-            -1
-        );
-        assert_eq!(group_highlight_clear(std::ptr::null_mut()), -1);
-        assert_eq!(
-            group_highlight_is_visible(std::ptr::null(), 1, 1, 1, 1),
-            -1
-        );
-        assert_eq!(
-            group_highlight_rect(
-                std::ptr::null(),
-                std::ptr::null_mut()
+            group_highlight_apply(
+                std::ptr::null_mut(),
+                bytes.as_ptr(),
+                bytes.len(),
+                b"win-2".as_ptr(),
+                5
             ),
             -1
         );
-        assert_eq!(group_highlight_status(std::ptr::null(), std::ptr::null_mut()), -1);
+        assert_eq!(group_highlight_clear(std::ptr::null_mut()), -1);
+        assert_eq!(group_highlight_is_visible(std::ptr::null(), 1, 1, 1, 1), -1);
+        assert_eq!(
+            group_highlight_rect(std::ptr::null(), std::ptr::null_mut()),
+            -1
+        );
+        assert_eq!(
+            group_highlight_status(std::ptr::null(), std::ptr::null_mut()),
+            -1
+        );
     }
 
     #[test]
     fn ffi_apply_and_rect_round_trip_without_unwind() {
         let mut state = GroupHighlightState::zero();
-        assert_eq!(group_highlight_state_init(&mut state as *mut GroupHighlightState), 0);
+        assert_eq!(
+            group_highlight_state_init(&mut state as *mut GroupHighlightState),
+            0
+        );
         let bytes = payload("gen-1-g3", 4);
         let code = group_highlight_apply(
             &mut state as *mut GroupHighlightState,
@@ -1340,9 +972,17 @@ mod tests {
             5,
         );
         assert_eq!(code, 1);
-        let mut rect = GroupHighlightRect { x: 0, y: 0, w: 0, h: 0 };
+        let mut rect = GroupHighlightRect {
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+        };
         assert_eq!(
-            group_highlight_rect(&state as *const GroupHighlightState, &mut rect as *mut GroupHighlightRect),
+            group_highlight_rect(
+                &state as *const GroupHighlightState,
+                &mut rect as *mut GroupHighlightRect
+            ),
             1
         );
         assert_eq!(
@@ -1354,8 +994,14 @@ mod tests {
                 h: 800
             }
         );
-        assert_eq!(group_highlight_is_visible(&state as *const GroupHighlightState, 1, 1, 1, 1), 1);
-        assert_eq!(group_highlight_is_visible(&state as *const GroupHighlightState, 0, 1, 1, 1), 0);
+        assert_eq!(
+            group_highlight_is_visible(&state as *const GroupHighlightState, 1, 1, 1, 1),
+            1
+        );
+        assert_eq!(
+            group_highlight_is_visible(&state as *const GroupHighlightState, 0, 1, 1, 1),
+            0
+        );
     }
 
     #[test]
@@ -1366,7 +1012,10 @@ mod tests {
         let mismatch = payload("gen-1-g1", 2);
         assert_eq!(apply_inner(&mut state, &mismatch, b"win-9"), 3);
         assert_eq!(apply(&mut state, "gen-1-g0", 1), 2);
-        assert_eq!(group_highlight_clear(&mut state as *mut GroupHighlightState), 0);
+        assert_eq!(
+            group_highlight_clear(&mut state as *mut GroupHighlightState),
+            0
+        );
 
         let mut first = GroupHighlightStatus {
             receipts: 0,
@@ -1388,7 +1037,10 @@ mod tests {
         assert_eq!(first.focus_mismatch, 1);
         assert_eq!(first.stale_ignored, 1);
         assert_eq!(first.clear_requests, 1);
-        assert_eq!(first.receipts, first.accepted + first.parse_rejected + first.focus_mismatch + first.stale_ignored);
+        assert_eq!(
+            first.receipts,
+            first.accepted + first.parse_rejected + first.focus_mismatch + first.stale_ignored
+        );
         assert_eq!(first.has_group, 0);
         assert_eq!(first.order_initialized, 1);
     }
@@ -1400,7 +1052,10 @@ mod tests {
         state.parse_rejected = u64::MAX;
         state.clear_requests = u64::MAX;
         assert_eq!(apply_inner(&mut state, b"bad", b"win-2"), 0);
-        assert_eq!(group_highlight_clear(&mut state as *mut GroupHighlightState), 0);
+        assert_eq!(
+            group_highlight_clear(&mut state as *mut GroupHighlightState),
+            0
+        );
         let mut status = GroupHighlightStatus {
             receipts: 0,
             accepted: 0,

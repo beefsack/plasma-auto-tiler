@@ -10,7 +10,7 @@ const logic = read("native-effect/activeborderlogic.h");
 const cmake = read("native-effect/CMakeLists.txt");
 const validator = read("native-effect/validate-metadata.cmake");
 const ffi = read("native-effect/group_highlight_ffi.h");
-const rust = read("native-effect/group_highlight.rs");
+const rust = read("../crates/tiler-kwin-effect-ffi/src/group_highlight.rs");
 
 function countMatches(body: string, pattern: RegExp): number {
     const matches = body.match(pattern);
@@ -255,7 +255,7 @@ describe("active-group native static contract", () => {
         assert.equal(countMatches(effectHeader, /OutlinedBorderItem/g), 2);
         // Oracle Rust FFI and pull protocol surface stay intact.
         const oracleFfi = read("native-effect/drag_oracle_ffi.h");
-        const oracleRust = read("native-effect/drag_oracle.rs");
+        const oracleRust = read("../crates/tiler-kwin-effect-ffi/src/drag_oracle.rs");
         assert.match(oracleFfi, /DragOracleRect/);
         assert.match(oracleFfi, /drag_oracle_record/);
         assert.match(oracleFfi, /drag_oracle_last_copy/);

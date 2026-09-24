@@ -292,9 +292,9 @@ EOF
   # Host-matched builder fakes: fake nix with provenance + develop that
   # executes the inner command with a simulated host-native cmake on PATH
   # (so host cmake, not outer, runs and logs to cmake.log and creates .so
-  # files). Portable rustc lives under the fake store root so the builder's
-  # explicit /nix/store (STORE_ROOT) check is exercised for real. Outer
-  # cmake/cargo are never required nor injected.
+  # files). Portable cargo+rustc live under the fake store root so the
+  # builder's explicit /nix/store (STORE_ROOT) checks are exercised for real.
+  # Outer cmake is never required nor injected.
   cat > "$FAKE_BIN/bin/nix" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -369,11 +369,15 @@ EOF
   chmod +x "$WORK/host-native/bin/cmake"
   export FAKE_HOST_NATIVE_BIN="$WORK/host-native/bin"
 
-  # Fake store with portable rustc only (CMake native sources use bare rustc;
-  # outer cargo/cmake are not needed) + host KWin provenance (real files).
-  mkdir -p "$FAKE_STORE/hash-rustc/bin"
+  # Fake store with portable cargo+rustc (AR10 Cargo workspace staticlib
+  # requires both, verified under STORE_ROOT) + host KWin provenance.
+  # Kept in distinct store bin dirs to exercise multi-dir injection.
+  # Outer cmake is deliberately absent (must come from nix develop).
+  mkdir -p "$FAKE_STORE/hash-rustc/bin" "$FAKE_STORE/hash-cargo/bin"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$FAKE_STORE/hash-rustc/bin/rustc"
   chmod +x "$FAKE_STORE/hash-rustc/bin/rustc"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$FAKE_STORE/hash-cargo/bin/cargo"
+  chmod +x "$FAKE_STORE/hash-cargo/bin/cargo"
   FAKE_DRV="$FAKE_STORE/abc123-kwin-6.7.5.drv"
   FAKE_STORE_PATH="$FAKE_STORE/hash-kwin-6.7.5/bin/kwin_wayland"
   FAKE_DEV_OUT="$FAKE_STORE/hash-kwin-dev-6.7.5"
@@ -407,6 +411,7 @@ reset_state() {
   TEST_JQ_BIN="$FAKE_BIN/bin/jq"
   TEST_NIX_BIN="$FAKE_BIN/bin/nix"
   TEST_RUSTC_BIN="$FAKE_STORE/hash-rustc/bin/rustc"
+  TEST_CARGO_BIN="$FAKE_STORE/hash-cargo/bin/cargo"
   TEST_HOST_KWIN_BIN="$FAKE_HOST_DIR/kwin_wayland"
   TEST_STORE_ROOT="$FAKE_STORE"
   TEST_SCRIPT=""
@@ -427,10 +432,18 @@ reset_state() {
 run_script() {
   set +e
   local script="${TEST_SCRIPT:-$SCRIPT}"
+  # The host builder requires cargo+rustc under STORE_ROOT. dogfood-install.sh
+  # strips CARGO_BIN before invoking the builder, so the fake cargo must also
+  # resolve via PATH: prepend its store bin dir when the override is set.
+  # RUSTC_BIN passes through explicitly, so no PATH prepend is needed for it.
+  local effective_path="$TEST_PATH"
+  if [[ -n "${TEST_CARGO_BIN:-}" ]]; then
+    effective_path="$(dirname -- "$TEST_CARGO_BIN"):$effective_path"
+  fi
   local cmd=(env -u NPM_BIN -u KWRITECONFIG6_BIN -u KREADCONFIG6_BIN -u QDBUS_BIN -u JQ_BIN -u CMAKE_BIN -u CARGO_BIN -u NIX_BIN -u RUSTC_BIN -u XDG_DATA_HOME -u XDG_CONFIG_HOME \
     -u DOGFOOD_KWIN_ENVIRON_FILE -u DOGFOOD_KWIN_NOT_RUNNING -u DOGFOOD_KWIN_DEV_CMAKE_DIR \
     -u PLASMA_AUTO_TILER_HOST_KWIN_BIN -u PLASMA_AUTO_TILER_STORE_ROOT -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR \
-    "DOGFOOD_DATA_ROOT=$DATA" "DOGFOOD_CONFIG_ROOT=$CONFIG" "HOME=$FAKE_HOME" "PATH=$TEST_PATH")
+    "DOGFOOD_DATA_ROOT=$DATA" "DOGFOOD_CONFIG_ROOT=$CONFIG" "HOME=$FAKE_HOME" "PATH=$effective_path")
   [[ -z "$TEST_NPM_BIN" ]] || cmd+=("NPM_BIN=$TEST_NPM_BIN")
   [[ -z "$TEST_KWRITECONFIG6_BIN" ]] || cmd+=("KWRITECONFIG6_BIN=$TEST_KWRITECONFIG6_BIN")
   [[ -z "$TEST_KREADCONFIG6_BIN" ]] || cmd+=("KREADCONFIG6_BIN=$TEST_KREADCONFIG6_BIN")
@@ -438,6 +451,7 @@ run_script() {
   [[ -z "$TEST_JQ_BIN" ]] || cmd+=("JQ_BIN=$TEST_JQ_BIN")
   [[ -z "${TEST_NIX_BIN:-}" ]] || cmd+=("NIX_BIN=$TEST_NIX_BIN")
   [[ -z "${TEST_RUSTC_BIN:-}" ]] || cmd+=("RUSTC_BIN=$TEST_RUSTC_BIN")
+  [[ -z "${TEST_CARGO_BIN:-}" ]] || cmd+=("CARGO_BIN=$TEST_CARGO_BIN")
   [[ -z "${TEST_CMAKE_BIN:-}" ]] || cmd+=("CMAKE_BIN=$TEST_CMAKE_BIN")
   [[ -z "${TEST_HOST_KWIN_BIN:-}" ]] || cmd+=("PLASMA_AUTO_TILER_HOST_KWIN_BIN=$TEST_HOST_KWIN_BIN")
   [[ -z "${TEST_STORE_ROOT:-}" ]] || cmd+=("PLASMA_AUTO_TILER_STORE_ROOT=$TEST_STORE_ROOT")
@@ -1727,11 +1741,12 @@ assert_grep_file "plasma-auto-tiler-kwinEnabled=true" "$CONFIG/kwinrc"
 assert_file "$EFFECT_STAGED_SO"
 assert_grep_file "loadEffect plasma-auto-tiler-active-border" "$WORK/tools.log"
 
-# setup: rustc toolchain unavailable -> effect stage gracefully skipped,
+# setup: cargo+rustc toolchain unavailable -> effect stage gracefully skipped,
 # whole command still succeeds (outer cmake is never required; host cmake
-# comes from `nix develop`, portable rustc from /nix/store is required).
+# comes from `nix develop`, portable cargo+rustc from /nix/store are required).
 reset_state
 TEST_RUSTC_BIN=""
+TEST_CARGO_BIN=""
 TEST_PATH="$FAKE_BIN/core:$(dirname "$BASH_PATH")"
 run_script setup
 check_exit 0

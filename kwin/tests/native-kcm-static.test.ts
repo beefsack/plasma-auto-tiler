@@ -85,13 +85,14 @@ describe("native KCM static contract", () => {
         assert.equal(kcmMetadata.KPlugin.Name, "Plasma Auto Tiler");
         // Exactly one effect plugin target plus the KCM config target; the
         // standalone drag-oracle effect, factory, metadata, and validation
-        // script are gone while the oracle Rust test target stays.
+        // script are gone while the unified effect-ffi Rust target and the
+        // oracle/group Rust tests stay.
         assert.equal(
             (cmake.match(/INSTALL_NAMESPACE "kwin\/effects\/plugins"/g) ?? []).length,
             1,
         );
         assert.ok(cmake.includes("drag_oracle_ffi.h"));
-        assert.ok(cmake.includes("plasma-auto-tiler-drag-oracle-rs"));
+        assert.ok(cmake.includes("plasma-auto-tiler-effect-ffi-rs"));
         assert.ok(cmake.includes("native-effect-drag-oracle-rs"));
         for (const residue of [
             "dragoracle.h",

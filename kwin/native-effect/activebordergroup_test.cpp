@@ -1,6 +1,7 @@
-// Temporary active-group highlight offline tests through the std-only Rust
-// FFI only. Policy (parsing, ordering, focus, visibility, state) lives in
-// group_highlight.rs; this test drives its minimal POD C ABI, including the
+// Temporary active-group highlight offline tests through the Cargo
+// workspace staticlib FFI only. Policy (parsing, ordering, focus,
+// visibility, state) lives in crates/tiler-kwin-effect-ffi; this test
+// drives its minimal POD C ABI, including the
 // QObject/D-Bus QString-to-UTF8 boundary shape (empty payload clears). No
 // KWin scene, no session bus, no timers.
 
@@ -105,6 +106,9 @@ void malformedPayloadsFailClosed()
         "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":-1,\"group\":\"g\",\"focused_window\":\"w\",\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
         "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":1.5,\"group\":\"g\",\"focused_window\":\"w\",\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
         "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":9007199254740992,\"group\":\"g\",\"focused_window\":\"w\",\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
+        "{\"v\":1,\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
+        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
+        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"bounds\":{\"x\":0,\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
         nullptr,
     };
     for (size_t i = 0; cases[i] != nullptr; ++i) {

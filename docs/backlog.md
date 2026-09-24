@@ -39,10 +39,6 @@ decisions of 2026-09-24 are recorded under
   effect mouse interception blocks all clicks; plausible first prototype is
   project-owned layer-shell surfaces confined to positive-width gaps, with a
   native KWin input filter as fallback. Needs a Rust split-boundary request.
-- P0 | AR10 Cargo-built effect Rust | 7.3, after AR8/AR9. Approved: replace the
-  bare-`rustc` effect build with a Cargo workspace staticlib built from CMake
-  (e.g. Corrosion), using serde/core types; delete the hand-written parser.
-  Rust keeps group visibility policy. Nix derivation follows.
 - P0 | AR12 Size hints and clamp acceptance | 7.11. Approved. Related: Ghostty
   short-frame and local-movement height items below.
 - P0 | AR16 Size caps | 7.13. Approved: drop 64-window/16-domain count caps in
