@@ -54,14 +54,13 @@ decisions of 2026-09-24 are recorded under
 - P0 | AR11 One transaction model (expectations) | 7.8, workspace send first.
   User selected host-authoritative facts, engine-authoritative layout and
   bounded convergence (2026-09-23). Transition contract passed design review;
-  four implementation attempts failed review, each on the native-observer to
-  core path that offline component tests missed. Approved next step
-  (2026-09-24): a sensible, minimal offline fixture driving the TS adapter's
-  observer against the Rust Engine for the send transition rows, sized to what
-  is valuable, not an extensive harness that constrains development. Then
-  retry the send slice. Live acceptance after: rapid repeated sends keep
-  prompt native-proof follow without focus theft; failed sends converge back
-  to source. [scope](changes/architecture-review-ar11-expectations.md)
+  four implementation attempts failed review on the native-observer-to-core
+  path. The six-scenario real-TS-observer/real-Rust-Engine fixture is green
+  offline against shipped pending behavior (2026-09-25); convert its marked
+  legacy assertions to the AR11 transition rows during the send-slice retry,
+  then independently review that path. Live acceptance after: rapid repeated
+  sends keep prompt native-proof follow without focus theft; failed sends
+  converge back to source. [scope](changes/architecture-review-ar11-expectations.md)
 - P0 | AR4 Single observation `sync` | 7.7, after AR11. Collapsing intermediate
   layout writes is selected. Post-only removal needs AR11's fact/expectation
   model. [scope](changes/architecture-review-ar4-observation-sync.md)

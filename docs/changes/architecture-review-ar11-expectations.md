@@ -245,3 +245,53 @@ After restoration, `cargo fmt --all -- --check`, `cargo check --workspace`,
 `npm run typecheck`, `npm test` (715 passing) and `npm run build` all passed.
 `git diff --check` passed. Only this active change note and the AR11/AR4
 backlog status changed; no code, wire golden or test-count change ships.
+
+## Offline vertical fixture green point (2026-09-25)
+
+Added `kwin/tests/workspace-send-engine-fixture.test.ts` (six scenarios, ~645
+lines including the scripted native surface) and the 33-line test-only
+`crates/tiler-protocol/examples/planner_eval.rs` seam. Normal `kwin/ npm test`
+spawns the example with `cargo run --offline` and passes real production
+`startWorkspaceSendAdapterEntry` observer/actuation requests through retained
+`Planner::evaluate` and the real Engine. Only D-Bus transport, native KWin
+objects, timer scheduling and log collection are fake. No production route,
+host, toolchain or live KWin changes. No separate harness or `just` target.
+
+The fixture pins current shipped behavior for issued/planned and native follow,
+in-transit unresolved status, target ack/verify/commit, a failed setter with
+the mover remaining in source at deadline, a same-output third-workspace
+escape, a failed complete read at deadline, and a genuinely disjoint foreground
+send while the first flight is live. A deliberately tampered post-observation
+fails real Engine verify (`diverged` / `postcondition-mismatch`) without commit.
+These scenarios expose the old observer's source-only focus and omission of
+an elsewhere mover and the old adapter's global send guard; the original
+old-generation baseline / leaked-flight failure is **not** reproduced.
+The fixture currently asserts the **legacy** pending-path outcomes: it does
+not yet catch a regression in the *unshipped* world-index validation,
+third-workspace classification, `F(D,E)`, forward expiry revisions,
+post-only all-member reconciliation, new follow gate or generation-bound
+baselines. Each affected test marks the required AR11 assertion flip. During
+the send slice, change those checks to assert the real
+`observation_seq`/`world_windows`/`send-observed` contract rows end to end;
+add narrowly targeted tests for supersession/binding loss where needed.
+
+Independent fixture review passed as a **pre-AR11 regression pin only**, after
+marking the pre-commit follow and elsewhere-observation gaps explicitly. It
+does not count as implementation review or live acceptance. The contract's
+six invariants remain mandatory and unshipped. Subsequent shipped AR12/AR16
+and drag recheck: keep `overconstrained` geometry non-reasserted under the
+existing AR12 rule, including send corrections; the complete new world index
+must fail closed rather than truncate at the old count limits or the current
+1 MiB request bound; the drag restore and foreground reconcile paths retain
+their separate focus/correlation behavior. No change to the reviewed send
+transaction semantics was identified in this fixture slice.
+
+Offline checks at this green point: `cargo test --workspace --offline` 624
+passed, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets
+--offline` (only existing warnings in unchanged files), `just check-portable`,
+and `kwin/` `npm run typecheck`, `npm test` 822 passed (816 baseline + six),
+`npm run build`, `git diff --check` passed. No fixture files were staged or
+committed. Send-slice retry, independent native-observer-to-core review,
+contract-row assertion flips and live user acceptance remain the next unit;
+AR4's blocker status is unchanged. This is the fixture handover point, not a
+claim that the send transaction model has shipped.
