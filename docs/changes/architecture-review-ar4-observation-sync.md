@@ -1,5 +1,9 @@
 # AR4: Single observation sync
 
+Parked 2026-09-25 by user direction; its visible benefit moves to
+[batched admissions](incremental-send-recovery-and-admission-batching.md).
+Retained for reference.
+
 ## Goal and scope
 
 Move membership diffing and bounded reconcile/park policy from the KWin adapter into the portable Engine. One `sync` request should carry complete observations for all affected domains and return one plan, with removals before admissions, stable admission order, domain changes as remove plus admit, retained exception handling, and independent per-domain revisions, fingerprints, divergence and pending scope. Keep existing send/R4 acknowledgement and verification, fences, background adoption, placement-aware fitting, native focus/visibility behavior and correlated lifecycle summaries.

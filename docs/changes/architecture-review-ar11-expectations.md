@@ -1,5 +1,9 @@
 # AR11: Workspace-send expectations
 
+Parked 2026-09-25 by user direction; superseded by
+[incremental send recovery](incremental-send-recovery-and-admission-batching.md).
+Retained for reference.
+
 ## Goal and scope
 
 Adopt the user's 2026-09-23 selection of review 7.8: host observations own existence, domain and flags; the Engine owns layout within observed facts. Prototype on workspace send, replacing send's pending acknowledgement/verification path with a bounded expectation and convergence. Preserve same-UID authorization, owner/generation/correlation, prompt native-proof follow, focus preservation, in-flight workspace retention and correlated lifecycle diagnostics. Keep R4 and ordinary commands on their existing transaction model in this slice.

@@ -473,7 +473,14 @@ the corresponding item ships; each such entry names its replacement.
     must preserve safe handling of later valid commands without treating the
     uncertain transaction as success, replaying it, resetting topology, or
     weakening those fences.
-- USER-APPROVED transaction-model direction, 2026-09-23: adopt architecture
+- USER-APPROVED incremental direction, 2026-09-25, replacing the 2026-09-23
+  entry below: full AR11 and AR4 are parked. Add bounded post-actuation send
+  resolution to the existing send pending model, then batch simultaneous
+  admissions into one plan; both open to later refinement. Scope and the
+  lessons behind it: [proposal](changes/incremental-send-recovery-and-admission-batching.md).
+  Until those ship, the send/R4 pending entries below describe current code.
+- SUPERSEDED 2026-09-25 (parked, retained for reference) - USER-APPROVED
+  transaction-model direction, 2026-09-23: adopt architecture
   review 7.8, prototyped on workspace send first. Host observations own window
   existence, domain and flags; the engine owns layout within those facts.
   Prefer bounded convergence to observed truth over never reporting success

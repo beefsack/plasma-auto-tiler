@@ -51,21 +51,23 @@ decisions of 2026-09-24 are recorded under
   effect mouse interception blocks all clicks; plausible first prototype is
   project-owned layer-shell surfaces confined to positive-width gaps, with a
   native KWin input filter as fallback. Needs a Rust split-boundary request.
-- P0 | AR11 One transaction model (expectations) | 7.8, workspace send first.
-  User selected host-authoritative facts, engine-authoritative layout and
-  bounded convergence (2026-09-23). Transition contract passed design review;
-  four implementation attempts failed review on the native-observer-to-core
-  path. Ten real-observer/real-Engine fixture rows now pin the AR11 contract
-  red against shipped behavior. A new implementation was stopped after review:
-  exact retained legacy revision/fingerprint cannot be supplied by the current
-  foreground adapter on first touch across restart. Select and review a
-  first-touch authority/bootstrap rule before retrying the send slice; add a
-  production-foreground occupied-domain fixture. Live acceptance after: rapid
-  repeated sends keep prompt native-proof follow without focus theft; failed
-  sends converge back to source. [scope](changes/architecture-review-ar11-expectations.md)
-- P0 | AR4 Single observation `sync` | 7.7, after AR11. Collapsing intermediate
-  layout writes is selected. Post-only removal needs AR11's fact/expectation
-  model. [scope](changes/architecture-review-ar4-observation-sync.md)
+- P1 | Bounded post-actuation send resolution | User-accepted direction
+  (2026-09-25) replacing full AR11. At the existing 5 s deadline, from a fresh
+  source/target observation: on target settle, on source restore retained
+  topology, elsewhere/absent release to ordinary routes; once, no replay.
+  Next: design against current send fences with fixture rows first, then
+  independent review, then implementation.
+  [proposal](changes/incremental-send-recovery-and-admission-batching.md)
+- P2 | Batched simultaneous admissions | User-accepted direction (2026-09-25)
+  replacing AR4's visible benefit: admit windows appearing together in one
+  plan; removals stay on the existing route. After send resolution, or sooner
+  if intermediate-layout jank is noticed.
+  [proposal](changes/incremental-send-recovery-and-admission-batching.md)
+- P3 | AR11/AR4 full models (parked) | Parked 2026-09-25 in favour of the two
+  incremental items above. Notes, the real-observer/real-Engine fixture and ten
+  skipped AR11 rows are retained for reference.
+  [AR11](changes/architecture-review-ar11-expectations.md)
+  [AR4](changes/architecture-review-ar4-observation-sync.md)
 - P3 | AR6 Logical workspace model in core | 7.10. Deferred 2026-09-24 until a
   non-KWin host needs it. The current KWin implementation is the "native
   workspaces" mode of a future native/custom choice.
