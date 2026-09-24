@@ -29,6 +29,20 @@ contains only `metadata.json`, `contents/code/main.js`,
 temporary roots; it does not install, enable, configure, or reconfigure a live
 KWin session.
 
+The archive is script-only by necessity: it cannot embed the ABI-dependent
+native script settings KCM (`kwin/scripts/configs/plasma-auto-tiler-kwin_config`,
+referenced by `kwin/metadata.json` `X-KDE-ConfigModule`). A KWin C++ plugin
+must be rebuilt against the exact KWin development headers of the target host,
+so no portable prebuilt binary can ship inside the `.kwinscript`. The script
+settings Configure page therefore resolves only when the companion
+ABI-matched native delivery is installed alongside this package on the same
+host: the NixOS module (`packages.native-effect` via `lib.mkNativeEffect`),
+the dogfood `effect-install` staging, or the dev `target/kwin-native-effect-stage`
+stage. A script-only install (for example a KDE Store download with no
+companion) still installs and runs, but its script settings have no project
+Configure page until the matching native build is present. Installing any
+package never implies the effect is enabled.
+
 ### Nix consumption
 
 The flake is the supported consumer interface for Nix-managed Plasma/KWin
@@ -36,8 +50,8 @@ systems. It exports these packages for `aarch64-linux` and `x86_64-linux`:
 
 - `packages.default` and `packages.tray` - the optional Rust tray binary
 - `packages.kwin-script` - the KWin script KPackage
-- `packages.native-effect` - the native effect and effect-scoped KCM,
-  built from this flake's pinned nixpkgs input
+- `packages.native-effect` - the native effect, the effect-scoped KCM, and
+  the native script settings KCM, built from this flake's pinned nixpkgs input
 - `lib.mkKwinScript`, `lib.mkNativeEffect`, and `lib.mkTray` - package helpers;
   `lib.mkNativeEffect` can receive an explicit matching `kwin` package
 
@@ -386,9 +400,12 @@ bash scripts/dogfood-install.sh uninstall
 ### Native effect (dogfood)
 
 `scripts/dogfood-install.sh` also builds and stages the experimental,
-disabled-by-default native `plasma-auto-tiler-active-border` effect and its
-effect-scoped QWidget KCM. The KWin script has no generic scripted KCM route or
-migration; this native effect KCM is the sole settings owner and is opened from
+disabled-by-default native `plasma-auto-tiler-active-border` effect, its
+effect-scoped QWidget KCM, and the native script settings KCM
+(`kwin/scripts/configs/plasma-auto-tiler-kwin_config`, the sole owner of the
+workspace mode, shortcut profile, and tiling gap settings). The KWin script
+uses its project-owned native script KCM without migrating existing values; it is opened from
+the script's Configure entry, while the effect KCM is opened from
 Desktop Effects. These commands describe the intended user-local lifecycle;
 current-host integration, KWin/session load or reload, and session-boundary
 results remain pending live evidence.
@@ -405,7 +422,7 @@ script, and `kwinrc` unchanged; unload it through a documented KWin mechanism
 while KWin is running, then rerun `effect-remove`. If KWin is unavailable, the
 command cannot prove the effect is unloaded and leaves the state for a later
 removal attempt. When unloaded, removal is transactional and removes the staged
-plugin, KCM, env script, and (when
+plugin, both KCMs, env script, and (when
 present) this `kwinrc` key, restoring the pre-install state exactly.
 
 ```sh
@@ -415,15 +432,16 @@ bash scripts/dogfood-install.sh effect-reload
 bash scripts/dogfood-install.sh effect-remove
 ```
 
-`effect-install` builds the effect and KCM against the running host's
+`effect-install` builds the effect and both KCMs against the running host's
 current-system KWin derivation via `scripts/nix-host-kwin-build.sh`
 (read-only `resolve` proves derivation metadata only, then `build` runs
 `nix develop <host-drv>` where `cmake` must resolve host-native and only
 explicit `/nix/store` `rustc` is injected; outer `cmake`/`cargo` are never
 required and the legacy pinned `PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR` never
 drives or leaks) and stages them under
-`$XDG_DATA_HOME/plasma-auto-tiler-native-effect/kwin/effects/plugins/` and
-`$XDG_DATA_HOME/plasma-auto-tiler-native-effect/kwin/effects/configs/` (or the
+`$XDG_DATA_HOME/plasma-auto-tiler-native-effect/kwin/effects/plugins/`,
+`$XDG_DATA_HOME/plasma-auto-tiler-native-effect/kwin/effects/configs/`, and
+`$XDG_DATA_HOME/plasma-auto-tiler-native-effect/kwin/scripts/configs/` (or the
 `$HOME/.local/share` equivalents), then writes a `QT_PLUGIN_PATH` export
 to `$XDG_CONFIG_HOME/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh`
 (sourced by `startplasma-wayland` at session start) so the staged directory
@@ -441,7 +459,8 @@ KWin/session reload remains pending. If `isEffectSupported=false`, that result
 is ambiguous: it does not establish a session boundary and may indicate a
 plugin load, factory, or ABI failure. Other query, unload, or load errors
 likewise exit non-zero. `effect-remove`
-unstages the plugin, deletes the env script, removes the `kwinrc` key above
+unstages the plugin and both KCMs, deletes the env script, and removes the
+`kwinrc` key above
 when present, and (migration cleanup) also deletes any legacy
 `environment.d` entry this project wrote previously; idempotent.
 `effect-install` writes only that one `kwinrc` key and does not use D-Bus.
@@ -452,8 +471,9 @@ session-boundary contract.
 ### Native effect development staging (`just build-native-effect`)
 
 Development-only alternative to `effect-install`. `just build-native-effect`
-stages both plugins at
-`target/kwin-native-effect-stage/kwin/effects/{plugins,configs}/` without
+stages all three plugins at
+`target/kwin-native-effect-stage/kwin/{effects/{plugins,configs},scripts/configs}/`
+without
 touching KWin, D-Bus, config, or user paths. One-time dev delivery uses the
 explicit setup below; it is documented, not run here, and remains pending
 live evidence.
@@ -548,7 +568,8 @@ These observations remain pending and require the reviewed live-test protocol:
 - `status` is read-only.
 - `dry-run` is read-only and never mutates anything.
 - `effect-install` and `effect-remove` build/stage/unstage the native effect
-  plugin and its QWidget KCM under their own namespaced user-local directory,
+  plugin, its effect-scoped QWidget KCM, and the native script settings KCM
+  under their own namespaced user-local directory,
   create/remove only the project's own `plasma-workspace/env/` script
   (`effect-remove` also
   migrates away any legacy `environment.d` entry), and write/remove exactly

@@ -7,11 +7,13 @@ import { startPlanAdapterEntry } from "../src/plan-adapter-entry";
 
 const read = (path: string): string => readFileSync(join(process.cwd(), path), "utf8");
 
-const module = read("native-effect/activeborderconfig_module.cpp");
-const header = read("native-effect/activeborderconfig_module.h");
-const ui = read("native-effect/activeborderconfig.ui");
+const module = read("native-effect/scriptconfig_module.cpp");
+const header = read("native-effect/scriptconfig_module.h");
+const ui = read("native-effect/scriptconfig.ui");
+const effectUi = read("native-effect/activeborderconfig.ui");
 const entry = read("src/plan-adapter-entry.ts");
 const gaps = read("src/domain-gap.ts");
+const sendAdapter = read("src/workspace-send-adapter.ts");
 const productionEntry = read("src/entry.ts");
 
 function functionBody(source: string, signature: string): string {
@@ -130,12 +132,24 @@ describe("interim tiler reload contract", () => {
         assert.match(entry, /readDomainGaps\(\{/);
         assert.match(entry, /requestResync\(\)/);
         assert.match(entry, /plasma-auto-tiler:plan:config-reloaded/);
+        assert.match(entry, /stage=re-read-queued/);
+        assert.match(entry, /applied-unconfirmed/);
+        assert.match(entry, /stage=restart-required/);
         assert.match(entry, /readShortcutProfile\(overrides\.readProfileFn\)/);
         assert.match(entry, /readWorkspaceModeValue\(overrides\.readWorkspaceModeFn\)/);
         // No script/plugin lifecycle or shortcut re-registration on the reload path.
         assert.doesNotMatch(entry, /loadScript/);
         assert.doesNotMatch(entry, /unloadScript/);
         assert.doesNotMatch(entry, /registerShortcutFn\(action/);
+        // Provenance: the update-gaps plan flight runs the ordinary retained
+        // route on the planner channel while workspace sends commit on the
+        // separate send channel, so no send outcome may back an applied
+        // claim. The entry keeps no outstanding pair and the send adapter
+        // exposes no committed-pair API.
+        assert.doesNotMatch(entry, /stage=applied/);
+        assert.doesNotMatch(entry, /reloadOutstanding/);
+        assert.doesNotMatch(entry, /evidence=committed-flight/);
+        assert.doesNotMatch(sendAdapter, /committedGaps/);
     });
 
     it("types the deliberate reload as one KWin reconfigure send without claiming application", () => {
@@ -146,96 +160,95 @@ describe("interim tiler reload contract", () => {
         assert.match(module, /Q_NOREPLY/);
         assert.match(module, /never proves the/);
         assert.match(module, /never claims the running tiler applied/);
-        assert.match(header, /requestTilerReload/);
-        assert.match(header, /isTilerReloadRequired/);
-        assert.match(header, /tilerReloadStatusText/);
+        assert.match(header, /requestScriptReconfigure/);
+        assert.match(header, /isScriptRestartRequired/);
+        assert.match(header, /scriptStatusText/);
+        assert.doesNotMatch(header, /requestTilerReload/);
+        assert.doesNotMatch(header, /isTilerReloadRequired/);
+        assert.doesNotMatch(header, /tilerReloadStatusText/);
         assert.doesNotMatch(module, /m_scriptReconfigurePending/);
-        const reconfigureBody = functionBody(module, "bool ActiveBorderConfigModule::requestScriptReconfigure()");
+        const reconfigureBody = functionBody(module, "bool ScriptConfigModule::requestScriptReconfigure()");
         assert.match(reconfigureBody, /\.send\(/);
         assert.doesNotMatch(reconfigureBody, /\.call\(/);
     });
 
-    it("refuses a no-pending reload without sending and gates the button on reload-required", () => {
-        const reloadBody = functionBody(module, "void ActiveBorderConfigModule::requestTilerReload()");
-        assert.match(reloadBody, /!m_tilerReloadRequired/);
-        assert.match(module, /setEnabled\(m_tilerReloadRequired\)/);
-        const saveBody = functionBody(module, "void ActiveBorderConfigModule::save()");
-        assert.doesNotMatch(saveBody, /requestScriptReconfigure\(\)/);
+    it("sends nothing on an unchanged save and requests reconfigure only for changed gaps", () => {
+        const saveBody = functionBody(module, "void ScriptConfigModule::save()");
+        assert.match(saveBody, /if \(gapChanged \|\| m_gapReconfigurePending\)/);
+        assert.match(saveBody, /requestScriptReconfigure\(\)/);
+        assert.doesNotMatch(module, /setEnabled\(m_tilerReloadRequired\)/);
+        assert.doesNotMatch(module, /tilerReloadButton/);
     });
 
-    it("marks gap reload-required and non-gap restart-required without auto-send", () => {
-        assert.match(module, /m_tilerReloadRequired = true/);
-        assert.match(module, /m_tilerRestartRequired = true/);
+    it("marks changed gaps for reconfigure and startup settings restart-required with auto-send", () => {
+        assert.match(module, /m_scriptRestartRequired = true/);
         assert.match(module, /gapChanged/);
         assert.match(module, /startupConsumedChanged/);
-        assert.match(module, /Reload applies gaps only/);
-        assert.match(module, /Session restart required/);
+        assert.match(module, /Reconfigure request sent/);
+        assert.match(module, /Session restart remains required/);
+        assert.match(module, /m_gapReconfigurePending = true/);
+        assert.match(module, /retry on the next save/);
+        assert.match(module, /if \(gapChanged \|\| m_gapReconfigurePending\)/);
         assert.doesNotMatch(module, /tilingAlgorithm|automaticSplitTarget|dropOutlinePreview|unconsumed settings/);
         assert.match(module, /startup gap values/);
-        assert.match(module, /requestEffectReconfigure\(\)/);
-        assert.match(module, /reconfigureEffect/);
-        const saveBody = functionBody(module, "void ActiveBorderConfigModule::save()");
-        assert.match(saveBody, /m_tilerReloadRequired = true/);
-        assert.match(saveBody, /m_tilerRestartRequired = true/);
-        assert.doesNotMatch(saveBody, /requestScriptReconfigure\(\)/);
+        assert.doesNotMatch(module, /requestEffectReconfigure\(\)/);
+        assert.doesNotMatch(module, /reconfigureEffect/);
+        const saveBody = functionBody(module, "void ScriptConfigModule::save()");
+        assert.match(saveBody, /m_scriptRestartRequired = true/);
+        assert.match(saveBody, /requestScriptReconfigure\(\)/);
         assert.match(gaps, /re-resolve/);
     });
 
     it("reports sent-but-unconfirmed and failed states without an applied claim and keeps restart residual", () => {
-        assert.match(module, /Reload request sent\. Application unconfirmed/);
-        assert.match(module, /Gap application unconfirmed/);
-        assert.match(module, /Reload request failed\. Running tiler still uses startup values/);
-        assert.match(module, /restart the session to guarantee pickup/);
+        assert.match(module, /Reconfigure request sent; application unconfirmed/);
+        assert.match(module, /application unconfirmed/i);
+        assert.match(module, /Reconfigure request failed; the running tiler still uses startup gap values/);
+        assert.match(module, /restart the session to guarantee pickup/i);
         assert.match(module, /session restart remains required for startup settings/i);
         assert.doesNotMatch(module, /No running tiler effect for unconsumed settings/);
-        const reloadBody = functionBody(module, "void ActiveBorderConfigModule::requestTilerReload()");
-        const reloadStrings = reloadBody
+        const saveBody = functionBody(module, "void ScriptConfigModule::save()");
+        const saveStrings = saveBody
             .split("\n")
             .filter((line) => line.includes("QStringLiteral"));
-        assert.ok(reloadStrings.length >= 2);
-        for (const line of reloadStrings) {
+        assert.ok(saveStrings.length >= 2);
+        for (const line of saveStrings) {
             assert.doesNotMatch(line, /applied/i);
         }
         const statusLines = module
             .split("\n")
-            .filter((line) => line.includes("m_tilerReloadStatus ="));
+            .filter((line) => line.includes("m_scriptStatus ="));
         assert.ok(statusLines.length >= 3);
         for (const line of statusLines) {
             assert.doesNotMatch(line, /applied/i);
         }
     });
 
-    it("keeps shortcut mutation out of ordinary save and deliberate reload", () => {
-        const saveBody = functionBody(module, "void ActiveBorderConfigModule::save()");
-        const reloadBody = functionBody(module, "void ActiveBorderConfigModule::requestTilerReload()");
+    it("keeps shortcut mutation out of the script module entirely", () => {
+        const saveBody = functionBody(module, "void ScriptConfigModule::save()");
         for (const forbidden of [
             /ShortcutReconciler/,
             /KGlobalAccel/,
             /setShortcutKeys/,
             /globalShortcut/i,
+            /confirmShortcutAction/,
+            /runShortcutApply/,
         ]) {
             assert.doesNotMatch(saveBody, forbidden);
-            assert.doesNotMatch(reloadBody, forbidden);
+            assert.doesNotMatch(module, forbidden);
         }
-        assert.match(module, /confirmShortcutAction/);
-        assert.match(module, /runShortcutApply/);
-        assert.match(module, /runShortcutRevert/);
     });
 
-    it("exposes gap reload UI with restart residual without touching the live border explanation", () => {
-        assert.match(ui, /name="tilerReloadStatusLabel"/);
-        assert.match(ui, /name="tilerReloadButton"/);
-        assert.match(ui, /Reload Tiler/);
-        assert.match(ui, /No pending tiler reload in this dialog\./);
-        assert.match(ui, /Session restart is the guaranteed pickup mechanism for gaps and startup settings\./);
+    it("exposes gap save status with restart residual and points the border dialog at script settings", () => {
+        assert.match(ui, /name="scriptStatusLabel"/);
+        assert.doesNotMatch(ui, /name="tilerReloadButton"/);
+        assert.match(ui, /No pending script setting in this dialog\./);
+        assert.match(ui, /Session restart is the guaranteed pickup mechanism/);
         assert.match(ui, /never claims the running tiler applied the settings/);
-        assert.match(ui, /This never changes shortcuts\./);
-        assert.match(ui, /Gap settings are saved to kwinrc\./);
-        assert.match(ui, /Saving gaps marks a reload as required/);
+        assert.match(ui, /Saving changed gaps sends one typed KWin reconfigure request/);
         assert.match(ui, /startup settings require a session restart/i);
         assert.doesNotMatch(ui, /unconsumed settings have no running effect/i);
-        assert.match(ui, /Border changes apply immediately through the KWin effect reconfigure\./);
-        assert.match(ui, /Gap settings can reload/);
+        assert.match(effectUi, /Border changes apply immediately through the KWin effect reconfigure\./);
+        assert.match(effectUi, /Script settings \(workspace mode, shortcut profile, tiling gaps\) live in the Plasma Auto Tiler script settings\./);
     });
 });
 
@@ -306,7 +319,7 @@ describe("deliberate tiler reload behavior", () => {
             fire();
         }
         assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:config-reloaded innerGap=12 outerGap=14"),
+            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:config-reloaded stage=re-read-queued innerGap=12 outerGap=14 applied-unconfirmed"),
         );
         // requestResync is debounce-coalesced with the startup resync while its
         // timer is still pending in this harness, so timer growth is not
@@ -432,12 +445,36 @@ describe("deliberate tiler reload behavior", () => {
 });
 
 describe("deliberate reload forwards gaps to subsequent workspace sends", () => {
-    function twoDesktopWorkspace(): Record<string, unknown> {
+    interface EchoHandles {
+        readonly fireDesktops: (id: string) => void;
+        readonly fireGeometry: (id: string) => void;
+    }
+    function twoDesktopWorkspace(echo?: { handles?: EchoHandles }): Record<string, unknown> {
         const output: Record<string, unknown> = { name: "out-1" };
         const ws1: Record<string, unknown> = { id: "ws-1", x11DesktopNumber: 1 };
         const ws2: Record<string, unknown> = { id: "ws-2", x11DesktopNumber: 2 };
         const currentByOutput = new Map<object, unknown>([[output, ws1]]);
+        const desktopsById = new Map<string, Array<() => void>>();
+        const geometryById = new Map<string, Array<() => void>>();
+        if (echo !== undefined) {
+            echo.handles = {
+                fireDesktops: (id: string): void => {
+                    for (const fire of [...(desktopsById.get(id) ?? [])]) {
+                        fire();
+                    }
+                },
+                fireGeometry: (id: string): void => {
+                    for (const fire of [...(geometryById.get(id) ?? [])]) {
+                        fire();
+                    }
+                },
+            };
+        }
         const makeWin = (id: string, desktop: unknown, x: number): Record<string, unknown> => {
+            const desktopsChanged = fakeSignal();
+            const frameGeometryChanged = fakeSignal();
+            desktopsById.set(id, desktopsChanged.handlers);
+            geometryById.set(id, frameGeometryChanged.handlers);
             const win: Record<string, unknown> = {
                 normalWindow: true,
                 managed: true,
@@ -450,10 +487,10 @@ describe("deliberate reload forwards gaps to subsequent workspace sends", () => 
                 output,
                 desktops: [desktop],
                 frameGeometry: { x, y: 0, width: 100, height: 100 },
-                frameGeometryChanged: fakeSignal().signal,
+                frameGeometryChanged: frameGeometryChanged.signal,
                 fullScreenChanged: fakeSignal().signal,
                 maximizedChanged: fakeSignal().signal,
-                desktopsChanged: fakeSignal().signal,
+                desktopsChanged: desktopsChanged.signal,
             };
             win["setMaximize"] = (): void => {};
             return win;
@@ -607,7 +644,7 @@ describe("deliberate reload forwards gaps to subsequent workspace sends", () => 
         for (const fire of [...optionsChanged.handlers]) {
             fire();
         }
-        assert.ok(logs.some((line) => line === "plasma-auto-tiler:plan:config-reloaded innerGap=12 outerGap=14"));
+        assert.ok(logs.some((line) => line === "plasma-auto-tiler:plan:config-reloaded stage=re-read-queued innerGap=12 outerGap=14 applied-unconfirmed"));
         settlePlans();
         const planAfter = planPayloads();
         const gapUpdate = planAfter.find(
@@ -635,6 +672,233 @@ describe("deliberate reload forwards gaps to subsequent workspace sends", () => 
         assert.equal((lastSend["domain"] as Record<string, unknown>)["outer_gap"], 14);
         assert.equal((lastSend["target_domain"] as Record<string, unknown>)["gap"], 12);
         assert.equal((lastSend["target_domain"] as Record<string, unknown>)["outer_gap"], 14);
+        handle?.stop();
+    });
+
+    it("logs queued applied-unconfirmed at signal and never claims applied, even after a commit", () => {
+        let innerGap = 8;
+        let outerGap = 8;
+        const optionsChanged = fakeSignal();
+        const dbusCalls: Array<{ method: string; payload: string }> = [];
+        const callbacks: Array<(reply: unknown) => void> = [];
+        const timers: Array<{ delayMs: number; callback: () => void; cancelled: boolean }> = [];
+        const logs: string[] = [];
+        const echo: { handles?: { fireDesktops: (id: string) => void; fireGeometry: (id: string) => void } } = {};
+        const handle = startPlanAdapterEntry({
+            workspace: twoDesktopWorkspace(echo),
+            options: { configChanged: optionsChanged.signal },
+            callDbus: (_service, _path, _iface, method, payload, callback): void => {
+                if (method === "NameHasOwner") {
+                    callback(true);
+                    return;
+                }
+                if (method === "GetNameOwner") {
+                    callback(":1.7");
+                    return;
+                }
+                if (method === "StartServiceByName") {
+                    callback(1);
+                    return;
+                }
+                dbusCalls.push({ method, payload });
+                callbacks.push(callback);
+            },
+            scheduleOnce: (delayMs: number, callback: () => void): (() => void) => {
+                const timer = { delayMs, callback, cancelled: false };
+                timers.push(timer);
+                return (): void => {
+                    timer.cancelled = true;
+                };
+            },
+            log: (message): void => {
+                logs.push(message);
+            },
+            owner: "owner-1",
+            generation: "gen-1",
+            registerShortcutFn: (): boolean => true,
+            readProfileFn: (): string => "cosmic",
+            readWorkspaceModeFn: (): string => "per-output-local",
+            readInnerGapFn: (): number => innerGap,
+            readOuterGapFn: (): number => outerGap,
+        });
+        assert.ok(handle !== null);
+        innerGap = 12;
+        outerGap = 14;
+        for (const fire of [...optionsChanged.handlers]) {
+            fire();
+        }
+        assert.ok(
+            logs.some(
+                (line) => line === "plasma-auto-tiler:plan:config-reloaded stage=re-read-queued innerGap=12 outerGap=14 applied-unconfirmed",
+            ),
+            logs.join("\n"),
+        );
+        // Queued is not applied: no committed flight has retained the pair yet.
+        assert.ok(!logs.some((line) => line.includes("stage=applied")), logs.join("\n"));
+        handle?.requestWorkspaceMove(2);
+        const sendIndex = dbusCalls.findIndex((call) => {
+            try {
+                return ((JSON.parse(call.payload) as Record<string, unknown>)["command"] as Record<string, unknown>)?.["op"] === "send-to-workspace";
+            } catch {
+                return false;
+            }
+        });
+        assert.ok(sendIndex >= 0);
+        const sendPayload = JSON.parse(dbusCalls[sendIndex]?.payload as string) as Record<string, unknown>;
+        const correlation = sendPayload["correlation_id"] as string;
+        assert.ok(typeof correlation === "string" && correlation.length > 0);
+        const geometry = (sendPayload["windows"] as Array<Record<string, unknown>>).concat(
+            sendPayload["target_windows"] as Array<Record<string, unknown>>,
+        );
+        callbacks[sendIndex]?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: correlation,
+                outcome: "planned",
+                kind: "send-to-workspace",
+                base_revision: 0,
+                detail: { kind: "send-to-workspace", policy_version: 1, capability: "move-tiled" },
+                desired_geometry: geometry.map((entry) => ({
+                    window: entry["window"],
+                    leaf: `leaf-${entry["window"] as string}`,
+                    output: entry["output"],
+                    workspace: "ws-2",
+                    rect: entry["rect"],
+                })),
+                desired_focus: { domain_output: "out-1", domain_workspace: "ws-2", leaf: "leaf-win-a" },
+                preconditions: ["window-observed", "desired-topology-valid", "adapter-must-verify-postconditions"],
+                operation: {
+                    op: "move-tiled",
+                    window: "win-a",
+                    leaf: "leaf-win-a",
+                    source_output: "out-1",
+                    source_workspace: "ws-1",
+                    target_output: "out-1",
+                    target_workspace: "ws-2",
+                },
+            }),
+        );
+        // Fire native echoes so the fenced ack/verify path can proceed.
+        echo.handles?.fireDesktops("win-a");
+        echo.handles?.fireGeometry("win-a");
+        echo.handles?.fireGeometry("win-b");
+        echo.handles?.fireGeometry("win-t");
+        const ackIndex = dbusCalls.findIndex((call, index) => {
+            if (index <= sendIndex) {
+                return false;
+            }
+            try {
+                return ((JSON.parse(call.payload) as Record<string, unknown>)["command"] as Record<string, unknown>)?.["op"] === "send-to-workspace-ack";
+            } catch {
+                return false;
+            }
+        });
+        assert.ok(ackIndex >= 0, `ack expected, got ${dbusCalls.map((call) => call.method).join(",")}`);
+        callbacks[ackIndex]?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: correlation,
+                outcome: "acknowledged",
+                kind: "send-to-workspace",
+                base_revision: 0,
+            }),
+        );
+        echo.handles?.fireDesktops("win-a");
+        echo.handles?.fireGeometry("win-a");
+        const verifyIndex = dbusCalls.findIndex((call, index) => {
+            if (index <= ackIndex) {
+                return false;
+            }
+            try {
+                return ((JSON.parse(call.payload) as Record<string, unknown>)["command"] as Record<string, unknown>)?.["op"] === "send-to-workspace-verify";
+            } catch {
+                return false;
+            }
+        });
+        assert.ok(verifyIndex >= 0, `verify expected, got ${dbusCalls.map((call) => call.method).join(",")}`);
+        callbacks[verifyIndex]?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: correlation,
+                outcome: "committed",
+                kind: "send-to-workspace",
+                base_revision: 1,
+            }),
+        );
+        // Provenance: the send committed with the queued pair, but the
+        // update-gaps plan flight runs the separate planner channel, so no
+        // applied claim may follow. The queued line stays applied-unconfirmed.
+        assert.ok(!logs.some((line) => line.includes("stage=applied")), logs.join("\n"));
+        assert.ok(
+            logs.some(
+                (line) => line === "plasma-auto-tiler:plan:config-reloaded stage=re-read-queued innerGap=12 outerGap=14 applied-unconfirmed",
+            ),
+            logs.join("\n"),
+        );
+        handle?.stop();
+    });
+
+    it("logs restart-required for startup key drift without adopting it", () => {
+        let workspaceMode = "per-output-local";
+        const optionsChanged = fakeSignal();
+        const dbusCalls: Array<{ method: string; payload: string }> = [];
+        const callbacks: Array<(reply: unknown) => void> = [];
+        const timers: Array<{ delayMs: number; callback: () => void; cancelled: boolean }> = [];
+        const logs: string[] = [];
+        const handle = startPlanAdapterEntry({
+            workspace: twoDesktopWorkspace(),
+            options: { configChanged: optionsChanged.signal },
+            callDbus: (_service, _path, _iface, method, payload, callback): void => {
+                if (method === "NameHasOwner") {
+                    callback(true);
+                    return;
+                }
+                if (method === "GetNameOwner") {
+                    callback(":1.7");
+                    return;
+                }
+                if (method === "StartServiceByName") {
+                    callback(1);
+                    return;
+                }
+                dbusCalls.push({ method, payload });
+                callbacks.push(callback);
+            },
+            scheduleOnce: (delayMs: number, callback: () => void): (() => void) => {
+                const timer = { delayMs, callback, cancelled: false };
+                timers.push(timer);
+                return (): void => {
+                    timer.cancelled = true;
+                };
+            },
+            log: (message): void => {
+                logs.push(message);
+            },
+            owner: "owner-1",
+            generation: "gen-1",
+            registerShortcutFn: (): boolean => true,
+            readProfileFn: (): string => "cosmic",
+            readWorkspaceModeFn: (): string => workspaceMode,
+            readInnerGapFn: (): number => 8,
+            readOuterGapFn: (): number => 8,
+        });
+        assert.ok(handle !== null);
+        workspaceMode = "shared";
+        for (const fire of [...optionsChanged.handlers]) {
+            fire();
+        }
+        assert.ok(
+            logs.some(
+                (line) => line === "plasma-auto-tiler:plan:config-reloaded stage=restart-required keys=workspaceMode",
+            ),
+            logs.join("\n"),
+        );
+        // Gaps unchanged: nothing queued and nothing applied.
+        assert.ok(!logs.some((line) => line.includes("stage=re-read-queued")), logs.join("\n"));
+        assert.ok(!logs.some((line) => line.includes("stage=applied")), logs.join("\n"));
+        void dbusCalls;
+        void callbacks;
+        void timers;
         handle?.stop();
     });
 });

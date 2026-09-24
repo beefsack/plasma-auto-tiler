@@ -28,10 +28,11 @@ describe("production bundle compatibility", () => {
         assert.doesNotMatch(bundle, /\.(?:trimStart|trimEnd|matchAll|replaceAll)\(/);
     });
 
-    it("keeps the script metadata free of the retired generic KCM link", () => {
+    it("routes the script metadata to the native script KCM, never the retired generic link", () => {
         const metadata = readFileSync("metadata.json", "utf8");
         const schema = readFileSync("contents/config/main.xml", "utf8");
-        assert.doesNotMatch(metadata, /"X-KDE-ConfigModule"/);
+        assert.match(metadata, /"X-KDE-ConfigModule": "kwin\/scripts\/configs\/plasma-auto-tiler-kwin_config"/);
+        assert.doesNotMatch(metadata, /kcm_kwin4_genericscripted/);
         assert.match(schema, /<entry name="workspaceMode" type="Enum">/);
         assert.match(schema, /<entry name="shortcutProfile" type="Enum">/);
         assert.match(schema, /<entry name="innerGap" type="Int">/);

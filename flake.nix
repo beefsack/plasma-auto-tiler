@@ -60,6 +60,12 @@
           ./kwin/native-effect/shortcutreconciler.h
           ./kwin/native-effect/shortcutreconciler.cpp
           ./kwin/native-effect/drag_oracle_ffi.h
+          ./kwin/native-effect/scriptconfig_module.json
+          ./kwin/native-effect/scriptconfig_module.h
+          ./kwin/native-effect/scriptconfig_module.cpp
+          ./kwin/native-effect/scriptconfig.ui
+          ./kwin/native-effect/scriptconfig_module_test.cpp
+          ./kwin/native-effect/validate-scriptconfig.cmake
           ./kwin/native-effect/validate-unified-lifecycle.cmake
           ./Cargo.toml
           ./Cargo.lock
@@ -142,7 +148,9 @@
             runHook preInstallCheck
             test -f "$out/lib/qt-6/plugins/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
             test -f "$out/lib/qt-6/plugins/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+            test -f "$out/lib/qt-6/plugins/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
             test ! -e "$out/lib/qt-6/plugins/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
+            test ! -e "$out/lib/qt-6/plugins/kwin/scripts/configs/plasma-auto-tiler-drag-oracle_config.so"
             runHook postInstallCheck
           '';
         };
@@ -179,6 +187,10 @@
             grep -Fx "package=plasma-auto-tiler-kwin" "$installRoot/build-id"
             grep -Fx "version=0.1.0" "$installRoot/build-id"
             grep -Fx "source=${sourceRev}" "$installRoot/build-id"
+            # Script-only package keeps the qualified native script KCM
+            # reference; the Configure page resolves only alongside the
+            # companion ABI-matched native-effect delivery.
+            grep -F "kwin/scripts/configs/plasma-auto-tiler-kwin_config" "$installRoot/metadata.json"
             runHook postInstallCheck
           '';
         };

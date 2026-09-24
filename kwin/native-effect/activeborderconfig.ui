@@ -1,97 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
  <class>ActiveBorderConfig</class>
- <widget class="QWidget" name="ActiveBorderConfig">
-  <layout class="QVBoxLayout" name="verticalLayout">
-   <item>
-    <widget class="QGroupBox" name="scriptSettings">
-     <property name="title">
-      <string>Plasma Auto Tiler</string>
-     </property>
-     <layout class="QFormLayout" name="scriptFormLayout">
-       <item row="0" column="0">
-        <widget class="QLabel" name="label_workspaceMode">
-         <property name="buddy">
-          <cstring>workspaceModeCombo</cstring>
-         </property>
-        <property name="text">
-         <string>The multi-output workspace model</string>
-        </property>
-       </widget>
-      </item>
-       <item row="0" column="1">
-       <widget class="QComboBox" name="workspaceModeCombo"/>
-      </item>
-       <item row="1" column="0">
-        <widget class="QLabel" name="label_shortcutProfile">
-         <property name="buddy">
-          <cstring>shortcutProfileCombo</cstring>
-         </property>
-        <property name="text">
-         <string>The startup shortcut profile</string>
-        </property>
-       </widget>
-      </item>
-        <item row="1" column="1">
-        <widget class="QComboBox" name="shortcutProfileCombo"/>
-       </item>
-       <item row="2" column="0">
-        <widget class="QLabel" name="label_innerGap">
-         <property name="buddy">
-          <cstring>innerGapSpinBox</cstring>
-         </property>
-        <property name="text">
-         <string>Gap between tiled windows:</string>
-        </property>
-       </widget>
-      </item>
-       <item row="2" column="1">
-       <widget class="QSpinBox" name="innerGapSpinBox">
-        <property name="minimum">
-         <number>0</number>
-        </property>
-        <property name="maximum">
-         <number>64</number>
-        </property>
-        <property name="value">
-         <number>8</number>
-        </property>
-        <property name="suffix">
-         <string> px</string>
-        </property>
-       </widget>
-      </item>
-       <item row="3" column="0">
-        <widget class="QLabel" name="label_outerGap">
-         <property name="buddy">
-          <cstring>outerGapSpinBox</cstring>
-         </property>
-        <property name="text">
-         <string>Gap between tiled windows and the work area edge:</string>
-        </property>
-       </widget>
-      </item>
-       <item row="3" column="1">
-       <widget class="QSpinBox" name="outerGapSpinBox">
-        <property name="minimum">
-         <number>0</number>
-        </property>
-        <property name="maximum">
-         <number>64</number>
-        </property>
-        <property name="value">
-         <number>8</number>
-        </property>
-        <property name="suffix">
-         <string> px</string>
-        </property>
-       </widget>
-      </item>
-     </layout>
-    </widget>
-   </item>
-   <item>
-    <widget class="QGroupBox" name="borderSettings">
+  <widget class="QWidget" name="ActiveBorderConfig">
+   <layout class="QVBoxLayout" name="verticalLayout">
+    <item>
+     <widget class="QGroupBox" name="borderSettings">
      <property name="title">
       <string>Active Window Border</string>
      </property>
@@ -188,7 +101,7 @@
        <item row="5" column="0" colspan="2">
         <widget class="QLabel" name="borderDescription">
          <property name="text">
-               <string>When enabled, the border uses the current theme highlight color when available and the configured color is the fallback. When disabled, the configured color is always used. Border changes apply immediately through the KWin effect reconfigure. Gap settings can reload; startup settings require a session restart.</string>
+               <string>When enabled, the border uses the current theme highlight color when available and the configured color is the fallback. When disabled, the configured color is always used. Border changes apply immediately through the KWin effect reconfigure. Script settings (workspace mode, shortcut profile, tiling gaps) live in the Plasma Auto Tiler script settings.</string>
         </property>
         <property name="wordWrap">
          <bool>true</bool>
@@ -196,42 +109,6 @@
        </widget>
       </item>
    </layout>
-     </widget>
-    </item>
-    <item>
-     <widget class="QGroupBox" name="tilerReloadGroup">
-      <property name="title">
-       <string>Tiler Reload</string>
-      </property>
-      <layout class="QVBoxLayout" name="tilerReloadLayout">
-       <item>
-        <widget class="QLabel" name="tilerReloadStatusLabel">
-         <property name="text">
-          <string>No pending tiler reload in this dialog.</string>
-         </property>
-         <property name="wordWrap">
-          <bool>true</bool>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QPushButton" name="tilerReloadButton">
-         <property name="text">
-          <string>Reload Tiler</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="tilerReloadDescription">
-         <property name="text">
-             <string>Gap settings are saved to kwinrc. Session restart is the guaranteed pickup mechanism for gaps and startup settings. Saving gaps marks a reload as required; startup settings require a session restart. Reload sends one typed KWin reconfigure request; the send is unconfirmed and never claims the running tiler applied the settings. This never changes shortcuts.</string>
-         </property>
-         <property name="wordWrap">
-          <bool>true</bool>
-         </property>
-        </widget>
-       </item>
-      </layout>
      </widget>
     </item>
     <item>

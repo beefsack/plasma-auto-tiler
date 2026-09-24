@@ -57,6 +57,11 @@ EFFECT_ROOT="$DATA_ROOT/plasma-auto-tiler-native-effect"
 EFFECT_SOURCE_DIR="$REPO_ROOT/kwin/native-effect"
 EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/$EFFECT_PLUGIN_ID.so"
 EFFECT_STAGED_KCM="$EFFECT_ROOT/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+# Project-owned native script settings KCM (kwin/scripts/configs/
+# plasma-auto-tiler-kwin_config), discovered through the script package
+# metadata X-KDE-ConfigModule reference. Staged alongside the effect; package
+# install never implies the effect (or any script setting) is enabled.
+EFFECT_STAGED_SCRIPT_KCM="$EFFECT_ROOT/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
 
 # plasma-workspace's own startplasma-wayland sources every *.sh file under
 # this directory into its own process environment before syncing it to the
@@ -96,18 +101,20 @@ Commands:
              destination install/enabled state; lists intended install
              actions; read-only, never mutates
 
-  effect-install  build the native "active border" effect and its QWidget KCM,
+  effect-install  build the native "active border" effect, its effect-scoped
+                   QWidget KCM, and the native script settings KCM,
                    staging them under
-                   $XDG_DATA_HOME/plasma-auto-tiler-native-effect/kwin/effects/
-                  (plugins/ and configs/, or the $HOME/.local/share equivalent
-                  when XDG_DATA_HOME is unset); writes a QT_PLUGIN_PATH env script under
+                   $XDG_DATA_HOME/plasma-auto-tiler-native-effect/kwin/
+                   (effects/plugins/, effects/configs/, and scripts/configs/,
+                   or the $HOME/.local/share equivalent
+                   when XDG_DATA_HOME is unset); writes a QT_PLUGIN_PATH env script under
                   $XDG_CONFIG_HOME/plasma-workspace/env/ so the staged plugin
                   dir is discovered on next login; also writes
                   [Plugins] plasma-auto-tiler-active-borderEnabled=true to
                   kwinrc so the effect persists across future session starts
                   once discovered (does not reconfigure KWin or use D-Bus);
                   idempotent. The staging transaction publishes only the
-                  survivor effect .so plus the KCM, so a stale staged
+                  survivor effect .so plus both KCMs, so a stale staged
                   plasma-auto-tiler-drag-oracle.so under the project-owned
                   staging root is eliminated by atomic replacement (external
                   or system plugin paths are never touched). When kwinrc
@@ -517,17 +524,22 @@ cmd_effect_install() {
 
   local built_so="$install_build_dir/bin/kwin/effects/plugins/$EFFECT_PLUGIN_ID.so"
   local built_kcm="$install_build_dir/bin/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+  local built_script_kcm="$install_build_dir/bin/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
   if [[ ! -f "$built_so" ]]; then
     effect_install_abort "bundle not found after build: $built_so"
   fi
   if [[ ! -f "$built_kcm" ]]; then
     effect_install_abort "config module not found after build: $built_kcm"
   fi
+  if [[ ! -f "$built_script_kcm" ]]; then
+    effect_install_abort "script config module not found after build: $built_script_kcm"
+  fi
 
   local install_payload_root="$install_payload/root"
   local payload_so="$install_payload_root/kwin/effects/plugins/$EFFECT_PLUGIN_ID.so"
   local payload_kcm="$install_payload_root/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
-  if ! install -Dm0644 "$built_so" "$payload_so" || ! install -Dm0644 "$built_kcm" "$payload_kcm"; then
+  local payload_script_kcm="$install_payload_root/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
+  if ! install -Dm0644 "$built_so" "$payload_so" || ! install -Dm0644 "$built_kcm" "$payload_kcm" || ! install -Dm0644 "$built_script_kcm" "$payload_script_kcm"; then
     effect_install_abort "could not prepare native-effect staging payload"
   fi
   effect_install_check_signal
@@ -615,6 +627,8 @@ cmd_effect_install() {
   rm -rf -- "$install_transaction"
   install_transaction=""
   echo "staged: $EFFECT_STAGED_SO"
+  echo "staged: $EFFECT_STAGED_KCM"
+  echo "staged: $EFFECT_STAGED_SCRIPT_KCM"
   echo "env script: $EFFECT_ENV_FILE"
   echo "kwinrc: $EFFECT_CONFIG_KEY set to true (persists across future session starts once the effect is discovered by KWin; this does not itself trigger a live D-Bus load - use 'effect-reload' for that)"
   if [[ "$legacy_oracle_migrated" -eq 1 ]]; then
@@ -716,6 +730,13 @@ cmd_effect_status() {
   else
     a_ok="false"
     echo "[a] config module: no - KCM .so not found at $EFFECT_STAGED_KCM"
+    echo "    -> run 'effect-install' to build and stage it."
+  fi
+  if [[ -f "$EFFECT_STAGED_SCRIPT_KCM" ]]; then
+    echo "[a] script config module: yes - script KCM .so present at $EFFECT_STAGED_SCRIPT_KCM"
+  else
+    a_ok="false"
+    echo "[a] script config module: no - script KCM .so not found at $EFFECT_STAGED_SCRIPT_KCM"
     echo "    -> run 'effect-install' to build and stage it."
   fi
 

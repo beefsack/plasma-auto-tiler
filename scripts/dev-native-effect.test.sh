@@ -52,8 +52,10 @@ assert_not_contains() {
 
 part1_setup() {
   local root="$WORK/p1"
-  mkdir -p "$root/stage/kwin/effects/plugins" "$root/config"
+  mkdir -p "$root/stage/kwin/effects/plugins" "$root/stage/kwin/effects/configs" "$root/stage/kwin/scripts/configs" "$root/config"
   printf 'border-so' > "$root/stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+  printf 'effect-kcm-so' > "$root/stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+  printf 'script-kcm-so' > "$root/stage/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
   printf 'oracle-so' > "$root/stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
   export PLASMA_AUTO_TILER_NATIVE_STAGE="$root/stage"
   export XDG_CONFIG_HOME="$root/config"
@@ -117,8 +119,10 @@ part1_setup() {
   # Alternate checkout refused.
   bash "$HELPER" setup >"$OUTPUT" 2>&1
   local other="$WORK/p1-other"
-  mkdir -p "$other/stage/kwin/effects/plugins"
+  mkdir -p "$other/stage/kwin/effects/plugins" "$other/stage/kwin/effects/configs" "$other/stage/kwin/scripts/configs"
   printf 'b' > "$other/stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+  printf 'k' > "$other/stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+  printf 's' > "$other/stage/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
   printf 'o' > "$other/stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
   set +e
   PLASMA_AUTO_TILER_NATIVE_STAGE="$other/stage" bash "$HELPER" setup >"$OUTPUT" 2>&1
@@ -137,6 +141,28 @@ part1_setup() {
   check_exit 1 "setup missing stage fails"
   assert_contains "just build-native-effect" "setup missing actionable"
   printf 'border-so' > "$root/stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+
+  # Missing staged effect KCM fails actionable even when the effect is staged.
+  rm -f "$root/stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+  set +e
+  bash "$HELPER" setup >"$OUTPUT" 2>&1
+  EXIT=$?
+  set -e
+  check_exit 1 "setup missing effect KCM fails"
+  assert_contains "staged effect KCM missing" "setup missing effect KCM actionable"
+  assert_contains "just build-native-effect" "setup missing effect KCM build hint"
+  printf 'effect-kcm-so' > "$root/stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+
+  # Missing staged script settings KCM fails actionable even when the effect is staged.
+  rm -f "$root/stage/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
+  set +e
+  bash "$HELPER" setup >"$OUTPUT" 2>&1
+  EXIT=$?
+  set -e
+  check_exit 1 "setup missing script KCM fails"
+  assert_contains "staged script settings KCM missing" "setup missing script KCM actionable"
+  assert_contains "just build-native-effect" "setup missing script KCM build hint"
+  printf 'script-kcm-so' > "$root/stage/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
 
   # No kwinrc writes, no D-Bus use: setup must not create kwinrc.
   [[ ! -e "$root/config/kwinrc" ]] && PASS=$((PASS + 1)) || { echo "FAIL [setup no kwinrc]" >&2; FAIL=$((FAIL + 1)); }
@@ -192,8 +218,10 @@ part1_setup() {
 part1_quoting() {
   local root="$WORK/p1q"
   local weird="$root/a b'\$x\"y;z&|()!"
-  mkdir -p "$weird/kwin/effects/plugins" "$root/config"
+  mkdir -p "$weird/kwin/effects/plugins" "$weird/kwin/effects/configs" "$weird/kwin/scripts/configs" "$root/config"
   printf 'b' > "$weird/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+  printf 'k' > "$weird/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+  printf 's' > "$weird/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
   printf 'o' > "$weird/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
   export PLASMA_AUTO_TILER_NATIVE_STAGE="$weird"
   export XDG_CONFIG_HOME="$root/config"
@@ -225,8 +253,10 @@ part1_quoting() {
 
 part1_canonical_and_collision() {
   local root="$WORK/p1c"
-  mkdir -p "$root/stage/kwin/effects/plugins" "$root/config"
+  mkdir -p "$root/stage/kwin/effects/plugins" "$root/stage/kwin/effects/configs" "$root/stage/kwin/scripts/configs" "$root/config"
   printf 'b' > "$root/stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+  printf 'k' > "$root/stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+  printf 's' > "$root/stage/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
   printf 'o' > "$root/stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
   export PLASMA_AUTO_TILER_NATIVE_STAGE="$root/stage"
   export XDG_CONFIG_HOME="$root/config"
@@ -353,8 +383,9 @@ EOF
   export FAKE_CALL_LOG="$WORK/p2/calls.log"
   export PROC_ROOT="$WORK/p2/proc"
   export PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/p2/stage"
-  mkdir -p "$PLASMA_AUTO_TILER_NATIVE_STAGE/kwin/effects/plugins"
+  mkdir -p "$PLASMA_AUTO_TILER_NATIVE_STAGE/kwin/effects/plugins" "$PLASMA_AUTO_TILER_NATIVE_STAGE/kwin/scripts/configs"
   printf 'x\0org.kde.kwin.EffectPluginFactory6.7.4\0' > "$PLASMA_AUTO_TILER_NATIVE_STAGE/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+  printf 'x' > "$PLASMA_AUTO_TILER_NATIVE_STAGE/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
   mkdir -p "$PROC_ROOT/5151"
   printf '5151 (kwin_wayland) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 777888\n' > "$PROC_ROOT/5151/stat"
   printf '5151\n' > "$WORK/p2/state/kwin-pid"
@@ -694,15 +725,11 @@ case "$*" in
   *) exit 1 ;;
 esac
 EOF
-  cat > "$fbin/cargo" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-printf 'cargo build\n' >> "${FAKE_CALL_LOG:?}"
-bin="${PLASMA_AUTO_TILER_BIN:?}"
-mkdir -p "${bin%/*}"
-[[ -x "$bin" ]] || { printf '#!/usr/bin/env bash\nexit 0\n' > "$bin"; chmod +x "$bin"; }
-exit 0
-EOF
+  # NOTE: there is intentionally no $fbin/cargo fake. The build-native-effect
+  # recipe runs the host builder with CARGO_BIN unset, so the builder resolves
+  # cargo via PATH and requires it under the (fake) store root. The logging
+  # cargo fake therefore lives at $jwork/fake-store/hash-cargo/bin/cargo below
+  # and jrun puts that dir first on PATH.
   cat > "$fbin/npm" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -717,9 +744,10 @@ set -euo pipefail
 printf 'cmake build\n' >> "${FAKE_CALL_LOG:?}"
 build_dir="${PLASMA_AUTO_TILER_NATIVE_BUILD:-}"
 if [[ -n "$build_dir" ]]; then
-  mkdir -p "$build_dir/bin/kwin/effects/plugins" "$build_dir/bin/kwin/effects/configs"
+  mkdir -p "$build_dir/bin/kwin/effects/plugins" "$build_dir/bin/kwin/effects/configs" "$build_dir/bin/kwin/scripts/configs"
   printf 'x' > "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
   printf 'x' > "$build_dir/bin/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+  printf 'x' > "$build_dir/bin/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
 fi
 exit 0
 EOF
@@ -784,7 +812,18 @@ EOF
   chmod +x "$fbin/nix"
   mkdir -p "$jwork/fake-store/hash-rustc/bin" "$jwork/fake-store/hash-cargo/bin" "$jwork/fake-store/hash-cmake/bin"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$jwork/fake-store/hash-rustc/bin/rustc"
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$jwork/fake-store/hash-cargo/bin/cargo"
+  # Logging cargo fake under the store root (see the $fbin/cargo note above):
+  # build-rust (via the fake devenv) and the host builder's PATH lookup both
+  # resolve this path, satisfying the builder's explicit /nix/store check.
+  cat > "$jwork/fake-store/hash-cargo/bin/cargo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'cargo build\n' >> "${FAKE_CALL_LOG:?}"
+bin="${PLASMA_AUTO_TILER_BIN:?}"
+mkdir -p "${bin%/*}"
+[[ -x "$bin" ]] || { printf '#!/usr/bin/env bash\nexit 0\n' > "$bin"; chmod +x "$bin"; }
+exit 0
+EOF
   chmod +x "$jwork/fake-store/hash-rustc/bin/rustc" "$jwork/fake-store/hash-cargo/bin/cargo"
   cp "$fbin/cmake" "$jwork/fake-store/hash-cmake/bin/cmake"
   chmod +x "$jwork/fake-store/hash-cmake/bin/cmake"
@@ -866,7 +905,7 @@ EOF
   }
   jrun() {
     set +e
-    FAKE_STATE_DIR="$jwork/state" FAKE_CALL_LOG="$jwork/calls.log" PROC_ROOT="$jwork/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" PLASMA_AUTO_TILER_KWIN_DIR="$jwork/fake-kwin" PLASMA_AUTO_TILER_NATIVE_BUILD="$jwork/fake-native-build" PLASMA_AUTO_TILER_NATIVE_STAGE="$jwork/fake-native-stage" PLASMA_AUTO_TILER_TARGET_DIR="$jwork/fake-target" PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$jwork/fake-kwin-cmake" PLASMA_AUTO_TILER_HOST_KWIN_BIN="$jwork/fake-host/kwin_wayland" PLASMA_AUTO_TILER_STORE_ROOT="$jwork/fake-store" NIX_BIN="$fbin/nix" RUSTC_BIN="$jwork/fake-store/hash-rustc/bin/rustc" CARGO_BIN="$jwork/fake-store/hash-cargo/bin/cargo" CMAKE_BIN="$jwork/fake-store/hash-cmake/bin/cmake" FAKE_DRV="$FAKE_DRV" FAKE_STORE_PATH="$FAKE_STORE_PATH" FAKE_DEV_OUT="$FAKE_DEV_OUT" XDG_RUNTIME_DIR="$jwork/runtime" DEV_LOOP_START_TEST="$jwork/fake-start.sh" DEV_LOOP_DOGFOOD="$jwork/fake-dogfood.sh" PATH="$fbin:$PATH" just --justfile "$isolated" "$@" >"$OUTPUT" 2>&1
+    FAKE_STATE_DIR="$jwork/state" FAKE_CALL_LOG="$jwork/calls.log" PROC_ROOT="$jwork/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" PLASMA_AUTO_TILER_KWIN_DIR="$jwork/fake-kwin" PLASMA_AUTO_TILER_NATIVE_BUILD="$jwork/fake-native-build" PLASMA_AUTO_TILER_NATIVE_STAGE="$jwork/fake-native-stage" PLASMA_AUTO_TILER_TARGET_DIR="$jwork/fake-target" PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$jwork/fake-kwin-cmake" PLASMA_AUTO_TILER_HOST_KWIN_BIN="$jwork/fake-host/kwin_wayland" PLASMA_AUTO_TILER_STORE_ROOT="$jwork/fake-store" NIX_BIN="$fbin/nix" RUSTC_BIN="$jwork/fake-store/hash-rustc/bin/rustc" CARGO_BIN="$jwork/fake-store/hash-cargo/bin/cargo" CMAKE_BIN="$jwork/fake-store/hash-cmake/bin/cmake" FAKE_DRV="$FAKE_DRV" FAKE_STORE_PATH="$FAKE_STORE_PATH" FAKE_DEV_OUT="$FAKE_DEV_OUT" XDG_RUNTIME_DIR="$jwork/runtime" DEV_LOOP_START_TEST="$jwork/fake-start.sh" DEV_LOOP_DOGFOOD="$jwork/fake-dogfood.sh" PATH="$jwork/fake-store/hash-cargo/bin:$fbin:$PATH" just --justfile "$isolated" "$@" >"$OUTPUT" 2>&1
     EXIT=$?
     set -e
   }

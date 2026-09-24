@@ -51,10 +51,6 @@ decisions of 2026-09-24 are recorded under
   effect mouse interception blocks all clicks; plausible first prototype is
   project-owned layer-shell surfaces confined to positive-width gaps, with a
   native KWin input filter as fallback. Needs a Rust split-boundary request.
-- P0 | AR15 Script-page tiling settings | 7.4. Approved: tiling settings
-  (`workspaceMode`, `shortcutProfile`, gaps) move to the script's configure page
-  via `X-KDE-ConfigModule`; effect KCM keeps border and shortcut settings only.
-  Same `kwinrc` group. Verify whether script-page save reaches the gap resync.
 - P0 | AR13 Same-UID-trusted tray | 7.12. Approved: drop KWin executable
   allowlist and `/proc`/pidfd/inode binding; single instance via D-Bus name;
   XDG autostart or user unit; accept snapshots only from the current
@@ -428,47 +424,27 @@ Existing work:
   [investigation](changes/reliability-condition-investigation.md)
 - P1 | All settings live application (launch blocker) | Before launch, every
   user-facing setting must apply live, including tiling, workspace, shortcut,
-  and effect settings. Overall liveness is PARTIAL, not complete: gaps apply
-  through the deliberate retained reload below and borders stay live; the
-  rest is pending. `shortcutProfile`/`workspaceMode` are startup-only
-  (restart applies them); `tilingAlgorithm`, `automaticSplitTarget`, and
-  `dropOutlinePreview` are persisted but consumed by nothing, so neither
-  reload nor restart applies them. Verify running behavior reflects saved
-  settings without requiring a tiler reload. The interim reload approach
-  does not satisfy this.
+  and effect settings. Overall liveness is PARTIAL: saving gaps from the script
+  Configure page now automatically requests the validated retained gap resync,
+  pending live acceptance; borders remain live. `shortcutProfile` and
+  `workspaceMode` still require a session restart, so the launch blocker is not
+  satisfied. The three ineffective controls have been removed; legacy values
+  are left untouched. Verify running behavior reflects saved settings without
+  requiring a tiler reload.
   [investigation](changes/reliability-condition-investigation.md)
 - P2 | Interim runtime configuration reload | PARTIAL: the gap-only portion is
   static-complete with retained offline proof and a pending live gate; broader
-  tiling-settings reload remains unfinished. Delivered: deliberate gap-only
-  reload after saving gap settings, with clear reload/restart UI and live border
-  updates retained. Saving gaps marks reload-required and enables Reload
-  Tiler; saving only startup-consumed `shortcutProfile`/`workspaceMode` marks
-  restart-required with reload disabled; saving only unconsumed
-  `tilingAlgorithm`, `automaticSplitTarget`, `dropOutlinePreview` marks
-  no-running-effect with reload disabled and no restart claim (neither reload
-  nor restart applies them today).
-  Combined saves distinguish each pending category: reload applies gaps only,
-  restart applies startup-consumed settings only, unconsumed settings stay
-  without running effect. A no-pending request sends nothing. A deliberate
-  reload sends one typed KWin reconfigure request reported as
-  sent-but-unconfirmed or failed, never applied; a queued send never clears
-  restart-required or unconsumed state; session restart remains the
-  fallback guarantee for gap pickup only where the retained route cannot
-  converge. The running controller subscribes to the KWin Options
-  `configChanged` signal emitted after that reconfigure reparses kwinrc, then
-  re-reads validated gap configuration and requests one debounced resync that
-  dispatches retained `update-gaps` for a changed gap pair (proven offline
-  for inner, outer, and combined changes with topology/share/focus
-  preservation; ordinary drift reconcile still refuses gaps);
-  unchanged signals resync nothing and shortcuts are never re-registered
-  (no unregister operation exists on the pinned KWin scripting surface, so
-  re-registration is unselected and foreign records stay KCM-explicit-only).
-  Startup-read settings stay startup-only; unconsumed settings stay
-  unconsumed. Reload/restart-required is dialog-scoped in-memory state: dialog
-  load/reopen resets it and truthful cross-reload preservation is blocked
-  (no authorized persistent key, no supported runtime observation). No live
-  result is claimed and the all-settings live-application launch blocker is
-  unchanged.
+  startup-only settings remain unfinished. AR15 moves gaps and startup settings
+  to the script Configure page. Saving changed gaps sends a KWin reconfigure
+  request automatically after persistence, without the effect KCM's former
+  Reload Tiler button. The send is reported as sent-but-unconfirmed or failed,
+  never as applied; the controller re-reads validated gaps on
+  `Options.configChanged` and requests debounced retained `update-gaps`.
+  Unchanged signals resync nothing; startup-read `shortcutProfile` and
+  `workspaceMode` remain restart-required and shortcuts are not re-registered.
+  Session restart remains the fallback guarantee for gap pickup if the retained
+  route cannot converge. Dialog-scoped status resets on reopening. No live
+  application result is claimed and the all-settings launch blocker remains.
   [investigation](changes/reliability-condition-investigation.md)
 - P1 | Rust-engine/direct-geometry migration live gate | Rust-mode exact-three
   focus, movement, keyboard resize, and pointer resize are static-complete behind
@@ -523,9 +499,12 @@ Existing work:
   same-unit containment are unproven. Do not add a project-owned client or
   dependency, retry, or cleanup without fresh explicit authorization.
 - P2 | Configurable gaps live acceptance | Native KCM inner/outer gaps and
-  validated startup binding are implemented (defaults 8, bounds 0..64). Script,
-  Rust, native build, and isolated KCM persistence checks pass. User-owned
-  acceptance remains for saved settings and visible gaps after reload/restart.
+  validated startup binding are implemented (defaults 8, bounds 0..64). AR15
+  moves gap controls to the script Configure page via a host-built native script
+  KCM; its Save requests running gap resync without a separate user step. The
+  native companion must be installed for the page, but the effect need not be
+  enabled. User-owned acceptance remains for saved settings and visible gaps
+  after Save, including session restart where needed for native delivery.
   [record](changes/archive/window-gap-configurability.md)
 - P2 | Floor-ratio fallback | Retain it unless qualifying isolated nested proof
   establishes a safe improvement. [change](changes/floor-ratio-feasibility.md)

@@ -14,12 +14,18 @@ const nativeMetadata = JSON.parse(read("native-effect/metadata.json")) as {
 const kcmMetadata = JSON.parse(read("native-effect/activeborderconfig_module.json")) as {
     KPlugin: { Id: string; Name: string; Description: string; Icon: string; License: string };
 };
+const scriptKcmMetadata = JSON.parse(read("native-effect/scriptconfig_module.json")) as {
+    KPlugin: { Id: string; Name: string; Description: string; Icon: string; License: string };
+};
 const cmake = read("native-effect/CMakeLists.txt").replace(/\s+/g, " ");
 const kcfg = read("native-effect/activeborderconfig.kcfg");
 const module = read("native-effect/activeborderconfig_module.cpp");
+const scriptModule = read("native-effect/scriptconfig_module.cpp");
+const scriptHeader = read("native-effect/scriptconfig_module.h");
 const effect = read("native-effect/activewindowborder.cpp");
 const logic = read("native-effect/activeborderlogic.h");
 const ui = read("native-effect/activeborderconfig.ui");
+const scriptUi = read("native-effect/scriptconfig.ui");
 
 const SCRIPT_SETTINGS = {
     workspaceMode: { type: "Enum", defaultValue: "per-output-local" },
@@ -72,6 +78,16 @@ describe("native KCM static contract", () => {
             /kcoreaddons_add_plugin\(plasma-auto-tiler-active-border_config INSTALL_NAMESPACE "kwin\/effects\/configs"/,
         );
         assert.match(cmake, /activeborderconfig_module\.json/);
+        assert.match(cmake, /scriptconfig_module\.json/);
+        assert.match(
+            cmake,
+            /kcoreaddons_add_plugin\(plasma-auto-tiler-kwin_config INSTALL_NAMESPACE "kwin\/scripts\/configs"/,
+        );
+        assert.match(scriptModule, /K_PLUGIN_CLASS_WITH_JSON\(KWin::ScriptConfigModule, "scriptconfig_module\.json"\)/);
+        assert.equal(scriptKcmMetadata.KPlugin.Id, "plasma-auto-tiler-kwin_config");
+        for (const field of ["Name", "Description", "Icon", "License"] as const) {
+            assert.notEqual(scriptKcmMetadata.KPlugin[field], "");
+        }
         assert.ok(cmake.includes("add_test(NAME native-effect-metadata-factory-validation"));
         assert.ok(cmake.includes("-P ${CMAKE_CURRENT_SOURCE_DIR}/validate-metadata.cmake"));
         assert.ok(cmake.includes("add_test(NAME native-effect-unified-lifecycle"));
@@ -113,7 +129,7 @@ describe("native KCM static contract", () => {
         }
     });
 
-    it("keeps the four supported script keys and defaults identical between schema and native KCM", () => {
+    it("keeps the four supported script keys and defaults identical between schema and native script KCM", () => {
         assert.deepEqual(schemaEntries(), SCRIPT_SETTINGS);
         assert.match(kcfg, /<group name="Effect-plasma-auto-tiler-active-border">/);
 
@@ -123,35 +139,37 @@ describe("native KCM static contract", () => {
             }
             const defaultExpression = `QStringLiteral("${setting.defaultValue}")`;
             assert.match(
-                module,
+                scriptModule,
                 new RegExp(
                     `readEntry\\(QStringLiteral\\("${key}"\\), ${defaultExpression.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`,
                 ),
             );
-            assert.match(module, new RegExp(`writeEntry\\(QStringLiteral\\("${key}"\\)`));
+            assert.match(scriptModule, new RegExp(`writeEntry\\(QStringLiteral\\("${key}"\\)`));
         }
         for (const key of ["innerGap", "outerGap"]) {
-            assert.match(module, new RegExp(`readBoundedGap\\(group, QStringLiteral\\("${key}"\\)\\)`));
-            assert.match(module, new RegExp(`isBoundedGapRawValid\\(group, QStringLiteral\\("${key}"\\)\\)`));
-            assert.match(module, new RegExp(`writeEntry\\(QStringLiteral\\("${key}"\\)`));
-            assert.match(module, new RegExp(`${key}SpinBox->setValue\\(8\\)`));
-            assert.match(module, new RegExp(`${key}SpinBox->value\\(\\)`));
+            assert.match(scriptModule, new RegExp(`readBoundedGap\\(group, QStringLiteral\\("${key}"\\)\\)`));
+            assert.match(scriptModule, new RegExp(`isBoundedGapRawValid\\(group, QStringLiteral\\("${key}"\\)\\)`));
+            assert.match(scriptModule, new RegExp(`writeEntry\\(QStringLiteral\\("${key}"\\)`));
+            assert.match(scriptModule, new RegExp(`${key}SpinBox->setValue\\((8|kGapDefault)\\)`));
+            assert.match(scriptModule, new RegExp(`${key}SpinBox->value\\(\\)`));
         }
 
-        assert.match(module, /workspaceModeCombo->findData\(QStringLiteral\("per-output-local"\)\)/);
-        assert.match(module, /shortcutProfileCombo->findData\(QStringLiteral\("cosmic"\)\)/);
-        assert.doesNotMatch(module, /engineAuthorityModeCombo/);
-        assert.doesNotMatch(module, /tilingAlgorithm|automaticSplitTarget|dropOutlinePreview/);
-        assert.match(module, /innerGapSpinBox->setValue\(8\)/);
-        assert.match(module, /outerGapSpinBox->setValue\(8\)/);
+        assert.match(scriptModule, /workspaceModeCombo->findData\(QStringLiteral\("per-output-local"\)\)/);
+        assert.match(scriptModule, /shortcutProfileCombo->findData\(QStringLiteral\("cosmic"\)\)/);
+        assert.doesNotMatch(scriptModule, /engineAuthorityModeCombo/);
+        assert.doesNotMatch(scriptModule, /tilingAlgorithm|automaticSplitTarget|dropOutlinePreview/);
+        assert.match(scriptModule, /innerGapSpinBox->setValue\((8|kGapDefault)\)/);
+        assert.match(scriptModule, /outerGapSpinBox->setValue\((8|kGapDefault)\)/);
+        assert.doesNotMatch(module, /workspaceModeCombo|shortcutProfileCombo|innerGapSpinBox|outerGapSpinBox/);
+        assert.doesNotMatch(module, /Script-plasma-auto-tiler-kwin/);
     });
 
     it("reads and writes supported script settings only through the script config group", () => {
-        assert.equal((module.match(/Script-plasma-auto-tiler-kwin/g) ?? []).length, 2);
-        assert.doesNotMatch(module, /Effect-plasma-auto-tiler-kwin/);
-        assert.match(module, /const QString workspaceMode = group\.readEntry\(QStringLiteral\("workspaceMode"\), QStringLiteral\("per-output-local"\)\)/);
-        assert.match(module, /select\(m_ui\.workspaceModeCombo, workspaceMode, QStringLiteral\("per-output-local"\)\)/);
-        assert.doesNotMatch(module, /tilingAlgorithm|automaticSplitTarget|dropOutlinePreview/);
+        assert.equal((scriptModule.match(/Script-plasma-auto-tiler-kwin/g) ?? []).length, 2);
+        assert.doesNotMatch(scriptModule, /Effect-plasma-auto-tiler-kwin/);
+        assert.match(scriptModule, /const QString workspaceMode = group\.readEntry\(QStringLiteral\("workspaceMode"\), QStringLiteral\("per-output-local"\)\)/);
+        assert.match(scriptModule, /select\(m_ui\.workspaceModeCombo, workspaceMode, QStringLiteral\("per-output-local"\)\)/);
+        assert.doesNotMatch(scriptModule, /tilingAlgorithm|automaticSplitTarget|dropOutlinePreview/);
     });
 
     it("does not expose global shortcut mutation APIs", () => {
@@ -203,14 +221,15 @@ describe("native KCM static contract", () => {
     });
 
     it("tracks supported script controls without rewriting untouched keys", () => {
-        assert.match(module, /unmanagedWidgetChangeState\(/);
-        assert.match(module, /unmanagedWidgetDefaultState\(/);
-        assert.match(module, /const bool borderChanged = managedWidgetChangeState\(\)/);
-        assert.doesNotMatch(module, /setNeedsSave\(false\)/);
-        assert.match(module, /if \(!m_loadedInnerGapRawValid \|\| !m_loadedOuterGapRawValid \|\| current != m_loadedScriptValues\)/);
-        assert.match(module, /if \(!m_loadedInnerGapRawValid \|\| current\.value\(QStringLiteral\("innerGap"\)\) != m_loadedScriptValues/);
-        assert.match(module, /if \(!m_loadedOuterGapRawValid \|\| current\.value\(QStringLiteral\("outerGap"\)\) != m_loadedScriptValues/);
-        assert.match(module, /m_loadedScriptValues = \{/);
+        assert.match(scriptModule, /unmanagedWidgetChangeState\(/);
+        assert.match(scriptModule, /unmanagedWidgetDefaultState\(/);
+        assert.doesNotMatch(scriptModule, /[^n]managedWidgetChangeState\(/);
+        assert.doesNotMatch(scriptModule, /setNeedsSave\(false\)/);
+        assert.match(scriptModule, /const bool widgetsChanged =/);
+        assert.match(scriptModule, /if \(!widgetsChanged && !m_gapReconfigurePending\)/);
+        assert.match(scriptModule, /if \(!m_loadedInnerGapRawValid\s*\|\|\s*current\.value\(QStringLiteral\("innerGap"\)\) != m_loadedScriptValues/);
+        assert.match(scriptModule, /if \(!m_loadedOuterGapRawValid\s*\|\|\s*current\.value\(QStringLiteral\("outerGap"\)\) != m_loadedScriptValues/);
+        assert.match(scriptModule, /m_loadedScriptValues = \{/);
     });
 
     it("associates every labeled native control with its buddy", () => {
@@ -219,6 +238,10 @@ describe("native KCM static contract", () => {
             ["label_shortcutProfile", "shortcutProfileCombo"],
             ["label_innerGap", "innerGapSpinBox"],
             ["label_outerGap", "outerGapSpinBox"],
+        ]) {
+            assert.match(scriptUi, new RegExp(`name="${label}"[\\s\\S]*?<property name="buddy">[\\s\\S]*?<cstring>${control}</cstring>`));
+        }
+        for (const [label, control] of [
             ["label_BorderColor", "kcfg_BorderColor"],
             ["label_BorderWidth", "kcfg_BorderWidth"],
             ["label_BorderRadius", "kcfg_BorderRadius"],
@@ -235,20 +258,43 @@ describe("native KCM static contract", () => {
         assert.doesNotMatch(ui, /kcfg_BorderColor[\s\S]{0,400}?enabled[\s\S]{0,20}?false/);
     });
 
-    it("explains gap reload versus session restart and retires the generic metadata KCM only after native discovery exists", () => {
-        assert.equal(scriptMetadata["X-KDE-ConfigModule"], undefined);
+    it("routes script settings through the native script KCM and keeps the border dialog script-free", () => {
+        assert.equal(
+            scriptMetadata["X-KDE-ConfigModule"],
+            "kwin/scripts/configs/plasma-auto-tiler-kwin_config",
+        );
         assert.doesNotMatch(read("metadata.json"), /kcm_kwin4_genericscripted/);
         assert.ok(nativeMetadata["X-KDE-ConfigModule"]);
+        assert.match(scriptHeader, /requestScriptReconfigure/);
+        assert.match(scriptHeader, /isScriptRestartRequired/);
+        assert.match(scriptHeader, /isGapReconfigurePending/);
+        assert.match(scriptModule, /m_gapReconfigurePending/);
+        assert.match(scriptModule, /if \(gapChanged \|\| m_gapReconfigurePending\)/);
+        assert.match(scriptModule, /if \(!widgetsChanged\)/);
+        assert.match(scriptModule, /This retry saved nothing/);
+        assert.match(scriptModule, /retry on the next save/);
+        assert.match(scriptModule, /startupWritten/);
+        assert.doesNotMatch(scriptModule, /"keys=workspaceMode,shortcutProfile"/);
+        assert.match(scriptModule, /lcScriptConfig/);
+        assert.match(scriptModule, /plasmaautotiler\.script-config op=/);
+        assert.match(scriptModule, /logScriptConfig\("save", "persist", "ok"/);
+        assert.match(scriptModule, /logScriptConfig\("save", "reconfigure", "sent-unconfirmed"/);
+        assert.match(scriptModule, /logScriptConfig\("save", "reconfigure", "failed"/);
+        assert.match(scriptModule, /retry-on-next-save/);
+        assert.match(scriptModule, /logScriptConfig\("save", "startup", "restart-required"/);
         assert.doesNotMatch(ui, /engine authority/i);
         assert.doesNotMatch(ui, /Rust is development-only/);
         assert.doesNotMatch(ui, /clears current transient Script ambiguity/);
         assert.doesNotMatch(ui, /engine authority[^.]*apply immediately/i);
         assert.doesNotMatch(ui, /engine authority[^.]*takes effect immediately/i);
-        assert.match(ui, /startup settings require a session restart/i);
+        assert.doesNotMatch(ui, /workspaceModeCombo|shortcutProfileCombo|innerGapSpinBox|outerGapSpinBox/);
+        assert.doesNotMatch(ui, /tilerReloadButton|tilerReloadStatusLabel|Reload Tiler/);
+        assert.match(ui, /Script settings \(workspace mode, shortcut profile, tiling gaps\) live in the Plasma Auto Tiler script settings\./);
         assert.doesNotMatch(ui, /unconsumed settings have no running effect/i);
-        assert.match(ui, /Gap settings can reload/i);
-        assert.match(ui, /Saving gaps marks a reload as required/i);
-        assert.doesNotMatch(ui, /Other script settings require a script reload or session restart\./);
-        assert.doesNotMatch(ui, /Script settings do not hot-apply; reload the script or restart the session\./);
+        assert.match(scriptUi, /startup settings require a session restart/i);
+        assert.match(scriptUi, /Saving changed gaps sends one typed KWin reconfigure request/);
+        assert.match(scriptUi, /never claims the running tiler applied the settings/);
+        assert.doesNotMatch(scriptUi, /unconsumed settings have no running effect/i);
+        assert.doesNotMatch(read("metadata.json"), /Other script settings require a script reload or session restart\./);
     });
 });

@@ -4,7 +4,6 @@
 
 #include <QDBusMessage>
 #include <QString>
-#include <QVariantMap>
 
 #include <functional>
 
@@ -29,15 +28,6 @@ public:
     static QString effectName();
     static bool isEffectReconfigureFailed(const QDBusMessage &reply);
     virtual bool requestEffectReconfigure();
-    static QString scriptService();
-    static QString scriptPath();
-    static QString scriptInterface();
-    static QString scriptMethod();
-    virtual bool requestScriptReconfigure();
-    QString tilerReloadStatusText() const;
-    bool isTilerReloadRequired() const;
-    bool isTilerRestartRequired() const;
-    bool isTilerUnconsumedPending() const;
 
     void setShortcutStores(ShortcutStore *store, JournalStore *journal, JournalStore *legacyJournal = nullptr);
     void setShortcutConfirmHandler(std::function<bool(const QString &, const QString &)> handler);
@@ -61,26 +51,16 @@ public Q_SLOTS:
     void requestShortcutRestore();
     void requestShortcutForceApply();
     void requestShortcutForceCancel();
-    void requestTilerReload();
 
 private:
-    QVariantMap currentScriptValues() const;
-    void updateScriptState();
     void runShortcutApply(const char *operation);
     void runShortcutRevert(const char *operation);
     void clearForcePreview();
     static QString buildForcePreviewText(const ShortcutForcePreview &preview);
     void updateShortcutPresentation(bool interrupted);
-    void updateTilerReloadPresentation();
 
     ::Ui::ActiveBorderConfig m_ui;
-    QVariantMap m_loadedScriptValues;
-    bool m_loadedInnerGapRawValid = true;
-    bool m_loadedOuterGapRawValid = true;
     bool m_effectReconfigurePending = false;
-    bool m_tilerReloadRequired = false;
-    bool m_tilerRestartRequired = false;
-    QString m_tilerReloadStatus;
     ShortcutStore *m_shortcutStore = nullptr;
     JournalStore *m_shortcutJournal = nullptr;
     // Single explicit legacy journal source. Read-only until a confirmed

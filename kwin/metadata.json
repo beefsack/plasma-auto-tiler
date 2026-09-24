@@ -3,10 +3,11 @@
   "KPlugin": {
     "Id": "plasma-auto-tiler-kwin",
     "Name": "Plasma Auto Tiler",
-    "Description": "Guarded Custom Tile automation for KWin.",
+    "Description": "COSMIC-style automatic tiling for KWin.",
     "EnabledByDefault": false,
     "License": "GPL-2.0-or-later",
     "Icon": "preferences-system-windows"
   },
-  "X-Plasma-API": "javascript"
+  "X-Plasma-API": "javascript",
+  "X-KDE-ConfigModule": "kwin/scripts/configs/plasma-auto-tiler-kwin_config"
 }

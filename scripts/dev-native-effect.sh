@@ -20,8 +20,12 @@ ENV_FILE="$CONFIG_ROOT/plasma-workspace/env/60-plasma-auto-tiler-native-effect.s
 PROC_ROOT="${PROC_ROOT:-/proc}"
 
 BORDER_EFFECT="plasma-auto-tiler-active-border"
+EFFECT_KCM="plasma-auto-tiler-active-border_config"
+SCRIPT_KCM="plasma-auto-tiler-kwin_config"
 
 BORDER_SO="$STAGE/kwin/effects/plugins/$BORDER_EFFECT.so"
+EFFECT_KCM_SO="$STAGE/kwin/effects/configs/$EFFECT_KCM.so"
+SCRIPT_KCM_SO="$STAGE/kwin/scripts/configs/$SCRIPT_KCM.so"
 
 usage() {
   cat <<'EOF'
@@ -29,8 +33,9 @@ usage: dev-native-effect.sh <command>
 
 Commands:
   setup      create the project-owned plasma-workspace env script for this
-             checkout's target/kwin-native-effect-stage (requires staged
-             effect .so files; run 'just build-native-effect' first).
+             checkout's target/kwin-native-effect-stage (requires the staged
+             effect .so, the staged effect KCM .so, and the staged script
+             settings KCM .so; run 'just build-native-effect' first).
              Idempotent only when existing content exactly matches this
              checkout; refuses symlinks, non-regular files, and unfamiliar
              or alternate-checkout content. Never touches kwinrc or D-Bus.
@@ -66,6 +71,14 @@ expected_env_contents() {
 cmd_setup() {
   if [[ ! -f "$BORDER_SO" ]]; then
     echo "error: staged border effect missing: $BORDER_SO; run 'just build-native-effect' first (inside 'devenv shell --impure')" >&2
+    exit 1
+  fi
+  if [[ ! -f "$EFFECT_KCM_SO" ]]; then
+    echo "error: staged effect KCM missing: $EFFECT_KCM_SO; run 'just build-native-effect' first (inside 'devenv shell --impure')" >&2
+    exit 1
+  fi
+  if [[ ! -f "$SCRIPT_KCM_SO" ]]; then
+    echo "error: staged script settings KCM missing: $SCRIPT_KCM_SO; run 'just build-native-effect' first (inside 'devenv shell --impure')" >&2
     exit 1
   fi
   if [[ -L "$ENV_FILE" ]]; then
@@ -122,6 +135,8 @@ cmd_setup() {
   rm -f -- "$tmp"
   echo "dev-native-setup: wrote $ENV_FILE"
   echo "staged: $BORDER_SO"
+  echo "staged: $EFFECT_KCM_SO"
+  echo "staged: $SCRIPT_KCM_SO"
   echo "note: log out and log back in (or start a new session) before KWin can discover the staged effect; setup never applies to the running KWin."
 }
 

@@ -218,10 +218,13 @@ for ((i=0; i<${#args[@]}; i++)); do
     build_dir="${args[$((i+1))]:?}"
   elif [[ "${args[$i]}" == "--build" ]]; then
     build_dir="${args[$((i+1))]:?}"
-    mkdir -p "$build_dir/bin/kwin/effects/plugins" "$build_dir/bin/kwin/effects/configs"
+    mkdir -p "$build_dir/bin/kwin/effects/plugins" "$build_dir/bin/kwin/effects/configs" "$build_dir/bin/kwin/scripts/configs"
     printf 'fake-so\n' > "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
     if [[ ! -f "${FAKE_STATE_DIR:?}/cmake-missing-kcm" ]]; then
       printf 'fake-kcm\n' > "$build_dir/bin/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+    fi
+    if [[ ! -f "${FAKE_STATE_DIR:?}/cmake-missing-script-kcm" ]]; then
+      printf 'fake-script-kcm\n' > "$build_dir/bin/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
     fi
   fi
 done
@@ -982,6 +985,7 @@ reset_state
 EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
 EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
 EFFECT_STAGED_KCM="$EFFECT_ROOT/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+EFFECT_STAGED_SCRIPT_KCM="$EFFECT_ROOT/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
 EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
 LEGACY_EFFECT_ENV_FILE="$CONFIG/environment.d/60-plasma-auto-tiler-native-effect.conf"
 run_script effect-install
@@ -995,9 +999,16 @@ assert_file "$EFFECT_STAGED_SO"
 assert_grep_file "fake-so" "$EFFECT_STAGED_SO"
 assert_file "$EFFECT_STAGED_KCM"
 assert_grep_file "fake-kcm" "$EFFECT_STAGED_KCM"
+assert_contains "staged: $EFFECT_STAGED_SCRIPT_KCM"
+assert_file "$EFFECT_STAGED_SCRIPT_KCM"
+assert_grep_file "fake-script-kcm" "$EFFECT_STAGED_SCRIPT_KCM"
 assert_find_count 1 "$EFFECT_ROOT/kwin/effects/plugins" "files in the staged native plugin namespace" -mindepth 1 -maxdepth 1 -type f
 assert_find_count 1 "$EFFECT_ROOT/kwin/effects/configs" "files in the staged native KCM namespace" -mindepth 1 -maxdepth 1 -type f
+assert_find_count 1 "$EFFECT_ROOT/kwin/scripts/configs" "files in the staged native script KCM namespace" -mindepth 1 -maxdepth 1 -type f
 assert_find_count 2 "$EFFECT_ROOT/kwin/effects" "files in the complete staged native namespace" -type f
+assert_find_count 3 "$EFFECT_ROOT/kwin" "files in the complete staged native tree" -type f
+assert_not_exists "$EFFECT_ROOT/kwin/scripts/plugins"
+assert_not_exists "$EFFECT_ROOT/kwin/effects/scripts"
 assert_file "$EFFECT_ENV_FILE"
 assert_grep_file 'export QT_PLUGIN_PATH="'"$EFFECT_ROOT"'${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"' "$EFFECT_ENV_FILE"
 assert_count 1 "$(grep -c QT_PLUGIN_PATH "$EFFECT_ENV_FILE")" "QT_PLUGIN_PATH lines in fresh env script"
@@ -1040,6 +1051,22 @@ assert_contains "error: config module not found after build:"
 assert_not_exists "$EFFECT_ROOT/kwin"
 assert_not_exists "$EFFECT_STAGED_SO"
 assert_not_exists "$EFFECT_STAGED_KCM"
+assert_not_exists "$EFFECT_STAGED_SCRIPT_KCM"
+assert_not_exists "$EFFECT_ENV_FILE"
+assert_not_exists "$CONFIG/kwinrc"
+assert_not_grep_file "kwriteconfig6" "$WORK/tools.log"
+
+# effect-install: a missing script KCM output fails closed before any native
+# output is staged or any environment/configuration state is written
+reset_state
+touch "$WORK/state/cmake-missing-script-kcm"
+run_script effect-install
+check_exit 1
+assert_contains "error: script config module not found after build:"
+assert_not_exists "$EFFECT_ROOT/kwin"
+assert_not_exists "$EFFECT_STAGED_SO"
+assert_not_exists "$EFFECT_STAGED_KCM"
+assert_not_exists "$EFFECT_STAGED_SCRIPT_KCM"
 assert_not_exists "$EFFECT_ENV_FILE"
 assert_not_exists "$CONFIG/kwinrc"
 assert_not_grep_file "kwriteconfig6" "$WORK/tools.log"
@@ -1068,15 +1095,19 @@ assert_count 1 "$(grep -c QT_PLUGIN_PATH "$EFFECT_ENV_FILE")" "QT_PLUGIN_PATH li
 assert_count 1 "$(grep -c '^plasma-auto-tiler-active-borderEnabled=' "$CONFIG/kwinrc")" "plasma-auto-tiler-active-borderEnabled lines in kwinrc after re-run"
 assert_not_contains "logout/login"
 
-# effect-install: staging publishes only the survivor .so plus the KCM; no
+# effect-install: staging publishes only the survivor .so plus both KCMs; no
 # standalone oracle artifact remains under the project-owned staging root.
 reset_state
 run_script effect-install
 check_exit 0
 EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
 assert_not_exists "$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
+assert_not_exists "$EFFECT_ROOT/kwin/scripts/configs/plasma-auto-tiler-drag-oracle_config.so"
+assert_file "$EFFECT_ROOT/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
 assert_find_count 1 "$EFFECT_ROOT/kwin/effects/plugins" "files in the staged native plugin namespace after consolidation" -mindepth 1 -maxdepth 1 -type f
 assert_find_count 2 "$EFFECT_ROOT/kwin/effects" "files in the complete staged native namespace after consolidation" -type f
+assert_find_count 1 "$EFFECT_ROOT/kwin/scripts/configs" "files in the staged native script KCM namespace after consolidation" -mindepth 1 -maxdepth 1 -type f
+assert_find_count 3 "$EFFECT_ROOT/kwin" "files in the complete staged native tree after consolidation" -type f
 
 # effect-install migration truth table: exact legacy "true" enables the
 # survivor and then sets the legacy oracle key false; other keys are
@@ -1283,6 +1314,7 @@ assert_cmp "$WORK/remove-old-root/kwin/effects/plugins/plasma-auto-tiler-active-
 assert_cmp "$WORK/remove-old-env" "$EFFECT_ENV_FILE"
 assert_cmp "$WORK/remove-old-kwinrc" "$CONFIG/kwinrc"
 assert_file "$EFFECT_STAGED_KCM"
+assert_file "$EFFECT_STAGED_SCRIPT_KCM"
 
 # effect-install: a failed rollback operation is reported as rollback failure
 reset_state
@@ -1382,6 +1414,7 @@ reset_state
 run_script effect-status
 check_exit 0
 assert_contains "[a] staging: no - plugin .so not found at $EFFECT_STAGED_SO"
+assert_contains "[a] script config module: no - script KCM .so not found at $EFFECT_STAGED_SCRIPT_KCM"
 assert_contains "-> run 'effect-install' to build and stage it."
 assert_contains "[b] env script: no - $EFFECT_ENV_FILE not found"
 assert_contains "-> run 'effect-install' to create it."
@@ -1402,6 +1435,7 @@ run_script effect-status
 check_exit 0
 assert_contains "[a] staging: yes - plugin .so present at $EFFECT_STAGED_SO"
 assert_contains "[a] config module: yes - KCM .so present at $EFFECT_STAGED_KCM"
+assert_contains "[a] script config module: yes - script KCM .so present at $EFFECT_STAGED_SCRIPT_KCM"
 assert_contains "[b] env script: yes - $EFFECT_ENV_FILE exists and its content is current"
 assert_contains "[c] session delivery: could not determine - the running kwin_wayland process could not be found"
 assert_count 0 "$(wc -l < "$WORK/cmake.log")" "cmake invocations during effect-status"
@@ -1662,6 +1696,7 @@ check_exit 1
 assert_contains "is currently loaded; refusing to delete its files"
 assert_file "$EFFECT_STAGED_SO"
 assert_file "$EFFECT_STAGED_KCM"
+assert_file "$EFFECT_STAGED_SCRIPT_KCM"
 assert_file "$EFFECT_ENV_FILE"
 assert_grep_file "plasma-auto-tiler-active-borderEnabled=true" "$CONFIG/kwinrc"
 assert_not_grep_file "loadEffect" "$WORK/tools.log"
@@ -1677,6 +1712,7 @@ check_exit 1
 assert_contains "error: kwriteconfig6 failed to delete plasma-auto-tiler-active-borderEnabled"
 assert_file "$EFFECT_STAGED_SO"
 assert_file "$EFFECT_STAGED_KCM"
+assert_file "$EFFECT_STAGED_SCRIPT_KCM"
 assert_file "$EFFECT_ENV_FILE"
 assert_grep_file "plasma-auto-tiler-active-borderEnabled=true" "$CONFIG/kwinrc"
 

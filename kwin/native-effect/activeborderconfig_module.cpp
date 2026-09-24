@@ -1,53 +1,18 @@
 #include "activeborderconfig_module.h"
 #include "activeborderconfig.h"
 
-#include <KConfigGroup>
-#include <KLocalizedString>
 #include <KPluginFactory>
-#include <KSharedConfig>
 
-#include <QCheckBox>
-#include <QComboBox>
 #include <QDBusConnection>
 #include <QDBusInterface>
 #include <QDBusMessage>
-#include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QSpinBox>
 
 K_PLUGIN_CLASS_WITH_JSON(KWin::ActiveBorderConfigModule, "activeborderconfig_module.json")
 
 namespace KWin
 {
-
-namespace
-{
-
-int readBoundedGap(const KConfigGroup &group, const QString &key)
-{
-    if (!group.hasKey(key)) {
-        return 8;
-    }
-    bool ok = false;
-    const int parsed = group.readEntry(key, QString()).toInt(&ok);
-    if (ok && parsed >= 0 && parsed <= 64) {
-        return parsed;
-    }
-    return 8;
-}
-
-bool isBoundedGapRawValid(const KConfigGroup &group, const QString &key)
-{
-    if (!group.hasKey(key)) {
-        return true;
-    }
-    bool ok = false;
-    const int parsed = group.readEntry(key, QString()).toInt(&ok);
-    return ok && parsed >= 0 && parsed <= 64;
-}
-
-} // namespace
 
 ActiveBorderConfigModule::ActiveBorderConfigModule(QObject *parent, const KPluginMetaData &data)
     : KCModule(parent, data)
@@ -55,19 +20,6 @@ ActiveBorderConfigModule::ActiveBorderConfigModule(QObject *parent, const KPlugi
     ActiveBorderConfig::instance(QStringLiteral("kwinrc"));
     m_ui.setupUi(widget());
     addConfig(ActiveBorderConfig::self(), widget());
-
-    m_ui.workspaceModeCombo->addItem(i18n("Per output, local"), QStringLiteral("per-output-local"));
-    m_ui.workspaceModeCombo->addItem(i18n("Global, unique"), QStringLiteral("global-unique"));
-    m_ui.workspaceModeCombo->addItem(i18n("Shared"), QStringLiteral("shared"));
-
-    m_ui.shortcutProfileCombo->addItem(i18n("COSMIC"), QStringLiteral("cosmic"));
-    m_ui.shortcutProfileCombo->addItem(i18n("Hyprland"), QStringLiteral("hyprland"));
-    m_ui.shortcutProfileCombo->addItem(i18n("bspwm"), QStringLiteral("bspwm"));
-
-    connect(m_ui.workspaceModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ActiveBorderConfigModule::updateScriptState);
-    connect(m_ui.shortcutProfileCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ActiveBorderConfigModule::updateScriptState);
-    connect(m_ui.innerGapSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, &ActiveBorderConfigModule::updateScriptState);
-    connect(m_ui.outerGapSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, &ActiveBorderConfigModule::updateScriptState);
 
     m_shortcutStore = createLiveShortcutStore();
     // Canonical host-independent journal plus the single explicit legacy
@@ -84,12 +36,7 @@ ActiveBorderConfigModule::ActiveBorderConfigModule(QObject *parent, const KPlugi
     connect(m_ui.shortcutRestoreButton, &QPushButton::clicked, this, &ActiveBorderConfigModule::requestShortcutRestore);
     connect(m_ui.shortcutForceApplyButton, &QPushButton::clicked, this, &ActiveBorderConfigModule::requestShortcutForceApply);
     connect(m_ui.shortcutForceCancelButton, &QPushButton::clicked, this, &ActiveBorderConfigModule::requestShortcutForceCancel);
-    connect(m_ui.tilerReloadButton, &QPushButton::clicked, this, &ActiveBorderConfigModule::requestTilerReload);
     refreshShortcutState();
-    m_tilerReloadRequired = false;
-    m_tilerRestartRequired = false;
-    m_tilerReloadStatus = QStringLiteral("No pending tiler reload in this dialog.");
-    updateTilerReloadPresentation();
 }
 
 ActiveBorderConfigModule::~ActiveBorderConfigModule()
@@ -136,36 +83,6 @@ bool ActiveBorderConfigModule::requestEffectReconfigure()
     QDBusInterface interface(effectService(), effectPath(), effectInterface(), QDBusConnection::sessionBus());
     const QDBusMessage reply = interface.call(effectMethod(), effectName());
     return !isEffectReconfigureFailed(reply);
-}
-
-QString ActiveBorderConfigModule::scriptService()
-{
-    return QStringLiteral("org.kde.KWin");
-}
-
-QString ActiveBorderConfigModule::scriptPath()
-{
-    return QStringLiteral("/KWin");
-}
-
-QString ActiveBorderConfigModule::scriptInterface()
-{
-    return QStringLiteral("org.kde.KWin");
-}
-
-QString ActiveBorderConfigModule::scriptMethod()
-{
-    return QStringLiteral("reconfigure");
-}
-
-bool ActiveBorderConfigModule::requestScriptReconfigure()
-{
-    QDBusInterface interface(scriptService(), scriptPath(), scriptInterface(), QDBusConnection::sessionBus());
-    if (!interface.isValid()) {
-        return false;
-    }
-    return QDBusConnection::sessionBus().send(
-        QDBusMessage::createMethodCall(scriptService(), scriptPath(), scriptInterface(), scriptMethod()));
 }
 
 void ActiveBorderConfigModule::setShortcutStores(ShortcutStore *store, JournalStore *journal,
@@ -226,73 +143,9 @@ bool ActiveBorderConfigModule::isShortcutForceCancelVisible() const
     return m_ui.shortcutForceCancelButton != nullptr && !m_ui.shortcutForceCancelButton->isHidden();
 }
 
-QString ActiveBorderConfigModule::tilerReloadStatusText() const
+void ActiveBorderConfigModule::requestShortcutApply()
 {
-    return m_tilerReloadStatus;
-}
-
-bool ActiveBorderConfigModule::isTilerReloadRequired() const
-{
-    return m_tilerReloadRequired;
-}
-
-bool ActiveBorderConfigModule::isTilerRestartRequired() const
-{
-    return m_tilerRestartRequired;
-}
-
-bool ActiveBorderConfigModule::isTilerUnconsumedPending() const
-{
-    return false;
-}
-
-void ActiveBorderConfigModule::requestTilerReload()
-{
-    // Deliberate gap-only reload: one typed KWin reconfigure send whose pickup
-    // is the running controller's Options configChanged gap re-read. KWin's
-    // reconfigure is Q_NOREPLY, so a queued send never proves the running
-    // script reread kwinrc. Success keeps reload-required and reports
-    // sent-but-unconfirmed; failure keeps reload-required and reports failed.
-    // A queued send never clears a pending session-restart requirement for
-    // startup-consumed settings (shortcutProfile, workspaceMode) and never
-    // claims all settings applied. This never touches shortcuts and never
-    // unloads scripts or plugins. With no pending gap reload the request is
-    // refused without sending so an idle click can neither queue D-Bus traffic
-    // nor mark the dialog reload-required.
-    if (!m_tilerReloadRequired) {
-        return;
-    }
-    if (requestScriptReconfigure()) {
-        if (m_tilerRestartRequired) {
-            m_tilerReloadStatus = QStringLiteral(
-                "Reload request sent. Gap application unconfirmed; session restart remains required for startup "
-                "settings. Restart the session to guarantee pickup.");
-        } else {
-            m_tilerReloadStatus = QStringLiteral(
-                "Reload request sent. Application unconfirmed; restart the session to guarantee pickup.");
-        }
-    } else {
-        if (m_tilerRestartRequired) {
-            m_tilerReloadStatus = QStringLiteral(
-                "Reload request failed. Running tiler still uses startup gap values; retry or restart the session "
-                "for gaps. Session restart remains required for startup settings.");
-        } else {
-            m_tilerReloadRequired = true;
-            m_tilerReloadStatus = QStringLiteral(
-                "Reload request failed. Running tiler still uses startup values; retry or restart the session.");
-        }
-    }
-    updateTilerReloadPresentation();
-}
-
-void ActiveBorderConfigModule::updateTilerReloadPresentation()
-{
-    if (m_ui.tilerReloadStatusLabel != nullptr) {
-        m_ui.tilerReloadStatusLabel->setText(m_tilerReloadStatus);
-    }
-    if (m_ui.tilerReloadButton != nullptr) {
-        m_ui.tilerReloadButton->setEnabled(m_tilerReloadRequired);
-    }
+    runShortcutApply("apply");
 }
 
 bool ActiveBorderConfigModule::confirmShortcutAction(const QString &title, const QString &text)
@@ -301,11 +154,6 @@ bool ActiveBorderConfigModule::confirmShortcutAction(const QString &title, const
         return m_shortcutConfirm(title, text);
     }
     return QMessageBox::question(widget(), title, text, QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
-}
-
-void ActiveBorderConfigModule::requestShortcutApply()
-{
-    runShortcutApply("apply");
 }
 
 void ActiveBorderConfigModule::requestShortcutFinishApply()
@@ -719,114 +567,18 @@ void ActiveBorderConfigModule::refreshShortcutState()
     updateShortcutPresentation(false);
 }
 
-QVariantMap ActiveBorderConfigModule::currentScriptValues() const
-{
-    return {
-        {QStringLiteral("workspaceMode"), m_ui.workspaceModeCombo->currentData()},
-        {QStringLiteral("shortcutProfile"), m_ui.shortcutProfileCombo->currentData()},
-        {QStringLiteral("innerGap"), m_ui.innerGapSpinBox->value()},
-        {QStringLiteral("outerGap"), m_ui.outerGapSpinBox->value()},
-    };
-}
-
-void ActiveBorderConfigModule::updateScriptState()
-{
-    const QVariantMap current = currentScriptValues();
-    const QVariantMap defaults = {
-        {QStringLiteral("workspaceMode"), QStringLiteral("per-output-local")},
-        {QStringLiteral("shortcutProfile"), QStringLiteral("cosmic")},
-        {QStringLiteral("innerGap"), 8},
-        {QStringLiteral("outerGap"), 8},
-    };
-    unmanagedWidgetChangeState(!m_loadedScriptValues.isEmpty() && current != m_loadedScriptValues);
-    unmanagedWidgetDefaultState(current == defaults);
-}
-
 void ActiveBorderConfigModule::load()
 {
     KCModule::load();
 
-    const KConfigGroup group(KSharedConfig::openConfig(QStringLiteral("kwinrc")), QStringLiteral("Script-plasma-auto-tiler-kwin"));
-    const auto select = [](QComboBox *combo, const QString &value, const QString &fallback) {
-        const int index = combo->findData(value);
-        const int fallbackIndex = combo->findData(fallback);
-        combo->setCurrentIndex(index >= 0 ? index : fallbackIndex);
-    };
-    const QString workspaceMode = group.readEntry(QStringLiteral("workspaceMode"), QStringLiteral("per-output-local"));
-    const QString shortcutProfile = group.readEntry(QStringLiteral("shortcutProfile"), QStringLiteral("cosmic"));
-    const int innerGap = readBoundedGap(group, QStringLiteral("innerGap"));
-    const int outerGap = readBoundedGap(group, QStringLiteral("outerGap"));
-    m_loadedInnerGapRawValid = isBoundedGapRawValid(group, QStringLiteral("innerGap"));
-    m_loadedOuterGapRawValid = isBoundedGapRawValid(group, QStringLiteral("outerGap"));
-    select(m_ui.workspaceModeCombo, workspaceMode, QStringLiteral("per-output-local"));
-    select(m_ui.shortcutProfileCombo, shortcutProfile, QStringLiteral("cosmic"));
-    m_ui.innerGapSpinBox->setValue(innerGap);
-    m_ui.outerGapSpinBox->setValue(outerGap);
-    m_loadedScriptValues = {
-        {QStringLiteral("workspaceMode"), workspaceMode},
-        {QStringLiteral("shortcutProfile"), shortcutProfile},
-        {QStringLiteral("innerGap"), innerGap},
-        {QStringLiteral("outerGap"), outerGap},
-    };
-    updateScriptState();
     clearForcePreview();
     refreshShortcutState();
-    m_tilerReloadRequired = false;
-    m_tilerRestartRequired = false;
-    m_tilerReloadStatus = QStringLiteral("No pending tiler reload in this dialog.");
-    updateTilerReloadPresentation();
 }
 
 void ActiveBorderConfigModule::save()
 {
     const bool borderChanged = managedWidgetChangeState();
     KCModule::save();
-
-    const QVariantMap current = currentScriptValues();
-    if (!m_loadedInnerGapRawValid || !m_loadedOuterGapRawValid || current != m_loadedScriptValues) {
-        const bool gapChanged = !m_loadedInnerGapRawValid || !m_loadedOuterGapRawValid
-            || current.value(QStringLiteral("innerGap")) != m_loadedScriptValues.value(QStringLiteral("innerGap"))
-            || current.value(QStringLiteral("outerGap")) != m_loadedScriptValues.value(QStringLiteral("outerGap"));
-        const bool startupConsumedChanged = current.value(QStringLiteral("workspaceMode"))
-                != m_loadedScriptValues.value(QStringLiteral("workspaceMode"))
-            || current.value(QStringLiteral("shortcutProfile")) != m_loadedScriptValues.value(QStringLiteral("shortcutProfile"));
-        KConfigGroup group(KSharedConfig::openConfig(QStringLiteral("kwinrc")), QStringLiteral("Script-plasma-auto-tiler-kwin"));
-        if (current.value(QStringLiteral("workspaceMode")) != m_loadedScriptValues.value(QStringLiteral("workspaceMode"))) {
-            group.writeEntry(QStringLiteral("workspaceMode"), current.value(QStringLiteral("workspaceMode")).toString());
-        }
-        if (current.value(QStringLiteral("shortcutProfile")) != m_loadedScriptValues.value(QStringLiteral("shortcutProfile"))) {
-            group.writeEntry(QStringLiteral("shortcutProfile"), current.value(QStringLiteral("shortcutProfile")).toString());
-        }
-        if (!m_loadedInnerGapRawValid || current.value(QStringLiteral("innerGap")) != m_loadedScriptValues.value(QStringLiteral("innerGap"))) {
-            group.writeEntry(QStringLiteral("innerGap"), current.value(QStringLiteral("innerGap")).toInt());
-        }
-        if (!m_loadedOuterGapRawValid || current.value(QStringLiteral("outerGap")) != m_loadedScriptValues.value(QStringLiteral("outerGap"))) {
-            group.writeEntry(QStringLiteral("outerGap"), current.value(QStringLiteral("outerGap")).toInt());
-        }
-        group.sync();
-        m_loadedScriptValues = current;
-        m_loadedInnerGapRawValid = true;
-        m_loadedOuterGapRawValid = true;
-        if (gapChanged) {
-            m_tilerReloadRequired = true;
-        }
-        if (startupConsumedChanged) {
-            m_tilerRestartRequired = true;
-        }
-        if (m_tilerReloadRequired && m_tilerRestartRequired) {
-            m_tilerReloadStatus = QStringLiteral(
-                "Tiling gaps and startup settings saved. Reload applies gaps only; session restart remains required "
-                "for startup settings.");
-        } else if (m_tilerReloadRequired) {
-            m_tilerReloadStatus = QStringLiteral(
-                "Tiling gaps saved. Reload required: the running tiler still uses startup gap values.");
-        } else if (m_tilerRestartRequired) {
-            m_tilerReloadStatus = QStringLiteral(
-                "Startup setting saved. Session restart required: the running tiler still uses startup values.");
-        }
-    }
-    updateScriptState();
-    updateTilerReloadPresentation();
 
     if (borderChanged) {
         m_effectReconfigurePending = true;
@@ -838,25 +590,14 @@ void ActiveBorderConfigModule::save()
             markAsChanged();
         }
     }
-    // Border hot-apply stays live through the native effect reconfigure. The
-    // running controller re-reads only validated gaps on the KWin Options
-    // configChanged signal emitted by the deliberate reconfigure; only
-    // shortcutProfile and workspaceMode are startup-consumed, and KWin's
-    // reconfigure is Q_NOREPLY, so save() never auto-sends a tiler reload and
-    // never claims the running tiler applied saved values. The deliberate
-    // Reload Tiler button sends one typed reconfigure request for gaps and
-    // reports sent-but-unconfirmed or failed.
+    // Border hot-apply stays live through the native effect reconfigure.
+    // Script settings (workspace mode, shortcut profile, tiling gaps) live in
+    // the native script KCM and never pass through this module.
 }
 
 void ActiveBorderConfigModule::defaults()
 {
     KCModule::defaults();
-
-    m_ui.workspaceModeCombo->setCurrentIndex(m_ui.workspaceModeCombo->findData(QStringLiteral("per-output-local")));
-    m_ui.shortcutProfileCombo->setCurrentIndex(m_ui.shortcutProfileCombo->findData(QStringLiteral("cosmic")));
-    m_ui.innerGapSpinBox->setValue(8);
-    m_ui.outerGapSpinBox->setValue(8);
-    updateScriptState();
 }
 
 } // namespace KWin

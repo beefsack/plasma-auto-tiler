@@ -1141,7 +1141,7 @@ build-kwin-script:
     npm --prefix "$KWIN_DIR" run build || { echo "error: npm run build failed for $KWIN_DIR" >&2; exit 1; }
     [[ -f "$BUNDLE" ]] || { echo "error: KWin bundle missing after build: $BUNDLE" >&2; exit 1; }
 
-# Build the native Plasma Auto Tiler effect + KCM against the exact host KWin derivation dev output via scripts/nix-host-kwin-build.sh and stage both .so files under target/ for QT_PLUGIN_PATH use. No KWin, D-Bus, loading, config, user/system-path, or live actions (subset build, static only).
+# Build the native Plasma Auto Tiler effect + KCMs against the exact host KWin derivation dev output via scripts/nix-host-kwin-build.sh and stage all three .so files under target/ for QT_PLUGIN_PATH use. No KWin, D-Bus, loading, config, user/system-path, or live actions (subset build, static only).
 build-native-effect:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1150,6 +1150,7 @@ build-native-effect:
     TARGET_DIR="$REPO_ROOT/target"
     EFFECT_SO="plasma-auto-tiler-active-border.so"
     KCM_SO="plasma-auto-tiler-active-border_config.so"
+    SCRIPT_KCM_SO="plasma-auto-tiler-kwin_config.so"
     BUILDER="$REPO_ROOT/scripts/nix-host-kwin-build.sh"
     [[ -x "$BUILDER" ]] || { echo "error: host-matched builder missing or not executable: $BUILDER" >&2; exit 1; }
     # Read-only provenance first (no realization, metadata only; KWinConfig is
@@ -1163,23 +1164,29 @@ build-native-effect:
     env -u PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR -u DOGFOOD_KWIN_DEV_CMAKE_DIR -u CMAKE_BIN -u CARGO_BIN bash "$BUILDER" build --source "$SOURCE_DIR" --build-dir "$BUILD_DIR" --expected-identity "$IDENTITY" || { echo "error: host-matched native build failed for $SOURCE_DIR" >&2; exit 1; }
     BUILT_SO="$BUILD_DIR/bin/kwin/effects/plugins/$EFFECT_SO"
     BUILT_KCM="$BUILD_DIR/bin/kwin/effects/configs/$KCM_SO"
+    BUILT_SCRIPT_KCM="$BUILD_DIR/bin/kwin/scripts/configs/$SCRIPT_KCM_SO"
     [[ -f "$BUILT_SO" ]] || { echo "error: effect .so not found after build: $BUILT_SO" >&2; exit 1; }
     [[ -f "$BUILT_KCM" ]] || { echo "error: KCM .so not found after build: $BUILT_KCM" >&2; exit 1; }
+    [[ -f "$BUILT_SCRIPT_KCM" ]] || { echo "error: script KCM .so not found after build: $BUILT_SCRIPT_KCM" >&2; exit 1; }
     PAYLOAD="$(mktemp -d "$TARGET_DIR/.kwin-native-effect-stage.XXXXXX")" || { echo "error: could not create staging transaction directory under $TARGET_DIR" >&2; exit 1; }
     cleanup() { [[ -n "${PAYLOAD:-}" && -d "${PAYLOAD:-}" ]] && rm -rf -- "$PAYLOAD"; }
     trap cleanup EXIT
     install -Dm0644 "$BUILT_SO" "$PAYLOAD/kwin/effects/plugins/$EFFECT_SO" || { echo "error: could not stage effect .so" >&2; exit 1; }
     install -Dm0644 "$BUILT_KCM" "$PAYLOAD/kwin/effects/configs/$KCM_SO" || { echo "error: could not stage KCM .so" >&2; exit 1; }
+    install -Dm0644 "$BUILT_SCRIPT_KCM" "$PAYLOAD/kwin/scripts/configs/$SCRIPT_KCM_SO" || { echo "error: could not stage script KCM .so" >&2; exit 1; }
     [[ -f "$PAYLOAD/kwin/effects/plugins/$EFFECT_SO" ]] || { echo "error: staged effect .so missing: $PAYLOAD/kwin/effects/plugins/$EFFECT_SO" >&2; exit 1; }
     [[ -f "$PAYLOAD/kwin/effects/configs/$KCM_SO" ]] || { echo "error: staged KCM .so missing: $PAYLOAD/kwin/effects/configs/$KCM_SO" >&2; exit 1; }
+    [[ -f "$PAYLOAD/kwin/scripts/configs/$SCRIPT_KCM_SO" ]] || { echo "error: staged script KCM .so missing: $PAYLOAD/kwin/scripts/configs/$SCRIPT_KCM_SO" >&2; exit 1; }
     rm -rf -- "$STAGE" || { echo "error: could not remove stale staging root: $STAGE" >&2; exit 1; }
     mv -- "$PAYLOAD" "$STAGE" || { echo "error: could not publish staging root: $STAGE" >&2; exit 1; }
     PAYLOAD=""
     trap - EXIT
     [[ -f "$STAGE/kwin/effects/plugins/$EFFECT_SO" ]] || { echo "error: staged effect .so missing: $STAGE/kwin/effects/plugins/$EFFECT_SO" >&2; exit 1; }
     [[ -f "$STAGE/kwin/effects/configs/$KCM_SO" ]] || { echo "error: staged KCM .so missing: $STAGE/kwin/effects/configs/$KCM_SO" >&2; exit 1; }
+    [[ -f "$STAGE/kwin/scripts/configs/$SCRIPT_KCM_SO" ]] || { echo "error: staged script KCM .so missing: $STAGE/kwin/scripts/configs/$SCRIPT_KCM_SO" >&2; exit 1; }
     echo "staged: $STAGE/kwin/effects/plugins/$EFFECT_SO"
     echo "staged: $STAGE/kwin/effects/configs/$KCM_SO"
+    echo "staged: $STAGE/kwin/scripts/configs/$SCRIPT_KCM_SO"
     echo "QT_PLUGIN_PATH=$STAGE"
 
 # One-time dev delivery setup: stage native effects, then write the project-owned plasma-workspace env script for this checkout. Takes effect only after user logout/login. Deliberate; never run by `just dev`.

@@ -27,6 +27,7 @@ in
     environment.pathsToLink = lib.mkAfter [
       "/share"
       "/lib/qt-6/plugins/kwin/effects"
+      "/lib/qt-6/plugins/kwin/scripts"
     ];
   };
 }

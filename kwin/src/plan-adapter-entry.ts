@@ -2488,6 +2488,11 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         readInnerGapFn: overrides.readInnerGapFn,
         readOuterGapFn: overrides.readOuterGapFn,
     });
+    // Startup-consumed settings snapshot: workspaceMode and shortcutProfile
+    // are never re-read for behavior. A configChanged drift against this
+    // snapshot is logged restart-required, never adopted here.
+    const startupProfile = readShortcutProfile(overrides.readProfileFn);
+    const startupWorkspaceMode = readWorkspaceModeValue(overrides.readWorkspaceModeFn);
     const eligibilityReasons = new Map<string, string>();
     const reportEligibility: EligibilityReporter = (ref, reason): void => {
         if (!KWIN_TRACE_ENABLED) {
@@ -4630,6 +4635,31 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             optionsConfigDetach = connectSignal(
                 readSignal(optionsGlobal as object, "configChanged"),
                 () => {
+                    // Startup-consumed drift note first: workspaceMode and
+                    // shortcutProfile never re-read for behavior here. Drift
+                    // is restart-required, never adopted.
+                    try {
+                        const drifted: string[] = [];
+                        if (
+                            String(readWorkspaceModeValue(overrides.readWorkspaceModeFn)) !== String(startupWorkspaceMode)
+                        ) {
+                            drifted.push("workspaceMode");
+                        }
+                        if (readShortcutProfile(overrides.readProfileFn) !== startupProfile) {
+                            drifted.push("shortcutProfile");
+                        }
+                        if (drifted.length > 0) {
+                            try {
+                                log(
+                                    `plasma-auto-tiler:plan:config-reloaded stage=restart-required keys=${drifted.join(",")}`,
+                                );
+                            } catch (error) {
+                                void error;
+                            }
+                        }
+                    } catch (error) {
+                        void error;
+                    }
                     let next: DomainGaps;
                     try {
                         next = readDomainGaps({
@@ -4649,9 +4679,16 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                     } catch (error) {
                         void error;
                     }
+                    // Queued, applied unconfirmed: the validated pair is
+                    // adopted for subsequent requests only. The update-gaps
+                    // plan flight runs the ordinary retained route on the
+                    // planner channel while workspace sends commit on the
+                    // separate send channel, so no send outcome here proves
+                    // the gap resync applied. Application stays unconfirmed;
+                    // restart the session to guarantee pickup.
                     try {
                         log(
-                            `plasma-auto-tiler:plan:config-reloaded innerGap=${String(next.innerGap)} outerGap=${String(next.outerGap)}`,
+                            `plasma-auto-tiler:plan:config-reloaded stage=re-read-queued innerGap=${String(next.innerGap)} outerGap=${String(next.outerGap)} applied-unconfirmed`,
                         );
                     } catch (error) {
                         void error;

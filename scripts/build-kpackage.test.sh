@@ -12,6 +12,7 @@ MEMBERS=(
 NATIVE_MEMBERS=(
   kwin/effects/plugins/plasma-auto-tiler-active-border.so
   kwin/effects/configs/plasma-auto-tiler-active-border_config.so
+  kwin/scripts/configs/plasma-auto-tiler-kwin_config.so
 )
 PLUGIN_ID="plasma-auto-tiler-kwin"
 
@@ -412,6 +413,11 @@ else
     assert_sidecar "$ARCHIVE_ONE"
     assert_archive_payload "$ARCHIVE_ONE"
     "$UNZIP_BIN" -p "$ARCHIVE_ONE" contents/code/main.js | cmp -s - <(printf 'generated-by-fake-build\n') || fail "archived bundle was not regenerated before staging"
+    # Script-only artifact keeps the qualified native script KCM reference:
+    # the Configure page resolves only when the companion ABI-matched
+    # native-effect delivery is installed alongside this package.
+    "$UNZIP_BIN" -p "$ARCHIVE_ONE" metadata.json | grep -Fq "kwin/scripts/configs/plasma-auto-tiler-kwin_config" \
+      || fail "archived metadata does not reference the native script KCM companion"
   fi
 fi
 [[ -s "$FIXTURE_TMP/validation-args" ]] || fail "isolated validation was not invoked"

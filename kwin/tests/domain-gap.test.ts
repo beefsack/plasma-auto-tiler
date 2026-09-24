@@ -41,17 +41,17 @@ describe("bounded gap schema and native KCM persistence", () => {
         }
     });
 
-    it("persists gaps through the native KCM script group with bounded validation", () => {
-        const module = entryXml("native-effect/activeborderconfig_module.cpp");
-        const ui = entryXml("native-effect/activeborderconfig.ui");
+    it("persists gaps through the native script KCM with bounded validation", () => {
+        const module = entryXml("native-effect/scriptconfig_module.cpp");
+        const ui = entryXml("native-effect/scriptconfig.ui");
         for (const key of ["innerGap", "outerGap"]) {
             assert.match(module, new RegExp(`readBoundedGap\\(group, QStringLiteral\\("${key}"\\)\\)`));
             assert.match(module, new RegExp(`writeEntry\\(QStringLiteral\\("${key}"\\)`));
             assert.match(ui, new RegExp(`name="${key}SpinBox"`));
             assert.match(ui, new RegExp(`name="label_${key}"[\\s\\S]*?${key}SpinBox`));
         }
-        assert.match(module, /innerGapSpinBox->setValue\(8\)/);
-        assert.match(module, /outerGapSpinBox->setValue\(8\)/);
+        assert.match(module, /innerGapSpinBox->setValue\((8|kGapDefault)\)/);
+        assert.match(module, /outerGapSpinBox->setValue\((8|kGapDefault)\)/);
         assert.match(ui, /name="innerGapSpinBox"[\s\S]*?<number>64<\/number>/);
         assert.match(ui, /name="outerGapSpinBox"[\s\S]*?<number>64<\/number>/);
     });

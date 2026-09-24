@@ -144,6 +144,34 @@ target_link_libraries(plasma-auto-tiler-active-border_config PRIVATE
 )
 target_compile_options(plasma-auto-tiler-active-border_config PRIVATE -Wall -Wextra -Werror)
 
+# AR15 script settings: a small independent native QWidget script KCM owning
+# workspaceMode, shortcutProfile, innerGap, and outerGap from the existing
+# Script-plasma-auto-tiler-kwin group. Discovered through the script
+# package metadata X-KDE-ConfigModule qualified reference
+# (kwin/scripts/configs/plasma-auto-tiler-kwin_config) via the KWin scripts
+# KCM configure path; no effect enablement required.
+set(script_kcm_SOURCES
+    scriptconfig_module.cpp
+    scriptconfig_module.h
+)
+ki18n_wrap_ui(script_kcm_SOURCES scriptconfig.ui)
+
+kcoreaddons_add_plugin(plasma-auto-tiler-kwin_config
+    INSTALL_NAMESPACE "kwin/scripts/configs"
+    SOURCES ${script_kcm_SOURCES}
+)
+target_compile_definitions(plasma-auto-tiler-kwin_config PRIVATE -DTRANSLATION_DOMAIN="kwin")
+target_link_libraries(plasma-auto-tiler-kwin_config PRIVATE
+    KF6::CoreAddons
+    KF6::ConfigCore
+    KF6::I18n
+    KF6::KCMUtils
+    Qt6::Core
+    Qt6::DBus
+    Qt6::Widgets
+)
+target_compile_options(plasma-auto-tiler-kwin_config PRIVATE -Wall -Wextra -Werror)
+
 include(CTest)
 
 if(BUILD_TESTING)
@@ -207,17 +235,11 @@ if(BUILD_TESTING)
         COMMAND plasma-auto-tiler-active-border-kcm-config-test border)
     add_test(NAME native-effect-kcm-config-reload
         COMMAND plasma-auto-tiler-active-border-kcm-config-test config)
-    add_test(NAME native-effect-kcm-config-gaps
-        COMMAND plasma-auto-tiler-active-border-kcm-config-test gaps)
-    add_test(NAME native-effect-kcm-tiler-reload
-        COMMAND plasma-auto-tiler-active-border-kcm-config-test reload)
     set_tests_properties(
         native-effect-kcm-dbus
         native-effect-kcm-hotapply
         native-effect-kcm-border
         native-effect-kcm-config-reload
-        native-effect-kcm-tiler-reload
-        native-effect-kcm-config-gaps
         PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
@@ -269,6 +291,52 @@ if(BUILD_TESTING)
         native-effect-kcm-shortcut-migration
         PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
+
+    set(script_config_test_SOURCES
+        scriptconfig_module_test.cpp
+        scriptconfig_module.cpp
+    )
+    ki18n_wrap_ui(script_config_test_SOURCES scriptconfig.ui)
+    add_executable(plasma-auto-tiler-script-config-test
+        ${script_config_test_SOURCES}
+    )
+    target_link_libraries(plasma-auto-tiler-script-config-test PRIVATE
+        KF6::CoreAddons
+        KF6::ConfigCore
+        KF6::I18n
+        KF6::KCMUtils
+        Qt6::Core
+        Qt6::DBus
+        Qt6::Widgets
+    )
+    target_compile_definitions(plasma-auto-tiler-script-config-test PRIVATE
+        -DTRANSLATION_DOMAIN="kwin"
+        -DKPLUGINFACTORY_PLUGIN_CLASS_INTERNAL_NAME=ScriptConfigModuleFactory
+    )
+    target_compile_options(plasma-auto-tiler-script-config-test PRIVATE -Wall -Wextra -Werror)
+
+    add_test(NAME native-script-config-dbus
+        COMMAND plasma-auto-tiler-script-config-test dbus)
+    add_test(NAME native-script-config-gaps
+        COMMAND plasma-auto-tiler-script-config-test gaps)
+    add_test(NAME native-script-config-save
+        COMMAND plasma-auto-tiler-script-config-test save)
+    set_tests_properties(
+        native-script-config-dbus
+        native-script-config-gaps
+        native-script-config-save
+        PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_test(NAME native-script-config-discovery-validation
+        COMMAND ${CMAKE_COMMAND}
+            -DSCRIPT_METADATA_FILE=${CMAKE_CURRENT_SOURCE_DIR}/../metadata.json
+            -DSCRIPT_KCM_METADATA_FILE=${CMAKE_CURRENT_SOURCE_DIR}/scriptconfig_module.json
+            -DSCRIPT_KCM_SOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/scriptconfig_module.cpp
+            -DSCRIPT_CMAKE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt
+            -DEXPECTED_SCRIPT_CONFIG_REFERENCE=kwin/scripts/configs/plasma-auto-tiler-kwin_config
+            -DEXPECTED_SCRIPT_KCM_ID=plasma-auto-tiler-kwin_config
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/validate-scriptconfig.cmake)
 
     add_executable(plasma-auto-tiler-shortcut-reconciler-test
         shortcutreconciler_test.cpp

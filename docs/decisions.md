@@ -35,10 +35,16 @@ the corresponding item ships; each such entry names its replacement.
 - Size caps (AR16, shipped offline): the 64-window and 16-domain count caps are
   retired. The codec rejects requests above 1 MiB; the KWin adapter mirrors
   this bound before dispatch. Separate reply, native/FFI, and field bounds remain.
-- Settings (AR15): tiling settings (`workspaceMode`, `shortcutProfile`, gaps)
-  are configured from the KWin script's own configure page; the effect KCM
-  keeps border and shortcut settings. Storage stays in the same `kwinrc`
-  group.
+- Settings (AR15, shipped offline): tiling settings (`workspaceMode`,
+  `shortcutProfile`, gaps) are configured from the KWin script's own Configure
+  page, backed by a small host-built native script KCM. Saving changed gaps
+  requests KWin reconfigure and the running controller re-reads validated gaps
+  for debounced retained resync; the request alone does not confirm application.
+  `workspaceMode` and `shortcutProfile` remain startup-only and the page states
+  that a session restart is required. The effect KCM keeps border and explicit
+  shortcut overrides only. Storage remains in the same `kwinrc` group. The
+  script KPackage needs the host-built native KCM companion for its Configure
+  page; the effect need not be enabled. Live acceptance remains pending.
 - Threat model (AR13): processes of the same user are trusted. The tray drops
   the KWin executable allowlist and `/proc`/pidfd/inode binding, runs single
   instance by owning its D-Bus name, is delivered by XDG autostart or a user
@@ -120,23 +126,21 @@ the corresponding item ships; each such entry names its replacement.
 
 ## Settings And Distribution
 
-- (Tiling/workspace settings ownership moves to the script configure page
-  when AR15 ships; see Architecture Direction.) One native QWidget
-  effect-scoped KCM owns tiling, workspace, shortcut,
-  outline, and border settings through the Desktop Effects entry. Existing
-  script groups, keys, values, and defaults remain unchanged. The approved
-  interim target remains a deliberate tiler reload after saving tiling settings
-  with clear reload-required UI; existing live border updates remain live.
-  Startup-read `shortcutProfile`/`workspaceMode` still require session restart,
-  which applies them.
-  The ineffective `tilingAlgorithm`,
-  `automaticSplitTarget`, and `dropOutlinePreview` controls are removed;
-  existing values are neither read nor rewritten. Shortcut re-registration is unselected: the pinned
-  scripting surface offers no unregister operation, so reload never
-  re-registers and foreign records change only through explicit KCM
-  Apply/Revert.
-  Before launch, every user-facing setting must apply live. That requirement is
-  a mandatory launch blocker, and the interim reload does not satisfy it.
+- The script Configure page owns `workspaceMode`, `shortcutProfile`, and both
+  gaps through a native script KCM; the effect-scoped KCM retains border and
+  shortcut-override settings. Existing script groups, keys, values, and
+  defaults remain unchanged. Saving changed gaps queues the existing KWin
+  reconfigure path automatically; the controller re-reads gaps on
+  `Options.configChanged` and requests a debounced retained `update-gaps`.
+  The queued D-Bus send is unconfirmed, and a session restart guarantees pickup
+  if it cannot converge. Startup-read `shortcutProfile`/`workspaceMode` still
+  require session restart. The ineffective `tilingAlgorithm`,
+  `automaticSplitTarget`, and `dropOutlinePreview` controls remain removed;
+  existing values are neither read nor rewritten. Shortcut re-registration
+  remains unselected: the pinned scripting surface offers no unregister
+  operation, and foreign records change only through explicit effect KCM
+  Apply/Revert. Existing live border updates remain live. Before launch, every
+  user-facing setting must apply live; this remains a mandatory launch blocker.
 - The core distribution remains the script KPackage for KDE Store and an
   identical GitHub Release artifact. Platform-native packages for the native
   effect and KCM are permitted; their formats and publication are unselected.

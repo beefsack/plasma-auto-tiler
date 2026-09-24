@@ -622,7 +622,7 @@ describe("deliberate gap reload production route", () => {
             fire();
         }
         assert.ok(
-            logs.some((line) => line === "plasma-auto-tiler:plan:config-reloaded innerGap=16 outerGap=8"),
+            logs.some((line) => line === "plasma-auto-tiler:plan:config-reloaded stage=re-read-queued innerGap=16 outerGap=8 applied-unconfirmed"),
         );
         fireDebounce();
         assert.equal(dbusCalls.length, 2);
