@@ -294,6 +294,7 @@ impl super::super::Session {
             desired_trees.get(&key).cloned().flatten().as_ref(),
             &desired_windows,
             &key,
+            &hints_from_observed(&session_observation.windows),
         )
         .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
         if desired_geometry.is_empty() {
@@ -499,6 +500,7 @@ impl super::super::Session {
                 Some(tree),
                 &desired_windows,
                 &key,
+                &hints_from_observed(&session_observation.windows),
             )
             .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?,
             None => Vec::new(),

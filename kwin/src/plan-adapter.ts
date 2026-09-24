@@ -178,6 +178,13 @@ export interface PlanSnapshotWindow {
     readonly floating: boolean;
     readonly sticky?: boolean;
     readonly resourceClass: string;
+    // AR12 client size hints captured freshly from `readWindowConstraints`
+    // at observation time (primitive only, advisory, never retained state).
+    // Absent when the host reports no hint there. Hints never join the
+    // fingerprint and never affect snapshot equality/membership: they only
+    // ride the request wire as `min_size`/`max_size`.
+    readonly minSize?: { readonly w: number; readonly h: number };
+    readonly maxSize?: { readonly w: number; readonly h: number };
 }
 
 export interface PlanSnapshot {
@@ -959,6 +966,11 @@ interface PlanGeometryEntry {
     readonly output: string;
     readonly workspace: string;
     readonly rect: PlanRect;
+    // AR12 reply diagnostics. Absent on the wire unless true; default false
+    // here. `overconstrained` is honored on every op (never reasserted);
+    // `clientClamped` is honored only on reconcile/update-gaps.
+    readonly overconstrained: boolean;
+    readonly clientClamped: boolean;
 }
 
 interface PlanFocusBody {
@@ -1022,8 +1034,18 @@ function validateGeometryEntry(value: unknown): PlanGeometryEntry | null {
     if (!isRecord(value)) {
         return null;
     }
-    if (!hasExactKeys(value, ["window", "leaf", "output", "workspace", "rect"])) {
-        return null;
+    // Required wire keys plus the optional AR12 diagnostics. Any other key
+    // stays malformed (fail closed, mirroring the old exact-keys check).
+    const allowed = new Set(["window", "leaf", "output", "workspace", "rect", "overconstrained", "client_clamped"]);
+    for (const key of Object.keys(value)) {
+        if (!allowed.has(key)) {
+            return null;
+        }
+    }
+    for (const key of ["window", "leaf", "output", "workspace", "rect"]) {
+        if (!Object.prototype.hasOwnProperty.call(value, key)) {
+            return null;
+        }
     }
     if (
         !isOpaqueId(value["window"]) ||
@@ -1035,6 +1057,14 @@ function validateGeometryEntry(value: unknown): PlanGeometryEntry | null {
     }
     const rawRect: unknown = value["rect"];
     if (!isTargetRect(rawRect)) {
+        return null;
+    }
+    const over = value["overconstrained"];
+    if (over !== undefined && typeof over !== "boolean") {
+        return null;
+    }
+    const clamped = value["client_clamped"];
+    if (clamped !== undefined && typeof clamped !== "boolean") {
         return null;
     }
     const rect = rawRect as unknown as Record<string, unknown>;
@@ -1049,6 +1079,8 @@ function validateGeometryEntry(value: unknown): PlanGeometryEntry | null {
             w: rect["w"] as number,
             h: rect["h"] as number,
         },
+        overconstrained: over === true,
+        clientClamped: clamped === true,
     };
 }
 
@@ -2104,7 +2136,7 @@ export class PlanAdapter {
         const snapshot = snapshotOf(observed);
         const retained = this.lastGoodFor(snapshot);
         if (retained === null && !snapshot.windows.some((entry) => entry.fullscreen || entry.maximized)) {
-            return snapshot;
+            return this.attachHintSizes(snapshot, observed);
         }
         const retainedById = new Map<string, PlanRect>();
         if (retained !== null) {
@@ -2123,7 +2155,7 @@ export class PlanAdapter {
                     : clampCarriedRect(entry.rect, snapshot.domainBounds);
             return { ...entry, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h } };
         });
-        return { ...snapshot, windows: Object.freeze(windows) };
+        return this.attachHintSizes({ ...snapshot, windows: Object.freeze(windows) }, observed);
     }
 
     // Reprojection carries the prior planner allocation for every member. The
@@ -2140,7 +2172,80 @@ export class PlanAdapter {
             const rect = clampCarriedRect(carried, snapshot.domainBounds);
             return { ...entry, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h } };
         });
-        return { ...snapshot, windows: Object.freeze(windows) };
+        return this.attachHintSizes({ ...snapshot, windows: Object.freeze(windows) }, observed);
+    }
+
+    // AR12: capture client size hints freshly from the live refs behind one
+    // observation. Best-effort and fail-closed: a missing reader, a throw, or
+    // an unreadable value leaves that member hintless (absent on the wire).
+    // Values ride through verbatim; meaningfulness (positive, in-bound) is
+    // judged in core, never here.
+    private hintSizesFor(ref: object): { minSize?: { readonly w: number; readonly h: number }; maxSize?: { readonly w: number; readonly h: number } } {
+        try {
+            const reader = this.env.readWindowConstraints;
+            if (typeof reader !== "function") {
+                return {};
+            }
+            const constraints = reader(ref);
+            if (constraints === null || typeof constraints !== "object") {
+                return {};
+            }
+            const out: { minSize?: { readonly w: number; readonly h: number }; maxSize?: { readonly w: number; readonly h: number } } = {};
+            const min = (constraints as PlanWindowConstraints).minSize;
+            if (min !== null && min !== undefined && Number.isInteger(min.w) && Number.isInteger(min.h)) {
+                out.minSize = { w: min.w, h: min.h };
+            }
+            const max = (constraints as PlanWindowConstraints).maxSize;
+            if (max !== null && max !== undefined && Number.isInteger(max.w) && Number.isInteger(max.h)) {
+                out.maxSize = { w: max.w, h: max.h };
+            }
+            return out;
+        } catch (error) {
+            void error;
+            return {};
+        }
+    }
+
+    // Attach freshly read hint sizes to every snapshot member backed by the
+    // given observation (matched by id). Members without a live ref keep
+    // their existing hints.
+    private attachHintSizes(snapshot: PlanSnapshot, observed: PlanObserved): PlanSnapshot {
+        if (typeof this.env.readWindowConstraints !== "function") {
+            return snapshot;
+        }
+        const refById = new Map<string, object>();
+        for (const entry of observed.windows) {
+            if (!refById.has(entry.id)) {
+                refById.set(entry.id, entry.ref);
+            }
+        }
+        if (refById.size === 0) {
+            return snapshot;
+        }
+        const windows = snapshot.windows.map((entry) => {
+            const ref = refById.get(entry.id);
+            if (ref === undefined) {
+                return entry;
+            }
+            const hints = this.hintSizesFor(ref);
+            if (hints.minSize === undefined && hints.maxSize === undefined) {
+                return entry;
+            }
+            return {
+                ...entry,
+                ...(hints.minSize === undefined ? {} : { minSize: hints.minSize }),
+                ...(hints.maxSize === undefined ? {} : { maxSize: hints.maxSize }),
+            };
+        });
+        return { ...snapshot, windows };
+    }
+
+    // Refresh a retained snapshot's hints from a fresh observation (remove
+    // intents reuse the pre-removal snapshot but must still send fresh
+    // hints for the survivors). Members absent from the fresh observation
+    // keep their retained hints.
+    private snapshotWithFreshHints(snapshot: PlanSnapshot, observed: PlanObserved): PlanSnapshot {
+        return this.attachHintSizes(snapshot, observed);
     }
 
     requestMove(direction: unknown): void {
@@ -3750,7 +3855,10 @@ export class PlanAdapter {
                 if (!after.has(entry.id)) {
                     intent = {
                         op: "remove",
-                        snapshot: previous,
+                        // Retained pre-removal snapshot, but with hints
+                        // refreshed from the fresh observation so survivors
+                        // still send fresh AR12 evidence.
+                        snapshot: this.snapshotWithFreshHints(previous, fresh),
                         removed: entry.id,
                         body: { op: "remove", window: entry.id },
                     };
@@ -4210,7 +4318,10 @@ export class PlanAdapter {
             const single = missing[0] as string;
             return {
                 op: "remove",
-                snapshot: previous,
+                // Retained pre-removal snapshot, but with hints refreshed
+                // from the fresh observation so survivors still send fresh
+                // AR12 evidence.
+                snapshot: this.snapshotWithFreshHints(previous, prepared.observed),
                 removed: single,
                 body: { op: "remove", window: single },
                 background: true,
@@ -4452,6 +4563,10 @@ export class PlanAdapter {
             // maximized member. Rust declines fitting when any entry sets it;
             // normal seed/reflow exception behavior is unchanged.
             ...(entry.floating === true || entry.sticky === true || entry.fullscreen || entry.maximized ? { fit_excluded: true } : {}),
+            // AR12 client size hints captured freshly at observation time.
+            // Absent when the host reports no hint there.
+            ...(entry.minSize === undefined ? {} : { min_size: { w: entry.minSize.w, h: entry.minSize.h } }),
+            ...(entry.maxSize === undefined ? {} : { max_size: { w: entry.maxSize.w, h: entry.maxSize.h } }),
         }));
         // Directional domains payload: only focus/move may carry it, and
         // only when the snapshot holds two validated domains. The source
@@ -5196,6 +5311,12 @@ export class PlanAdapter {
             this.activationStep = 0;
             this.diag(flightState.op, flightState.correlation, flightState.windowCount, "rejected");
             this.rejectKind(kind, detail, flightState.snapshot);
+            // Core partial-observation diagnostics: log the retained vs
+            // observed membership skew (counts only, no gate change) so a
+            // floating/exception drift is attributable without guessing.
+            if (kind === "partial-observation") {
+                this.logCoverSkew(flightState, null, "partial-observation");
+            }
             if (flightState.background === true) {
                 this.noteBackgroundTerminal(flightState.snapshot);
             } else {
@@ -5251,17 +5372,198 @@ export class PlanAdapter {
         if (planned === null) {
             this.lifecycleDiag(flightState, "reply", "validate", "malformed", "precondition-mismatch");
             this.ordinaryTerminal(flightState, null, "uncertain", "validate");
+            this.logCoverSkew(flightState, null, "malformed");
             this.failFlight(flightState, "precondition-mismatch");
             return;
         }
         if (!this.geometryCovers(planned, flightState)) {
             this.lifecycleDiag(flightState, "reply", "validate", "malformed", "precondition-mismatch", this.ordinaryRevision(planned, flightState));
             this.ordinaryTerminal(flightState, planned, "uncertain", "validate");
+            this.logCoverSkew(flightState, planned, "cover-mismatch");
             this.failFlight(flightState, "precondition-mismatch");
             return;
         }
         this.lifecycleDiag(flightState, "reply", "validate", "validated", "-", this.ordinaryRevision(planned, flightState));
         this.applyPlanned(planned, flightState);
+    }
+
+    // Known floating source derived from adapter observation (entry.ts:
+    // floating = float-membership set OR onAllDesktops; sticky implies
+    // onAllDesktops). Never a Rust derivation.
+    private floatSourceOf(entry: { readonly floating: boolean; readonly sticky?: boolean }): string {
+        if (entry.floating !== true) {
+            return "none";
+        }
+        return entry.sticky === true ? "all-desktops" : "float-set";
+    }
+
+    private skewFlag(value: boolean | undefined): string {
+        return value === undefined ? "unknown" : value ? "true" : "false";
+    }
+
+    // Membership-skew diagnostics (logging only, never a gate): one summary
+    // line plus one bounded record per mismatched member using the existing
+    // opaque window id convention, each with its observed
+    // floating/sticky/fullscreen/maximized flags and known floating source.
+    // Retained tiled membership comes from the adapter last-good baseline
+    // when available and is labeled adapter-last-good evidence, never
+    // asserted as core state. For core partial-observation (no planned
+    // geometry) members compare only against actual retained evidence;
+    // without it the log reports retained=unknown and claims no precise
+    // cause. Counts only otherwise; no rects, no raw native ids. Member
+    // records are bounded by the protocol window caps (at most 64 wanted
+    // plus 64 planned).
+    private logCoverSkew(flightState: PendingFlight, planned: PlannedReply | null, reason: string): void {
+        try {
+            interface SkewFlags {
+                readonly floating: boolean | undefined;
+                readonly sticky: boolean | undefined;
+                readonly fullscreen: boolean | undefined;
+                readonly maximized: boolean | undefined;
+                readonly src: string;
+            }
+            const snapById = new Map<string, SkewFlags>();
+            const wanted = new Set<string>();
+            let floating = 0;
+            let sticky = 0;
+            let fullscreen = 0;
+            let maximized = 0;
+            for (const entry of flightState.snapshot.windows) {
+                snapById.set(entry.id, {
+                    floating: entry.floating,
+                    sticky: entry.sticky,
+                    fullscreen: entry.fullscreen,
+                    maximized: entry.maximized,
+                    src: this.floatSourceOf(entry),
+                });
+                if (entry.floating === true) {
+                    floating += 1;
+                }
+                if (entry.sticky === true) {
+                    sticky += 1;
+                }
+                if (entry.fullscreen) {
+                    fullscreen += 1;
+                }
+                if (entry.maximized) {
+                    maximized += 1;
+                }
+                if (entry.floating !== true || (flightState.floatTarget?.window === entry.id && flightState.floatTarget.floating === false)) {
+                    wanted.add(entry.id);
+                }
+            }
+            if (flightState.removed !== null) {
+                wanted.delete(flightState.removed);
+            }
+            // Adapter last-good evidence (never core state): retained tiled
+            // members under the flight domain key.
+            const retained = this.lastGoodFor(flightState.snapshot);
+            const retainedTiled = new Map<string, SkewFlags>();
+            if (retained !== null) {
+                for (const entry of retained.windows) {
+                    if (entry.floating !== true) {
+                        retainedTiled.set(entry.id, {
+                            floating: entry.floating,
+                            sticky: entry.sticky,
+                            fullscreen: entry.fullscreen,
+                            maximized: entry.maximized,
+                            src: this.floatSourceOf(entry),
+                        });
+                    }
+                }
+            }
+            // Missing/extra member ids with per-member flags. Cover-mismatch
+            // compares wanted against the planned geometry with observed
+            // (dispatch-snapshot) flags; without planned geometry the
+            // comparison falls back to retained evidence when available.
+            const missing: string[] = [];
+            const extra: string[] = [];
+            const flagOf = new Map<string, SkewFlags>();
+            const unknownFlags: SkewFlags = {
+                floating: undefined,
+                sticky: undefined,
+                fullscreen: undefined,
+                maximized: undefined,
+                src: "unknown",
+            };
+            let plannedText = "unknown";
+            if (planned !== null) {
+                const plannedIds = new Set<string>();
+                for (const entry of planned.geometry) {
+                    plannedIds.add(entry.window);
+                }
+                for (const id of wanted) {
+                    if (!plannedIds.has(id)) {
+                        missing.push(id);
+                    }
+                }
+                for (const id of plannedIds) {
+                    if (!wanted.has(id)) {
+                        extra.push(id);
+                    }
+                }
+                plannedText = String(planned.geometry.length);
+                for (const id of missing) {
+                    const flags = snapById.get(id);
+                    if (flags !== undefined) {
+                        flagOf.set(id, flags);
+                    }
+                }
+                for (const id of extra) {
+                    flagOf.set(id, snapById.get(id) ?? unknownFlags);
+                }
+            } else if (retained !== null) {
+                for (const id of wanted) {
+                    if (!retainedTiled.has(id)) {
+                        missing.push(id);
+                    }
+                }
+                for (const id of retainedTiled.keys()) {
+                    if (!wanted.has(id)) {
+                        extra.push(id);
+                    }
+                }
+                for (const id of missing) {
+                    const flags = snapById.get(id);
+                    if (flags !== undefined) {
+                        flagOf.set(id, flags);
+                    }
+                }
+                for (const id of extra) {
+                    const flags = retainedTiled.get(id);
+                    if (flags !== undefined) {
+                        flagOf.set(id, flags);
+                    }
+                }
+            }
+            missing.sort();
+            extra.sort();
+            const retainedIds = [...retainedTiled.keys()].sort();
+            const hasReference = planned !== null || retained !== null;
+            this.logToken(
+                `${LOG_PREFIX}:membership-skew correlation=${flightState.correlation} op=${flightState.op} reason=${sanitizeKind(reason)} wanted=${String(wanted.size)} planned=${plannedText} missing=${hasReference ? String(missing.length) : "unknown"} extra=${hasReference ? String(extra.length) : "unknown"} floating=${String(floating)} sticky=${String(sticky)} fullscreen=${String(fullscreen)} maximized=${String(maximized)} retained=${retained === null ? "unknown" : "known"} retained-wanted=${retained === null ? "-" : String(retainedTiled.size)} retained-ids=${retained === null || retainedIds.length === 0 ? "-" : retainedIds.join(",")}`,
+            );
+            for (const id of missing) {
+                const flags = flagOf.get(id);
+                if (flags === undefined) {
+                    continue;
+                }
+                this.logToken(
+                    `${LOG_PREFIX}:membership-skew-member correlation=${flightState.correlation} window=${id} side=missing floating=${this.skewFlag(flags.floating)} sticky=${this.skewFlag(flags.sticky)} fullscreen=${this.skewFlag(flags.fullscreen)} maximized=${this.skewFlag(flags.maximized)} float-src=${flags.src}`,
+                );
+            }
+            for (const id of extra) {
+                const flags = flagOf.get(id);
+                if (flags === undefined) {
+                    continue;
+                }
+                this.logToken(
+                    `${LOG_PREFIX}:membership-skew-member correlation=${flightState.correlation} window=${id} side=extra floating=${this.skewFlag(flags.floating)} sticky=${this.skewFlag(flags.sticky)} fullscreen=${this.skewFlag(flags.fullscreen)} maximized=${this.skewFlag(flags.maximized)} float-src=${flags.src}`,
+                );
+            }
+        } catch (error) {
+            void error;
+        }
     }
 
     // Complete-reply binding: the reply geometry must cover exactly the
@@ -5929,7 +6231,7 @@ export class PlanAdapter {
         for (const entry of current.windows) {
             oldById.set(entry.id, { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h });
         }
-        const ordered = orderGeometryWrites(oldById, planned.geometry);
+        const ordered = orderGeometryWrites(oldById, planned.geometry.filter((entry) => !entry.overconstrained));
         for (const entry of ordered) {
             const ref = byRef.get(entry.window);
             if (ref === undefined) {
@@ -6027,10 +6329,54 @@ export class PlanAdapter {
             }
             resourceClassById.set(entry.id, isOpaqueId(entry.resourceClass) ? entry.resourceClass : "unknown");
         }
-        const ordered = orderGeometryWrites(oldById, planned.geometry);
+        // AR12: planner-directed skips. Overconstrained members are never
+        // reasserted on any op; client-clamped members are honored only on
+        // reconcile/update-gaps (the only paths that set the flag). Honored
+        // members leave the observed rectangle alone and keep the retained
+        // desired rectangle as authoritative truth. Park accounting for a
+        // fully explained reconcile apply resets below; a mixed apply that
+        // also reasserts genuine drift keeps the bounded increment.
+        const overconstrainedById = new Set<string>();
+        const clampedById = new Set<string>();
+        for (const entry of planned.geometry) {
+            if (entry.overconstrained) {
+                overconstrainedById.add(entry.window);
+            } else if (entry.clientClamped) {
+                clampedById.add(entry.window);
+            }
+        }
+        const honorClamp = flightState.op === "reconcile" || flightState.op === "update-gaps";
+        let honoredAr12Skips = 0;
+        for (const entry of planned.geometry) {
+            if (overconstrainedById.has(entry.window)) {
+                honoredAr12Skips += 1;
+            } else if (honorClamp && clampedById.has(entry.window)) {
+                honoredAr12Skips += 1;
+            }
+        }
+        const writable = planned.geometry.filter(
+            (entry) => !overconstrainedById.has(entry.window) && !(honorClamp && clampedById.has(entry.window)),
+        );
+        const ordered = orderGeometryWrites(oldById, writable);
         const orderedById = new Set<string>();
         for (const entry of ordered) {
             orderedById.add(entry.window);
+        }
+        // Genuine reasserts pending on this apply: ordered members that are
+        // not overlay-skipped. A mixed reconcile (one accepted clamp plus
+        // one genuine drift) still performs a genuine write, so it must
+        // still advance bounded park attempts below; only a fully explained
+        // apply (every drift covered by an honored AR12 skip) converges.
+        let pendingWrites = 0;
+        for (const entry of ordered) {
+            if (
+                fullscreenById.has(entry.window) ||
+                maximizedById.has(entry.window) ||
+                (floatingById.has(entry.window) && flightState.floatTarget?.window !== entry.window)
+            ) {
+                continue;
+            }
+            pendingWrites += 1;
         }
         // Focus is focus-only: never rewrite geometry, only move the active
         // window. Matches the standalone focus adapter single-write contract;
@@ -6043,7 +6389,9 @@ export class PlanAdapter {
             // skipped maximized, already equal, written, or write-failed) with
             // the stable opaque window id and target rect. Fullscreen takes
             // precedence over maximize, and either overlay state takes
-            // precedence over equality.
+            // precedence over equality. AR12 planner-directed skips
+            // (overconstrained, honored client clamp) take precedence over
+            // equality and carry their own default-visible correlated line.
             for (const entry of planned.geometry) {
                 if (fullscreenById.has(entry.window)) {
                     this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "skip-fullscreen", entry.rect);
@@ -6051,6 +6399,14 @@ export class PlanAdapter {
                     this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "skip-maximized", entry.rect);
                 } else if (floatingById.has(entry.window) && flightState.floatTarget?.window !== entry.window) {
                     this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "skip-floating", entry.rect);
+                } else if (overconstrainedById.has(entry.window)) {
+                    const resourceClass = resourceClassById.get(entry.window) ?? "unknown";
+                    this.writeDiag(entry.window, resourceClass, "skip-overconstrained", entry.rect);
+                    this.logToken(`${LOG_PREFIX}:overconstrained-skipped correlation=${flightState.correlation} window=${entry.window} resource_class=${resourceClass} op=${flightState.op}`);
+                } else if (honorClamp && clampedById.has(entry.window)) {
+                    const resourceClass = resourceClassById.get(entry.window) ?? "unknown";
+                    this.writeDiag(entry.window, resourceClass, "skip-clamped", entry.rect);
+                    this.logToken(`${LOG_PREFIX}:clamp-accepted correlation=${flightState.correlation} window=${entry.window} resource_class=${resourceClass} op=${flightState.op}`);
                 } else if (!orderedById.has(entry.window)) {
                     this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "skip-already-equal", entry.rect);
                 }
@@ -6347,9 +6703,23 @@ export class PlanAdapter {
                 if (flightState.background === true) {
                     if (flightState.workAreaReprojection === true) {
                         this.clearBackgroundReconcile(flightState.snapshot);
+                    } else if (honoredAr12Skips > 0 && pendingWrites === 0) {
+                        // Fully explained drift converges: every difference
+                        // was covered by a honored client-clamped or
+                        // overconstrained skip, so no genuine reassert ran
+                        // and background park must not advance.
+                        this.clearBackgroundReconcile(flightState.snapshot);
                     } else {
                         this.noteBackgroundTerminal(flightState.snapshot);
                     }
+                } else if (honoredAr12Skips > 0 && pendingWrites === 0) {
+                    // Fully explained drift converges: every difference was
+                    // covered by an honored client-clamped or overconstrained
+                    // skip, so no genuine reassert ran and park must not
+                    // advance. A mixed apply that also wrote genuine drift
+                    // keeps the existing bounded increment below.
+                    this.reconcileAttempts = 0;
+                    this.parked = false;
                 } else {
                     this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
                 }
@@ -6375,6 +6745,10 @@ export class PlanAdapter {
                     skips.add("skipped-maximized");
                 } else if (floatingById.has(entry.window) && flightState.floatTarget?.window !== entry.window) {
                     skips.add("skipped-floating");
+                } else if (overconstrainedById.has(entry.window)) {
+                    skips.add("skipped-overconstrained");
+                } else if (honorClamp && clampedById.has(entry.window)) {
+                    skips.add("skipped-clamped");
                 } else if (!orderedById.has(entry.window)) {
                     skips.add("skipped-equal");
                 }
@@ -6427,6 +6801,9 @@ export class PlanAdapter {
         }
         const changed: string[] = [];
         for (const entry of planned.geometry) {
+            if (entry.overconstrained) {
+                continue;
+            }
             const fresh = freshById.get(entry.window);
             if (fresh === undefined) {
                 continue;
@@ -6620,12 +6997,13 @@ export class PlanAdapter {
             this.failR4Terminal("stale-scope", true);
             return;
         }
-        if (!this.r4ProofMatches(r4)) {
+        const post = this.r4ObservedPost(r4);
+        if (post === null) {
             this.failR4Terminal("post-observation-mismatch", true);
             return;
         }
         r4.acked = true;
-        const payload = this.buildR4AckPayload(r4);
+        const payload = this.buildR4AckPayload(r4, post);
         if (payload === null || payload.length > PLAN_MAX_REQUEST_BYTES) {
             this.failR4Terminal("precondition-mismatch", false);
             return;
@@ -6634,30 +7012,40 @@ export class PlanAdapter {
         this.sendR4Request(payload, (reply) => this.onR4AckReply(reply, flight, session));
     }
 
-    // Full desired observed proof against the retained plan: mover on the
-    // exact target output with exact single-target membership, and every
-    // desired window at its planned rectangle.
-    private r4ProofMatches(r4: R4Flight): boolean {
+    // Native proof and post-image are captured together: all identities and
+    // memberships must match the plan. Only plan-flagged overconstrained
+    // members carry the actual client-held rectangle instead of a target.
+    private r4ObservedPost(r4: R4Flight): Array<{ window: string; output: string; workspace: string; rect: PlanRect }> | null {
         if (!this.r4MoverPlacementMatches(r4)) {
-            return false;
+            return null;
         }
+        const post: Array<{ window: string; output: string; workspace: string; rect: PlanRect }> = [];
         for (const entry of r4.planned.geometry) {
             const ref = r4.byRef.get(entry.window);
             if (ref === undefined) {
-                return false;
+                return null;
             }
             let rect: PlanRect | null = null;
+            let output: string | null = null;
+            let desktops: ReadonlyArray<string> | null = null;
             try {
                 rect = this.env.readGeometry?.(ref) ?? null;
+                output = this.env.readOutputName?.(ref) ?? null;
+                desktops = this.env.readDesktopIds?.(ref) ?? null;
             } catch (error) {
                 void error;
-                return false;
+                return null;
             }
-            if (rect === null || rect.x !== entry.rect.x || rect.y !== entry.rect.y || rect.w !== entry.rect.w || rect.h !== entry.rect.h) {
-                return false;
+            if (
+                !isTargetRect(rect) || output !== entry.output ||
+                desktops === null || desktops.length !== 1 || desktops[0] !== entry.workspace ||
+                (!entry.overconstrained && (rect.x !== entry.rect.x || rect.y !== entry.rect.y || rect.w !== entry.rect.w || rect.h !== entry.rect.h))
+            ) {
+                return null;
             }
+            post.push({ window: entry.window, output: entry.output, workspace: entry.workspace, rect });
         }
-        return true;
+        return post;
     }
 
     private r4MoverPlacementMatches(r4: R4Flight): boolean {
@@ -6684,9 +7072,8 @@ export class PlanAdapter {
         return true;
     }
 
-    // Post-observation windows carried by ack/verify: exactly the retained
-    // desired geometry (output/workspace/rect per window).
-    private r4PostWindows(r4: R4Flight): Array<Record<string, unknown>> {
+    // Planned post-image is used only for the terminal adapter-lost ack.
+    private r4PostWindows(r4: R4Flight): Array<{ window: string; output: string; workspace: string; rect: PlanRect }> {
         return r4.planned.geometry.map((entry) => ({
             window: entry.window,
             output: entry.output,
@@ -6707,12 +7094,12 @@ export class PlanAdapter {
         }));
     }
 
-    private r4PostFingerprint(r4: R4Flight): number {
+    private r4PostFingerprint(r4: R4Flight, post: ReadonlyArray<{ window: string; output: string; workspace: string; rect: PlanRect }>): number {
         const domains = r4.snapshot.domains as ReadonlyArray<PlanDomain>;
         return planDirectionalFingerprint(
             domains,
             "",
-            r4.planned.geometry.map((entry) => ({
+            post.map((entry) => ({
                 window: entry.window,
                 output: entry.output,
                 workspace: entry.workspace,
@@ -6723,7 +7110,7 @@ export class PlanAdapter {
         );
     }
 
-    private buildR4AckPayload(r4: R4Flight): string | null {
+    private buildR4AckPayload(r4: R4Flight, post: Array<{ window: string; output: string; workspace: string; rect: PlanRect }>): string | null {
         const snapshot = r4.snapshot;
         let payload = "";
         try {
@@ -6733,7 +7120,7 @@ export class PlanAdapter {
                 owner: this.owner,
                 generation: this.generation,
                 revision: r4.baseRevision,
-                fingerprint: this.r4PostFingerprint(r4),
+                fingerprint: this.r4PostFingerprint(r4, post),
                 domain: {
                     output: snapshot.domainOutput,
                     workspace: snapshot.domainWorkspace,
@@ -6748,7 +7135,7 @@ export class PlanAdapter {
                 },
                 domains: this.r4DomainsPayload(r4),
                 focused_window: "",
-                windows: this.r4PostWindows(r4),
+                windows: post,
                 command: { op: "directional-move-ack", ack_outcome: "accepted" },
             });
         } catch (error) {
@@ -6758,7 +7145,7 @@ export class PlanAdapter {
         return payload;
     }
 
-    private buildR4VerifyPayload(r4: R4Flight): string | null {
+    private buildR4VerifyPayload(r4: R4Flight, post: Array<{ window: string; output: string; workspace: string; rect: PlanRect }>): string | null {
         const snapshot = r4.snapshot;
         let payload = "";
         try {
@@ -6768,7 +7155,7 @@ export class PlanAdapter {
                 owner: this.owner,
                 generation: this.generation,
                 revision: r4.baseRevision,
-                fingerprint: this.r4PostFingerprint(r4),
+                fingerprint: this.r4PostFingerprint(r4, post),
                 domain: {
                     output: snapshot.domainOutput,
                     workspace: snapshot.domainWorkspace,
@@ -6783,7 +7170,7 @@ export class PlanAdapter {
                 },
                 domains: this.r4DomainsPayload(r4),
                 focused_window: "",
-                windows: this.r4PostWindows(r4),
+                windows: post,
                 command: {
                     op: "directional-move-verify",
                     verified: true,
@@ -6816,7 +7203,7 @@ export class PlanAdapter {
                 owner: this.owner,
                 generation: this.generation,
                 revision: r4.baseRevision,
-                fingerprint: this.r4PostFingerprint(r4),
+                fingerprint: this.r4PostFingerprint(r4, this.r4PostWindows(r4)),
                 domain: {
                     output: snapshot.domainOutput,
                     workspace: snapshot.domainWorkspace,
@@ -6997,9 +7384,11 @@ export class PlanAdapter {
             return null;
         }
         // Wire mapping mirrors dispatch exactly (including the carried
-        // floating/fit-excluded flags), so the Rust pre-image comparison sees
-        // the same normalized observation shape.
-        const windows = snapshot.windows.map((entry) => ({
+        // floating/fit-excluded flags and freshly read AR12 hints), so the
+        // Rust pre-image comparison sees the same normalized observation
+        // shape.
+        const hinted = this.attachHintSizes(snapshot, observed);
+        const windows = hinted.windows.map((entry) => ({
             window: entry.id,
             output: entry.output,
             workspace: entry.workspace,
@@ -7008,6 +7397,8 @@ export class PlanAdapter {
             ...(entry.floating === true || entry.sticky === true || entry.fullscreen || entry.maximized
                 ? { fit_excluded: true }
                 : {}),
+            ...(entry.minSize === undefined ? {} : { min_size: { w: entry.minSize.w, h: entry.minSize.h } }),
+            ...(entry.maxSize === undefined ? {} : { max_size: { w: entry.maxSize.w, h: entry.maxSize.h } }),
         }));
         const domains = (snapshot.domains as ReadonlyArray<PlanDomain>).map((entry) => ({
             output: entry.output,
@@ -7197,16 +7588,22 @@ export class PlanAdapter {
         this.diag(r4.op, r4.correlation, r4.planned.geometry.length, "r4-acknowledged");
         // Scope may have changed between ack and verify: rerun the full
         // desired observed proof so stale data never reaches verify.
-        if (r4.epoch !== this.epoch || !this.r4ProofMatches(r4)) {
+        const post = r4.epoch === this.epoch ? this.r4ObservedPost(r4) : null;
+        if (post === null) {
             this.failR4Terminal("stale-scope", false);
             return;
         }
-        const payload = this.buildR4VerifyPayload(r4);
+        const payload = this.buildR4VerifyPayload(r4, post);
         if (payload === null || payload.length > PLAN_MAX_REQUEST_BYTES) {
             this.failR4Terminal("precondition-mismatch", false);
             return;
         }
         this.diag(r4.op, r4.correlation, r4.planned.geometry.length, "r4-verify");
+        for (const entry of r4.planned.geometry) {
+            if (entry.overconstrained) {
+                this.logToken(`${LOG_PREFIX}:r4-verify correlation=${r4.correlation} window=${entry.window} overconstrained=true`);
+            }
+        }
         r4.verifyRequested = true;
         r4.verifyReplySeen = false;
         this.sendR4Request(payload, (verifyReply) => this.onR4VerifyReply(verifyReply, flight, session));

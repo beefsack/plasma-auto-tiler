@@ -67,6 +67,7 @@ fn complete_obs(session: &Session) -> tiler_core::session::SessionObservation {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            hints: tiler_core::size_hints::WindowSizeHints::none(),
         })
         .collect();
     windows.extend(session.exception_observed());
@@ -90,6 +91,7 @@ fn tiled(window: &str) -> ObservedWindow {
         fullscreen: false,
         maximized: false,
         sticky: false,
+        hints: tiler_core::size_hints::WindowSizeHints::none(),
     }
 }
 /// Axis-intent placement: `horiz` requests a horizontal split. The COSMIC

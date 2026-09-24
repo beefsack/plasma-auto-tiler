@@ -125,6 +125,7 @@ impl super::super::Session {
                     target_tree.as_ref(),
                     &self.windows,
                     &target_key,
+                    &hints_from_observed(&session_observation.windows),
                 )
                 .ok()?
                 .into_iter()
@@ -177,9 +178,14 @@ impl super::super::Session {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         }
         let affected = vec![source_key.clone(), target_key.clone()];
-        let desired_geometry =
-            project_affected_geometry(&self.domains, &desired_trees, &desired_windows, &affected)
-                .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
+        let desired_geometry = project_affected_geometry(
+            &self.domains,
+            &desired_trees,
+            &desired_windows,
+            &affected,
+            &hints_from_observed(&session_observation.windows),
+        )
+        .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
         if !geometry_covers_affected(&desired_geometry, &desired_windows, &affected) {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         }

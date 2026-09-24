@@ -16,11 +16,23 @@ decisions of 2026-09-24 are recorded under
   Meta+left move snap-back, Esc/zero-move, size-increment client, and the
   unexplained `p13` 36 px bottom-edge shortfall in
   `/run/user/1000/plasma-auto-tiler-dev.LVkQv5.log`. AR8 remains separate.
+- P2 | Floating-membership skew blocks plans | Parked by user (2026-09-24)
+  until it recurs. `/run/user/1000/plasma-auto-tiler-dev.EIV6Rm.log` drag-4
+  (Kate Meta+right corner shrink): press, thirds classification and Rust
+  `planned` reply were correct, but the adapter rejected the four-window plan
+  as `precondition-mismatch` (lines 1464-1468) because a non-dragged member was
+  observed floating while core retained it tiled; the restore reconcile failed
+  the same way and a later reconcile was refused as `partial-observation`, so
+  no reflow or restore occurred. User recalls no float/unfloat. Member
+  identity and flag provenance are not logged. No AR10 involvement found.
 - P2 | Drag-and-drop reorganisation | User-approved as a later item
   (2026-09-24). Wire move drops to the existing core placement policy
   (`crates/tiler-core/src/session/ops/drag.rs`: split edges, group interiors,
   snap-back) instead of the interim snap-back. Needs product decisions on drop
   targets and preview before implementation.
+- P2 | Hintless drag preview | AR12's preview has no observation and therefore
+  projects without size hints; a hinted drop can land at a different rectangle.
+  Align preview with drop evidence when drag-preview work is taken up.
 - P2 | Live sibling reflow while dragging | User request, not high priority.
   Research: no project per-step sibling writer found in history; the
   remembered behavior is likely KWin Custom Tile native reflow (hypothesis).
@@ -39,8 +51,6 @@ decisions of 2026-09-24 are recorded under
   effect mouse interception blocks all clicks; plausible first prototype is
   project-owned layer-shell surfaces confined to positive-width gaps, with a
   native KWin input filter as fallback. Needs a Rust split-boundary request.
-- P0 | AR12 Size hints and clamp acceptance | 7.11. Approved. Related: Ghostty
-  short-frame and local-movement height items below.
 - P0 | AR16 Size caps | 7.13. Approved: drop 64-window/16-domain count caps in
   core and TS; keep one codec request byte cap (~1 MiB).
 - P0 | AR15 Script-page tiling settings | 7.4. Approved: tiling settings
@@ -233,9 +243,10 @@ Existing work:
   `502x1092` but observed `502x1036`; the native cause remains unknown. Bounded
   trace-only size hints (`resizeable`, `minSize`, `maxSize`), workarea/output,
   and requested/observed frames now cover pre-plan, plan, write, and post-signal.
-  Next: user restarts `just dev trace`, repeats the local move and a subsequent
-  command, and provides the exact trace to distinguish native constraints from
-  post-write mismatch. No native lifecycle or geometry mutation ran in verification.
+  AR12 now accepts only hint-explained clamps; the observed 56px shortfall is
+  not explained by the recorded min/unbounded max. Next: user restarts
+  `just dev trace`, repeats the local move and a subsequent command, and
+  provides the exact trace. No native lifecycle or geometry mutation ran in verification.
 - P1 | Consistent correlated observability | User requires consistent lifecycle,
   decision, and failure logging throughout the solution, with trace IDs linking
   requests across services; encoded in `docs/principles.md`. Delivered normal
@@ -304,9 +315,10 @@ Existing work:
   proves an intermediate output-transfer geometry signal was counted before
   planned writes, causing premature post-observation mismatch and divergence.
   Static correction consumes each geometry fence only at the exact planned
-  rectangle and otherwise waits within the existing deadline. Ghostty's final
-  `1012x1036` versus requested `1012x1092` remains unexplained, not accepted as
-  correct or bypassed. Next: fresh trace repeats right-to-left and records final
+  rectangle and otherwise waits within the existing deadline. AR12's flagged
+  overconstrained members use client-held geometry for R4 proof; Ghostty's final
+  `1012x1036` versus requested `1012x1092` remains unexplained without matching
+  size-hint evidence. Next: fresh trace repeats right-to-left and records final
   exact geometry/commit or timeout before testing subsequent local/return moves.
   Up/Down local behavior and directional workspace cycling are unchanged.
   [record](changes/cross-output-directional-focus-movement.md)
@@ -338,7 +350,8 @@ Existing work:
   persistent short frame remains unresolved: a requested `2032x1092` became
   `1920x1036`, matching secondary usable size, while another primary Ghostty
   accepted the full size. Native per-window constraint or stale output-derived
-  cap remains a hypothesis; primary 125%/secondary 100% scaling causality is
+  cap remains a hypothesis; AR12 cannot explain this from the recorded hints.
+  Primary 125%/secondary 100% scaling causality is
   unproven. Oracle delivery is tracked by the native dev lifecycle live gate.
   The interactive-resize fighting/drop correction is now manually accepted;
   prior output-jumping and startup-loop fixes remain manually accepted.

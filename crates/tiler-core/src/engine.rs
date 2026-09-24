@@ -683,7 +683,11 @@ impl Engine {
     /// projection (reproject on bounds change, else `malformed-topology`),
     /// focus binding (`focus-mismatch`), pure projection
     /// (`malformed-topology` on shape failure), then work-area reprojection on
-    /// bounds change. Relocation is atomic: the outer gap is pre-validated
+    /// bounds change. The projection honors carried client size hints (AR12:
+    /// satisfiable minimums take sibling slack, unsatisfiable windows flag
+    /// `overconstrained`) and assesses observed rectangles as client clamps
+    /// (`client_clamped` flags for accepted clamps, never adopted, shares
+    /// untouched). Relocation is atomic: the outer gap is pre-validated
     /// against the unique source before mutating, and any later rejection
     /// restores the pre-request world exactly.
     fn reconcile_request(&mut self, event: &CoreEvent) -> CoreReply {
@@ -807,6 +811,11 @@ impl Engine {
                 message: RefusalKind::FocusMismatch.message(),
             };
         }
+        let hints = event
+            .windows
+            .iter()
+            .map(|entry| (entry.window.clone(), entry.hints))
+            .collect::<BTreeMap<_, _>>();
         let Some(plan) = project_retained_tiled_geometry(
             &session,
             &event.domain_key,
@@ -814,6 +823,8 @@ impl Engine {
             retained_domain.gap,
             Some((focus_domain.clone(), focus_leaf.clone())),
             ProjectionKind::Reconcile,
+            &hints,
+            &event.windows,
         ) else {
             restore(self, &backup, relocated_here);
             return CoreReply::Rejected {
@@ -927,6 +938,11 @@ impl Engine {
                 message: RefusalKind::FocusMismatch.message(),
             };
         }
+        let hints = event
+            .windows
+            .iter()
+            .map(|entry| (entry.window.clone(), entry.hints))
+            .collect::<BTreeMap<_, _>>();
         let Some(mut plan) = project_retained_tiled_geometry(
             &session,
             &event.domain_key,
@@ -934,6 +950,8 @@ impl Engine {
             event.domain.gap,
             Some((focus_domain.clone(), focus_leaf.clone())),
             ProjectionKind::UpdateGaps,
+            &hints,
+            &event.windows,
         ) else {
             return CoreReply::Rejected {
                 kind: RefusalKind::MalformedTopology.as_str(),
@@ -3204,6 +3222,7 @@ mod tests {
             },
             floating: false,
             fit_excluded: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
         }];
         let seeded =
             crate::seed::seed_session(&owner, &gen_id, 7, &source_domain, &order).expect("seeds");
@@ -3252,6 +3271,7 @@ mod tests {
             },
             floating: false,
             fit_excluded: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
         }];
         let seeded = seed_session(&owner, &gen_id, 7, &source_domain, &order).expect("seeds");
         let revision = seeded.accepted_revision();

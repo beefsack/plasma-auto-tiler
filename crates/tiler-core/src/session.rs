@@ -92,7 +92,7 @@ use crate::directional::{
     Axis, Capabilities, Direction, FocusPlan, MoveOperation, MovePlan, Node, NodeId, OutputId,
     Snapshot, WindowId, WindowLink, WorkspaceId,
 };
-use crate::geometry::{Rect, project};
+use crate::geometry::Rect;
 use crate::ids::{CorrelationId, GenerationId, OwnerId};
 #[cfg(test)]
 use crate::policy::CosmicV1Policy;
@@ -297,6 +297,18 @@ impl CanonicalPairError {
 
 /// Complete desired geometry for one affected tiled window.
 /// Domain-scoped: names the exact `(output, workspace)` domain plus leaf.
+///
+/// AR12 diagnostics ride here so every workflow (admit/remove/move/
+/// focus/resize/drag plus the reconcile/update-gaps projections) exposes
+/// them uniformly:
+/// - `overconstrained`: the window's minimums are unsatisfiable in this
+///   allocation; the rectangle is the proportional fallback and must never
+///   be reasserted. Set by hints-aware projection wherever hints are
+///   available, else false.
+/// - `client_clamped`: only the reconcile/update-gaps projection path sets
+///   this, when the observed rectangle accepts as a client clamp of this
+///   desired rectangle. The adapter must not rewrite the window nor count
+///   it toward drift/park. Every other path leaves it false.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesiredGeometry {
     pub window: WindowId,
@@ -304,6 +316,8 @@ pub struct DesiredGeometry {
     pub output: OutputId,
     pub workspace: WorkspaceId,
     pub rect: Rect,
+    pub overconstrained: bool,
+    pub client_clamped: bool,
 }
 
 /// Authoritative session plan: reconciler identity-bound lifecycle dispatch
@@ -1748,6 +1762,7 @@ fn project_affected_geometry(
     trees: &BTreeMap<DomainKey, Option<Node>>,
     windows: &BTreeMap<WindowId, WindowLink>,
     affected: &[DomainKey],
+    hints: &BTreeMap<WindowId, crate::size_hints::WindowSizeHints>,
 ) -> Result<Vec<DesiredGeometry>, ()> {
     let mut out = Vec::new();
     for key in affected {
@@ -1755,8 +1770,8 @@ fn project_affected_geometry(
             return Err(());
         };
         let tree = trees.get(key).cloned().flatten();
-        let projected =
-            project_output_geometry(Some(domain), tree.as_ref(), windows, key).map_err(|_| ())?;
+        let projected = project_output_geometry(Some(domain), tree.as_ref(), windows, key, hints)
+            .map_err(|_| ())?;
         out.extend(projected);
     }
     out.sort_by(|a, b| {
@@ -2312,18 +2327,30 @@ fn project_output_geometry(
     tree: Option<&Node>,
     windows: &BTreeMap<WindowId, WindowLink>,
     key: &DomainKey,
+    hints: &BTreeMap<WindowId, crate::size_hints::WindowSizeHints>,
 ) -> Result<Vec<DesiredGeometry>, ()> {
     let (Some(domain), Some(tree)) = (domain, tree) else {
         return Ok(Vec::new());
     };
-    let projected = project(tree, domain.bounds, domain.gap).map_err(|_| ())?;
     let leaf_to_window: BTreeMap<&NodeId, &WindowId> = windows
         .values()
         .filter(|l| l.output == key.output && l.workspace == key.workspace)
         .map(|l| (&l.leaf, &l.window))
         .collect();
-    let mut out = Vec::with_capacity(projected.len());
-    for leaf in projected {
+    // Hints resolve leaf -> window -> per-window hints; unknown leaves or
+    // windows without hints project exactly as before (advisory only).
+    let resolve = |leaf: &NodeId| {
+        leaf_to_window
+            .get(leaf)
+            .and_then(|window| hints.get(window))
+            .copied()
+            .unwrap_or_else(crate::size_hints::WindowSizeHints::none)
+    };
+    let hinted = crate::size_hints::project_with_hints(tree, domain.bounds, domain.gap, &resolve)
+        .map_err(|_| ())?;
+    let over: BTreeSet<&NodeId> = hinted.overconstrained.iter().collect();
+    let mut out = Vec::with_capacity(hinted.leaves.len());
+    for leaf in hinted.leaves {
         let Some(window) = leaf_to_window.get(&leaf.leaf) else {
             return Err(());
         };
@@ -2332,13 +2359,29 @@ fn project_output_geometry(
         }
         out.push(DesiredGeometry {
             window: (*window).clone(),
-            leaf: leaf.leaf,
+            leaf: leaf.leaf.clone(),
             output: key.output.clone(),
             workspace: key.workspace.clone(),
             rect: leaf.rect,
+            overconstrained: over.contains(&leaf.leaf),
+            client_clamped: false,
         });
     }
     Ok(out)
+}
+
+/// Collect per-window size hints from one observation for projection.
+///
+/// Every observed window maps (hints resolve per window and sanitize at
+/// use); callers without an observation pass an empty map, which projects
+/// exactly as before.
+fn hints_from_observed(
+    observed: &[ObservedWindow],
+) -> BTreeMap<WindowId, crate::size_hints::WindowSizeHints> {
+    observed
+        .iter()
+        .map(|entry| (entry.window.clone(), entry.hints))
+        .collect()
 }
 
 #[cfg(test)]
@@ -2501,6 +2544,7 @@ mod tests {
                 fullscreen: false,
                 maximized: false,
                 sticky: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
             })
             .collect();
         windows.extend(session.exception_observed());
@@ -2535,6 +2579,7 @@ mod tests {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
         });
         let bounds = if horizontal {
             Rect {
@@ -2604,6 +2649,7 @@ mod tests {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
         });
         let command = SessionCommand::Admit {
             window: window_id,
@@ -3192,6 +3238,7 @@ mod tests {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
         });
         session
             .propose(
@@ -3438,6 +3485,7 @@ mod tests {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
         });
         assert_eq!(
             session.propose(
@@ -3690,6 +3738,7 @@ mod tests {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
         });
         assert_eq!(
             session.propose(
@@ -4663,6 +4712,7 @@ mod tests {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
         });
         let bounds = if horizontal {
             Rect {
@@ -4732,6 +4782,7 @@ mod tests {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
         });
         let command = SessionCommand::Admit {
             window: window_id,
@@ -5189,6 +5240,7 @@ mod tests {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
         });
         pending
             .propose(
@@ -5231,6 +5283,7 @@ mod tests {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
         });
         pair.propose(
             &SessionCommand::Admit {

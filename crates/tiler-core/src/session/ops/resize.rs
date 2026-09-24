@@ -144,9 +144,14 @@ impl super::super::Session {
         };
         // Accepted projected geometry is the normalized current geometry for
         // the COSMIC pixel policy.
-        let accepted_geometry =
-            project_output_geometry(Some(&own_domain), Some(&tree), &self.windows, domain)
-                .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
+        let accepted_geometry = project_output_geometry(
+            Some(&own_domain),
+            Some(&tree),
+            &self.windows,
+            domain,
+            &hints_from_observed(&session_observation.windows),
+        )
+        .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
         if !geometry_covers_affected(
             &accepted_geometry,
             &self.windows,
@@ -201,6 +206,7 @@ impl super::super::Session {
             &desired_trees,
             &self.windows,
             std::slice::from_ref(domain),
+            &hints_from_observed(&session_observation.windows),
         )
         .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
         if !geometry_covers_affected(
@@ -525,9 +531,14 @@ impl super::super::Session {
         }
         // Project the accepted topology once: source of truth for group
         // extents and adjacent pixel sizes.
-        let accepted_geometry =
-            project_output_geometry(Some(&own_domain), Some(&tree), &self.windows, domain)
-                .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
+        let accepted_geometry = project_output_geometry(
+            Some(&own_domain),
+            Some(&tree),
+            &self.windows,
+            domain,
+            &hints_from_observed(&session_observation.windows),
+        )
+        .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
         if !geometry_covers_affected(
             &accepted_geometry,
             &self.windows,
@@ -582,6 +593,7 @@ impl super::super::Session {
             &desired_trees,
             &self.windows,
             std::slice::from_ref(domain),
+            &hints_from_observed(&session_observation.windows),
         )
         .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
         if !geometry_covers_affected(
@@ -844,9 +856,14 @@ impl super::super::Session {
         if !collect_leaves(&tree).contains(&target_leaf) {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         }
-        let accepted_geometry =
-            project_output_geometry(Some(&own_domain), Some(&tree), &self.windows, domain)
-                .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
+        let accepted_geometry = project_output_geometry(
+            Some(&own_domain),
+            Some(&tree),
+            &self.windows,
+            domain,
+            &hints_from_observed(&session_observation.windows),
+        )
+        .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
         if !geometry_covers_affected(
             &accepted_geometry,
             &self.windows,
@@ -891,6 +908,7 @@ impl super::super::Session {
             &intermediate_trees,
             &self.windows,
             std::slice::from_ref(domain),
+            &hints_from_observed(&session_observation.windows),
         )
         .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
         if !geometry_covers_affected(
@@ -949,6 +967,7 @@ impl super::super::Session {
             &desired_trees,
             &self.windows,
             std::slice::from_ref(domain),
+            &hints_from_observed(&session_observation.windows),
         )
         .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
         if !geometry_covers_affected(

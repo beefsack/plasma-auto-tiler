@@ -324,8 +324,9 @@ impl DirectionalMovePending {
     }
 
     /// Complete directional post-observation validation against the retained
-    /// R4 plan: every desired window must be carried exactly once with the
-    /// expected output, workspace, and rectangle.
+    /// R4 plan: every desired window must be carried exactly once with exact
+    /// membership. Only plan-flagged overconstrained members may retain their
+    /// client-held rectangle rather than the projected rectangle.
     #[must_use]
     pub fn post_matches(&self, observed: &[EngineWindow]) -> bool {
         directional_post_matches_engine(&self.desired_geometry, observed)
@@ -409,7 +410,16 @@ fn pre_image_matches_engine(
         let Some(got) = observed.get(id) else {
             return false;
         };
-        if *got != *want {
+        // Identity match ignores size hints: hints are ephemeral advisory
+        // inputs (AR12), so a changed min/max report must not read as a new
+        // window or a lost pre-image.
+        if got.window != want.window
+            || got.output != want.output
+            || got.workspace != want.workspace
+            || got.rect != want.rect
+            || got.floating != want.floating
+            || got.fit_excluded != want.fit_excluded
+        {
             return false;
         }
     }
@@ -436,7 +446,7 @@ fn directional_post_matches_engine(
         };
         if entry.output != desired.output
             || entry.workspace != desired.workspace
-            || entry.rect != desired.rect
+            || (!desired.overconstrained && entry.rect != desired.rect)
         {
             return false;
         }
@@ -463,6 +473,7 @@ mod tests {
             },
             floating: false,
             fit_excluded: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
         }
     }
 
@@ -541,6 +552,8 @@ mod tests {
                 w: 10,
                 h: 10,
             },
+            overconstrained: false,
+            client_clamped: false,
         }];
         assert!(directional_post_matches_engine(
             &desired,
@@ -557,6 +570,71 @@ mod tests {
         assert!(!directional_post_matches_engine(
             &desired,
             &[window("a", "out", "ws", 1)]
+        ));
+    }
+
+    #[test]
+    fn directional_post_accepts_only_plan_flagged_client_geometry() {
+        let desired = vec![
+            crate::session::DesiredGeometry {
+                window: WindowId("a".to_owned()),
+                leaf: crate::directional::NodeId::from("a"),
+                output: crate::directional::OutputId("out-2".to_owned()),
+                workspace: crate::directional::WorkspaceId("ws".to_owned()),
+                rect: Rect {
+                    x: 100,
+                    y: 0,
+                    w: 10,
+                    h: 10,
+                },
+                overconstrained: true,
+                client_clamped: false,
+            },
+            crate::session::DesiredGeometry {
+                window: WindowId("b".to_owned()),
+                leaf: crate::directional::NodeId::from("b"),
+                output: crate::directional::OutputId("out-1".to_owned()),
+                workspace: crate::directional::WorkspaceId("ws".to_owned()),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    w: 10,
+                    h: 10,
+                },
+                overconstrained: false,
+                client_clamped: false,
+            },
+        ];
+        let held = window("a", "out-2", "ws", 110);
+        let exact = window("b", "out-1", "ws", 0);
+        assert!(directional_post_matches_engine(
+            &desired,
+            &[held.clone(), exact.clone()]
+        ));
+        assert!(!directional_post_matches_engine(
+            &desired,
+            &[held.clone(), window("b", "out-1", "ws", 1)]
+        ));
+        assert!(!directional_post_matches_engine(
+            &desired,
+            &[window("a", "out-1", "ws", 110), exact.clone()]
+        ));
+        assert!(!directional_post_matches_engine(
+            &desired,
+            &[held.clone(), exact.clone(), exact.clone()]
+        ));
+        assert!(!directional_post_matches_engine(&desired, &[held]));
+        let unflagged = desired
+            .iter()
+            .cloned()
+            .map(|mut entry| {
+                entry.overconstrained = false;
+                entry
+            })
+            .collect::<Vec<_>>();
+        assert!(!directional_post_matches_engine(
+            &unflagged,
+            &[window("a", "out-2", "ws", 110), exact]
         ));
     }
 

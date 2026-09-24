@@ -141,8 +141,14 @@ impl super::super::Session {
             return Err(ProposeError::Refused(RefusalKind::UnknownDomain));
         };
         let tree = self.trees.get(&key).cloned().flatten();
-        let geometry = project_output_geometry(Some(&domain), tree.as_ref(), &self.windows, &key)
-            .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
+        let geometry = project_output_geometry(
+            Some(&domain),
+            tree.as_ref(),
+            &self.windows,
+            &key,
+            &hints_from_observed(&session_observation.windows),
+        )
+        .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
         let Some(source_rect) = geometry
             .iter()
             .find(|g| g.leaf == link.leaf)
@@ -252,6 +258,9 @@ impl super::super::Session {
             &desired_trees,
             &self.windows,
             std::slice::from_ref(&capture_snapshot.domain),
+            // Preview-only projection over retained state (no observation in
+            // scope): hints stay empty, exactly as before.
+            &BTreeMap::new(),
         )
         .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
         let Some(proposed_rect) = desired_geometry
@@ -425,6 +434,7 @@ impl super::super::Session {
             &desired_trees,
             &self.windows,
             std::slice::from_ref(&capture.domain),
+            &hints_from_observed(&session_observation.windows),
         ) {
             Ok(geometry) => geometry,
             Err(_) => {
@@ -518,8 +528,16 @@ impl super::super::Session {
             .find(|d| d.key() == capture.domain)
             .and_then(|domain| {
                 let tree = self.trees.get(&capture.domain).cloned().flatten();
-                project_output_geometry(Some(domain), tree.as_ref(), &self.windows, &capture.domain)
-                    .ok()
+                project_output_geometry(
+                    Some(domain),
+                    tree.as_ref(),
+                    &self.windows,
+                    &capture.domain,
+                    // Snap-back reflects accepted state (no observation in
+                    // scope): hints stay empty, exactly as before.
+                    &BTreeMap::new(),
+                )
+                .ok()
             })
             .and_then(|geometry| {
                 geometry

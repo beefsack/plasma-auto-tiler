@@ -249,9 +249,14 @@ impl super::super::Session {
             }
             _ => vec![domain.clone()],
         };
-        let desired_geometry =
-            project_affected_geometry(&self.domains, &desired_trees, &desired_windows, &affected)
-                .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
+        let desired_geometry = project_affected_geometry(
+            &self.domains,
+            &desired_trees,
+            &desired_windows,
+            &affected,
+            &hints_from_observed(&session_observation.windows),
+        )
+        .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
         // Completeness: every tiled window in affected domains must have a
         // positive rectangle.
         if !geometry_covers_affected(&desired_geometry, &desired_windows, &affected) {

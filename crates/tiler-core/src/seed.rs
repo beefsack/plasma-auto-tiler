@@ -21,6 +21,12 @@ use crate::session::{
 };
 
 /// Serde-free observed window for seed ordering and strip fitting.
+///
+/// Carries the ephemeral client size hints (AR12) alongside the frame: seed
+/// ordering and strip fitting ignore hints (topology derives from rectangles
+/// only), while [`observed_window_from_engine`] propagates them so later
+/// projection and clamp assessment see the same advisory input. Pre/post-image
+/// matching ignores hints (identity is window/output/workspace/rect/flags).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EngineWindow {
     pub window: WindowId,
@@ -29,6 +35,7 @@ pub struct EngineWindow {
     pub rect: Rect,
     pub floating: bool,
     pub fit_excluded: bool,
+    pub hints: crate::size_hints::WindowSizeHints,
 }
 
 /// Deterministic near-strip fit over the current admission's complete
@@ -243,7 +250,8 @@ pub fn seed_target_bounds(session: &Session, domain: &OutputDomain) -> Rect {
 }
 
 /// Portable observed-window mapping: tiled seed observations carry no
-/// exception flags beyond the carried floating bit.
+/// exception flags beyond the carried floating bit. Hints propagate
+/// unchanged (advisory only; never identity).
 #[must_use]
 pub fn observed_window_from_engine(entry: &EngineWindow) -> ObservedWindow {
     ObservedWindow {
@@ -254,6 +262,7 @@ pub fn observed_window_from_engine(entry: &EngineWindow) -> ObservedWindow {
         fullscreen: false,
         maximized: false,
         sticky: false,
+        hints: entry.hints,
     }
 }
 
@@ -362,6 +371,9 @@ pub fn seed_session(
                 fullscreen: false,
                 maximized: false,
                 sticky: false,
+                // Seed rebuilds synthesize observations from retained links;
+                // hints are unknown here, so none (advisory only).
+                hints: crate::size_hints::WindowSizeHints::none(),
             })
             .collect();
         observed.extend(session.exception_observed());
@@ -373,6 +385,7 @@ pub fn seed_session(
             fullscreen: false,
             maximized: false,
             sticky: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
         });
         let correlation_text = format!("seed-{index:04}");
         let correlation = CorrelationId::parse(&correlation_text)?;
@@ -441,6 +454,7 @@ pub fn seed_workspace_admit(
             fullscreen: false,
             maximized: false,
             sticky: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
         })
         .collect();
     observed.extend(session.exception_observed());
@@ -546,6 +560,7 @@ mod tests {
             rect: Rect { x, y, w, h },
             floating: false,
             fit_excluded: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
         }
     }
 

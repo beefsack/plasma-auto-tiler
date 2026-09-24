@@ -1409,6 +1409,81 @@ fn r4_stages_pending_and_blocks_until_verify() {
 }
 
 #[test]
+fn r4_overconstrained_post_commits_client_geometry_but_not_other_mismatches() {
+    for mismatch in [false, true] {
+        let mut planner = Planner::new();
+        let correlation = if mismatch {
+            "dir-hint-mismatch"
+        } else {
+            "dir-hint-success"
+        };
+        let mut constrained = win("win-x", "out-2", "ws-b", 810, 10, 100, 80);
+        constrained["min_size"] = serde_json::json!({"w": 1, "h": 1000});
+        let planned = parse(&planner.evaluate(&request_with_domain(
+            correlation,
+            "win-b",
+            vec![
+                win("win-a", "out-1", "ws-a", 10, 10, 100, 80),
+                win("win-b", "out-1", "ws-a", 400, 10, 100, 80),
+                constrained,
+            ],
+            move_cmd("win-b", "right"),
+            left_source_domain(),
+            Some(left_domains_payload()),
+        )));
+        assert_eq!(planned["outcome"], "planned", "{planned}");
+        let geometry = planned["desired_geometry"].as_array().expect("geometry");
+        assert_eq!(
+            geometry
+                .iter()
+                .filter(|g| g["overconstrained"] == true)
+                .count(),
+            1,
+            "{planned}"
+        );
+        assert_eq!(
+            geometry
+                .iter()
+                .find(|g| g["window"] == "win-x")
+                .expect("target")["overconstrained"],
+            true
+        );
+        let mut post = post_windows_from_geometry(&planned["desired_geometry"]);
+        let target = post
+            .iter_mut()
+            .find(|w| w["window"] == "win-x")
+            .expect("target");
+        target["rect"]["h"] = serde_json::json!(target["rect"]["h"].as_i64().expect("height") - 1);
+        if mismatch {
+            let other = post
+                .iter_mut()
+                .find(|w| w["window"] == "win-b")
+                .expect("mover");
+            other["rect"]["w"] = serde_json::json!(other["rect"]["w"].as_i64().expect("width") - 1);
+        }
+        let base = planned["base_revision"].as_u64().expect("base");
+        let acked =
+            parse(&planner.evaluate(&ack_request(correlation, base, post.clone(), "accepted")));
+        assert_eq!(acked["outcome"], "acknowledged", "{acked}");
+        let verified = parse(&planner.evaluate(&verify_request(
+            correlation,
+            base,
+            post,
+            planned["preconditions"].clone(),
+            planned["operation"].clone(),
+        )));
+        assert_eq!(
+            verified["outcome"],
+            if mismatch { "diverged" } else { "committed" },
+            "{verified}"
+        );
+        if mismatch {
+            assert_eq!(verified["kind"], "postcondition-mismatch", "{verified}");
+        }
+    }
+}
+
+#[test]
 fn r4_verify_without_ack_is_rejected() {
     let mut planner = Planner::new();
     let planned = plan_r4_occupied(&mut planner, "dir-noack-1");

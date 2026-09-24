@@ -61,6 +61,7 @@ fn tiled(w: &str, o: &str, ws: &str) -> ObservedWindow {
         fullscreen: false,
         maximized: false,
         sticky: false,
+        hints: tiler_core::size_hints::WindowSizeHints::none(),
     }
 }
 fn obs(s: &Session, extra: Vec<ObservedWindow>) -> SessionObservation {

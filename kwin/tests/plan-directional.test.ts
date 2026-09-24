@@ -592,6 +592,8 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
         readonly wsB: { id: string };
         outputOfMover: string;
         desktopsOfMover: string[];
+        desktopsOfTarget: string[];
+        outputOfTarget: string;
         rects: Map<object, { x: number; y: number; w: number; h: number }>;
         activeRef: object | null;
         outputHandlers: Array<(old: unknown) => void>;
@@ -611,6 +613,8 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
             wsB: { id: "ws-b" },
             outputOfMover: "out-1",
             desktopsOfMover: ["ws-a"],
+            outputOfTarget: "out-2",
+            desktopsOfTarget: ["ws-b"],
             rects: new Map([
                 [r.a, { x: 810, y: 10, w: 100, h: 80 }],
                 [r.x, { x: 10, y: 10, w: 100, h: 80 }],
@@ -645,9 +649,9 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
             return true;
         };
         env["readOutputName"] = (ref: object): string | null =>
-            ref === r.a ? native.outputOfMover : null;
+            ref === r.a ? native.outputOfMover : ref === r.x ? native.outputOfTarget : null;
         env["readDesktopIds"] = (ref: object): ReadonlyArray<string> | null =>
-            ref === r.a ? [...native.desktopsOfMover] : null;
+            ref === r.a ? [...native.desktopsOfMover] : ref === r.x ? [...native.desktopsOfTarget] : null;
         env["readGeometry"] = (ref: object): { x: number; y: number; w: number; h: number } | null => {
             const rect = native.rects.get(ref);
             return rect === undefined ? null : { ...rect };
@@ -697,6 +701,7 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
         targetWorkspace = "ws-b",
     ): { mocks: Mocks; native: R4Native; adapter: PlanAdapter; correlation: string } {
         const { mocks, native } = r4Mocks(r);
+        native.desktopsOfTarget = [targetWorkspace];
         mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
             status: "ready",
             observed: twoDomainObserved(r, { targetWorkspace }),
@@ -817,6 +822,63 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
         mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 }));
         assert.equal(adapter.isR4InFlight, false);
         assert.equal(adapter.isInFlight, false);
+    });
+
+    it("verifies a plan-flagged R4 mover against its native client-held geometry", () => {
+        const r = refs();
+        const { mocks, native } = r4Mocks(r);
+        mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({ status: "ready", observed: twoDomainObserved(r) });
+        const adapter = enable(mocks);
+        adapter.requestMove("right");
+        const correlation = payload(mocks, 0)["correlation_id"] as string;
+        const planned = JSON.parse(crossMoveReply(correlation)) as { desired_geometry: Array<Record<string, unknown>> };
+        planned.desired_geometry[0]!["overconstrained"] = true;
+        mocks.callbacks[0]?.(JSON.stringify(planned));
+        assert.equal(mocks.geometries.length, 1);
+        assert.equal(mocks.geometries[0]?.target, r.x);
+        assert.equal(native.geoHandlers.has("win-a"), false);
+        native.outputHandlers.forEach((handler) => handler(native.out1));
+        native.desktopsHandlers.forEach((handler) => handler());
+        native.geoHandlers.get("win-x")?.();
+        assert.equal(mocks.dbusCalls.length, 2);
+        const ack = payload(mocks, 1);
+        const ackWindows = ack["windows"] as Array<{ window: string; rect: unknown }>;
+        assert.deepEqual(ackWindows.find((entry) => entry.window === "win-a")?.rect, native.rects.get(r.a));
+        assert.notDeepEqual(ackWindows.find((entry) => entry.window === "win-a")?.rect, planned.desired_geometry[0]!["rect"]);
+        assert.equal(ack["fingerprint"], planDirectionalFingerprint(twoDomainObserved(r).domains!, "", ackWindows.map((entry) => ({
+            window: entry.window, output: "out-2", workspace: "ws-b", rect: entry.rect as { x: number; y: number; w: number; h: number }, floating: false, fitExcluded: false,
+        }))));
+        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", base_revision: 2 }));
+        assert.equal(mocks.dbusCalls.length, 3);
+        assert.deepEqual((payload(mocks, 2)["windows"] as Array<{ window: string; rect: unknown }>)[0]?.rect, native.rects.get(r.a));
+        assert.ok(mocks.logs.some((line) => line.includes(`r4-verify correlation=${correlation} window=win-a overconstrained=true`)));
+        mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 }));
+        assert.equal(adapter.isR4InFlight, false);
+    });
+
+    it("rejects a genuine R4 member mismatch even with another member overconstrained", () => {
+        const r = refs();
+        const { mocks, native } = r4Mocks(r);
+        mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({ status: "ready", observed: twoDomainObserved(r) });
+        const adapter = enable(mocks);
+        adapter.requestMove("right");
+        const correlation = payload(mocks, 0)["correlation_id"] as string;
+        const planned = JSON.parse(crossMoveReply(correlation)) as { desired_geometry: Array<Record<string, unknown>> };
+        planned.desired_geometry[0]!["overconstrained"] = true;
+        mocks.callbacks[0]?.(JSON.stringify(planned));
+        native.outputHandlers.forEach((handler) => handler(native.out1));
+        native.desktopsHandlers.forEach((handler) => handler());
+        native.rects.set(r.x, { x: 1201, y: 10, w: 380, h: 580 });
+        native.geoHandlers.get("win-x")?.();
+        assert.equal(mocks.dbusCalls.length, 1);
+        native.rects.set(r.x, { x: 1200, y: 10, w: 380, h: 580 });
+        native.geoHandlers.get("win-x")?.();
+        assert.equal(mocks.dbusCalls.length, 2);
+        native.outputOfTarget = "out-1";
+        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", base_revision: 2 }));
+        assert.equal(mocks.dbusCalls.length, 2);
+        assert.ok(mocks.logs.some((line) => line.includes("stale-scope")));
+        assert.equal(adapter.isR4InFlight, false);
     });
 
     it("waits for the mover's final geometry after an output-transfer geometry echo", () => {

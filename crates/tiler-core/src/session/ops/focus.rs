@@ -125,6 +125,7 @@ impl super::super::Session {
             &self.trees,
             &self.windows,
             std::slice::from_ref(domain),
+            &hints_from_observed(&session_observation.windows),
         )
         .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
         if !geometry_covers_affected(
@@ -377,9 +378,14 @@ impl super::super::Session {
         // Complete geometry for source plus target must project before any
         // pending is staged; failure refuses without pending.
         let affected = vec![domain.clone(), target_key.clone()];
-        let desired_geometry =
-            project_affected_geometry(&self.domains, &self.trees, &self.windows, &affected)
-                .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
+        let desired_geometry = project_affected_geometry(
+            &self.domains,
+            &self.trees,
+            &self.windows,
+            &affected,
+            &hints_from_observed(&session_observation.windows),
+        )
+        .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
         if !geometry_covers_affected(&desired_geometry, &self.windows, &affected) {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         }

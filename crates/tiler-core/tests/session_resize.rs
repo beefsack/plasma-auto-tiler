@@ -90,6 +90,7 @@ fn complete_obs(
             fullscreen: false,
             maximized: false,
             sticky: false,
+            hints: tiler_core::size_hints::WindowSizeHints::none(),
         })
         .collect();
     windows.extend(session.exception_observed());
@@ -114,6 +115,7 @@ fn tiled(window: &str, output: &str, workspace: &str) -> ObservedWindow {
         fullscreen: false,
         maximized: false,
         sticky: false,
+        hints: tiler_core::size_hints::WindowSizeHints::none(),
     }
 }
 fn admit_commit(session: &mut Session, window: &str, horiz: bool, corr: &str) {
@@ -1388,6 +1390,7 @@ fn flagged_observation_refuses_fail_closed() {
             fullscreen: false,
             maximized: false,
             sticky: false,
+            hints: tiler_core::size_hints::WindowSizeHints::none(),
         }],
     );
     let tbase = t.accepted_revision();

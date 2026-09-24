@@ -17,7 +17,7 @@
 //! verify commit), which own the pending outcome and one-shot transition.
 //! All synchronous command orchestration runs through [`crate::engine::Engine::handle`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::active_group::{ActiveGroupMember, describe_active_group};
 use crate::contract::{
@@ -28,7 +28,7 @@ use crate::directional::{
     Capability, CrossOutputTarget, Direction, MoveOperation, NodeId, OutputId, Precondition, Rule,
     WindowId, WorkspaceId,
 };
-use crate::geometry::{Rect, project};
+use crate::geometry::Rect;
 use crate::ids::{CorrelationId, GenerationId, OwnerId};
 use crate::seed::EngineWindow;
 use crate::session::{
@@ -732,15 +732,33 @@ pub struct ProjectionPlan {
 
 /// Pure retained-tree tiled projection for the reconcile/update-gaps family.
 ///
-/// Projects the retained domain tree into `bounds` with `gap`, rebuilds
-/// authoritative desired geometry from retained topology only (observed
-/// client rectangles are never adopted, shares untouched), sorts by
-/// (output, workspace, leaf), and refuses tiled-coverage mismatch.
+/// Projects the retained domain tree into `bounds` with `gap`, honoring the
+/// per-window client size hints (`hints`, AR12) exactly like every other
+/// workflow: satisfiable minimums take slack from siblings, unsatisfiable
+/// windows keep the proportional fallback flagged `overconstrained` on their
+/// [`DesiredGeometry`]. Rebuilds authoritative desired geometry from retained
+/// topology only (observed client rectangles are never adopted, shares
+/// untouched), sorts by (output, workspace, leaf), and refuses tiled-coverage
+/// mismatch.
+///
+/// The observed rectangles (`observed`, floating/fit-excluded entries
+/// skipped: exception rects are compositor-owned, never layout-driven) are
+/// compared against the desired allocation through
+/// [`crate::size_hints::assess_window_clamp`]: a window whose observed size
+/// accepts as a client clamp of its desired size is flagged `client_clamped`
+/// on its [`DesiredGeometry`]. The adapter must then neither rewrite that
+/// window nor count it toward drift/park; the retained desired rectangle
+/// stays the authoritative truth so no drift accumulates. Overconstrained
+/// windows carry only the overconstrained flag (never reasserted either).
+/// Windows without meaningful hints never accept: unhinted drift still
+/// reasserts fully.
+///
 /// Returns `None` for every projection-shape failure; the caller maps that
 /// to its existing `malformed-topology` rejection at the exact legacy
 /// position. All fences (domain binding, divergence, pending, membership,
 /// focus, outer gap) stay in the caller, which passes its already-checked
 /// focus through untouched.
+#[allow(clippy::too_many_arguments)]
 pub fn project_retained_tiled_geometry(
     session: &Session,
     domain_key: &DomainKey,
@@ -748,6 +766,8 @@ pub fn project_retained_tiled_geometry(
     gap: i32,
     focus: Option<(DomainKey, NodeId)>,
     kind: ProjectionKind,
+    hints: &BTreeMap<WindowId, crate::size_hints::WindowSizeHints>,
+    observed: &[EngineWindow],
 ) -> Option<ProjectionPlan> {
     let snapshot = session.snapshot();
     let tree = snapshot
@@ -757,25 +777,67 @@ pub fn project_retained_tiled_geometry(
             domain.output == domain_key.output && domain.workspace == domain_key.workspace
         })
         .and_then(|domain| domain.tree)?;
-    let projected = project(&tree, bounds, gap).ok()?;
     let leaf_to_window: BTreeMap<String, String> = snapshot
         .windows
         .into_iter()
         .filter(|link| link.output == domain_key.output && link.workspace == domain_key.workspace)
         .map(|link| (link.leaf.0, link.window.0))
         .collect();
-    let mut geometry: Vec<DesiredGeometry> = Vec::with_capacity(projected.len());
-    for leaf in projected {
+    let resolve = |leaf: &crate::directional::NodeId| {
+        leaf_to_window
+            .get(&leaf.0)
+            .and_then(|window| hints.get(&WindowId(window.clone())))
+            .copied()
+            .unwrap_or_else(crate::size_hints::WindowSizeHints::none)
+    };
+    let hinted = crate::size_hints::project_with_hints(&tree, bounds, gap, &resolve).ok()?;
+    let over: BTreeSet<String> = hinted
+        .overconstrained
+        .iter()
+        .map(|id| id.0.clone())
+        .collect(); // Observed layout-driven rectangles by window id for clamp assessment.
+    let mut observed_rects: BTreeMap<&str, &Rect> = BTreeMap::new();
+    for entry in observed {
+        if entry.floating || entry.fit_excluded {
+            continue;
+        }
+        observed_rects.insert(entry.window.0.as_str(), &entry.rect);
+    }
+    let mut geometry: Vec<DesiredGeometry> = Vec::with_capacity(hinted.leaves.len());
+    for leaf in hinted.leaves {
         let window = leaf_to_window.get(&leaf.leaf.0)?;
         if leaf.rect.w <= 0 || leaf.rect.h <= 0 {
             return None;
         }
+        // `over` carries leaf ids; map through the projected leaf here,
+        // not the window id.
+        let overconstrained = over.contains(&leaf.leaf.0);
+        let window_id = WindowId(window.clone());
+        // Accepted clamps never perturb shares (this path is read-only) and
+        // never synthesize a plan: the flag only tells the adapter to leave
+        // the observed rectangle alone. Overconstrained windows rely solely
+        // on their own flag.
+        let client_clamped = !overconstrained
+            && observed_rects.get(window.as_str()).is_some_and(|rect| {
+                **rect != leaf.rect
+                    && crate::size_hints::assess_window_clamp(
+                        rect,
+                        &leaf.rect,
+                        &hints
+                            .get(&window_id)
+                            .copied()
+                            .unwrap_or_else(crate::size_hints::WindowSizeHints::none),
+                    )
+                    .accepted
+            });
         geometry.push(DesiredGeometry {
-            window: WindowId(window.clone()),
+            window: window_id,
             leaf: leaf.leaf.clone(),
             output: domain_key.output.clone(),
             workspace: domain_key.workspace.clone(),
             rect: leaf.rect,
+            overconstrained,
+            client_clamped,
         });
     }
     geometry.sort_by(|a, b| {
@@ -1140,6 +1202,8 @@ mod tests {
                 0,
                 None,
                 ProjectionKind::Reconcile,
+                &BTreeMap::new(),
+                &[],
             )
             .is_none()
         );
@@ -1195,6 +1259,7 @@ mod tests {
                     fullscreen: false,
                     maximized: false,
                     sticky: false,
+                    hints: crate::size_hints::WindowSizeHints::none(),
                 })
                 .collect(),
         };
@@ -1275,6 +1340,8 @@ mod tests {
             retained.gap,
             Some((key.clone(), focus_leaf.clone())),
             ProjectionKind::Reconcile,
+            &BTreeMap::new(),
+            &[],
         )
         .expect("projects");
         assert_eq!(plan.base_revision, session.accepted_revision());
@@ -1305,6 +1372,8 @@ mod tests {
             retained.gap,
             Some((key.clone(), focus_leaf.clone())),
             ProjectionKind::UpdateGaps,
+            &BTreeMap::new(),
+            &[],
         )
         .expect("projects");
         assert_eq!(gaps.kind, ProjectionKind::UpdateGaps);

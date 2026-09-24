@@ -120,6 +120,7 @@ impl super::Session {
             trees.get(&key).cloned().flatten().as_ref(),
             &windows,
             &key,
+            &super::hints_from_observed(&session_observation.windows),
         )
         .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
         if desired_geometry.is_empty() {

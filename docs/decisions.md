@@ -27,10 +27,11 @@ the corresponding item ships; each such entry names its replacement.
   `tiler-core` validation gates. The bare-`rustc` build and hand-written JSON
   parser are retired. Rust keeps group visibility and drag verdict policy;
   the POD-only C ABI and panic containment remain.
-- Size hints (AR12): observed windows carry min/max size hints; projection
-  honours minimums by taking space from siblings, marks unsatisfiable windows
-  overconstrained rather than reasserting them, and reconcile accepts
-  client-clamped sizes without counting them as drift.
+- Size hints (AR12, shipped offline): observed min/max hints guide minimum-aware
+  projection and evidence-backed clamp acceptance without drift/park. Per the
+  Orchestrator's option (1) decision applying the user-approved AR12 text,
+  overconstrained members are not reasserted; R4 verifies their client-held
+  geometry while keeping identity, membership, and other geometry exact.
 - Size caps (AR16): the 64-window and 16-domain count caps are replaced by one
   codec request byte cap (about 1 MiB).
 - Settings (AR15): tiling settings (`workspaceMode`, `shortcutProfile`, gaps)

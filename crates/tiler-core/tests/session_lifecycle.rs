@@ -14,6 +14,7 @@ use tiler_core::session::{
     DomainKey, ExceptionBehavior, ExceptionFlags, ObservedWindow, OutputDomain, ProposeError,
     RefusalKind, Session, SessionCommand, SessionObservation, SessionPlan,
 };
+use tiler_core::size_hints::WindowSizeHints;
 
 fn owner() -> OwnerId {
     OwnerId::parse("owner-1").expect("valid")
@@ -75,6 +76,7 @@ fn tiled_observed(window: &str, output: &str, workspace: &str) -> ObservedWindow
         fullscreen: false,
         maximized: false,
         sticky: false,
+        hints: WindowSizeHints::none(),
     }
 }
 
@@ -87,6 +89,7 @@ fn exception_observed(window: &str, output: &str, workspace: &str) -> ObservedWi
         fullscreen: false,
         maximized: false,
         sticky: false,
+        hints: WindowSizeHints::none(),
     }
 }
 
@@ -105,6 +108,7 @@ fn complete_observation(session: &Session, extra: Vec<ObservedWindow>) -> Sessio
             fullscreen: false,
             maximized: false,
             sticky: false,
+            hints: WindowSizeHints::none(),
         })
         .collect();
     windows.extend(session.exception_observed());

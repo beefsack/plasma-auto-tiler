@@ -123,6 +123,7 @@ fn complete_obs(session: &Session, extra: Vec<ObservedWindow>) -> SessionObserva
             fullscreen: false,
             maximized: false,
             sticky: false,
+            hints: tiler_core::size_hints::WindowSizeHints::none(),
         })
         .collect();
     windows.extend(session.exception_observed());
@@ -147,6 +148,7 @@ fn tiled(window: &str, output: &str, workspace: &str) -> ObservedWindow {
         fullscreen: false,
         maximized: false,
         sticky: false,
+        hints: tiler_core::size_hints::WindowSizeHints::none(),
     }
 }
 fn admit_commit(

@@ -187,6 +187,18 @@ fn direction_str(value: Direction) -> &'static str {
     }
 }
 
+/// Bounded client size-hint extent (AR12): `{w, h}` device units mirroring
+/// the adapter `PlanWindowConstraints` min/max shapes. Unknown fields refuse
+/// fail-closed; validation of meaningfulness lives in
+/// [`tiler_core::size_hints`] (non-positive or absurd values behave as
+/// absent, never as rejections: hints are advisory).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SizeDto {
+    w: i32,
+    h: i32,
+}
+
 fn parse_mode(value: &str) -> Option<tiler_core::contract::ResizeMode> {
     match value {
         "inwards" => Some(tiler_core::contract::ResizeMode::Inwards),
@@ -230,6 +242,16 @@ struct ObservedDto {
     /// normal seed/reflow exception behavior is untouched.
     #[serde(default)]
     fit_excluded: bool,
+    /// AR12 client size hints. Both default absent so existing fixtures parse
+    /// unchanged; unknown nested fields refuse via [`SizeDto`].
+    /// Meaningfulness (positive, in-bound) is judged in
+    /// [`tiler_core::size_hints`], never here. Hints never join the
+    /// directional fingerprint (they are advisory, not layout identity), so
+    /// existing adapter baselines keep matching.
+    #[serde(default)]
+    min_size: Option<SizeDto>,
+    #[serde(default)]
+    max_size: Option<SizeDto>,
 }
 
 /// Production directional domains payload (DescribePlan active route only).
@@ -282,6 +304,17 @@ struct GeometryReply {
     output: String,
     workspace: String,
     rect: RectDto,
+    /// AR12: the window's minimums are unsatisfiable in this allocation
+    /// (proportional fallback shown). The adapter must never reassert this
+    /// window. Absent unless true, so existing replies are byte-identical.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    overconstrained: Option<bool>,
+    /// AR12: the observed rectangle accepts as a client clamp of the desired
+    /// rectangle (reconcile/update-gaps family only). The adapter must
+    /// neither rewrite the window nor count it toward drift/park. Absent
+    /// unless true, so existing replies are byte-identical.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_clamped: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -588,6 +621,8 @@ fn geometry_reply(g: &tiler_core::session::DesiredGeometry) -> GeometryReply {
             w: g.rect.w,
             h: g.rect.h,
         },
+        overconstrained: g.overconstrained.then_some(true),
+        client_clamped: g.client_clamped.then_some(true),
     }
 }
 
@@ -1806,6 +1841,8 @@ fn workspace_planned_reply(
 }
 
 /// Convert carried wire windows to the portable near-strip fitter.
+/// AR12 hints map straight across (raw values; meaningfulness is judged in
+/// [`tiler_core::size_hints`] so absurd reports behave as absent).
 fn engine_window_from_dto(entry: &ObservedDto) -> tiler_core::seed::EngineWindow {
     tiler_core::seed::EngineWindow {
         window: WindowId(entry.window.clone()),
@@ -1819,6 +1856,12 @@ fn engine_window_from_dto(entry: &ObservedDto) -> tiler_core::seed::EngineWindow
         },
         floating: entry.floating,
         fit_excluded: entry.fit_excluded,
+        hints: tiler_core::size_hints::WindowSizeHints {
+            min_w: entry.min_size.as_ref().map(|size| size.w),
+            min_h: entry.min_size.as_ref().map(|size| size.h),
+            max_w: entry.max_size.as_ref().map(|size| size.w),
+            max_h: entry.max_size.as_ref().map(|size| size.h),
+        },
     }
 }
 
@@ -4125,6 +4168,9 @@ fn serialize_active_group_found(
                 w: member.rect.w,
                 h: member.rect.h,
             },
+            // Read-only group query: no hint/clamp context applies.
+            overconstrained: None,
+            client_clamped: None,
         })
         .collect();
     serialize_bounded(&PlanReply {
@@ -4831,6 +4877,61 @@ mod tests {
             "output": "out-1",
             "workspace": "ws-1",
         })
+    }
+
+    /// Retained request variant carrying AR12 per-window size hints:
+    /// `hints` maps window id to `(min_size, max_size)` as `(w, h)` pairs.
+    /// Windows absent from the map carry no hint fields (legacy shape).
+    type HintPair = (Option<(i32, i32)>, Option<(i32, i32)>);
+    #[allow(clippy::too_many_arguments)]
+    fn retained_request_with_hints(
+        correlation: &str,
+        owner: &str,
+        generation: &str,
+        focused: &str,
+        windows: &[(&str, i32, i32, i32, i32)],
+        hints: &std::collections::BTreeMap<&str, HintPair>,
+        command: serde_json::Value,
+    ) -> String {
+        let entries: Vec<serde_json::Value> = windows
+            .iter()
+            .map(|(window, x, y, w, h)| {
+                let mut entry = serde_json::json!({
+                    "window": window,
+                    "output": "out-1",
+                    "workspace": "ws-1",
+                    "rect": {"x": x, "y": y, "w": w, "h": h},
+                });
+                if let Some((min, max)) = hints.get(window) {
+                    if let Some((mw, mh)) = min {
+                        entry["min_size"] = serde_json::json!({"w": mw, "h": mh});
+                    }
+                    if let Some((mw, mh)) = max {
+                        entry["max_size"] = serde_json::json!({"w": mw, "h": mh});
+                    }
+                }
+                entry
+            })
+            .collect();
+        serde_json::json!({
+            "v": 1,
+            "correlation_id": correlation,
+            "owner": owner,
+            "generation": generation,
+            "revision": 0,
+            "fingerprint": 7,
+            "domain": {
+                "output": "out-1",
+                "workspace": "ws-1",
+                "bounds": {"x": 0, "y": 0, "w": 1200, "h": 800},
+                "gap": 0,
+                "outer_gap": 0,
+            },
+            "focused_window": focused,
+            "windows": entries,
+            "command": command,
+        })
+        .to_string()
     }
 
     #[test]
@@ -7019,6 +7120,232 @@ mod tests {
         );
         let follow_reply = parse_reply(&planner.evaluate(&follow));
         assert_eq!(follow_reply["outcome"], "planned", "{follow_reply}");
+    }
+
+    #[test]
+    fn reconcile_without_hints_carries_no_hint_flags() {
+        let mut planner = seed_two_window_planner();
+        let request = retained_request(
+            "rec-flags-absent",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let reply = parse_reply(&planner.evaluate(&request));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        for entry in reply["desired_geometry"]
+            .as_array()
+            .expect("planned geometry present")
+        {
+            assert!(entry.get("overconstrained").is_none(), "{reply}");
+            assert!(entry.get("client_clamped").is_none(), "{reply}");
+        }
+    }
+
+    #[test]
+    fn reconcile_accepts_hinted_short_frame_as_client_clamped() {
+        let mut planner = seed_two_window_planner();
+        let baseline = retained_request(
+            "rec-clamp-base",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let baseline_reply = parse_reply(&planner.evaluate(&baseline));
+        assert_eq!(baseline_reply["outcome"], "planned", "{baseline_reply}");
+        let before = geometry_by_window(&baseline_reply);
+        // Short frame against a REAL carried maximum: win-2 keeps position
+        // but lands 56 short in height, exactly at its carried max, so the
+        // observed size equals clamp(desired, min, max) and accepts. (This
+        // is distinct from the logged Ghostty evidence, whose max is the
+        // unbounded sentinel: that stays genuine drift.) Hints ride
+        // alongside the legacy fingerprint (7): advisory hints never join
+        // the fingerprint.
+        let desired_h = before["win-2"].3;
+        let clamped_h = desired_h - 56;
+        let (x, y, w, _) = before["win-2"];
+        let mut hints = std::collections::BTreeMap::new();
+        hints.insert("win-2", (None, Some((w, clamped_h))));
+        let clamped = retained_request_with_hints(
+            "rec-clamp-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", x, y, w, clamped_h)],
+            &hints,
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let reply = parse_reply(&planner.evaluate(&clamped));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        // Retained truth stands (leftover explained, shares untouched)...
+        assert_eq!(geometry_by_window(&reply), before, "{reply}");
+        // ...while the clamped window accepts: no rewrite, no drift/park.
+        let by_window: std::collections::BTreeMap<String, &serde_json::Value> =
+            reply["desired_geometry"]
+                .as_array()
+                .expect("planned geometry present")
+                .iter()
+                .map(|entry| (entry["window"].as_str().expect("window").to_owned(), entry))
+                .collect();
+        assert_eq!(
+            by_window["win-2"].get("client_clamped"),
+            Some(&serde_json::Value::Bool(true)),
+            "{reply}"
+        );
+        assert!(
+            by_window["win-2"].get("overconstrained").is_none(),
+            "{reply}"
+        );
+        assert!(
+            by_window["win-1"].get("client_clamped").is_none(),
+            "{reply}"
+        );
+        assert!(
+            by_window["win-1"].get("overconstrained").is_none(),
+            "{reply}"
+        );
+        // No pending crosses the read-only reconcile: a follow-up command
+        // still plans on the retained tree.
+        let follow = retained_request(
+            "rec-clamp-follow",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "focus", "window": "win-1", "direction": "right"}),
+        );
+        let follow_reply = parse_reply(&planner.evaluate(&follow));
+        assert_eq!(follow_reply["outcome"], "planned", "{follow_reply}");
+    }
+
+    #[test]
+    fn reconcile_marks_unsatisfiable_minimums_overconstrained() {
+        let mut planner = seed_two_window_planner();
+        // Both windows demand 700 wide in a 1200 extent: unsatisfiable.
+        let mut hints = std::collections::BTreeMap::new();
+        hints.insert("win-1", (Some((700, 10)), None));
+        hints.insert("win-2", (Some((700, 10)), None));
+        let request = retained_request_with_hints(
+            "rec-over-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            &hints,
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let reply = parse_reply(&planner.evaluate(&request));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        for entry in reply["desired_geometry"]
+            .as_array()
+            .expect("planned geometry present")
+        {
+            assert_eq!(
+                entry.get("overconstrained"),
+                Some(&serde_json::Value::Bool(true)),
+                "{reply}"
+            );
+            assert!(entry.get("client_clamped").is_none(), "{reply}");
+        }
+    }
+
+    #[test]
+    fn reconcile_unhinted_drift_never_accepts() {
+        let mut planner = seed_two_window_planner();
+        let baseline = retained_request(
+            "rec-nodrift-base",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let baseline_reply = parse_reply(&planner.evaluate(&baseline));
+        let before = geometry_by_window(&baseline_reply);
+        // Same 56-short frame with no hints: drift, still fully reasserted.
+        let (x, y, w, h) = before["win-2"];
+        let drifted = retained_request(
+            "rec-nodrift-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", x, y, w, h - 56)],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let reply = parse_reply(&planner.evaluate(&drifted));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(geometry_by_window(&reply), before, "{reply}");
+        for entry in reply["desired_geometry"]
+            .as_array()
+            .expect("planned geometry present")
+        {
+            assert!(entry.get("client_clamped").is_none(), "{reply}");
+            assert!(entry.get("overconstrained").is_none(), "{reply}");
+        }
+    }
+
+    #[test]
+    fn admit_honors_satisfiable_minimum_from_observed_hints() {
+        let mut planner = seed_two_window_planner();
+        // Wide placement forces a horizontal split of the focused leaf;
+        // win-3 needs 400 wide, so win-1 yields inside the new pair.
+        let mut hints = std::collections::BTreeMap::new();
+        hints.insert("win-3", (Some((400, 10)), None));
+        let request: serde_json::Value = serde_json::from_str(&retained_request_with_hints(
+            "rec-admit-hint",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[
+                ("win-1", 0, 0, 100, 80),
+                ("win-2", 200, 0, 100, 80),
+                ("win-3", 400, 0, 100, 80),
+            ],
+            &hints,
+            serde_json::json!({
+                "op": "admit",
+                "window": "win-3",
+                "output": "out-1",
+                "workspace": "ws-1",
+                "placement_bounds": {"x": 0, "y": 0, "w": 400, "h": 100},
+            }),
+        ))
+        .expect("valid request");
+        // Admit through the normal path with the hinted observation.
+        let reply = parse_reply(&planner.evaluate(&request.to_string()));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        let geometry = geometry_by_window(&reply);
+        assert_eq!(geometry.len(), 3, "{reply}");
+        let win3 = geometry["win-3"];
+        assert!(win3.2 >= 400, "admitted minimum honored: {reply}");
+        for entry in reply["desired_geometry"]
+            .as_array()
+            .expect("planned geometry present")
+        {
+            assert!(entry.get("overconstrained").is_none(), "{reply}");
+        }
+    }
+
+    #[test]
+    fn hint_unknown_nested_field_rejects_fail_closed() {
+        let mut planner = seed_two_window_planner();
+        let mut request: serde_json::Value = serde_json::from_str(&retained_request(
+            "rec-hint-bad",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        ))
+        .expect("valid request");
+        request["windows"][0]["min_size"] = serde_json::json!({"w": 10, "h": 10, "depth": 3});
+        let reply = parse_reply(&planner.evaluate(&request.to_string()));
+        assert_eq!(reply["outcome"], "rejected", "{reply}");
+        assert_eq!(reply["kind"], "unknown-field", "{reply}");
     }
 
     #[test]

@@ -131,7 +131,10 @@ pub enum ExceptionBehavior {
     Defer,
 }
 
-/// One adapter-observed window with explicit exception flags.
+/// One adapter-observed window with explicit exception flags plus the
+/// ephemeral client size hints (AR12). Hints are advisory per-observation
+/// inputs: they shape projection and clamp acceptance but never participate
+/// in identity, membership, or pre/post-image matching.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservedWindow {
     pub window: WindowId,
@@ -141,6 +144,7 @@ pub struct ObservedWindow {
     pub fullscreen: bool,
     pub maximized: bool,
     pub sticky: bool,
+    pub hints: crate::size_hints::WindowSizeHints,
 }
 
 impl ObservedWindow {
@@ -467,6 +471,8 @@ impl super::Session {
                 fullscreen: record.flags.fullscreen,
                 maximized: record.flags.maximized,
                 sticky: record.flags.sticky,
+                // Exceptions are never projected: hints stay empty.
+                hints: crate::size_hints::WindowSizeHints::none(),
             })
             .collect()
     }
