@@ -8,15 +8,14 @@ each review claim before acting; it was a static sampling review. User
 decisions of 2026-09-24 are recorded under
 [Architecture Direction](decisions.md#architecture-direction).
 
-- P1 | Drop-intent edge drag live cases | User accepted inactive-target resize,
-  rejected-drop convergence and KWin-thirds interior grabs (2026-09-24).
-  Live trace exposed shallow Meta+right corner misses and tiled-move reconcile
-  parking. User-approved passive native press capture and interim move-drop
-  snap-back are implemented offline (Rust 593, KWin 808, native 27); see
-  [follow-up](changes/archive/passive-press-move-snapback.md). Next: user
-  rebuilds/delivers the unified native effect across a session restart, then
-  validates corner presses and tiled/floating move drops live. AR8 remains
-  separate.
+- P2 | Drop-intent edge drag live cases | Shipped with passive native press
+  capture and interim move-drop snap-back
+  ([follow-up](changes/archive/passive-press-move-snapback.md)). User manually
+  reports (2026-09-24) Meta+right drags, edge and corner drags, and floating
+  Meta move/resize "working really well". Not individually confirmed: tiled
+  Meta+left move snap-back, Esc/zero-move, size-increment client, and the
+  unexplained `p13` 36 px bottom-edge shortfall in
+  `/run/user/1000/plasma-auto-tiler-dev.LVkQv5.log`. AR8 remains separate.
 - P2 | Drag-and-drop reorganisation | User-approved as a later item
   (2026-09-24). Wire move drops to the existing core placement policy
   (`crates/tiler-core/src/session/ops/drag.rs`: split edges, group interiors,
@@ -40,12 +39,6 @@ decisions of 2026-09-24 are recorded under
   effect mouse interception blocks all clicks; plausible first prototype is
   project-owned layer-shell surfaces confined to positive-width gaps, with a
   native KWin input filter as fallback. Needs a Rust split-boundary request.
-- P0 | AR8 Drag oracle measurement | 7.1: trace-mode finish/first-change/verdict
-  logging instrumented offline. Next: user captures ~20 Wayland edge drags,
-  incl. a size-increment terminal and Esc cancellation, using
-  [AR8 runbook](changes/architecture-review-ar8-drag-oracle-measurement.md).
-  Evidence selects removal, pointer-derived boundary, or folding into
-  `ActiveBorder`.
 - P0 | AR9 Initial maximize direct read | 7.2. Approved: seed maximize state in
   the effect via `window()->maximizeMode()`; remove the script epoch handshake,
   `active-border-initial.ts`, and the Rust `initial_maximize_*` half.
@@ -381,15 +374,17 @@ Existing work:
   mutation, ack/verify uncertainty, lost commit replies, and divergence remain
   unresolved. Their recovery semantics require a separate decision; no blind
   reset, replay, or topology reconstruction is selected.
-- P1 | Temporary active-group highlight live gate | Named-log diagnosis found
-  retained-focus lookup and missing completed-geometry refresh defects; both are
-  corrected and statically verified. A read-only native status diagnostic now
-  separates policy receipt, parse/focus/order outcome, Meta/focus/OpenGL gates,
-  and selected outline visibility without proving composited output. Rebuild,
-  stage, and start a new Plasma session before rechecking the separate outline
-  while holding Meta. The user reports no visible group border. User-owned
-  evidence remains for native transport, modifier delivery, fullscreen
-  suppression, rendering, and cost.
+- P2 | Active-group highlight redesign | User observation (2026-09-24): the
+  group border now renders, but statically during KDE's workspace slide
+  transition, while the active border now slides with its window (previously
+  it jumped to the new window and rendered statically; likely fixed by
+  parenting the active border to the target WindowItem at negative z, while
+  the group outline remains a scene overlay - not proven). User does not want
+  heavy investment in the current group outline. User's current thinking, not
+  a decision: render the group as a semi-transparent grey rectangle beneath
+  the windows and beneath the active border, extending beyond the active
+  border by about one more border width. Earlier: retained-focus and
+  completed-geometry defects corrected; native status diagnostic available.
   [record](changes/archive/active-group-highlight-design.md)
 - P1 | Preserved host residue | Do not search for, enumerate, inspect,
   heuristically identify, modify, or clean unidentified advisory, shadow, or

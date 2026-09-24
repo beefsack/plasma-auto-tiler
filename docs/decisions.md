@@ -109,13 +109,20 @@ the corresponding item ships; each such entry names its replacement.
   the smallest reliable native integration; no capability, including input,
   is excluded merely for being native.
 
-- The drag-final-geometry oracle uses the minimal C++/moc KWin-effect shim and
-  POD-only C ABI required by KWin. Rust owns verdict policy; no Qt or KWin type
-  crosses the ABI, and every Rust callback catches panics before returning to
-  KWin.
-- The drag-final-geometry oracle owns a second read-only session D-Bus endpoint
-  for its last verdict. The KWin script pulls it after interactive drag finish;
-  the effect never pushes a verdict into the script.
+- The shipped drag oracle uses a C++/moc KWin-effect shim and POD-only C ABI.
+  Rust owns verdict policy; no Qt or KWin type crosses the ABI, and every Rust
+  callback catches panics before returning to KWin. The unified effect also
+  observes the configured modifier-resize press through a passive InputEventSpy:
+  it matches the same window and identity at drag start within a bounded age,
+  then consumes that single-use evidence with the final geometry at finish.
+  The script owns KWin-thirds grabbed-edge classification and resize routing.
+- The drag oracle retains a separate read-only session D-Bus endpoint for its
+  last verdict, hosted in the same active-border effect plugin. The KWin script
+  pulls it after interactive drag finish; the effect never pushes a verdict
+  into the script. The reply carries optional matched press position and
+  binding atomically with final geometry, cancellation, and correlation.
+  AR8 closed on 2026-09-24 at the user's request with the shipped integration
+  kept, following the Lead's recommendation; this selects no endpoint rewrite.
 - Orchestrator interpretation of the 2026-09-24 user decision: reliability is
   part of the test for any needed native capability. Private KWin APIs are not
   categorically forbidden, but their ABI churn weighs against their use. Put
@@ -919,13 +926,15 @@ ships.
 ## Production Interactive Edge Drag
 
 - Production interactive drag share adjustment uses drop intent (user,
-  2026-09-24). Capture the grabbed edge(s) at drag start: prefer a reliable
-  KWin-reported resize edge if available, otherwise the pointer's proximity
-  to the starting edges. Retile from the final window edge on each grabbed
-  side, ignoring other edge changes from rounding, size increments, or a
-  self-resizing client; corner drags use both axes. Reject only when no usable
-  grabbed edge remains (including cancellation, zero movement, or lost window
-  identity). The strict opposite-edge-fixed rule is superseded.
+  2026-09-24). The script captures a fallback grabbed-edge classification from
+  the pointer and starting frame at drag start; a matching native press in the
+  later verdict takes precedence for KWin-thirds classification. No reliable
+  KWin-reported grabbed-edge signal is available in the shipped route. Retile
+  from the oracle's final window edge on each grabbed side, ignoring other edge
+  changes from rounding, size increments, or a self-resizing client; corner
+  drags use both axes. A cancelled verdict makes no resize plan; a moved verdict
+  with no usable grabbed edge, no movement on grabbed edges, or lost identity
+  does not route a resize. The strict opposite-edge-fixed rule is superseded.
 - User accepted the Orchestrator's follow-up recommendations (2026-09-24): a
   completed pointer drag may resize an inactive tiled window without changing
   active, focused or remembered focus; keyboard resize and other operations
@@ -937,13 +946,16 @@ ships.
   rule.
 - User-approved 2026-09-24: the unified native effect passively observes
   the configured modifier-resize button press without grabbing or consuming
-  input. A fresh press matching the same window at resize start selects
-  KWin 6.7.5 thirds regardless of the 64 px interior gate; absent/unusable
-  press evidence falls back to the prior Started-pointer classifier, with a
-  bounded fallback log. The effective binding is read from KWin when public
-  options are available; only an unavailable binding source uses and logs
-  the KWin source default. The unified effect and existing oracle endpoint
-  retain their identities.
+  input. The passive input spy captures a candidate press first; the effect
+  matches it to the same window and identity at drag start and carries it
+  atomically with the final-geometry verdict. At reply, the script validates
+  the finish identity and resize start before a usable press selects KWin
+  6.7.5 thirds regardless of the 64 px interior gate; absent/unusable press
+  evidence falls back to the Started-pointer classifier, with a bounded
+  fallback log. The effective binding is read from KWin when public options
+  are available; only an unavailable binding source uses and logs the KWin
+  source default. The unified effect and existing oracle endpoint retain
+  their identities.
 - User-approved interim move-drop rule, 2026-09-24: a tiled window moved
   interactively suppresses ordinary reconcile during the gesture, then
   converges to its retained layout on drop through one correlated, coalesced
@@ -951,12 +963,15 @@ ships.
   native-only. Drag-and-drop reorganisation is a separate later backlog item.
 - The drag oracle hosted in the disabled-by-default unified
   `plasma-auto-tiler-active-border` native effect records final drag geometry;
-  after that effect's explicit enable, the
-  production script pulls its read-only session D-Bus verdict and routes a
-  non-cancelled verdict through `pointer-resize` shares. A cancelled or
-  no-change verdict makes no pointer-resize plan. No stock-KWin parity or
-  atomic native geometry-write claim is selected. AR8 still decides the
-  oracle's future from its measurement; this change does not decide AR8.
+  after that effect's explicit enable, the production script pulls its
+  read-only session D-Bus verdict. A non-cancelled resize can route grabbed
+  edges through `pointer-resize` shares; a tiled move instead restores its
+  retained layout on drop, while a floating move stays native-only. A
+  cancelled or no-change verdict makes no pointer-resize plan. No stock-KWin
+  parity or atomic native geometry-write claim is selected. AR8 closed on
+  2026-09-24 at the user's request with the shipped oracle integration kept,
+  following the Lead's recommendation; trace-only measurement remains for
+  drag diagnosis.
 
 ## Deferred Scope
 
