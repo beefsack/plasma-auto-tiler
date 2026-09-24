@@ -439,7 +439,10 @@ Existing work:
   Configure page until real profiles exist, keep the single COSMIC-style
   catalog, leave any saved value untouched in `kwinrc`, and fold profiles into
   "Post-MVP tiling profiles"; this removes it from the launch blocker. Not yet
-  implemented.
+  implemented. User decision (2026-09-25): `workspaceMode` stays startup-only
+  for MVP as an explicit launch-blocker exception; verify the Configure page
+  states the restart requirement clearly. Remaining blocker: implement the
+  `shortcutProfile` hide and live-accept gaps and borders.
   [investigation](changes/reliability-condition-investigation.md)
   [live settings research](research/live-settings-after-ar15.md)
 - P2 | Interim runtime configuration reload | PARTIAL: the gap-only portion is
@@ -555,6 +558,11 @@ Existing work:
 - P3 | Artifact publication | Publish reproducible KPackage artifacts to KDE
   Store and GitHub Release after MVP delivery dependencies complete.
   [foundations](changes/archive/delivered-foundations.md)
+- P3 | Live workspace-mode switch | Post-MVP (user, 2026-09-25). On save,
+  quiesce, rebuild the backing-desktop mapping and fresh-adopt current windows
+  without native moves, keeping focus and visible desktops; layouts may be lost
+  (near-strip fitting recovers simple strips). Needs a safe Planner generation
+  transition. [research](research/live-settings-after-ar15.md)
 - P3 | Post-MVP tiling profiles | Required when adding other tiling types such
   as Hyprland: selectable profiles must cover both the tiling behavior/algorithm
   and matching shortcuts. Includes re-exposing `shortcutProfile` (hidden

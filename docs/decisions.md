@@ -143,6 +143,9 @@ the corresponding item ships; each such entry names its replacement.
   operation, and foreign records change only through explicit effect KCM
   Apply/Revert. Existing live border updates remain live. Before launch, every
   user-facing setting must apply live; this remains a mandatory launch blocker.
+  User exceptions (2026-09-25): `workspaceMode` stays startup-only for MVP and
+  the Configure page states the restart requirement clearly; `shortcutProfile`
+  is hidden until distinct profiles exist (post-MVP).
 - The core distribution remains the script KPackage for KDE Store and an
   identical GitHub Release artifact. Platform-native packages for the native
   effect and KCM are permitted; their formats and publication are unselected.
