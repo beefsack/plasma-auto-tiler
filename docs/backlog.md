@@ -429,8 +429,13 @@ Existing work:
   `workspaceMode` still require a session restart, so the launch blocker is not
   satisfied. The three ineffective controls have been removed; legacy values
   are left untouched. Verify running behavior reflects saved settings without
-  requiring a tiler reload.
+  requiring a tiler reload. Research (2026-09-25): the three shortcut profiles
+  currently produce the same catalog; KWin 6.7.5 scripting cannot unregister
+  or rebind shortcuts; live `workspaceMode` needs product semantics for
+  layouts, numbering, view and focus; generic post-Save script reload is not
+  recommended. Awaiting user answers to the note's four questions.
   [investigation](changes/reliability-condition-investigation.md)
+  [live settings research](research/live-settings-after-ar15.md)
 - P2 | Interim runtime configuration reload | PARTIAL: the gap-only portion is
   static-complete with retained offline proof and a pending live gate; broader
   startup-only settings remain unfinished. AR15 moves gaps and startup settings
