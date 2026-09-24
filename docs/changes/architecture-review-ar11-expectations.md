@@ -295,3 +295,57 @@ committed. Send-slice retry, independent native-observer-to-core review,
 contract-row assertion flips and live user acceptance remain the next unit;
 AR4's blocker status is unchanged. This is the fixture handover point, not a
 claim that the send transaction model has shipped.
+
+## Send-slice review stop (2026-09-25)
+
+Converted the existing real-observer/real-Engine fixture to ten red AR11 rows:
+issued, transit, met, expired-source, third-workspace expiry,
+observation-unavailable expiry latch, disjoint send, supersession, binding
+retirement and tampered observation. All are driven by adapter-produced requests
+and native signal/timer events. They fail against shipped code for missing
+`observation_seq`/`world_windows`/`send-observed`, the old global flight guard
+or terminal deadline behavior. The fixture does not establish the new contract
+on its own, and does not claim a shipped send slice.
+
+A core/protocol/adapter implementation made these rows pass offline, but an
+independent end-to-end review found a material unresolved bootstrap gap. The
+reviewed first-touch migration requires the caller to supply each occupied
+legacy Session's **exact retained accepted revision and fingerprint** before
+the Engine mutates either domain (`send_expected_base` and
+`send_load_for_issue` in the attempted core). The production ordinary Plan
+route sends `revision: 0` on requests, treats that value as non-staleness
+evidence, and does not persist per-domain Engine accepted revisions across a
+Planner/session restart (`kwin/src/plan-adapter.ts`, ordinary dispatch).
+The attempted send adapter consequently supplied zero and no legacy tokens;
+its fixture started from a fresh Engine, so it did not expose the failure.
+Guessing revisions or deriving a retained fingerprint from the current native
+snapshot would defeat the mandatory stale-base/real-observation fences. The
+contract needs an explicit, reviewed first-touch authority/bootstrap rule for
+retained ordinary domains (including restarts) before implementation resumes;
+the existing text does not select one.
+
+Other review findings on the discarded implementation included premature
+send dispatch before Engine binding sync, stale replies that did not always
+resnapshot before writes, an initially global ordinary Plan guard, and fixture
+coverage of the dev entry rather than the separate foreground observer. Some
+were repaired during the attempt, but passing tests there did not resolve the
+bootstrap gap. All attempted core, protocol, KWin production and obsolete-test
+edits were restored; only the red fixture conversion and this outcome remain.
+No send behavior, wire golden, shipped decision, live mutation or acceptance
+ships. AR4 remains blocked behind AR11. Next action: select and independently
+review the first-touch/restart evidence rule, then resume from the red fixture
+and add a production-foreground occupied-domain case before another send slice.
+
+After restoring the rejected implementation: `cargo test --workspace --offline`
+624 passed; `cargo fmt --all -- --check`, `just check-portable`, KWin
+`npm run typecheck` and `npm run build` passed. Workspace clippy passed with
+existing warnings only in unchanged files. KWin `npm test` ran 826 tests:
+816 shipped-baseline tests passed, and the ten intentional AR11 row assertions
+failed red (the first run contended for the concurrent Cargo build lock; the
+focused fixture run was red without long waits). `git diff --check` passed.
+
+First-touch/restart rule options for user selection (review candidates, not decisions):
+- Bound read-only Engine query for each occupied domain's exact accepted revision/fingerprint, tied to owner/generation and a fresh complete observation: best preserves stale, topology and no-reset fences; requires a new authorized query and atomic handoff across competing mutations.
+- Have ordinary Plan replies carry accepted per-domain tokens into a session-local adapter cache: avoids a query in the same runtime, but tokens are unavailable after adapter restart and may stale across other routes, weakening generation/stale-base safety unless paired with revalidation.
+- Reinitialize occupied domains from current native facts before first send: supplies a fresh base, but discards authoritative tree/shares and violates the no-blind-reset invariant; not recommended.
+Recommendation: review the bound read-only query with atomic handoff, including restart and R4 interlock. Until selected, ten AR11 fixture rows are skipped via `node:test` (which has no expected-failure variant) so main stays green; assertions remain intact.

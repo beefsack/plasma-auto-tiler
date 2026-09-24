@@ -55,12 +55,14 @@ decisions of 2026-09-24 are recorded under
   User selected host-authoritative facts, engine-authoritative layout and
   bounded convergence (2026-09-23). Transition contract passed design review;
   four implementation attempts failed review on the native-observer-to-core
-  path. The six-scenario real-TS-observer/real-Rust-Engine fixture is green
-  offline against shipped pending behavior (2026-09-25); convert its marked
-  legacy assertions to the AR11 transition rows during the send-slice retry,
-  then independently review that path. Live acceptance after: rapid repeated
-  sends keep prompt native-proof follow without focus theft; failed sends
-  converge back to source. [scope](changes/architecture-review-ar11-expectations.md)
+  path. Ten real-observer/real-Engine fixture rows now pin the AR11 contract
+  red against shipped behavior. A new implementation was stopped after review:
+  exact retained legacy revision/fingerprint cannot be supplied by the current
+  foreground adapter on first touch across restart. Select and review a
+  first-touch authority/bootstrap rule before retrying the send slice; add a
+  production-foreground occupied-domain fixture. Live acceptance after: rapid
+  repeated sends keep prompt native-proof follow without focus theft; failed
+  sends converge back to source. [scope](changes/architecture-review-ar11-expectations.md)
 - P0 | AR4 Single observation `sync` | 7.7, after AR11. Collapsing intermediate
   layout writes is selected. Post-only removal needs AR11's fact/expectation
   model. [scope](changes/architecture-review-ar4-observation-sync.md)

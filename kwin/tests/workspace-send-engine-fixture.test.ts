@@ -1,20 +1,51 @@
-// Minimal vertical fixture: REAL production workspace-send observer/adapter
-// against the REAL Rust Engine over the Planner codec seam.
+// Vertical AR11 transition-contract fixture (skipped until AR11 ships): REAL
+// standalone workspace-send observer/actuation against the REAL Rust Engine
+// over the Planner codec seam. The foreground Plan entry has a separate
+// observer and needs its own occupied-domain fixture before implementation.
 //
-// REAL parts: `startWorkspaceSendAdapterEntry` (production observeNative +
+// REAL parts: `startWorkspaceSendAdapterEntry` (standalone observeNative +
 // actuation) on a scripted fake KWin surface; `Planner::evaluate` via the
 // test-only `planner_eval` example (same validation/retained state as the
-// shipped binary; only D-Bus is stubbed). Run: `npm test`.
+// shipped binary; only D-Bus is stubbed). Included in `npm test`.
 //
-// Six pre-AR11 scenarios below. Where shipped code cannot satisfy the AR11
-// contract yet, the test asserts CURRENTLY EXPECTED behavior and carries a
-// FUTURE note with the exact assertion update the send slice must make.
-// Overclaim warning: nothing here executes unshipped contract rows
-// (observation_seq / world_windows / send-observed); claims are limited to
-// what each test executes. AR11 issued/transit/met/expired/expiry-latched,
-// supersession and binding-loss must be asserted after the protocol ships;
-// especially target focus proof, elsewhere classification and old-generation
-// baseline/flight retirement cannot be verified with the legacy wire.
+// Ten AR11 rows. Every assertion inspects only adapter-captured evidence:
+// D-Bus payloads the standalone observer actually emitted (via
+// flush/peekQueued), Engine replies to those payloads, native surface state,
+// the real one-shot timer objects, and redacted logs. No hand-built wire, no
+// cloned-payload send-observed, no invented sequence/correlation, no direct
+// bridge.send of synthetic requests (the tamper test rewrites an
+// adapter-emitted payload at the transport seam only, still
+// observer-produced).
+//
+// AR11 requirements are asserted POSITIVELY so each row fails red on main,
+// and every test is GREENABLE: it must be able to pass unmodified once a
+// conformant AR11 implementation ships. Nothing here depends on the legacy
+// completion path (no ack/verify/committed waits, no timeout-request waits,
+// no terminal-disable or in-flight-refusal pins, no echo-fence armed waits:
+// AR11 removes the send echo fences). Follow-ups are driven by real native
+// invalidation (signal fires) and the real one-shot timer, then observed via
+// peekQueued/flush with a short settle instead of long waits on hooks that do
+// not exist yet.
+//
+// Field names come only from the reviewed design
+// (docs/changes/architecture-review-ar11-expectations.md): observation_seq,
+// world_windows, send-observed, deadline_elapsed, revision, fingerprint,
+// domain, target_domain, windows, target_windows, focused_window, command,
+// correlation_id, owner, generation, outcome, desired_geometry, SetWorkspace,
+// planned/converged/waiting/expired/rejected/uncertain, expectation-expired,
+// observation-unavailable, binding-lost. Per-domain revision/fingerprint key
+// names, world-entry key names, exact retained revision/fingerprint values
+// and F(D,E) goldens are NOT asserted: exact retained Session values need a
+// semantic bootstrap that is unresolved, and the design pins goldens in the
+// protocol suite, not here.
+//
+// Against current main every AR11 row is EXPECTED RED: the shipped adapter
+// emits only send-to-workspace/-ack/-verify with a singular base_revision and
+// never send-observed; the Engine never replies converged/waiting/expired/
+// uncertain/rejected-to-observed; the deadline path terminates instead of
+// latching. Gaps that cannot be driven through this seam at all (core Session
+// revision arithmetic, F(D,E) values, tombstones) are reported, not faked. No
+// production route, host, toolchain, or live KWin changes.
 
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -146,11 +177,15 @@ class EngineBridge {
 async function waitFor(condition: () => boolean, label: string): Promise<void> {
     const start = Date.now();
     while (!condition()) {
-        if (Date.now() - start > 45000) {
+        if (Date.now() - start > 15000) {
             throw new Error(`timeout: ${label}`);
         }
         await new Promise((resolve) => setTimeout(resolve, 5));
     }
+}
+
+async function settle(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 interface FakeSignal {
@@ -210,6 +245,12 @@ function makeWindow(id: string, output: { name: string }, desktop: object): Fake
     };
 }
 
+interface HarnessOpts {
+    readonly owner?: string;
+    readonly generation?: string;
+    readonly rewrite?: (index: number, payload: string) => string;
+}
+
 interface Harness {
     readonly win: { wa: FakeWindow; wb: FakeWindow; wt: FakeWindow; wc: FakeWindow; wd: FakeWindow };
     readonly desk: { d1: object; d2: object; d3: object; d4: object };
@@ -222,14 +263,16 @@ interface Harness {
     readonly requestSend: (target: unknown) => boolean;
     readonly stop: () => void;
     readonly breakReads: () => void;
+    readonly restoreReads: () => void;
     readonly setActive: (window: FakeWindow) => void;
     readonly setCurrent: (desktop: object) => void;
     flush: () => Promise<void>;
+    peekQueued: () => string[];
     queued: () => number;
     committed: () => boolean;
 }
 
-async function makeHarness(rewrite?: (index: number, payload: string) => string): Promise<Harness> {
+async function makeHarness(opts: HarnessOpts = {}): Promise<Harness> {
     const out = { name: "out-1" };
     const d1 = { id: "ws-1" };
     const d2 = { id: "ws-2" };
@@ -238,16 +281,10 @@ async function makeHarness(rewrite?: (index: number, payload: string) => string)
     const wa = makeWindow("n-win-a", out, d1);
     const wb = makeWindow("n-win-b", out, d1);
     const wt = makeWindow("n-win-t", out, d2);
-    // Independently scoped second domain for the disjoint-send probe: its own
-    // source (ws-3), target (ws-4), and focused mover share nothing with the
-    // ws-1 -> ws-2 flight.
     const wc = makeWindow("n-win-c", out, d3);
     const wd = makeWindow("n-win-d", out, d3);
     let current: object = d1;
     let failReads = false;
-    // Identity matters: the observer, the echo fence, and the entry's native
-    // writes all operate on these exact objects, so the test observes every
-    // mutation the REAL adapter performs.
     const surface: Record<string, unknown> = {
         activeWindow: wa,
         currentDesktop: d1,
@@ -271,6 +308,7 @@ async function makeHarness(rewrite?: (index: number, payload: string) => string)
     const logs: string[] = [];
     const switches: object[] = [];
     const pending: Array<{ payload: string; callback: (reply: unknown) => void }> = [];
+    const rewrite = opts.rewrite;
     const entry = startWorkspaceSendAdapterEntry({
         workspace: surface,
         callDbus: (service, _path, _iface, method, payload, callback) => {
@@ -302,8 +340,8 @@ async function makeHarness(rewrite?: (index: number, payload: string) => string)
         log: (message) => {
             logs.push(message);
         },
-        owner: "owner-1",
-        generation: "gen-1",
+        owner: opts.owner ?? "owner-1",
+        generation: opts.generation ?? "gen-1",
         readInnerGapFn: () => 8,
         readOuterGapFn: () => 8,
     });
@@ -330,6 +368,9 @@ async function makeHarness(rewrite?: (index: number, payload: string) => string)
         breakReads: () => {
             failReads = true;
         },
+        restoreReads: () => {
+            failReads = false;
+        },
         setActive: (window) => {
             surface["activeWindow"] = window;
         },
@@ -348,6 +389,7 @@ async function makeHarness(rewrite?: (index: number, payload: string) => string)
             call.reply = await bridge.send(outgoing);
             next.callback(call.reply);
         },
+        peekQueued: () => pending.map((item) => item.payload),
         queued: () => pending.length,
         committed: () =>
             calls.some((call) => {
@@ -361,6 +403,47 @@ async function makeHarness(rewrite?: (index: number, payload: string) => string)
     };
 }
 
+function parseBody(call: { payload: string; reply: string } | undefined, side: "payload" | "reply"): Record<string, unknown> {
+    assert.ok(call, `AR11: expected a ${side} to exist (native observer -> Engine path broken)`);
+    return JSON.parse(side === "payload" ? call.payload : call.reply) as Record<string, unknown>;
+}
+
+function hasKey(value: unknown, key: string): boolean {
+    if (typeof value !== "object" || value === null) {
+        return false;
+    }
+    return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function tryParse(value: string): Record<string, unknown> | null {
+    try {
+        const parsed: unknown = JSON.parse(value);
+        if (typeof parsed === "object" && parsed !== null) {
+            return parsed as Record<string, unknown>;
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+function opOf(payload: string): string {
+    const body = tryParse(payload);
+    if (body === null) {
+        return "?";
+    }
+    const command = body["command"];
+    if (hasKey(command, "op")) {
+        const op = (command as Record<string, unknown>)["op"];
+        return typeof op === "string" ? op : "?";
+    }
+    return "?";
+}
+
+function emittedOps(h: Harness): string[] {
+    return h.calls.map((call) => opOf(call.payload));
+}
+
 function fireEchoes(h: Harness): void {
     for (const w of [h.win.wa, h.win.wb, h.win.wt, h.win.wc, h.win.wd]) {
         w.desktopsChanged.fire();
@@ -368,105 +451,53 @@ function fireEchoes(h: Harness): void {
     }
 }
 
-// Drives one full send through REAL observer -> REAL Engine -> REAL actuation.
-// Fails if any link (observation, planning, echo fence, ack/verify, follow)
-// breaks, in either direction.
-async function driveSend(h: Harness): Promise<void> {
-    assert.equal(h.requestSend("ws-2"), true);
-    await waitFor(() => h.queued() > 0, "request");
+// AR11 issue flow shared by every row: real observer request, real planned
+// reply. Greenable: the initial send-to-workspace request and planned outcome
+// (model plan, not native proof) are kept by the reviewed design.
+async function issueSend(h: Harness, target: string): Promise<Record<string, unknown>> {
+    assert.equal(h.requestSend(target), true, "initial send accepted");
+    await waitFor(() => h.queued() > 0, "initial observer request");
     await h.flush();
-    await waitFor(() => h.win.wa.desktopsChanged.armed(), "echo fence armed");
-    fireEchoes(h);
-    await waitFor(() => h.queued() > 0, "ack");
-    await h.flush();
-    await waitFor(() => h.queued() > 0, "verify");
-    await h.flush();
-    await waitFor(() => h.committed(), "commit");
+    const request = parseBody(h.calls[0], "payload");
+    const planned = parseBody(h.calls[0], "reply");
+    assert.equal(planned["outcome"], "planned", "initial reply is planned (model only)");
+    return request;
 }
 
-describe("workspace-send vertical fixture", () => {
-    it("pre-AR11 happy path commits with legacy one-shot target follow", async () => {
+describe("workspace-send AR11 transition contract", () => {
+    // node:test has no expected-failure variant. See docs/changes/architecture-review-ar11-expectations.md
+    // (Send-slice review stop); run these rows after the first-touch rule is selected.
+    it.skip("issued: initial observer payload carries E(n) world index; planned reply echoes sequence with one setter", async () => {
         const h = await makeHarness();
         try {
-            await driveSend(h);
-            const request = JSON.parse(h.calls[0]?.payload ?? "") as Record<string, unknown>;
-            // Observer fidelity: exact source/target membership and mover.
+            const request = await issueSend(h, "ws-2");
+            // Legacy envelope still present (reviewed design keeps these names).
             assert.equal((request["command"] as Record<string, unknown>)["window"], "n-win-a");
             assert.equal(request["focused_window"], "n-win-a");
-            assert.deepEqual(
-                (request["windows"] as Array<Record<string, unknown>>).map((w) => w["window"]).sort(),
-                ["n-win-a", "n-win-b"],
-            );
-            assert.deepEqual(
-                (request["target_windows"] as Array<Record<string, unknown>>).map((w) => w["window"]),
-                ["n-win-t"],
-            );
-            const planned = JSON.parse(h.calls[0]?.reply ?? "") as Record<string, unknown>;
-            assert.equal(planned["outcome"], "planned");
-            assert.equal(
-                (planned["operation"] as Record<string, unknown>)["target_workspace"],
-                "ws-2",
-            );
-            // Target native proof: mover off source, on exact target, with the
-            // follow switching to that target and focusing the mover, once.
-            assert.deepEqual(h.win.wa.desktops, [h.desk.d2]);
-            assert.deepEqual(h.switches, [h.desk.d2]);
-            assert.equal(h.surface["activeWindow"], h.win.wa);
-            // CURRENTLY EXPECTED: this is legacy pre-commit follow. FUTURE
-            // (AR11 met): assert target focus proof is observable from the
-            // complete world index and follow happens after converged proof,
-            // while preserving unrelated user focus. Today focus resolves
-            // source-only.
+            assert.ok(Array.isArray(request["windows"]) && Array.isArray(request["target_windows"]), "scoped observations present");
+            // AR11 red: generation-local observation sequence, complete world
+            // membership index, and a single SetWorkspace on the initial reply.
+            assert.ok(hasKey(request, "observation_seq"), "AR11 issued: request must carry observation_seq E(n)");
+            assert.ok(hasKey(request, "world_windows"), "AR11 issued: request must carry complete world_windows index");
+            // All native members present exactly once, eligible and
+            // exception alike, across every output/workspace in scope.
+            const worldIds = ((request["world_windows"] as Array<Record<string, unknown>>).map((entry) => entry["window"] as string)).sort();
+            assert.deepEqual(worldIds, ["n-win-a", "n-win-b", "n-win-c", "n-win-d", "n-win-t"], "world index covers every native window");
+            const planned = parseBody(h.calls[0], "reply");
+            assert.ok(hasKey(planned, "observation_seq"), "AR11 issued: planned reply must echo E(n)");
+            assert.equal(planned["observation_seq"], request["observation_seq"], "echoed sequence matches the consumed n");
+            assert.ok(JSON.stringify(planned).includes("set_workspace"), "AR11 issued: initial planned reply carries one SetWorkspace");
+            assert.equal((planned["set_workspace"] as Record<string, unknown>)["window"], "n-win-a", "setter names the mover once");
+            assert.equal(h.timers.length, 1, "one-shot deadline armed exactly once at issue");
         } finally {
             h.stop();
             await h.bridge.close();
         }
     });
 
-    it("pre-AR11 third-workspace escape fails closed on the real deadline", async () => {
+    it.skip("transit: stuck-mover invalidation emits send-observed(false) resolving to waiting, no setter, no follow", async () => {
         const h = await makeHarness();
         try {
-            assert.equal(h.requestSend("ws-2"), true);
-            await waitFor(() => h.queued() > 0, "request");
-            await h.flush();
-            await waitFor(() => h.win.wa.desktopsChanged.armed(), "echo fence armed");
-            // Exactly one valid follow happened on real pre-escape proof.
-            assert.deepEqual(h.switches, [h.desk.d2]);
-            // Mover escapes to a same-output third workspace; echoes withheld.
-            h.win.wa.desktops = [h.desk.d3];
-            // The legacy observer has only the pair: an elsewhere mover is
-            // invisible in both scoped lists, not classified nonexclusive.
-            const deadline = h.timers[0];
-            assert.ok(deadline, "deadline armed");
-            deadline.callback();
-            await waitFor(
-                () => h.logs.some((line) => line.includes("timeout-request")),
-                "deadline terminal",
-            );
-            // Expiry evidence: post-plan proof against ws-3 fails, the flight
-            // terminates, the adapter disables, nothing commits, and no follow
-            // fires after the escape.
-            assert.ok(h.logs.some((line) => line.includes("verify-failed")));
-            assert.ok(!h.committed());
-            assert.deepEqual(h.switches, [h.desk.d2]);
-            assert.equal(h.requestSend("ws-2"), false);
-            // FUTURE (AR11 expired): assert complete world observation
-            // explicitly identifies ws-3, never calls it nonexclusive or
-            // closed, and send-observed with deadline attestation reconciles
-            // the pair without terminal disable.
-        } finally {
-            h.stop();
-            await h.bridge.close();
-        }
-    });
-
-    it("pre-AR11 failed setter leaves mover on source without fabricated commit", async () => {
-        const h = await makeHarness();
-        try {
-            // Native fault at the exact seam the production entry writes: the
-            // desktops setter swallows the write, so the REAL observer keeps
-            // reporting the mover on source while the adapter believes it
-            // dispatched. Everything downstream is production code.
             const sourceDesktops = h.win.wa.desktops;
             Object.defineProperty(h.win.wa, "desktops", {
                 get: () => sourceDesktops,
@@ -474,170 +505,316 @@ describe("workspace-send vertical fixture", () => {
                 enumerable: true,
                 configurable: true,
             });
-            assert.equal(h.requestSend("ws-2"), true);
-            await waitFor(() => h.queued() > 0, "request");
-            await h.flush();
-            await waitFor(() => h.win.wa.desktopsChanged.armed(), "echo fence armed");
-            // Geometry echoes arrive; the membership echo never does (native
-            // never moved). The flight is in transit, mover still source.
+            await issueSend(h, "ws-2");
+            // Membership echo never arrives (native stuck on source); unrelated
+            // geometry invalidations fire through the real signal seam.
             h.win.wb.desktopsChanged.fire();
             h.win.wt.desktopsChanged.fire();
             for (const w of [h.win.wa, h.win.wb, h.win.wt, h.win.wc, h.win.wd]) {
                 w.frameGeometryChanged.fire();
             }
-            // Transit at the Engine seam on the captured observer wire: the
-            // dispatch observation (mover on source) classifies the live
-            // pending as unresolved, never committed.
-            const request = JSON.parse(h.calls[0]?.payload ?? "") as Record<string, unknown>;
-            const planned = JSON.parse(h.calls[0]?.reply ?? "") as Record<string, unknown>;
-            const status = {
-                ...request,
-                revision: planned["base_revision"],
-                command: { op: "send-to-workspace-status" },
-            };
-            const statusReply = JSON.parse(await h.bridge.send(JSON.stringify(status))) as Record<
-                string,
-                unknown
-            >;
-            assert.equal(statusReply["outcome"], "status");
-            assert.equal(statusReply["kind"], "unresolved");
-            // Fire the original one-shot deadline.
-            const deadline = h.timers[0];
-            assert.ok(deadline, "deadline armed");
-            deadline.callback();
-            await waitFor(
-                () => h.logs.some((line) => line.includes("timeout-request")),
-                "deadline terminal",
-            );
-            // CURRENTLY EXPECTED: terminal teardown with no fabricated commit
-            // or follow; native source membership unchanged end to end.
-            assert.ok(h.logs.some((line) => line.includes("verify-failed")));
-            assert.ok(!h.committed());
-            assert.deepEqual(h.switches, []);
-            assert.deepEqual(h.win.wa.desktops, [h.desk.d1]);
-            assert.equal(h.requestSend("ws-2"), false);
-            // FUTURE (AR11 expired-source): re-admit the mover to source from
-            // retained topology with a forward (monotonic) revision bound to a
-            // NEW complete observation, instead of terminal disable here.
+            await settle(250);
+            // AR11 red: the invalidation must surface as a send-observed
+            // follow-up with deadline_elapsed:false resolving to waiting.
+            assert.ok(h.queued() > 0, "AR11 transit: invalidation must emit a send-observed follow-up");
+            const follow = tryParse(h.peekQueued()[0] ?? "");
+            assert.ok(follow !== null && opOf(h.peekQueued()[0] ?? "") === "send-observed", "AR11 transit: follow-up op is send-observed");
+            const command = follow?.["command"];
+            assert.ok(hasKey(command, "deadline_elapsed") && (command as Record<string, unknown>)["deadline_elapsed"] === false, "AR11 transit: follow-up carries deadline_elapsed:false");
+            await h.flush();
+            const waiting = parseBody(h.calls[h.calls.length - 1], "reply");
+            assert.equal(waiting["outcome"], "waiting", "AR11 transit: Engine replies waiting while mover unresolved");
+            assert.equal(waiting["disposition"], "in-transit", "waiting disposition holds the in-transit mask");
+            assert.ok(!JSON.stringify(waiting).includes("set_workspace"), "AR11 transit: later reply never emits a second setter");
+            assert.deepEqual(h.win.wa.desktops, [h.desk.d1], "mover natively still source");
+            assert.ok(!h.committed(), "no commit while mover unresolved");
+            assert.deepEqual(h.switches, [], "no follow on unresolved proof");
         } finally {
             h.stop();
             await h.bridge.close();
         }
     });
 
-    it("pre-AR11 disjoint-domain send hits the single-flight guard", async () => {
+    it.skip("met: exact-target proof emits send-observed resolving to converged with prompt one-shot follow", async () => {
         const h = await makeHarness();
         try {
-            assert.equal(h.requestSend("ws-2"), true);
-            await waitFor(() => h.queued() > 0, "request");
-            await h.flush();
-            await waitFor(() => h.win.wa.desktopsChanged.armed(), "echo fence armed");
-            // Foreground moves to an independently scoped domain: source ws-3,
-            // mover n-win-c, target ws-4. Disjoint from the live ws-1 -> ws-2
-            // flight in source, target, and mover.
-            h.setActive(h.win.wc);
-            h.setCurrent(h.desk.d3);
-            // CURRENTLY EXPECTED (shipped single-flight guard): the disjoint
-            // foreground send is refused while the flight is live, with no new
-            // DescribePlan dispatched. Sensitive to guard changes: a per-pair
-            // interlock must flip this refusal to acceptance.
-            assert.equal(h.requestSend("ws-4"), false);
-            assert.ok(h.logs.some((line) => line.includes("in-flight")));
-            assert.equal(h.queued(), 0);
-            // The disjoint scope itself is valid: settle the first flight,
-            // then the same foreground command plans with its own correlation.
-            h.setActive(h.win.wa);
-            h.setCurrent(h.desk.d1);
+            await issueSend(h, "ws-2");
+            await settle(100);
+            assert.deepEqual(h.win.wa.desktops, [h.desk.d2], "adapter dispatched membership once after planned");
+            // Native target arrival observed through the real signal seam.
             fireEchoes(h);
-            await waitFor(() => h.queued() > 0, "ack");
+            await settle(250);
+            // AR11 red: target proof travels as send-observed and the Engine
+            // replies converged; follow is prompt and proof-gated.
+            assert.ok(h.queued() > 0, "AR11 met: target proof must emit a send-observed follow-up");
+            assert.ok(opOf(h.peekQueued()[0] ?? "") === "send-observed", "AR11 met: follow-up op is send-observed");
             await h.flush();
-            await waitFor(() => h.queued() > 0, "verify");
-            await h.flush();
-            await waitFor(() => h.committed(), "first commit");
-            h.setActive(h.win.wc);
-            h.setCurrent(h.desk.d3);
-            assert.equal(h.requestSend("ws-4"), true);
-            await waitFor(() => h.queued() > 0, "disjoint request");
-            await h.flush();
-            const second = JSON.parse(h.calls[h.calls.length - 1]?.payload ?? "") as Record<string, unknown>;
-            assert.equal(second["correlation_id"], "gen-1-w1");
-            assert.equal((second["command"] as Record<string, unknown>)["window"], "n-win-c");
-            assert.equal(
-                JSON.parse(h.calls[h.calls.length - 1]?.reply ?? "")["outcome"] as unknown,
-                "planned",
-            );
-            // FUTURE (send slice): the disjoint send above must plan while the
-            // first flight is still live, under a per-pair interlock.
+            const converged = parseBody(h.calls[h.calls.length - 1], "reply");
+            assert.equal(converged["outcome"], "converged", "AR11 met: Engine replies converged on exact-target proof");
+            assert.equal(converged["disposition"], "target", "converged disposition names the exact target");
+            assert.equal(converged["focus_proof"], true, "proof observation carries pinned focus on the mover");
+            assert.ok(!JSON.stringify(converged).includes("set_workspace"), "AR11 met: no second setter");
+            assert.deepEqual(h.win.wa.desktops, [h.desk.d2], "mover only on exact target, absent source");
+            assert.deepEqual(h.switches, [h.desk.d2], "prompt one-shot native switch after proof");
+            assert.equal(h.surface["activeWindow"], h.win.wa, "mover focused after proof");
+            assert.ok(h.switches.length <= 1, "at most one follow, no replay");
         } finally {
             h.stop();
             await h.bridge.close();
         }
     });
 
-    it("pre-AR11 unavailable deadline terminates without native mutation", async () => {
+    it.skip("expired-source: source mover at deadline emits send-observed(true) resolving to expired", async () => {
         const h = await makeHarness();
         try {
-            assert.equal(h.requestSend("ws-2"), true);
-            await waitFor(() => h.queued() > 0, "request queued");
-            // Native read dies before any planned reply is processed.
+            const sourceDesktops = h.win.wa.desktops;
+            Object.defineProperty(h.win.wa, "desktops", {
+                get: () => sourceDesktops,
+                set: () => {},
+                enumerable: true,
+                configurable: true,
+            });
+            await issueSend(h, "ws-2");
+            const deadline = h.timers[0];
+            assert.ok(deadline, "one-shot deadline armed");
+            deadline.callback();
+            await settle(250);
+            // AR11 red: the original deadline callback plus a fresh complete
+            // observation emits send-observed with the latched attestation,
+            // resolving to expired with forward revisions and diag.
+            const queued = h.peekQueued();
+            assert.ok(queued.length > 0, "AR11 expired-source: deadline must emit a send-observed follow-up");
+            const follow = tryParse(queued[0] ?? "");
+            assert.ok(follow !== null && opOf(queued[0] ?? "") === "send-observed", "AR11 expired-source: follow-up op is send-observed");
+            const command = follow?.["command"];
+            assert.ok(hasKey(command, "deadline_elapsed") && (command as Record<string, unknown>)["deadline_elapsed"] === true, "AR11 expired-source: follow-up carries the latched deadline attestation");
+            await h.flush();
+            const expired = parseBody(h.calls[h.calls.length - 1], "reply");
+            assert.equal(expired["outcome"], "expired", "AR11 expired-source: Engine replies expired for source disposition");
+            assert.equal(expired["disposition"], "source", "expired disposition names the source");
+            // Forward-only: re-admission advances monotonically from the
+            // transit revisions and rebinds the actual fresh fingerprints.
+            const plannedReply = parseBody(h.calls[0], "reply");
+            assert.ok(
+                (expired["source_accepted_revision"] as number) >= (plannedReply["source_accepted_revision"] as number),
+                "source revision advances forward through expiry",
+            );
+            assert.ok(
+                (expired["target_accepted_revision"] as number) >= (plannedReply["target_accepted_revision"] as number),
+                "target revision advances forward through expiry",
+            );
+            assert.ok(h.logs.some((line) => line.includes("expectation-expired")), "AR11 expired-source: logs diag expectation-expired");
+            assert.deepEqual(h.win.wa.desktops, [h.desk.d1], "mover re-admitted to source topology");
+            assert.ok(!h.committed(), "no fabricated commit");
+        } finally {
+            h.stop();
+            await h.bridge.close();
+        }
+    });
+
+    it.skip("expired-third-workspace: ws-3 escape appears in the world index while source/target stay exact", async () => {
+        const h = await makeHarness();
+        try {
+            await issueSend(h, "ws-2");
+            h.win.wa.desktops = [h.desk.d3];
+            const deadline = h.timers[0];
+            assert.ok(deadline, "one-shot deadline armed");
+            deadline.callback();
+            await settle(250);
+            // AR11 red: the fresh observation scopes the ws-3 escape inside
+            // world_windows while the declared source/target pair stays exact,
+            // resolving to other-domain expiry.
+            const queued = h.peekQueued();
+            assert.ok(queued.length > 0, "AR11 expired: deadline must emit a send-observed follow-up");
+            const follow = tryParse(queued[0] ?? "");
+            assert.ok(follow !== null && opOf(queued[0] ?? "") === "send-observed", "AR11 expired: follow-up op is send-observed");
+            assert.ok(hasKey(follow, "world_windows"), "AR11 expired: follow-up carries the complete world index");
+            const world = follow?.["world_windows"];
+            assert.ok(Array.isArray(world) && JSON.stringify(world).includes("ws-3"), "AR11 expired: world index explicitly scopes the ws-3 escape");
+            const domain = follow?.["domain"];
+            const targetDomain = follow?.["target_domain"];
+            assert.ok(hasKey(domain, "workspace") && (domain as Record<string, unknown>)["workspace"] === "ws-1", "AR11 expired: declared source stays exact");
+            assert.ok(hasKey(targetDomain, "workspace") && (targetDomain as Record<string, unknown>)["workspace"] === "ws-2", "AR11 expired: declared target stays exact");
+            await h.flush();
+            const expired = parseBody(h.calls[h.calls.length - 1], "reply");
+            assert.equal(expired["outcome"], "expired", "AR11 expired: Engine replies expired for other-domain disposition");
+            assert.equal(expired["disposition"], "other", "same-output third workspace is other, never nonexclusive");
+            assert.ok(!h.committed(), "no commit on escape");
+        } finally {
+            h.stop();
+            await h.bridge.close();
+        }
+    });
+
+    it.skip("expiry-latched: failed read latches with uncertainty, then a fresh observation resolves expired/converged", async () => {
+        const h = await makeHarness();
+        try {
+            await issueSend(h, "ws-2");
+            assert.equal(h.timers.length, 1, "clock armed once and never rearmed");
             h.breakReads();
             const deadline = h.timers[0];
-            assert.ok(deadline, "deadline armed");
+            assert.ok(deadline, "one-shot deadline armed");
             deadline.callback();
-            await waitFor(() => h.logs.some((line) => line.includes("timeout-request")), "terminal");
-            assert.deepEqual(h.win.wa.desktops, [h.desk.d1]);
-            assert.equal(h.switches.length, 0);
-            assert.ok(!h.committed());
-            // FUTURE (send slice): assert the expiry latch is retained and the
-            // next valid observation resolves expired/met instead of terminal
-            // disable here.
+            await settle(250);
+            // AR11 red: with no complete observation available, expiry latches
+            // and reports observation-unavailable uncertainty with no mutation.
+            assert.ok(h.logs.some((line) => line.includes("observation-unavailable")), "AR11 expiry-latched: reports uncertainty observation-unavailable");
+            assert.ok(!h.committed(), "no commit without observation");
+            assert.deepEqual(h.switches, [], "no setter or follow without observation");
+            // A fresh valid observation carrying the latched attestation then
+            // resolves through the normal expiry/met row.
+            h.restoreReads();
+            fireEchoes(h);
+            await settle(250);
+            assert.ok(h.queued() > 0, "AR11 expiry-latched: next valid observation emits send-observed");
+            assert.ok(opOf(h.peekQueued()[0] ?? "") === "send-observed", "AR11 expiry-latched: follow-up op is send-observed");
+            await h.flush();
+            const outcome = parseBody(h.calls[h.calls.length - 1], "reply")["outcome"];
+            assert.ok(outcome === "expired" || outcome === "converged", "AR11 expiry-latched: latched flight resolves expired or converged on valid E(n)");
         } finally {
             h.stop();
             await h.bridge.close();
         }
     });
 
-    it("pre-AR11 tampered post-observation cannot commit", async () => {
-        // Intentional-defect demonstration: the stub rewrites the verify
-        // payload's mover rect (a lying observer), the REAL Engine must refuse
-        // to commit on it.
-        const h = await makeHarness((index, payload) => {
-            if (index !== 2) {
-                return payload;
-            }
-            const body = JSON.parse(payload) as Record<string, unknown>;
-            for (const list of ["windows", "target_windows"]) {
-                for (const entry of (body[list] as Array<Record<string, unknown>>)) {
-                    if (entry["window"] === "n-win-a") {
-                        const rect = entry["rect"] as Record<string, unknown>;
-                        rect["w"] = (rect["w"] as number) + 1;
+    it.skip("disjoint scopes: ws-3 -> ws-4 plans while ws-1 -> ws-2 flight is live (per-pair interlock)", async () => {
+        const h = await makeHarness();
+        try {
+            await issueSend(h, "ws-2");
+            h.setActive(h.win.wc);
+            h.setCurrent(h.desk.d3);
+            // AR11 per-pair interlock: this disjoint send plans while the first
+            // flight is live, with independent correlation and revisions.
+            assert.equal(h.requestSend("ws-4"), true, "AR11 disjoint: unrelated-domain send plans during live flight");
+            await waitFor(() => h.queued() > 0, "disjoint observer request");
+            await h.flush();
+            const second = parseBody(h.calls[h.calls.length - 1], "payload");
+            assert.equal((second["command"] as Record<string, unknown>)["window"], "n-win-c", "second flight carries its own mover");
+            assert.ok(hasKey(second, "observation_seq"), "AR11 disjoint: second flight carries its own E(n)");
+            assert.notEqual(second["correlation_id"], parseBody(h.calls[0], "payload")["correlation_id"], "independent correlations");
+        } finally {
+            h.stop();
+            await h.bridge.close();
+        }
+    });
+
+    it.skip("supersession: later command after resolution starts from a new greater observation", async () => {
+        const h = await makeHarness();
+        try {
+            assert.equal(h.requestSend("ws-2"), true, "first send accepted");
+            await waitFor(() => h.queued() > 0, "initial observer request");
+            // Competitor for the same pair while the lock is live is refused
+            // until the earlier expectation resolves with fresh evidence.
+            assert.equal(h.requestSend("ws-2"), false, "competitor during live lock refused");
+            await h.flush();
+            const first = parseBody(h.calls[0], "payload");
+            assert.equal(parseBody(h.calls[0], "reply")["outcome"], "planned");
+            fireEchoes(h);
+            await settle(250);
+            // AR11 red: the first flight resolves through its own proof, then
+            // the later command starts from a new greater observation.
+            assert.ok(h.queued() > 0, "AR11 supersession: proof emits a send-observed follow-up");
+            await h.flush();
+            assert.equal(parseBody(h.calls[h.calls.length - 1], "reply")["outcome"], "converged", "AR11 supersession: first flight converges");
+            h.setActive(h.win.wa);
+            h.setCurrent(h.desk.d2);
+            assert.equal(h.requestSend("ws-1"), true, "later command accepted after resolution");
+            await waitFor(() => h.queued() > 0, "later observer request");
+            await h.flush();
+            const bodies = h.calls.map((call) => parseBody(call, "payload"));
+            const last = bodies[bodies.length - 1];
+            assert.ok(last !== undefined && last["correlation_id"] === "gen-1-w1", "later command carries new correlation");
+            assert.notEqual(bodies[0]?.["correlation_id"], last?.["correlation_id"], "old terminal stays under old correlation");
+            const firstSeq = first["observation_seq"];
+            const laterSeq = last?.["observation_seq"];
+            assert.ok(typeof firstSeq === "number" && typeof laterSeq === "number" && (laterSeq as number) > (firstSeq as number), "AR11 supersession: later command starts from new E(m), m greater than n");
+        } finally {
+            h.stop();
+            await h.bridge.close();
+        }
+    });
+
+    it.skip("generation binding: retired timer actuates nothing; new generation works from its own sequenced snapshot", async () => {
+        const h1 = await makeHarness({ generation: "gen-1" });
+        try {
+            assert.equal(h1.requestSend("ws-2"), true, "first send accepted");
+            await waitFor(() => h1.queued() > 0, "initial observer request");
+            assert.equal(h1.peekQueued().length, 1, "initial observer request queued");
+            const oldTimer = h1.timers[0];
+            assert.ok(oldTimer, "old deadline armed");
+            h1.stop();
+            // Late fire of the retired binding's timer: no dispatch, follow,
+            // commit, or fresh observation for the old correlation.
+            oldTimer.callback();
+            await settle(100);
+            assert.ok(!h1.committed(), "retired binding never commits");
+            assert.deepEqual(h1.switches, [], "retired timer causes no follow");
+            assert.ok(!emittedOps(h1).includes("send-observed"), "retired binding emits no send-observed");
+        } finally {
+            h1.stop();
+            await h1.bridge.close();
+        }
+        const h2 = await makeHarness({ generation: "gen-2" });
+        try {
+            const request = await issueSend(h2, "ws-2");
+            assert.equal(request["generation"], "gen-2", "new generation works from its own fresh observation");
+            assert.equal(request["correlation_id"], "gen-2-w0", "new commands receive their own correlation");
+            // AR11 red: the new-generation snapshot carries its own sequence,
+            // and the retired correlation surfaces redacted binding-lost
+            // uncertainty. Neither happens on main.
+            assert.ok(hasKey(request, "observation_seq"), "AR11 binding: new-generation work requires its own sequenced snapshot");
+            assert.ok(h1.logs.some((line) => line.includes("binding-lost")), "AR11 binding: old correlation logs uncertainty binding-lost");
+        } finally {
+            h2.stop();
+            await h2.bridge.close();
+        }
+    });
+
+    it.skip("shared evidence: tampered send-observed fails validation with rejection and no commit", async () => {
+        const h = await makeHarness({
+            rewrite: (index, payload) => {
+                void index;
+                if (opOf(payload) !== "send-observed") {
+                    return payload;
+                }
+                const body = tryParse(payload);
+                if (body === null) {
+                    return payload;
+                }
+                // Lying observer: shift the mover rect in the scoped lists so
+                // they no longer match the world index entry.
+                for (const list of ["windows", "target_windows"]) {
+                    const entries = body[list];
+                    if (Array.isArray(entries)) {
+                        for (const entry of entries as Array<Record<string, unknown>>) {
+                            if (entry["window"] === "n-win-a") {
+                                const rect = entry["rect"];
+                                if (hasKey(rect, "w")) {
+                                    const width = (rect as Record<string, unknown>)["w"];
+                                    if (typeof width === "number") {
+                                        (rect as Record<string, unknown>)["w"] = width + 1;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-            }
-            return JSON.stringify(body);
+                return JSON.stringify(body);
+            },
         });
         try {
-            assert.equal(h.requestSend("ws-2"), true);
-            await waitFor(() => h.queued() > 0, "request");
-            await h.flush();
-            await waitFor(() => h.win.wa.desktopsChanged.armed(), "echo fence armed");
+            await issueSend(h, "ws-2");
             fireEchoes(h);
-            await waitFor(() => h.queued() > 0, "ack");
+            await settle(250);
+            // AR11 red: the proof travels as send-observed; the tampered copy
+            // must fail bidirectional validation with rejection and no commit.
+            assert.ok(h.queued() > 0, "AR11 shared evidence: proof emits a send-observed follow-up");
+            assert.ok(opOf(h.peekQueued()[0] ?? "") === "send-observed", "AR11 shared evidence: follow-up op is send-observed");
             await h.flush();
-            await waitFor(() => h.queued() > 0, "verify");
-            await h.flush();
-            // The REAL Engine answers the tampered verify with an exact
-            // rejection, and the REAL adapter terminates without committing.
-            const verifyReply = JSON.parse(h.calls[2]?.reply ?? "") as Record<string, unknown>;
-            assert.equal(verifyReply["outcome"], "diverged");
-            assert.equal(verifyReply["kind"], "postcondition-mismatch");
-            assert.equal(verifyReply["correlation_id"], "gen-1-w0");
-            await waitFor(
-                () => h.logs.some((line) => line.includes("stage=result")),
-                "terminal result",
-            );
-            assert.ok(!h.committed());
-            assert.equal(h.requestSend("ws-2"), false);
+            const reply = parseBody(h.calls[h.calls.length - 1], "reply");
+            assert.equal(reply["outcome"], "rejected", "AR11 shared evidence: tampered scoped/world mismatch is rejected");
+            assert.ok(!h.committed(), "tampered post-observation never commits");
+            assert.ok(!JSON.stringify(reply).includes("set_workspace"), "rejection carries no setter");
         } finally {
             h.stop();
             await h.bridge.close();
