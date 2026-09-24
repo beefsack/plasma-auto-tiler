@@ -375,7 +375,7 @@
         assert !(builtins.elem tray enabledNixos.config.environment.systemPackages);
         assert !(builtins.hasAttr "xdg/kwinrc" disabledNixos.config.environment.etc);
         assert nixpkgs.lib.hasInfix "Exec=/nix/store/" autostart;
-        assert nixpkgs.lib.hasInfix "/bin/plasma-auto-tiler tray-managed\n" autostart;
+        assert nixpkgs.lib.hasInfix "/bin/plasma-auto-tiler tray\n" autostart;
         assert !(nixpkgs.lib.hasInfix (toString ./. ) autostart);
         assert !(nixpkgs.lib.hasInfix "Planner" autostart);
         assert !(nixpkgs.lib.hasInfix "planner-service" autostart);
@@ -389,7 +389,7 @@
           Type=Application
           Name=Plasma Auto Tiler Tray
           Comment=Shows Plasma Auto Tiler status in the system tray
-          Exec=${tray}/bin/plasma-auto-tiler tray-managed
+          Exec=${tray}/bin/plasma-auto-tiler tray
           TryExec=${tray}/bin/plasma-auto-tiler
           Icon=${tray}/share/icons/hicolor/scalable/apps/plasma-auto-tiler.svg
           X-KDE-autostart-phase=1

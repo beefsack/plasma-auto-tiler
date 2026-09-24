@@ -45,11 +45,13 @@ the corresponding item ships; each such entry names its replacement.
   shortcut overrides only. Storage remains in the same `kwinrc` group. The
   script KPackage needs the host-built native KCM companion for its Configure
   page; the effect need not be enabled. Live acceptance remains pending.
-- Threat model (AR13): processes of the same user are trusted. The tray drops
-  the KWin executable allowlist and `/proc`/pidfd/inode binding, runs single
-  instance by owning its D-Bus name, is delivered by XDG autostart or a user
-  unit, and accepts snapshots only from the current `org.kde.KWin` owner. The
-  Planner same-UID caller check remains.
+- Threat model (AR13, shipped offline): processes of the same user are trusted.
+  The tray has no KWin executable allowlist or `/proc`/pidfd/inode binding;
+  it runs single-instance by owning its D-Bus name with `DoNotQueue` and
+  accepts snapshots only from the current `org.kde.KWin` owner. Home Manager
+  delivers it through XDG autostart; dev and dogfood launch it on demand with
+  `cargo run -p plasma-auto-tiler -- tray`. The Planner same-UID caller check
+  remains. Live login and watcher acceptance remain pending.
 - Testing investment: build test fixtures that are sensible and valuable for
   the change at hand; avoid extensive custom harnesses that constrain later
   development.
@@ -162,7 +164,8 @@ the corresponding item ships; each such entry names its replacement.
   only `[Plugins] plasma-auto-tiler-kwinEnabled=true` in its immutable global
   KWin profile. It does not enable the native border or mutate shortcuts. Home
   Manager owns user-session delivery: the optional immutable tray XDG autostart
-  file and the on-demand Planner D-Bus/systemd activation metadata. Neither
+  file running `plasma-auto-tiler tray` and the on-demand Planner D-Bus/systemd
+  activation metadata. Neither
   writes user `kwinrc` authority.
 - Flake source filesets are explicit for the KWin script, native effect/KCM,
   and tray package; build trees, generated artifacts, and unrelated repository
@@ -879,33 +882,23 @@ the corresponding item ships; each such entry names its replacement.
 
 ## Tray
 
-The executable-identity, lock/PID and pidfd/inode binding entries below are
-replaced by the AR13 same-UID-trusted tray (see Architecture Direction) when it
-ships.
-
 - Use a portable Rust StatusNotifierItem carrier with the KWin backend first;
   fail closed without a watcher. The bridge is whitelisted, outbound
   state-snapshot based, reconnecting, idempotent, and has no shell, input, or
   helper-to-KWin action route. The KCM remains the settings owner.
-- Snapshot publication requires the current `org.kde.KWin` D-Bus owner and an
-  exact canonical executable identity from the host current-system or
-  `/usr/bin` KWin entrypoints; unlisted KWin launch paths fail closed.
+- Snapshot publication requires the sender's unique D-Bus name to equal the
+  current `org.kde.KWin` name owner. Owner loss or replacement clears the old
+  snapshot; the tray remains available for the new owner's snapshot.
 - The static bridge includes freshness and ordering/generation checks,
   idempotent notifications, and bounded watcher retry.
-- Home Manager autostart uses the immutable store tray binary with the fixed
-  `tray-managed` mode; `TryExec` remains the immutable store binary alone.
-  Managed mode uses only `$XDG_RUNTIME_DIR/plasma-auto-tiler-managed` for its
-  lock and PID state and never installs or mutates the dogfood helper state.
-- Managed startup accepts only the current safe regular executable resolved
-  under `/nix/store`, with exact PID, start-tick, path, device, inode, and
-  content binding. Malformed, unowned, replaced, symlinked, wrong-mode,
-  unreadable, or ambiguous state fails closed; cleanup removes only exact
-  managed state. The no-argument endpoint and lifecycle commands retain the
-  existing dogfood namespace and semantics.
-- The helper is not required for core tiler operation. Normal lifecycle
-  rollback is exact and in-process; interrupted, crash, power-loss, malformed,
-  replaced, or ambiguous state fails closed. Durable recovery and automatic
-  post-crash retry are not selected.
+- Home Manager autostart uses the immutable store tray binary with the `tray`
+  command; `TryExec` points to that same binary. Dev and dogfood start the
+  worktree binary on demand. A second instance exits successfully when the
+  D-Bus name is taken. The tray stops if its own name or connection is lost,
+  or at session teardown; it does not restart automatically after a crash.
+  Name acquisition/loss, owner transitions and changed or refused snapshots
+  emit bounded, redacted diagnostics on stderr. A queryable autostart tray
+  stderr sink remains outstanding.
 - The tray MVP provides basic status and Settings only. It has no direct tiling
   controls and no expansion of the helper boundary.
 - No KWin snapshot authority is claimed from tray live runs. Tray live runs

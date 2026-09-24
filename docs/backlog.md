@@ -51,10 +51,6 @@ decisions of 2026-09-24 are recorded under
   effect mouse interception blocks all clicks; plausible first prototype is
   project-owned layer-shell surfaces confined to positive-width gaps, with a
   native KWin input filter as fallback. Needs a Rust split-boundary request.
-- P0 | AR13 Same-UID-trusted tray | 7.12. Approved: drop KWin executable
-  allowlist and `/proc`/pidfd/inode binding; single instance via D-Bus name;
-  XDG autostart or user unit; accept snapshots only from the current
-  `org.kde.KWin` owner. Planner same-UID caller check stays.
 - P0 | AR11 One transaction model (expectations) | 7.8, workspace send first.
   User selected host-authoritative facts, engine-authoritative layout and
   bounded convergence (2026-09-23). Transition contract passed design review;
@@ -463,9 +459,12 @@ Existing work:
   discovery and runtime/config/reload/restoration acceptance remain unproven.
   Existing border/KCM observations are manual evidence only.
   [decision](decisions.md#native-active-border)
-- P1 | Tray live and release acceptance | KWin-origin SNI authority, watcher
-  ordering, native ABI load, install/packaging, login/autostart, and
-  update/rollback remain live-unproven. [change](changes/archive/tray-carrier.md)
+- P1 | Tray live and release acceptance | AR13 same-UID-trusted name ownership,
+  current-KWin-owner snapshots, and Home Manager XDG autostart are offline-
+  verified only. KWin-origin SNI authority, watcher ordering, native ABI load,
+  login/autostart, and update/rollback remain live-unproven.
+  [change](changes/archive/architecture-review-ar13-tray.md)
+  [carrier](changes/archive/tray-carrier.md)
 - P1 | External NixOS/Home Manager delivery | Validate clean external install,
   update, generation rollback, and host-matching KWin ABI. [change](changes/archive/nix-current-host-delivery.md)
 - P1 | Shortcut physical and recovery checks | Verify Lock Session, Revert,

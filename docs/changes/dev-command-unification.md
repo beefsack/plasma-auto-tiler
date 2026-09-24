@@ -37,8 +37,8 @@ independently editable component retains a cheap direct command.
   `npm run typecheck --prefix kwin`, and all `scripts/*.test.sh` passed.
 - Shell evidence: `dev-loop-split` (`PASS=276 FAIL=0`), `dogfood-install`
   (482), `live-test` (237), `custom-tile-acceptance` (131),
-  `floor-ratio-feasibility` (92), `build-kpackage`, `tray-05a` (19 direct + 4
-  self-test), and `tray-managed-05b` (exit 0).
+  `floor-ratio-feasibility` (92), and `build-kpackage`. The retired tray lifecycle
+  suites were replaced by the AR13 `tray-05b` private-bus single-instance check.
 - The hermetic dev-loop coverage proves menu/dry-run structure, all three
   build branches, all staged artifacts, DOWN-only build ordering, build-failure
   refusals before lifecycle mutation, the exact native warning, and existing
