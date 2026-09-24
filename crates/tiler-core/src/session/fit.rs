@@ -26,6 +26,7 @@ impl super::Session {
     /// leaf), so the caller acknowledges and `verify_lifecycle`-commits the
     /// real dispatch like any other admit. No historical MRU is modeled.
     /// Public for the planner fit path (cross-crate); narrowly named.
+    #[allow(clippy::too_many_arguments)]
     pub fn propose_fitted_admit(
         &mut self,
         tree: Node,

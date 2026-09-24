@@ -259,7 +259,7 @@ impl super::Session {
         if bounds.w <= 0 || bounds.h <= 0 {
             return false;
         }
-        if gap < 0 || gap > 64 {
+        if !(0..=64).contains(&gap) {
             return false;
         }
         if self.reconciler.divergence().is_some() {

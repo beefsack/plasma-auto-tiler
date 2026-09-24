@@ -814,7 +814,14 @@ mod tests {
             pixmap[0].2.len(),
             4 * ICON_PIXMAP_WIDTH as usize * ICON_PIXMAP_HEIGHT as usize
         );
-        assert!(pixmap[0].2.chunks_exact(4).all(|pixel| pixel[0] == 0xFF));
+        assert!(
+            pixmap[0]
+                .2
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|pixel| pixel[0] == 0xFF)
+        );
         assert_eq!(
             <Vec<(i32, i32, Vec<u8>)> as Type>::SIGNATURE.to_string(),
             "a(iiay)"

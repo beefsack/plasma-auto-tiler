@@ -2279,9 +2279,8 @@ impl Planner {
         if let Some(reply) = self.pending_conflict_reply(&ctx) {
             return reply;
         }
-        match validated_op(&ctx).as_str() {
-            "send-to-workspace" => return self.evaluate_workspace_request(&ctx),
-            _ => {}
+        if validated_op(&ctx).as_str() == "send-to-workspace" {
+            return self.evaluate_workspace_request(&ctx);
         }
         self.sync_binding(&ctx.owner, &ctx.generation);
         // Typed codec: reconcile/update-gaps/admit/remove/active-group
@@ -10182,6 +10181,7 @@ mod tests {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn retained_request_for_domain(
         correlation: &str,
         owner: &str,

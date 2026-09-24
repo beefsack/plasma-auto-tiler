@@ -683,8 +683,8 @@ mod tests {
             &generation,
             2,
             7,
-            &[source_win.clone()],
-            &[target_win.clone()],
+            std::slice::from_ref(&source_win),
+            std::slice::from_ref(&target_win),
         );
         assert_eq!(observation.windows.len(), 2);
         assert!(!workspace_post_matches(&[], &[source_win], &[target_win]));

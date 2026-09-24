@@ -1493,40 +1493,38 @@ impl Engine {
                 .iter()
                 .find(|l| l.window.0 == window.0)
                 .map(|l| l.leaf.clone())
-        {
-            if let Ok(mut fitted) = Session::new(
+            && let Ok(mut fitted) = Session::new(
                 event.owner.clone(),
                 event.generation.clone(),
                 0,
                 event.fingerprint,
                 vec![event.domain.clone()],
+            )
+        {
+            fitted.set_policy(self.policy.clone());
+            let base = fitted.accepted_revision();
+            let observation = crate::seed::session_observation_for(
+                &event.owner,
+                &event.generation,
+                base,
+                event.fingerprint,
+                &event.windows,
+            );
+            if let Ok(plan) = fitted.propose_fitted_admit(
+                tree,
+                links,
+                focus_leaf,
+                window,
+                output,
+                workspace,
+                &observation,
+                &event.correlation,
+                &LifecycleCapabilities::full(),
             ) {
-                fitted.set_policy(self.policy.clone());
-                let base = fitted.accepted_revision();
-                let observation = crate::seed::session_observation_for(
-                    &event.owner,
-                    &event.generation,
-                    base,
-                    event.fingerprint,
-                    &event.windows,
-                );
-                if let Ok(plan) = fitted.propose_fitted_admit(
-                    tree,
-                    links,
-                    focus_leaf,
-                    window,
-                    output,
-                    workspace,
-                    &observation,
-                    &event.correlation,
-                    &LifecycleCapabilities::full(),
-                ) {
-                    let typed =
-                        CoreReply::Tiled(TiledPlan::from_lifecycle(TiledKind::Admit, &plan));
-                    if Self::commit_lifecycle(&mut fitted, &plan, event, base) {
-                        self.store_committed(event.domain_key.clone(), fitted, event.outer_gap);
-                        return typed;
-                    }
+                let typed = CoreReply::Tiled(TiledPlan::from_lifecycle(TiledKind::Admit, &plan));
+                if Self::commit_lifecycle(&mut fitted, &plan, event, base) {
+                    self.store_committed(event.domain_key.clone(), fitted, event.outer_gap);
+                    return typed;
                 }
             }
         }
@@ -2871,18 +2869,16 @@ impl Engine {
             target_workspace,
             ..
         } = pending.operation()
-        {
-            if echo_target_output.0 != target_output.0
+            && (echo_target_output.0 != target_output.0
                 || echo_target_workspace.0 != target_workspace.0
                 || echo_target_output.0 != pending.target_key().output.0
                 || echo_target_workspace.0 != pending.target_key().workspace.0
                 || echo_source_output.0 != pending.source_key().output.0
-                || echo_source_workspace.0 != pending.source_key().workspace.0
-            {
-                let reason = pending.session_mut().note_postcondition_mismatch();
-                self.restore_directional_pending(pending);
-                return CoreReply::Diverged(reason);
-            }
+                || echo_source_workspace.0 != pending.source_key().workspace.0)
+        {
+            let reason = pending.session_mut().note_postcondition_mismatch();
+            self.restore_directional_pending(pending);
+            return CoreReply::Diverged(reason);
         }
         let post = PostObservation::new(
             Observation::new(
