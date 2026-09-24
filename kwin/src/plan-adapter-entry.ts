@@ -25,7 +25,7 @@
 // shortcut-failed line and one bounded plan-ready startup line.
 
 import { DomainGaps, readDomainGaps } from "./domain-gap";
-import { identifyGrabbedEdges, resolveOracleResizeTargets, startDragOraclePullEntry, DragOracleFinishContext, DragOracleVerdict, OracleGrabbed, OracleGrabSource } from "./drag-oracle-pull";
+import { identifyGrabbedEdges, identifyPressGrabbed, resolveOracleResizeTargets, startDragOraclePullEntry, DragOracleFinishContext, DragOracleVerdict, OracleGrabbed, OracleGrabSource } from "./drag-oracle-pull";
 import {
     DRAG_MEASURE_LATER_TIMEOUT_MS,
     DRAG_MEASURE_VERDICT_TIMEOUT_MS,
@@ -2570,7 +2570,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         scheduleOnce,
         log,
         isSendActive: () => workspaceSendRef !== null && workspaceSendRef.blocksPlan,
-        isInteractiveResizeActive: () => interactiveResizeRefs.size > 0,
+        isInteractiveResizeActive: () => interactiveResizeRefs.size > 0 || interactiveMoveRefs.size > 0,
         onPlannedApplied: () => {
             try {
                 highlightRefresh?.();
@@ -3569,9 +3569,18 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // is <= that finish token; an old reply faced with a newer start fails
     // closed and never clears the newer start. Cancelled verdicts never reach
     // the pointer route and never change a share.
-    interface OracleStart { id: string; rect: { x: number; y: number; w: number; h: number }; move: boolean; resize: boolean; epoch: number; grabbed: OracleGrabbed | null; grabSource: OracleGrabSource | "missing"; pointerStart: { x: number; y: number } | null }
+    interface OracleStart { id: string; rect: { x: number; y: number; w: number; h: number }; move: boolean; resize: boolean; epoch: number; grabbed: OracleGrabbed | null; grabSource: OracleGrabSource | "missing"; pointerStart: { x: number; y: number } | null; floatingStart: boolean }
     const oracleStarts = new Map<object, OracleStart>();
     const interactiveResizeRefs = new Set<object>();
+    // Tiled-move suppression mirrors the resize hold: while a tiled member is
+    // being moved, ordinary reconcile stays suppressed exactly as during
+    // resize. Floating moves never enter this set and stay native-only.
+    // The hold lasts from Started until the correlated verdict settles
+    // (route or settle) or the bounded per-finish timer releases it, so a
+    // missing/unavailable reply cannot block later work and no successful
+    // drag terminal is invented without a validated drag-N correlation.
+    const interactiveMoveRefs = new Set<object>();
+    const moveGuardCancels = new Map<DragOracleFinishContext, () => void>();
     let oracleEpoch = 0;
     const readLiveState = (target: object): { move: boolean; resize: boolean } | null => {
         try {
@@ -3617,10 +3626,29 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                     } catch (error) {
                         void error;
                     }
-                    oracleStarts.set(ref, { id: entry.id, rect, move: state.move, resize: state.resize, epoch: (oracleEpoch += 1), grabbed, grabSource, pointerStart });
+                    oracleStarts.set(ref, { id: entry.id, rect, move: state.move, resize: state.resize, epoch: (oracleEpoch += 1), grabbed, grabSource, pointerStart, floatingStart: (entry as { floating?: unknown }).floating === true });
                     if (state.move === false && state.resize === true && !interactiveResizeRefs.has(ref)) {
                         interactiveResizeRefs.add(ref);
                         adapter.setInteractiveResizeActive(true);
+                    }
+                    // Tiled-move hold: any move gesture on a tiled member
+                    // suppresses ordinary reconcile exactly as a resize hold.
+                    // Floating (including sticky, which observes as floating)
+                    // never enters the hold and stays native-only. The start
+                    // floating state is recorded so a move that STARTS
+                    // floating stays unaffected even if tiled at finish.
+                    if (state.move === true && !interactiveMoveRefs.has(ref)) {
+                        let floating = false;
+                        try {
+                            floating = (entry as { floating?: unknown }).floating === true;
+                        } catch (error) {
+                            void error;
+                            floating = false;
+                        }
+                        if (!floating) {
+                            interactiveMoveRefs.add(ref);
+                            adapter.setInteractiveResizeActive(true);
+                        }
                     }
                     return;
                 }
@@ -3976,6 +4004,41 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         } catch (error) {
             void error;
         }
+        // Bounded move-guard release: when this finish belongs to a held
+        // tiled move, arm one per-finish timer on the shared verdict bound.
+        // Settle cancels it; if no verdict ever settles, the timer consumes
+        // only this finish's own start (newer Started stays) and releases
+        // the hold once through the ordinary resync. No marker and no drag
+        // terminal is created here.
+        try {
+            if (interactiveMoveRefs.has(ref)) {
+                const cancel = scheduleOnce(DRAG_MEASURE_VERDICT_TIMEOUT_MS, () => {
+                    try {
+                        moveGuardCancels.delete(ctx);
+                        if (!interactiveMoveRefs.has(ref)) {
+                            return;
+                        }
+                        const start = oracleStarts.get(ctx.ref);
+                        if (start !== undefined && start.epoch > ctx.finishEpoch) {
+                            return;
+                        }
+                        try { takeOwnStart(ctx); } catch (error) { void error; }
+                        const had = interactiveMoveRefs.delete(ref);
+                        if (had && interactiveMoveRefs.size === 0 && interactiveResizeRefs.size === 0) {
+                            try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
+                        }
+                        try { log(`plasma-auto-tiler:route-diag:drag-move-timeout correlation=none`); } catch (error) { void error; }
+                    } catch (error) {
+                        void error;
+                    }
+                });
+                if (typeof cancel === "function") {
+                    moveGuardCancels.set(ctx, cancel);
+                }
+            }
+        } catch (error) {
+            void error;
+        }
         return ctx;
     };
     const feedMeasureVerdict = (ctx: DragOracleFinishContext | undefined, verdict: DragOracleVerdict | null): void => {
@@ -4001,10 +4064,50 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // Finish-token completion: runs after every parsed verdict (including
     // cancelled) and for invalid/unavailable replies (null). Consumes only
     // its own finish's associated start without routing, logging, or
-    // touching DescribePlan.
+    // touching DescribePlan. For a held tiled move that did not already
+    // restore through the route, this releases the hold once through the
+    // ordinary resync: cancelled, null, and route failure paths converge
+    // without a marker and without inventing a drag terminal. A successful
+    // move restore already cleared the hold silently, so this is a no-op
+    // then. A newer Started (larger epoch) is never cleared.
     const settleOracleVerdict = (verdict: DragOracleVerdict | null, ctx: DragOracleFinishContext | undefined): void => {
         try {
             void verdict;
+            if (ctx !== undefined) {
+                try {
+                    const cancel = moveGuardCancels.get(ctx);
+                    if (cancel !== undefined) {
+                        moveGuardCancels.delete(ctx);
+                        try { cancel(); } catch (error) { void error; }
+                    }
+                } catch (error) {
+                    void error;
+                }
+                if (interactiveMoveRefs.has(ctx.ref)) {
+                    let owned = true;
+                    try {
+                        const start = oracleStarts.get(ctx.ref);
+                        if (start !== undefined && start.epoch > ctx.finishEpoch) {
+                            owned = false;
+                        }
+                    } catch (error) {
+                        void error;
+                        owned = true;
+                    }
+                    if (owned) {
+                        try { takeOwnStart(ctx); } catch (error) { void error; }
+                        const had = interactiveMoveRefs.delete(ctx.ref);
+                        if (had && interactiveMoveRefs.size === 0 && interactiveResizeRefs.size === 0) {
+                            try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
+                        }
+                        feedMeasureVerdict(ctx, verdict);
+                        return;
+                    }
+                    takeOwnStart(ctx);
+                    feedMeasureVerdict(ctx, verdict);
+                    return;
+                }
+            }
             takeOwnStart(ctx);
             feedMeasureVerdict(ctx, verdict);
         } catch (error) {
@@ -4050,7 +4153,77 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 return;
             }
             if (start.move === true) {
-                try { log(`plasma-auto-tiler:route-diag:drag-move-ignored correlation=${verdict.correlation}`); } catch (error) { void error; }
+                // Tiled move-drop restore: only a move that STARTS tiled and
+                // FINISHES tiled converges its retained domain once through
+                // the existing coalesced one-shot marker (one dispatch, no
+                // retry, per-drag terminal naming the satisfying plan).
+                // Anything touching floating stays native-only with the
+                // historical ignored line and no marker: floating-at-start
+                // never entered the hold, and tiled-at-finish after a
+                // floating start must not restore. A start/finish mismatch
+                // logs one bounded line (closed-vocabulary tokens only, no
+                // ids or coordinates) so the decision stays observable.
+                // Cancelled verdicts never reach this route (the pull settles
+                // them directly), so this branch only sees ok-moved drops.
+                let floatingFinish = false;
+                try {
+                    for (const entry of observed.windows) {
+                        if (entry.id === verdict.windowIdentity) {
+                            floatingFinish = (entry as { floating?: unknown }).floating === true;
+                            break;
+                        }
+                    }
+                } catch (error) {
+                    void error;
+                    floatingFinish = false;
+                }
+                const floatingStart = start.floatingStart === true;
+                if (floatingStart !== floatingFinish) {
+                    try { log(`plasma-auto-tiler:route-diag:drag-move-floating-mismatch correlation=${verdict.correlation} start=${floatingStart ? "floating" : "tiled"} finish=${floatingFinish ? "floating" : "tiled"}`); } catch (error) { void error; }
+                }
+                if (floatingFinish || floatingStart) {
+                    // Single-use release without a marker: cancel this
+                    // finish's bounded timer and drop the hold when present.
+                    // A tiled-at-start hold converges through the ordinary
+                    // resync below; a floating-at-start move never held, so
+                    // this is a no-op beyond the ignored line. Settle finds
+                    // no guard afterwards and only feeds measurement.
+                    try {
+                        const cancel = moveGuardCancels.get(ctx);
+                        if (cancel !== undefined) {
+                            moveGuardCancels.delete(ctx);
+                            try { cancel(); } catch (error) { void error; }
+                        }
+                    } catch (error) {
+                        void error;
+                    }
+                    try {
+                        const had = interactiveMoveRefs.delete(ctx.ref);
+                        if (had && interactiveMoveRefs.size === 0 && interactiveResizeRefs.size === 0) {
+                            try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
+                        }
+                    } catch (error) {
+                        void error;
+                    }
+                    try { log(`plasma-auto-tiler:route-diag:drag-move-ignored correlation=${verdict.correlation}`); } catch (error) { void error; }
+                    return;
+                }
+                try {
+                    const cancel = moveGuardCancels.get(ctx);
+                    if (cancel !== undefined) {
+                        moveGuardCancels.delete(ctx);
+                        try { cancel(); } catch (error) { void error; }
+                    }
+                } catch (error) {
+                    void error;
+                }
+                try { interactiveMoveRefs.delete(ctx.ref); } catch (error) { void error; }
+                try { log(`plasma-auto-tiler:route-diag:drag-move-restore correlation=${verdict.correlation}`); } catch (error) { void error; }
+                try {
+                    adapter.noteMoveDropped(verdict.correlation, verdict.windowIdentity, observed.domainOutput, observed.domainWorkspace);
+                } catch (error) {
+                    void error;
+                }
                 return;
             }
             if (!(start.move === false && start.resize === true)) {
@@ -4073,19 +4246,48 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 const v = grabbed.vertical ?? "-";
                 return `${h}+${v}`;
             };
-            if (start.grabbed === null) {
-                try { log(`plasma-auto-tiler:route-diag:drag-no-grabbed-edge correlation=${verdict.correlation} source=${start.grabSource}`); } catch (error) { void error; }
+            // Verified press override: only after the entry verified the same
+            // finish ref, the verdict window identity, and a resize-only
+            // start above. A present press classifies by exact KWin thirds
+            // regardless of the 64px Started-pointer depth gate; an absent
+            // (missing/stale/other-window) press keeps the Started
+            // nearest-frame capture with one correlated press-absent line (no
+            // raw native ids or coordinates at normal level). A present but
+            // unusable press (outside the start frame) keeps the Started capture
+            // the same way. The epoch-guarded start consumption above already prevents
+            // any async stale-start route; the press never bypasses it.
+            let grabbed: OracleGrabbed | null = start.grabbed;
+            let grabSource: OracleGrabSource | "missing" = start.grabSource;
+            if (verdict.press !== undefined) {
+                let identified: { grabbed: OracleGrabbed; source: OracleGrabSource } | null = null;
+                try {
+                    identified = identifyPressGrabbed(start.rect, verdict.press);
+                } catch (error) {
+                    void error;
+                    identified = null;
+                }
+                if (identified !== null) {
+                    grabbed = identified.grabbed;
+                    grabSource = identified.source;
+                } else {
+                    try { log(`plasma-auto-tiler:route-diag:drag-press-fallback correlation=${verdict.correlation} source=${start.grabSource}`); } catch (error) { void error; }
+                }
+            } else {
+                try { log(`plasma-auto-tiler:route-diag:drag-press-fallback correlation=${verdict.correlation} source=${start.grabSource}`); } catch (error) { void error; }
+            }
+            if (grabbed === null) {
+                try { log(`plasma-auto-tiler:route-diag:drag-no-grabbed-edge correlation=${verdict.correlation} source=${grabSource}`); } catch (error) { void error; }
                 return;
             }
-            const resolved = resolveOracleResizeTargets(start.rect, verdict.finalRect, start.grabbed);
+            const resolved = resolveOracleResizeTargets(start.rect, verdict.finalRect, grabbed);
             if (resolved === null) {
-                try { log(`plasma-auto-tiler:route-diag:drag-zero-move correlation=${verdict.correlation} grabbed=${formatGrabbed(start.grabbed)} source=${start.grabSource}`); } catch (error) { void error; }
+                try { log(`plasma-auto-tiler:route-diag:drag-zero-move correlation=${verdict.correlation} grabbed=${formatGrabbed(grabbed)} source=${grabSource}`); } catch (error) { void error; }
                 return;
             }
             try {
                 const targetText = resolved.targets.map((t) => `${t.direction}:${String(t.boundary)}`).join(",");
                 const ignoredText = resolved.ignored.length > 0 ? resolved.ignored.join(",") : "none";
-                log(`plasma-auto-tiler:route-diag:drag-route correlation=${verdict.correlation} grabbed=${formatGrabbed(start.grabbed)} source=${start.grabSource} targets=${targetText} ignored=${ignoredText}`);
+                log(`plasma-auto-tiler:route-diag:drag-route correlation=${verdict.correlation} grabbed=${formatGrabbed(grabbed)} source=${grabSource} targets=${targetText} ignored=${ignoredText}`);
             } catch (error) {
                 void error;
             }
@@ -4163,7 +4365,19 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             measureStarts.delete(ref);
             measureStandaloneClaimed.delete(ref);
             completeMeasureRemoval(ref);
-            if (interactiveResizeRefs.delete(ref) && interactiveResizeRefs.size === 0) {
+            try {
+                for (const [ctx, cancel] of [...moveGuardCancels]) {
+                    if (ctx.ref === ref) {
+                        moveGuardCancels.delete(ctx);
+                        try { cancel(); } catch (error) { void error; }
+                    }
+                }
+            } catch (error) {
+                void error;
+            }
+            const hadResize = interactiveResizeRefs.delete(ref);
+            const hadMove = interactiveMoveRefs.delete(ref);
+            if ((hadResize || hadMove) && interactiveResizeRefs.size === 0 && interactiveMoveRefs.size === 0) {
                 adapter.setInteractiveResizeActive(false);
             }
             oracleSeen.delete(ref);
@@ -4189,8 +4403,24 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             if (startedDetach === null) return;
             finishedDetach = connectSignal(finished, () => {
                 try {
-                    if (interactiveResizeRefs.delete(ref) && interactiveResizeRefs.size === 0) {
-                        adapter.setInteractiveResizeActive(false);
+                    if (interactiveResizeRefs.delete(ref)) {
+                        if (interactiveResizeRefs.size === 0 && interactiveMoveRefs.size === 0) {
+                            adapter.setInteractiveResizeActive(false);
+                        }
+                    } else if (interactiveMoveRefs.has(ref)) {
+                        // Tiled move hold: keep suppression until the
+                        // correlated verdict settles (route or settle) or the
+                        // bounded per-finish timer releases it. When the
+                        // global pull never attached, no verdict can arrive,
+                        // so release now through the ordinary resync.
+                        let available = false;
+                        try { available = measurePullAvailable === true; } catch (error) { void error; }
+                        if (!available) {
+                            const had = interactiveMoveRefs.delete(ref);
+                            if (had && interactiveMoveRefs.size === 0 && interactiveResizeRefs.size === 0) {
+                                try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
+                            }
+                        }
                     }
                 } catch (error) { void error; }
                 // Standalone measurement only: active exactly when the

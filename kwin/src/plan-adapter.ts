@@ -3046,6 +3046,20 @@ export class PlanAdapter {
         }
     }
 
+    // Tiled move-drop convergence: records the correlated drop in its domain
+    // marker through the existing coalesced one-shot route (one dispatch, no
+    // retry, per-drag terminal). Floating moves never reach here; cancelled
+    // and null verdicts never reach here either (they converge through the
+    // ordinary debounced resync without a marker and without inventing a
+    // terminal).
+    public noteMoveDropped(dragCorrelation: unknown, windowId: string | null = null, output?: string, workspace?: string): void {
+        try {
+            this.noteDragRejected(dragCorrelation, "move-dropped", windowId, output, workspace, true);
+        } catch (error) {
+            void error;
+        }
+    }
+
     // Fold a deferred intent being superseded or cleared into the marker
     // map: a deferred drag pointer never dispatched, so its drop joins the
     // marker instead of vanishing. A queued marker reconcile never exists
@@ -3600,6 +3614,24 @@ export class PlanAdapter {
                 return;
             }
             this.refreshHiddenNow();
+            // Idle marker pump: when the foreground decided no ordinary
+            // flight was needed and no hidden step took the slot, a pending
+            // drop marker still owns convergence. This covers guard releases
+            // (settle/timeout/removal resync) that land on an already-equal
+            // snapshot: without a flight the finishFlight chain never runs,
+            // so the marker would strand. Same single-slot guards as the
+            // finishFlight pump; a dispatched ordinary or hidden flight
+            // above already returned before reaching here.
+            if (!this.enabled || this.inFlight || this.deferredAuto !== null) {
+                return;
+            }
+            if (this.r4Flight !== null || this.activeProbe !== 0) {
+                return;
+            }
+            if (this.blockedBySend()) {
+                return;
+            }
+            this.maybeDispatchDragRestore();
         } finally {
             this.chainingHidden = false;
         }

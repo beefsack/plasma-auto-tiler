@@ -1,10 +1,13 @@
 #include "activeborderlogic.h"
+#include "oraclepress.h"
 
 #include <QColor>
 #include <QRectF>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 namespace
 {
@@ -150,6 +153,44 @@ void initialGateFullscreenAndAnyMaximizeSuppress()
     CHECK(!KWin::activeBorderInitialGate(true, true, true, true));
 }
 
+void pressResizeBindingMapsSlotsInOrder()
+{
+    // Options::MouseUnrestrictedResize value is opaque here; the seam takes
+    // it as a plain int so no KWin headers are needed.
+    constexpr int resize = 14;
+    CHECK(KWin::oracleResizeButton(resize, 0, 0, resize) == Qt::LeftButton);
+    CHECK(KWin::oracleResizeButton(0, resize, 0, resize) == Qt::MiddleButton);
+    CHECK(KWin::oracleResizeButton(0, 0, resize, resize) == Qt::RightButton);
+    CHECK(KWin::oracleResizeButton(0, 0, 0, resize) == Qt::NoButton);
+    CHECK(KWin::oracleResizeButton(1, 2, 3, resize) == Qt::NoButton);
+    // First slot carrying the resize command wins.
+    CHECK(KWin::oracleResizeButton(resize, resize, resize, resize) == Qt::LeftButton);
+}
+
+void pressDefaultBindingIsAltRight()
+{
+    // Verified against Options::defaultCommandAll3() (MouseUnrestrictedResize)
+    // and Options::defaultKeyCmdAllModKey() (Key_Alt): fallback only while
+    // the public options are unavailable.
+    CHECK(KWin::oracleDefaultResizeButton() == Qt::RightButton);
+    CHECK(KWin::oracleDefaultResizeModifier() == Qt::AltModifier);
+}
+
+void pressAgeGateBoundsTwoSecondsMonotonic()
+{
+    CHECK(KWin::oraclePressAgeOk(0));
+    CHECK(KWin::oraclePressAgeOk(2000));
+    CHECK(!KWin::oraclePressAgeOk(2001));
+    CHECK(!KWin::oraclePressAgeOk(-1));
+    CHECK(!KWin::oraclePressAgeOk(INT64_C(1000000)));
+}
+
+void pressBindingNameIsClosedVocabulary()
+{
+    CHECK(std::strcmp(KWin::oraclePressBindingName(true), "configured") == 0);
+    CHECK(std::strcmp(KWin::oraclePressBindingName(false), "default") == 0);
+}
+
 } // namespace
 
 int main()
@@ -171,6 +212,10 @@ int main()
     initialGateStartupUnknownStaysHidden();
     initialGateNormalZeroShowsOnlyWhenUsable();
     initialGateFullscreenAndAnyMaximizeSuppress();
+    pressResizeBindingMapsSlotsInOrder();
+    pressDefaultBindingIsAltRight();
+    pressAgeGateBoundsTwoSecondsMonotonic();
+    pressBindingNameIsClosedVocabulary();
 
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);

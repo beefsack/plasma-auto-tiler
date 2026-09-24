@@ -10,11 +10,18 @@ decisions of 2026-09-24 are recorded under
 
 - P1 | Drop-intent edge drag live cases | User accepted inactive-target resize,
   rejected-drop convergence and KWin-thirds interior grabs (2026-09-24).
-  Offline implementation and cancellation/coverage/one-shot regressions pass
-  (Rust 593, KWin 784). See [completed follow-up](changes/archive/drop-intent-drag-live-followup.md).
-  Next: user live acceptance of inactive Meta+right corner and rejected-drop
-  convergence, edge/corner/center-third starts, isolated members, Esc,
-  zero-move and size-increment clients; AR8 remains separate.
+  Live trace exposed shallow Meta+right corner misses and tiled-move reconcile
+  parking. User-approved passive native press capture and interim move-drop
+  snap-back are implemented offline (Rust 593, KWin 808, native 27); see
+  [follow-up](changes/archive/passive-press-move-snapback.md). Next: user
+  rebuilds/delivers the unified native effect across a session restart, then
+  validates corner presses and tiled/floating move drops live. AR8 remains
+  separate.
+- P2 | Drag-and-drop reorganisation | User-approved as a later item
+  (2026-09-24). Wire move drops to the existing core placement policy
+  (`crates/tiler-core/src/session/ops/drag.rs`: split edges, group interiors,
+  snap-back) instead of the interim snap-back. Needs product decisions on drop
+  targets and preview before implementation.
 - P2 | Live sibling reflow while dragging | User request, not high priority.
   Research: no project per-step sibling writer found in history; the
   remembered behavior is likely KWin Custom Tile native reflow (hypothesis).

@@ -7,6 +7,7 @@
 #include <effect/effectwindow.h>
 #include <scene/outlinedborderitem.h>
 
+#include <QByteArray>
 #include <QHash>
 #include <QPointF>
 #include <QPointer>
@@ -15,10 +16,14 @@
 #include <QSet>
 #include <QString>
 
+#include <chrono>
 #include <cstdint>
 
 namespace KWin
 {
+
+struct PointerButtonEvent;
+class OraclePressSpy;
 
 class ActiveWindowBorderEffect : public Effect
 {
@@ -36,6 +41,7 @@ public:
     QString initialMaximizeEpoch() const;
 
 private:
+    friend class OraclePressSpy;
     void reconfigure(ReconfigureFlags flags) override;
     void setTrackedWindow(EffectWindow *window);
     void subscribeMaximize(EffectWindow *window);
@@ -44,6 +50,16 @@ private:
     void forgetOracleWindow(EffectWindow *window);
     void onOracleDragStart(EffectWindow *window);
     void onOracleDragFinish(EffectWindow *window);
+    // Passive press capture: a public InputEventSpy observes pointer presses
+    // without grabbing or intercepting. A press matching the live configured
+    // MouseUnrestrictedResize binding (or the Alt+Right source default while
+    // the public options are unavailable) overwrites the single candidate;
+    // any other press clears it. At drag start a candidate matching the exact
+    // same effect window and identity within the bounded monotonic age moves
+    // single-use into the per-window start slot, which the finish handler
+    // passes to the verdict atomically. Move-vs-resize is never decided here.
+    void noteOraclePointerPress(PointerButtonEvent *event);
+    void emitOraclePressDiag(const char *outcome, bool configured);
     void updateMaximizedState(EffectWindow *window, bool maximized);
     void updateBorder();
     void updateOutline();
@@ -66,6 +82,22 @@ private:
     QObject *m_oracleDbusObject = nullptr;
     QHash<EffectWindow *, QRect> m_oracleStartRects;
     QSet<EffectWindow *> m_oracleAttached;
+    // Single overwrite-on-press candidate plus one single-use press slot per
+    // window pending between drag start and finish. Coordinates keep full
+    // native precision (f64) so script thirds comparisons match exactly.
+    struct OraclePressCandidate {
+        QPointer<EffectWindow> window;
+        QByteArray identity;
+        double x = 0.0;
+        double y = 0.0;
+        bool configured = false;
+        bool hasPress = false;
+        std::chrono::steady_clock::time_point at{};
+    };
+    OraclePressCandidate m_oraclePress;
+    QHash<EffectWindow *, DragOraclePress> m_oracleStartPress;
+    OraclePressSpy *m_oraclePressSpy = nullptr;
+    bool m_oraclePressDefaultLogged = false;
     // Pure group policy state lives in the std-only Rust staticlib; C++
     // holds it by value and forwards QString-to-UTF8 bytes plus POD
     // observer flags. Rendering reads the POD rect back out.

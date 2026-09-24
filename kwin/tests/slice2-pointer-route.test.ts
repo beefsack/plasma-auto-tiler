@@ -844,15 +844,21 @@ describe("slice 2 entry finish consumes the captured start", () => {
         stop();
     });
 
-    it("logs drag-move-ignored for a move-gesture start with no dispatch", () => {
+    it("restores a tiled move-gesture drop once with no pointer dispatch", () => {
         const world = oracleWorld({ move: { "win-a": true } });
         const { stop, mocks } = startOracleEntry(world);
         fireAll(world.signals["startedA"]);
         fireAll(world.signals["finishedA"]);
         assert.equal(mocks.oracleCalls.length, 1);
         (mocks.oracleCalls[0] as (reply: unknown) => void)(movedWinA("drag-1"));
-        assert.equal(mocks.planCalls.length, 0);
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-move-ignored correlation=drag-1"));
+        assert.equal(mocks.planCalls.length, 1);
+        assert.deepEqual((JSON.parse(mocks.planCalls[0]?.payload as string) as Record<string, unknown>)["command"], { op: "reconcile" });
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-move-restore correlation=drag-1"));
+        assert.ok(mocks.logs.some((line) => line.includes("drag-rejected") && line.includes("correlation=drag-1") && line.includes("reason=move-dropped")));
+        assert.ok(
+            mocks.planCalls.every((call) => !(call.payload.includes("pointer-resize"))),
+            "tiled move never dispatches a pointer plan",
+        );
         stop();
     });
 

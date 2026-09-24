@@ -10,7 +10,9 @@ export interface DragOraclePullEnv { readonly callDbus: (service: string, path: 
 export interface DragOraclePullOverrides { readonly workspace?: unknown; readonly callDbus?: DragOraclePullEnv["callDbus"] | undefined; readonly log?: ((message: string) => void) | undefined; readonly routePointer?: ((verdict: DragOracleVerdict, ctx: DragOracleFinishContext | undefined) => void) | undefined; readonly onSettled?: ((verdict: DragOracleVerdict | null, ctx: DragOracleFinishContext | undefined) => void) | undefined; readonly makeFinishContext?: ((ref: object) => DragOracleFinishContext) | undefined; }
 export interface DragOraclePullHandle { readonly stop: () => void; }
 export interface DragOracleFinalRect { readonly x: number; readonly y: number; readonly w: number; readonly h: number; }
-export interface DragOracleVerdict { readonly cancelled: boolean; readonly finalRect: DragOracleFinalRect; readonly windowIdentity: string; readonly correlation: string; readonly reason: string; }
+export interface DragOraclePress { readonly x: number; readonly y: number; readonly binding: "configured" | "default"; }
+export const DRAG_ORACLE_PRESS_MAX_ABS = 16384;
+export interface DragOracleVerdict { readonly cancelled: boolean; readonly finalRect: DragOracleFinalRect; readonly windowIdentity: string; readonly correlation: string; readonly reason: string; readonly press?: DragOraclePress | undefined; }
 function isCorrelation(value: unknown): value is string { return typeof value === "string" && value.length <= DRAG_ORACLE_MAX_TOKEN_LEN && /^drag-[0-9]+$/.test(value); }
 function isReason(value: unknown): value is string { return typeof value === "string" && value.length > 0 && value.length <= DRAG_ORACLE_MAX_REASON_LEN && VERDICT_REASONS.indexOf(value) >= 0; }
 function isOpaqueId(value: unknown): value is string { return typeof value === "string" && value.length <= DRAG_ORACLE_MAX_ID_LEN && /^[A-Za-z0-9_.\-]*$/.test(value); }
@@ -28,6 +30,17 @@ function isFinalRect(value: unknown): boolean {
     return w > 0 && h > 0 && x >= -16384 && x <= 16384 && y >= -16384 && y <= 16384 && w <= 16384 && h <= 16384;
 }
 function hasExactKeys(value: Record<string, unknown>, keys: ReadonlyArray<string>): boolean { if (Object.keys(value).length !== keys.length) return false; for (const k of keys) if (!Object.prototype.hasOwnProperty.call(value, k)) return false; return true; }
+function isFiniteNumber(value: unknown): value is number { return typeof value === "number" && Number.isFinite(value); }
+function isPressBinding(value: unknown): value is "configured" | "default" { return value === "configured" || value === "default"; }
+function isPress(value: unknown): value is DragOraclePress {
+    if (!isRecord(value)) return false;
+    if (!hasExactKeys(value, ["x", "y", "binding"])) return false;
+    const x = value["x"];
+    const y = value["y"];
+    if (!isFiniteNumber(x) || !isFiniteNumber(y)) return false;
+    if (Math.abs(x) > DRAG_ORACLE_PRESS_MAX_ABS || Math.abs(y) > DRAG_ORACLE_PRESS_MAX_ABS) return false;
+    return isPressBinding(value["binding"]);
+}
 export function parseDragOracleVerdict(reply: unknown): DragOracleVerdict | null {
     let text: unknown = reply;
     if (Array.isArray(reply)) { if (reply.length === 0) return null; text = reply[0]; }
@@ -35,7 +48,9 @@ export function parseDragOracleVerdict(reply: unknown): DragOracleVerdict | null
     let parsed: unknown = null;
     try { parsed = JSON.parse(text); } catch (_e) { return null; }
     if (!isRecord(parsed)) return null;
-    if (!hasExactKeys(parsed, ["v", "cancelled", "finalRect", "windowIdentity", "correlation", "reason"])) return null;
+    const hasLegacy = hasExactKeys(parsed, ["v", "cancelled", "finalRect", "windowIdentity", "correlation", "reason"]);
+    const hasPress = hasExactKeys(parsed, ["v", "cancelled", "finalRect", "windowIdentity", "correlation", "reason", "press"]);
+    if (!hasLegacy && !hasPress) return null;
     if (parsed["v"] !== 1) return null;
     const cancelled = parsed["cancelled"];
     if (cancelled !== true && cancelled !== false) return null;
@@ -49,7 +64,12 @@ export function parseDragOracleVerdict(reply: unknown): DragOracleVerdict | null
         if (EMPTY_IDENTITY_REASONS.indexOf(parsed["reason"] as string) < 0) return null;
     }
     const rect = parsed["finalRect"] as Record<string, unknown>;
-    return { cancelled: cancelled as boolean, finalRect: { x: rect["x"] as number, y: rect["y"] as number, w: rect["w"] as number, h: rect["h"] as number }, windowIdentity: identity as string, correlation: parsed["correlation"] as string, reason: parsed["reason"] as string };
+    if (!hasPress) {
+        return { cancelled: cancelled as boolean, finalRect: { x: rect["x"] as number, y: rect["y"] as number, w: rect["w"] as number, h: rect["h"] as number }, windowIdentity: identity as string, correlation: parsed["correlation"] as string, reason: parsed["reason"] as string };
+    }
+    if (!isPress(parsed["press"])) return null;
+    const press = parsed["press"] as unknown as Record<string, unknown>;
+    return { cancelled: cancelled as boolean, finalRect: { x: rect["x"] as number, y: rect["y"] as number, w: rect["w"] as number, h: rect["h"] as number }, windowIdentity: identity as string, correlation: parsed["correlation"] as string, reason: parsed["reason"] as string, press: { x: press["x"] as number, y: press["y"] as number, binding: press["binding"] as "configured" | "default" } };
 }
 export function formatDragOracleVerdict(verdict: Pick<DragOracleVerdict, "cancelled" | "correlation" | "reason">): string { return `${VERDICT_PREFIX} cancelled=${verdict.cancelled === true ? "true" : "false"} correlation=${verdict.correlation} reason=${verdict.reason}`; }
 // Grabbed-edge helpers: the grabbed edge(s) are captured at Started,
@@ -99,6 +119,43 @@ export const ORACLE_KWIN_THIRDS_MIN_EDGE_PX = 64;
 export type OracleGrabSource = "nearest-pointer" | "kwin-thirds";
 export interface OracleGrabbed { readonly horizontal: "left" | "right" | null; readonly vertical: "up" | "down" | null; }
 export interface OraclePointer { readonly x: number; readonly y: number; }
+function computeKwinThirdsGrabbed(start: DragOracleFinalRect, px: number, py: number): OracleGrabbed {
+    const lx = Math.trunc(px - start.x);
+    const ly = Math.trunc(py - start.y);
+    const thirdW = start.w / 3;
+    const twoThirdW = (2 * start.w) / 3;
+    const thirdH = start.h / 3;
+    const twoThirdH = (2 * start.h) / 3;
+    const halfW = start.w / 2;
+    const xLeft = lx < thirdW;
+    const xRight = lx >= twoThirdW;
+    const yTop = ly < thirdH;
+    const yBottom = ly >= twoThirdH;
+    if (yTop || yBottom) {
+        return { horizontal: xLeft ? "left" : xRight ? "right" : null, vertical: yTop ? "up" : "down" };
+    }
+    return { horizontal: lx < halfW ? "left" : "right", vertical: null };
+}
+// Verified native modifier-resize press classification: exact KWin 6.7.5
+// thirds regardless of the 64px interior depth gate. The press must sit
+// inside the starting frame (thirds gravity is undefined outside); finite
+// f64 coordinates keep native precision. Null when unusable so the caller
+// keeps the Started nearest-frame fallback.
+export function identifyPressGrabbed(start: DragOracleFinalRect, press: DragOraclePress | OraclePointer | null): { grabbed: OracleGrabbed; source: OracleGrabSource } | null {
+    try {
+        if (press === null) return null;
+        if (typeof press.x !== "number" || typeof press.y !== "number") return null;
+        if (!Number.isFinite(press.x) || !Number.isFinite(press.y)) return null;
+        if (Math.abs(press.x) > DRAG_ORACLE_PRESS_MAX_ABS || Math.abs(press.y) > DRAG_ORACLE_PRESS_MAX_ABS) return null;
+        if (!Number.isSafeInteger(start.x) || !Number.isSafeInteger(start.y) || !Number.isSafeInteger(start.w) || !Number.isSafeInteger(start.h)) return null;
+        if (start.w <= 0 || start.h <= 0) return null;
+        const inside = press.x >= start.x && press.x < start.x + start.w && press.y >= start.y && press.y < start.y + start.h;
+        if (!inside) return null;
+        return { grabbed: computeKwinThirdsGrabbed(start, press.x, press.y), source: "kwin-thirds" };
+    } catch (_e) {
+        return null;
+    }
+}
 export function identifyGrabbedEdges(start: DragOracleFinalRect, pointer: OraclePointer | null): { grabbed: OracleGrabbed; source: OracleGrabSource } | null {
     try {
         if (pointer === null) return null;
@@ -121,24 +178,7 @@ export function identifyGrabbedEdges(start: DragOracleFinalRect, pointer: Oracle
         // distances can exceed the gate) never read as thirds.
         const inside = px >= start.x && px < start.x + start.w && py >= start.y && py < start.y + start.h;
         if (inside && minEdge >= ORACLE_KWIN_THIRDS_MIN_EDGE_PX) {
-            const lx = Math.trunc(px - start.x);
-            const ly = Math.trunc(py - start.y);
-            const thirdW = start.w / 3;
-            const twoThirdW = (2 * start.w) / 3;
-            const thirdH = start.h / 3;
-            const twoThirdH = (2 * start.h) / 3;
-            const halfW = start.w / 2;
-            const xLeft = lx < thirdW;
-            const xRight = lx >= twoThirdW;
-            const yTop = ly < thirdH;
-            const yBottom = ly >= twoThirdH;
-            if (yTop || yBottom) {
-                const horizontal = xLeft ? "left" : xRight ? "right" : null;
-                const vertical = yTop ? "up" : "down";
-                return { grabbed: { horizontal: horizontal as "left" | "right" | null, vertical: vertical as "up" | "down" }, source: "kwin-thirds" };
-            }
-            const horizontal = lx < halfW ? "left" : "right";
-            return { grabbed: { horizontal: horizontal as "left" | "right", vertical: null }, source: "kwin-thirds" };
+            return { grabbed: computeKwinThirdsGrabbed(start, px, py), source: "kwin-thirds" };
         }
         const hNearest = dLeft <= dRight ? "left" : "right";
         const vNearest = dUp <= dDown ? "up" : "down";

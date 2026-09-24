@@ -2731,9 +2731,15 @@ describe("plan adapter source hygiene", () => {
             assert.ok(!body.includes("setTimeout"), "setTimeout");
             assert.ok(!body.includes("setInterval"), "setInterval");
             assert.ok(!body.includes("requestAnimationFrame"), "requestAnimationFrame");
-            assert.ok(!body.includes("fallback"), "fallback");
             assert.ok(!body.includes("pollFor"), "pollFor");
         }
+        assert.ok(!src.includes("fallback"), "fallback");
+        // The entry's only "fallback" is the correlated drag-press-absent
+        // diagnostic (absent/stale/other-window press keeps the Started
+        // capture); no behavior fallback exists.
+        assert.ok(entry.includes("drag-press-fallback"), "press-absent diagnostic");
+        assert.equal(entry.split("drag-press-fallback").length - 1, 2, "only the two press-absent log lines");
+        assert.equal(entry.split("fallback").length - 1, 2, "no other fallback");
         assert.ok(!src.includes("registerShortcut"), "adapter must not register shortcuts");
         assert.ok(entry.includes("connectSignal"), "entry must use the shared connector");
         assert.ok(entry.includes("signal-capability"), "entry must use the shared layer");

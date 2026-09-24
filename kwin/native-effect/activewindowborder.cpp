@@ -2,11 +2,17 @@
 #include "activeborderconfig.h"
 #include "activeborderlogic.h"
 #include "drag_oracle_ffi.h"
+#include "oraclepress.h"
 
 #include <KColorScheme>
 #include <KSharedConfig>
 
+#include <core/inputdevice.h>
 #include <effect/effecthandler.h>
+#include <input.h>
+#include <input_event.h>
+#include <input_event_spy.h>
+#include <options.h>
 #include <scene/workspacescene.h>
 #include <scene/windowitem.h>
 #include <window.h>
@@ -18,6 +24,7 @@
 #include <QPalette>
 #include <QUuid>
 
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -93,6 +100,10 @@ public Q_SLOTS:
     {
         // Copy the verdict before the D-Bus return so the reply never borrows
         // the oracle's process-static storage across threads or reentrancy.
+        // The reply carries the exact existing fields plus, only when a
+        // resize-binding press was verified for the same window, an optional
+        // bounded "press" object (native f64 position, closed-vocabulary
+        // binding token). No second call, service, or object.
         uint8_t copy[1024];
         const size_t taken = drag_oracle_last_copy(copy, sizeof(copy));
         if (taken == 0 || taken > sizeof(copy)) {
@@ -101,6 +112,34 @@ public Q_SLOTS:
         return QString::fromUtf8(reinterpret_cast<const char *>(copy), static_cast<int>(taken));
     }
 };
+
+} // namespace
+
+// Passive press observer at KWin scope (matching the header forward
+// declaration): sees every pointer button event before filters but never
+// consumes, grabs, or modifies anything. Forwards presses to the effect,
+// which matches them against the resize binding and window.
+class OraclePressSpy : public InputEventSpy
+{
+public:
+    explicit OraclePressSpy(ActiveWindowBorderEffect *effect)
+        : m_effect(effect)
+    {
+    }
+
+    void pointerButton(PointerButtonEvent *event) override
+    {
+        if (m_effect != nullptr) {
+            m_effect->noteOraclePointerPress(event);
+        }
+    }
+
+private:
+    ActiveWindowBorderEffect *m_effect = nullptr;
+};
+
+namespace
+{
 
 DragOracleRect toOraclePod(const QRect &rect)
 {
@@ -215,6 +254,20 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
         }
     }
 
+    // Passive press capture for the drag oracle: a public InputEventSpy
+    // observes pointer presses without grabbing or intercepting. Fail closed
+    // when input redirection is unavailable: drags then simply carry no press
+    // evidence and the existing verdict contract is unchanged. Deleting the
+    // spy uninstalls it automatically; the destructor deletes it explicitly.
+    m_oraclePressSpy = new OraclePressSpy(this);
+    if (input() != nullptr) {
+        input()->installInputEventSpy(m_oraclePressSpy);
+    } else {
+        delete m_oraclePressSpy;
+        m_oraclePressSpy = nullptr;
+        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:drag-oracle:press-spy available=0"));
+    }
+
     // Oracle observation is independent of rendering. Keep this one shared
     // lifecycle hookup set active even when the border cannot render.
     connect(effects, &EffectsHandler::windowDeleted, this, [this](EffectWindow *window) {
@@ -287,6 +340,8 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
 
 ActiveWindowBorderEffect::~ActiveWindowBorderEffect()
 {
+    delete m_oraclePressSpy;
+    m_oraclePressSpy = nullptr;
     QDBusConnection bus = QDBusConnection::sessionBus();
     bus.unregisterObject(QStringLiteral("/org/plasmaautotiler/DragOracle"));
     bus.unregisterService(QStringLiteral("org.plasmaautotiler.DragOracle"));
@@ -406,7 +461,82 @@ void ActiveWindowBorderEffect::forgetOracleWindow(EffectWindow *window)
         return;
     }
     m_oracleStartRects.remove(window);
+    m_oracleStartPress.remove(window);
+    if (m_oraclePress.window == window) {
+        m_oraclePress = OraclePressCandidate{};
+    }
     m_oracleAttached.remove(window);
+}
+
+void ActiveWindowBorderEffect::emitOraclePressDiag(const char *outcome, bool configured)
+{
+    // Redacted transition diagnostic only: outcome plus the closed-vocabulary
+    // binding source. Never carries coordinates, identities, or geometry.
+    try {
+        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:drag-oracle:press outcome=%1 binding=%2")
+                .arg(QString::fromUtf8(outcome))
+                .arg(QString::fromUtf8(oraclePressBindingName(configured))));
+    } catch (...) {
+    }
+}
+
+void ActiveWindowBorderEffect::noteOraclePointerPress(PointerButtonEvent *event)
+{
+    // Passive observer only: the event is never consumed, grabbed, filtered,
+    // or modified. Only press edges can start a candidate; every other event
+    // leaves the current candidate untouched.
+    if (event == nullptr || event->state != PointerButtonState::Pressed) {
+        return;
+    }
+    // Single overwrite-on-press candidate: each press replaces the previous
+    // one, so at most one press is ever pending.
+    m_oraclePress = OraclePressCandidate{};
+    if (!std::isfinite(event->position.x()) || !std::isfinite(event->position.y())) {
+        return;
+    }
+    // Identify the actual configured MouseUnrestrictedResize binding. While
+    // the public options are unavailable, fall back to the verified source
+    // default (Alt+RightButton) and log that default once per effect
+    // instance. A missing resize slot fails closed with no candidate.
+    Qt::MouseButton resizeButton = oracleDefaultResizeButton();
+    Qt::KeyboardModifier resizeModifier = oracleDefaultResizeModifier();
+    bool configured = false;
+    if (options != nullptr) {
+        resizeButton = oracleResizeButton(static_cast<int>(options->commandAll1()), static_cast<int>(options->commandAll2()),
+            static_cast<int>(options->commandAll3()), static_cast<int>(Options::MouseUnrestrictedResize));
+        resizeModifier = options->commandAllModifier();
+        configured = true;
+    } else if (!m_oraclePressDefaultLogged) {
+        m_oraclePressDefaultLogged = true;
+        emitOraclePressDiag("default-binding", false);
+    }
+    if (resizeButton == Qt::NoButton || event->button != resizeButton || !event->modifiers.testFlag(resizeModifier)) {
+        return;
+    }
+    InputRedirection *redir = input();
+    if (redir == nullptr) {
+        return;
+    }
+    Window *top = redir->findToplevel(event->position);
+    if (top == nullptr || top->isDeleted()) {
+        return;
+    }
+    // Associate the toplevel with its effect window through the public
+    // internal-id lookup, then verify the exact same live window object.
+    EffectWindow *found = effects->findWindow(top->internalId());
+    if (found == nullptr || found->isDeleted() || found->window() != top) {
+        return;
+    }
+    OraclePressCandidate next;
+    next.window = found;
+    next.identity = found->internalId().toString(QUuid::WithoutBraces).toUtf8();
+    next.x = event->position.x();
+    next.y = event->position.y();
+    next.configured = configured;
+    next.hasPress = true;
+    next.at = std::chrono::steady_clock::now();
+    m_oraclePress = next;
+    emitOraclePressDiag("captured", configured);
 }
 
 void ActiveWindowBorderEffect::onOracleDragStart(EffectWindow *window)
@@ -415,6 +545,40 @@ void ActiveWindowBorderEffect::onOracleDragStart(EffectWindow *window)
         return;
     }
     m_oracleStartRects.insert(window, oracleMoveResizeRect(window));
+    // A repeated start supersedes any prior unconsumed slot for this window:
+    // drop it before evaluating the candidate so a stale slot can never leak
+    // into a later finish. A stale candidate likewise drops on any start via
+    // the exact freshness match below instead of lingering for an unrelated
+    // later window start; only a fresh candidate for another window stays
+    // pending (bounded by age and overwrite-on-press).
+    m_oracleStartPress.remove(window);
+    // Single-use press evidence: a candidate for the exact same effect window
+    // and identity within the bounded monotonic age moves into this window's
+    // start slot. Stale or orphaned candidates drop; a candidate for another
+    // window stays pending (bounded by age and overwrite-on-press). Whether
+    // this drag is a move or a resize is not decided here: the matched press
+    // is recorded and the script adapter gates on its own start.resize.
+    if (m_oraclePress.hasPress) {
+        const auto now = std::chrono::steady_clock::now();
+        const int64_t ageMs =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - m_oraclePress.at).count();
+        const QByteArray identity = window->internalId().toString(QUuid::WithoutBraces).toUtf8();
+        if (m_oraclePress.window.isNull() || !oraclePressAgeOk(ageMs)) {
+            const bool wasConfigured = m_oraclePress.configured;
+            m_oraclePress = OraclePressCandidate{};
+            emitOraclePressDiag("stale", wasConfigured);
+        } else if (m_oraclePress.window == window && m_oraclePress.identity == identity) {
+            DragOraclePress pod{};
+            pod.hasPress = 1;
+            pod.binding = m_oraclePress.configured ? 1 : 0;
+            pod.x = m_oraclePress.x;
+            pod.y = m_oraclePress.y;
+            m_oracleStartPress.insert(window, pod);
+            const bool wasConfigured = m_oraclePress.configured;
+            m_oraclePress = OraclePressCandidate{};
+            emitOraclePressDiag("attached", wasConfigured);
+        }
+    }
 }
 
 void ActiveWindowBorderEffect::onOracleDragFinish(EffectWindow *window)
@@ -424,9 +588,12 @@ void ActiveWindowBorderEffect::onOracleDragFinish(EffectWindow *window)
     }
     const QRect finalRect = oracleMoveResizeRect(window);
     const QRect startRect = m_oracleStartRects.take(window);
+    // Single-use: the start slot is consumed with this verdict, so the press
+    // evidence correlates atomically with the final verdict in one reply.
+    const DragOraclePress press = m_oracleStartPress.take(window);
     const QByteArray identity = window->internalId().toString(QUuid::WithoutBraces).toUtf8();
     drag_oracle_record(toOraclePod(startRect), toOraclePod(finalRect), reinterpret_cast<const uint8_t *>(identity.constData()),
-        static_cast<size_t>(identity.size()));
+        static_cast<size_t>(identity.size()), press);
 }
 
 void ActiveWindowBorderEffect::updateMaximizedState(EffectWindow *window, bool maximized)

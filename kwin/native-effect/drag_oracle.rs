@@ -1,7 +1,25 @@
 use std::sync::{LazyLock, Mutex, atomic::{AtomicU64, Ordering}};
 #[repr(C)] #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DragRect { pub x: i32, pub y: i32, pub w: i32, pub h: i32 }
+// Optional bounded press evidence carried atomically with the final verdict.
+// The C++ effect captures the pointer press passively (InputEventSpy, no
+// grab/interception) and matches it to the same effect window plus identity
+// within a bounded monotonic age at drag start. Rust never classifies
+// thirds/move-vs-resize: a valid press is echoed verbatim so the script
+// adapter can gate on its own start.resize knowledge plus presence.
+// Field order mirrors the C++ DragOraclePress layout exactly (C layout).
+// binding is 1 when the press matched the live configured
+// MouseUnrestrictedResize binding, 0 when it matched the Alt+Right fallback
+// used only while the public options are unavailable.
+#[repr(C)] #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DragPress { pub has_press: u8, pub binding: u8, pub x: f64, pub y: f64 }
+impl DragPress {
+    pub const fn absent() -> DragPress { DragPress { has_press: 0, binding: 0, x: 0.0, y: 0.0 } }
+}
+const _: () = assert!(std::mem::size_of::<DragPress>() == 24);
 pub const DRAG_ORACLE_MAX_ID_LEN: usize = 128; pub const DRAG_ORACLE_MAX_JSON: usize = 1024;
+pub const DRAG_ORACLE_PRESS_MAX_ABS: f64 = 16384.0;
+pub const DRAG_PRESS_BINDING_DEFAULT: u8 = 0; pub const DRAG_PRESS_BINDING_CONFIGURED: u8 = 1;
 const COORD_LIMIT: i32 = 16384;
 static CORRELATION: AtomicU64 = AtomicU64::new(0);
 static LAST_JSON: LazyLock<Mutex<Vec<u8>>> = LazyLock::new(|| Mutex::new(br#"{"v":1,"cancelled":true,"finalRect":{"x":0,"y":0,"w":1,"h":1},"windowIdentity":"","correlation":"drag-0","reason":"no-observation"}"#.to_vec()));
@@ -13,23 +31,47 @@ fn identity_reason(id: &[u8]) -> Option<&'static str> {
     if !id.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'-' || *b == b'_' || *b == b'.') { return Some("identity-invalid"); }
     None
 }
-pub fn build_verdict(start: DragRect, end: DragRect, id: &[u8]) -> (Vec<u8>, u64) {
+// A press is echoed only when fully verified: explicit presence flag,
+// closed-vocabulary binding, and finite coordinates inside the shared
+// carried-geometry bound. Anything else reads as absent, never a rejection:
+// the exact existing cancelled/reason contract is preserved.
+fn verified_press(press: DragPress) -> Option<(f64, f64, &'static str)> {
+    if press.has_press != 1 { return None; }
+    let binding = match press.binding {
+        DRAG_PRESS_BINDING_CONFIGURED => "configured",
+        DRAG_PRESS_BINDING_DEFAULT => "default",
+        _ => return None,
+    };
+    if !press.x.is_finite() || !press.y.is_finite() { return None; }
+    if press.x.abs() > DRAG_ORACLE_PRESS_MAX_ABS || press.y.abs() > DRAG_ORACLE_PRESS_MAX_ABS { return None; }
+    Some((press.x, press.y, binding))
+}
+pub fn build_verdict(start: DragRect, end: DragRect, id: &[u8], press: DragPress) -> (Vec<u8>, u64) {
     let correlation = CORRELATION.fetch_add(1, Ordering::SeqCst) + 1;
     let (cancelled, reason) = if bad_dim(start) || bad_dim(end) { (true, "geometry-invalid") } else if bad_range(start) || bad_range(end) { (true, "geometry-out-of-range") } else if let Some(why) = identity_reason(id) { (true, why) } else if start == end { (true, "no-change") } else { (false, "ok-moved") };
     let id_out = if identity_reason(id).is_none() { id } else { b"" };
-    let out = format!("{{\"v\":1,\"cancelled\":{},\"finalRect\":{{\"x\":{},\"y\":{},\"w\":{},\"h\":{}}},\"windowIdentity\":\"{}\",\"correlation\":\"drag-{}\",\"reason\":\"{}\"}}", cancelled, end.x, end.y, end.w, end.h, String::from_utf8_lossy(id_out), correlation, reason);
+    let mut out = format!("{{\"v\":1,\"cancelled\":{},\"finalRect\":{{\"x\":{},\"y\":{},\"w\":{},\"h\":{}}},\"windowIdentity\":\"{}\",\"correlation\":\"drag-{}\",\"reason\":\"{}\"", cancelled, end.x, end.y, end.w, end.h, String::from_utf8_lossy(id_out), correlation, reason);
+    // Optional press evidence appends INSIDE the outer object atomically with
+    // the same verdict reply: no second D-Bus call, no separate service or
+    // object. Debug formatting keeps full f64 precision so script thirds
+    // comparisons match the native press exactly; values are finite and
+    // bounded above.
+    if let Some((x, y, binding)) = verified_press(press) {
+        out.push_str(&format!(",\"press\":{{\"x\":{x:?},\"y\":{y:?},\"binding\":\"{binding}\"}}"));
+    }
+    out.push('}');
     let mut bytes = out.into_bytes();
     debug_assert!(bytes.len() <= DRAG_ORACLE_MAX_JSON);
     bytes.truncate(DRAG_ORACLE_MAX_JSON);
     (bytes, correlation)
 }
 fn store_last(json: &[u8]) { if let Ok(mut guard) = LAST_JSON.lock() { guard.clear(); guard.extend_from_slice(json); } }
-fn record_inner(start: DragRect, end: DragRect, id: &[u8]) -> u64 { let (json, correlation) = build_verdict(start, end, id); store_last(&json); correlation }
+fn record_inner(start: DragRect, end: DragRect, id: &[u8], press: DragPress) -> u64 { let (json, correlation) = build_verdict(start, end, id, press); store_last(&json); correlation }
 #[no_mangle]
-pub extern "C" fn drag_oracle_record(start: DragRect, end: DragRect, id_ptr: *const u8, id_len: usize) -> u64 {
+pub extern "C" fn drag_oracle_record(start: DragRect, end: DragRect, id_ptr: *const u8, id_len: usize, press: DragPress) -> u64 {
     match std::panic::catch_unwind(|| {
-        let id: &[u8] = if id_len == 0 || id_ptr.is_null() { &[] } else if id_len > 4096 { return record_inner(start, end, &vec![0u8; DRAG_ORACLE_MAX_ID_LEN + 1]); } else { unsafe { std::slice::from_raw_parts(id_ptr, id_len) } };
-        record_inner(start, end, id)
+        let id: &[u8] = if id_len == 0 || id_ptr.is_null() { &[] } else if id_len > 4096 { return record_inner(start, end, &vec![0u8; DRAG_ORACLE_MAX_ID_LEN + 1], press); } else { unsafe { std::slice::from_raw_parts(id_ptr, id_len) } };
+        record_inner(start, end, id, press)
     }) {
         Ok(correlation) => correlation,
         Err(_) => { let _ = std::panic::catch_unwind(|| store_last(br#"{"v":1,"cancelled":true,"finalRect":{"x":0,"y":0,"w":1,"h":1},"windowIdentity":"","correlation":"drag-0","reason":"oracle-panic"}"#)); 0 }
@@ -69,6 +111,10 @@ mod tests {
         text.as_bytes().to_vec()
     }
 
+    fn press(binding: u8, x: f64, y: f64) -> DragPress {
+        DragPress { has_press: 1, binding, x, y }
+    }
+
     fn reason_of(json: &[u8]) -> String {
         let text = std::str::from_utf8(json).expect("verdict is ASCII JSON");
         let marker = "\"reason\":\"";
@@ -83,10 +129,42 @@ mod tests {
             .contains("\"cancelled\":true")
     }
 
+    // Minimal structural shape check for what TS will JSON.parse: the reply
+    // ends with the outer closing brace and braces balance outside strings.
+    // Exact full-string equality in each test below pins the field order.
+    fn assert_json_shape(text: &str) {
+        assert!(text.starts_with('{') && text.ends_with('}'), "verdict must be one closed object: {}", text);
+        let mut depth = 0i32;
+        let mut in_string = false;
+        let mut escaped = false;
+        for c in text.chars() {
+            if in_string {
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' {
+                    escaped = true;
+                } else if c == '"' {
+                    in_string = false;
+                }
+                continue;
+            }
+            match c {
+                '"' => in_string = true,
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    assert!(depth >= 0, "unbalanced braces: {}", text);
+                }
+                _ => {}
+            }
+        }
+        assert!(!in_string && depth == 0, "unbalanced shape: {}", text);
+    }
+
     #[test]
     fn equal_geometry_reports_no_change_cancelled() {
         let r = DragRect { x: 10, y: 20, w: 300, h: 200 };
-        let (json, _) = build_verdict(r, r, &id("win-1"));
+        let (json, _) = build_verdict(r, r, &id("win-1"), DragPress::absent());
         assert!(cancelled_of(&json));
         assert_eq!(reason_of(&json), "no-change");
     }
@@ -95,7 +173,7 @@ mod tests {
     fn moved_geometry_reports_ok_not_cancelled() {
         let start = DragRect { x: 10, y: 20, w: 300, h: 200 };
         let end = DragRect { x: 60, y: 20, w: 300, h: 200 };
-        let (json, _) = build_verdict(start, end, &id("win-1"));
+        let (json, _) = build_verdict(start, end, &id("win-1"), DragPress::absent());
         assert!(!cancelled_of(&json));
         assert_eq!(reason_of(&json), "ok-moved");
     }
@@ -104,7 +182,7 @@ mod tests {
     fn empty_identity_has_specific_reason() {
         let start = DragRect { x: 0, y: 0, w: 100, h: 100 };
         let end = DragRect { x: 5, y: 0, w: 100, h: 100 };
-        let (json, _) = build_verdict(start, end, &[]);
+        let (json, _) = build_verdict(start, end, &[], DragPress::absent());
         assert!(cancelled_of(&json));
         assert_eq!(reason_of(&json), "empty-identity");
     }
@@ -113,7 +191,7 @@ mod tests {
     fn bad_charset_identity_has_specific_reason() {
         let start = DragRect { x: 0, y: 0, w: 100, h: 100 };
         let end = DragRect { x: 5, y: 0, w: 100, h: 100 };
-        let (json, _) = build_verdict(start, end, b"win\";drop");
+        let (json, _) = build_verdict(start, end, b"win\";drop", DragPress::absent());
         assert!(cancelled_of(&json));
         assert_eq!(reason_of(&json), "identity-invalid");
     }
@@ -122,7 +200,7 @@ mod tests {
     fn oversize_identity_has_specific_reason() {
         let start = DragRect { x: 0, y: 0, w: 100, h: 100 };
         let end = DragRect { x: 5, y: 0, w: 100, h: 100 };
-        let (json, _) = build_verdict(start, end, &vec![b'a'; 129]);
+        let (json, _) = build_verdict(start, end, &vec![b'a'; 129], DragPress::absent());
         assert!(cancelled_of(&json));
         assert_eq!(reason_of(&json), "identity-too-long");
     }
@@ -131,7 +209,7 @@ mod tests {
     fn degenerate_geometry_has_specific_reason() {
         let start = DragRect { x: 0, y: 0, w: 0, h: 0 };
         let end = DragRect { x: 0, y: 0, w: 100, h: 100 };
-        let (json, _) = build_verdict(start, end, &id("win-1"));
+        let (json, _) = build_verdict(start, end, &id("win-1"), DragPress::absent());
         assert!(cancelled_of(&json));
         assert_eq!(reason_of(&json), "geometry-invalid");
     }
@@ -140,7 +218,7 @@ mod tests {
     fn out_of_range_geometry_has_specific_reason() {
         let start = DragRect { x: 0, y: 0, w: 100, h: 100 };
         let end = DragRect { x: 20000, y: 0, w: 100, h: 100 };
-        let (json, _) = build_verdict(start, end, &id("win-1"));
+        let (json, _) = build_verdict(start, end, &id("win-1"), DragPress::absent());
         assert!(cancelled_of(&json));
         assert_eq!(reason_of(&json), "geometry-out-of-range");
     }
@@ -149,7 +227,7 @@ mod tests {
     fn verdict_carries_required_fields_and_stays_bounded() {
         let start = DragRect { x: 1, y: 2, w: 3, h: 4 };
         let end = DragRect { x: 5, y: 6, w: 7, h: 8 };
-        let (json, correlation) = build_verdict(start, end, &id("win-9"));
+        let (json, correlation) = build_verdict(start, end, &id("win-9"), DragPress::absent());
         let text = std::str::from_utf8(&json).expect("verdict is ASCII JSON");
         assert!(text.contains("\"cancelled\":"));
         assert!(text.contains("\"finalRect\":{\"x\":5,\"y\":6,\"w\":7,\"h\":8}"));
@@ -159,11 +237,99 @@ mod tests {
     }
 
     #[test]
+    fn absent_press_emits_no_press_key() {
+        let start = DragRect { x: 0, y: 0, w: 100, h: 100 };
+        let end = DragRect { x: 5, y: 0, w: 100, h: 100 };
+        let (json, correlation) = build_verdict(start, end, &id("win-1"), DragPress::absent());
+        let text = std::str::from_utf8(&json).expect("verdict is ASCII JSON");
+        assert_json_shape(text);
+        // Exact legacy shape is preserved byte-for-byte when no press is verified.
+        let expected = format!("{{\"v\":1,\"cancelled\":false,\"finalRect\":{{\"x\":5,\"y\":0,\"w\":100,\"h\":100}},\"windowIdentity\":\"win-1\",\"correlation\":\"drag-{correlation}\",\"reason\":\"ok-moved\"}}");
+        assert_eq!(text, expected);
+        assert_eq!(reason_of(&json), "ok-moved");
+    }
+
+    #[test]
+    fn configured_press_is_echoed_atomically_with_verdict() {
+        let start = DragRect { x: 0, y: 0, w: 300, h: 200 };
+        let end = DragRect { x: 10, y: 0, w: 300, h: 200 };
+        let (json, correlation) = build_verdict(start, end, &id("win-1"), press(DRAG_PRESS_BINDING_CONFIGURED, 250.5, 100.25));
+        let text = std::str::from_utf8(&json).expect("verdict is ASCII JSON");
+        assert_json_shape(text);
+        assert!(!cancelled_of(&json));
+        assert_eq!(reason_of(&json), "ok-moved");
+        let expected = format!("{{\"v\":1,\"cancelled\":false,\"finalRect\":{{\"x\":10,\"y\":0,\"w\":300,\"h\":200}},\"windowIdentity\":\"win-1\",\"correlation\":\"drag-{correlation}\",\"reason\":\"ok-moved\",\"press\":{{\"x\":250.5,\"y\":100.25,\"binding\":\"configured\"}}}}");
+        assert_eq!(text, expected);
+        assert!(json.len() <= DRAG_ORACLE_MAX_JSON);
+    }
+
+    #[test]
+    fn default_binding_press_is_echoed_with_default_token() {
+        let start = DragRect { x: 0, y: 0, w: 300, h: 200 };
+        let end = DragRect { x: 10, y: 0, w: 300, h: 200 };
+        let (json, correlation) = build_verdict(start, end, &id("win-1"), press(DRAG_PRESS_BINDING_DEFAULT, 12.0, 34.0));
+        let text = std::str::from_utf8(&json).expect("verdict is ASCII JSON");
+        assert_json_shape(text);
+        let expected = format!("{{\"v\":1,\"cancelled\":false,\"finalRect\":{{\"x\":10,\"y\":0,\"w\":300,\"h\":200}},\"windowIdentity\":\"win-1\",\"correlation\":\"drag-{correlation}\",\"reason\":\"ok-moved\",\"press\":{{\"x\":12.0,\"y\":34.0,\"binding\":\"default\"}}}}");
+        assert_eq!(text, expected);
+    }
+
+    #[test]
+    fn press_survives_cancelled_verdict_without_changing_reason() {
+        // The press is drag-start evidence, independent of the final geometry
+        // verdict: a no-change drag still carries the verified press so the
+        // adapter observes presence uniformly.
+        let r = DragRect { x: 10, y: 20, w: 300, h: 200 };
+        let (json, correlation) = build_verdict(r, r, &id("win-1"), press(DRAG_PRESS_BINDING_CONFIGURED, 20.0, 30.0));
+        let text = std::str::from_utf8(&json).expect("verdict is ASCII JSON");
+        assert_json_shape(text);
+        assert!(cancelled_of(&json));
+        assert_eq!(reason_of(&json), "no-change");
+        let expected = format!("{{\"v\":1,\"cancelled\":true,\"finalRect\":{{\"x\":10,\"y\":20,\"w\":300,\"h\":200}},\"windowIdentity\":\"win-1\",\"correlation\":\"drag-{correlation}\",\"reason\":\"no-change\",\"press\":{{\"x\":20.0,\"y\":30.0,\"binding\":\"configured\"}}}}");
+        assert_eq!(text, expected);
+    }
+
+    #[test]
+    fn invalid_press_reads_as_absent_never_a_rejection() {
+        let start = DragRect { x: 0, y: 0, w: 100, h: 100 };
+        let end = DragRect { x: 5, y: 0, w: 100, h: 100 };
+        let bad = [
+            DragPress { has_press: 0, binding: 1, x: 1.0, y: 1.0 },
+            DragPress { has_press: 2, binding: 1, x: 1.0, y: 1.0 },
+            DragPress { has_press: 1, binding: 7, x: 1.0, y: 1.0 },
+            DragPress { has_press: 1, binding: 1, x: f64::NAN, y: 1.0 },
+            DragPress { has_press: 1, binding: 1, x: 1.0, y: f64::INFINITY },
+            DragPress { has_press: 1, binding: 1, x: f64::NEG_INFINITY, y: 1.0 },
+            DragPress { has_press: 1, binding: 1, x: 16384.5, y: 1.0 },
+            DragPress { has_press: 1, binding: 0, x: 1.0, y: -16385.0 },
+        ];
+        for press in bad {
+            let (json, _) = build_verdict(start, end, &id("win-1"), press);
+            let text = std::str::from_utf8(&json).expect("verdict is ASCII JSON");
+            assert_json_shape(text);
+            assert!(!cancelled_of(&json));
+            assert_eq!(reason_of(&json), "ok-moved");
+            assert!(!text.contains("\"press\""), "invalid press must omit");
+        }
+    }
+
+    #[test]
+    fn press_boundary_coordinates_are_echoed() {
+        let start = DragRect { x: 0, y: 0, w: 100, h: 100 };
+        let end = DragRect { x: 5, y: 0, w: 100, h: 100 };
+        let (json, correlation) = build_verdict(start, end, &id("win-1"), press(DRAG_PRESS_BINDING_CONFIGURED, -16384.0, 16384.0));
+        let text = std::str::from_utf8(&json).expect("verdict is ASCII JSON");
+        assert_json_shape(text);
+        let expected = format!("{{\"v\":1,\"cancelled\":false,\"finalRect\":{{\"x\":5,\"y\":0,\"w\":100,\"h\":100}},\"windowIdentity\":\"win-1\",\"correlation\":\"drag-{correlation}\",\"reason\":\"ok-moved\",\"press\":{{\"x\":-16384.0,\"y\":16384.0,\"binding\":\"configured\"}}}}");
+        assert_eq!(text, expected);
+    }
+
+    #[test]
     fn ffi_record_and_last_round_trip_without_unwind() {
         let start = DragRect { x: 0, y: 0, w: 120, h: 90 };
         let end = DragRect { x: 10, y: 0, w: 120, h: 90 };
         let bytes = id("ffi-win_1.2");
-        let correlation = drag_oracle_record(start, end, bytes.as_ptr(), bytes.len());
+        let correlation = drag_oracle_record(start, end, bytes.as_ptr(), bytes.len(), DragPress::absent());
         assert!(correlation > 0);
         let mut len = 0usize;
         let ptr = drag_oracle_last(&mut len as *mut usize);
@@ -174,11 +340,27 @@ mod tests {
     }
 
     #[test]
+    fn ffi_record_with_press_round_trips_evidence_without_unwind() {
+        let start = DragRect { x: 0, y: 0, w: 120, h: 90 };
+        let end = DragRect { x: 10, y: 0, w: 120, h: 90 };
+        let bytes = id("ffi-press-1");
+        let correlation = drag_oracle_record(start, end, bytes.as_ptr(), bytes.len(), press(DRAG_PRESS_BINDING_CONFIGURED, 7.5, 9.25));
+        assert!(correlation > 0);
+        let mut buf = vec![0u8; DRAG_ORACLE_MAX_JSON];
+        let taken = drag_oracle_last_copy(buf.as_mut_ptr(), buf.len());
+        assert!(taken > 0 && taken <= DRAG_ORACLE_MAX_JSON);
+        let text = std::str::from_utf8(&buf[..taken]).expect("verdict is ASCII JSON");
+        assert_json_shape(text);
+        let expected = format!("{{\"v\":1,\"cancelled\":false,\"finalRect\":{{\"x\":10,\"y\":0,\"w\":120,\"h\":90}},\"windowIdentity\":\"ffi-press-1\",\"correlation\":\"drag-{correlation}\",\"reason\":\"ok-moved\",\"press\":{{\"x\":7.5,\"y\":9.25,\"binding\":\"configured\"}}}}");
+        assert_eq!(text, expected);
+    }
+
+    #[test]
     fn ffi_null_identity_reports_empty_identity_reason() {
         let r = DragRect { x: 0, y: 0, w: 50, h: 50 };
         let moved = DragRect { x: 1, y: 0, w: 50, h: 50 };
         let correlation =
-            drag_oracle_record(r, moved, std::ptr::null(), 0);
+            drag_oracle_record(r, moved, std::ptr::null(), 0, DragPress::absent());
         assert!(correlation > 0);
         let mut len = 0usize;
         let ptr = drag_oracle_last(&mut len as *mut usize);
@@ -198,7 +380,7 @@ mod tests {
         let start = DragRect { x: 0, y: 0, w: 120, h: 90 };
         let end = DragRect { x: 11, y: 0, w: 120, h: 90 };
         let bytes = id("copy-win-1");
-        assert!(drag_oracle_record(start, end, bytes.as_ptr(), bytes.len()) > 0);
+        assert!(drag_oracle_record(start, end, bytes.as_ptr(), bytes.len(), DragPress::absent()) > 0);
         let mut len = 0usize;
         let ptr = drag_oracle_last(&mut len as *mut usize);
         assert!(!ptr.is_null() && len > 0);

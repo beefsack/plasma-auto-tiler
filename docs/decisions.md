@@ -931,9 +931,24 @@ ships.
   active, focused or remembered focus; keyboard resize and other operations
   retain their focus rules. On adapter or Planner rejection, converge to the
   retained layout with one bounded, drag-correlated reconcile, without retry
-  or loop. For a start well inside the window, follow KWin's exact
-  Meta+right-drag thirds (including its center branch); starts at the frame
-  edge retain the nearest-edge and corner-zone rule.
+  or loop. Without a matching native modifier-resize press, a start well
+  inside the window follows KWin's exact thirds (including its center
+  branch); starts at the frame edge retain the nearest-edge and corner-zone
+  rule.
+- User-approved 2026-09-24: the unified native effect passively observes
+  the configured modifier-resize button press without grabbing or consuming
+  input. A fresh press matching the same window at resize start selects
+  KWin 6.7.5 thirds regardless of the 64 px interior gate; absent/unusable
+  press evidence falls back to the prior Started-pointer classifier, with a
+  bounded fallback log. The effective binding is read from KWin when public
+  options are available; only an unavailable binding source uses and logs
+  the KWin source default. The unified effect and existing oracle endpoint
+  retain their identities.
+- User-approved interim move-drop rule, 2026-09-24: a tiled window moved
+  interactively suppresses ordinary reconcile during the gesture, then
+  converges to its retained layout on drop through one correlated, coalesced
+  restore marker, with no failed-dispatch retry. Floating moves remain
+  native-only. Drag-and-drop reorganisation is a separate later backlog item.
 - The drag oracle hosted in the disabled-by-default unified
   `plasma-auto-tiler-active-border` native effect records final drag geometry;
   after that effect's explicit enable, the
