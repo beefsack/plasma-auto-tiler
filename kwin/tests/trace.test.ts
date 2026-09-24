@@ -31,7 +31,7 @@ function traceValue(define: string | null): boolean {
     return global.KWIN_TRACE_ENABLED;
 }
 
-function dragLogs(define: string | null): string[] {
+function dragLogs(define: string | null, cancelled = false): string[] {
     const outDir = mkdtempSync(join(tmpdir(), "pat-trace-drag-"));
     const outFile = join(outDir, "main.js");
     const args = [
@@ -56,11 +56,11 @@ function dragLogs(define: string | null): string[] {
         callDbus: (_service: unknown, _path: unknown, _iface: unknown, _method: unknown, callback: (reply: unknown) => void): void => {
             callback(JSON.stringify({
                 v: 1,
-                cancelled: false,
+                cancelled,
                 finalRect: { x: 0, y: 0, w: 1, h: 1 },
                 windowIdentity: "win-1",
                 correlation: "drag-1",
-                reason: "ok-moved",
+                reason: cancelled ? "no-change" : "ok-moved",
             }));
         },
         log: (message: string): void => {
@@ -93,6 +93,17 @@ describe("compile-time KWin trace gate", () => {
         assert.deepEqual(dragLogs("1"), [
             "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
             "plasma-auto-tiler:route-diag:drag-verdict cancelled=false correlation=drag-1 reason=ok-moved",
+        ]);
+    });
+
+    it("emits the cancelled rejection in normal mode with correlation and reason", () => {
+        assert.deepEqual(dragLogs(null, true), [
+            "plasma-auto-tiler:route-diag:drag-cancelled correlation=drag-1 reason=no-change",
+        ]);
+        assert.deepEqual(dragLogs("1", true), [
+            "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
+            "plasma-auto-tiler:route-diag:drag-verdict cancelled=true correlation=drag-1 reason=no-change",
+            "plasma-auto-tiler:route-diag:drag-cancelled correlation=drag-1 reason=no-change",
         ]);
     });
 });

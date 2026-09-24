@@ -1569,6 +1569,32 @@ fn serialize_resize_reply(
         );
     }
     debug_assert!(plan.boundary.is_some(), "pointer plans carry a boundary");
+    if let Some(secondary) = &plan.secondary {
+        return planned_reply(
+            correlation_id,
+            plan.base_revision,
+            serde_json::json!({
+                "kind": "pointer-resize",
+                "capability": "pointer-resize",
+                "direction": direction_str(plan.direction),
+                "boundary": plan.boundary.unwrap_or(0),
+                "target_group": operation.target_group.0,
+                "focused_index": operation.focused_index,
+                "neighbor_index": operation.neighbor_index,
+                "old_shares": operation.old_shares,
+                "new_shares": operation.new_shares,
+                "direction2": direction_str(secondary.direction),
+                "boundary2": secondary.boundary,
+                "target_group2": secondary.operation.target_group.0,
+                "focused_index2": secondary.operation.focused_index,
+                "neighbor_index2": secondary.operation.neighbor_index,
+                "old_shares2": secondary.operation.old_shares,
+                "new_shares2": secondary.operation.new_shares,
+            }),
+            &plan.geometry,
+            focus,
+        );
+    }
     planned_reply(
         correlation_id,
         plan.base_revision,
@@ -2758,13 +2784,15 @@ impl Planner {
 
     fn evaluate_pointer_resize_retained(&mut self, ctx: &Validated) -> String {
         // Strict tagged decode in place (see `SyncCommand`).
-        let (window_raw, direction_raw, boundary) =
+        let (window_raw, direction_raw, boundary, direction2_raw, boundary2) =
             match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
                 Ok(SyncCommand::PointerResize {
                     window,
                     direction,
                     boundary,
-                }) => (window, direction, boundary),
+                    direction2,
+                    boundary2,
+                }) => (window, direction, boundary, direction2, boundary2),
                 Ok(_) => {
                     return snapshot_invalid(
                         ctx.request.correlation_id.clone(),
@@ -2798,15 +2826,37 @@ impl Planner {
                 MSG_DIRECTION,
             );
         }
+        // Corner second axis is both-or-neither; a half-present pair is an
+        // op shape violation, and an unparsable second direction binds the
+        // exact direction refusal like the primary.
+        if direction2_raw.is_some() != boundary2.is_some() {
+            return snapshot_invalid(
+                ctx.request.correlation_id.clone(),
+                MSG_OPAQUE_ID,
+                "pointer-resize-op-invalid",
+            );
+        }
+        if let Some(second) = &direction2_raw
+            && parse_direction(second).is_none()
+        {
+            return rejected(
+                ctx.request.correlation_id.clone(),
+                "direction-invalid",
+                MSG_DIRECTION,
+            );
+        }
         // Engine-owned pointer-resize orchestration: the validated
-        // window/direction plus the opaquely carried boundary cross in the
-        // typed command; seed ordering, focus sync, pointer-gated
-        // propose/commit, and store run in `Engine::handle`. Serialization
-        // funnels through the typed choke point.
+        // window/direction plus the opaquely carried boundary (and the
+        // optional corner second axis) cross in the typed command; seed
+        // ordering, focus sync, pointer-gated propose/commit, and store run
+        // in `Engine::handle`. Serialization funnels through the typed
+        // choke point.
         let core_command = tiler_core::boundary::CoreCommand::PointerResize {
             window: window_raw,
             direction: direction_raw,
             boundary,
+            direction2: direction2_raw,
+            boundary2,
         };
         let event = core_event(ctx, &core_command);
         let reply = self.engine.handle(&event);
@@ -3757,6 +3807,13 @@ enum SyncCommand {
         window: String,
         direction: String,
         boundary: i32,
+        /// Corner second axis: both present for an atomic corner resize,
+        /// both absent for an ordinary single-axis request. `deny_unknown_fields`
+        /// is preserved; single-axis JSON is shape-identical to before.
+        #[serde(default)]
+        direction2: Option<String>,
+        #[serde(default)]
+        boundary2: Option<i32>,
     },
     #[serde(rename = "toggle-float")]
     ToggleFloat {
@@ -3894,10 +3951,14 @@ fn core_command_from_sync(command: &SyncCommand) -> Option<tiler_core::boundary:
             window,
             direction,
             boundary,
+            direction2,
+            boundary2,
         } => Some(CoreCommand::PointerResize {
             window: window.clone(),
             direction: direction.clone(),
             boundary: *boundary,
+            direction2: direction2.clone(),
+            boundary2: *boundary2,
         }),
         SyncCommand::ToggleFloat { window, float_rect } => Some(CoreCommand::ToggleFloat {
             window: window.clone(),
@@ -5162,6 +5223,180 @@ mod tests {
     }
 
     #[test]
+    fn retained_pointer_resize_corner_commits_both_axes_in_one_request() {
+        // Nested retained layout from two horizontal admits plus one tall
+        // admit: root H [win-1 | V[win-2, win-3]] over 1200x800 with the
+        // shared horizontal edge at 600 and the shared vertical edge at
+        // 400, focused on win-3. One corner request must plan and commit
+        // both axes atomically: a single planned reply whose geometry moves
+        // both shared edges, advancing exactly one revision.
+        let mut planner = seed_pointer_planner();
+        let seed3 = retained_request(
+            "ptr-seed-3",
+            "owner-1",
+            "gen-1",
+            "win-3",
+            &[
+                ("win-1", 0, 0, 100, 80),
+                ("win-2", 200, 0, 100, 80),
+                ("win-3", 400, 0, 100, 300),
+            ],
+            admit_body("win-3"),
+        );
+        let seeded = parse_reply(&planner.evaluate(&seed3));
+        assert_eq!(seeded["outcome"], "planned", "{seeded}");
+        let request = retained_request(
+            "ptr-corner-1",
+            "owner-1",
+            "gen-1",
+            "win-3",
+            &[
+                ("win-1", 0, 0, 100, 80),
+                ("win-2", 200, 0, 100, 80),
+                ("win-3", 400, 0, 100, 300),
+            ],
+            serde_json::json!({
+                "op": "pointer-resize",
+                "window": "win-3",
+                "direction": "left",
+                "boundary": 590,
+                "direction2": "up",
+                "boundary2": 390,
+            }),
+        );
+        let reply = parse_reply(&planner.evaluate(&request));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["base_revision"], 3, "{reply}");
+        assert_eq!(reply["detail"]["kind"], "pointer-resize", "{reply}");
+        assert_eq!(reply["detail"]["capability"], "pointer-resize", "{reply}");
+        assert_eq!(reply["detail"]["direction"], "left", "{reply}");
+        assert_eq!(reply["detail"]["boundary"], 590, "{reply}");
+        assert_eq!(reply["detail"]["direction2"], "up", "{reply}");
+        assert_eq!(reply["detail"]["boundary2"], 390, "{reply}");
+        assert!(reply["detail"]["target_group"].is_string(), "{reply}");
+        assert!(reply["detail"]["target_group2"].is_string(), "{reply}");
+        assert_ne!(
+            reply["detail"]["target_group"], reply["detail"]["target_group2"],
+            "corner spans two split groups: {reply}"
+        );
+        let rect_of = |window: &str| {
+            reply["desired_geometry"]
+                .as_array()
+                .expect("geometry")
+                .iter()
+                .find(|g| g["window"] == window)
+                .expect("member")
+                .get("rect")
+                .expect("rect")
+                .clone()
+        };
+        assert_eq!(rect_of("win-3")["x"], 590, "{reply}");
+        assert_eq!(rect_of("win-3")["y"], 390, "{reply}");
+        assert_eq!(
+            rect_of("win-1")["x"].as_i64().unwrap() + rect_of("win-1")["w"].as_i64().unwrap(),
+            590,
+            "{reply}"
+        );
+        assert_eq!(
+            rect_of("win-2")["y"].as_i64().unwrap() + rect_of("win-2")["h"].as_i64().unwrap(),
+            390,
+            "{reply}"
+        );
+        assert_geometry_covers(&reply, &["win-1", "win-2", "win-3"]);
+    }
+
+    #[test]
+    fn retained_pointer_resize_corner_refusals_are_exact() {
+        let mut planner = seed_pointer_planner();
+        let seed3 = retained_request(
+            "ptr-seed-3",
+            "owner-1",
+            "gen-1",
+            "win-3",
+            &[
+                ("win-1", 0, 0, 100, 80),
+                ("win-2", 200, 0, 100, 80),
+                ("win-3", 400, 0, 100, 300),
+            ],
+            admit_body("win-3"),
+        );
+        assert_eq!(parse_reply(&planner.evaluate(&seed3))["outcome"], "planned");
+        let mut corner = |correlation: &str, command: serde_json::Value| {
+            parse_reply(&planner.evaluate(&retained_request(
+                correlation,
+                "owner-1",
+                "gen-1",
+                "win-3",
+                &[
+                    ("win-1", 0, 0, 100, 80),
+                    ("win-2", 200, 0, 100, 80),
+                    ("win-3", 400, 0, 100, 300),
+                ],
+                command,
+            )))
+        };
+        // Same-axis pair cannot express a corner.
+        let same_axis = corner(
+            "ptr-corner-bad-1",
+            serde_json::json!({
+                "op": "pointer-resize",
+                "window": "win-3",
+                "direction": "left",
+                "boundary": 590,
+                "direction2": "right",
+                "boundary2": 700,
+            }),
+        );
+        assert_eq!(same_axis["outcome"], "rejected", "{same_axis}");
+        assert_eq!(same_axis["kind"], "direction-invalid", "{same_axis}");
+        // Half-present pair is an op shape violation.
+        let half = corner(
+            "ptr-corner-bad-2",
+            serde_json::json!({
+                "op": "pointer-resize",
+                "window": "win-3",
+                "direction": "left",
+                "boundary": 590,
+                "direction2": "up",
+            }),
+        );
+        assert_eq!(half["outcome"], "rejected", "{half}");
+        assert_eq!(half["kind"], "snapshot-invalid", "{half}");
+        assert_eq!(half["detail"], "pointer-resize-op-invalid", "{half}");
+        // Unparsable second direction binds the direction refusal.
+        let bad_dir = corner(
+            "ptr-corner-bad-3",
+            serde_json::json!({
+                "op": "pointer-resize",
+                "window": "win-3",
+                "direction": "left",
+                "boundary": 590,
+                "direction2": "sideways",
+                "boundary2": 390,
+            }),
+        );
+        assert_eq!(bad_dir["outcome"], "rejected", "{bad_dir}");
+        assert_eq!(bad_dir["kind"], "direction-invalid", "{bad_dir}");
+        // No-op on either grabbed axis refuses the whole corner as
+        // unchanged with no plan and no pending: the committed edge still
+        // sits at 600/400 afterwards.
+        let noop = corner(
+            "ptr-corner-bad-4",
+            serde_json::json!({
+                "op": "pointer-resize",
+                "window": "win-3",
+                "direction": "left",
+                "boundary": 600,
+                "direction2": "up",
+                "boundary2": 390,
+            }),
+        );
+        assert_eq!(noop["outcome"], "rejected", "{noop}");
+        assert_eq!(noop["kind"], "unchanged", "{noop}");
+        assert!(noop.get("desired_geometry").is_none(), "{noop}");
+    }
+
+    #[test]
     fn retained_pointer_resize_reflows_allocation_and_shares() {
         let mut planner = seed_pointer_planner();
         let request = retained_request(
@@ -5951,6 +6186,7 @@ mod tests {
             mode: Some(ResizeMode::Outwards),
             boundary: None,
             operation: resize_op.clone(),
+            secondary: None,
             geometry: Vec::new(),
             focus_domain: ctx.domain_key.clone(),
             focus_leaf: focus_leaf.clone(),
@@ -5965,6 +6201,7 @@ mod tests {
             mode: None,
             boundary: Some(120),
             operation: resize_op,
+            secondary: None,
             geometry: Vec::new(),
             focus_domain: ctx.domain_key.clone(),
             focus_leaf: focus_leaf.clone(),

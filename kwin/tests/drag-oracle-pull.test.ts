@@ -343,7 +343,7 @@ describe("drag-oracle pull transport", () => {
         pull.pullVerdict();
         assert.deepEqual(logs, [
             "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
-            "plasma-auto-tiler:route-diag:drag-reply-invalid",
+            "plasma-auto-tiler:route-diag:drag-reply-invalid correlation=none",
         ]);
         assert.ok(!logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-unavailable"));
     });
@@ -431,6 +431,7 @@ describe("drag-oracle pull entry wiring", () => {
         assert.deepEqual(logs, [
             "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
             "plasma-auto-tiler:route-diag:drag-verdict cancelled=true correlation=drag-4 reason=no-change",
+            "plasma-auto-tiler:route-diag:drag-cancelled correlation=drag-4 reason=no-change",
         ]);
         (handle as { stop: () => void }).stop();
         assert.equal(first.disconnects(), 1);

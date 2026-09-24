@@ -2,7 +2,7 @@ import { connectSignal, isConnectableSignal, readSignal } from "./signal-capabil
 import { KWIN_TRACE_ENABLED } from "./trace";
 export const DRAG_ORACLE_SERVICE = "org.plasmaautotiler.DragOracle"; export const DRAG_ORACLE_OBJECT = "/org/plasmaautotiler/DragOracle"; export const DRAG_ORACLE_INTERFACE = "org.plasmaautotiler.DragOracle1"; export const DRAG_ORACLE_METHOD = "LastVerdict";
 export const DRAG_ORACLE_MAX_REPLY_BYTES = 64 * 1024; export const DRAG_ORACLE_MAX_TOKEN_LEN = 128; export const DRAG_ORACLE_MAX_REASON_LEN = 64; export const DRAG_ORACLE_MAX_ID_LEN = 128;
-const ROUTE_DIAG = "plasma-auto-tiler:route-diag"; const VERDICT_PREFIX = `${ROUTE_DIAG}:drag-verdict`; const PULL_DISPATCH_LINE = `${ROUTE_DIAG}:drag-pull action=dispatch`; const CALL_MISSING_LINE = `${ROUTE_DIAG}:drag-call-missing`; const CALL_THROWN_LINE = `${ROUTE_DIAG}:drag-call-thrown`; const REPLY_INVALID_LINE = `${ROUTE_DIAG}:drag-reply-invalid`; const ROUTE_MISSING_LINE = `${ROUTE_DIAG}:drag-route-missing`; const ENTRY_WORKSPACE_MISSING = `${ROUTE_DIAG}:drag-entry-workspace-missing`; const ENTRY_CALL_MISSING = `${ROUTE_DIAG}:drag-entry-call-missing`; const ENTRY_CALL_THROWN = `${ROUTE_DIAG}:drag-entry-call-thrown`; const ENTRY_LIST_MISSING = `${ROUTE_DIAG}:drag-entry-list-missing`; const ENTRY_LIST_THROWN = `${ROUTE_DIAG}:drag-entry-list-thrown`; const ENTRY_LIST_INVALID = `${ROUTE_DIAG}:drag-entry-list-invalid`; const ENTRY_FINISHED_INVALID = `${ROUTE_DIAG}:drag-entry-finished-invalid`; const ENTRY_NO_WINDOWS = `${ROUTE_DIAG}:drag-entry-no-windows`; const ENTRY_NO_FINISHED = `${ROUTE_DIAG}:drag-entry-no-finished`; const ENTRY_ADDED_INVALID = `${ROUTE_DIAG}:drag-entry-added-invalid`; const ENTRY_ADDED_CONNECT_FAILED = `${ROUTE_DIAG}:drag-entry-added-connect-failed`; const MAX_LIST = 1024;
+const ROUTE_DIAG = "plasma-auto-tiler:route-diag"; const VERDICT_PREFIX = `${ROUTE_DIAG}:drag-verdict`; const PULL_DISPATCH_LINE = `${ROUTE_DIAG}:drag-pull action=dispatch`; const CALL_MISSING_LINE = `${ROUTE_DIAG}:drag-call-missing`; const CALL_THROWN_LINE = `${ROUTE_DIAG}:drag-call-thrown`; const REPLY_INVALID_LINE = `${ROUTE_DIAG}:drag-reply-invalid correlation=none`; const ROUTE_MISSING_LINE = `${ROUTE_DIAG}:drag-route-missing`; const CANCELLED_PREFIX = `${ROUTE_DIAG}:drag-cancelled`; const ENTRY_WORKSPACE_MISSING = `${ROUTE_DIAG}:drag-entry-workspace-missing`; const ENTRY_CALL_MISSING = `${ROUTE_DIAG}:drag-entry-call-missing`; const ENTRY_CALL_THROWN = `${ROUTE_DIAG}:drag-entry-call-thrown`; const ENTRY_LIST_MISSING = `${ROUTE_DIAG}:drag-entry-list-missing`; const ENTRY_LIST_THROWN = `${ROUTE_DIAG}:drag-entry-list-thrown`; const ENTRY_LIST_INVALID = `${ROUTE_DIAG}:drag-entry-list-invalid`; const ENTRY_FINISHED_INVALID = `${ROUTE_DIAG}:drag-entry-finished-invalid`; const ENTRY_NO_WINDOWS = `${ROUTE_DIAG}:drag-entry-no-windows`; const ENTRY_NO_FINISHED = `${ROUTE_DIAG}:drag-entry-no-finished`; const ENTRY_ADDED_INVALID = `${ROUTE_DIAG}:drag-entry-added-invalid`; const ENTRY_ADDED_CONNECT_FAILED = `${ROUTE_DIAG}:drag-entry-added-connect-failed`; const MAX_LIST = 1024;
 const EMPTY_IDENTITY_REASONS: ReadonlyArray<string> = ["no-observation", "oracle-unavailable", "oracle-panic", "empty-identity", "identity-invalid", "identity-too-long", "geometry-invalid", "geometry-out-of-range"];
 const VERDICT_REASONS: ReadonlyArray<string> = [...EMPTY_IDENTITY_REASONS, "no-change", "ok-moved"];
 export interface DragOracleFinishContext { readonly ref: object; readonly finishEpoch: number; }
@@ -52,8 +52,92 @@ export function parseDragOracleVerdict(reply: unknown): DragOracleVerdict | null
     return { cancelled: cancelled as boolean, finalRect: { x: rect["x"] as number, y: rect["y"] as number, w: rect["w"] as number, h: rect["h"] as number }, windowIdentity: identity as string, correlation: parsed["correlation"] as string, reason: parsed["reason"] as string };
 }
 export function formatDragOracleVerdict(verdict: Pick<DragOracleVerdict, "cancelled" | "correlation" | "reason">): string { return `${VERDICT_PREFIX} cancelled=${verdict.cancelled === true ? "true" : "false"} correlation=${verdict.correlation} reason=${verdict.reason}`; }
-// Edge helper: stepped payload only, never live geometry. Exactly one
-// edge must move with the opposite fixed; otherwise null (no-change) or mixed.
+// Grabbed-edge helpers: the grabbed edge(s) are captured at Started,
+// final targets resolve from the authoritative final rect. Secondary
+// (non-grabbed) edge deltas are ignored, never a rejection.
+//
+// KWin research (script + effect interfaces available to this project):
+// Window exposes only move/resize booleans plus
+// interactiveMoveResizeStarted/Stepped/Finished; Stepped carries geometry
+// only, Finished carries no edge or cancel flag (window.h, window.cpp).
+// The effect route (EffectWindow windowStart/Step/FinishUserMovedResized,
+// EffectsHandler mouseChanged) likewise carries no grabbed edge. No
+// reliable KWin-reported grabbed edge exists on either route, and no
+// KWin-pinned corner-handle size is reachable from the available
+// interfaces or the repo's pinned-source docs, so identification uses the
+// nearest edge(s) to workspace.cursorPos at start with a corner only when
+// the pointer sits within a small fixed radius of both physical edges.
+// The radius is absolute pixels, not a window fraction: a proportional
+// zone (e.g. outer thirds) misclassifies ordinary edge grips on wide or
+// tall windows, where most of the edge lies hundreds of pixels from the
+// corner. 16px is conservative: a corner classification means the pointer
+// is unambiguously on both edges, while genuine corner presses (pointer
+// essentially on the corner pixel at grab) are captured. A corner press
+// just outside the radius reads single-axis (partial intent applies);
+// an edge grip just inside still reads corner (the whole corner then
+// refuses only if an axis is truly unusable). Stepped geometry is never
+// used as grabbed intent.
+export const ORACLE_CORNER_RADIUS_PX = 16;
+export type OracleGrabSource = "nearest-pointer";
+export interface OracleGrabbed { readonly horizontal: "left" | "right" | null; readonly vertical: "up" | "down" | null; }
+export interface OraclePointer { readonly x: number; readonly y: number; }
+export function identifyGrabbedEdges(start: DragOracleFinalRect, pointer: OraclePointer | null): { grabbed: OracleGrabbed; source: OracleGrabSource } | null {
+    try {
+        if (pointer === null) return null;
+        if (!Number.isSafeInteger(pointer.x) || !Number.isSafeInteger(pointer.y)) return null;
+        const px = pointer.x;
+        const py = pointer.y;
+        const dLeft = Math.abs(px - start.x);
+        const dRight = Math.abs(px - (start.x + start.w));
+        const dUp = Math.abs(py - start.y);
+        const dDown = Math.abs(py - (start.y + start.h));
+        for (const d of [dLeft, dRight, dUp, dDown]) if (!Number.isFinite(d)) return null;
+        const hNearest = dLeft <= dRight ? "left" : "right";
+        const vNearest = dUp <= dDown ? "up" : "down";
+        const dH = hNearest === "left" ? dLeft : dRight;
+        const dV = vNearest === "up" ? dUp : dDown;
+        if (dH <= ORACLE_CORNER_RADIUS_PX && dV <= ORACLE_CORNER_RADIUS_PX) {
+            return { grabbed: { horizontal: hNearest as "left" | "right", vertical: vNearest as "up" | "down" }, source: "nearest-pointer" };
+        }
+        if (dH <= dV) return { grabbed: { horizontal: hNearest as "left" | "right", vertical: null }, source: "nearest-pointer" };
+        return { grabbed: { horizontal: null, vertical: vNearest as "up" | "down" }, source: "nearest-pointer" };
+    } catch (_e) {
+        return null;
+    }
+}
+export interface OracleResizeTarget { readonly direction: string; readonly boundary: number; }
+// Targets resolve in fixed horizontal-first order (left/right before
+// up/down), so a corner pair is always [horizontal, vertical] for the
+// atomic dual-axis intent. Null when no grabbed axis moved.
+export function resolveOracleResizeTargets(start: DragOracleFinalRect, final: DragOracleFinalRect, grabbed: OracleGrabbed): { targets: OracleResizeTarget[]; ignored: string[] } | null {
+    try {
+        const targets: OracleResizeTarget[] = [];
+        const ignored: string[] = [];
+        const startRight = start.x + start.w;
+        const startBottom = start.y + start.h;
+        const finalRight = final.x + final.w;
+        const finalBottom = final.y + final.h;
+        const pushOrIgnore = (dir: string, startEdge: number, finalEdge: number, isGrabbed: boolean): void => {
+            if (isGrabbed) {
+                if (finalEdge !== startEdge) targets.push({ direction: dir, boundary: finalEdge });
+            } else if (finalEdge !== startEdge) {
+                ignored.push(`${dir}:${String(startEdge)}->${String(finalEdge)}`);
+            }
+        };
+        pushOrIgnore("left", start.x, final.x, grabbed.horizontal === "left");
+        pushOrIgnore("right", startRight, finalRight, grabbed.horizontal === "right");
+        pushOrIgnore("up", start.y, final.y, grabbed.vertical === "up");
+        pushOrIgnore("down", startBottom, finalBottom, grabbed.vertical === "down");
+        if (targets.length === 0) return null;
+        return { targets, ignored };
+    } catch (_e) {
+        return null;
+    }
+}
+// Legacy strict helper kept for trace-only measurement: stepped payload
+// only, never live geometry. Exactly one edge must move with the opposite
+// fixed; otherwise null (no-change) or mixed. The pointer route no longer
+// uses this; it uses identifyGrabbedEdges + resolveOracleResizeTargets.
 export function deriveOracleEdge(start: DragOracleFinalRect, final: DragOracleFinalRect): { direction: string; boundary: number } | "mixed" | null {
     const startRight = start.x + start.w;
     const startBottom = start.y + start.h;
@@ -92,8 +176,15 @@ export class DragOraclePull {
         // Every parsed verdict (including cancelled) notifies the optional
         // finish-keyed completion exactly once so the entry can consume its
         // per-window captured start; the notification runs after routing so
-        // the route still observes the captured start.
-        if (verdict.cancelled === true) { this.notifySettled(verdict, ctx); return; }
+        // the route still observes the captured start. A cancelled verdict
+        // always emits one bounded normal-mode line (correlation and reason
+        // are closed-vocabulary validated tokens) so the rejection is
+        // visible without trace; logging never affects behavior.
+        if (verdict.cancelled === true) {
+            try { this.env.log(`${CANCELLED_PREFIX} correlation=${verdict.correlation} reason=${verdict.reason}`); } catch (_e) { /* fail-closed */ }
+            this.notifySettled(verdict, ctx);
+            return;
+        }
         const route = this.env.routePointer;
         if (typeof route !== "function") { this.logToken(ROUTE_MISSING_LINE); this.notifySettled(verdict, ctx); return; }
         try { route(verdict, ctx); } catch (_e) { /* fail-closed */ }

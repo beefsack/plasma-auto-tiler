@@ -8,12 +8,16 @@ each review claim before acting; it was a static sampling review. User
 decisions of 2026-09-24 are recorded under
 [Architecture Direction](decisions.md#architecture-direction).
 
-- P0 | Drag resize rejection | Next session's first item. On `H[W1 V[W2 W3]]`
-  (W1/W2 Ghostty, W3 Firefox): grow W3 vertically, shrink vertically, grow
-  horizontally all worked; the following vertical shrink was rejected and W3
-  reverted to its original size as the drag started (expected: shrink). Trace
-  `/run/user/1000/plasma-auto-tiler-dev.2Wcery.log`, last drag. Not yet
-  investigated. May inform AR8.
+- P0 | Drop-intent edge drag | Offline implementation and regressions complete:
+  start-pointer grab detection, oracle final grabbed-edge targets, ignored
+  secondary deltas and one dual-axis corner request. Next: user accepts on live
+  Wayland Firefox (including opposite-edge jitter), a size-increment client,
+  corner, Esc and zero-move drags. AR8 oracle measurement remains separate.
+- P1 | Ghostty drag and gap-drag research | Read-only: why Ghostty cannot be
+  edge-dragged; whether KWin's modifier right-drag resize works for it and
+  reaches drop-intent handling; which routes exist for a native gap-drag
+  anchor (dragging the gap between tiled windows moves their split) and their
+  reliability/cost. Decide gap drag after this.
 - P0 | AR8 Drag oracle measurement | 7.1: trace-mode finish/first-change/verdict
   logging instrumented offline. Next: user captures ~20 Wayland edge drags,
   incl. a size-increment terminal and Esc cancellation, using

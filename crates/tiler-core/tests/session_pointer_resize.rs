@@ -1010,3 +1010,227 @@ fn pointer_two_sided_correction_preserved() {
         plan.resize_plan.operation.old_shares
     );
 }
+
+fn focus_up_commit(session: &mut Session, corr: &str) {
+    let k = key("out-1", "ws-1");
+    let w = focused_window(session, &k);
+    let obs = complete_obs(session);
+    let base = session.accepted_revision();
+    let fplan = session
+        .propose_focus(
+            &k,
+            &w,
+            Direction::Up,
+            &obs,
+            &correlation(corr),
+            &tiler_core::contract::FocusCapabilities::full(),
+        )
+        .unwrap_or_else(|e| panic!("focus up: {e:?}"));
+    session
+        .acknowledge(&AdapterAck::new(
+            correlation(corr),
+            owner(),
+            generation(),
+            base,
+            AckOutcome::Accepted,
+        ))
+        .expect("ack");
+    session
+        .verify_focus(&tiler_core::contract::FocusPostObservation::new(
+            Observation::new(owner(), generation(), base, 700 + base),
+            correlation(corr),
+            true,
+            fplan.dispatch.preconditions.clone(),
+            fplan.dispatch.operation.clone(),
+        ))
+        .expect("focus commit");
+}
+
+#[allow(clippy::too_many_arguments)]
+fn corner_commit(
+    session: &mut Session,
+    domain: &DomainKey,
+    window: &WindowId,
+    direction_h: Direction,
+    boundary_h: i32,
+    direction_v: Direction,
+    boundary_v: i32,
+    corr: &str,
+) -> tiler_core::session::SessionResizePlan {
+    let obs = complete_obs(session);
+    let base = session.accepted_revision();
+    let plan = session
+        .propose_pointer_resize_corner(
+            domain,
+            window,
+            direction_h,
+            boundary_h,
+            direction_v,
+            boundary_v,
+            &obs,
+            &correlation(corr),
+            &ResizeCapabilities::full(),
+        )
+        .unwrap_or_else(|e| {
+            panic!("corner {direction_h:?}@{boundary_h} {direction_v:?}@{boundary_v}: {e:?}")
+        });
+    session
+        .acknowledge(&AdapterAck::new(
+            correlation(corr),
+            owner(),
+            generation(),
+            base,
+            AckOutcome::Accepted,
+        ))
+        .expect("ack");
+    let secondary = plan
+        .dispatch
+        .secondary_operation
+        .clone()
+        .expect("corner dispatch binds both operations");
+    let post = ResizePostObservation::new_with_secondary(
+        Observation::new(owner(), generation(), base, 960 + base),
+        correlation(corr),
+        true,
+        plan.dispatch.preconditions.clone(),
+        plan.dispatch.operation.clone(),
+        Some(secondary),
+    );
+    let commit = session.verify_resize(&post).expect("verify corner");
+    assert_eq!(commit.revision, base + 1);
+    assert!(!session.has_pending());
+    plan
+}
+
+fn nested_focus_win2() -> (Session, DomainKey, WindowId) {
+    let mut s = single_session();
+    admit_commit(&mut s, "win-1", true, "c-1");
+    admit_commit(&mut s, "win-2", true, "c-2");
+    admit_commit(&mut s, "win-3", false, "c-3");
+    focus_up_commit(&mut s, "f-1");
+    let k = key("out-1", "ws-1");
+    let w = focused_window(&s, &k);
+    assert_eq!(w.0, "win-2");
+    (s, k, w)
+}
+
+#[test]
+fn corner_commits_both_axes_through_one_pending_transaction() {
+    let (mut s, k, w) = nested_focus_win2();
+    // Accepted nested layout: root H [win-1 | V[win-2, win-3]] over
+    // 800x600, so the shared horizontal edge sits at 400 and the shared
+    // vertical edge at 300. One corner request moves both.
+    let base = s.accepted_revision();
+    let plan = corner_commit(
+        &mut s,
+        &k,
+        &w,
+        Direction::Left,
+        390,
+        Direction::Down,
+        310,
+        "p-1",
+    );
+    assert_eq!(s.accepted_revision(), base + 1);
+    let secondary = plan.secondary_plan.as_ref().expect("secondary plan");
+    assert_eq!(plan.resize_plan.intent.direction, Direction::Left);
+    assert_eq!(secondary.intent.direction, Direction::Down);
+    assert_eq!(
+        plan.dispatch.secondary_operation.as_deref(),
+        Some(&secondary.operation)
+    );
+    // win-2 sits in the right child of the outer horizontal group and the
+    // top child of the inner vertical group: the corner moves its left edge
+    // to 390 and its bottom edge to 310.
+    let win2 = plan
+        .desired_geometry
+        .iter()
+        .find(|g| g.window.0 == "win-2")
+        .expect("win-2 geometry");
+    assert_eq!(win2.rect.x, 390);
+    assert_eq!(win2.rect.x + win2.rect.w, 800);
+    assert_eq!(win2.rect.y + win2.rect.h, 310);
+    let win1 = plan
+        .desired_geometry
+        .iter()
+        .find(|g| g.window.0 == "win-1")
+        .expect("win-1 geometry");
+    assert_eq!(win1.rect.x + win1.rect.w, 390);
+    let win3 = plan
+        .desired_geometry
+        .iter()
+        .find(|g| g.window.0 == "win-3")
+        .expect("win-3 geometry");
+    assert_eq!(win3.rect.x, 390);
+    assert_eq!(win3.rect.y, 310);
+    assert_eq!(
+        s.focus(),
+        (Some(k.clone()), Some(plan.desired_focus_leaf.clone()))
+    );
+}
+
+#[test]
+fn corner_refuses_unchanged_when_either_axis_is_a_noop() {
+    let (mut s, k, w) = nested_focus_win2();
+    // Horizontal edge already at 400: the corner is a no-op on that axis.
+    let obs = complete_obs(&s);
+    let refused = s.propose_pointer_resize_corner(
+        &k,
+        &w,
+        Direction::Left,
+        400,
+        Direction::Down,
+        310,
+        &obs,
+        &correlation("p-noop-h"),
+        &ResizeCapabilities::full(),
+    );
+    assert!(
+        matches!(refused, Err(ProposeError::Refused(RefusalKind::Unchanged))),
+        "{refused:?}"
+    );
+    assert!(!s.has_pending());
+    // Vertical edge already at 300: likewise refused as a whole corner.
+    let obs = complete_obs(&s);
+    let refused = s.propose_pointer_resize_corner(
+        &k,
+        &w,
+        Direction::Left,
+        390,
+        Direction::Down,
+        300,
+        &obs,
+        &correlation("p-noop-v"),
+        &ResizeCapabilities::full(),
+    );
+    assert!(
+        matches!(refused, Err(ProposeError::Refused(RefusalKind::Unchanged))),
+        "{refused:?}"
+    );
+    assert!(!s.has_pending());
+}
+
+#[test]
+fn corner_refuses_same_axis_pair_as_malformed() {
+    let (mut s, k, w) = nested_focus_win2();
+    let obs = complete_obs(&s);
+    let refused = s.propose_pointer_resize_corner(
+        &k,
+        &w,
+        Direction::Left,
+        390,
+        Direction::Right,
+        700,
+        &obs,
+        &correlation("p-axes"),
+        &ResizeCapabilities::full(),
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(ProposeError::Refused(RefusalKind::MalformedInput))
+        ),
+        "{refused:?}"
+    );
+    assert!(!s.has_pending());
+}

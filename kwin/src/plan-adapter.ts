@@ -2705,12 +2705,15 @@ export class PlanAdapter {
         }
     }
 
-    // Oracle route: exactly one strict pointer-resize from the
-    // authoritative final rect. Strict decoding only; fail-closed false when
-    // the window, direction, or boundary cannot be safely bound. Defers
-    // through the single pending slot when a flight is active, never bypasses
-    // it, retries, or guesses.
-    requestPointerResize(windowId: unknown, direction: unknown, boundary: unknown): boolean {
+    // Oracle route: one pointer-resize intent from the authoritative final
+    // rect, single-axis or atomic corner (dual-axis). Strict decoding only;
+    // fail-closed false when the window, direction(s), or boundary(ies)
+    // cannot be safely bound. A corner carries both axes in exactly one
+    // intent through the single pending slot (never two concurrent
+    // requests); single-axis wire shape is unchanged. Defers through the
+    // single pending slot when a flight is active, never bypasses it,
+    // retries, or guesses.
+    requestPointerResize(windowId: unknown, direction: unknown, boundary: unknown, direction2?: unknown, boundary2?: unknown): boolean {
         if (!this.enabled) {
             this.logToken(`${LOG_PREFIX}:pointer-refused-disabled`);
             return false;
@@ -2726,6 +2729,26 @@ export class PlanAdapter {
         if (!isFiniteInt(boundary) || (boundary as number) < -16384 || (boundary as number) > 16384) {
             this.logToken(`${LOG_PREFIX}:pointer-refused-boundary`);
             return false;
+        }
+        // Corner second axis is both-or-neither; a half-present pair, an
+        // unparsable second direction, or a same-axis pair binds the exact
+        // direction refusal, and an out-of-range second boundary binds the
+        // exact boundary refusal. Single-axis calls never reach this block.
+        const corner = direction2 !== undefined || boundary2 !== undefined;
+        if (corner) {
+            if (!isDirection(direction2)) {
+                this.logToken(`${LOG_PREFIX}:pointer-refused-direction`);
+                return false;
+            }
+            if (!isFiniteInt(boundary2) || (boundary2 as number) < -16384 || (boundary2 as number) > 16384) {
+                this.logToken(`${LOG_PREFIX}:pointer-refused-boundary`);
+                return false;
+            }
+            const horizontal = (value: string): boolean => value === "left" || value === "right";
+            if (horizontal(direction as string) === horizontal(direction2 as string)) {
+                this.logToken(`${LOG_PREFIX}:pointer-refused-direction`);
+                return false;
+            }
         }
         if (this.blockedBySend()) {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=pointer-resize`);
@@ -2765,7 +2788,9 @@ export class PlanAdapter {
             op: "pointer-resize",
             snapshot,
             removed: null,
-            body: { op: "pointer-resize", window: windowId as string, direction, boundary },
+            body: corner
+                ? { op: "pointer-resize", window: windowId as string, direction, boundary, direction2, boundary2 }
+                : { op: "pointer-resize", window: windowId as string, direction, boundary },
             pointerSource: windowId as string,
         };
         // A final-geometry pointer route is selected ahead of the ordinary

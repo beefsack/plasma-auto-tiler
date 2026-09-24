@@ -25,7 +25,7 @@
 // shortcut-failed line and one bounded plan-ready startup line.
 
 import { DomainGaps, readDomainGaps } from "./domain-gap";
-import { deriveOracleEdge, startDragOraclePullEntry, DragOracleFinishContext, DragOracleVerdict } from "./drag-oracle-pull";
+import { identifyGrabbedEdges, resolveOracleResizeTargets, startDragOraclePullEntry, DragOracleFinishContext, DragOracleVerdict, OracleGrabbed, OracleGrabSource } from "./drag-oracle-pull";
 import {
     DRAG_MEASURE_LATER_TIMEOUT_MS,
     DRAG_MEASURE_VERDICT_TIMEOUT_MS,
@@ -3552,17 +3552,25 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     } catch (error) {
         void error;
     }
-    // Oracle route: preserve start rect plus move/resize classification
-    // at Started, then on a non-cancelled LastVerdict route exactly one strict
-    // pointer-resize derived from the authoritative final rect. Cancelled is a
-    // strict no-op; derive failures fail closed with exact bounded reasons.
+    // Oracle route: preserve start rect, move/resize classification, start
+    // pointer, and grabbed edge(s) at Started, then on a non-cancelled
+    // LastVerdict route the grabbed final edge target(s) from the
+    // authoritative final rect (never the finish pointer). Non-grabbed edge
+    // deltas are ignored, never a rejection; a grabbed corner routes both
+    // axes in exactly one atomic dual-axis pointer-resize intent through
+    // the shared single-flight (never two concurrent requests); the
+    // single-axis wire shape is unchanged. Cancelled is a strict no-op
+    // with one bounded normal-mode log at the pull layer; unusable-edge
+    // failures (missing grab, zero move) fail closed with exact bounded
+    // correlated reasons.
     // Every finish carries an opaque per-finish token (exact Window object
     // plus finish epoch) from its signal through the D-Bus pull back to the
     // route/settle callbacks. Route/settle consume only a start whose epoch
     // is <= that finish token; an old reply faced with a newer start fails
     // closed and never clears the newer start. Cancelled verdicts never reach
     // the pointer route and never change a share.
-    const oracleStarts = new Map<object, { id: string; rect: { x: number; y: number; w: number; h: number }; move: boolean; resize: boolean; epoch: number }>();
+    interface OracleStart { id: string; rect: { x: number; y: number; w: number; h: number }; move: boolean; resize: boolean; epoch: number; grabbed: OracleGrabbed | null; grabSource: OracleGrabSource | "missing"; pointerStart: { x: number; y: number } | null }
+    const oracleStarts = new Map<object, OracleStart>();
     const interactiveResizeRefs = new Set<object>();
     let oracleEpoch = 0;
     const readLiveState = (target: object): { move: boolean; resize: boolean } | null => {
@@ -3587,7 +3595,29 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                         oracleStarts.delete(ref);
                         return;
                     }
-                    oracleStarts.set(ref, { id: entry.id, rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h }, move: state.move, resize: state.resize, epoch: (oracleEpoch += 1) });
+                    // Route-owned start pointer capture: always read, never
+                    // trace-gated. Trace-only measurement keeps its own
+                    // separate capture. Fail-closed null, never throws.
+                    let pointerStart: { x: number; y: number } | null = null;
+                    try {
+                        pointerStart = readMeasurePointer(liveWorkspace);
+                    } catch (error) {
+                        void error;
+                        pointerStart = null;
+                    }
+                    const rect = { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h };
+                    let grabbed: OracleGrabbed | null = null;
+                    let grabSource: OracleGrabSource | "missing" = "missing";
+                    try {
+                        const identified = identifyGrabbedEdges(rect, pointerStart);
+                        if (identified !== null) {
+                            grabbed = identified.grabbed;
+                            grabSource = identified.source;
+                        }
+                    } catch (error) {
+                        void error;
+                    }
+                    oracleStarts.set(ref, { id: entry.id, rect, move: state.move, resize: state.resize, epoch: (oracleEpoch += 1), grabbed, grabSource, pointerStart });
                     if (state.move === false && state.resize === true && !interactiveResizeRefs.has(ref)) {
                         interactiveResizeRefs.add(ref);
                         adapter.setInteractiveResizeActive(true);
@@ -3608,7 +3638,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // when it predates the finish token. A newer Started (larger epoch) that
     // lands before the async reply is always kept. Never touches other
     // windows and never broad-clears.
-    const takeOwnStart = (ctx: DragOracleFinishContext | undefined): { id: string; rect: { x: number; y: number; w: number; h: number }; move: boolean; resize: boolean } | null => {
+    const takeOwnStart = (ctx: DragOracleFinishContext | undefined): OracleStart | null => {
         try {
             if (ctx === undefined) return null;
             const start = oracleStarts.get(ctx.ref);
@@ -3981,16 +4011,20 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             void error;
         }
     };
+    // Every oracle drag rejection logs its exact reason with the parsed
+    // drag-N correlation (validated closed-vocabulary tokens only; no
+    // titles, no native ids, no secrets). Logging is best-effort and never
+    // affects behavior.
     const routeOracleVerdict = (verdict: DragOracleVerdict, ctx: DragOracleFinishContext | undefined): void => {
         try {
             if (ctx === undefined) {
-                try { log("plasma-auto-tiler:route-diag:drag-context-invalid"); } catch (error) { void error; }
+                try { log(`plasma-auto-tiler:route-diag:drag-context-invalid correlation=${verdict.correlation}`); } catch (error) { void error; }
                 return;
             }
             const observed = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility);
             if (observed === null) {
                 takeOwnStart(ctx);
-                try { log("plasma-auto-tiler:route-diag:drag-scope-invalid"); } catch (error) { void error; }
+                try { log(`plasma-auto-tiler:route-diag:drag-scope-invalid correlation=${verdict.correlation}`); } catch (error) { void error; }
                 return;
             }
             let ref: object | null = null;
@@ -4002,39 +4036,95 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             }
             if (ref === null) {
                 takeOwnStart(ctx);
-                try { log("plasma-auto-tiler:route-diag:drag-unknown-window"); } catch (error) { void error; }
+                try { log(`plasma-auto-tiler:route-diag:drag-unknown-window correlation=${verdict.correlation}`); } catch (error) { void error; }
                 return;
             }
             if (ref !== ctx.ref) {
                 takeOwnStart(ctx);
-                try { log("plasma-auto-tiler:route-diag:drag-ref-mismatch"); } catch (error) { void error; }
+                try { log(`plasma-auto-tiler:route-diag:drag-ref-mismatch correlation=${verdict.correlation}`); } catch (error) { void error; }
                 return;
             }
             const start = takeOwnStart(ctx);
             if (start === null || start.id !== verdict.windowIdentity) {
-                try { log("plasma-auto-tiler:route-diag:drag-start-missing"); } catch (error) { void error; }
+                try { log(`plasma-auto-tiler:route-diag:drag-start-missing correlation=${verdict.correlation}`); } catch (error) { void error; }
                 return;
             }
             if (start.move === true) {
-                try { log("plasma-auto-tiler:route-diag:drag-move-ignored"); } catch (error) { void error; }
+                try { log(`plasma-auto-tiler:route-diag:drag-move-ignored correlation=${verdict.correlation}`); } catch (error) { void error; }
                 return;
             }
             if (!(start.move === false && start.resize === true)) {
-                try { log("plasma-auto-tiler:route-diag:drag-start-invalid"); } catch (error) { void error; }
+                try { log(`plasma-auto-tiler:route-diag:drag-start-invalid correlation=${verdict.correlation}`); } catch (error) { void error; }
                 return;
             }
-            const edge = deriveOracleEdge(start.rect, verdict.finalRect);
-            if (edge === null || edge === "mixed") {
-                try { log("plasma-auto-tiler:route-diag:drag-edge-invalid"); } catch (error) { void error; }
+            // Grabbed-edge routing: the grabbed edge(s) captured at Started
+            // select the final target edge(s) from the authoritative final
+            // rect (final edge target, never the finish pointer).
+            // Non-grabbed edge deltas are ignored, never a rejection. A
+            // grabbed corner routes both axes in exactly one dual-axis
+            // pointer-resize intent through the shared single-flight (never
+            // two concurrent requests); the single-axis wire shape is
+            // unchanged. Reject only when no usable edge remains: missing
+            // grab, zero move on every grabbed axis, or gone/identity-invalid
+            // above. Logging is best-effort and never affects behavior; no
+            // native ids or secrets are logged.
+            const formatGrabbed = (grabbed: OracleGrabbed): string => {
+                const h = grabbed.horizontal ?? "-";
+                const v = grabbed.vertical ?? "-";
+                return `${h}+${v}`;
+            };
+            if (start.grabbed === null) {
+                try { log(`plasma-auto-tiler:route-diag:drag-no-grabbed-edge correlation=${verdict.correlation} source=${start.grabSource}`); } catch (error) { void error; }
                 return;
+            }
+            const resolved = resolveOracleResizeTargets(start.rect, verdict.finalRect, start.grabbed);
+            if (resolved === null) {
+                try { log(`plasma-auto-tiler:route-diag:drag-zero-move correlation=${verdict.correlation} grabbed=${formatGrabbed(start.grabbed)} source=${start.grabSource}`); } catch (error) { void error; }
+                return;
+            }
+            try {
+                const targetText = resolved.targets.map((t) => `${t.direction}:${String(t.boundary)}`).join(",");
+                const ignoredText = resolved.ignored.length > 0 ? resolved.ignored.join(",") : "none";
+                log(`plasma-auto-tiler:route-diag:drag-route correlation=${verdict.correlation} grabbed=${formatGrabbed(start.grabbed)} source=${start.grabSource} targets=${targetText} ignored=${ignoredText}`);
+            } catch (error) {
+                void error;
             }
             // The adapter emits its exact source-grounded refusal token for
             // every distinct failure cause (disabled, identity, direction,
             // boundary, observation failure, absent target, fullscreen or
             // maximized target). No catch-all pointer-refused line is added here.
-            adapter.requestPointerResize(verdict.windowIdentity, edge.direction, edge.boundary);
+            // Targets resolve horizontal-first, so a corner pair is
+            // (direction, boundary) horizontal plus (direction2, boundary2)
+            // vertical in exactly one atomic intent. The dispatch outcome
+            // is logged with the drag correlation: accepted means one
+            // intent entered the single flight (dispatched or deferred);
+            // refused means the adapter's exact refusal token (logged
+            // alongside by the adapter) rejected it and nothing was sent.
+            // Completion (planned/applied/rejected) is logged by the
+            // adapter under its own plan correlation.
+            try {
+                let accepted = false;
+                if (resolved.targets.length === 2) {
+                    const first = resolved.targets[0] as { direction: string; boundary: number };
+                    const second = resolved.targets[1] as { direction: string; boundary: number };
+                    accepted = adapter.requestPointerResize(verdict.windowIdentity, first.direction, first.boundary, second.direction, second.boundary);
+                } else {
+                    const only = resolved.targets[0] as { direction: string; boundary: number };
+                    accepted = adapter.requestPointerResize(verdict.windowIdentity, only.direction, only.boundary);
+                }
+                try {
+                    const targetText = resolved.targets.map((t) => `${t.direction}:${String(t.boundary)}`).join(",");
+                    log(`plasma-auto-tiler:route-diag:drag-dispatched correlation=${verdict.correlation} targets=${targetText} accepted=${accepted === true ? "true" : "false"}`);
+                } catch (error) {
+                    void error;
+                }
+            } catch (error) {
+                void error;
+                try { log(`plasma-auto-tiler:route-diag:drag-dispatch-thrown correlation=${verdict.correlation}`); } catch (_ignored) { /* fail-closed */ }
+            }
         } catch (error) {
             void error;
+            try { log(`plasma-auto-tiler:route-diag:drag-route-thrown correlation=${verdict.correlation}`); } catch (_ignored) { /* fail-closed */ }
         }
     };
     const oracleSeen = new Set<object>();

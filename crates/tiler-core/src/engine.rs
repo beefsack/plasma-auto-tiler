@@ -2201,10 +2201,13 @@ impl Engine {
     /// legacy handler.
     fn pointer_resize_request(&mut self, event: &CoreEvent) -> CoreReply {
         use crate::boundary::ResizePlanReply;
+        use crate::directional::Axis;
         let CoreCommand::PointerResize {
             window,
             direction,
             boundary,
+            direction2,
+            boundary2,
         } = &event.command
         else {
             return CoreReply::Rejected {
@@ -2224,6 +2227,33 @@ impl Engine {
                 message: DIRECTION_MESSAGE,
             };
         };
+        // Corner second axis: both-or-neither (the protocol layer refuses a
+        // half-present pair before this boundary); a present pair must parse
+        // and must span perpendicular axes.
+        let corner = match (direction2, boundary2) {
+            (None, None) => None,
+            (Some(raw), Some(second)) => {
+                let Some(parsed) = parse_engine_direction(raw) else {
+                    return CoreReply::Rejected {
+                        kind: DIRECTION_KIND,
+                        message: DIRECTION_MESSAGE,
+                    };
+                };
+                if Axis::for_direction(direction) == Axis::for_direction(parsed) {
+                    return CoreReply::Rejected {
+                        kind: DIRECTION_KIND,
+                        message: DIRECTION_MESSAGE,
+                    };
+                }
+                Some((parsed, *second))
+            }
+            _ => {
+                return CoreReply::Rejected {
+                    kind: "unknown-value",
+                    message: "request contains an unknown value",
+                };
+            }
+        };
         let seed_order = crate::seed::order_spatial_with_focus_last(
             event.windows.clone(),
             &event.focused_window,
@@ -2231,28 +2261,76 @@ impl Engine {
         );
         let window = WindowId(window.to_owned());
         let boundary = *boundary;
-        self.run_retained(
-            event,
-            seed_order,
-            true,
-            |session, observation| {
-                let _ = session.sync_focus_from_window(&event.domain_key, &event.focused_window);
-                session.propose_pointer_resize(
-                    &event.domain_key,
-                    &window,
-                    direction,
-                    boundary,
-                    observation,
-                    &event.correlation,
-                    &ResizeCapabilities {
-                        keyboard_resize: false,
-                        pointer_resize: true,
+        match corner {
+            None => self.run_retained(
+                event,
+                seed_order,
+                true,
+                |session, observation| {
+                    let _ =
+                        session.sync_focus_from_window(&event.domain_key, &event.focused_window);
+                    session.propose_pointer_resize(
+                        &event.domain_key,
+                        &window,
+                        direction,
+                        boundary,
+                        observation,
+                        &event.correlation,
+                        &ResizeCapabilities {
+                            keyboard_resize: false,
+                            pointer_resize: true,
+                        },
+                    )
+                },
+                |plan| CoreReply::Resize(ResizePlanReply::from_pointer(direction, boundary, plan)),
+                |session, plan, event, base| Self::commit_resize(session, event, plan, base),
+            ),
+            Some((second_direction, second_boundary)) => {
+                // Axis-normalized corner: horizontal primary, vertical
+                // secondary, regardless of wire order.
+                let (direction_h, boundary_h, direction_v, boundary_v) =
+                    if Axis::for_direction(direction) == Axis::Horizontal {
+                        (direction, boundary, second_direction, second_boundary)
+                    } else {
+                        (second_direction, second_boundary, direction, boundary)
+                    };
+                self.run_retained(
+                    event,
+                    seed_order,
+                    true,
+                    |session, observation| {
+                        let _ = session
+                            .sync_focus_from_window(&event.domain_key, &event.focused_window);
+                        session.propose_pointer_resize_corner(
+                            &event.domain_key,
+                            &window,
+                            direction_h,
+                            boundary_h,
+                            direction_v,
+                            boundary_v,
+                            observation,
+                            &event.correlation,
+                            &ResizeCapabilities {
+                                keyboard_resize: false,
+                                pointer_resize: true,
+                            },
+                        )
+                    },
+                    |plan| {
+                        CoreReply::Resize(ResizePlanReply::from_pointer_corner(
+                            direction_h,
+                            boundary_h,
+                            direction_v,
+                            boundary_v,
+                            plan,
+                        ))
+                    },
+                    |session, plan, event, base| {
+                        Self::commit_resize_corner(session, event, plan, base)
                     },
                 )
-            },
-            |plan| CoreReply::Resize(ResizePlanReply::from_pointer(direction, boundary, plan)),
-            |session, plan, event, base| Self::commit_resize(session, event, plan, base),
-        )
+            }
+        }
     }
 
     /// Synchronous acknowledge/verify for a retained resize plan. Mirrors the
@@ -2277,6 +2355,34 @@ impl Engine {
             true,
             plan.dispatch.preconditions.clone(),
             plan.dispatch.operation.clone(),
+        );
+        session.verify_resize(&post).is_ok()
+    }
+
+    /// Synchronous acknowledge/verify for a retained atomic corner resize
+    /// plan. Mirrors [`Engine::commit_resize`] with both operation echoes
+    /// bound, so the single pending corner transaction commits exactly once.
+    fn commit_resize_corner(
+        session: &mut Session,
+        event: &CoreEvent,
+        plan: &crate::session::SessionResizePlan,
+        base: u64,
+    ) -> bool {
+        if !engine_acknowledge(session, event, base) {
+            return false;
+        }
+        let post = ResizePostObservation::new_with_secondary(
+            Observation::new(
+                event.owner.clone(),
+                event.generation.clone(),
+                base,
+                event.fingerprint,
+            ),
+            event.correlation.clone(),
+            true,
+            plan.dispatch.preconditions.clone(),
+            plan.dispatch.operation.clone(),
+            plan.dispatch.secondary_operation.clone(),
         );
         session.verify_resize(&post).is_ok()
     }

@@ -214,6 +214,10 @@ enum PendingKind {
     Resize {
         preconditions: Vec<ResizePrecondition>,
         operation: ResizeOperation,
+        /// Second-axis operation for an atomic corner pointer resize;
+        /// `None` for every single-axis plan. Boxed: the single pending
+        /// slot keeps its single-axis footprint.
+        secondary_operation: Option<Box<ResizeOperation>>,
     },
     Drag {
         preconditions: Vec<DragPrecondition>,
@@ -771,6 +775,7 @@ impl Reconciler {
             preconditions: preconditions.clone(),
             intent: plan.intent.clone(),
             operation: plan.operation.clone(),
+            secondary_operation: None,
         };
         self.pending = Some(Pending {
             correlation_id: correlation_id.clone(),
@@ -779,6 +784,7 @@ impl Reconciler {
             kind: PendingKind::Resize {
                 preconditions,
                 operation: plan.operation.clone(),
+                secondary_operation: None,
             },
         });
         Ok(dispatch)
@@ -880,6 +886,7 @@ impl Reconciler {
             preconditions: preconditions.clone(),
             intent: plan.intent.clone(),
             operation: plan.operation.clone(),
+            secondary_operation: None,
         };
         self.pending = Some(Pending {
             correlation_id: correlation_id.clone(),
@@ -888,6 +895,140 @@ impl Reconciler {
             kind: PendingKind::Resize {
                 preconditions,
                 operation: plan.operation.clone(),
+                secondary_operation: None,
+            },
+        });
+        Ok(dispatch)
+    }
+
+    /// Propose an already-computed atomic corner (dual-axis) pointer
+    /// split-share resize plan: one horizontal plus one vertical axis from a
+    /// single `pointer-resize` request.
+    ///
+    /// Shares the single pending slot with every other kind: exactly one
+    /// pending entry carries both operations, acknowledgement binds
+    /// identically, and verification reuses [`Reconciler::verify_resize`]
+    /// with both operation echoes bound. Each axis plan must independently
+    /// satisfy the single-axis pointer checks (capability, preconditions,
+    /// intent/operation consistency, adjacent-only share validity), and the
+    /// two axes must differ (one horizontal, one vertical).
+    /// `primary` selects the dispatch intent/operation; `secondary` rides as
+    /// the bound second axis.
+    pub fn propose_pointer_resize_corner(
+        &mut self,
+        primary: &ResizePlan,
+        secondary: &ResizePlan,
+        observation: &Observation,
+        correlation_id: &CorrelationId,
+        capabilities: &ResizeCapabilities,
+    ) -> Result<ResizeDispatch, ProposeError> {
+        if let Some(reason) = self.diverged {
+            return Err(ProposeError::Diverged(reason));
+        }
+        if self.pending.is_some() {
+            return Err(ProposeError::PendingExists);
+        }
+        if !is_correlation_id(correlation_id.as_str()) {
+            let reason = self.diverge(DivergenceKind::CorrelationMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if !observation.validate() || observation.owner != self.owner {
+            let reason = if observation.owner != self.owner {
+                self.diverge(DivergenceKind::OwnerMismatch)
+            } else if !crate::contract::is_generation_id(observation.generation.as_str()) {
+                self.diverge(DivergenceKind::GenerationMismatch)
+            } else {
+                self.diverge(DivergenceKind::StaleRevision)
+            };
+            return Err(ProposeError::Diverged(reason));
+        }
+        if observation.generation != self.generation {
+            let reason = self.diverge(DivergenceKind::GenerationMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if observation.revision != self.verified_revision {
+            let reason = self.diverge(DivergenceKind::StaleRevision);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if self.verified_revision >= crate::contract::MAX_REVISION {
+            let reason = self.diverge(DivergenceKind::RevisionExhausted);
+            return Err(ProposeError::Diverged(reason));
+        }
+        for plan in [primary, secondary] {
+            if plan.required_capability != crate::contract::ResizeCapability::PointerResize {
+                let reason = self.diverge(DivergenceKind::CapabilityRefused);
+                return Err(ProposeError::Diverged(reason));
+            }
+            if plan.preconditions != plan.operation.preconditions() {
+                let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+                return Err(ProposeError::Diverged(reason));
+            }
+            if plan.intent.domain_output != plan.operation.domain_output
+                || plan.intent.domain_workspace != plan.operation.domain_workspace
+                || plan.intent.focused_leaf != plan.operation.focused_leaf
+                || plan.intent.focused_window != plan.operation.focused_window
+                || plan.intent.direction != plan.operation.direction
+                || plan.intent.mode != plan.operation.mode
+            {
+                let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+                return Err(ProposeError::Diverged(reason));
+            }
+            if !valid_fixed_share_operation(&plan.operation) {
+                let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+                return Err(ProposeError::Diverged(reason));
+            }
+        }
+        if primary.preconditions != secondary.preconditions {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if crate::directional::Axis::for_direction(primary.operation.direction)
+            == crate::directional::Axis::for_direction(secondary.operation.direction)
+        {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if !capabilities.supports(crate::contract::ResizeCapability::PointerResize) {
+            let reason = self.diverge(DivergenceKind::CapabilityRefused);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if primary.preconditions.len() > MAX_PRECONDITIONS
+            || !primary
+                .preconditions
+                .contains(&ResizePrecondition::AdapterMustVerifyPostconditions)
+        {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if primary.intent.domain_output != secondary.intent.domain_output
+            || primary.intent.domain_workspace != secondary.intent.domain_workspace
+            || primary.intent.focused_leaf != secondary.intent.focused_leaf
+            || primary.intent.focused_window != secondary.intent.focused_window
+        {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        let mut preconditions = Vec::with_capacity(primary.preconditions.len());
+        preconditions.extend_from_slice(&primary.preconditions);
+        let dispatch = ResizeDispatch {
+            correlation_id: correlation_id.clone(),
+            owner: self.owner.clone(),
+            generation: self.generation.clone(),
+            base_revision: self.verified_revision,
+            required_capability: primary.required_capability,
+            preconditions: preconditions.clone(),
+            intent: primary.intent.clone(),
+            operation: primary.operation.clone(),
+            secondary_operation: Some(Box::new(secondary.operation.clone())),
+        };
+        self.pending = Some(Pending {
+            correlation_id: correlation_id.clone(),
+            base_revision: self.verified_revision,
+            acked: false,
+            kind: PendingKind::Resize {
+                preconditions,
+                operation: primary.operation.clone(),
+                secondary_operation: Some(Box::new(secondary.operation.clone())),
             },
         });
         Ok(dispatch)
@@ -1313,6 +1454,7 @@ impl Reconciler {
         let PendingKind::Resize {
             preconditions,
             operation,
+            secondary_operation,
         } = &pending.kind
         else {
             let reason = self.diverge(DivergenceKind::PostconditionMismatch);
@@ -1323,6 +1465,10 @@ impl Reconciler {
             return Err(VerifyError::Diverged(reason));
         }
         if post.verified_operation != *operation {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.verified_secondary_operation != *secondary_operation {
             let reason = self.diverge(DivergenceKind::PostconditionMismatch);
             return Err(VerifyError::Diverged(reason));
         }

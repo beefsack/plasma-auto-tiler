@@ -287,7 +287,7 @@ describe("ar8 drag measurement record shape", () => {
         assert.ok(winA !== undefined);
         settleBaseline(mocks);
 
-        world.workspace["cursorPos"] = { x: 10, y: 10 };
+        world.workspace["cursorPos"] = { x: 590, y: 400 };
         fireAll(world.signals["startedA"]);
         winA["frameGeometry"] = { x: 0, y: 0, width: 1000, height: 800 };
         world.workspace["cursorPos"] = { x: 50, y: 10 };
@@ -311,7 +311,7 @@ describe("ar8 drag measurement record shape", () => {
         assert.ok(line.includes("reason=ok-moved"), line);
         assert.ok(line.includes("final=0,0,1000,800"), line);
         assert.ok(line.includes("edge=right:1000"), line);
-        assert.ok(line.includes("pointerStart=10,10"), line);
+        assert.ok(line.includes("pointerStart=590,400"), line);
         assert.ok(line.includes("pointerFinish=50,10"), line);
         assert.ok(!line.includes("win-a"), "no window identity in the record");
         assert.ok(!line.includes("title"), "no caption in the record");
@@ -553,7 +553,7 @@ describe("ar8 drag measurement record shape", () => {
         assert.ok(line.includes("pointerStart=20,20"), line);
         assert.ok(line.includes("pointerFinish=30,10"), line);
         assert.ok(
-            mocks.logs.some((entry) => entry === "plasma-auto-tiler:route-diag:drag-start-missing"),
+            mocks.logs.some((entry) => entry === "plasma-auto-tiler:route-diag:drag-start-missing correlation=drag-1"),
             "route agrees it holds no start for this finish",
         );
         for (const call of mocks.planCalls) {
@@ -699,7 +699,7 @@ describe("ar8 drag measurement record shape", () => {
         assert.ok(winA !== undefined);
         settleBaseline(mocks);
 
-        world.workspace["cursorPos"] = { x: 10, y: 10 };
+        world.workspace["cursorPos"] = { x: 590, y: 400 };
         fireAll(world.signals["startedA"]);
         winA["frameGeometry"] = { x: 0, y: 0, width: 1000, height: 800 };
         world.workspace["cursorPos"] = { x: 50, y: 10 };

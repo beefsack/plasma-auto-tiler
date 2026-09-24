@@ -983,6 +983,13 @@ pub struct ResizeDispatch {
     pub preconditions: Vec<ResizePrecondition>,
     pub intent: ResizeIntent,
     pub operation: ResizeOperation,
+    /// Second-axis operation for an atomic corner (dual-axis) pointer
+    /// resize. `None` for every single-axis plan (keyboard plus pointer);
+    /// `Some` only when one `pointer-resize` request carries both a
+    /// horizontal and a vertical boundary through the single pending slot.
+    /// Boxed: the corner axis rides cold-path only, keeping the dispatch
+    /// footprint at the single-axis size.
+    pub secondary_operation: Option<Box<ResizeOperation>>,
 }
 
 /// Fresh post-observation plus explicit native verification flag for a pending
@@ -997,6 +1004,11 @@ pub struct ResizePostObservation {
     pub verified: bool,
     pub verified_preconditions: Vec<ResizePrecondition>,
     pub verified_operation: ResizeOperation,
+    /// Second-axis operation echo for an atomic corner resize. Compared by
+    /// exact `Option` equality against the pending corner plan, so a corner
+    /// pending requires `Some` and every single-axis pending requires `None`.
+    /// Boxed like the dispatch echo it binds.
+    pub verified_secondary_operation: Option<Box<ResizeOperation>>,
 }
 
 impl ResizePostObservation {
@@ -1009,12 +1021,34 @@ impl ResizePostObservation {
         verified_preconditions: Vec<ResizePrecondition>,
         verified_operation: ResizeOperation,
     ) -> Self {
+        Self::new_with_secondary(
+            observation,
+            correlation_id,
+            verified,
+            verified_preconditions,
+            verified_operation,
+            None,
+        )
+    }
+
+    /// Typed construction carrying the second-axis operation echo for an
+    /// atomic corner resize.
+    #[must_use]
+    pub fn new_with_secondary(
+        observation: Observation,
+        correlation_id: CorrelationId,
+        verified: bool,
+        verified_preconditions: Vec<ResizePrecondition>,
+        verified_operation: ResizeOperation,
+        verified_secondary_operation: Option<Box<ResizeOperation>>,
+    ) -> Self {
         Self {
             observation,
             correlation_id,
             verified,
             verified_preconditions,
             verified_operation,
+            verified_secondary_operation,
         }
     }
 

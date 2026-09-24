@@ -368,6 +368,12 @@ pub struct SessionFocusPlan {
 pub struct SessionResizePlan {
     pub dispatch: ResizeDispatch,
     pub resize_plan: ResizePlan,
+    /// Second-axis plan for an atomic corner (dual-axis) pointer resize.
+    /// `None` for every single-axis plan; `Some` only when one request
+    /// carries both a horizontal and a vertical boundary. The desired
+    /// trees/snapshot/geometry already combine both axes; this carries the
+    /// vertical plan for the bound pending operation and the reply detail.
+    pub secondary_plan: Option<ResizePlan>,
     pub desired_snapshot: SessionSnapshot,
     pub desired_focus_domain: DomainKey,
     pub desired_focus_leaf: NodeId,

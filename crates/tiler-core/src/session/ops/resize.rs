@@ -280,6 +280,7 @@ impl super::super::Session {
         Ok(SessionResizePlan {
             dispatch,
             resize_plan: plan,
+            secondary_plan: None,
             desired_snapshot,
             desired_focus_domain: domain.clone(),
             desired_focus_leaf: focused_leaf,
@@ -626,6 +627,377 @@ impl super::super::Session {
         Ok(SessionResizePlan {
             dispatch,
             resize_plan: plan,
+            secondary_plan: None,
+            desired_snapshot,
+            desired_focus_domain: domain.clone(),
+            desired_focus_leaf: focused_leaf,
+            desired_geometry,
+        })
+    }
+
+    /// Propose an atomic corner (dual-axis) COSMIC pointer pixel resize for
+    /// the selected exact opaque `(domain, window)` pair: one horizontal
+    /// boundary plus one vertical boundary from a single request, committed
+    /// through the single pending slot.
+    ///
+    /// Structural preconditions match [`Session::propose_pointer_resize`]
+    /// exactly (topology/membership/focus/capability binding). Derivation
+    /// runs per axis in a fixed horizontal-then-vertical order: the
+    /// horizontal boundary derives against the accepted topology, applies to
+    /// a tree clone, the intermediate topology is re-projected, and the
+    /// vertical boundary derives against that intermediate state before the
+    /// combined tree stages exactly one pending plan. Both axes must derive
+    /// `Planned`; either axis `Unchanged` (no-op, exhausted minima, or
+    /// unrepresentable clamped result) refuses the whole corner as
+    /// [`RefusalKind::Unchanged`] with no plan and no pending, so a corner
+    /// never half-applies one axis while the other silently keeps stale
+    /// shares. Per-axis minimum-size projectability and exact
+    /// projectability bind independently, exactly like the single-axis path.
+    /// Commits only via acknowledge-then-[`Session::verify_resize`], with
+    /// both operation echoes bound.
+    #[allow(clippy::too_many_arguments)]
+    pub fn propose_pointer_resize_corner(
+        &mut self,
+        domain: &DomainKey,
+        window: &WindowId,
+        direction_h: Direction,
+        boundary_h: i32,
+        direction_v: Direction,
+        boundary_v: i32,
+        session_observation: &SessionObservation,
+        correlation_id: &CorrelationId,
+        capabilities: &ResizeCapabilities,
+    ) -> Result<SessionResizePlan, ProposeError> {
+        if let Some(reason) = self.reconciler.divergence() {
+            return Err(ProposeError::Diverged(reason));
+        }
+        if self.has_pending() {
+            return Err(ProposeError::PendingExists);
+        }
+        if self.drag.is_some() {
+            return Err(ProposeError::PendingExists);
+        }
+        // Corner axes are fixed horizontal-then-vertical; the caller binds
+        // them by axis before calling.
+        if Axis::for_direction(direction_h) != Axis::Horizontal
+            || Axis::for_direction(direction_v) != Axis::Vertical
+        {
+            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
+        }
+        let Some(own_domain) = self.domains.iter().find(|d| &d.key() == domain).cloned() else {
+            return Err(ProposeError::Refused(RefusalKind::UnknownDomain));
+        };
+        if !self.validate_current_topology() {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        if window.0.is_empty() {
+            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
+        }
+        if session_observation.windows.len() > MAX_OBSERVED_WINDOWS
+            || !valid_observed_shapes(&session_observation.windows)
+        {
+            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
+        }
+        for entry in &session_observation.windows {
+            if self.domain_for(&entry.output, &entry.workspace).is_none() {
+                return Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch));
+            }
+        }
+        let known: BTreeSet<&WindowId> =
+            self.windows.keys().chain(self.exceptions.keys()).collect();
+        let observed_ids: BTreeSet<&WindowId> = session_observation
+            .windows
+            .iter()
+            .map(|w| &w.window)
+            .collect();
+        if observed_ids != known {
+            return Err(ProposeError::Refused(RefusalKind::PartialObservation));
+        }
+        if !self.observed_known_match(&session_observation.windows, None) {
+            return Err(ProposeError::Refused(RefusalKind::PartialObservation));
+        }
+        if !self.windows.contains_key(window) && !self.exceptions.contains_key(window) {
+            return Err(ProposeError::Refused(RefusalKind::UnknownWindow));
+        }
+        if self.exceptions.contains_key(window) {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        }
+        let (Some(focused_domain), Some(focused_leaf)) =
+            (self.focused_domain.clone(), self.focused_leaf.clone())
+        else {
+            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        };
+        if &focused_domain != domain {
+            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        }
+        let Some(focused_window) = self.focused_window_for(&focused_leaf, domain) else {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        };
+        if self.exceptions.contains_key(&focused_window) {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        }
+        if window != &focused_window {
+            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        }
+        if let Some(entry) = session_observation
+            .windows
+            .iter()
+            .find(|w| w.window == focused_window)
+            && entry.flags().any()
+        {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        }
+        if !capabilities.supports(crate::contract::ResizeCapability::PointerResize) {
+            return Err(ProposeError::Refused(RefusalKind::UnsupportedCapability));
+        }
+        // Both normalized coordinates must land inside the domain work-area
+        // extent along their matching axis; outside is malformed, never
+        // clamped.
+        let inside_h = boundary_h >= own_domain.bounds.x
+            && boundary_h <= own_domain.bounds.x + own_domain.bounds.w;
+        let inside_v = boundary_v >= own_domain.bounds.y
+            && boundary_v <= own_domain.bounds.y + own_domain.bounds.h;
+        if !inside_h || !inside_v {
+            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
+        }
+        let Some(tree) = self.trees.get(domain).cloned().flatten() else {
+            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        };
+        let accepted_geometry =
+            project_output_geometry(Some(&own_domain), Some(&tree), &self.windows, domain)
+                .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
+        if !geometry_covers_affected(
+            &accepted_geometry,
+            &self.windows,
+            std::slice::from_ref(domain),
+        ) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        // Horizontal axis first against the accepted topology.
+        let Some(pointer_h) = derive_pointer_shares(
+            self.policy(),
+            &tree,
+            &focused_leaf,
+            direction_h,
+            boundary_h,
+            &own_domain,
+            &accepted_geometry,
+        ) else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        };
+        let (target_h, shares_h, effective_h, mode_h) = match pointer_h {
+            PointerDerived::Unchanged => {
+                return Err(ProposeError::Refused(RefusalKind::Unchanged));
+            }
+            PointerDerived::Planned {
+                target,
+                new_shares,
+                effective_boundary,
+                mode,
+            } => (target, new_shares, effective_boundary, mode),
+        };
+        let Some(intermediate_tree) =
+            crate::directional::apply_resize_shares(&tree, &target_h.group_id, &shares_h)
+        else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        };
+        // Re-project the intermediate topology: the vertical derivation must
+        // see the post-horizontal pixel extents, never the accepted ones.
+        let mut intermediate_trees = self.trees.clone();
+        intermediate_trees.insert(domain.clone(), Some(intermediate_tree.clone()));
+        let intermediate_geometry = project_affected_geometry(
+            &self.domains,
+            &intermediate_trees,
+            &self.windows,
+            std::slice::from_ref(domain),
+        )
+        .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
+        if !geometry_covers_affected(
+            &intermediate_geometry,
+            &self.windows,
+            std::slice::from_ref(domain),
+        ) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        let Some(pointer_v) = derive_pointer_shares(
+            self.policy(),
+            &intermediate_tree,
+            &focused_leaf,
+            direction_v,
+            boundary_v,
+            &own_domain,
+            &intermediate_geometry,
+        ) else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        };
+        let (target_v, shares_v, effective_v, mode_v) = match pointer_v {
+            PointerDerived::Unchanged => {
+                return Err(ProposeError::Refused(RefusalKind::Unchanged));
+            }
+            PointerDerived::Planned {
+                target,
+                new_shares,
+                effective_boundary,
+                mode,
+            } => (target, new_shares, effective_boundary, mode),
+        };
+        let Some(updated_tree) = crate::directional::apply_resize_shares(
+            &intermediate_tree,
+            &target_v.group_id,
+            &shares_v,
+        ) else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        };
+        let mut desired_trees = self.trees.clone();
+        desired_trees.insert(domain.clone(), Some(updated_tree));
+        if desired_trees == self.trees {
+            return Err(ProposeError::Refused(RefusalKind::Unchanged));
+        }
+        if !validate_topology(
+            &self.domains,
+            &desired_trees,
+            &self.windows,
+            &self.exceptions,
+            &Some(domain.clone()),
+            &Some(focused_leaf.clone()),
+        ) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        let desired_geometry = project_affected_geometry(
+            &self.domains,
+            &desired_trees,
+            &self.windows,
+            std::slice::from_ref(domain),
+        )
+        .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
+        if !geometry_covers_affected(
+            &desired_geometry,
+            &self.windows,
+            std::slice::from_ref(domain),
+        ) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        if !pointer_minimum_holds(
+            self.policy(),
+            &desired_geometry,
+            &target_h,
+            domain,
+            Axis::Horizontal,
+        ) || !pointer_minimum_holds(
+            self.policy(),
+            &desired_geometry,
+            &target_v,
+            domain,
+            Axis::Vertical,
+        ) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        let desired_tree = desired_trees
+            .get(domain)
+            .cloned()
+            .flatten()
+            .expect("desired tree present");
+        let (Some(projected_h), Some(projected_v)) = (
+            pointer_projected_boundary(
+                &desired_geometry,
+                &desired_tree,
+                &target_h,
+                Axis::Horizontal,
+            ),
+            pointer_projected_boundary(&desired_geometry, &desired_tree, &target_v, Axis::Vertical),
+        ) else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        };
+        if projected_h != effective_h || projected_v != effective_v {
+            return Err(ProposeError::Refused(RefusalKind::Unchanged));
+        }
+        let operation_h = ResizeOperation {
+            domain_output: domain.output.clone(),
+            domain_workspace: domain.workspace.clone(),
+            focused_leaf: focused_leaf.clone(),
+            focused_window: focused_window.clone(),
+            direction: direction_h,
+            mode: mode_h,
+            target_group: target_h.group_id.clone(),
+            focused_child: target_h.focused_child.clone(),
+            neighbor_child: target_h.neighbor_child.clone(),
+            focused_index: target_h.focused_index,
+            neighbor_index: target_h.neighbor_index,
+            old_shares: target_h.old_shares.clone(),
+            new_shares: shares_h.clone(),
+        };
+        let plan_h = ResizePlan {
+            intent: ResizeIntent {
+                domain_output: domain.output.clone(),
+                domain_workspace: domain.workspace.clone(),
+                focused_leaf: focused_leaf.clone(),
+                focused_window: focused_window.clone(),
+                direction: direction_h,
+                mode: mode_h,
+            },
+            operation: operation_h.clone(),
+            required_capability: crate::contract::ResizeCapability::PointerResize,
+            preconditions: operation_h.preconditions(),
+        };
+        let operation_v = ResizeOperation {
+            domain_output: domain.output.clone(),
+            domain_workspace: domain.workspace.clone(),
+            focused_leaf: focused_leaf.clone(),
+            focused_window: focused_window.clone(),
+            direction: direction_v,
+            mode: mode_v,
+            target_group: target_v.group_id.clone(),
+            focused_child: target_v.focused_child.clone(),
+            neighbor_child: target_v.neighbor_child.clone(),
+            focused_index: target_v.focused_index,
+            neighbor_index: target_v.neighbor_index,
+            old_shares: target_v.old_shares.clone(),
+            new_shares: shares_v.clone(),
+        };
+        let plan_v = ResizePlan {
+            intent: ResizeIntent {
+                domain_output: domain.output.clone(),
+                domain_workspace: domain.workspace.clone(),
+                focused_leaf: focused_leaf.clone(),
+                focused_window: focused_window.clone(),
+                direction: direction_v,
+                mode: mode_v,
+            },
+            operation: operation_v.clone(),
+            required_capability: crate::contract::ResizeCapability::PointerResize,
+            preconditions: operation_v.preconditions(),
+        };
+        let dispatch = match self.reconciler.propose_pointer_resize_corner(
+            &plan_h,
+            &plan_v,
+            &session_observation.observation,
+            correlation_id,
+            capabilities,
+        ) {
+            Ok(dispatch) => dispatch,
+            Err(crate::reconcile::ProposeError::PendingExists) => {
+                return Err(ProposeError::PendingExists);
+            }
+            Err(crate::reconcile::ProposeError::Diverged(reason)) => {
+                self.pending_desired = None;
+                self.drag = None;
+                return Err(ProposeError::Diverged(reason));
+            }
+        };
+        let desired_snapshot = self.snapshot_for(&desired_trees, &self.windows);
+        self.pending_desired = Some(PendingDesired {
+            trees: desired_trees.clone(),
+            windows: self.windows.clone(),
+            focused_domain: Some(domain.clone()),
+            focused_leaf: Some(focused_leaf.clone()),
+            last_active: self.last_active.clone(),
+            exceptions: self.exceptions.clone(),
+            retained_float_geometry: self.retained_float_geometry.clone(),
+        });
+        Ok(SessionResizePlan {
+            dispatch,
+            resize_plan: plan_h,
+            secondary_plan: Some(plan_v),
             desired_snapshot,
             desired_focus_domain: domain.clone(),
             desired_focus_leaf: focused_leaf,

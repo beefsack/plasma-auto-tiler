@@ -79,6 +79,12 @@ pub enum CoreCommand {
         window: String,
         direction: String,
         boundary: i32,
+        /// Second-axis corner pair: both `Some` for an atomic corner
+        /// (dual-axis) resize, both `None` for an ordinary single-axis
+        /// request. A half-present pair never reaches the Engine (the
+        /// protocol layer refuses it as `pointer-resize-op-invalid`).
+        direction2: Option<String>,
+        boundary2: Option<i32>,
     },
     ToggleFloat {
         window: String,
@@ -457,9 +463,22 @@ pub struct ResizePlanReply {
     pub mode: Option<ResizeMode>,
     pub boundary: Option<i32>,
     pub operation: ResizeOperation,
+    /// Second-axis corner detail: `Some` only for an atomic corner reply,
+    /// carrying the vertical direction, proposed boundary, and operation.
+    /// `None` for every single-axis reply, whose wire shape is unchanged.
+    /// Boxed: corner detail rides cold-path only.
+    pub secondary: Option<Box<SecondaryPointerResize>>,
     pub geometry: Vec<DesiredGeometry>,
     pub focus_domain: DomainKey,
     pub focus_leaf: NodeId,
+}
+
+/// Second-axis detail of an atomic corner pointer-resize reply.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecondaryPointerResize {
+    pub direction: Direction,
+    pub boundary: i32,
+    pub operation: ResizeOperation,
 }
 
 impl ResizePlanReply {
@@ -472,6 +491,7 @@ impl ResizePlanReply {
             mode: Some(mode),
             boundary: None,
             operation: plan.dispatch.operation.clone(),
+            secondary: None,
             geometry: plan.desired_geometry.clone(),
             focus_domain: plan.desired_focus_domain.clone(),
             focus_leaf: plan.desired_focus_leaf.clone(),
@@ -487,6 +507,38 @@ impl ResizePlanReply {
             mode: None,
             boundary: Some(boundary),
             operation: plan.dispatch.operation.clone(),
+            secondary: None,
+            geometry: plan.desired_geometry.clone(),
+            focus_domain: plan.desired_focus_domain.clone(),
+            focus_leaf: plan.desired_focus_leaf.clone(),
+        }
+    }
+
+    /// Typed construction for atomic corner pointer resize plans: the
+    /// primary (horizontal) direction/boundary plus the bound vertical
+    /// second axis from the plan's secondary operation.
+    #[must_use]
+    pub fn from_pointer_corner(
+        direction: Direction,
+        boundary: i32,
+        direction2: Direction,
+        boundary2: i32,
+        plan: &SessionResizePlan,
+    ) -> Self {
+        let secondary = plan.secondary_plan.as_ref().map(|secondary| {
+            Box::new(SecondaryPointerResize {
+                direction: direction2,
+                boundary: boundary2,
+                operation: secondary.operation.clone(),
+            })
+        });
+        Self {
+            base_revision: plan.dispatch.base_revision,
+            direction,
+            mode: None,
+            boundary: Some(boundary),
+            operation: plan.dispatch.operation.clone(),
+            secondary,
             geometry: plan.desired_geometry.clone(),
             focus_domain: plan.desired_focus_domain.clone(),
             focus_leaf: plan.desired_focus_leaf.clone(),
@@ -929,6 +981,8 @@ mod tests {
                 window: "w".to_owned(),
                 direction: "left".to_owned(),
                 boundary: 0,
+                direction2: None,
+                boundary2: None,
             },
             CoreCommand::ToggleFloat {
                 window: "w".to_owned(),
@@ -1495,6 +1549,7 @@ mod tests {
                     old_shares: vec![1, 1],
                     new_shares: vec![611, 587],
                 },
+                secondary_operation: None,
             },
             resize_plan: crate::contract::ResizePlan::for_operation(
                 crate::contract::ResizeIntent {
@@ -1525,6 +1580,7 @@ mod tests {
                 domains: Vec::new(),
                 windows: Vec::new(),
             },
+            secondary_plan: None,
             desired_focus_domain: key.clone(),
             desired_focus_leaf: NodeId::from("a"),
             desired_geometry: Vec::new(),

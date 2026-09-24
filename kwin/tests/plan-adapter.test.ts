@@ -1898,6 +1898,46 @@ describe("plan adapter bounded diagnostics", () => {
         adapter.requestPointerResize("win-b", "left", 600);
         assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:pointer-refused-fullscreen"));
     });
+
+    it("dispatches a corner as one dual-axis intent and refuses malformed pairs exactly", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = enableAdapter(mocks);
+
+        assert.equal(adapter.requestPointerResize("win-a", "right", 700, "down", 900), true);
+        assert.equal(mocks.dbusCalls.length, 1, "corner is one request, never two");
+        const command = (JSON.parse(mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>)["command"] as Record<string, unknown>;
+        assert.deepEqual(command, {
+            op: "pointer-resize",
+            window: "win-a",
+            direction: "right",
+            boundary: 700,
+            direction2: "down",
+            boundary2: 900,
+        });
+
+        const callsBefore = mocks.dbusCalls.length;
+        assert.equal(adapter.requestPointerResize("win-a", "right", 700, undefined, 900), false);
+        assert.equal(adapter.requestPointerResize("win-a", "right", 700, "sideways", 900), false);
+        assert.equal(adapter.requestPointerResize("win-a", "right", 700, "left", 900), false);
+        assert.equal(adapter.requestPointerResize("win-a", "right", 700, "down", 999999), false);
+        assert.equal(adapter.requestPointerResize("win-a", "right", 700, "down", undefined), false);
+        assert.equal(mocks.dbusCalls.length, callsBefore, "refused corners dispatch nothing");
+        const directionRefusals = mocks.logs.filter((l) => l === "plasma-auto-tiler:plan:pointer-refused-direction");
+        assert.equal(directionRefusals.length, 3, "missing direction2, bad direction2, and same-axis pair bind the direction refusal");
+        const boundaryRefusals = mocks.logs.filter((l) => l === "plasma-auto-tiler:plan:pointer-refused-boundary");
+        assert.equal(boundaryRefusals.length, 2, "out-of-range and missing boundary2 bind the boundary refusal");
+
+        mocks.callbacks[0]?.(
+            plannedReply(plannerPayload(mocks, 0)["correlation_id"] as string, [
+                { window: "win-a", rect: { x: 0, y: 0, w: 700, h: 800 } },
+                { window: "win-b", rect: { x: 700, y: 0, w: 500, h: 800 } },
+            ], null),
+        );
+        assert.equal(adapter.requestPointerResize("win-a", "right", 1000), true);
+        const single = (JSON.parse(mocks.dbusCalls[mocks.dbusCalls.length - 1]?.payload as string) as Record<string, unknown>)["command"] as Record<string, unknown>;
+        assert.ok(!("direction2" in single) && !("boundary2" in single), "single-axis wire shape carries no second axis");
+    });
 });
 
 describe("plan adapter sticky and maximize toggles", () => {

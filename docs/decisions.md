@@ -44,6 +44,11 @@ the corresponding item ships; each such entry names its replacement.
 - Testing investment: build test fixtures that are sensible and valuable for
   the change at hand; avoid extensive custom harnesses that constrain later
   development.
+- Native integration boundary (user, 2026-09-24): the native layer provides
+  capabilities the project needs, with the smallest reliable native footprint.
+  Keep as much logic and policy as possible in or near the Rust core, but use
+  native integration where needed; do not exclude capabilities such as input
+  by category. Existing specific implementation choices stand until changed.
 
 ## Native Active Border
 
@@ -92,21 +97,17 @@ the corresponding item ships; each such entry names its replacement.
   metadata, or KCM entry remains.
 - The outline never clips, reshapes, or changes window textures. Plasma 6.5+
   decoration-driven rounded corners remain the selected corner solution.
-- C++ is limited to platform-required public-API adapters and effects. Manual
-  ownership, threads, custom shaders or GL resources, QPainter, clipping,
-  texture changes, and broader scene manipulation are excluded. Input remains
-  excluded except narrow passive public `EffectsHandler` modifier observation:
-  `I permit the modifier observation.` This authorizes no grabs,
-  interception, filters/spies, private InputRedirection, input consumption, or
-  polling. The scene exception is at most two effect-owned
-  automatic-lifetime `KWin::OutlinedBorderItem`s: one active border plus one
-  temporary group outline.
+- The shipped border uses two effect-owned automatic-lifetime
+  `KWin::OutlinedBorderItem`s (active border and temporary group outline),
+  without texture changes or clipping. The native integration boundary above
+  governs further capabilities, including input, rather than a category ban.
 
 ## Native Integration Boundary
 
-> Any OS/DE-agnostic logic belongs in the central engine where tiling currently
-> resides. Logic requiring native integration with the OS/DE belongs alongside
-> the native effect.
+- User decision (2026-09-24): keep OS/DE-agnostic logic and policy in or near
+  the Rust core wherever possible. Supply needed OS/DE capabilities through
+  the smallest reliable native integration; no capability, including input,
+  is excluded merely for being native.
 
 - The drag-final-geometry oracle uses the minimal C++/moc KWin-effect shim and
   POD-only C ABI required by KWin. Rust owns verdict policy; no Qt or KWin type
@@ -115,6 +116,11 @@ the corresponding item ships; each such entry names its replacement.
 - The drag-final-geometry oracle owns a second read-only session D-Bus endpoint
   for its last verdict. The KWin script pulls it after interactive drag finish;
   the effect never pushes a verdict into the script.
+- Orchestrator interpretation of the 2026-09-24 user decision: reliability is
+  part of the test for any needed native capability. Private KWin APIs are not
+  categorically forbidden, but their ABI churn weighs against their use. Put
+  portable policy in Rust where possible and keep native integration as small
+  and reliable as the capability permits.
 
 ## Settings And Distribution
 
@@ -807,12 +813,11 @@ the corresponding item ships; each such entry names its replacement.
   selected lifetime. One-second accepted/applied open/move/close behavior is
   an alternative fallback only if Meta-held proves unavailable or impractical,
   never automatic when Meta is not held. `I permit the modifier observation.`
-  This authorizes only passive public `EffectsHandler::mouseChanged(...)`
-  observation. No public initial modifiers snapshot is asserted, and
-  `startMousePolling` is stale documentation: no such API exists. It
-  authorizes no grabs, interception, filters/spies, private InputRedirection,
-  input consumption, or polling. KWin Script workspace exposes only cursor
-  position, so Script alone cannot observe Meta hold.
+  The shipped route observes passive public `EffectsHandler::mouseChanged(...)`.
+  No public initial modifiers snapshot is asserted; `startMousePolling` is
+  stale documentation (no such API exists). KWin Script workspace exposes
+  only cursor position, so Script alone cannot observe Meta hold. Additional
+  native input capability follows the Native Integration Boundary.
 - On a recognized Meta press, show the current valid active immediate group;
   while held update/clear it on qualifying tiling/focus/domain changes; clear
   on Meta release. First visibility does not require a tiling mutation. Only
@@ -913,14 +918,22 @@ ships.
 
 ## Production Interactive Edge Drag
 
-- Production interactive single-edge drag share adjustment is selected and
-  shipped. The drag oracle hosted in the disabled-by-default unified
+- Production interactive drag share adjustment uses drop intent (user,
+  2026-09-24). Capture the grabbed edge(s) at drag start: prefer a reliable
+  KWin-reported resize edge if available, otherwise the pointer's proximity
+  to the starting edges. Retile from the final window edge on each grabbed
+  side, ignoring other edge changes from rounding, size increments, or a
+  self-resizing client; corner drags use both axes. Reject only when no usable
+  grabbed edge remains (including cancellation, zero movement, or lost window
+  identity). The strict opposite-edge-fixed rule is superseded.
+- The drag oracle hosted in the disabled-by-default unified
   `plasma-auto-tiler-active-border` native effect records final drag geometry;
   after that effect's explicit enable, the
   production script pulls its read-only session D-Bus verdict and routes a
   non-cancelled verdict through `pointer-resize` shares. A cancelled or
-  no-change verdict makes no pointer-resize plan. This selects no atomicity,
-  acknowledgement, or stock-KWin parity claim.
+  no-change verdict makes no pointer-resize plan. No stock-KWin parity or
+  atomic native geometry-write claim is selected. AR8 still decides the
+  oracle's future from its measurement; this change does not decide AR8.
 
 ## Deferred Scope
 
