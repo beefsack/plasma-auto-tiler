@@ -1095,6 +1095,53 @@ describe("cosmic send-to-workspace refusal routes", () => {
         assert.equal(outcome, "desktop-cap");
     });
 
+    it("dispatches a request with more than sixty-four windows", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const sourceWindows: Array<{ id: string; ref: object; rect: { x: number; y: number; w: number; h: number } }> = [];
+        for (let index = 0; index < 70; index += 1) {
+            sourceWindows.push(
+                Object.freeze({ id: `win-${String(index)}`, ref: {}, rect: Object.freeze(rect((index * 13) % 1100, 0, 100, 100)) }),
+            );
+        }
+        mocks.observeImpl = () =>
+            makeObserved(refs, { focused: "win-0", sourceWindows: Object.freeze(sourceWindows) });
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        assert.equal(adapter.requestSend("ws-2"), true);
+        assert.equal(adapter.isInFlight, true);
+        // Activation: GetNameOwner pins the owner immediately.
+        mocks.callbacks[0]?.(":1.7");
+        const requestCall = mocks.dbusCalls[1];
+        assert.equal(requestCall?.method, WORKSPACE_SEND_METHOD);
+        const requestPayload = parsePayload(requestCall?.payload ?? "{}");
+        assert.equal((requestPayload["windows"] as Array<unknown>).length, 70);
+        assert.ok(!mocks.logs.some((l) => l.includes("event=refuse")), mocks.logs.join("\n"));
+    });
+
+    it("refuses an over-cap request with a correlated refusal and no dispatch", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const sourceWindows: Array<{ id: string; ref: object; rect: { x: number; y: number; w: number; h: number } }> = [];
+        for (let index = 0; index < 14000; index += 1) {
+            sourceWindows.push(
+                Object.freeze({ id: `win-${String(index)}`, ref: {}, rect: Object.freeze(rect((index * 13) % 1100, 0, 100, 100)) }),
+            );
+        }
+        mocks.observeImpl = () =>
+            makeObserved(refs, { focused: "win-0", sourceWindows: Object.freeze(sourceWindows) });
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        assert.equal(adapter.requestSend("ws-2"), false);
+        assert.equal(adapter.isEnabled, true, "pre-flight refusal must stay enabled");
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.dbusCalls.length, 0, "an over-cap request must not touch D-Bus");
+        const line = mocks.logs[mocks.logs.length - 1] ?? "";
+        assert.ok(line.includes("event=refuse"), line);
+        assert.ok(line.includes("outcome=request-over-cap"), line);
+        assert.ok(line.includes("correlation=gen-1-w0"), line);
+    });
+
     it("refuses scope-invalid without disabling when observation is absent", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);

@@ -16,11 +16,6 @@ use crate::directional::{
 };
 use crate::geometry::Rect;
 
-/// Observed-window vector bound (single source: [`crate::bounds`]).
-pub use crate::bounds::MAX_OBSERVED_WINDOWS;
-/// Logical domain bound.
-pub const MAX_DOMAINS: usize = 16;
-
 /// Logical output domain: separate output/workspace scope with explicit
 /// portable bounds and gap for the deterministic projector, plus configured
 /// logical output adjacency for R4 planning. Adjacency maps a

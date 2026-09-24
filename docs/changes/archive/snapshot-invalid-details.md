@@ -28,7 +28,7 @@
 | `domain-output-invalid` | Domain output opaque ID is invalid. |
 | `domain-workspace-invalid` | Domain workspace opaque ID is invalid. |
 | `focused-id-invalid` | Nonempty focused-window opaque ID is invalid. |
-| `window-limit` | Observation exceeds `PLAN_MAX_WINDOWS`. |
+| `window-limit` (retired by AR16) | Observation exceeded the former `PLAN_MAX_WINDOWS` bound. |
 | `observed-window-invalid` | Observed window opaque ID is invalid. |
 | `observed-output-invalid` | Observed output opaque ID is invalid. |
 | `observed-workspace-invalid` | Observed workspace opaque ID is invalid. |

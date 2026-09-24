@@ -75,9 +75,7 @@ impl super::super::Session {
         if window.0.is_empty() {
             return Err(ProposeError::Refused(RefusalKind::MalformedInput));
         }
-        if session_observation.windows.len() > MAX_OBSERVED_WINDOWS
-            || !valid_observed_shapes(&session_observation.windows)
-        {
+        if !valid_observed_shapes(&session_observation.windows) {
             return Err(ProposeError::Refused(RefusalKind::MalformedInput));
         }
         for entry in &session_observation.windows {
@@ -429,9 +427,7 @@ impl super::super::Session {
         if window.0.is_empty() {
             return Err(ProposeError::Refused(RefusalKind::MalformedInput));
         }
-        if session_observation.windows.len() > MAX_OBSERVED_WINDOWS
-            || !valid_observed_shapes(&session_observation.windows)
-        {
+        if !valid_observed_shapes(&session_observation.windows) {
             return Err(ProposeError::Refused(RefusalKind::MalformedInput));
         }
         for entry in &session_observation.windows {
@@ -762,9 +758,7 @@ impl super::super::Session {
         if window.0.is_empty() {
             return Err(ProposeError::Refused(RefusalKind::MalformedInput));
         }
-        if session_observation.windows.len() > MAX_OBSERVED_WINDOWS
-            || !valid_observed_shapes(&session_observation.windows)
-        {
+        if !valid_observed_shapes(&session_observation.windows) {
             return Err(ProposeError::Refused(RefusalKind::MalformedInput));
         }
         for entry in &session_observation.windows {

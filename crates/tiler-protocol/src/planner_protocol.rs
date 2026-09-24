@@ -42,14 +42,12 @@ use tiler_core::session::{DomainKey, OutputDomain, RefusalKind};
 
 /// Planner protocol contract version (JSON string v1).
 pub const PLAN_CONTRACT_VERSION: u32 = 1;
-/// Bounded request cap (mirrors the portable service bound).
-pub const PLAN_MAX_REQUEST_BYTES: usize = 64 * 1024;
+/// Bounded request cap (1 MiB; mirrors the portable service bound).
+pub const PLAN_MAX_REQUEST_BYTES: usize = 1_048_576;
 /// Bounded reply cap (mirrors the portable service bound).
 pub const PLAN_MAX_REPLY_BYTES: usize = 64 * 1024;
 /// Opaque id bound (single source: [`tiler_core::bounds::MAX_OPAQUE_ID_LEN`]).
 pub const PLAN_MAX_ID_LEN: usize = tiler_core::bounds::MAX_OPAQUE_ID_LEN;
-/// Observed window bound (single source: [`tiler_core::bounds::MAX_OBSERVED_WINDOWS`]).
-pub const PLAN_MAX_WINDOWS: usize = tiler_core::bounds::MAX_OBSERVED_WINDOWS;
 /// Revision bound (inclusive, shared with contract).
 pub const PLAN_MAX_REVISION: u64 = 1_000_000;
 
@@ -358,8 +356,24 @@ struct PlanReply {
 fn serialize_bounded(reply: &PlanReply) -> String {
     match serde_json::to_string(reply) {
         Ok(text) if text.len() <= PLAN_MAX_REPLY_BYTES => text,
-        _ => "{\"v\":1,\"correlation_id\":\"\",\"outcome\":\"rejected\",\"kind\":\"snapshot-invalid\",\"message\":\"snapshot or intent is malformed\"}"
-            .to_owned(),
+        // Fixed bounded correlated rejection: a valid large request can
+        // overflow the 64 KiB reply cap, and losing correlation there would
+        // leave the transaction unattributable. Only a validated correlation
+        // is ever echoed (garbage degrades to empty), so untrusted bytes
+        // never escape through this path.
+        _ => {
+            let correlation = CorrelationId::parse(&reply.correlation_id)
+                .map(|id| id.as_str().to_owned())
+                .unwrap_or_default();
+            serde_json::json!({
+                "v": PLAN_CONTRACT_VERSION,
+                "correlation_id": correlation,
+                "outcome": "rejected",
+                "kind": "reply-oversize",
+                "message": "reply exceeds size bound",
+            })
+            .to_string()
+        }
     }
 }
 
@@ -549,7 +563,6 @@ const PLANNER_SNAPSHOT_DETAILS: &[&str] = &[
     "domain-output-invalid",
     "domain-workspace-invalid",
     "focused-id-invalid",
-    "window-limit",
     "observed-window-invalid",
     "observed-output-invalid",
     "observed-workspace-invalid",
@@ -848,13 +861,6 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
             request.correlation_id.clone(),
             MSG_OPAQUE_ID,
             "focused-id-invalid",
-        ));
-    }
-    if request.windows.len() > PLAN_MAX_WINDOWS {
-        return Err(snapshot_invalid(
-            request.correlation_id.clone(),
-            MSG_OBSERVATION,
-            "window-limit",
         ));
     }
     {
@@ -2211,7 +2217,7 @@ impl Planner {
         Self::default()
     }
 
-    /// Number of retained domains (bounded by [`tiler_core::session::MAX_DOMAINS`]).
+    /// Number of retained domains.
     #[must_use]
     pub fn retained_domains(&self) -> usize {
         self.engine.retained_domains()
@@ -4140,9 +4146,6 @@ fn serialize_active_group_found(
     ctx: &Validated,
     found: &tiler_core::boundary::ActiveGroupFound,
 ) -> String {
-    if found.members.len() > PLAN_MAX_WINDOWS {
-        return no_group_reply(ctx, Some(found.base_revision), "no-parent-group");
-    }
     let members: Vec<serde_json::Value> = found
         .members
         .iter()
@@ -5679,18 +5682,36 @@ mod tests {
             mutate(&mut value);
             assert_retained_detail(value, &format!("snap-v-{index}"), expected);
         }
-        let mut many = base_valid_value("snap-v-limit");
-        let mut windows = Vec::new();
-        for i in 0..65 {
-            windows.push(serde_json::json!({
-                "window": format!("win-{i}"),
-                "output": "out-1", "workspace": "ws-1",
-                "rect": {"x": 0, "y": 0, "w": 10, "h": 10},
-            }));
-        }
-        many["windows"] = serde_json::Value::Array(windows);
-        many["focused_window"] = serde_json::json!("win-0");
-        assert_retained_detail(many, "snap-v-limit", "window-limit");
+    }
+
+    #[test]
+    fn many_observed_windows_plan_without_count_cap() {
+        // No observed-window count cap: 70 windows in one horizontal strip
+        // admit through the flat N-ary fit path on a fresh planner. Each
+        // carried rectangle is valid, contained, and strictly sequential.
+        let names: Vec<String> = (0..70).map(|i| format!("win-{i}")).collect();
+        let windows: Vec<(&str, i32, i32, i32, i32)> = names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| (name.as_str(), i as i32 * 17, 0, 10, 800))
+            .collect();
+        let focused = names.last().expect("names").clone();
+        let command = serde_json::json!({"op": "admit", "window": focused, "output": "out-1", "workspace": "ws-1"});
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&retained_request(
+            "many-win-1",
+            "owner-1",
+            "gen-1",
+            &focused,
+            &windows,
+            command,
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(
+            reply["desired_geometry"].as_array().map(Vec::len),
+            Some(70),
+            "{reply}"
+        );
     }
     #[test]
     fn command_and_construction_details_are_exact() {
@@ -7014,7 +7035,7 @@ mod tests {
             );
             assert!(seen.insert(*token), "duplicate token: {token}");
         }
-        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 50, "closed registry size");
+        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 49, "closed registry size");
     }
 
     fn geometry_by_window(
@@ -10257,14 +10278,14 @@ mod tests {
     }
 
     #[test]
-    fn retained_at_cap_empty_cleanup_releases_one_slot() {
-        // At cap, removing the final member of an already-retained domain
-        // still commits and retires, freeing exactly one slot. Offline only.
+    fn retained_many_domains_plan_without_count_cap() {
+        // No retained-domain count cap: well beyond the old 16-domain bound,
+        // every distinct domain admits and stays retained. Offline only.
         let mut planner = Planner::new();
-        for index in 1..=tiler_core::session::MAX_DOMAINS {
+        for index in 1..=24 {
             let workspace = format!("ws-{index}");
             let window = format!("win-{index}");
-            let correlation = format!("cap-retire-admit-{index}");
+            let correlation = format!("many-domain-admit-{index}");
             let request = retained_request_for_domain(
                 &correlation,
                 "owner-1",
@@ -10278,11 +10299,11 @@ mod tests {
             let reply = parse_reply(&planner.evaluate(&request));
             assert_eq!(reply["outcome"], "planned", "{reply} {index}");
         }
-        assert_eq!(planner.retained_domains(), tiler_core::session::MAX_DOMAINS);
+        assert_eq!(planner.retained_domains(), 24);
         // Empty the first retained domain with its exact single-member
-        // observation: the committed remove retires it even at cap.
+        // observation: the committed remove retires it.
         let remove = retained_request_for_domain(
-            "cap-retire-remove-1",
+            "many-domain-remove-1",
             "owner-1",
             "gen-1",
             "out-1",
@@ -10298,10 +10319,91 @@ mod tests {
             Some(0),
             "{remove_reply}"
         );
-        assert_eq!(
-            planner.retained_domains(),
-            tiler_core::session::MAX_DOMAINS - 1
+        assert_eq!(planner.retained_domains(), 23);
+    }
+
+    #[test]
+    fn request_size_cap_is_one_mib_with_bounded_oversize_refusal() {
+        assert_eq!(PLAN_MAX_REQUEST_BYTES, 1_048_576);
+        assert_eq!(PLAN_MAX_REPLY_BYTES, 64 * 1024);
+        // At-cap input passes the size gate (trailing JSON whitespace is
+        // ignored by parsing, so padding is neutral).
+        let base = retained_request(
+            "size-cap-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
         );
+        assert!(base.len() < PLAN_MAX_REQUEST_BYTES);
+        let mut at_cap = base.clone();
+        at_cap.push_str(&" ".repeat(PLAN_MAX_REQUEST_BYTES - at_cap.len()));
+        assert_eq!(at_cap.len(), PLAN_MAX_REQUEST_BYTES);
+        let mut planner = Planner::new();
+        let at_reply = parse_reply(&planner.evaluate(&at_cap));
+        assert_ne!(at_reply["kind"], "oversized", "{at_reply}");
+        // Just-over-cap input refuses without parsing: empty correlation,
+        // bounded fixed message, valid JSON within the reply cap.
+        let mut over = base.clone();
+        over.push_str(&" ".repeat(PLAN_MAX_REQUEST_BYTES - over.len() + 1));
+        assert_eq!(over.len(), PLAN_MAX_REQUEST_BYTES + 1);
+        let over_text = planner.evaluate(&over);
+        let over_reply: serde_json::Value =
+            serde_json::from_str(&over_text).expect("oversize reply is JSON");
+        assert_eq!(over_reply["outcome"], "rejected");
+        assert_eq!(over_reply["kind"], "oversized");
+        assert_eq!(over_reply["message"], "request exceeds size bound");
+        assert_eq!(over_reply["correlation_id"], "");
+        assert!(over_text.len() <= PLAN_MAX_REPLY_BYTES);
+        // The oversize path never echoes untrusted bytes, so no trusted
+        // correlation can be extracted: the service early-exit stays fixed
+        // and uncorrelated (adapter logs the correlated preflight refusal).
+        assert!(!over_text.contains("size-cap"));
+    }
+
+    #[test]
+    fn oversize_reply_from_valid_large_request_stays_correlated_and_bounded() {
+        // A valid large request (800 observed windows, well under the 1 MiB
+        // request cap) overflows the 64 KiB reply cap through desired
+        // geometry. The codec fallback must stay correlated (validated
+        // correlation only, never untrusted bytes) and bounded, and the
+        // normal summary pair must stay bounded with the correlation
+        // attributable.
+        let names: Vec<String> = (0..800).map(|i| format!("win-{i}")).collect();
+        let windows: Vec<(&str, i32, i32, i32, i32)> = names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| (name.as_str(), i as i32, 0, 1, 800))
+            .collect();
+        let focused = names.last().expect("names").clone();
+        let request = retained_request(
+            "big-reply-1",
+            "owner-1",
+            "gen-1",
+            &focused,
+            &windows,
+            serde_json::json!({"op": "admit", "window": focused, "output": "out-1", "workspace": "ws-1"}),
+        );
+        assert!(request.len() < PLAN_MAX_REQUEST_BYTES, "{}", request.len());
+        let mut planner = Planner::new();
+        let text = planner.evaluate(&request);
+        let reply: serde_json::Value = serde_json::from_str(&text).expect("fallback reply is JSON");
+        assert_eq!(reply["outcome"], "rejected", "{reply}");
+        assert_eq!(reply["kind"], "reply-oversize", "{reply}");
+        assert_eq!(reply["message"], "reply exceeds size bound", "{reply}");
+        assert_eq!(reply["correlation_id"], "big-reply-1", "{reply}");
+        assert!(text.len() <= PLAN_MAX_REPLY_BYTES, "{reply}");
+        // No carried data echoes: only the validated correlation survives.
+        assert!(!text.contains("win-42"), "{reply}");
+        let ingress = summarize_plan_ingress(&request);
+        let egress = summarize_plan_egress(&request, &text);
+        for line in [&ingress, &egress] {
+            assert!(line.len() <= 512, "{line}");
+        }
+        assert!(ingress.contains("correlation=big-reply-1"), "{ingress}");
+        assert!(egress.contains("correlation=big-reply-1"), "{egress}");
+        assert!(egress.contains("kind=reply-oversize"), "{egress}");
     }
 
     #[test]

@@ -9,8 +9,6 @@
 
 use crate::geometry::Rect;
 
-/// Observed-window vector bound.
-pub const MAX_OBSERVED_WINDOWS: usize = 64;
 /// Opaque id bound.
 pub const MAX_OPAQUE_ID_LEN: usize = 128;
 /// Bounded carried-geometry extent.

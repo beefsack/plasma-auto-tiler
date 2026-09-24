@@ -857,9 +857,10 @@ fn stale_adjacency_does_not_poison_retained_pair() {
 }
 
 #[test]
-fn bounded_capacity_never_clears_unrelated_pairs() {
-    // Nine distinct pairs exceed the 16-domain canonical-state bound. The
-    // ninth is refused without evicting or reseeding any earlier authority.
+fn many_pairs_plan_without_domain_cap() {
+    // No retained-domain count cap: ten distinct pairs (20 domains, beyond
+    // the old 16-domain bound) all establish canonical components and plan,
+    // and the first pair still plans afterwards.
     let mut planner = Planner::new();
     let pair_request = |tag: &str, i: usize| {
         let out_l = format!("out-l{i}");
@@ -890,14 +891,13 @@ fn bounded_capacity_never_clears_unrelated_pairs() {
             Some(domains),
         )
     };
-    for i in 0..8 {
+    for i in 0..10 {
         let reply = parse(&planner.evaluate(&pair_request(&format!("dir-cap-{i}"), i)));
         assert_eq!(reply["outcome"], "planned", "pair {i}: {reply}");
     }
-    // Ninth pair cannot establish canonical components, then the first pair
-    // still plans because nothing was cleared.
-    let ninth = parse(&planner.evaluate(&pair_request("dir-cap-8", 8)));
-    assert_eq!(ninth["outcome"], "rejected", "{ninth}");
+    // The eleventh pair also plans, then the first pair still plans.
+    let extra = parse(&planner.evaluate(&pair_request("dir-cap-10", 10)));
+    assert_eq!(extra["outcome"], "planned", "{extra}");
     let first_again = parse(&planner.evaluate(&pair_request("dir-cap-0b", 0)));
     assert_eq!(first_again["outcome"], "planned", "{first_again}");
     assert_eq!(

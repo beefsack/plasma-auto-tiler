@@ -38,7 +38,6 @@ export const ACTIVE_GROUP_MAX_ID_LEN = 128;
 export const ACTIVE_GROUP_MAX_OWNER_LEN = 128;
 export const ACTIVE_GROUP_MAX_GENERATION_LEN = 64;
 export const ACTIVE_GROUP_MAX_CORRELATION_LEN = 128;
-export const ACTIVE_GROUP_MAX_MEMBERS = 64;
 export const ACTIVE_GROUP_MAX_SEQ = 1000000;
 
 const LOG_PREFIX = "plasma-auto-tiler:group-highlight";
@@ -377,7 +376,7 @@ export function parseActiveGroupReply(reply: unknown, expected: ActiveGroupReply
         return null;
     }
     const membersRaw = detail["members"];
-    if (!Array.isArray(membersRaw) || membersRaw.length === 0 || membersRaw.length > ACTIVE_GROUP_MAX_MEMBERS) {
+    if (!Array.isArray(membersRaw) || membersRaw.length === 0) {
         return null;
     }
     const members: ActiveGroupMember[] = [];
@@ -454,7 +453,7 @@ function validateObserved(observed: ActiveGroupObserved | null): observed is Act
     if (!Array.isArray(observed.windows as unknown)) {
         return false;
     }
-    if (observed.windows.length === 0 || observed.windows.length > ACTIVE_GROUP_MAX_MEMBERS) {
+    if (observed.windows.length === 0) {
         return false;
     }
     const seen = new Set<string>();
@@ -492,7 +491,13 @@ function validateObserved(observed: ActiveGroupObserved | null): observed is Act
 
 // Builds the exact DescribePlan active-group request over the existing
 // route. The observation rectangles are carried verbatim for the Rust
-// retained lookup; no topology is derived here.
+// retained lookup; no topology is derived here. Over-cap is reported
+// distinctly from malformed builds so the caller can refuse loudly instead
+// of silently dropping.
+export type ActiveGroupRequestResult =
+    | { readonly ok: true; readonly payload: string }
+    | { readonly ok: false; readonly reason: "request-invalid" | "request-over-cap" };
+
 export function buildActiveGroupRequest(
     observed: ActiveGroupObserved,
     owner: string,
@@ -500,21 +505,21 @@ export function buildActiveGroupRequest(
     correlation: string,
     revision: number,
     fingerprint: number,
-): string | null {
+): ActiveGroupRequestResult {
     if (!validateObserved(observed)) {
-        return null;
+        return { ok: false, reason: "request-invalid" };
     }
     if (!isOpaqueId(owner, ACTIVE_GROUP_MAX_OWNER_LEN, false)) {
-        return null;
+        return { ok: false, reason: "request-invalid" };
     }
     if (!isOpaqueId(correlation, ACTIVE_GROUP_MAX_CORRELATION_LEN, false)) {
-        return null;
+        return { ok: false, reason: "request-invalid" };
     }
     if (!isGenerationId(generation)) {
-        return null;
+        return { ok: false, reason: "request-invalid" };
     }
     if (!isRevision(revision) || !isRevision(fingerprint)) {
-        return null;
+        return { ok: false, reason: "request-invalid" };
     }
     const windows = observed.windows.map((entry) => ({
         window: entry.id,
@@ -549,12 +554,16 @@ export function buildActiveGroupRequest(
         });
     } catch (error) {
         void error;
-        return null;
+        return { ok: false, reason: "request-invalid" };
     }
+    // `.length` is an exact byte count: every serialized string is a fixed
+    // literal or passes isOpaqueId/isGenerationId (ASCII-only charsets), and
+    // JSON numbers and escapes are ASCII-only. Validation above rejects any
+    // non-ASCII before this build.
     if (payload.length > ACTIVE_GROUP_MAX_REQUEST_BYTES) {
-        return null;
+        return { ok: false, reason: "request-over-cap" };
     }
-    return payload;
+    return { ok: true, payload };
 }
 
 // Formats the bounded QString payload forwarded to the owned effect setter.
@@ -664,11 +673,15 @@ export class ActiveGroupHighlight {
             this.clearFlight(`${LOG_PREFIX}:cleared reason=fingerprint-invalid`);
             return;
         }
-        const payload = buildActiveGroupRequest(snapshot, this.env.owner, this.env.generation, correlation, this.requestRevision, fingerprint);
-        if (payload === null) {
+        const result = buildActiveGroupRequest(snapshot, this.env.owner, this.env.generation, correlation, this.requestRevision, fingerprint);
+        if (!result.ok) {
+            // Unbuildable or over-cap request: no dispatch, plus one
+            // correlated refusal line so the drop is never silent.
+            this.logToken(`${LOG_PREFIX}:request-refused correlation=${correlation} reason=${result.reason}`);
             this.clearFlight(`${LOG_PREFIX}:cleared reason=request-invalid`);
             return;
         }
+        const payload = result.payload;
         this.pending = {
             correlation,
             epoch: flightEpoch,

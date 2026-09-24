@@ -544,6 +544,7 @@ mod tests {
         assert_eq!(OBJECT, "/org/plasmaautotiler/Planner");
         assert_eq!(INTERFACE, "org.plasmaautotiler.Planner1");
         assert_eq!(PLAN_MAX_REPLY, 64 * 1024);
+        assert_eq!(PLAN_MAX_REQUEST, 1_048_576);
         assert_eq!(
             PLAN_MAX_REPLY,
             tiler_protocol::planner_protocol::PLAN_MAX_REPLY_BYTES

@@ -51,8 +51,6 @@ decisions of 2026-09-24 are recorded under
   effect mouse interception blocks all clicks; plausible first prototype is
   project-owned layer-shell surfaces confined to positive-width gaps, with a
   native KWin input filter as fallback. Needs a Rust split-boundary request.
-- P0 | AR16 Size caps | 7.13. Approved: drop 64-window/16-domain count caps in
-  core and TS; keep one codec request byte cap (~1 MiB).
 - P0 | AR15 Script-page tiling settings | 7.4. Approved: tiling settings
   (`workspaceMode`, `shortcutProfile`, gaps) move to the script's configure page
   via `X-KDE-ConfigModule`; effect KCM keeps border and shortcut settings only.

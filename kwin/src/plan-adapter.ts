@@ -42,7 +42,13 @@ export const PLAN_START_PRIMARY = 1;
 export const PLAN_START_ALREADY = 2;
 
 export const PLAN_CONTRACT_VERSION = 1;
-export const PLAN_MAX_REQUEST_BYTES = 64 * 1024;
+// Planner request byte cap (mirrors the Rust codec `PLAN_MAX_REQUEST_BYTES`).
+// `.length` is an exact byte count here: every string reaching request JSON
+// is a fixed literal or passes isOpaqueId/isGeneration/isCorrelationId
+// (charsets [A-Za-z0-9_.-] / [a-z0-9-], all <= 0x7F), and JSON numbers,
+// booleans, and escapes are ASCII-only. Non-ASCII can never reach a request
+// payload: validation rejects it before any build.
+export const PLAN_MAX_REQUEST_BYTES = 1_048_576;
 export const PLAN_MAX_REPLY_BYTES = 64 * 1024;
 export const PLAN_TIMEOUT_MS = 2000;
 export const PLAN_DEBOUNCE_MS = 120;
@@ -51,10 +57,7 @@ export const PLAN_MAX_CORRELATION_LEN = 128;
 export const PLAN_MAX_OWNER_LEN = 128;
 export const PLAN_MAX_GENERATION_LEN = 64;
 export const PLAN_MAX_ID_LEN = 128;
-export const PLAN_MAX_WINDOWS = 64;
-export const PLAN_MAX_GEOMETRY = 64;
 export const PLAN_MAX_SEQ = 1000000;
-export const PLAN_MAX_DOMAINS = 16;
 
 // KWin's public Script API exposes Window.output read-only and has no public
 // output-transfer operation. A desktop-membership setter and target geometry
@@ -1130,7 +1133,7 @@ function validatePlanned(reply: unknown, correlationId: string): PlannedReply | 
         return null;
     }
     const geometryRaw = reply["desired_geometry"];
-    if (!Array.isArray(geometryRaw) || geometryRaw.length > PLAN_MAX_GEOMETRY) {
+    if (!Array.isArray(geometryRaw)) {
         return null;
     }
     const geometry: PlanGeometryEntry[] = [];
@@ -1321,7 +1324,7 @@ function validateFocusOperation(value: unknown): PlanFocusOperation | null | und
         return undefined;
     }
     const route = value["route"];
-    if (!Array.isArray(route) || route.length === 0 || route.length > PLAN_MAX_WINDOWS) {
+    if (!Array.isArray(route) || route.length === 0) {
         return undefined;
     }
     const routeOut: string[] = [];
@@ -1406,7 +1409,7 @@ function validateObserved(observed: PlanObserved | null): observed is PlanObserv
         return false;
     }
     const windows = observed.windows;
-    if (windows.length === 0 || windows.length > PLAN_MAX_WINDOWS) {
+    if (windows.length === 0) {
         return false;
     }
     if (
@@ -1688,10 +1691,9 @@ interface DragRestoreMarker {
     dispatched: boolean;
 }
 
-// Bound on correlations coalesced into one marker, and on markers overall
-// (sharing the planner's bounded-domain cap). Overflow fails closed with a
-// truthful correlated `unavailable` terminal naming `plan=none`, never a
-// silent drop and never a fabricated success.
+// Bound on drag correlations coalesced into one marker. Overflow fails closed
+// with a truthful correlated `unavailable` terminal naming `plan=none`, never
+// a silent drop and never a fabricated success.
 const MAX_DRAG_RESTORE_DRAGS = 64;
 // Bound on ops whose successful application satisfies a marker: exactly the
 // ops that write/apply a domain's full retained/projected geometry.
@@ -3109,11 +3111,6 @@ export class PlanAdapter {
             const key = this.dragRestoreKey(domain.output, domain.workspace);
             let marker = this.dragRestore.get(key);
             if (marker === undefined) {
-                if (this.dragRestore.size >= PLAN_MAX_DOMAINS) {
-                    this.logToken(`${LOG_PREFIX}:drag-rejected correlation=${id} reason=${kind}`);
-                    this.logToken(`${LOG_PREFIX}:drag-reconcile-settled correlation=${id} outcome=unavailable plan=none`);
-                    return;
-                }
                 marker = {
                     output: domain.output,
                     workspace: domain.workspace,
@@ -4110,21 +4107,13 @@ export class PlanAdapter {
                 valid.push(entry);
             }
         }
-        // Bounded-domain cap stays fail-closed for new background admission
-        // (hiddenIntentFor/setLastGood refuse without evicting foreground),
-        // but explicit empty-source cleanup for an already-retained domain is
-        // still considered at cap so a committed last remove can release its
-        // slot. Over-limit hidden sets (no room left for the foreground) skip
-        // new domains entirely; retained domains still converge below. Cap
-        // counts only non-empty observations: explicit empty evidence never
-        // occupies a slot.
+        // Every validated hidden domain is considered: explicit empty-source
+        // cleanup for an already-retained domain releases its baseline, and
+        // new domains admit without a domain-count gate. Retained domains
+        // converge below.
         const nonEmpty = valid.filter((entry) => entry.windows.length > 0);
         const emptyExplicit = valid.filter((entry) => entry.windows.length === 0);
-        const overLimit = nonEmpty.length >= PLAN_MAX_DOMAINS;
         for (const observed of nonEmpty) {
-            if (overLimit && !this.lastGoodByDomain.has(this.domainKey(snapshotOf(observed)))) {
-                continue;
-            }
             const intent = this.hiddenIntentFor(observed);
             if (intent !== null) {
                 this.dispatch(intent);
@@ -4135,7 +4124,7 @@ export class PlanAdapter {
         // empty-domain evidence whose output is not tainted/unclassifiable.
         // Absence is unknown (exception transition, tainted output,
         // unreadable domain, or overall failure) and must never synthesize
-        // an empty snapshot. Per-domain baselines and cap slots are cleaned
+        // an empty snapshot. Per-domain baselines are cleaned
         // only via applied removes; attempts/parked use the per-domain
         // background accounting. No visibility history or polling is invented.
         let foregroundKey: string | null = null;
@@ -4248,9 +4237,6 @@ export class PlanAdapter {
         const freshSnapshot = this.carriedSnapshot(prepared.observed);
         const previous = this.lastGoodFor(freshSnapshot);
         if (previous === null) {
-            if (!this.lastGoodByDomain.has(this.domainKey(freshSnapshot)) && this.lastGoodByDomain.size >= PLAN_MAX_DOMAINS) {
-                return null;
-            }
             return {
                 op: "admit",
                 snapshot: freshSnapshot,
@@ -4375,12 +4361,12 @@ export class PlanAdapter {
             };
         }
         if (sameRects(previous, freshSnapshot) && !knownOutOfBounds) {
-            this.setLastGood(freshSnapshot, true);
+            this.setLastGood(freshSnapshot);
             this.clearBackgroundReconcile(freshSnapshot);
             return null;
         }
         if (!sameScope(previous, freshSnapshot)) {
-            this.setLastGood(freshSnapshot, true);
+            this.setLastGood(freshSnapshot);
             this.clearBackgroundReconcile(freshSnapshot);
             return null;
         }
@@ -4637,14 +4623,18 @@ export class PlanAdapter {
         } catch (error) {
             void error;
             // Unbuildable payload: no plan correlation was created, so bind
-            // the exact marker failure now with an honest `plan=none`.
+            // the exact marker failure now with an honest `plan=none`, plus
+            // one correlated refusal line so the drop is never silent.
+            this.logToken(`${LOG_PREFIX}:request-refused correlation=${correlation} reason=request-invalid`);
             this.failMarkerDispatch(intent, "dispatch-failed", null);
             return;
         }
         if (payload.length > PLAN_MAX_REQUEST_BYTES) {
             // Oversize payload: no flight was created, so bind the exact
-            // marker failure now with an honest `plan=none`. The allocated
-            // correlation never left the adapter and names nothing.
+            // marker failure now with an honest `plan=none`, plus one
+            // correlated refusal line so the drop is never silent. The
+            // allocated correlation never left the adapter and names nothing.
+            this.logToken(`${LOG_PREFIX}:request-refused correlation=${correlation} reason=request-over-cap`);
             this.failMarkerDispatch(intent, "dispatch-failed", null);
             return;
         }
@@ -5411,8 +5401,7 @@ export class PlanAdapter {
     // geometry) members compare only against actual retained evidence;
     // without it the log reports retained=unknown and claims no precise
     // cause. Counts only otherwise; no rects, no raw native ids. Member
-    // records are bounded by the protocol window caps (at most 64 wanted
-    // plus 64 planned).
+    // records are bounded by the built request byte cap.
     private logCoverSkew(flightState: PendingFlight, planned: PlannedReply | null, reason: string): void {
         try {
             interface SkewFlags {
@@ -6673,16 +6662,7 @@ export class PlanAdapter {
                     }
                 }
             } else {
-                const retained = this.setLastGood({ ...retainedBase, windows: Object.freeze(windows) }, flightState.background === true);
-                if (flightState.background === true && !retained) {
-                    // Background cap-race: the applied result cannot be retained
-                    // without evicting the foreground baseline. Fail closed without
-                    // clearing accounting (which would retry forever): count the
-                    // terminal attempt so the domain parks boundedly instead.
-                    this.ordinaryTerminal(flightState, planned, "uncertain", "setters");
-                    this.failFlight(flightState, "cap-race");
-                    return;
-                }
+                this.setLastGood({ ...retainedBase, windows: Object.freeze(windows) });
             }
             if (flightState.op === "pointer-resize" && flightState.pointerSource !== null) {
                 const neighbours = planned.geometry
@@ -7004,7 +6984,12 @@ export class PlanAdapter {
         }
         r4.acked = true;
         const payload = this.buildR4AckPayload(r4, post);
-        if (payload === null || payload.length > PLAN_MAX_REQUEST_BYTES) {
+        if (payload === null) {
+            this.failR4Terminal("precondition-mismatch", false);
+            return;
+        }
+        if (payload.length > PLAN_MAX_REQUEST_BYTES) {
+            this.logToken(`${LOG_PREFIX}:request-refused correlation=${r4.correlation} reason=request-over-cap`);
             this.failR4Terminal("precondition-mismatch", false);
             return;
         }
@@ -7226,6 +7211,7 @@ export class PlanAdapter {
             return;
         }
         if (payload.length > PLAN_MAX_REQUEST_BYTES) {
+            this.logToken(`${LOG_PREFIX}:request-refused correlation=${r4.correlation} reason=request-over-cap`);
             return;
         }
         try {
@@ -7325,7 +7311,11 @@ export class PlanAdapter {
             return this.abortR4CancelStart(flightState);
         }
         const payload = this.buildR4CancelPayload(flightState, observed);
-        if (payload === null || payload.length > PLAN_MAX_REQUEST_BYTES) {
+        if (payload === null) {
+            return this.abortR4CancelStart(flightState);
+        }
+        if (payload.length > PLAN_MAX_REQUEST_BYTES) {
+            this.logToken(`${LOG_PREFIX}:request-refused correlation=${flightState.correlation} reason=request-over-cap`);
             return this.abortR4CancelStart(flightState);
         }
         // Retire the firing/armed dispatch-phase deadline and arm the single
@@ -7594,7 +7584,12 @@ export class PlanAdapter {
             return;
         }
         const payload = this.buildR4VerifyPayload(r4, post);
-        if (payload === null || payload.length > PLAN_MAX_REQUEST_BYTES) {
+        if (payload === null) {
+            this.failR4Terminal("precondition-mismatch", false);
+            return;
+        }
+        if (payload.length > PLAN_MAX_REQUEST_BYTES) {
+            this.logToken(`${LOG_PREFIX}:request-refused correlation=${r4.correlation} reason=request-over-cap`);
             this.failR4Terminal("precondition-mismatch", false);
             return;
         }
@@ -8035,18 +8030,8 @@ export class PlanAdapter {
         return this.lastGoodByDomain.get(this.domainKey(snapshot)) ?? null;
     }
 
-    private setLastGood(snapshot: PlanSnapshot, background = false): boolean {
+    private setLastGood(snapshot: PlanSnapshot): boolean {
         const key = this.domainKey(snapshot);
-        if (!this.lastGoodByDomain.has(key) && this.lastGoodByDomain.size >= PLAN_MAX_DOMAINS) {
-            if (background) {
-                // Fail closed without evicting the foreground baseline: a
-                // hidden candidate never forces foreground re-admission.
-                return false;
-            }
-            // Match the Planner's bounded-domain eviction before retaining the
-            // projection that committed the replacement domain.
-            this.lastGoodByDomain.clear();
-        }
         this.lastGoodByDomain.set(key, snapshot);
         return true;
     }

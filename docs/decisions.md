@@ -32,8 +32,9 @@ the corresponding item ships; each such entry names its replacement.
   Orchestrator's option (1) decision applying the user-approved AR12 text,
   overconstrained members are not reasserted; R4 verifies their client-held
   geometry while keeping identity, membership, and other geometry exact.
-- Size caps (AR16): the 64-window and 16-domain count caps are replaced by one
-  codec request byte cap (about 1 MiB).
+- Size caps (AR16, shipped offline): the 64-window and 16-domain count caps are
+  retired. The codec rejects requests above 1 MiB; the KWin adapter mirrors
+  this bound before dispatch. Separate reply, native/FFI, and field bounds remain.
 - Settings (AR15): tiling settings (`workspaceMode`, `shortcutProfile`, gaps)
   are configured from the KWin script's own configure page; the effect KCM
   keeps border and shortcut settings. Storage stays in the same `kwinrc`

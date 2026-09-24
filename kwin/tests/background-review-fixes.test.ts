@@ -3,7 +3,6 @@ import { describe, it } from "node:test";
 
 import {
     PLAN_DEBOUNCE_MS,
-    PLAN_MAX_DOMAINS,
     PlanAdapter,
     PlanAdapterEnv,
     PlanObserved,
@@ -545,7 +544,7 @@ describe("background review fixes", () => {
         }
     });
 
-    it("cap-race parks the background domain without evicting the foreground", () => {
+    it("background admission beyond sixteen domains retains without parking", () => {
         const fgA: object = {};
         const fgB: object = {};
         const hiddenRefs = new Map<string, object>();
@@ -594,7 +593,7 @@ describe("background review fixes", () => {
         };
         state.observeImpl = () => fgObserved();
         const hiddenWorkspaces: string[] = [];
-        for (let index = 2; index <= PLAN_MAX_DOMAINS - 1; index += 1) {
+        for (let index = 2; index <= 21; index += 1) {
             hiddenWorkspaces.push(`ws-${String(index)}`);
         }
         for (const workspace of hiddenWorkspaces) {
@@ -690,13 +689,13 @@ describe("background review fixes", () => {
             const index = answered;
             answered += 1;
             callbacks[index]?.(plannedFor(payloadAt(index)));
-            if (answered > PLAN_MAX_DOMAINS + 2) {
-                throw new Error("cap-race baseline did not converge");
+            if (answered > 64) {
+                throw new Error("multi-domain baseline did not converge");
             }
         }
-        assert.equal(dbusCalls.length, PLAN_MAX_DOMAINS - 1, "foreground plus all but one hidden domain retained");
+        assert.equal(dbusCalls.length, 21, "foreground plus twenty hidden domains retained");
         const inner = adapter as unknown as { lastGoodByDomain: Map<string, { domainOutput: string; domainWorkspace: string }> };
-        assert.equal(inner.lastGoodByDomain.size, PLAN_MAX_DOMAINS - 1);
+        assert.equal(inner.lastGoodByDomain.size, 21);
 
         const raceRef: object = {};
         const raceObserved = hiddenObserved("ws-race", "win-race", raceRef);
@@ -705,66 +704,24 @@ describe("background review fixes", () => {
         runDebounceLocal();
         const raceIndex = dbusCalls.length - 1;
         assert.equal((payloadAt(raceIndex)["domain"] as Record<string, unknown>)["workspace"], "ws-race");
-        // Race the applied retain: fill the final cap slot before the reply so
-        // the applied background result cannot be retained.
-        inner.lastGoodByDomain.set("race-filler\u0000ws-filler", {
-            domainOutput: "race-filler",
-            domainWorkspace: "ws-filler",
-            domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
-            domainGap: DOMAIN_GAP,
-            domainOuterGap: OUTER_DOMAIN_GAP,
-            focusedId: "win-filler",
-            windows: Object.freeze([]),
-            fingerprint: "fp-filler",
-        } as unknown as { domainOutput: string; domainWorkspace: string });
-        assert.equal(inner.lastGoodByDomain.size, PLAN_MAX_DOMAINS);
+        assert.equal((payloadAt(raceIndex)["command"] as Record<string, unknown>)["op"], "admit");
         callbacks[raceIndex]?.(plannedFor(payloadAt(raceIndex)));
-        // Fail-closed without foreground eviction: the race filler plus the
-        // foreground baseline are still retained.
-        assert.ok(inner.lastGoodByDomain.has("out-1\u0000ws-1"), "foreground baseline must survive a background cap-race");
-        assert.ok(logs.some((line) => line.includes("outcome=cap-race") || line.includes("outcome=planned-applied") || line.includes("reconcile-parked")));
-
-        const callsAfterRace = dbusCalls.length;
-        // Drive two more raced retries (three total incl. the first) by freeing
-        // one slot before each intent and refilling before the reply. Each
-        // applied failure must count without clearing, so the third parks.
-        for (let round = 0; round < 2; round += 1) {
-            inner.lastGoodByDomain.delete("race-filler\u0000ws-filler");
-            inner.lastGoodByDomain.delete(`race-filler-${String(round - 1)}\u0000ws-filler-${String(round - 1)}`);
-            fireKind("geometry");
-            runDebounceLocal();
-            if (dbusCalls.length <= callsAfterRace) {
-                throw new Error("cap-race retry did not dispatch");
-            }
-            const nextIndex = dbusCalls.length - 1;
-            const nextPayload = payloadAt(nextIndex);
-            assert.equal((nextPayload["domain"] as Record<string, unknown>)["workspace"], "ws-race");
-            inner.lastGoodByDomain.set(`race-filler-${String(round)}\u0000ws-filler-${String(round)}`, {
-                domainOutput: `race-filler-${String(round)}`,
-                domainWorkspace: `ws-filler-${String(round)}`,
-                domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
-                domainGap: DOMAIN_GAP,
-                domainOuterGap: OUTER_DOMAIN_GAP,
-                focusedId: "win-filler",
-                windows: Object.freeze([]),
-                fingerprint: "fp-filler",
-            } as unknown as { domainOutput: string; domainWorkspace: string });
-            callbacks[nextIndex]?.(plannedFor(nextPayload));
-        }
-        assert.ok(logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"), "background cap-race must park boundedly");
-        const parkedCalls = dbusCalls.length;
-        fireKind("geometry");
-        runDebounceLocal();
-        const parkedPayloads = dbusCalls.slice(parkedCalls).map((call) => JSON.parse(call.payload) as Record<string, unknown>);
+        // No domain-count gate: the twenty-second domain is retained and the
+        // foreground baseline survives with no parking.
+        assert.equal(inner.lastGoodByDomain.size, 22);
+        assert.ok(inner.lastGoodByDomain.has("out-1\u0000ws-1"), "foreground baseline must survive admission beyond sixteen domains");
+        assert.ok(inner.lastGoodByDomain.has("out-1\u0000ws-race"), "admission beyond sixteen domains must retain");
         assert.ok(
-            parkedPayloads.every((payload) => (payload["domain"] as Record<string, unknown>)["workspace"] !== "ws-race"),
-            "parked background race domain must not retry forever",
+            !logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"),
+            "admission beyond sixteen domains must not park",
         );
+
         fgRect = { x: 0, y: 0, w: 616, h: 800 };
+        const beforeDrift = dbusCalls.length;
         fireKind("geometry");
         runDebounceLocal();
-        assert.equal(dbusCalls.length, parkedCalls + 1, "foreground stays usable after a background cap-race");
-        assert.equal((payloadAt(parkedCalls)["domain"] as Record<string, unknown>)["workspace"], "ws-1");
-        assert.deepEqual((payloadAt(parkedCalls)["command"] as Record<string, unknown>)["op"], "reconcile");
+        assert.equal(dbusCalls.length, beforeDrift + 1, "foreground stays usable after admission beyond sixteen domains");
+        assert.equal((payloadAt(beforeDrift)["domain"] as Record<string, unknown>)["workspace"], "ws-1");
+        assert.deepEqual((payloadAt(beforeDrift)["command"] as Record<string, unknown>)["op"], "reconcile");
     });
 });

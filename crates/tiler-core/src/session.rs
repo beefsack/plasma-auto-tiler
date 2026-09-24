@@ -104,9 +104,8 @@ mod ops;
 mod world;
 
 pub use world::{
-    DomainKey, ExceptionBehavior, ExceptionFlags, ExceptionRecord, MAX_DOMAINS,
-    MAX_OBSERVED_WINDOWS, ObservedWindow, OutputDomain, SessionDomainView, SessionObservation,
-    SessionSnapshot,
+    DomainKey, ExceptionBehavior, ExceptionFlags, ExceptionRecord, ObservedWindow, OutputDomain,
+    SessionDomainView, SessionObservation, SessionSnapshot,
 };
 
 /// Lifecycle command against the accepted session.
@@ -578,10 +577,7 @@ impl Session {
         if !is_revision(initial_revision) {
             return Err(SessionNewError::RevisionOutOfBounds);
         }
-        if domains.is_empty()
-            || domains.len() > MAX_DOMAINS
-            || !domains.iter().all(|d| d.validate())
-        {
+        if domains.is_empty() || !domains.iter().all(|d| d.validate()) {
             return Err(SessionNewError::InvalidDomain);
         }
         let mut seen = BTreeSet::new();

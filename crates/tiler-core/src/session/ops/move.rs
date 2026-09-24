@@ -108,9 +108,7 @@ impl super::super::Session {
         if !self.validate_current_topology() {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         }
-        if session_observation.windows.len() > MAX_OBSERVED_WINDOWS
-            || !valid_observed_shapes(&session_observation.windows)
-        {
+        if !valid_observed_shapes(&session_observation.windows) {
             return Err(ProposeError::Refused(RefusalKind::MalformedInput));
         }
         for entry in &session_observation.windows {

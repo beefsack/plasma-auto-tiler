@@ -107,10 +107,10 @@ both revision and fingerprint. For send-touched domains, an empty canonical
 slot retains its last `(revision, F)` as an owner/generation-bound tombstone; a
 subsequent send or ordinary re-admission advances **from that tombstone**,
 never starts at zero. A never-observed domain alone begins at zero as in AR4's
-unshipped candidate. Tombstones count toward `MAX_DOMAINS` alongside live
-Sessions and are never silently evicted in the same generation: refuse a new
-domain without modifying existing scopes if capacity is exhausted. Binding
-loss discards old-generation tombstones. Ordinary operations elsewhere keep
+unshipped candidate. AR16 retired `MAX_DOMAINS`; the earlier tombstone
+capacity clause is superseded. Tombstones are not silently evicted in the
+same generation. Binding loss discards old-generation tombstones. Ordinary
+operations elsewhere keep
 their existing model; ordinary admission into a send-touched empty domain
 consumes the retained revision. `Session`
 needs a direct validated observation acceptance transition, separate from

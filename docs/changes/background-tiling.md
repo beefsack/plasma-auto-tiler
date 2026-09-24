@@ -27,15 +27,15 @@
   and preserves the baseline rather than fabricating a multi-remove commit.
   Ordinary single-window hidden open, move, geometry reconciliation, and final
   close continue through the existing lifecycle.
-- Existing limits remain authoritative: new background domains fail closed at
-  the 16-domain and 64-window request bounds. No recovery, replay, reseed,
-  polling, or visibility/focus workaround was added.
+- The original 16-domain and 64-window request bounds were retired by AR16;
+  the codec request byte bound now applies. No recovery, replay, reseed,
+  polling, or visibility/focus workaround was added here.
 
 ## Evidence And Live Gate
 
 - Offline production-entry and Plan-adapter tests cover hidden startup, open,
   move, final removal, multi-output domains, exception and unreadable handling,
-  caps, send coordination, and unchanged native focus/desktop seams. Rust unit
+  send coordination, and unchanged native focus/desktop seams. Rust unit
   tests cover empty-session retirement and fail-closed multi-member collapse.
 - No live KWin/Plasma action or rendered-state proof occurred. User-owned live
   acceptance remains for hidden startup/open/move, multi-output behavior, and

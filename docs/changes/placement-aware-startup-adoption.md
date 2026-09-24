@@ -85,14 +85,12 @@
 
 ## Feasibility And Evidence
 
-- The topology is already an ordered, nested N-ary tree with one positive
-  `u64` share per child (`src/directional.rs:107-123`); the observer and wire
-  cap one request at 64 windows and one planner at 16 domains
-  (`src/planner_protocol.rs:52-60`; `src/session.rs:99-101`). Current seeding
-  is `O(n log n)` ordering plus bounded sequential admission/projection.
-  Exhaustive enumeration of trees, orders, or share vectors is not an acceptable
-  adoption strategy; the fit remains bounded by the existing 64-window cap and
-  a finite deterministic grammar.
+- The topology is an ordered, nested N-ary tree with one positive `u64` share
+  per child. AR16 retired the former 64-window/16-domain limits; the codec now
+  caps request bytes at 1 MiB. Seeding orders windows and uses deterministic
+  admission/projection. Exhaustive enumeration of trees, orders, or share
+  vectors is not an acceptable adoption strategy; fitting uses a finite
+  deterministic grammar.
 - Future implementation evidence should establish deterministic near-fitting,
   low unnecessary startup movement, configured gaps/inset handling, genuine
   inference failure, and the selected fallback. A live journey is not requested

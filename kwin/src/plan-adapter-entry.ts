@@ -932,10 +932,8 @@ export function observeSendTarget(
 // the adapter can protect a retained baseline, but the adapter never
 // dispatches admission/reconcile/removal solely for them. Anything unreadable
 // or tainted is omitted as unknown and must never be treated as empty.
-// Omission fails closed per domain, per output, or overall. The bounded-domain cap is
-// enforced by the adapter (which can distinguish cap from empty); this
-// observer reports every eligible background domain without inventing
-// over-limit policy.
+// Omission fails closed per domain, per output, or overall. This observer
+// reports every eligible background domain without inventing an empty one.
 export function observeHiddenDomains(
     liveWorkspace: unknown,
     cache: Map<string, string>,
@@ -1367,9 +1365,8 @@ export function observeHiddenDomains(
                 });
             }
         }
-        // The bounded-domain cap is enforced fail-closed by the adapter (which
-        // distinguishes cap from empty for baseline cleanup). Report every
-        // eligible background domain without inventing over-limit policy.
+        // Report every eligible background domain; the adapter distinguishes
+        // explicit empty evidence from omitted, unreadable domains.
         return Object.freeze(out);
     } catch (error) {
         void error;

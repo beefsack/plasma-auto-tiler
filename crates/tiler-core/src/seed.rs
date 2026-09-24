@@ -16,8 +16,8 @@ use crate::directional::{Axis, Node, NodeId, OutputId, WindowId, WindowLink, Wor
 use crate::geometry::{Rect, project};
 use crate::ids::{CorrelationId, GenerationId, OwnerId};
 use crate::session::{
-    DesiredGeometry, DomainKey, ExceptionFlags, MAX_OBSERVED_WINDOWS, ObservedWindow, OutputDomain,
-    Session, SessionCommand, SessionObservation,
+    DesiredGeometry, DomainKey, ExceptionFlags, ObservedWindow, OutputDomain, Session,
+    SessionCommand, SessionObservation,
 };
 
 /// Serde-free observed window for seed ordering and strip fitting.
@@ -68,7 +68,7 @@ pub fn try_flat_strip_fit(
     domain: &OutputDomain,
     windows: &[EngineWindow],
 ) -> Option<(Node, Vec<WindowLink>)> {
-    if windows.len() < 2 || windows.len() > MAX_OBSERVED_WINDOWS {
+    if windows.len() < 2 {
         return None;
     }
     if windows.iter().any(|w| w.floating || w.fit_excluded) {

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import {
-    ACTIVE_GROUP_MAX_MEMBERS,
+    ACTIVE_GROUP_MAX_REQUEST_BYTES,
     ActiveGroupHighlight,
     ActiveGroupHighlightEnv,
     ActiveGroupObserved,
@@ -204,9 +204,9 @@ describe("active-group reply contract", () => {
     });
 
     it("builds the existing DescribePlan active-group request without deriving topology", () => {
-        const payload = buildActiveGroupRequest(observed(), OWNER, GENERATION, CORRELATION, 0, 7);
-        assert.ok(payload !== null);
-        const body = JSON.parse(payload as string) as Record<string, unknown>;
+        const result = buildActiveGroupRequest(observed(), OWNER, GENERATION, CORRELATION, 0, 7);
+        assert.equal(result.ok, true);
+        const body = JSON.parse((result as { ok: true; payload: string }).payload) as Record<string, unknown>;
         assert.equal(body["v"], 1);
         assert.equal(body["correlation_id"], CORRELATION);
         assert.deepEqual(body["command"], { op: "active-group" });
@@ -489,10 +489,9 @@ describe("active-group highlight bridge behavior", () => {
         assert.ok(logs.some((line) => line === "plasma-auto-tiler:group-highlight:cleared reason=service-loss"));
     });
 
-    it("caps members at the shared bound", () => {
-        assert.equal(ACTIVE_GROUP_MAX_MEMBERS, 64);
+    it("accepts more than sixty-four members", () => {
         const members: Array<unknown> = [];
-        for (let index = 0; index < 65; index += 1) {
+        for (let index = 0; index < 100; index += 1) {
             members.push({ window: `win-${index}`, leaf: `leaf-${index}`, rect: { x: 0, y: 0, w: 1, h: 1 } });
         }
         const reply = JSON.stringify({
@@ -514,10 +513,110 @@ describe("active-group highlight bridge behavior", () => {
                 bounds: { x: 0, y: 0, w: 1200, h: 800 },
             },
         });
-        assert.equal(
-            parseActiveGroupReply(reply, { correlationId: CORRELATION, owner: OWNER, generation: GENERATION }),
-            null,
+        const parsed = parseActiveGroupReply(reply, { correlationId: CORRELATION, owner: OWNER, generation: GENERATION });
+        assert.ok(parsed !== null && parsed.kind === "active-group");
+        assert.equal(parsed.members.length, 100);
+    });
+
+    it("builds a request for more than sixty-four observed windows", () => {
+        const windows = [];
+        for (let index = 0; index < 100; index += 1) {
+            windows.push({
+                id: `win-${String(index)}`,
+                output: "out-1",
+                workspace: "ws-1",
+                rect: { x: 0, y: 0, w: 100, h: 80 },
+                fullscreen: false,
+            });
+        }
+        const result = buildActiveGroupRequest(
+            {
+                domainOutput: "out-1",
+                domainWorkspace: "ws-1",
+                domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
+                domainGap: 0,
+                domainOuterGap: 0,
+                focusedId: "win-0",
+                windows,
+            },
+            OWNER,
+            GENERATION,
+            CORRELATION,
+            0,
+            0,
         );
+        assert.equal(result.ok, true, "a 100-window active-group request must build");
+        assert.equal((JSON.parse((result as { ok: true; payload: string }).payload)["windows"] as Array<unknown>).length, 100);
+    });
+
+    // Exact 1MiB boundary coverage for the shared request cap: fixed-width
+    // ids keep the per-window marginal size constant, so one padded id lands
+    // one shared build exactly on the cap and one byte over. A single pair
+    // of tests covers the boundary; no repeated giant builds elsewhere.
+    function capId(index: number, pad: number): string {
+        return `w${String(index).padStart(6, "0")}${"x".repeat(pad)}`;
+    }
+
+    function capObserved(count: number, pad: number): ActiveGroupObserved {
+        const windows = [];
+        for (let index = 0; index < count; index += 1) {
+            windows.push({
+                id: index === 1 ? capId(index, pad) : capId(index, 0),
+                output: "out-1",
+                workspace: "ws-1",
+                rect: { x: 0, y: 0, w: 100, h: 80 },
+                fullscreen: false,
+            });
+        }
+        return {
+            domainOutput: "out-1",
+            domainWorkspace: "ws-1",
+            domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
+            domainGap: 0,
+            domainOuterGap: 0,
+            focusedId: capId(0, 0),
+            windows,
+        };
+    }
+
+    function capPayloadLength(count: number): number {
+        const result = buildActiveGroupRequest(capObserved(count, 0), OWNER, GENERATION, CORRELATION, 0, 0);
+        assert.equal(result.ok, true);
+        return (result as { ok: true; payload: string }).payload.length;
+    }
+
+    function capSizedPad(): { count: number; pad: number } {
+        // Marginal size per window is constant for fixed-width ids; solve the
+        // largest fitting count, then pad one non-focused id to the cap.
+        const step = capPayloadLength(101) - capPayloadLength(100);
+        const base = capPayloadLength(100) - 100 * step;
+        const count = Math.max(101, Math.floor((ACTIVE_GROUP_MAX_REQUEST_BYTES - base) / step));
+        const pad = ACTIVE_GROUP_MAX_REQUEST_BYTES - (base + count * step);
+        assert.ok(pad >= 0 && pad < step && 7 + pad + 1 <= 128, `pad in range: ${String(pad)}`);
+        return { count, pad };
+    }
+
+    it("accepts a request at exactly the 1MiB cap", () => {
+        const { count, pad } = capSizedPad();
+        const result = buildActiveGroupRequest(capObserved(count, pad), OWNER, GENERATION, CORRELATION, 0, 0);
+        assert.equal(result.ok, true, "an exactly-at-cap request must build");
+        const payload = (result as { ok: true; payload: string }).payload;
+        assert.equal(payload.length, ACTIVE_GROUP_MAX_REQUEST_BYTES);
+        assert.equal(Buffer.byteLength(payload, "utf8"), payload.length, "validated ASCII-only fields make length exact bytes");
+    });
+
+    it("refuses a request one byte over the cap with a correlated log and no dispatch", () => {
+        const { count, pad } = capSizedPad();
+        const result = buildActiveGroupRequest(capObserved(count, pad + 1), OWNER, GENERATION, CORRELATION, 0, 0);
+        assert.deepEqual(result, { ok: false, reason: "request-over-cap" });
+        const f = fixture(() => capObserved(count, pad + 1));
+        f.bridge.refresh();
+        assert.equal(f.payloads.length, 0, "an over-cap request must never dispatch");
+        assert.ok(
+            f.logs.some((line) => line === "plasma-auto-tiler:group-highlight:request-refused correlation=gen-1-g0 reason=request-over-cap"),
+            f.logs.join("\n"),
+        );
+        assert.ok(f.logs.some((line) => line === "plasma-auto-tiler:group-highlight:cleared reason=request-invalid"));
     });
 
     it("establishes current revision from the initial snapshot", () => {

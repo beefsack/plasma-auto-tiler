@@ -32,8 +32,8 @@ use crate::policy::{LayoutPolicy, default_policy};
 use crate::reconcile::{AckError, CancelUnackedError, StateKind, VerifyError};
 use crate::seed::EngineWindow;
 use crate::session::{
-    CanonicalPairError, DomainKey, ExceptionFlags, MAX_DOMAINS, OutputDomain, ProposeError,
-    RefusalKind, Session, SessionCommand, SessionObservation,
+    CanonicalPairError, DomainKey, ExceptionFlags, OutputDomain, ProposeError, RefusalKind,
+    Session, SessionCommand, SessionObservation,
 };
 
 /// Wire `kind`/`message` for the generic pending conflict fence.
@@ -130,7 +130,7 @@ impl Engine {
         &self.policy
     }
 
-    /// Number of retained domains (bounded by [`MAX_DOMAINS`]).
+    /// Number of retained domains.
     #[must_use]
     pub fn retained_domains(&self) -> usize {
         self.sessions.len()
@@ -283,16 +283,12 @@ impl Engine {
         Some(session.clone())
     }
 
-    /// Store a committed session: empty results retire the slot, capacity
-    /// misses never evict unrelated domains, otherwise the slot and outer gap
-    /// are recorded.
+    /// Store a committed session: empty results retire the slot, otherwise
+    /// the slot and outer gap are recorded.
     pub fn store_committed(&mut self, domain_key: DomainKey, mut session: Session, outer_gap: i32) {
         if committed_session_is_empty(&session) {
             self.sessions.remove(&domain_key);
             self.outer_gaps.remove(&domain_key);
-            return;
-        }
-        if self.sessions.len() >= MAX_DOMAINS && !self.sessions.contains_key(&domain_key) {
             return;
         }
         session.set_policy(self.policy.clone());
@@ -2990,22 +2986,8 @@ impl Engine {
         if committed_session_is_empty(&moved) {
             return false;
         }
-        let backup_session = session;
-        let backup_outer = self.outer_gaps.get(&source).copied();
         self.sessions.remove(&source);
         self.outer_gaps.remove(&source);
-        if self.sessions.len() >= MAX_DOMAINS {
-            match backup_outer {
-                Some(gap) => {
-                    self.outer_gaps.insert(source.clone(), gap);
-                    self.sessions.insert(source, backup_session);
-                }
-                None => {
-                    self.sessions.insert(source, backup_session);
-                }
-            }
-            return false;
-        }
         self.outer_gaps
             .insert(target_key.clone(), request_outer_gap);
         self.sessions.insert(target_key.clone(), moved);
@@ -3120,31 +3102,107 @@ mod tests {
         assert_eq!(engine.outer_gap(&key), None);
     }
 
+    /// Admit one window into a fresh single-domain session through the full
+    /// propose/acknowledge/verify cycle, leaving committed (non-empty) state.
+    fn admit_one(
+        session: &mut Session,
+        owner: &OwnerId,
+        gen_id: &GenerationId,
+        output: &str,
+        workspace: &str,
+        window: &str,
+    ) {
+        use crate::contract::{
+            AckOutcome, AdapterAck, LifecycleCapabilities, LifecyclePostObservation, Observation,
+        };
+        use crate::directional::WindowId;
+        use crate::ids::CorrelationId;
+        use crate::session::{ExceptionFlags, ObservedWindow, SessionCommand, SessionObservation};
+        let rev = session.accepted_revision();
+        let window_id = WindowId(window.to_owned());
+        let observation = SessionObservation {
+            observation: Observation::new(owner.clone(), gen_id.clone(), rev, 100 + rev),
+            windows: vec![ObservedWindow {
+                window: window_id.clone(),
+                output: OutputId(output.to_owned()),
+                workspace: WorkspaceId(workspace.to_owned()),
+                floating: false,
+                fullscreen: false,
+                maximized: false,
+                sticky: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            }],
+        };
+        let correlation = CorrelationId::parse(&format!("corr-{window}")).expect("valid");
+        let command = SessionCommand::Admit {
+            window: window_id,
+            output: OutputId(output.to_owned()),
+            workspace: WorkspaceId(workspace.to_owned()),
+            exceptions: ExceptionFlags::none(),
+            exception_behavior: None,
+            placement_bounds: Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 50,
+            },
+        };
+        let plan = session
+            .propose(
+                &command,
+                &observation,
+                &correlation,
+                &LifecycleCapabilities::full(),
+            )
+            .expect("admit propose");
+        session
+            .acknowledge(&AdapterAck::new(
+                correlation.clone(),
+                owner.clone(),
+                gen_id.clone(),
+                rev,
+                AckOutcome::Accepted,
+            ))
+            .expect("admit ack");
+        session
+            .verify_lifecycle(&LifecyclePostObservation::new(
+                Observation::new(owner.clone(), gen_id.clone(), rev, 200 + rev),
+                correlation,
+                true,
+                plan.dispatch.preconditions.clone(),
+                plan.dispatch.operation.clone(),
+            ))
+            .expect("admit verify");
+    }
+
     #[test]
-    fn empty_commits_retire_and_capacity_never_evicts() {
+    fn store_committed_retains_beyond_old_domain_cap_and_retires_empty() {
         let mut engine = Engine::new();
         let owner = OwnerId::parse("owner-a").expect("valid");
         let gen_id = GenerationId::parse("gen-1").expect("valid");
         engine.sync_binding(&owner, &gen_id);
+        // Empty results still retire through the production commit path.
         let d = domain("out", "ws");
         let key = d.key();
         let session = new_session(&owner, &gen_id, d);
         engine.store_committed(key.clone(), session.clone(), 4);
         assert_eq!(engine.retained_domains(), 0);
         assert_eq!(engine.outer_gap(&key), None);
-        for i in 0..MAX_DOMAINS {
-            let d = domain(&format!("out-{i}"), "ws");
+        // No retained-domain count cap on the production path: 20 committed
+        // single-window sessions (well beyond the old 16-domain bound) are
+        // all retained via `store_committed`, never refused or evicted.
+        for i in 0..20 {
+            let output = format!("out-{i}");
+            let workspace = format!("ws-{i}");
+            let window = format!("win-{i}");
+            let d = domain(&output, &workspace);
             let key = d.key();
-            let session = new_session(&owner, &gen_id, d);
-            engine.insert_raw(key, session, 0);
+            let mut session = new_session(&owner, &gen_id, d);
+            admit_one(&mut session, &owner, &gen_id, &output, &workspace, &window);
+            engine.store_committed(key.clone(), session, 0);
+            assert!(engine.contains(&key), "domain {i} retained");
+            assert_eq!(engine.retained_domains(), i + 1);
         }
-        assert_eq!(engine.retained_domains(), MAX_DOMAINS);
-        let extra_domain = domain("out-extra", "ws");
-        let extra_key = extra_domain.key();
-        let extra = new_session(&owner, &gen_id, extra_domain);
-        engine.store_committed(extra_key.clone(), extra, 0);
-        assert!(!engine.contains(&extra_key));
-        assert_eq!(engine.retained_domains(), MAX_DOMAINS);
     }
 
     #[test]

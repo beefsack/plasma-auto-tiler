@@ -17,8 +17,6 @@ use crate::bounds::is_opaque_id;
 use crate::directional::{Node, NodeId, WindowId};
 use crate::geometry::{Rect, project};
 
-/// Portable member bound (single source: [`crate::bounds`]).
-pub const MAX_ACTIVE_GROUP_MEMBERS: usize = crate::bounds::MAX_OBSERVED_WINDOWS;
 /// Opaque id bound (single source: [`crate::bounds`]).
 pub const MAX_ACTIVE_GROUP_ID_LEN: usize = crate::bounds::MAX_OPAQUE_ID_LEN;
 
@@ -127,7 +125,7 @@ pub fn describe_active_group(
     }
     let mut descendant_leaves = Vec::new();
     collect_descendant_leaves(parent, &mut descendant_leaves);
-    if descendant_leaves.len() < 2 || descendant_leaves.len() > MAX_ACTIVE_GROUP_MEMBERS {
+    if descendant_leaves.len() < 2 {
         return None;
     }
     let descendant_set: BTreeSet<&NodeId> = descendant_leaves.iter().collect();

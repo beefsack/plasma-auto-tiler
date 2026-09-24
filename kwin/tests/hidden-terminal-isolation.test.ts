@@ -4,7 +4,6 @@ import { describe, it } from "node:test";
 import {
     PLAN_DEBOUNCE_MS,
     PLAN_TIMEOUT_MS,
-    PLAN_MAX_DOMAINS,
     PlanAdapter,
     PlanAdapterEnv,
     PlanObserved,
@@ -160,6 +159,39 @@ function payload(mocks: Mocks, index: number): Record<string, unknown> {
     return JSON.parse(mocks.dbusCalls[index]?.payload as string) as Record<string, unknown>;
 }
 
+function bigObserved(count: number): PlanObserved {
+    const firstRef = makeRef();
+    const entries: object[] = [];
+    for (let index = 0; index < count; index += 1) {
+        entries.push(
+            Object.freeze({
+                id: `win-${String(index)}`,
+                ref: index === 0 ? firstRef : makeRef(),
+                rect: { x: (index * 37) % 1100, y: 0, w: 100, h: 100 },
+                output: "out-1",
+                workspace: "ws-1",
+                fullscreen: false,
+                maximized: false,
+                floating: false,
+                sticky: false,
+                resourceClass: "unknown",
+            }),
+        );
+    }
+    return {
+        domainOutput: "out-1",
+        domainWorkspace: "ws-1",
+        domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
+        domainGap: DOMAIN_GAP,
+        domainOuterGap: OUTER_DOMAIN_GAP,
+        focusedId: "win-0",
+        windows: Object.freeze(entries) as PlanObserved["windows"],
+        activeRef: firstRef,
+        fingerprint: "fp-big",
+        revalidate: () => true,
+    };
+}
+
 function plannedReplyFor(callPayload: Record<string, unknown>): string {
     const command = callPayload["command"] as Record<string, unknown>;
     const domain = callPayload["domain"] as Record<string, unknown>;
@@ -306,15 +338,15 @@ describe("hidden terminal isolation", () => {
         assert.deepEqual((fgCall["command"] as Record<string, unknown>)["op"], "reconcile");
     });
 
-    it("hidden candidate at the domain cap does not evict the foreground baseline", () => {
+    it("more than sixteen hidden domains all admit without eviction", () => {
         const world: World = { fgA: makeRef(), fgB: makeRef(), hiddenRefs: new Map() };
         const mocks = mockEnv();
         enableAdapter(mocks);
         const hiddenWorkspaces: string[] = [];
-        for (let index = 2; index <= PLAN_MAX_DOMAINS; index += 1) {
+        for (let index = 2; index <= 21; index += 1) {
             hiddenWorkspaces.push(`ws-${String(index)}`);
         }
-        assert.equal(hiddenWorkspaces.length, PLAN_MAX_DOMAINS - 1);
+        assert.equal(hiddenWorkspaces.length, 20);
         for (const workspace of hiddenWorkspaces) {
             const ref = makeRef();
             world.hiddenRefs.set(workspace, ref);
@@ -334,30 +366,47 @@ describe("hidden terminal isolation", () => {
             const index = answered;
             answered += 1;
             mocks.callbacks[index]?.(plannedReplyFor(payload(mocks, index)));
-            if (answered > PLAN_MAX_DOMAINS + 2) {
-                throw new Error("cap test did not converge");
+            if (answered > 64) {
+                throw new Error("multi-domain admission did not converge");
             }
         }
-        assert.equal(mocks.dbusCalls.length, PLAN_MAX_DOMAINS);
-        const extraRef = makeRef();
-        mocks.observeHiddenImpl = () => [
-            ...hiddenWorkspaces.map((workspace) =>
-                hiddenObserved(workspace, `win-${workspace}`, world.hiddenRefs.get(workspace) as object, HIDDEN_STABLE),
+        assert.equal(mocks.dbusCalls.length, 21, "foreground plus twenty hidden domains all dispatch");
+        const admitted = mocks.dbusCalls
+            .map((call) => (JSON.parse(call.payload) as Record<string, unknown>)["domain"] as Record<string, unknown>)
+            .map((domain) => domain["workspace"] as string);
+        for (const workspace of hiddenWorkspaces) {
+            assert.ok(admitted.includes(workspace), `hidden domain ${workspace} must admit`);
+        }
+    });
+
+    it("more than sixty-four windows dispatch in one observation", () => {
+        const mocks = mockEnv();
+        enableAdapter(mocks);
+        mocks.observeImpl = () => bigObserved(100);
+        mocks.observeHiddenImpl = () => [];
+        fire(mocks, "added");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 1, "a 100-window observation must dispatch");
+        const call = payload(mocks, 0);
+        assert.equal((call["windows"] as Array<unknown>).length, 100);
+        mocks.callbacks[0]?.(plannedReplyFor(call));
+        assert.equal(mocks.dbusCalls.length, 1, "no hidden domains means no follow-up dispatch");
+    });
+
+    it("an over-cap request logs a correlated refusal and never dispatches", () => {
+        const mocks = mockEnv();
+        enableAdapter(mocks);
+        mocks.observeImpl = () => bigObserved(12000);
+        mocks.observeHiddenImpl = () => [];
+        fire(mocks, "added");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 0, "an over-cap request must not reach D-Bus");
+        assert.ok(
+            mocks.logs.some(
+                (line) => line === "plasma-auto-tiler:plan:request-refused correlation=gen-1-p0 reason=request-over-cap",
             ),
-            hiddenObserved("ws-99", "win-ws-99", extraRef, HIDDEN_STABLE),
-        ];
-        const before = mocks.dbusCalls.length;
-        fire(mocks, "geometry");
-        runDebounce(mocks);
-        assert.equal(mocks.dbusCalls.length, before, "over-cap hidden candidate fails closed");
-        fire(mocks, "geometry");
-        runDebounce(mocks);
-        assert.equal(mocks.dbusCalls.length, before, "foreground baseline still retained, no re-admission");
-        mocks.observeImpl = () => fgObserved(world.fgA, world.fgB, DRIFT_A);
-        fire(mocks, "geometry");
-        runDebounce(mocks);
-        assert.equal(mocks.dbusCalls.length, before + 1);
-        assert.equal((payload(mocks, before)["domain"] as Record<string, unknown>)["workspace"], "ws-1");
+            mocks.logs.join("\n"),
+        );
     });
 
     it("successful background same-scope drift reconciles park after three", () => {

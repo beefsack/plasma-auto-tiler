@@ -1094,21 +1094,20 @@ describe("drag restore marker scope", () => {
         assert.equal(w.sent.length, 0, "no retry after the bound terminal");
     });
 
-    it("marker domain overflow fails closed with an unavailable terminal", () => {
+    it("markers retain beyond sixteen domains without eviction", () => {
         const w = restoreWorld();
-        for (let i = 1; i <= 16; i += 1) {
+        for (let i = 1; i <= 20; i += 1) {
             w.setDomain(`out-${i}`, "ws-1");
             assert.equal(w.adapter.requestPointerResize("win-a", "sideways", 1000, undefined, undefined, `drag-${90 + i}`), false);
         }
         const markers = (w.adapter as unknown as { dragRestore: Map<string, { drags: string[] }> }).dragRestore;
-        assert.equal(markers.size, 16, "bounded by the planner domain cap");
-        // The 17th domain cannot be retained: loud unavailable terminal, no
-        // silent loss, and the existing markers are untouched.
-        w.setDomain("out-17", "ws-1");
+        assert.equal(markers.size, 20, "no domain-count gate on drag markers");
+        // A 21st domain is retained as well: no overflow terminal and no
+        // eviction of the existing markers.
+        w.setDomain("out-21", "ws-1");
         assert.equal(w.adapter.requestPointerResize("win-a", "sideways", 1000, undefined, undefined, "drag-99"), false);
-        assert.equal(markers.size, 16, "cap never evicts a retained marker");
-        assert.ok(w.logs.some((line) => line.includes("drag-rejected") && line.includes("correlation=drag-99")));
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-99") && line.includes("outcome=unavailable") && line.includes("plan=none")));
+        assert.equal(markers.size, 21, "new domains never evict a retained marker");
+        assert.ok(!w.logs.some((line) => line.includes("correlation=drag-99") && line.includes("outcome=unavailable")), "no overflow terminal");
     });
 
     it("marker correlation overflow fails closed with an unavailable terminal", () => {

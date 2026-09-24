@@ -484,12 +484,12 @@ describe("background tiling through production entry", () => {
         handle?.stop();
     });
 
-    it("fails closed on over-limit hidden domains while foreground keeps working", () => {
-        const world = makeWorld(17);
+    it("admits hidden domains beyond sixteen while foreground keeps working", () => {
+        const world = makeWorld(20);
         const ws1 = world.desktops[0] as FakeDesktop;
         const winA = addWindow(world, "win-a", ws1, { x: 0, y: 0, width: 600, height: 800 });
         addWindow(world, "win-b", ws1, { x: 600, y: 0, width: 600, height: 800 });
-        for (let index = 1; index < 17; index += 1) {
+        for (let index = 1; index < 20; index += 1) {
             addWindow(world, `win-h${String(index)}`, world.desktops[index] as FakeDesktop, {
                 x: 0,
                 y: 0,
@@ -504,16 +504,19 @@ describe("background tiling through production entry", () => {
         assert.ok(handle !== null);
         runDebounce(mocks);
         const answered = converge(mocks, new Set());
-        assert.equal(answered, 1, "only the foreground adoption flight runs");
+        assert.equal(answered, 20, "foreground plus nineteen hidden domains all run");
 
-        for (const call of planCalls(mocks)) {
-            assert.equal((call.payload["domain"] as Record<string, unknown>)["workspace"], "ws-1");
+        const workspaces = planCalls(mocks).map(
+            (call) => (call.payload["domain"] as Record<string, unknown>)["workspace"] as string,
+        );
+        for (let index = 2; index <= 20; index += 1) {
+            assert.ok(workspaces.includes(`ws-${String(index)}`), `hidden domain ws-${String(index)} must admit`);
         }
         assert.ok(mocks.logs.some((line) => line.includes("outcome=planned-applied")));
         // Foreground stays interactive: a directional move still dispatches.
         handle?.requestMove("left");
-        assert.equal(planCalls(mocks).length, 2);
-        const move = planCalls(mocks)[1]?.payload as Record<string, unknown>;
+        assert.equal(planCalls(mocks).length, 21);
+        const move = planCalls(mocks)[20]?.payload as Record<string, unknown>;
         assert.equal((move["domain"] as Record<string, unknown>)["workspace"], "ws-1");
         assert.equal(world.activeSets, 0);
         assert.equal(world.desktopSwitches, 0);

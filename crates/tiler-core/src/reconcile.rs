@@ -650,7 +650,7 @@ impl Reconciler {
             let reason = self.diverge(DivergenceKind::PostconditionMismatch);
             return Err(ProposeError::Diverged(reason));
         }
-        if plan.operation.route.is_empty() || plan.operation.route.len() > MAX_PRECONDITIONS * 8 {
+        if plan.operation.route.is_empty() {
             let reason = self.diverge(DivergenceKind::PostconditionMismatch);
             return Err(ProposeError::Diverged(reason));
         }
@@ -1737,9 +1737,6 @@ fn valid_drag_operation(operation: &DragOperation) -> bool {
     if operation.axis != side_axis || operation.before != side_before {
         return false;
     }
-    if operation.insertion_index > 64 {
-        return false;
-    }
     if operation.wrap {
         let Some(new_group) = &operation.new_group else {
             return false;
@@ -1856,10 +1853,7 @@ fn valid_fixed_share_operation(operation: &ResizeOperation) -> bool {
     if operation.focused_child == operation.neighbor_child {
         return false;
     }
-    if operation.old_shares.len() < 2
-        || operation.old_shares.len() > 64
-        || operation.new_shares.len() != operation.old_shares.len()
-    {
+    if operation.old_shares.len() < 2 || operation.new_shares.len() != operation.old_shares.len() {
         return false;
     }
     if operation.focused_index >= operation.old_shares.len()
@@ -3003,6 +2997,34 @@ mod tests {
     }
 
     #[test]
+    fn sixty_five_share_resize_validates_without_count_cap() {
+        // 65-child group (beyond the old 64-share bound) with exact K=16
+        // pixel scaling on the adjacent pair: valid through the real
+        // reconciler path, proving the old length refusal now succeeds.
+        // All other gates (>=2, length equality, adjacent indices,
+        // orientation, positivity, exact scaling, checked totals) apply
+        // unchanged.
+        let old_shares = vec![1_u64; 65];
+        let mut new_shares = vec![16_u64; 65];
+        new_shares[0] = 14;
+        new_shares[1] = 18;
+        let operation = ResizeOperation {
+            old_shares,
+            new_shares,
+            ..resize_operation()
+        };
+        let plan = ResizePlan::for_operation(resize_intent(), operation);
+        let mut r = reconciler();
+        r.propose_resize(
+            &plan,
+            &observation(0),
+            &correlation("corr-1"),
+            &ResizeCapabilities::full(),
+        )
+        .expect("65-share pixel operation accepts");
+    }
+
+    #[test]
     fn keyboard_mode_direction_validated_on_dedicated_path() {
         // Otherwise-valid operation with flipped mode diverges; the valid
         // keyboard operation stays accepted. Pointer validation is unchanged.
@@ -3635,5 +3657,63 @@ mod tests {
                 DivergenceKind::PostconditionMismatch
             ))
         );
+    }
+
+    #[test]
+    fn drag_insertion_index_sixty_five_validates_without_count_cap() {
+        // Insertion index 65 (beyond the old 64 bound) validates through the
+        // real reconciler path on the non-wrap insert shape, proving the old
+        // index refusal now succeeds. Wrap-root index-0 and all structural
+        // checks apply unchanged.
+        let operation = DragOperation {
+            insertion_index: 65,
+            ..drag_operation()
+        };
+        let plan = DragPlan::for_operation(drag_intent(), operation);
+        let mut r = reconciler();
+        r.propose_drag(
+            &plan,
+            &observation(0),
+            &correlation("corr-1"),
+            &DragCapabilities::full(),
+        )
+        .expect("insertion index 65 accepts");
+    }
+
+    #[test]
+    fn focus_route_sixty_five_validates_without_count_cap() {
+        // 65-node focus route (beyond the old 64 bound) validates through
+        // the real reconciler path, proving the old route-length refusal
+        // now succeeds. Nonempty route and preconditions <= 8 apply
+        // unchanged.
+        let route: Vec<NodeId> = (0..65).map(|i| NodeId(format!("r-{i}"))).collect();
+        let operation = crate::contract::FocusOperation {
+            domain_output: OutputId("out-1".to_owned()),
+            domain_workspace: crate::directional::WorkspaceId("ws-1".to_owned()),
+            from_leaf: NodeId("a".to_owned()),
+            to_leaf: NodeId("b".to_owned()),
+            from_window: WindowId("win-a".to_owned()),
+            to_window: WindowId("win-b".to_owned()),
+            direction: Direction::Right,
+            route,
+            cross_source_output: None,
+            cross_source_workspace: None,
+        };
+        let intent = crate::contract::FocusIntent {
+            domain_output: OutputId("out-1".to_owned()),
+            domain_workspace: crate::directional::WorkspaceId("ws-1".to_owned()),
+            focused_leaf: NodeId("a".to_owned()),
+            focused_window: WindowId("win-a".to_owned()),
+            direction: Direction::Right,
+        };
+        let plan = FocusPlanContract::for_operation(intent, operation);
+        let mut r = reconciler();
+        r.propose_focus(
+            &plan,
+            &observation(0),
+            &correlation("corr-1"),
+            &FocusCapabilities::full(),
+        )
+        .expect("65-node focus route accepts");
     }
 }

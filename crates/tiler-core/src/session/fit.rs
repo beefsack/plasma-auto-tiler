@@ -9,8 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    DomainKey, MAX_OBSERVED_WINDOWS, PendingDesired, ProposeError, RefusalKind, SessionObservation,
-    SessionPlan,
+    DomainKey, PendingDesired, ProposeError, RefusalKind, SessionObservation, SessionPlan,
 };
 use crate::contract::{LifecycleCapabilities, LifecycleIntent, LifecycleOperation};
 use crate::directional::{Node, NodeId, OutputId, WindowId, WindowLink, WorkspaceId};
@@ -54,12 +53,10 @@ impl super::Session {
         if self.domains.len() != 1 || !self.windows.is_empty() || !self.exceptions.is_empty() {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         }
-        if links.len() < 2 || links.len() > MAX_OBSERVED_WINDOWS {
+        if links.len() < 2 {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         }
-        if session_observation.windows.len() > MAX_OBSERVED_WINDOWS
-            || !super::valid_observed_shapes(&session_observation.windows)
-        {
+        if !super::valid_observed_shapes(&session_observation.windows) {
             return Err(ProposeError::Refused(RefusalKind::MalformedInput));
         }
         let domain = &self.domains[0];

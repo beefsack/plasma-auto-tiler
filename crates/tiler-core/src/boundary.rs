@@ -32,8 +32,8 @@ use crate::geometry::Rect;
 use crate::ids::{CorrelationId, GenerationId, OwnerId};
 use crate::seed::EngineWindow;
 use crate::session::{
-    DesiredGeometry, DomainKey, MAX_OBSERVED_WINDOWS, OutputDomain, Session, SessionFocusPlan,
-    SessionMovePlan, SessionPlan, SessionResizePlan,
+    DesiredGeometry, DomainKey, OutputDomain, Session, SessionFocusPlan, SessionMovePlan,
+    SessionPlan, SessionResizePlan,
 };
 
 /// Typed command for all 19 wire ops: the 10 synchronous ops plus
@@ -940,9 +940,6 @@ pub fn resolve_active_group(session: Option<&Session>, event: &CoreEvent) -> Act
     ) else {
         return no_group(NoGroupReason::NoParentGroup);
     };
-    if group.members.len() > MAX_OBSERVED_WINDOWS {
-        return no_group(NoGroupReason::NoParentGroup);
-    }
     ActiveGroupResolution::Found(ActiveGroupFound {
         base_revision: base,
         group: group.group,
