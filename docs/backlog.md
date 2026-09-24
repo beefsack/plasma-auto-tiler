@@ -258,9 +258,11 @@ Existing work:
   repeated-heartbeat noise suppressed. Validated generation/revision/enabled
   joins snapshot identity across KWin/Rust, not individual heartbeat causality.
   Typecheck, 937 KWin tests, full Rust tests, and independent review pass.
-  Active: establish a reliable queryable sink for autostarted Rust tray diagnostics;
-  source establishes only inherited stderr, while `just dev` captures KWin and
-  Planner, not tray stderr. Ambient topology and native signals must not inherit
+  Delivered native best-effort journald submission for autostarted Rust tray
+  diagnostics alongside retained stderr, queryable with
+  `journalctl --user -g "plasma-auto-tiler:route-diag component=tray-endpoint"`;
+  `just dev` captures KWin and Planner, not tray stderr. Ambient topology and
+  native signals must not inherit
   unrelated request IDs. Whole-system coverage and live capture remain unproven.
   [cancellation observability](changes/archive/correlated-pending-observability.md)
   [activation observability](changes/archive/plan-transport-activation-observability.md)

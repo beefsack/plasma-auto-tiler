@@ -563,12 +563,71 @@ fn service_name_lost_live(
     }
 }
 
+/// Native journal submission address for the documented Linux journald
+/// datagram protocol: one `AF_UNIX` datagram per entry.
+#[cfg(not(test))]
+const TRAY_JOURNAL_SOCKET: &str = "/run/systemd/journal/socket";
+/// Fixed journal identifier for tray endpoint records. The diagnostic line
+/// itself stays in `MESSAGE`, so the existing
+/// `plasma-auto-tiler:route-diag component=tray-endpoint` filter keeps
+/// working; no sender, owner, PID, or raw detail is ever added here.
+const TRAY_JOURNAL_IDENTIFIER: &str = "plasma-auto-tiler-tray";
+/// Syslog info: tray records are normal-operation lifecycle diagnostics.
+const TRAY_JOURNAL_PRIORITY: &str = "6";
+
+/// Pure journald datagram payload builder. Returns `None` when the line
+/// carries `\n` or `\r`, so a hostile or malformed line can never inject an
+/// extra journal field; the stderr fallback below still carries it.
+fn tray_journal_payload(line: &str) -> Option<Vec<u8>> {
+    if line.contains('\n') || line.contains('\r') {
+        return None;
+    }
+    Some(
+        format!(
+            "PRIORITY={TRAY_JOURNAL_PRIORITY}\nSYSLOG_IDENTIFIER={TRAY_JOURNAL_IDENTIFIER}\nMESSAGE={line}\n"
+        )
+        .into_bytes(),
+    )
+}
+
+/// Best-effort journald submission. Every setup/send error is ignored:
+/// submission is not acknowledgement and never affects tray behavior.
+#[cfg(not(test))]
+fn submit_tray_journal(payload: &[u8]) {
+    submit_tray_journal_to(payload, TRAY_JOURNAL_SOCKET);
+}
+
+/// Path-parameterized submission used by [`submit_tray_journal`]. The
+/// indirection exists so offline tests can verify the real datagram send
+/// path against a fixture socket without touching the host journal socket.
+fn submit_tray_journal_to(payload: &[u8], socket_path: &str) {
+    let result = (|| -> std::io::Result<()> {
+        let socket = std::os::unix::net::UnixDatagram::unbound()?;
+        socket.set_nonblocking(true)?;
+        let _ = socket.send_to(payload, socket_path)?;
+        Ok(())
+    })();
+    let _ = result;
+}
+
 /// Best-effort tray diagnostic writer. Standard printing panics on a stderr
 /// write error, so tray diagnostics use this instead: the write result is
-/// discarded and logging can never affect tray behavior.
+/// discarded and logging can never affect tray behavior. Records go to the
+/// inherited stderr (manual terminal runs, existing captures) and, in the
+/// same call, best-effort to the user journal via the native datagram
+/// protocol (queryable sink for XDG-autostarted runs, where stderr has no
+/// repository-owned capture). Stderr is retained universally: where stderr
+/// is already journal-connected the same `MESSAGE` may appear twice, and
+/// message equality joins those twins. No `JOURNAL_STREAM` suppression
+/// check: that would add device/inode comparison for no reliability gain.
 pub(crate) fn emit_tray_diag(line: &str) {
     use std::io::Write as _;
     let _ = writeln!(std::io::stderr(), "{line}");
+    // Unit tests exercise the send path with a private fixture socket.
+    #[cfg(not(test))]
+    if let Some(payload) = tray_journal_payload(line) {
+        submit_tray_journal(&payload);
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1723,13 +1782,78 @@ mod tests {
     }
 
     #[test]
-    fn tray_diag_writer_is_best_effort_and_never_fails_the_caller() {
-        // The writer discards the stderr result by signature (returns ()),
-        // so a write error can never panic or propagate into tray behavior.
-        // This exercises the normal path; the contract is the return type.
-        let result: () = super::emit_tray_diag(
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=test event=writer-check outcome=ok",
+    fn tray_journal_payload_uses_fixed_identifier_priority_and_message() {
+        let line = "plasma-auto-tiler:route-diag component=tray-endpoint stage=name event=acquire outcome=acquired";
+        let payload = super::tray_journal_payload(line).expect("fixed line builds a payload");
+        let text = String::from_utf8(payload).expect("payload is UTF-8");
+        assert_eq!(
+            text,
+            format!("PRIORITY=6\nSYSLOG_IDENTIFIER=plasma-auto-tiler-tray\nMESSAGE={line}\n")
         );
+    }
+
+    #[test]
+    fn tray_journal_payload_rejects_field_injection_lines() {
+        assert!(super::tray_journal_payload("ok\nPRIORITY=3").is_none());
+        assert!(super::tray_journal_payload("ok\rPRIORITY=3").is_none());
+        assert!(super::tray_journal_payload("alpha\ninjected").is_none());
+    }
+
+    #[test]
+    fn tray_journal_submission_delivers_one_datagram_to_a_fixture_socket() {
+        // Offline verification of the real `UnixDatagram` send path: bind a
+        // fixture socket in a temp dir, submit through the
+        // path-parameterized writer, and read back the exact payload. The
+        // host journal socket is never touched.
+        let path = std::env::temp_dir().join(format!(
+            "plasma-auto-tiler-tray-journal-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock is after epoch")
+                .as_nanos()
+        ));
+        let receiver =
+            std::os::unix::net::UnixDatagram::bind(&path).expect("fixture journal socket binds");
+        receiver
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .expect("fixture socket read timeout sets");
+        let line = "plasma-auto-tiler:route-diag component=tray-endpoint stage=test event=writer-check outcome=ok";
+        let payload = super::tray_journal_payload(line).expect("fixed line builds a payload");
+        let result: () = super::submit_tray_journal_to(
+            &payload,
+            path.to_str().expect("temp socket path is UTF-8"),
+        );
+        assert_eq!(result, ());
+        let mut buf = vec![0_u8; 4096];
+        let (len, _) = receiver
+            .recv_from(&mut buf)
+            .expect("fixture socket receives");
+        assert_eq!(&buf[..len], &payload[..]);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn tray_diag_writer_is_best_effort_and_never_fails_the_caller() {
+        // The writer discards every I/O result by signature (returns ()),
+        // so a submission error can never panic or propagate into tray
+        // behavior. This submits to a path with no listener, which exercises
+        // the ignored-error path without touching the host journal socket
+        // or the test runner's stderr; the contract is the return type.
+        let missing = std::env::temp_dir().join(format!(
+            "plasma-auto-tiler-tray-journal-missing-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock is after epoch")
+                .as_nanos()
+        ));
+        let payload = super::tray_journal_payload(
+            "plasma-auto-tiler:route-diag component=tray-endpoint stage=test event=writer-check outcome=ok",
+        )
+        .expect("fixed line builds a payload");
+        let result: () =
+            super::submit_tray_journal_to(&payload, missing.to_str().expect("temp path is UTF-8"));
         assert_eq!(result, ());
     }
 

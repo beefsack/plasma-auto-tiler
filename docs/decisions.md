@@ -898,8 +898,9 @@ the corresponding item ships; each such entry names its replacement.
   D-Bus name is taken. The tray stops if its own name or connection is lost,
   or at session teardown; it does not restart automatically after a crash.
   Name acquisition/loss, owner transitions and changed or refused snapshots
-  emit bounded, redacted diagnostics on stderr. A queryable autostart tray
-  stderr sink remains outstanding.
+  emit bounded, redacted diagnostics on stderr. The queryable autostart sink
+  is best-effort native journald submission alongside retained stderr,
+  queried with `journalctl --user -g "plasma-auto-tiler:route-diag component=tray-endpoint"`.
 - The tray MVP provides basic status and Settings only. It has no direct tiling
   controls and no expansion of the helper boundary.
 - No KWin snapshot authority is claimed from tray live runs. Tray live runs
