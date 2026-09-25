@@ -28,7 +28,19 @@
 //! `diverged` with no Legacy fallback. Legacy requests are unchanged. A
 //! read-only `send-to-workspace-status` query classifies the retained
 //! transaction against a fresh complete observation without mutating,
-//! acknowledging, verifying, rebinding, or advancing anything.
+//! acknowledging, verifying, rebinding, or advancing anything. A fenced
+//! `send-to-workspace-abandon` operation retires ANY existing
+//! workspace-send pending (exact or orphan: older generation, other
+//! correlation, other same-UID caller, other revision or scope), regardless
+//! of acked/unacked/diverged state, with no commit claim and no new retained
+//! state, preserving all per-domain Engine sessions. An exact retained
+//! match (owner/generation/correlation/retained-revision/scope) replies
+//! `abandoned`; a mismatched retired live pending replies distinct
+//! `orphan-abandoned` (v, requester correlation, kind `send-to-workspace`,
+//! no base/geometry/operation/preconditions). Absent pending replies
+//! `no-pending-unknown` with the exact correlation and kind. Malformed or
+//! unauthorized requests still fail closed before any retirement, and a
+//! directional R4 pending is out of scope (never retired by this op).
 
 use serde::{Deserialize, Serialize};
 
@@ -497,7 +509,8 @@ pub fn summarize_plan_shape(request_json: &str) -> String {
 /// correlation/outcome/kind/base/detail from the reply echo. Status result
 /// codes pass through truthfully (`status`/`post-unacked`/…,
 /// `cancelled`/`send-to-workspace`/…); `no-pending-unknown` stays exactly
-/// that and never implies a commit.
+/// that and never implies a commit. Abandon outcomes (`abandoned`,
+/// `orphan-abandoned`) pass through with the same redaction posture.
 #[must_use]
 pub fn summarize_plan_egress(request_json: &str, reply_json: &str) -> String {
     let request: serde_json::Value = serde_json::from_str(request_json).unwrap_or_default();
@@ -1146,6 +1159,7 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
             | Some("send-to-workspace-verify")
             | Some("send-to-workspace-status")
             | Some("send-to-workspace-cancel")
+            | Some("send-to-workspace-abandon")
             | Some("directional-move-ack")
             | Some("directional-move-verify")
             | Some("directional-move-status")
@@ -1968,6 +1982,75 @@ fn cancelled_reply(correlation_id: &str, kind: &'static str, base_revision: u64)
     })
 }
 
+/// Abandon success reply: outcome `abandoned` with the retired route kind and
+/// the exact request correlation. Carries no base revision, geometry, focus,
+/// operation, or preconditions and must never be read as a commit: the exact
+/// pending was retired and its staged desired state discarded, with Engine
+/// sessions and baselines untouched.
+fn abandoned_reply(correlation_id: &str, kind: &'static str) -> String {
+    serialize_bounded(&PlanReply {
+        v: PLAN_CONTRACT_VERSION,
+        correlation_id: correlation_id.to_owned(),
+        outcome: "abandoned",
+        kind: Some(kind.to_owned()),
+        message: None,
+        base_revision: None,
+        detail: None,
+        desired_geometry: None,
+        desired_focus: None,
+        float_geometry: None,
+        preconditions: None,
+        operation: None,
+    })
+}
+
+/// Orphan abandon reply: outcome `orphan-abandoned` with the retired route
+/// kind and the requester correlation. Same shape contract as
+/// [`abandoned_reply`]: no base revision, geometry, focus, operation, or
+/// preconditions, never a commit. Emitted when a fenced abandon retires a
+/// live workspace-send pending whose retained identity (owner, generation,
+/// correlation), revision, or scope does not exactly match the requester
+/// (older generation, other correlation, other same-UID caller). The
+/// distinct outcome lets the caller distinguish orphan retirement from an
+/// exact retire while both clear the same pending slot.
+fn orphan_abandoned_reply(correlation_id: &str, kind: &'static str) -> String {
+    serialize_bounded(&PlanReply {
+        v: PLAN_CONTRACT_VERSION,
+        correlation_id: correlation_id.to_owned(),
+        outcome: "orphan-abandoned",
+        kind: Some(kind.to_owned()),
+        message: None,
+        base_revision: None,
+        detail: None,
+        desired_geometry: None,
+        desired_focus: None,
+        float_geometry: None,
+        preconditions: None,
+        operation: None,
+    })
+}
+
+/// Abandon retry reply: outcome `no-pending-unknown` with the route kind and
+/// the exact request correlation. Emitted for the same fenced abandon request
+/// when no matching pending exists (already retired, already committed, or
+/// never staged). Carries nothing else and never implies a commit.
+fn abandon_unknown_reply(correlation_id: &str, kind: &'static str) -> String {
+    serialize_bounded(&PlanReply {
+        v: PLAN_CONTRACT_VERSION,
+        correlation_id: correlation_id.to_owned(),
+        outcome: "no-pending-unknown",
+        kind: Some(kind.to_owned()),
+        message: None,
+        base_revision: None,
+        detail: None,
+        desired_geometry: None,
+        desired_focus: None,
+        float_geometry: None,
+        preconditions: None,
+        operation: None,
+    })
+}
+
 /// Deferred raw echo of a verify command's nested `preconditions`/`operation`.
 ///
 /// Captures the nested JSON bytes opaquely at the tagged [`SyncCommand`]
@@ -2195,7 +2278,12 @@ fn parse_directional_move_operation(
 /// and never mutates, acknowledges, verifies, rebinds, or advances anything.
 /// `send-to-workspace-cancel` withdraws the pending only on exact identity,
 /// scope, unacked state, zero-dispatch attestation, and pre-image proof,
-/// preserving everything committed.
+/// preserving everything committed. `send-to-workspace-abandon` retires ANY
+/// existing workspace-send pending regardless of acked/unacked/diverged state
+/// with no commit claim and no session/baseline reset: an exact retained
+/// match replies `abandoned`, a mismatched retired live pending replies
+/// distinct `orphan-abandoned`, and absence replies `no-pending-unknown`.
+/// A directional R4 pending is out of scope and never retired by this op.
 ///
 /// Directional R4 route: `move` with a two-domain payload proposes an R4
 /// cross-output transfer once and retains it in [`DirectionalMovePending`]
@@ -2255,7 +2343,14 @@ impl Planner {
     /// the same boundary through the mutating entry point (`handle` takes
     /// `&mut self`): on exact pre-image
     /// proof they withdraw only the matching unacknowledged pending and its
-    /// staged desired state, preserving everything committed.
+    /// staged desired state, preserving everything committed. The abandon
+    /// phase dispatches at the same boundary through existing Engine
+    /// accessors only: any live send pending retires (exact or orphan, any
+    /// ack state, diverged or not) with no commit claim and no
+    /// session/baseline mutation; exact identity/scope/revision proof replies
+    /// `abandoned`, a mismatched retired live pending replies distinct
+    /// `orphan-abandoned`, and absent pending replies `no-pending-unknown`
+    /// without mutation. A directional R4 pending is out of scope.
     pub fn evaluate(&mut self, request_json: &str) -> String {
         let ctx = match validate_request(request_json) {
             Ok(ctx) => ctx,
@@ -2266,6 +2361,7 @@ impl Planner {
             "send-to-workspace-verify" => return self.evaluate_workspace_verify(&ctx),
             "send-to-workspace-status" => return self.evaluate_workspace_status(&ctx),
             "send-to-workspace-cancel" => return self.evaluate_workspace_cancel(&ctx),
+            "send-to-workspace-abandon" => return self.evaluate_workspace_abandon(&ctx),
             "directional-move-ack" => return self.evaluate_directional_ack(&ctx),
             "directional-move-verify" => return self.evaluate_directional_verify(&ctx),
             "directional-move-status" => return self.evaluate_directional_status(&ctx),
@@ -2274,8 +2370,8 @@ impl Planner {
         }
         // Full global pending conflict boundary: while either pending exists,
         // every other plan operation blocks (diverged on identity/divergence
-        // loss, else `pending-exists`). Ack/verify/status/cancel above never
-        // reach here.
+        // loss, else `pending-exists`). Ack/verify/status/cancel/abandon above
+        // never reach here.
         if let Some(reply) = self.pending_conflict_reply(&ctx) {
             return reply;
         }
@@ -3620,6 +3716,66 @@ impl Planner {
         serialize_core_reply(ctx, &reply)
     }
 
+    /// Workspace-send abandon: retire ANY existing workspace-send pending.
+    ///
+    /// Fenced control op for the accepted 2026-09-25 abandon path (option B).
+    /// Codec and scope-shape validation stay here (tagged decode, shared
+    /// target scope) and fail closed before any retirement: malformed or
+    /// unauthorized requests never retire anything, and a directional R4
+    /// pending is out of scope (only the workspace-send slot is read and
+    /// cleared via the existing Engine accessors, so no new typed command,
+    /// receipts, or retained state cross). Any live workspace-send pending
+    /// retires regardless of acked/unacked/diverged state, even on older
+    /// generation, other correlation, other same-UID caller, other revision,
+    /// or other scope, with no commit claim and without touching Engine
+    /// sessions, baselines, or outer gaps. Exact binding (owner, generation,
+    /// correlation, retained base or original request revision for a lost
+    /// planned reply, and the retained source/target scope) replies
+    /// `abandoned`; a mismatched retired live pending replies distinct
+    /// `orphan-abandoned` with the requester correlation. Absent pending
+    /// replies `no-pending-unknown` with the exact correlation and kind.
+    /// A `domains` payload is already refused fail-closed by
+    /// `validate_request`.
+    fn evaluate_workspace_abandon(&mut self, ctx: &Validated) -> String {
+        const ABANDON_KIND: &str = "send-to-workspace";
+        let cid = ctx.request.correlation_id.clone();
+        match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+            Ok(SyncCommand::SendToWorkspaceAbandon {}) => {}
+            Ok(_) => {
+                return rejected(cid, "abandon-op-invalid", "abandon operation is invalid");
+            }
+            Err(error) => {
+                if is_unknown_variant(&error) {
+                    return rejected(cid, "abandon-op-invalid", "abandon operation is invalid");
+                }
+                let (kind, message) = classify_parse_error(&error);
+                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+            }
+        }
+        let (target_domain, _) = match self.workspace_target_scope(ctx) {
+            Ok(scope) => scope,
+            Err(reply) => return reply,
+        };
+        let Some(pending) = self.engine.workspace_pending() else {
+            return abandon_unknown_reply(&cid, ABANDON_KIND);
+        };
+        let exact = pending.owner() == &ctx.owner
+            && pending.generation() == &ctx.generation
+            && pending.correlation() == &ctx.correlation
+            && (ctx.request.revision == pending.base_revision()
+                || ctx.request.revision == pending.request_revision())
+            && {
+                let retained = pending.session().domains();
+                retained.len() == 2 && retained[0] == ctx.domain && retained[1] == target_domain
+            };
+        self.engine.clear_workspace_pending();
+        if exact {
+            abandoned_reply(&cid, ABANDON_KIND)
+        } else {
+            orphan_abandoned_reply(&cid, ABANDON_KIND)
+        }
+    }
+
     /// Directional R4 cancellation: withdraw the exact retained
     /// [`DirectionalMovePending`] transaction under the same contract as
     /// [`Planner::evaluate_workspace_cancel`]. Codec and pair-shape validation
@@ -3786,20 +3942,23 @@ struct ActiveGroupCommand {
 
 /// Typed synchronous command codec (narrow).
 ///
-/// Internally tagged on `op` with `deny_unknown_fields` for all nineteen
-/// command ops: the ten synchronous ops plus `send-to-workspace` and the
-/// eight R4 ack/verify/status/cancel phases. Sync handlers parse
+/// Internally tagged on `op` with `deny_unknown_fields` for all twenty
+/// command ops: the ten synchronous ops plus `send-to-workspace`, the eight
+/// R4 ack/verify/status/cancel phases, and `send-to-workspace-abandon`. Sync
+/// handlers parse
 /// [`SyncCommand`] once in place after the existing dispatch boundaries
-/// (validation, ack/verify/status/cancel dispatch, pending conflict, send
-/// dispatch, binding sync): the production `evaluate` string-guards on the
-/// known op before dispatch, so missing/non-string/unknown ops keep the exact
-/// `unknown-value` path without a typed parse, and malformed known ops during
-/// pending keep `pending-exists` by never reaching here.
+/// (validation, ack/verify/status/cancel/abandon dispatch, pending conflict,
+/// send dispatch, binding sync): the production `evaluate` string-guards on
+/// the known op before dispatch, so missing/non-string/unknown ops keep the
+/// exact `unknown-value` path without a typed parse, and malformed known ops
+/// during pending keep `pending-exists` by never reaching here.
 /// Transaction handlers parse [`SyncCommand`] once in place at their exact
 /// legacy position: `send-to-workspace` keeps target-scope-before-parse in
-/// `validate_workspace_input`, ack/verify/status/cancel keep parse-first at
-/// the pre-binding dispatch boundary, status handlers stay read-only
-/// (`&self`), cancel handlers keep their `&mut self` withdraw effects.
+/// `validate_workspace_input`, ack/verify/status/cancel/abandon keep
+/// parse-first at the pre-binding dispatch boundary, status handlers stay
+/// read-only (`&self`), cancel/abandon handlers keep their `&mut self`
+/// withdraw effects (abandon clears any live workspace-send pending via existing
+/// Engine accessors, with no CoreCommand crossing).
 /// A present-but-wrong op string surfaces as an
 /// `unknown variant` decode error, which each handler maps back to the exact
 /// legacy `*-op-invalid` snapshot the old `from_value` + op-check produced;
@@ -3893,6 +4052,8 @@ enum SyncCommand {
     SendToWorkspaceStatus {},
     #[serde(rename = "send-to-workspace-cancel")]
     SendToWorkspaceCancel { zero_dispatch: bool },
+    #[serde(rename = "send-to-workspace-abandon")]
+    SendToWorkspaceAbandon {},
     #[serde(rename = "directional-move-ack")]
     DirectionalMoveAck { ack_outcome: String },
     #[serde(rename = "directional-move-verify")]
@@ -4034,6 +4195,10 @@ fn core_command_from_sync(command: &SyncCommand) -> Option<tiler_core::boundary:
         SyncCommand::SendToWorkspaceCancel { zero_dispatch } => Some(CoreCommand::SendCancel {
             zero_dispatch: *zero_dispatch,
         }),
+        // Abandon never crosses the typed boundary: the Planner retires the
+        // exact pending via Engine accessors without a CoreCommand, so no
+        // new retained state, receipts, or Engine mutation beyond the clear.
+        SyncCommand::SendToWorkspaceAbandon {} => None,
         SyncCommand::DirectionalMoveAck { ack_outcome } => Some(CoreCommand::DirectionalAck {
             ack_outcome: ack_outcome.clone(),
         }),
@@ -9539,6 +9704,848 @@ mod tests {
         assert_eq!(unknown["outcome"], "rejected", "{unknown}");
         assert_eq!(unknown["kind"], "unknown-field", "{unknown}");
         let _ = (post_source, post_target);
+    }
+
+    fn workspace_abandon_body() -> serde_json::Value {
+        serde_json::json!({"op": "send-to-workspace-abandon"})
+    }
+
+    fn workspace_abandon_request(
+        correlation: &str,
+        owner: &str,
+        generation: &str,
+        revision: u64,
+        source: Vec<serde_json::Value>,
+        target: Vec<serde_json::Value>,
+        command: serde_json::Value,
+    ) -> String {
+        workspace_request(
+            correlation,
+            owner,
+            generation,
+            revision,
+            "",
+            source,
+            target,
+            command,
+        )
+    }
+
+    #[test]
+    fn workspace_abandon_retires_exact_pending_regardless_state_without_commit() {
+        // Exact abandon retires the pending whether unacked, acked, or
+        // diverged, with no commit claim, geometry, operation, or setter
+        // replay. The fenced retry with no pending is correlated
+        // `no-pending-unknown`.
+        for (id, setup) in [("unacked", 0u8), ("acked", 1u8), ("diverged", 2u8)] {
+            let mut planner = Planner::new();
+            let correlation = format!("ws-abandon-{id}");
+            let (planned, post_source, post_target) =
+                stage_workspace_send(&mut planner, &correlation);
+            let base = planned["base_revision"].as_u64().expect("base revision");
+            if setup == 1 {
+                assert_eq!(
+                    parse_reply(&planner.evaluate(&workspace_request(
+                        &correlation,
+                        "owner-1",
+                        "gen-1",
+                        base,
+                        "",
+                        post_source.clone(),
+                        post_target.clone(),
+                        workspace_ack_body(),
+                    )))["outcome"],
+                    "acknowledged"
+                );
+            }
+            if setup == 2 {
+                assert_eq!(
+                    parse_reply(&planner.evaluate(&workspace_request(
+                        &correlation,
+                        "owner-1",
+                        "gen-1",
+                        base,
+                        "",
+                        post_source.clone(),
+                        post_target.clone(),
+                        serde_json::json!({"op": "send-to-workspace-ack", "ack_outcome": "partial-application"}),
+                    )))["outcome"],
+                    "diverged"
+                );
+            }
+            let abandoned = parse_reply(&planner.evaluate(&workspace_abandon_request(
+                &correlation,
+                "owner-1",
+                "gen-1",
+                base,
+                post_source.clone(),
+                post_target.clone(),
+                workspace_abandon_body(),
+            )));
+            assert_eq!(abandoned["correlation_id"], correlation, "{abandoned}");
+            assert_eq!(abandoned["outcome"], "abandoned", "{abandoned}");
+            assert_eq!(abandoned["kind"], "send-to-workspace", "{abandoned}");
+            assert!(abandoned.get("base_revision").is_none(), "{abandoned}");
+            assert!(abandoned.get("desired_geometry").is_none(), "{abandoned}");
+            assert!(abandoned.get("operation").is_none(), "{abandoned}");
+            assert!(abandoned.get("preconditions").is_none(), "{abandoned}");
+            assert_ne!(abandoned["outcome"], "committed", "{abandoned}");
+            // No new retained state: pure workspace flow binds nothing and
+            // retains no domains.
+            assert!(planner.owner().is_none());
+            assert_eq!(planner.retained_domains(), 0);
+            // Exact same fenced retry finds no pending: correlated
+            // `no-pending-unknown`, never a commit.
+            let retry = parse_reply(&planner.evaluate(&workspace_abandon_request(
+                &correlation,
+                "owner-1",
+                "gen-1",
+                base,
+                post_source.clone(),
+                post_target.clone(),
+                workspace_abandon_body(),
+            )));
+            assert_eq!(retry["correlation_id"], correlation, "{retry}");
+            assert_eq!(retry["outcome"], "no-pending-unknown", "{retry}");
+            assert_eq!(retry["kind"], "send-to-workspace", "{retry}");
+            assert_ne!(retry["outcome"], "committed", "{retry}");
+            // Slot released: a fresh correlation plans and status cannot imply
+            // a commit.
+            let second = parse_reply(&planner.evaluate(&workspace_request(
+                "ws-abandon-next",
+                "owner-1",
+                "gen-1",
+                0,
+                "win-1",
+                vec![
+                    workspace_entry("win-1", "ws-1", 0),
+                    workspace_entry("win-2", "ws-1", 100),
+                ],
+                vec![workspace_entry("win-t1", "ws-2", 0)],
+                workspace_send_body(),
+            )));
+            assert_eq!(second["outcome"], "planned", "{second}");
+        }
+    }
+
+    #[test]
+    fn workspace_abandon_lost_planned_reply_matches_original_request_revision() {
+        let mut planner = Planner::new();
+        let (planned, source, target) = stage_workspace_send(&mut planner, "ws-abandon-lost-plan");
+        assert_ne!(
+            planned["base_revision"], 0,
+            "seeded base differs from the request revision"
+        );
+        let abandoned = parse_reply(&planner.evaluate(&workspace_abandon_request(
+            "ws-abandon-lost-plan",
+            "owner-1",
+            "gen-1",
+            0,
+            source,
+            target,
+            workspace_abandon_body(),
+        )));
+        assert_eq!(abandoned["outcome"], "abandoned", "{abandoned}");
+        assert!(planner.engine.workspace_pending().is_none());
+    }
+
+    #[test]
+    fn workspace_abandon_mismatch_preserves_pending_without_mutation() {
+        // 2026-09-25 option B: the same fenced abandon retires ANY live
+        // workspace-send pending. A mismatched live pending retires with the
+        // distinct `orphan-abandoned` outcome (never a commit, no retained
+        // state), and the retired slot then reports `no-pending-unknown`.
+        // Each probe uses a fresh staged pending because the first retire
+        // clears the slot. Each probe differs in exactly one fencing
+        // dimension: correlation, owner, generation, then revision.
+        let probes = [
+            ("ws-abandon-other", "owner-1", "gen-1", false),
+            ("ws-abandon-mismatch", "owner-9", "gen-1", false),
+            ("ws-abandon-mismatch", "owner-1", "gen-9", false),
+            ("ws-abandon-mismatch", "owner-1", "gen-1", true),
+        ];
+        for (correlation, owner, generation, bump_revision) in probes {
+            let mut planner = Planner::new();
+            let (planned, post_source, post_target) =
+                stage_workspace_send(&mut planner, "ws-abandon-mismatch");
+            let base = planned["base_revision"].as_u64().expect("base revision");
+            let revision = if bump_revision { base + 1 } else { base };
+            let orphan = parse_reply(&planner.evaluate(&workspace_abandon_request(
+                correlation,
+                owner,
+                generation,
+                revision,
+                post_source.clone(),
+                post_target.clone(),
+                workspace_abandon_body(),
+            )));
+            assert_eq!(orphan["v"], 1, "{orphan}");
+            assert_eq!(orphan["correlation_id"], correlation, "{orphan}");
+            assert_eq!(orphan["outcome"], "orphan-abandoned", "{orphan}");
+            assert_eq!(orphan["kind"], "send-to-workspace", "{orphan}");
+            assert!(orphan.get("base_revision").is_none(), "{orphan}");
+            assert!(orphan.get("desired_geometry").is_none(), "{orphan}");
+            assert!(orphan.get("desired_focus").is_none(), "{orphan}");
+            assert!(orphan.get("float_geometry").is_none(), "{orphan}");
+            assert!(orphan.get("operation").is_none(), "{orphan}");
+            assert!(orphan.get("preconditions").is_none(), "{orphan}");
+            assert_ne!(orphan["outcome"], "committed", "{orphan}");
+            assert!(planner.engine.workspace_pending().is_none());
+            // No new retained state: pure workspace flow binds nothing and
+            // retains no domains.
+            assert!(planner.owner().is_none());
+            assert_eq!(planner.retained_domains(), 0);
+            // Post-retire the same fenced request finds no pending.
+            let retry = parse_reply(&planner.evaluate(&workspace_abandon_request(
+                correlation,
+                owner,
+                generation,
+                revision,
+                post_source.clone(),
+                post_target.clone(),
+                workspace_abandon_body(),
+            )));
+            assert_eq!(retry["correlation_id"], correlation, "{retry}");
+            assert_eq!(retry["outcome"], "no-pending-unknown", "{retry}");
+            assert_eq!(retry["kind"], "send-to-workspace", "{retry}");
+            assert_ne!(retry["outcome"], "committed", "{retry}");
+        }
+        // Wrong scope (valid but non-retained target domain) retires the same
+        // way: option B retires ANY live pending on a well-formed abandon.
+        // Observation window sets never gate abandon, only the request shape.
+        let mut planner = Planner::new();
+        let (planned, post_source, _) = stage_workspace_send(&mut planner, "ws-abandon-mismatch");
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        let mut scoped: serde_json::Value = serde_json::from_str(&workspace_abandon_request(
+            "ws-abandon-mismatch",
+            "owner-1",
+            "gen-1",
+            base,
+            post_source.clone(),
+            vec![workspace_entry("win-t1", "ws-3", 0)],
+            workspace_abandon_body(),
+        ))
+        .expect("json");
+        scoped["target_domain"]["workspace"] = serde_json::json!("ws-3");
+        let scope_orphan = parse_reply(&planner.evaluate(&scoped.to_string()));
+        assert_eq!(
+            scope_orphan["correlation_id"], "ws-abandon-mismatch",
+            "{scope_orphan}"
+        );
+        assert_eq!(
+            scope_orphan["outcome"], "orphan-abandoned",
+            "{scope_orphan}"
+        );
+        assert_eq!(scope_orphan["kind"], "send-to-workspace", "{scope_orphan}");
+        assert!(
+            scope_orphan.get("base_revision").is_none(),
+            "{scope_orphan}"
+        );
+        assert_ne!(scope_orphan["outcome"], "committed", "{scope_orphan}");
+        assert!(planner.engine.workspace_pending().is_none());
+    }
+
+    #[test]
+    fn workspace_abandon_orphan_cross_generation_correlation() {
+        // Option B cross-generation recovery: a gen-1 flight orphans when its
+        // owner restarts at gen-2; the new generation's fenced abandon (new
+        // correlation, new generation, same owner and scope) retires it as
+        // `orphan-abandoned` with the requester correlation, never a commit.
+        let mut planner = Planner::new();
+        let (planned, post_source, post_target) =
+            stage_workspace_send(&mut planner, "ws-orphan-old");
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        let orphan = parse_reply(&planner.evaluate(&workspace_abandon_request(
+            "ws-orphan-new",
+            "owner-1",
+            "gen-2",
+            base,
+            post_source.clone(),
+            post_target.clone(),
+            workspace_abandon_body(),
+        )));
+        assert_eq!(orphan["v"], 1, "{orphan}");
+        assert_eq!(orphan["correlation_id"], "ws-orphan-new", "{orphan}");
+        assert_eq!(orphan["outcome"], "orphan-abandoned", "{orphan}");
+        assert_eq!(orphan["kind"], "send-to-workspace", "{orphan}");
+        assert!(orphan.get("base_revision").is_none(), "{orphan}");
+        assert!(orphan.get("desired_geometry").is_none(), "{orphan}");
+        assert!(orphan.get("operation").is_none(), "{orphan}");
+        assert!(orphan.get("preconditions").is_none(), "{orphan}");
+        assert_ne!(orphan["outcome"], "committed", "{orphan}");
+        assert!(planner.engine.workspace_pending().is_none());
+        // Post-retire the slot reports absence, and a fresh flight plans.
+        let retry = parse_reply(&planner.evaluate(&workspace_abandon_request(
+            "ws-orphan-new",
+            "owner-1",
+            "gen-2",
+            base,
+            post_source,
+            post_target,
+            workspace_abandon_body(),
+        )));
+        assert_eq!(retry["outcome"], "no-pending-unknown", "{retry}");
+        assert_eq!(retry["kind"], "send-to-workspace", "{retry}");
+        let second = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-orphan-next",
+            "owner-1",
+            "gen-2",
+            0,
+            "win-1",
+            vec![
+                workspace_entry("win-1", "ws-1", 0),
+                workspace_entry("win-2", "ws-1", 100),
+            ],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_send_body(),
+        )));
+        assert_eq!(second["outcome"], "planned", "{second}");
+    }
+
+    #[test]
+    fn workspace_abandon_orphan_different_owner_preserves_sessions() {
+        // A different same-format owner (other same-UID caller) retires the
+        // orphan as `orphan-abandoned` while every canonical per-domain
+        // Engine session survives and stays reusable.
+        let mut planner = Planner::new();
+        let admit = retained_request_for_domain(
+            "ws-orphan-owner-1",
+            "owner-1",
+            "gen-1",
+            "out-9",
+            "ws-9",
+            "win-keep",
+            &[("win-keep", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-keep", "output": "out-9", "workspace": "ws-9"}),
+        );
+        assert_eq!(parse_reply(&planner.evaluate(&admit))["outcome"], "planned");
+        assert_eq!(planner.retained_domains(), 1);
+        let (planned, post_source, post_target) =
+            stage_workspace_send(&mut planner, "ws-orphan-owner-2");
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        let orphan = parse_reply(&planner.evaluate(&workspace_abandon_request(
+            "ws-orphan-owner-2",
+            "owner-9",
+            "gen-1",
+            base,
+            post_source,
+            post_target,
+            workspace_abandon_body(),
+        )));
+        assert_eq!(orphan["outcome"], "orphan-abandoned", "{orphan}");
+        assert_eq!(orphan["kind"], "send-to-workspace", "{orphan}");
+        assert_ne!(orphan["outcome"], "committed", "{orphan}");
+        assert!(planner.engine.workspace_pending().is_none());
+        assert_eq!(planner.retained_domains(), 1, "canonical session preserved");
+        let regroup = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "ws-orphan-owner-3",
+            "owner-1",
+            "gen-1",
+            "out-9",
+            "ws-9",
+            "win-keep",
+            &[("win-keep", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(regroup["outcome"], "planned", "{regroup}");
+    }
+
+    #[test]
+    fn workspace_abandon_orphan_displaced_late_phases_recover_without_commit() {
+        // Displaced original owner after an orphan retire: its late ack and
+        // verify find no pending and never commit, and its own late abandon
+        // reports `no-pending-unknown` (option A recovery shape).
+        let mut planner = Planner::new();
+        let (planned, post_source, post_target) =
+            stage_workspace_send(&mut planner, "ws-orphan-late");
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        let orphan = parse_reply(&planner.evaluate(&workspace_abandon_request(
+            "ws-orphan-late-new",
+            "owner-1",
+            "gen-2",
+            base,
+            post_source.clone(),
+            post_target.clone(),
+            workspace_abandon_body(),
+        )));
+        assert_eq!(orphan["outcome"], "orphan-abandoned", "{orphan}");
+        let late_ack = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-orphan-late",
+            "owner-1",
+            "gen-1",
+            base,
+            "",
+            post_source.clone(),
+            post_target.clone(),
+            workspace_ack_body(),
+        )));
+        assert_eq!(late_ack["correlation_id"], "ws-orphan-late", "{late_ack}");
+        assert_eq!(late_ack["outcome"], "rejected", "{late_ack}");
+        assert_eq!(late_ack["kind"], "no-pending", "{late_ack}");
+        assert_ne!(late_ack["outcome"], "committed", "{late_ack}");
+        let late_verify = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-orphan-late",
+            "owner-1",
+            "gen-1",
+            base,
+            "",
+            post_source.clone(),
+            post_target.clone(),
+            workspace_verify_body(
+                planned["preconditions"].clone(),
+                planned["operation"].clone(),
+            ),
+        )));
+        assert_eq!(late_verify["outcome"], "rejected", "{late_verify}");
+        assert_eq!(late_verify["kind"], "no-pending", "{late_verify}");
+        assert_ne!(late_verify["outcome"], "committed", "{late_verify}");
+        let late_abandon = parse_reply(&planner.evaluate(&workspace_abandon_request(
+            "ws-orphan-late",
+            "owner-1",
+            "gen-1",
+            base,
+            post_source,
+            post_target,
+            workspace_abandon_body(),
+        )));
+        assert_eq!(
+            late_abandon["correlation_id"], "ws-orphan-late",
+            "{late_abandon}"
+        );
+        assert_eq!(
+            late_abandon["outcome"], "no-pending-unknown",
+            "{late_abandon}"
+        );
+        assert_eq!(late_abandon["kind"], "send-to-workspace", "{late_abandon}");
+        assert_ne!(late_abandon["outcome"], "committed", "{late_abandon}");
+    }
+
+    #[test]
+    fn workspace_abandon_malformed_preserves_live_pending() {
+        // Malformed or unauthorized abandon requests fail closed before any
+        // retirement: the live pending survives and the exact abandon still
+        // retires it afterwards.
+        let mut planner = Planner::new();
+        let (planned, post_source, post_target) =
+            stage_workspace_send(&mut planner, "ws-abandon-malformed");
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        let unknown_field = parse_reply(&planner.evaluate(&workspace_abandon_request(
+            "ws-abandon-malformed",
+            "owner-1",
+            "gen-1",
+            base,
+            post_source.clone(),
+            post_target.clone(),
+            serde_json::json!({"op": "send-to-workspace-abandon", "extra": 1}),
+        )));
+        assert_eq!(unknown_field["outcome"], "rejected", "{unknown_field}");
+        assert_eq!(unknown_field["kind"], "unknown-field", "{unknown_field}");
+        let mut missing: serde_json::Value = serde_json::from_str(&workspace_abandon_request(
+            "ws-abandon-malformed",
+            "owner-1",
+            "gen-1",
+            base,
+            post_source.clone(),
+            post_target.clone(),
+            workspace_abandon_body(),
+        ))
+        .expect("json");
+        missing
+            .as_object_mut()
+            .expect("object")
+            .remove("target_domain");
+        let missing_reply = parse_reply(&planner.evaluate(&missing.to_string()));
+        assert_eq!(missing_reply["outcome"], "rejected", "{missing_reply}");
+        assert_eq!(
+            missing_reply["kind"], "workspace-target-invalid",
+            "{missing_reply}"
+        );
+        // Unauthorized owner shape fails closed at request validation.
+        let bad_owner = parse_reply(&planner.evaluate(&workspace_abandon_request(
+            "ws-abandon-malformed",
+            "not an owner!!",
+            "gen-1",
+            base,
+            post_source.clone(),
+            post_target.clone(),
+            workspace_abandon_body(),
+        )));
+        assert_eq!(bad_owner["outcome"], "rejected", "{bad_owner}");
+        assert_eq!(bad_owner["kind"], "owner-invalid", "{bad_owner}");
+        // The live pending survived every malformed probe.
+        assert!(planner.engine.workspace_pending().is_some());
+        let abandoned = parse_reply(&planner.evaluate(&workspace_abandon_request(
+            "ws-abandon-malformed",
+            "owner-1",
+            "gen-1",
+            base,
+            post_source,
+            post_target,
+            workspace_abandon_body(),
+        )));
+        assert_eq!(abandoned["outcome"], "abandoned", "{abandoned}");
+        assert_eq!(abandoned["kind"], "send-to-workspace", "{abandoned}");
+    }
+
+    #[test]
+    fn workspace_abandon_leaves_directional_pending_untouched() {
+        // Directional R4 pending is out of scope: a fenced workspace abandon
+        // with no workspace pending reports `no-pending-unknown` and never
+        // clears, rebinds, or otherwise touches the directional transaction.
+        use tiler_core::directional::{
+            CrossOutputTarget, MoveOperation, OutputId, Rule, WindowId, WorkspaceId,
+        };
+        use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
+        use tiler_core::pending::DirectionalMovePending;
+        use tiler_core::session::Session;
+        let mut planner = Planner::new();
+        let domain = OutputDomain {
+            id: OutputId("out-9".to_owned()),
+            workspace: WorkspaceId("ws-9".to_owned()),
+            bounds: Rect {
+                x: 0,
+                y: 0,
+                w: 1200,
+                h: 800,
+            },
+            gap: 0,
+            adjacent: std::collections::BTreeMap::new(),
+        };
+        let session = Session::new(
+            OwnerId::parse("owner-1").expect("owner"),
+            GenerationId::parse("gen-1").expect("generation"),
+            0,
+            7,
+            vec![domain],
+        )
+        .expect("session");
+        let source_key = DomainKey {
+            output: OutputId("out-9".to_owned()),
+            workspace: WorkspaceId("ws-9".to_owned()),
+        };
+        let target_key = DomainKey {
+            output: OutputId("out-8".to_owned()),
+            workspace: WorkspaceId("ws-9".to_owned()),
+        };
+        planner
+            .engine
+            .set_directional_pending(DirectionalMovePending::new(
+                OwnerId::parse("owner-1").expect("owner"),
+                GenerationId::parse("gen-1").expect("generation"),
+                CorrelationId::parse("ws-r4-live").expect("correlation"),
+                0,
+                0,
+                session,
+                source_key,
+                target_key,
+                0,
+                0,
+                vec![],
+                MoveOperation::CrossOutput {
+                    rule: Rule::R4,
+                    target_output: OutputId("out-8".to_owned()),
+                    target_workspace: WorkspaceId("ws-9".to_owned()),
+                    source_root_child_index: 0,
+                    target: CrossOutputTarget::Empty,
+                },
+                vec![],
+                WindowId("win-keep".to_owned()),
+                vec![],
+            ));
+        let reply = parse_reply(&planner.evaluate(&workspace_abandon_request(
+            "ws-abandon-r4",
+            "owner-1",
+            "gen-1",
+            0,
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_abandon_body(),
+        )));
+        assert_eq!(reply["correlation_id"], "ws-abandon-r4", "{reply}");
+        assert_eq!(reply["outcome"], "no-pending-unknown", "{reply}");
+        assert_eq!(reply["kind"], "send-to-workspace", "{reply}");
+        assert_ne!(reply["outcome"], "committed", "{reply}");
+        assert!(
+            planner.engine.directional_pending().is_some(),
+            "directional pending untouched"
+        );
+        assert!(planner.engine.workspace_pending().is_none());
+    }
+
+    #[test]
+    fn workspace_abandon_orphan_summaries_redacted() {
+        // The distinct orphan outcome flows through the existing bounded
+        // redacted summaries: truthful outcome/kind tokens, validated
+        // correlation only, no ids, rects, owner, or payload bytes. Logging
+        // stays pure and never mutates planner state.
+        let request = workspace_abandon_request(
+            "ws-abandon-orphan-sum-1",
+            "owner-9",
+            "gen-9",
+            3,
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_abandon_body(),
+        );
+        assert_eq!(
+            summarize_plan_ingress(&request),
+            "plasma-auto-tiler:plan-summary direction=ingress op=send-to-workspace-abandon correlation=ws-abandon-orphan-sum-1 revision=3"
+        );
+        let shape = summarize_plan_shape(&request);
+        assert!(shape.contains("op=send-to-workspace-abandon"), "{shape}");
+        assert!(!shape.contains("win-1"), "{shape}");
+        assert!(!shape.contains("owner-9"), "{shape}");
+        let orphaned = summarize_plan_egress(
+            &request,
+            r#"{"v":1,"correlation_id":"ws-abandon-orphan-sum-1","outcome":"orphan-abandoned","kind":"send-to-workspace"}"#,
+        );
+        assert!(orphaned.contains("outcome=orphan-abandoned"), "{orphaned}");
+        assert!(orphaned.contains("kind=send-to-workspace"), "{orphaned}");
+        assert!(!orphaned.contains("committed"), "{orphaned}");
+        assert!(!orphaned.contains("win-1"), "{orphaned}");
+        assert!(!orphaned.contains("owner-9"), "{orphaned}");
+        // Summaries are pure: a staged flight still retires exactly once
+        // afterwards (exact here, proving the summaries changed nothing).
+        let mut planner = Planner::new();
+        let (planned, post_source, post_target) =
+            stage_workspace_send(&mut planner, "ws-abandon-orphan-sum-2");
+        let base = planned["base_revision"].as_u64().expect("base");
+        let _ = summarize_plan_ingress(&request);
+        let _ = summarize_plan_shape(&request);
+        let _ = summarize_plan_egress(&request, &planned.to_string());
+        let abandoned = parse_reply(&planner.evaluate(&workspace_abandon_request(
+            "ws-abandon-orphan-sum-2",
+            "owner-1",
+            "gen-1",
+            base,
+            post_source,
+            post_target,
+            workspace_abandon_body(),
+        )));
+        assert_eq!(abandoned["outcome"], "abandoned", "{abandoned}");
+    }
+
+    #[test]
+    fn workspace_abandon_after_commit_reports_no_pending_without_commit_claim() {
+        // Committed-before-lost-reply: the Engine committed on verify, so the
+        // pending is gone and abandon must report correlated no-pending
+        // without ever claiming commit.
+        let mut planner = Planner::new();
+        let (planned, post_source, post_target) =
+            stage_workspace_send(&mut planner, "ws-abandon-committed");
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        assert_eq!(
+            parse_reply(&planner.evaluate(&workspace_request(
+                "ws-abandon-committed",
+                "owner-1",
+                "gen-1",
+                base,
+                "",
+                post_source.clone(),
+                post_target.clone(),
+                workspace_ack_body(),
+            )))["outcome"],
+            "acknowledged"
+        );
+        let committed = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-abandon-committed",
+            "owner-1",
+            "gen-1",
+            base,
+            "",
+            post_source.clone(),
+            post_target.clone(),
+            workspace_verify_body(
+                planned["preconditions"].clone(),
+                planned["operation"].clone(),
+            ),
+        )));
+        assert_eq!(committed["outcome"], "committed", "{committed}");
+        let retry = parse_reply(&planner.evaluate(&workspace_abandon_request(
+            "ws-abandon-committed",
+            "owner-1",
+            "gen-1",
+            base,
+            post_source,
+            post_target,
+            workspace_abandon_body(),
+        )));
+        assert_eq!(retry["correlation_id"], "ws-abandon-committed", "{retry}");
+        assert_eq!(retry["outcome"], "no-pending-unknown", "{retry}");
+        assert_eq!(retry["kind"], "send-to-workspace", "{retry}");
+        assert_ne!(retry["outcome"], "committed", "{retry}");
+        assert!(retry.get("desired_geometry").is_none(), "{retry}");
+        assert!(retry.get("operation").is_none(), "{retry}");
+    }
+
+    #[test]
+    fn workspace_abandon_preserves_canonical_sessions_and_rejects_malformed() {
+        // Canonical domain sessions survive abandon: seed an unrelated legacy
+        // domain, stage and abandon a workspace flight, then prove the legacy
+        // slot is intact and reusable.
+        let mut planner = Planner::new();
+        let admit = retained_request_for_domain(
+            "ws-abandon-keep-1",
+            "owner-1",
+            "gen-1",
+            "out-9",
+            "ws-9",
+            "win-keep",
+            &[("win-keep", 0, 0, 100, 80)],
+            serde_json::json!({"op": "admit", "window": "win-keep", "output": "out-9", "workspace": "ws-9"}),
+        );
+        assert_eq!(parse_reply(&planner.evaluate(&admit))["outcome"], "planned");
+        assert_eq!(planner.retained_domains(), 1);
+        let (planned, post_source, post_target) =
+            stage_workspace_send(&mut planner, "ws-abandon-keep-2");
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        let abandoned = parse_reply(&planner.evaluate(&workspace_abandon_request(
+            "ws-abandon-keep-2",
+            "owner-1",
+            "gen-1",
+            base,
+            post_source,
+            post_target,
+            workspace_abandon_body(),
+        )));
+        assert_eq!(abandoned["outcome"], "abandoned", "{abandoned}");
+        assert_eq!(planner.retained_domains(), 1, "canonical session preserved");
+        let regroup = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "ws-abandon-keep-3",
+            "owner-1",
+            "gen-1",
+            "out-9",
+            "ws-9",
+            "win-keep",
+            &[("win-keep", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(regroup["outcome"], "planned", "{regroup}");
+        // Malformed abandon shapes fail closed without mutation.
+        let unknown = parse_reply(&planner.evaluate(&workspace_abandon_request(
+            "ws-abandon-keep-4",
+            "owner-1",
+            "gen-1",
+            0,
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            serde_json::json!({"op": "send-to-workspace-abandon", "extra": 1}),
+        )));
+        assert_eq!(unknown["outcome"], "rejected", "{unknown}");
+        assert_eq!(unknown["kind"], "unknown-field", "{unknown}");
+        let mut missing: serde_json::Value = serde_json::from_str(&workspace_abandon_request(
+            "ws-abandon-keep-4",
+            "owner-1",
+            "gen-1",
+            0,
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_abandon_body(),
+        ))
+        .expect("json");
+        missing
+            .as_object_mut()
+            .expect("object")
+            .remove("target_domain");
+        let missing_reply = parse_reply(&planner.evaluate(&missing.to_string()));
+        assert_eq!(missing_reply["outcome"], "rejected", "{missing_reply}");
+        assert_eq!(
+            missing_reply["kind"], "workspace-target-invalid",
+            "{missing_reply}"
+        );
+        // Unknown ops stay on the exact unknown-value path and never reach
+        // abandon.
+        let unknown_op = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-abandon-keep-4",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            serde_json::json!({"op": "send-to-workspace-bogus"}),
+        )));
+        assert_eq!(unknown_op["outcome"], "rejected", "{unknown_op}");
+        assert_eq!(unknown_op["kind"], "unknown-value", "{unknown_op}");
+    }
+
+    #[test]
+    fn workspace_abandon_summaries_are_bounded_and_redacted() {
+        // Requested/replied/retry semantics flow through the existing bounded
+        // redacted summaries with no ids, rects, owner, or payload bytes.
+        // Logging is pure: summaries never mutate planner state and failures
+        // degrade to placeholders without changing behavior.
+        let request = workspace_abandon_request(
+            "ws-abandon-sum-1",
+            "owner-1",
+            "gen-1",
+            3,
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_abandon_body(),
+        );
+        assert_eq!(
+            summarize_plan_ingress(&request),
+            "plasma-auto-tiler:plan-summary direction=ingress op=send-to-workspace-abandon correlation=ws-abandon-sum-1 revision=3"
+        );
+        let shape = summarize_plan_shape(&request);
+        assert!(shape.contains("op=send-to-workspace-abandon"), "{shape}");
+        assert!(!shape.contains("win-1"), "{shape}");
+        assert!(!shape.contains("owner-1"), "{shape}");
+        let replied = summarize_plan_egress(
+            &request,
+            r#"{"v":1,"correlation_id":"ws-abandon-sum-1","outcome":"abandoned","kind":"send-to-workspace"}"#,
+        );
+        assert!(replied.contains("outcome=abandoned"), "{replied}");
+        assert!(replied.contains("kind=send-to-workspace"), "{replied}");
+        assert!(!replied.contains("committed"), "{replied}");
+        let retried = summarize_plan_egress(
+            &request,
+            r#"{"v":1,"correlation_id":"ws-abandon-sum-1","outcome":"no-pending-unknown","kind":"send-to-workspace"}"#,
+        );
+        assert!(retried.contains("outcome=no-pending-unknown"), "{retried}");
+        assert!(retried.contains("kind=send-to-workspace"), "{retried}");
+        let garbage = summarize_plan_egress(&request, "{not-json!!");
+        assert!(garbage.contains("outcome=unknown"), "{garbage}");
+        assert!(!garbage.contains("not-json"), "{garbage}");
+        // Summaries are pure: the lifecycle they describe still commits
+        // exactly once afterwards.
+        let mut planner = Planner::new();
+        let (planned, post_source, post_target) =
+            stage_workspace_send(&mut planner, "ws-abandon-sum-2");
+        let base = planned["base_revision"].as_u64().expect("base");
+        let _ = summarize_plan_ingress(&request);
+        let _ = summarize_plan_shape(&request);
+        let _ = summarize_plan_egress(&request, &planned.to_string());
+        assert_eq!(
+            parse_reply(&planner.evaluate(&workspace_request(
+                "ws-abandon-sum-2",
+                "owner-1",
+                "gen-1",
+                base,
+                "",
+                post_source.clone(),
+                post_target.clone(),
+                workspace_ack_body(),
+            )))["outcome"],
+            "acknowledged"
+        );
+        assert_eq!(
+            parse_reply(&planner.evaluate(&workspace_request(
+                "ws-abandon-sum-2",
+                "owner-1",
+                "gen-1",
+                base,
+                "",
+                post_source,
+                post_target,
+                workspace_verify_body(
+                    planned["preconditions"].clone(),
+                    planned["operation"].clone(),
+                ),
+            )))["outcome"],
+            "committed"
+        );
     }
 
     #[test]

@@ -24,6 +24,25 @@ Development process principles, approved by the user. Product goals live in
 - Control effort by scoping the work down to a sensible level instead. Keep the
   implementation the smallest one that is actually correct for that scope.
 
+## Simplicity
+
+- We are complexity averse. Always choose the simplest and least surprising
+  solution that delivers the requirements within our constraints.
+- This matters most in complex areas with uncontrolled elements and multiple
+  failure modes, where added machinery multiplies the ways things can fail.
+
+## Resilience
+
+- Never give up permanently. The only acceptable terminal state is a hard
+  failure that prevents all functionality, such as KWin missing or access to
+  it denied. Every other failure is logged and followed by recovery; ephemeral
+  issues must not disable tiling or any other functionality.
+- We do not control the host. KWin, Wayland, and clients may report values
+  that differ subtly from what was requested or expected. Tolerate these
+  differences and converge gracefully, in ways that do not surprise the user.
+- Windows change themselves. They resize, change modes, move, and close at any
+  time, including mid-operation. Handle these as normal events, not failures.
+
 ## Observability
 
 - Observability is a core requirement across every component of the project.

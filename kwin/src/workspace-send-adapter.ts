@@ -30,8 +30,26 @@
 // The planner commits only after an exact accepted acknowledgement and a
 // matching verified post-observation: request proposes and retains one pending
 // two-domain Session, then ack then verify each bind one owner/generation/
-// correlation/base-revision. Pending mismatch, loss, refused ack, or failed
-// verification is terminal divergence with no legacy recovery.
+// correlation/base-revision. Any send unable to verify cleanly (nonexact
+// post-observation, unreadable source/third/absent scope, deadline, lost/late
+// reply, ack/verify timeout) uses ONE fenced correlated Planner op
+// `send-to-workspace-abandon` carrying the retained identity, scope, and base
+// revision. An exact reply (`abandoned`, `orphan-abandoned`, or
+// `no-pending-unknown` with exact version/correlation/kind) settles the
+// flight: the adapter stays enabled, unblocks Plan, and hands off to one
+// ordinary Plan resync over native observation, never claiming a KWin commit.
+// `orphan-abandoned` retires ANY live workspace-send pending from another
+// generation/correlation/owner/scope and is logged distinctly. Exact verify
+// is unchanged and nothing replays native setters. One single bounded
+// abandon wait runs on the existing one-shot deadline: while unreadable it
+// keeps trying on a valid echo before the deadline without resetting it;
+// when the wait expires the local flight releases as UNCONFIRMED (never
+// claiming Rust retirement or commit), stays enabled, unblocks Plan, and
+// hands off to the ordinary resync; a later send re-activates the current
+// Planner owner and its abandon can still retire any surviving pending. The
+// pre-actuation cancel below stays for provably zero-dispatch withdrawal
+// when it succeeds; every uncertain or lost planned result reaches abandon
+// instead of any terminal disabling.
 //
 // Refusal routes are exact bounded tokens: no-planner, owner-loss,
 // stale-revision, cross-output, same-workspace, absent-focus, non-tiled-focus,
@@ -40,13 +58,16 @@
 // (scope-invalid plus the requestSend validation tokens above) log one
 // structured best-effort `plasma-auto-tiler:route-diag` line and return false
 // with the adapter still enabled, so a later valid send can proceed. Every
-// post-flight/planner/stale/owner/generation/partial/timeout divergence
-// disables the adapter and emits one structured best-effort
-// `plasma-auto-tiler:route-diag` line with fixed fields (component, stage,
-// correlation, generation, revision, event, outcome) carrying no sensitive,
-// native, or payload data. A post-plan failure additionally sends one bounded
-// best-effort `send-to-workspace-ack` `adapter-lost` to the still pinned
-// unique owner before disabling; never the well-known name, never a retry.
+// uncertain post-dispatch result (post-flight/planner/stale/owner/generation/
+// partial/timeout divergence) runs the single fenced correlated
+// `send-to-workspace-abandon` op and settles on its exact reply
+// (`abandoned`, `orphan-abandoned`, `no-pending-unknown`) or, when the
+// single bounded wait expires with no definitive reply, releases the local
+// flight as UNCONFIRMED instead of disabling: the adapter stays enabled
+// and unblocks Plan with one ordinary resync handoff. Post-plan abandon never sends the legacy
+// `send-to-workspace-ack` `adapter-lost` report. All logs carry fixed fields
+// (component, stage, correlation, generation, revision, event, outcome) with
+// no sensitive, native, or payload data.
 //
 // All logs are fixed redacted tokens. Only minimal public events are used and
 // all are detached on disable. No polling.
@@ -192,6 +213,12 @@ export interface WorkspaceSendAdapterEnv {
     // ordering. Never invoked for pre-dispatch clean recovery or uncertain
     // terminal divergence.
     readonly onCommitted?: () => void;
+    // Abandon settlement edge for entry-owned coordination: invoked exactly
+    // once after an exact `abandoned`/`no-pending-unknown` reply releases an
+    // unverifiable flight. The entry runs one ordinary Plan resync over
+    // native observation; the adapter never resets the Plan baseline itself.
+    // Never invoked for clean recovery, cancel withdrawal, or commit.
+    readonly onAbandoned?: () => void;
     readonly setGeometry: (target: object, rect: WorkspaceSendRect) => boolean;
     readonly readGeometry?: (target: object) => WorkspaceSendRect | null;
     readonly setDesktops: (target: object, refs: ReadonlyArray<object>) => boolean;
@@ -913,9 +940,6 @@ export class WorkspaceSendAdapter {
     private innerGap: number;
     private outerGap: number;
     private inFlight = false;
-    // A post-plan terminal result can leave native membership ahead of Rust's
-    // committed domain. Keep Plan from adopting that uncommitted visible state.
-    private planBlocked = false;
     private token = 0;
     private activeToken = 0;
     private deadlineToken = 0;
@@ -937,6 +961,14 @@ export class WorkspaceSendAdapter {
     // settlement (success or fallthrough) or explicit disable.
     private cancelArmed = false;
     private cancelReplySeen = false;
+    // Abandon fence: while armed, the original late replies, timers, echoes,
+    // completions, setters, and new planner sends cannot write, recover, or
+    // settle. Armed when an uncertain result starts the fenced
+    // `send-to-workspace-abandon` attempts and cleared only on their exact
+    // reply or explicit disable. Missed, inexact, or unanswered attempts
+    // re-send on the next valid observation or timeout opportunity while the
+    // retained pending flight lives; the adapter never disables on this path.
+    private abandonArmed = false;
     // Fallthrough terminal outcome (plus diag event) preserved across the
     // cancel attempt so a failed cancellation runs the exact terminal path
     // the original failure would have run.
@@ -1010,7 +1042,12 @@ export class WorkspaceSendAdapter {
     }
 
     get blocksPlan(): boolean {
-        return this.inFlight || this.planBlocked;
+        // Plan is blocked exactly while a send flight is live. Abandon
+        // settlement releases the Rust pending without committing, so Plan
+        // then adopts the ordinary native observation through the resync
+        // handoff instead of holding uncommitted visible state at arm's
+        // length. Nothing here latches a block past the flight.
+        return this.inFlight;
     }
 
     // Derived from the existing retained flight only. Entry diagnostics use
@@ -1081,6 +1118,7 @@ export class WorkspaceSendAdapter {
         this.cancelOutcome = "";
         this.cancelFollow = undefined;
         this.cancelEvent = "";
+        this.abandonArmed = false;
         return true;
     }
 
@@ -1111,12 +1149,15 @@ export class WorkspaceSendAdapter {
         this.clearTimer();
         this.clearEcho();
         // Explicit disable wins over a pending cancel wait: the outstanding
-        // cancel reply, if any, is fenced by the cleared flight below.
+        // cancel reply, if any, is fenced by the cleared flight below. An
+        // outstanding abandon wait is likewise retired: explicit teardown
+        // owns the flight and the unanswered abandon is simply dropped.
         this.cancelArmed = false;
         this.cancelReplySeen = false;
         this.cancelOutcome = "";
         this.cancelFollow = undefined;
         this.cancelEvent = "";
+        this.abandonArmed = false;
         this.nativeDispatches = 0;
     }
 
@@ -1452,6 +1493,7 @@ export class WorkspaceSendAdapter {
         this.cancelOutcome = "";
         this.cancelFollow = undefined;
         this.cancelEvent = "";
+        this.abandonArmed = false;
         const flags = snapshotMoverFlags(snapshot, moverId);
         this.pending = {
             correlation,
@@ -1713,8 +1755,9 @@ export class WorkspaceSendAdapter {
         }
         // Cancel-armed fence: a late original reply arriving while the
         // withdrawal awaits must never bind a plan or actuate. The cancel
-        // outcome alone settles the flight.
-        if (this.cancelArmed) {
+        // outcome alone settles the flight. The abandon fence below applies
+        // the same rule while the correlated abandon round trip awaits.
+        if (this.cancelArmed || this.abandonArmed) {
             return;
         }
         const pending = this.pending;
@@ -2028,7 +2071,35 @@ export class WorkspaceSendAdapter {
     }
 
     private onMoverEcho(flight: number, correlation: string): void {
-        if (!this.inFlight || flight !== this.activeToken || !this.echoArmed || this.cancelArmed) {
+        // Abandon retry trigger before the single deadline: a still-waiting
+        // abandon re-attempts on this valid observation without resetting
+        // the armed deadline. The one-shot is consumed first, then the
+        // gated send re-arms the next trigger. An unreadable observation
+        // sends nothing and simply waits for the next trigger or the
+        // deadline, which releases as UNCONFIRMED.
+        if (this.abandonArmed) {
+            if (!this.inFlight || flight !== this.activeToken) {
+                return;
+            }
+            const pending = this.pending;
+            const detach = this.echoDetach;
+            this.echoDetach = null;
+            this.echoArmed = false;
+            this.moverSeen = false;
+            if (detach !== null) {
+                try {
+                    detach();
+                } catch (error) {
+                    void error;
+                }
+            }
+            if (pending === null || pending.correlation !== correlation) {
+                return;
+            }
+            this.trySendAbandon(flight, correlation, false);
+            return;
+        }
+        if (!this.inFlight || flight !== this.activeToken || !this.echoArmed || this.cancelArmed || this.abandonArmed) {
             return;
         }
         const pending = this.pending;
@@ -2054,7 +2125,7 @@ export class WorkspaceSendAdapter {
     }
 
     private onGeometryEcho(windowId: string, flight: number, correlation: string): void {
-        if (!this.inFlight || flight !== this.activeToken || this.cancelArmed) {
+        if (!this.inFlight || flight !== this.activeToken || this.cancelArmed || this.abandonArmed) {
             return;
         }
         if (!this.geoPending.has(windowId)) {
@@ -2096,7 +2167,7 @@ export class WorkspaceSendAdapter {
     }
 
     private tryMaybeComplete(flight: number, correlation: string): void {
-        if (!this.inFlight || flight !== this.activeToken || this.nativeWriteDepth > 0 || this.nativeFollowDepth > 0 || this.cancelArmed) {
+        if (!this.inFlight || flight !== this.activeToken || this.nativeWriteDepth > 0 || this.nativeFollowDepth > 0 || this.cancelArmed || this.abandonArmed) {
             return;
         }
         if (!this.moverSeen || this.geoPending.size > 0) {
@@ -2111,7 +2182,7 @@ export class WorkspaceSendAdapter {
     }
 
     private completePostWrite(planned: WorkspacePlanned, flight: number, correlation: string): void {
-        if (this.nativeWriteDepth > 0 || this.nativeFollowDepth > 0 || this.cancelArmed) {
+        if (this.nativeWriteDepth > 0 || this.nativeFollowDepth > 0 || this.cancelArmed || this.abandonArmed) {
             return;
         }
         const pending = this.pending;
@@ -2404,7 +2475,7 @@ export class WorkspaceSendAdapter {
     }
 
     private sendAck(flight: number, correlation: string, payload: string): void {
-        if (!this.inFlight || flight !== this.activeToken || !isUniqueOwner(this.pinnedOwner) || this.cancelArmed) {
+        if (!this.inFlight || flight !== this.activeToken || !isUniqueOwner(this.pinnedOwner) || this.cancelArmed || this.abandonArmed) {
             return;
         }
         this.callbackSeen = false;
@@ -2424,7 +2495,7 @@ export class WorkspaceSendAdapter {
     }
 
     private onAckReply(reply: unknown, flight: number, correlation: string): void {
-        if (!this.inFlight || flight !== this.activeToken || this.callbackSeen || this.cancelArmed) {
+        if (!this.inFlight || flight !== this.activeToken || this.callbackSeen || this.cancelArmed || this.abandonArmed) {
             return;
         }
         const pending = this.pending;
@@ -2499,7 +2570,7 @@ export class WorkspaceSendAdapter {
     }
 
     private sendVerify(flight: number, correlation: string, payload: string): void {
-        if (!this.inFlight || flight !== this.activeToken || !isUniqueOwner(this.pinnedOwner) || this.cancelArmed) {
+        if (!this.inFlight || flight !== this.activeToken || !isUniqueOwner(this.pinnedOwner) || this.cancelArmed || this.abandonArmed) {
             return;
         }
         this.callbackSeen = false;
@@ -2519,7 +2590,7 @@ export class WorkspaceSendAdapter {
     }
 
     private onVerifyReply(reply: unknown, flight: number, correlation: string): void {
-        if (!this.inFlight || flight !== this.activeToken || this.callbackSeen || this.cancelArmed) {
+        if (!this.inFlight || flight !== this.activeToken || this.callbackSeen || this.cancelArmed || this.abandonArmed) {
             return;
         }
         const pending = this.pending;
@@ -2617,6 +2688,7 @@ export class WorkspaceSendAdapter {
             this.nativeWriteDepth > 0 ||
             this.nativeFollowDepth > 0 ||
             this.cancelArmed ||
+            this.abandonArmed ||
             !isUniqueOwner(this.pinnedOwner)
         ) {
             return;
@@ -2879,56 +2951,440 @@ export class WorkspaceSendAdapter {
         }
         // One automatic pre-actuation recovery attempt: when the flight never
         // bound a plan and never dispatched a native write, Rust may hold a
-        // clean unacknowledged pending worth withdrawing before terminal
-        // teardown. Any ineligibility falls through to the terminal core
-        // unchanged. Callers proving Rust terminal for this scope (a
-        // `diverged` reply) bypass the attempt: cancellation refuses diverged
-        // transactions, so the attempt could never succeed.
+        // clean unacknowledged pending worth withdrawing before the abandon
+        // below. Any ineligibility falls through to abandon unchanged.
+        // Callers proving Rust terminal for this scope (a `diverged` reply)
+        // bypass the attempt: cancellation refuses diverged transactions, so
+        // the attempt could never succeed, while abandon retires any state.
         if (allowCancel && this.tryStartCancel(flight, "result", outcome)) {
             return;
         }
-        this.terminateFlight(flight, correlation, "result", outcome, undefined);
+        this.startAbandon(flight, correlation, outcome);
     }
 
-    // Shared terminal core: exactly the historical failFlight teardown
-    // (plan-block on bound plans, one best-effort adapter-lost report,
-    // context clear, result diagnostic, disable). The timer is retired first
-    // so a reentrant fire during the loss report cannot double-terminate.
-    private terminateFlight(
-        flight: number,
-        correlation: string,
-        event: string,
-        outcome: string,
-        followFallback: string | undefined,
-    ): void {
-        if (flight !== this.activeToken) {
+    // Correlated abandon for every uncertain result: fenced
+    // `send-to-workspace-abandon` attempts carrying the retained identity,
+    // scope, and base revision, settled only by their exact reply
+    // (`abandoned`, `orphan-abandoned`, `no-pending-unknown`). The adapter
+    // stays enabled and Plan unblocks through the ordinary resync handoff
+    // on settlement; nothing here disables, reports adapter-lost, replays
+    // setters, or claims a commit. Every attempt is gated on one fresh
+    // valid observation (an unreadable scope sends nothing). One single
+    // bounded wait runs on the existing one-shot deadline: valid echoes
+    // before the deadline may re-attempt on the same correlation without
+    // resetting the deadline; when the wait expires the local flight
+    // releases as UNCONFIRMED with the ordinary resync handoff, never
+    // claiming Rust retirement or commit.
+    private startAbandon(flight: number, correlation: string, cause: string): void {
+        if (!this.inFlight || flight !== this.activeToken) {
             return;
         }
         const pending = this.pending;
-        const revision = pending === null ? 0 : pending.baseRevision;
-        const followOutcome = pending?.followOutcome ?? followFallback;
-        // Post-plan terminal divergence: one bounded best-effort
-        // `send-to-workspace-ack` `adapter-lost` to the still pinned owner
-        // before disabling. Never the well-known name, never a retry, and a
-        // failed report never changes the failure behavior.
-        if (pending?.planned !== null) {
-            this.planBlocked = true;
+        if (pending === null || pending.correlation !== correlation || this.abandonArmed) {
+            return;
+        }
+        // The original phases are over: their late replies, echoes, timers,
+        // and setters must never run while the abandon round trip awaits.
+        // Cancel is disarmed first so the two waits never overlap.
+        this.cancelArmed = false;
+        this.cancelReplySeen = false;
+        this.cancelOutcome = "";
+        this.cancelEvent = "";
+        this.cancelFollow = undefined;
+        this.abandonArmed = true;
+        this.abandonLog(correlation, pending.baseRevision, "abandon-requested", "requested", cause);
+        if (!this.trySendAbandon(flight, correlation, true)) {
+            this.armAbandonRetryTimer(flight);
+            // When even the single wait cannot be armed, release bounded
+            // immediately rather than holding Plan blocked with no deadline.
+            if (!this.inFlight || flight !== this.activeToken || !this.abandonArmed || this.activeDeadline === 0) {
+                if (this.inFlight && flight === this.activeToken && this.abandonArmed) {
+                    this.releaseAbandonUnconfirmed(flight, correlation, "timer-unavailable");
+                }
+            }
+        }
+    }
+
+    // Gated abandon attempt: one fresh valid observation proves a reachable
+    // scope before anything is sent. Unreadable scope sends nothing and logs
+    // the retry; the caller keeps the flight for the next trigger before the
+    // single deadline. Retries never reset the armed deadline.
+    private trySendAbandon(flight: number, correlation: string, rearm: boolean): boolean {
+        if (!this.inFlight || flight !== this.activeToken || !this.abandonArmed) {
+            return false;
+        }
+        const pending = this.pending;
+        if (pending === null || pending.correlation !== correlation) {
+            return false;
+        }
+        const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+        if (fresh === null) {
+            this.abandonLog(correlation, pending.baseRevision, "abandon-retry", "retrying");
+            return false;
+        }
+        return this.sendAbandonGated(flight, correlation, fresh, rearm);
+    }
+
+    // Abandon payload: the retained snapshot scope (source/target domains,
+    // bounds, flight gaps) with the flight base revision and the
+    // `send-to-workspace-abandon` op. Rust retires any live workspace-send
+    // pending and distinguishes exact from orphan retirement; window sets
+    // never gate it, so the payload carries no windows and no focus.
+    // The fresh observation above only gates reachability; its drifted scope
+    // never replaces the retained one. On success the one-shot mover echo is
+    // re-armed as the retry trigger before the single deadline. Retries keep
+    // the armed deadline epoch and never reset it.
+    private sendAbandonGated(
+        flight: number,
+        correlation: string,
+        fresh: WorkspaceSendObserved,
+        rearm: boolean,
+    ): boolean {
+        if (!this.inFlight || flight !== this.activeToken || !this.abandonArmed) {
+            return false;
+        }
+        const pending = this.pending;
+        if (pending === null || pending.correlation !== correlation) {
+            return false;
+        }
+        // The pinned planner endpoint is unreachable: release the local
+        // flight as UNCONFIRMED with the ordinary resync handoff so Plan
+        // unblocks, stays enabled, and a later send can re-activate the
+        // current owner. Never claims Rust retirement or commit.
+        if (!isUniqueOwner(this.pinnedOwner)) {
+            this.releaseAbandonUnconfirmed(flight, correlation, "owner-invalid");
+            return false;
+        }
+        const payload = this.buildAbandonPayload(pending);
+        if (payload === null || payload.length > WORKSPACE_SEND_MAX_REQUEST_BYTES) {
+            this.abandonLog(correlation, pending.baseRevision, "abandon-retry", "retrying");
+            return false;
+        }
+        if (!rearm) {
+            // Bounded retry before the single deadline: keep the armed epoch
+            // and timer untouched, send on the same correlation, and re-arm
+            // the echo trigger only. Performs zero native writes.
+            const deadline = this.activeDeadline;
+            if (deadline === 0) {
+                this.abandonLog(correlation, pending.baseRevision, "abandon-retry", "retrying");
+                return false;
+            }
+            try {
+                this.env.callDbus(
+                    this.pinnedOwner as string,
+                    WORKSPACE_SEND_OBJECT,
+                    WORKSPACE_SEND_INTERFACE,
+                    WORKSPACE_SEND_METHOD,
+                    payload,
+                    (reply) => this.onAbandonReply(reply, flight, correlation, deadline),
+                );
+            } catch (error) {
+                void error;
+                this.abandonLog(correlation, pending.baseRevision, "abandon-retry", "retrying");
+                return false;
+            }
+            this.armAbandonEcho(flight, correlation, fresh);
+            return true;
+        }
+        // Retire the firing/armed whole-flight deadline and arm the single
+        // bounded abandon round trip on a fresh epoch; a stale epoch can
+        // never touch the wait. Performs zero native writes.
+        this.clearTimer();
+        this.deadlineToken += 1;
+        this.activeDeadline = this.deadlineToken;
+        const deadline = this.activeDeadline;
+        let timer: (() => void) | null = null;
+        try {
+            timer = this.env.scheduleOnce(WORKSPACE_SEND_TIMEOUT_MS, () =>
+                this.onTimeout(flight, "abandon", deadline),
+            );
+        } catch (error) {
+            void error;
+            timer = null;
+        }
+        if (timer === null) {
+            this.activeDeadline = 0;
+            this.abandonLog(correlation, pending.baseRevision, "abandon-retry", "retrying");
+            return false;
+        }
+        if (!this.inFlight || flight !== this.activeToken || !this.abandonArmed || deadline !== this.activeDeadline) {
+            try {
+                timer();
+            } catch (error) {
+                void error;
+            }
+            return false;
+        }
+        this.cancelTimer = timer;
+        try {
+            this.env.callDbus(
+                this.pinnedOwner as string,
+                WORKSPACE_SEND_OBJECT,
+                WORKSPACE_SEND_INTERFACE,
+                WORKSPACE_SEND_METHOD,
+                payload,
+                (reply) => this.onAbandonReply(reply, flight, correlation, deadline),
+            );
+        } catch (error) {
+            void error;
+            this.clearTimer();
+            this.activeDeadline = 0;
+            this.abandonLog(correlation, pending.baseRevision, "abandon-retry", "retrying");
+            return false;
+        }
+        this.armAbandonEcho(flight, correlation, fresh);
+        return true;
+    }
+
+    // One-shot mover-echo retry trigger before the single deadline: the next
+    // native membership signal re-observes and re-sends on the same
+    // correlation without resetting the armed deadline. Reuses the existing
+    // echo flags; the original fence is over and its guards stay fenced by
+    // abandonArmed. A live fence subscription already serves as the trigger
+    // and is left alone; without the seam or a resolvable mover ref the
+    // single wait simply expires into the UNCONFIRMED release.
+    private armAbandonEcho(flight: number, correlation: string, current: WorkspaceSendObserved): void {
+        if (!this.inFlight || flight !== this.activeToken || !this.abandonArmed) {
+            return;
+        }
+        if (this.echoArmed) {
+            return;
+        }
+        const subscribe = this.env.subscribeMoverDesktops;
+        if (typeof subscribe !== "function") {
+            return;
+        }
+        const pending = this.pending;
+        if (pending === null || pending.correlation !== correlation) {
+            return;
+        }
+        const moverRef = this.resolveMoverRef(pending, current);
+        if (moverRef === null) {
+            return;
+        }
+        let detach: (() => void) | null = null;
+        try {
+            detach = subscribe(moverRef, () => this.onMoverEcho(flight, correlation));
+        } catch (error) {
+            void error;
+            detach = null;
+        }
+        if (detach === null || typeof detach !== "function") {
+            return;
+        }
+        this.echoDetach = detach;
+        this.echoArmed = true;
+        this.moverSeen = false;
+    }
+
+    // Single wait arming when the first abandon attempt could not be sent
+    // (unreadable scope, unbuildable payload, or transport throw): one bare
+    // one-shot deadline for the bounded wait whose fire releases the local
+    // flight as UNCONFIRMED. The flight stays retained and enabled until
+    // then; a scheduling fault here leaves activeDeadline at 0 so the
+    // starter releases immediately instead of holding Plan blocked.
+    private armAbandonRetryTimer(flight: number): void {
+        if (!this.inFlight || flight !== this.activeToken || !this.abandonArmed) {
+            return;
         }
         this.clearTimer();
-        this.reportAdapterLost();
+        this.deadlineToken += 1;
+        this.activeDeadline = this.deadlineToken;
+        const deadline = this.activeDeadline;
+        try {
+            const timer = this.env.scheduleOnce(WORKSPACE_SEND_TIMEOUT_MS, () =>
+                this.onTimeout(flight, "abandon", deadline),
+            );
+            if (timer === null) {
+                this.activeDeadline = 0;
+                return;
+            }
+            if (!this.inFlight || flight !== this.activeToken || !this.abandonArmed || deadline !== this.activeDeadline) {
+                try {
+                    timer();
+                } catch (error) {
+                    void error;
+                }
+                return;
+            }
+            this.cancelTimer = timer;
+        } catch (error) {
+            void error;
+            this.cancelTimer = null;
+            this.activeDeadline = 0;
+        }
+    }
+
+    // Abandon payload: the retained snapshot scope (source/target domains,
+    // bounds, flight gaps) with the flight base revision and the
+    // `send-to-workspace-abandon` op. Rust gates abandon only on the
+    // retained identity, scope, and revision; window sets never gate it, so
+    // the payload carries no windows and no focus. Never claims a commit.
+    private buildAbandonPayload(pending: WorkspacePendingFlight): string | null {
+        const snapshot = pending.snapshot;
+        let payload = "";
+        try {
+            payload = JSON.stringify({
+                v: WORKSPACE_SEND_CONTRACT_VERSION,
+                correlation_id: pending.correlation,
+                owner: this.owner,
+                generation: this.generation,
+                revision: pending.baseRevision,
+                fingerprint: this.snapshotFingerprint(snapshot),
+                domain: {
+                    output: snapshot.sourceOutput,
+                    workspace: snapshot.sourceWorkspace,
+                    bounds: {
+                        x: snapshot.sourceBounds.x,
+                        y: snapshot.sourceBounds.y,
+                        w: snapshot.sourceBounds.w,
+                        h: snapshot.sourceBounds.h,
+                    },
+                    gap: pending.innerGap,
+                    outer_gap: pending.outerGap,
+                },
+                target_domain: {
+                    output: snapshot.targetOutput,
+                    workspace: snapshot.targetWorkspace,
+                    bounds: {
+                        x: snapshot.targetBounds.x,
+                        y: snapshot.targetBounds.y,
+                        w: snapshot.targetBounds.w,
+                        h: snapshot.targetBounds.h,
+                    },
+                    gap: pending.innerGap,
+                    outer_gap: pending.outerGap,
+                },
+                focused_window: "",
+                windows: [],
+                target_windows: [],
+                command: { op: "send-to-workspace-abandon" },
+            });
+        } catch (error) {
+            void error;
+            return null;
+        }
+        return payload;
+    }
+
+    private onAbandonReply(reply: unknown, flight: number, correlation: string, deadline: number): void {
+        if (!this.inFlight || flight !== this.activeToken || !this.abandonArmed) {
+            return;
+        }
+        if (deadline !== this.activeDeadline) {
+            return;
+        }
+        const pending = this.pending;
+        if (pending === null || pending.correlation !== correlation) {
+            return;
+        }
+        // The single wait stays armed while this reply is not the exact
+        // settlement. An inexact reply never consumes the attempt: a later
+        // same-epoch exact reply still settles, and the deadline still
+        // bounds the wait into the UNCONFIRMED release.
+        let settled: string | null = null;
+        if (typeof reply === "string" && reply.length <= WORKSPACE_SEND_MAX_REPLY_BYTES) {
+            try {
+                const parsed: unknown = JSON.parse(reply);
+                if (
+                    isRecord(parsed) &&
+                    parsed["v"] === WORKSPACE_SEND_CONTRACT_VERSION &&
+                    parsed["correlation_id"] === correlation &&
+                    parsed["kind"] === "send-to-workspace" &&
+                    (parsed["outcome"] === "abandoned" ||
+                        parsed["outcome"] === "orphan-abandoned" ||
+                        parsed["outcome"] === "no-pending-unknown")
+                ) {
+                    settled = parsed["outcome"] as string;
+                }
+            } catch (error) {
+                void error;
+                settled = null;
+            }
+        }
+        if (settled === null) {
+            // Answered but inexact, lost, or malformed: never a commit claim
+            // and never a teardown. The armed single wait keeps running until
+            // its deadline releases as UNCONFIRMED.
+            this.abandonLog(correlation, pending.baseRevision, "abandon-retry", "retrying");
+            return;
+        }
+        const revision = pending.baseRevision;
+        this.clearTimer();
+        this.clearEcho();
         this.inFlight = false;
         this.pending = null;
         this.activationStep = 0;
         this.pinnedOwner = null;
         this.activeDeadline = 0;
+        this.callbackSeen = false;
+        this.abandonArmed = false;
+        this.nativeDispatches = 0;
+        this.abandonLog(correlation, revision, "abandon-replied", settled);
+        this.abandonLog(correlation, revision, "abandon-handoff", "resync-requested");
+        try {
+            this.env.onAbandoned?.();
+        } catch (error) {
+            void error;
+        }
+    }
+
+    // Bounded local release when the single abandon wait expires with no
+    // definitive reply: the KWin flight clears as UNCONFIRMED without ever
+    // claiming Rust retirement or commit. Stays enabled, unblocks Plan, and
+    // hands off to the ordinary resync; a later send re-activates the
+    // current Planner owner and its abandon can still retire any surviving
+    // pending. Performs zero native writes and never reports adapter-lost.
+    private releaseAbandonUnconfirmed(flight: number, correlation: string, cause: string): void {
+        if (!this.inFlight || flight !== this.activeToken || !this.abandonArmed) {
+            return;
+        }
+        const pending = this.pending;
+        if (pending === null || pending.correlation !== correlation) {
+            return;
+        }
+        const revision = pending.baseRevision;
+        this.clearTimer();
         this.clearEcho();
-        this.cancelArmed = false;
-        this.cancelReplySeen = false;
-        this.cancelOutcome = "";
-        this.cancelFollow = undefined;
-        this.cancelEvent = "";
-        this.diag("result", correlation, revision, event, outcome, followOutcome);
-        this.disable();
+        this.inFlight = false;
+        this.pending = null;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.activeDeadline = 0;
+        this.callbackSeen = false;
+        this.abandonArmed = false;
+        this.nativeDispatches = 0;
+        this.abandonLog(correlation, revision, "abandon-released", "unconfirmed", cause);
+        this.abandonLog(correlation, revision, "abandon-handoff", "resync-requested");
+        try {
+            this.env.onAbandoned?.();
+        } catch (error) {
+            void error;
+        }
+    }
+
+    // Structured correlated bounded abandon lines: requested (one per
+    // started wait, carrying the cause), replied (`abandoned`,
+    // `orphan-abandoned`, `no-pending-unknown`, or `unconfirmed` for the
+    // bounded local release with no definitive reply), retrying (inexact,
+    // lost, malformed, unreadable, or unanswered attempts before the
+    // deadline), and the Plan handoff. Always logged (never
+    // gated), fixed redacted fields only: no native identifiers, payloads,
+    // owners, or geometry. Never throws and never affects flight state.
+    private abandonLog(
+        correlation: string,
+        revision: number,
+        event: string,
+        outcome: string,
+        cause?: string,
+    ): void {
+        try {
+            this.env.log(
+                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} route=send-to-workspace stage=abandon correlation=${correlation} generation=${this.generation} revision=${String(revision)} diag_seq=${String(this.nextDiagSeq())} event=${sanitizeKind(event)} outcome=${sanitizeKind(outcome)}${cause === undefined ? "" : ` cause=${sanitizeKind(cause)}`}`,
+            );
+        } catch (error) {
+            void error;
+        }
     }
 
     // One automatic pre-actuation recovery attempt. Eligible only while still
@@ -3152,7 +3608,9 @@ export class WorkspaceSendAdapter {
             this.cancelOutcome = "";
             this.cancelEvent = "";
             this.cancelFollow = undefined;
-            this.terminateFlight(flight, correlation, event, outcome, follow);
+            void event;
+            void follow;
+            this.startAbandon(flight, correlation, outcome);
             return;
         }
         this.cancelReplySeen = true;
@@ -3224,7 +3682,9 @@ export class WorkspaceSendAdapter {
             this.cancelOutcome = "";
             this.cancelEvent = "";
             this.cancelFollow = undefined;
-            this.terminateFlight(flight, correlation, event, outcome, follow);
+            void event;
+            void follow;
+            this.startAbandon(flight, correlation, outcome);
             return;
         }
         const cause = this.cancelOutcome;
@@ -3274,6 +3734,7 @@ export class WorkspaceSendAdapter {
         this.cancelOutcome = "";
         this.cancelFollow = undefined;
         this.cancelEvent = "";
+        this.abandonArmed = false;
         this.diag("result", correlation, 0, "result", outcome);
     }
 
@@ -3282,12 +3743,23 @@ export class WorkspaceSendAdapter {
     }
 
     private onTimeout(flight: number, stage: string, deadline: number): void {
+        void stage;
         if (!this.inFlight || flight !== this.activeToken || deadline !== this.activeDeadline) {
             return;
         }
+        // Abandon wait timeout: the single bounded wait expired with no
+        // definitive reply. Release the local flight as UNCONFIRMED with
+        // the ordinary resync handoff; never a commit claim and never a
+        // disable. A later send re-activates the current owner and its
+        // abandon can still retire any surviving pending.
+        if (this.abandonArmed) {
+            const correlation = this.pending === null ? "" : this.pending.correlation;
+            this.releaseAbandonUnconfirmed(flight, correlation, "timeout");
+            return;
+        }
         // Cancel wait timeout: the single bounded cancel round trip never
-        // answered. Attribute the wait, then disarm and run the preserved
-        // fallthrough terminal path.
+        // answered. Attribute the wait, then disarm and fall through to
+        // abandon below.
         if (this.cancelArmed) {
             const correlation = this.pending === null ? "" : this.pending.correlation;
             const revision = this.pending === null ? 0 : this.pending.baseRevision;
@@ -3300,7 +3772,9 @@ export class WorkspaceSendAdapter {
             this.cancelOutcome = "";
             this.cancelFollow = undefined;
             this.cancelEvent = "";
-            this.terminateFlight(flight, correlation, event, outcome, follow);
+            void event;
+            void follow;
+            this.startAbandon(flight, correlation, outcome);
             return;
         }
         // Synchronous settlement-deadline reentrancy (scheduleOnce invoking
@@ -3312,7 +3786,6 @@ export class WorkspaceSendAdapter {
         const pending = this.pending;
         const correlation = pending === null ? "" : pending.correlation;
         const revision = pending === null ? 0 : pending.baseRevision;
-        const followOutcome = pending?.followOutcome;
         // Exact pre-ack settlement only: a valid planned flight that has not
         // yet verified (verifiedObserved === null) may have converged locally
         // while its geometry/membership echoes were withheld or missed. Make
@@ -3327,16 +3800,18 @@ export class WorkspaceSendAdapter {
         // preserved; late events/callbacks/timers cannot duplicate ack/follow
         // or touch a future flight via token, deadline epoch, echo, and acked
         // guards.
-        // Permanent disablement stays for uncertain divergence; only provably
+        // Permanent disablement never applies on this path: only provably
         // safe pre-dispatch failures (no valid plan, no native write) and
         // well-formed request-phase rejections other than
-        // "pending-exists"/"unknown" are treated as Rust-clean.
-        // Missing/malformed/lost planned replies, request timeouts, owner
-        // loss, and transport ambiguity are never treated as no-pending
-        // because Rust can create pending before the client receives a reply.
-        // Outcome diverged is never remote-clean: Rust retains the wedged
-        // pending. Explicit well-formed rejections after a plan/ack stay
-        // terminal because native writes already mutated KWin state.
+        // "pending-exists"/"unknown" recover clean as Rust-clean. Every other
+        // uncertain result reaches abandon below: missing/malformed/lost
+        // planned replies, request timeouts, owner loss, and transport
+        // ambiguity are never treated as no-pending because Rust can create
+        // pending before the client receives a reply. Outcome diverged is
+        // never remote-clean: Rust retains the wedged pending, which only
+        // abandon retires. Explicit well-formed rejections after a plan/ack
+        // abandon the retained pending instead of disabling because native
+        // writes already mutated KWin state.
         if (
             pending !== null &&
             pending.planned !== null &&
@@ -3442,34 +3917,19 @@ export class WorkspaceSendAdapter {
                 fence: this.timeoutFenceDetail(pending.planned, pending.fenceTotal),
             });
         }
-        // Pre-actuation timeout with zero dispatch: one bounded cancel attempt
-        // before the terminal teardown below. Post-plan timeouts skip it via
-        // the eligibility gate and keep the established path unchanged.
-        if (this.tryStartCancel(flight, `timeout-${stage}`, "timeout", pending?.followOutcome ?? followOutcome)) {
+        // Whole-flight deadline with no settlement above: the outstanding
+        // reply (if any) is lost or late, which is inherently uncertain -
+        // Rust may already hold or have retired state. Pre-actuation cancel
+        // stays available only on reply-driven failFlight paths, never here:
+        // every timeout reaches abandon directly. A timeout before the
+        // planner request was ever dispatched (activation/owner phases run
+        // no planner op, so Rust can hold no pending) releases clean and
+        // enabled without any D-Bus round trip.
+        if (this.activationStep !== 5) {
+            this.recoverClean(flight, correlation, "timeout");
             return;
         }
-        if (pending?.planned !== null) {
-            this.planBlocked = true;
-        }
-        this.clearTimer();
-        // Post-plan timeout (ack/verify waiting on a valid planned reply) also
-        // reports one best-effort adapter-lost to the pinned owner. The
-        // whole-flight deadline stays the only terminal deadline while the
-        // mover echo is pending.
-        this.reportAdapterLost();
-        this.inFlight = false;
-        this.pending = null;
-        this.activationStep = 0;
-        this.pinnedOwner = null;
-        this.activeDeadline = 0;
-        this.clearEcho();
-        this.cancelArmed = false;
-        this.cancelReplySeen = false;
-        this.cancelOutcome = "";
-        this.cancelFollow = undefined;
-        this.cancelEvent = "";
-        this.diag("result", correlation, revision, `timeout-${stage}`, "timeout", pending?.followOutcome ?? followOutcome);
-        this.disable();
+        this.startAbandon(flight, correlation, "timeout");
     }
 
     private clearTimer(): void {

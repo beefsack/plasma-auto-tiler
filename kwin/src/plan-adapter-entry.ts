@@ -3112,6 +3112,17 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 void error;
             }
         },
+        // Abandon settlement hands Plan one ordinary native-observation
+        // resync: the Rust pending is retired without a commit, so Plan must
+        // converge from what KWin actually shows. Never resets the Plan
+        // baseline; send stays enabled and the next valid send may proceed.
+        onAbandoned: () => {
+            try {
+                adapter.requestResync();
+            } catch (error) {
+                void error;
+            }
+        },
         setGeometry: (target, rect) => {
             try {
                 return Reflect.set(target, "frameGeometry", {

@@ -382,7 +382,7 @@ function ackReply(correlation: string): string {
 }
 
 describe("planned send ack/verify after source pruning", () => {
-    it("native-confirmed follow still fails ack with stale-revision when the pinned source is gone and blocks plan", () => {
+    it("native-confirmed follow abandons on stale-revision when the pinned source is gone and blocks plan", () => {
         const refs = makeRefs();
         const world = defaultWorld(refs);
         const dbusCalls: DbusCall[] = [];
@@ -436,14 +436,26 @@ describe("planned send ack/verify after source pruning", () => {
         observeImpl = () => null;
         callbacks[2]?.(ackReply(correlation));
         // Exact mechanism: onAckReply re-observes before verify; null binds to
-        // the stale-revision terminal (workspace-send-adapter.ts onAckReply),
-        // never sends verify, reports adapter-lost, and blocks plan.
-        assert.ok(logs.some((l) => l.includes("outcome=stale-revision")), logs.join("\n"));
+        // stale-revision (workspace-send-adapter.ts onAckReply), never sends
+        // verify, and reaches abandon instead of disabling. The pruned scope
+        // is unreadable, so no abandon op is emitted yet: the flight stays
+        // retained and enabled for the next valid observation, still
+        // blocking Plan with its bound workspaces.
+        assert.ok(logs.some((l) => l.includes("cause=stale-revision")), logs.join("\n"));
         assert.equal(dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
-        assert.equal(dbusCalls.filter((c) => c.payload.includes("adapter-lost")).length, 1);
-        assert.equal(adapter.isEnabled, false);
+        assert.equal(dbusCalls.filter((c) => c.payload.includes("adapter-lost")).length, 0);
+        assert.equal(dbusCalls.filter((c) => c.payload.includes("send-to-workspace-abandon")).length, 0);
+        assert.ok(
+            logs.some((l) => l.includes("event=abandon-requested") && l.includes("cause=stale-revision")),
+            logs.join("\n"),
+        );
+        assert.ok(
+            logs.some((l) => l.includes("event=abandon-retry") && l.includes(`correlation=${correlation}`)),
+            logs.join("\n"),
+        );
+        assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.blocksPlan, true);
-        assert.deepEqual(adapter.pendingWorkspaces, []);
+        assert.deepEqual(adapter.pendingWorkspaces, ["ws-1", "ws-2"]);
     });
 
     it("exposes pending source/target only while a plan is bound", () => {

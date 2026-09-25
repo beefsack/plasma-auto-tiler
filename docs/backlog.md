@@ -51,13 +51,33 @@ decisions of 2026-09-24 are recorded under
   effect mouse interception blocks all clicks; plausible first prototype is
   project-owned layer-shell surfaces confined to positive-width gaps, with a
   native KWin input filter as fallback. Needs a Rust split-boundary request.
-- P1 | Bounded post-actuation send resolution | User-accepted direction
-  (2026-09-25) replacing full AR11. At the existing 5 s deadline, from a fresh
-  source/target observation: on target settle, on source restore retained
-  topology, elsewhere/absent release to ordinary routes; once, no replay.
-  Next: design against current send fences with fixture rows first, then
-  independent review, then implementation.
+- P1 | Abandon-send recovery | User-accepted (2026-09-25), replacing the
+  three-outcome send resolution under the new Simplicity and Resilience
+  principles. Any send that cannot verify cleanly is abandoned through one
+  fenced, acknowledged Planner operation that retires the pending send without
+  claiming commit, keeps retained domain sessions and Plan baselines, and
+  unblocks Plan so ordinary routes handle observed facts. Exact verify stays
+  the success path. Unreadable observation waits with tiling enabled.
+  Option A (user): a no-pending reply is sufficient to resume. Option B
+  (user): abandon also retires orphan pending from other flights; an
+  unanswered abandon ends in a bounded unconfirmed local release. Shipped
+  offline 2026-09-25. Pending live acceptance: orphaned older-generation
+  sends, displaced-owner late replies, inaccessible Planner owner,
+  unconfirmed handoff, ordinary Plan convergence.
   [proposal](changes/incremental-send-recovery-and-admission-batching.md)
+- P1 | Simplicity review | User request (2026-09-25), next after abandon-send;
+  pauses other backlog work. Surface-level review of the project against the
+  Simplicity principle, prioritising complexity that causes reliability or
+  jank issues. Goals and constraints still stand; very complex areas become
+  discussion items for the user, not automatic rewrites.
+  [principles](principles.md#simplicity)
+- P1 | Resilience audit | New principle (user, 2026-09-25): no permanent
+  give-up short of hard failure; tolerate subtle host/client deviations;
+  window self-changes are normal. Audit terminal, disable and blocked states
+  (e.g. `planBlocked`, send disable, directional cross-output pending) and
+  exact-match refusals (e.g. `precondition-mismatch`, `partial-observation`)
+  for conflicts, and list fixes. Related: floating-membership skew entry.
+  [principles](principles.md#resilience)
 - P2 | Batched simultaneous admissions | User-accepted direction (2026-09-25)
   replacing AR4's visible benefit: admit windows appearing together in one
   plan; removals stay on the existing route. After send resolution, or sooner
@@ -441,9 +461,9 @@ Existing work:
   "Post-MVP tiling profiles"; this removes it from the launch blocker.
   Implemented offline (2026-09-25). User decision (2026-09-25): `workspaceMode`
   stays startup-only for MVP as an explicit launch-blocker exception; the
-  Configure page now labels it as requiring a session restart. Remaining
-  blocker: live-accept the Configure page (profile hidden, restart wording),
-  gaps and borders.
+  Configure page now labels it as requiring a session restart. User live-checked
+  the Configure page contents (profile hidden, restart wording) on 2026-09-25.
+  Remaining blocker: live-accept gap and border application.
   [hide profile](changes/archive/hide-shortcut-profile.md)
   [investigation](changes/reliability-condition-investigation.md)
   [live settings research](research/live-settings-after-ar15.md)

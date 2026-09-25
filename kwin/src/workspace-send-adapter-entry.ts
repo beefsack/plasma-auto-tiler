@@ -54,6 +54,8 @@ export interface WorkspaceSendEntryOverrides {
 export interface WorkspaceSendEntryHandle {
     readonly stop: () => void;
     readonly requestSend: (targetWorkspace: unknown) => boolean;
+    readonly blocksPlan: () => boolean;
+    readonly isEnabled: () => boolean;
 }
 
 const ENTRY_LOG = "plasma-auto-tiler:route-diag";
@@ -688,5 +690,7 @@ export function startWorkspaceSendAdapterEntry(
                 return false;
             }
         },
+        blocksPlan: () => adapter.blocksPlan,
+        isEnabled: () => adapter.isEnabled,
     };
 }

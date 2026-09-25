@@ -423,6 +423,68 @@ function committedReply(correlation: string): string {
     });
 }
 
+// Accepted 2026-09-25 abandon replies: exact version/correlation/kind with
+// outcome `abandoned` (retired) or `no-pending-unknown` (nothing to retire).
+// Either settles the flight without a commit claim.
+function abandonedReply(correlation: string): string {
+    return JSON.stringify({
+        v: WORKSPACE_SEND_CONTRACT_VERSION,
+        correlation_id: correlation,
+        outcome: "abandoned",
+        kind: "send-to-workspace",
+    });
+}
+
+function noPendingReply(correlation: string): string {
+    return JSON.stringify({
+        v: WORKSPACE_SEND_CONTRACT_VERSION,
+        correlation_id: correlation,
+        outcome: "no-pending-unknown",
+        kind: "send-to-workspace",
+    });
+}
+
+function tryParseBody(payload: string): Record<string, unknown> | null {
+    try {
+        const body: unknown = JSON.parse(payload);
+        return typeof body === "object" && body !== null ? (body as Record<string, unknown>) : null;
+    } catch (error) {
+        void error;
+        return null;
+    }
+}
+
+function abandonPayloadsOf(mocks: Mocks): Array<Record<string, unknown>> {
+    const out: Array<Record<string, unknown>> = [];
+    for (const call of mocks.dbusCalls) {
+        // Activation calls carry the bare service name, not JSON: skip them.
+        if (!call.payload.includes("send-to-workspace-abandon")) {
+            continue;
+        }
+        const body = tryParseBody(call.payload);
+        if (body !== null && (body["command"] as Record<string, unknown> | undefined)?.["op"] === "send-to-workspace-abandon") {
+            out.push(body);
+        }
+    }
+    return out;
+}
+
+// Settle the latest abandon attempt with an exact reply. Returns the settled
+// correlation. Callbacks and dbusCalls stay aligned in mockEnv (activation
+// presence answers inline without recording).
+function settleAbandon(mocks: Mocks, outcome: string): string {
+    const index = mocks.dbusCalls.length - 1;
+    const body = parsePayload(mocks.dbusCalls[index]?.payload ?? "{}");
+    assert.equal(
+        (body["command"] as Record<string, unknown> | undefined)?.["op"],
+        "send-to-workspace-abandon",
+        "latest call is the abandon attempt",
+    );
+    const correlation = body["correlation_id"] as string;
+    mocks.callbacks[index]?.(outcome === "no-pending-unknown" ? noPendingReply(correlation) : abandonedReply(correlation));
+    return correlation;
+}
+
 function parsePayload(payload: string): Record<string, unknown> {
     return JSON.parse(payload) as Record<string, unknown>;
 }
@@ -972,16 +1034,32 @@ describe("cosmic send-to-workspace adapter lifecycle", () => {
         mismatch["desired_focus"] = { domain_output: "out-1", domain_workspace: "ws-1", leaf: "leaf-win-b" };
         mocks.callbacks[1]?.(JSON.stringify(mismatch));
         // Pre-actuation zero-dispatch failure: one cancel round trip runs
-        // before the preserved terminal teardown below.
+        // before the abandon below. The unanswered cancel reaches abandon
+        // instead of disabling.
         assert.equal(adapter.isInFlight, true);
         assert.ok(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-cancel")));
         mocks.timers[1]?.callback();
-        assert.equal(adapter.isEnabled, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=precondition-mismatch")), mocks.logs.join("\n"));
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, true);
+        assert.equal(abandonPayloadsOf(mocks).length, 1);
+        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.blocksPlan, false);
+        assert.ok(
+            mocks.logs.some((l) => l.includes("event=abandon-requested") && l.includes(`correlation=${correlation}`)),
+            mocks.logs.join("\n"),
+        );
+        assert.ok(
+            mocks.logs.some((l) => l.includes("event=abandon-replied") && l.includes("outcome=abandoned")),
+            mocks.logs.join("\n"),
+        );
+        assert.ok(mocks.logs.some((l) => l.includes("cause=precondition-mismatch")), mocks.logs.join("\n"));
         assert.deepEqual(mocks.switches, []);
         assert.deepEqual(mocks.focuses, []);
         assert.equal(mocks.geometries.length, 0);
         assert.equal(mocks.desktops.length, 0);
+        assert.equal(adapter.requestSend("ws-2"), true, "send reusable after abandon");
     });
 
     it("does not follow twice when later commit observation drifts from the plan", () => {
@@ -1224,7 +1302,7 @@ describe("cosmic send-to-workspace refusal routes", () => {
         assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 0);
     });
 
-    it("keeps post-plan divergence terminal and disabled", () => {
+    it("retires post-request divergence via abandon and stays enabled", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = new WorkspaceSendAdapter(mocks.env);
@@ -1241,9 +1319,16 @@ describe("cosmic send-to-workspace refusal routes", () => {
                 kind: "stale-revision",
             }),
         );
-        assert.equal(adapter.isEnabled, false, "post-plan divergence stays terminal");
+        // A diverged reply skips cancel (it could never succeed) and reaches
+        // abandon directly; the adapter stays enabled and unblocks on reply.
+        assert.equal(adapter.isEnabled, true, "divergence abandons, never disables");
+        assert.equal(adapter.isInFlight, true);
+        assert.equal(abandonPayloadsOf(mocks).length, 1);
+        assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
+        assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.isInFlight, false);
-        assert.equal(adapter.requestSend("ws-2"), false, "terminal adapter stays fail-closed");
+        assert.equal(adapter.blocksPlan, false);
+        assert.equal(adapter.requestSend("ws-2"), true, "send reusable after abandon");
     });
 
     it("accepts exactly 25 desktops (the KWin cap is inclusive)", () => {
@@ -1331,7 +1416,7 @@ describe("cosmic send-to-workspace refusal routes", () => {
         assert.equal(adapter.isInFlight, false);
     });
 
-    it("refuses owner-loss when a D-Bus call throws after pinning", () => {
+    it("abandons when a D-Bus call throws after pinning", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const throwing = {
@@ -1349,8 +1434,17 @@ describe("cosmic send-to-workspace refusal routes", () => {
         // Presence then owner resolution pins before the request throws.
         mocks.callbacks[0]?.(true);
         mocks.callbacks[1]?.(":1.7");
-        assert.equal(adapter.isEnabled, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=owner-loss")), mocks.logs.join("\n"));
+        // The request throw cannot prove Rust clean, so the flight reaches
+        // abandon; every send (request, cancel, abandon) throws on this
+        // transport, so the flight stays retained and enabled for retry.
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, true);
+        assert.ok(mocks.logs.some((l) => l.includes("cause=owner-loss")), mocks.logs.join("\n"));
+        assert.ok(
+            mocks.logs.some((l) => l.includes("event=abandon-requested") && l.includes("cause=owner-loss")),
+            mocks.logs.join("\n"),
+        );
+        assert.ok(mocks.logs.some((l) => l.includes("event=abandon-retry")), mocks.logs.join("\n"));
     });
 
     it("refuses stale-revision when the re-observation no longer matches", () => {
@@ -1374,18 +1468,21 @@ describe("cosmic send-to-workspace refusal routes", () => {
         mocks.observeImpl = () => drifted;
         mocks.callbacks[1]?.(plannedReply(correlation));
         // The drifted re-observation fails before any write; the cancel
-        // attempt runs first, then the preserved terminal teardown.
+        // attempt runs first, then the unanswered cancel reaches abandon.
         assert.equal(adapter.isInFlight, true);
         assert.ok(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-cancel")));
         mocks.timers[1]?.callback();
-        assert.equal(adapter.isEnabled, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=stale-revision")), mocks.logs.join("\n"));
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(abandonPayloadsOf(mocks).length, 1);
+        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
+        assert.equal(adapter.isInFlight, false);
+        assert.ok(mocks.logs.some((l) => l.includes("cause=stale-revision")), mocks.logs.join("\n"));
         // No native writes happened.
         assert.equal(mocks.geometries.length, 0);
         assert.equal(mocks.desktops.length, 0);
     });
 
-    it("refuses a terminal diverged planner reply (e.g. stale-revision)", () => {
+    it("retires a diverged planner reply via abandon (e.g. stale-revision)", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = new WorkspaceSendAdapter(mocks.env);
@@ -1403,8 +1500,11 @@ describe("cosmic send-to-workspace refusal routes", () => {
                 message: "observation revision does not match verified state",
             }),
         );
-        assert.equal(adapter.isEnabled, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=stale-revision")), mocks.logs.join("\n"));
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(abandonPayloadsOf(mocks).length, 1);
+        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
+        assert.equal(adapter.isInFlight, false);
+        assert.ok(mocks.logs.some((l) => l.includes("cause=stale-revision")), mocks.logs.join("\n"));
         assert.equal(mocks.geometries.length, 0);
     });
 
@@ -1434,25 +1534,35 @@ describe("cosmic send-to-workspace refusal routes", () => {
             });
         };
         mocks.callbacks[1]?.(plannedReply(correlation));
-        assert.equal(adapter.isEnabled, false);
+        assert.equal(adapter.isEnabled, true);
         assert.ok(
-            mocks.logs.some((l) => l.includes("outcome=post-observation-mismatch")),
+            mocks.logs.some((l) => l.includes("cause=post-observation-mismatch")),
             mocks.logs.join("\n"),
         );
         // No accepted ack and no verify are ever sent; the only post-request
-        // planner call is the bounded adapter-lost report.
+        // planner call is the single fenced abandon, never adapter-lost.
         const verify = mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify"));
         const acceptedAck = mocks.dbusCalls.some(
             (c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted"),
         );
         assert.equal(verify, false, JSON.stringify(mocks.dbusCalls, null, 2));
         assert.equal(acceptedAck, false, JSON.stringify(mocks.dbusCalls, null, 2));
-        const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
-        assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(lost[0]?.service, ":1.7");
+        assert.equal(
+            mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")),
+            false,
+            JSON.stringify(mocks.dbusCalls, null, 2),
+        );
+        const abandon = abandonPayloadsOf(mocks);
+        assert.equal(abandon.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        assert.equal(abandon[0]?.["correlation_id"], correlation);
+        assert.equal(abandon[0]?.["revision"], 0);
+        assert.equal((abandon[0]?.["command"] as Record<string, unknown>)?.["op"], "send-to-workspace-abandon");
+        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.blocksPlan, false);
     });
 
-    it("reports exactly one adapter-lost ack to the pinned owner on write failure", () => {
+    it("abandons to the pinned owner on write failure without adapter-lost", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = new WorkspaceSendAdapter(mocks.env);
@@ -1464,17 +1574,20 @@ describe("cosmic send-to-workspace refusal routes", () => {
         // The mover's desktop membership write fails after a valid plan.
         mocks.desktopsImpl = () => false;
         mocks.callbacks[1]?.(plannedReply(correlation));
-        assert.equal(adapter.isEnabled, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=write-failed")), mocks.logs.join("\n"));
-        const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
-        assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(lost[0]?.service, ":1.7", JSON.stringify(mocks.dbusCalls, null, 2));
-        const lostPayload = parsePayload(lost[0]?.payload ?? "{}");
-        const lostCommand = lostPayload["command"] as Record<string, unknown>;
-        assert.equal(lostCommand["op"], "send-to-workspace-ack");
-        assert.equal(lostCommand["ack_outcome"], "adapter-lost");
-        assert.equal(parsePayload(lost[0]?.payload ?? "{}")["correlation_id"], correlation);
-        assert.equal(parsePayload(lost[0]?.payload ?? "{}")["revision"], 0);
+        assert.equal(adapter.isEnabled, true);
+        assert.ok(mocks.logs.some((l) => l.includes("cause=write-failed")), mocks.logs.join("\n"));
+        assert.equal(
+            mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")),
+            false,
+            JSON.stringify(mocks.dbusCalls, null, 2),
+        );
+        const abandon = abandonPayloadsOf(mocks);
+        assert.equal(abandon.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        const abandonCall = mocks.dbusCalls.find((c) =>
+            c.payload.includes("send-to-workspace-abandon"),
+        );
+        assert.equal(abandonCall?.service, ":1.7", JSON.stringify(mocks.dbusCalls, null, 2));
+        assert.equal(abandon[0]?.["correlation_id"], correlation);
         // Failure behavior is unchanged: no accepted ack and no verify.
         assert.equal(
             mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")),
@@ -1484,9 +1597,11 @@ describe("cosmic send-to-workspace refusal routes", () => {
             mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
             false,
         );
+        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
+        assert.equal(adapter.isInFlight, false);
     });
 
-    it("never falls back to the well-known name for the adapter-lost report", () => {
+    it("never falls back to the well-known name for the abandon report", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = new WorkspaceSendAdapter(mocks.env);
@@ -1497,34 +1612,36 @@ describe("cosmic send-to-workspace refusal routes", () => {
         const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
         mocks.geometryImpl = () => false;
         mocks.callbacks[1]?.(plannedReply(correlation));
-        assert.equal(adapter.isEnabled, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=write-failed")), mocks.logs.join("\n"));
-        const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
-        assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        for (const call of lost) {
+        assert.equal(adapter.isEnabled, true);
+        assert.ok(mocks.logs.some((l) => l.includes("cause=write-failed")), mocks.logs.join("\n"));
+        const abandon = mocks.dbusCalls.filter((c) => c.payload.includes("send-to-workspace-abandon"));
+        assert.equal(abandon.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        for (const call of abandon) {
             assert.equal(call.service, ":1.7");
             assert.notEqual(call.service, WORKSPACE_SEND_SERVICE);
         }
+        assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
+        assert.equal(adapter.blocksPlan, false);
     });
 
-    it("times out a flight that never resolves", () => {
+    it("abandons a flight that never resolves instead of disabling", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = new WorkspaceSendAdapter(mocks.env);
         adapter.enable({ owner: "owner-1", generation: "gen-1" });
         assert.equal(adapter.requestSend("ws-2"), true);
         // Owner never resolves; the single timer fires. No valid planned reply
-        // exists, so no adapter-lost report may be emitted.
+        // exists and the planner request was never dispatched, so the flight
+        // releases clean with no D-Bus round trip and no adapter-lost.
         const timer = mocks.timers[0];
         assert.ok(timer);
         timer.callback();
-        assert.equal(adapter.isEnabled, false);
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
         assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")), mocks.logs.join("\n"));
-        assert.ok(
-            mocks.logs.some((line) => line.includes("event=timeout-request") && line.includes("follow=not-reached gate=pre-commit phase=timeout reason=timeout-request")),
-            mocks.logs.join("\n"),
-        );
         assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
+        assert.equal(abandonPayloadsOf(mocks).length, 0);
+        assert.equal(adapter.requestSend("ws-2"), true, "send reusable after clean timeout release");
     });
 });
 
@@ -1626,7 +1743,7 @@ describe("cosmic send-to-workspace disable and stop divergence", () => {
         assert.ok(logs.length > 0, logs.join("\n"));
     });
 
-    it("fails closed before verify when the scope changed after an accepted ack", () => {
+    it("abandons before verify when the scope changed after an accepted ack", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = new WorkspaceSendAdapter(mocks.env);
@@ -1635,31 +1752,39 @@ describe("cosmic send-to-workspace disable and stop divergence", () => {
         mocks.callbacks[0]?.(":1.7");
         const requestCall = mocks.dbusCalls[1];
         const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        // Request, pre-write revalidation, and post-write verified observations
-        // are stable; the fourth (just before verify) reports a drifted scope.
-        // The request observation predates the override, so the first two counted
-// observations are the pre-write and post-write revalidations; the third
-// (just before verify) reports a drifted scope.
+        // Request, pre-write revalidation, follow check, and post-write
+        // verified observations are stable; the fifth (just before verify)
+        // reports a drifted scope. The request observation predates the
+        // override, so the first three counted observations are pre-write,
+        // follow, and post-write; the fourth (pre-verify) drifts.
         let observeCalls = 0;
         mocks.observeImpl = () => {
             observeCalls += 1;
-            if (observeCalls <= 2) {
+            if (observeCalls <= 3) {
                 return makeWorldObserved(mocks.world, refs);
             }
             return makeObserved(refs, { sourceOutput: "out-9" });
         };
         mocks.callbacks[1]?.(plannedReply(correlation));
-        // Accepted ack arrives, then the pre-verify re-observation fails.
+        // Accepted ack arrives, then the pre-verify re-observation fails: the
+        // uncertain post-ack result abandons instead of disabling.
         mocks.callbacks[2]?.(ackReply(correlation));
-        assert.equal(adapter.isEnabled, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=stale-revision")), mocks.logs.join("\n"));
-        // No verify was sent with the stale data; exactly one adapter-lost.
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, true);
+        assert.ok(mocks.logs.some((l) => l.includes("cause=stale-revision")), mocks.logs.join("\n"));
+        // No verify was sent with the stale data; no adapter-lost, exactly
+        // one abandon carrying the retained scope.
         const verify = mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify"));
         assert.equal(verify, false, JSON.stringify(mocks.dbusCalls, null, 2));
-        const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
-        assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(lost[0]?.service, ":1.7");
-        assert.equal(parsePayload(lost[0]?.payload ?? "{}")["correlation_id"], correlation);
+        assert.equal(
+            mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")),
+            false,
+            JSON.stringify(mocks.dbusCalls, null, 2),
+        );
+        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.blocksPlan, false);
     });
 
     it("emits a redacted disable-terminal discriminator for a pre-ack fence-incomplete teardown", () => {
@@ -1921,11 +2046,14 @@ describe("cosmic send-to-workspace wire contract", () => {
         const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
         mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "bogus" }));
         // Service-fault failures attempt one cancel round trip first; the
-        // unanswered deadline runs the same terminal teardown.
+        // unanswered cancel reaches abandon instead of disabling.
         assert.equal(adapter.isInFlight, true);
         mocks.timers[1]?.callback();
-        assert.equal(adapter.isEnabled, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=service-fault")), mocks.logs.join("\n"));
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(abandonPayloadsOf(mocks).length, 1);
+        assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
+        assert.equal(adapter.isInFlight, false);
+        assert.ok(mocks.logs.some((l) => l.includes("cause=service-fault")), mocks.logs.join("\n"));
         assert.equal(mocks.geometries.length, 0);
     });
 
@@ -2017,12 +2145,15 @@ describe("cosmic send-to-workspace review follow-ups", () => {
         mismatched["desired_focus"] = { domain_output: "out-1", domain_workspace: "ws-2", leaf: "leaf-win-b" };
         mocks.callbacks[1]?.(JSON.stringify(mismatched));
         // Mismatched before any write: one cancel round trip runs before the
-        // preserved terminal teardown below.
+        // unanswered cancel reaches abandon.
         assert.equal(adapter.isInFlight, true);
         assert.ok(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-cancel")));
         mocks.timers[1]?.callback();
-        assert.equal(adapter.isEnabled, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=precondition-mismatch")), mocks.logs.join("\n"));
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(abandonPayloadsOf(mocks).length, 1);
+        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
+        assert.equal(adapter.isInFlight, false);
+        assert.ok(mocks.logs.some((l) => l.includes("cause=precondition-mismatch")), mocks.logs.join("\n"));
         assert.equal(mocks.geometries.length, 0);
         assert.equal(mocks.desktops.length, 0);
         assert.deepEqual(mocks.switches, []);
@@ -2096,7 +2227,12 @@ describe("cosmic send-to-workspace review follow-ups", () => {
                 kind: "policy-deny",
             }),
         );
-        assert.equal(adapter.isEnabled, false);
+        // The rejected ack abandons the retained pending; the confirmed
+        // native follow is preserved and the adapter stays enabled.
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, true);
+        assert.equal(abandonPayloadsOf(mocks).length, 1);
+        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
         assert.equal(adapter.isInFlight, false);
         assert.deepEqual(mocks.switches, [refs.desktop]);
         assert.deepEqual(mocks.focuses, [refs.a]);
@@ -2125,7 +2261,12 @@ describe("cosmic send-to-workspace review follow-ups", () => {
                 kind: "stale-revision",
             }),
         );
-        assert.equal(adapter.isEnabled, false);
+        // The diverged verify abandons the retained pending; the confirmed
+        // native follow is preserved and the adapter stays enabled.
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, true);
+        assert.equal(abandonPayloadsOf(mocks).length, 1);
+        assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
         assert.equal(adapter.isInFlight, false);
         assert.deepEqual(mocks.switches, [refs.desktop]);
         assert.deepEqual(mocks.focuses, [refs.a]);
@@ -2286,7 +2427,7 @@ describe("cosmic send-to-workspace mover echo fence", () => {
         assert.equal(adapter.isInFlight, false);
     });
 
-    it("treats an echo mismatch as terminal with exactly one adapter-lost", () => {
+    it("abandons an echo mismatch without adapter-lost", () => {
         const refs = makeRefs();
         const { mocks, adapter, seam, correlation } = startEchoFlight(refs);
         // Mover reports back in the source with a stale rect: strict echo
@@ -2300,10 +2441,12 @@ describe("cosmic send-to-workspace mover echo fence", () => {
             });
         seam.fire();
         seam.fireGeometry();
-        assert.equal(adapter.isEnabled, false);
-        assert.equal(adapter.isInFlight, false);
+        // Strict echo post-observation fails without an accepted ack; the
+        // uncertain result abandons instead of disabling.
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, true);
         assert.ok(
-            mocks.logs.some((l) => l.includes("outcome=post-observation-mismatch")),
+            mocks.logs.some((l) => l.includes("cause=post-observation-mismatch")),
             mocks.logs.join("\n"),
         );
         assert.equal(
@@ -2314,11 +2457,15 @@ describe("cosmic send-to-workspace mover echo fence", () => {
             mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
             false,
         );
-        const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
-        assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(lost[0]?.service, ":1.7");
-        assert.equal(parsePayload(lost[0]?.payload ?? "{}")["correlation_id"], correlation);
+        assert.equal(
+            mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")),
+            false,
+            JSON.stringify(mocks.dbusCalls, null, 2),
+        );
+        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
         assert.equal(seam.detachCount, 1);
+        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
+        assert.equal(adapter.isInFlight, false);
     });
 
     it("completes a real entry shortcut-shaped flight only after the native echo", () => {
@@ -2410,7 +2557,7 @@ describe("cosmic send-to-workspace mover echo fence", () => {
         assert.equal(seam.geoDetachCount, 0);
     });
 
-    it("fails terminal and detaches every handler when a geometry subscription fails", () => {
+    it("abandons and detaches every handler when a geometry subscription fails", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const handlers: Array<() => void> = [];
@@ -2457,14 +2604,19 @@ describe("cosmic send-to-workspace mover echo fence", () => {
         const requestCall = mocks.dbusCalls[1];
         const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
         mocks.callbacks[1]?.(plannedReply(correlation));
-        assert.equal(adapter.isEnabled, false, "geometry subscription failure is terminal");
-        assert.equal(adapter.isInFlight, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=write-failed")), mocks.logs.join("\n"));
-        const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
-        assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(parsePayload(lost[0]?.payload ?? "{}")["correlation_id"], correlation);
+        assert.equal(adapter.isEnabled, true, "geometry subscription failure abandons, never disables");
+        assert.equal(adapter.isInFlight, true);
+        assert.ok(mocks.logs.some((l) => l.includes("cause=write-failed")), mocks.logs.join("\n"));
+        assert.equal(
+            mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")),
+            false,
+            JSON.stringify(mocks.dbusCalls, null, 2),
+        );
+        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
         assert.equal(moverDetaches, 1, "mover handler detached");
         assert.equal(geoDetaches, 1, "prior geometry handler detached");
+        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
+        assert.equal(adapter.isInFlight, false);
         assert.equal(
             mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
             false,
@@ -2751,8 +2903,10 @@ describe("cosmic send-to-workspace frameGeometry fence P0", () => {
         assert.ok(target !== undefined);
         target.rect = rect(602, 0, 600, 800);
         mocks.timers[0]?.callback();
-        assert.equal(adapter.isEnabled, false);
-        assert.equal(adapter.isInFlight, false);
+        // Verify fails at the timeout, so the flight abandons instead of
+        // disabling; the timeout-settle discriminator is unchanged.
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, true);
         const timeout = mocks.logs.find((line) => line.includes("event=timeout-settle") && line.includes(`correlation=${correlation}`));
         assert.ok(timeout !== undefined, mocks.logs.join("\n"));
         assert.ok(timeout.includes("verify_reason=geometry-rect-mismatch"), timeout);
@@ -2771,7 +2925,11 @@ describe("cosmic send-to-workspace frameGeometry fence P0", () => {
         assert.equal(mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-verify")), false);
         assert.deepEqual(mocks.switches, [refs.desktop]);
         assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.equal(adapter.requestSend("ws-2"), false, "terminal adapter stays fail-closed");
+        assert.equal(adapter.requestSend("ws-2"), false, "abandon wait still blocks a concurrent send");
+        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.blocksPlan, false);
         for (const line of [targetWrite, moverEcho, timeout]) {
             for (const raw of ["win-a", "win-t", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
                 assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
@@ -2799,11 +2957,24 @@ describe("cosmic send-to-workspace frameGeometry fence P0", () => {
         const targetWrite = writes.find((line) => line.includes("geo_role=target-retained"));
         assert.ok(targetWrite !== undefined, harness.logs.join("\n"));
         assert.ok(targetWrite.includes("write_return=0"), targetWrite);
-        assert.ok(harness.logs.some((line) => line.includes("outcome=write-failed")), harness.logs.join("\n"));
-        const lost = harness.dbusCalls.filter((call) => call.payload.includes("adapter-lost"));
-        assert.equal(lost.length, 1, JSON.stringify(harness.dbusCalls, null, 2));
-        assert.equal(lost[0]?.service, ":1.7");
-        assert.equal(parsePayload(lost[0]?.payload ?? "{}")["correlation_id"], correlation);
+        assert.ok(harness.logs.some((line) => line.includes("cause=write-failed")), harness.logs.join("\n"));
+        assert.equal(
+            harness.dbusCalls.some((call) => call.payload.includes("adapter-lost")),
+            false,
+            JSON.stringify(harness.dbusCalls, null, 2),
+        );
+        const abandonCall = harness.dbusCalls[harness.dbusCalls.length - 1];
+        assert.ok((parsePayload(abandonCall?.payload ?? "{}")["command"] as Record<string, unknown>)?.["op"] === "send-to-workspace-abandon");
+        assert.equal(abandonCall?.service, ":1.7");
+        assert.equal(parsePayload(abandonCall?.payload ?? "{}")["correlation_id"], correlation);
+        harness.callbacks[harness.callbacks.length - 1]?.(
+            JSON.stringify({
+                v: WORKSPACE_SEND_CONTRACT_VERSION,
+                correlation_id: correlation,
+                outcome: "abandoned",
+                kind: "send-to-workspace",
+            }),
+        );
         assert.equal(
             harness.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted")),
             false,
@@ -2817,7 +2988,7 @@ describe("cosmic send-to-workspace frameGeometry fence P0", () => {
             harness.logs.some((line) => line.includes("event=follow-focused") || line.includes("event=follow-switched")),
             false,
         );
-        assert.equal(handle.requestSend("ws-2"), false, "terminal entry stays fail-closed");
+        assert.equal(handle.requestSend("ws-2"), true, "entry reusable after abandon");
         handle.stop();
     });
 
@@ -3093,18 +3264,28 @@ describe("cosmic send-to-workspace pre-ack timeout settlement", () => {
         assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
         assert.equal(mocks.geometries.length, geosBefore, "no new native write on mismatch");
         assert.equal(mocks.desktops.length, desksBefore);
-        assert.equal(adapter.isEnabled, false);
-        assert.equal(adapter.isInFlight, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")), mocks.logs.join("\n"));
+        // The mismatch abandons instead of disabling: the timeout-settle
+        // discriminator is unchanged, then one fenced abandon carries the
+        // retained scope.
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, true);
         assert.ok(
-            mocks.logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=timeout-request") && line.includes("follow=state-confirmed gate=native-move")),
+            mocks.logs.some(
+                (line) => line.includes(`correlation=${correlation}`) && line.includes("event=abandon-requested") && line.includes("cause=timeout"),
+            ),
             mocks.logs.join("\n"),
         );
         assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
         assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
         assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
-        const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
-        assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        assert.equal(
+            mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")),
+            false,
+            JSON.stringify(mocks.dbusCalls, null, 2),
+        );
+        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
+        assert.equal(adapter.isInFlight, false);
         assert.deepEqual(mocks.switches, [refs.desktop]);
         assert.deepEqual(mocks.focuses, [refs.a]);
         void seam;
@@ -3132,9 +3313,12 @@ describe("cosmic send-to-workspace pre-ack timeout settlement", () => {
             false,
         );
         assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
-        assert.equal(adapter.isEnabled, false);
-        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, true);
         assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
+        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
+        assert.equal(adapter.isInFlight, false);
         assert.deepEqual(mocks.switches, [refs.desktop]);
     });
 
@@ -3199,9 +3383,15 @@ describe("cosmic send-to-workspace pre-ack timeout settlement", () => {
         const accepted = mocks.dbusCalls.filter((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted"));
         assert.equal(accepted.length, 1, "ack timeout must not replay ack");
         assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
-        assert.equal(adapter.isEnabled, false);
-        assert.equal(adapter.isInFlight, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")), mocks.logs.join("\n"));
+        // The uncertain ack timeout abandons instead of disabling; the late
+        // original ack is fenced and can never dispatch verify.
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, true);
+        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        assert.ok(
+            mocks.logs.some((l) => l.includes("event=abandon-requested") && l.includes("cause=timeout")),
+            mocks.logs.join("\n"),
+        );
         assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
         mocks.callbacks[2]?.(ackReply(correlation));
         assert.equal(mocks.dbusCalls.filter((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")).length, 1);
@@ -3212,6 +3402,8 @@ describe("cosmic send-to-workspace pre-ack timeout settlement", () => {
         assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
         assert.deepEqual(mocks.switches, [refs.desktop]);
         assert.deepEqual(mocks.focuses, [refs.a]);
+        assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
+        assert.equal(adapter.isInFlight, false);
     });
 
     it("verify timeout never replays", () => {
@@ -3229,15 +3421,20 @@ describe("cosmic send-to-workspace pre-ack timeout settlement", () => {
         assert.ok(mocks.dbusCalls[3]?.payload.includes("send-to-workspace-verify"));
         mocks.timers[0]?.callback();
         assert.equal(mocks.dbusCalls.filter((c) => c.payload.includes("send-to-workspace-verify")).length, 1, "verify timeout must not replay");
-        assert.equal(adapter.isEnabled, false);
-        assert.equal(adapter.isInFlight, false);
+        // The uncertain verify timeout abandons instead of disabling; the
+        // late committed reply is fenced and never claims a KWin commit.
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, true);
+        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
         mocks.callbacks[3]?.(committedReply(correlation));
         assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
         assert.deepEqual(mocks.switches, [refs.desktop]);
         assert.deepEqual(mocks.focuses, [refs.a]);
+        assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
+        assert.equal(adapter.isInFlight, false);
     });
 
-    it("missing/malformed/lost replies, timeout, and owner loss are never no-pending", () => {
+    it("missing/malformed/lost replies, timeout, and owner loss reach abandon, never a commit", () => {
         const refs = makeRefs();
         const failing = (reply: unknown): string => {
             const innerRefs = makeRefs();
@@ -3251,15 +3448,18 @@ describe("cosmic send-to-workspace pre-ack timeout settlement", () => {
             void corr;
             inner.callbacks[1]?.(reply);
             // Pre-actuation ambiguous failures run one cancel round trip
-            // first; its unanswered deadline reaches the same terminal line.
+            // first; its unanswered deadline reaches abandon.
             inner.timers[1]?.callback();
+            assert.equal(innerAdapter.isEnabled, true);
+            const abandon = abandonPayloadsOf(inner);
+            assert.equal(abandon.length, 1, inner.logs.join("\n"));
             const line = inner.logs[inner.logs.length - 1] ?? "";
             assert.ok(!line.includes("outcome=no-pending"), `must not interpret as no-pending: ${line}`);
             assert.ok(!inner.logs.some((l) => l.includes("outcome=committed")), inner.logs.join("\n"));
             return line;
         };
-        assert.ok(failing(undefined).includes("outcome=service-fault"));
-        assert.ok(failing("{not-json").includes("outcome=service-fault"));
+        assert.ok(failing(undefined).includes("event=abandon-requested"));
+        assert.ok(failing("{not-json").includes("event=abandon-requested"));
         const bogusCorrelation = (() => {
             const innerRefs = makeRefs();
             const inner = mockEnv(innerRefs);
@@ -3273,9 +3473,10 @@ describe("cosmic send-to-workspace pre-ack timeout settlement", () => {
             inner.timers[1]?.callback();
             const line = inner.logs[inner.logs.length - 1] ?? "";
             assert.ok(!line.includes("outcome=no-pending"), `must not interpret as no-pending: ${line}`);
+            assert.ok(inner.logs.some((l) => l.includes("cause=service-fault")), inner.logs.join("\n"));
             return line;
         })();
-        assert.ok(bogusCorrelation.includes("outcome=service-fault"), bogusCorrelation);
+        assert.ok(bogusCorrelation.includes("event=abandon-requested"), bogusCorrelation);
         const explicit = (() => {
             const innerRefs = makeRefs();
             const inner = mockEnv(innerRefs);
@@ -3289,8 +3490,12 @@ describe("cosmic send-to-workspace pre-ack timeout settlement", () => {
             inner.callbacks[2]?.(
                 JSON.stringify({ v: WORKSPACE_SEND_CONTRACT_VERSION, correlation_id: corr, outcome: "rejected", kind: "no-pending" }),
             );
+            // An explicit well-formed no-pending ack rejection still abandons
+            // the retained pending instead of re-interpreting success.
+            assert.equal(innerAdapter.isEnabled, true);
+            assert.equal(abandonPayloadsOf(inner).length, 1, inner.logs.join("\n"));
             const line = inner.logs[inner.logs.length - 1] ?? "";
-            assert.ok(line.includes("outcome=no-pending"), `explicit well-formed no-pending preserved: ${line}`);
+            assert.ok(line.includes("event=abandon-requested"), `abandon follows the rejection: ${line}`);
             assert.ok(!inner.logs.some((l) => l.includes("outcome=committed")), inner.logs.join("\n"));
             return line;
         })();
@@ -3383,6 +3588,34 @@ describe("cosmic send-to-workspace deadline epoch", () => {
         assert.equal(adapter.isInFlight, false);
         assert.ok(mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
         void seam;
+    });
+
+    it("synchronous abandon deadline releases once without dispatching after release", () => {
+        const mocks = mockEnv(makeRefs());
+        let handoffs = 0;
+        const env: WorkspaceSendAdapterEnv = {
+            ...mocks.env,
+            onAbandoned: () => { handoffs += 1; },
+            scheduleOnce: (delayMs, callback) => {
+                const timer = { delayMs, callback, cancelled: false };
+                mocks.timers.push(timer);
+                if (mocks.timers.length === 2) {
+                    callback();
+                }
+                return () => { timer.cancelled = true; };
+            },
+        };
+        const adapter = new WorkspaceSendAdapter(env);
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
+        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "diverged", kind: "stale" }));
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.blocksPlan, false);
+        assert.equal(handoffs, 1);
+        assert.equal(mocks.dbusCalls.filter((call) => call.payload.includes("send-to-workspace-abandon")).length, 0);
+        assert.ok(mocks.logs.some((line) => line.includes("event=abandon-released outcome=unconfirmed")));
     });
 
     it("retired deadlines never touch a future flight", () => {
@@ -3498,7 +3731,7 @@ describe("cosmic send-to-workspace narrow remote-clean recovery", () => {
         assert.ok(mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
     });
 
-    it("malformed unknown request rejection kind stays terminal and disabled", () => {
+    it("malformed unknown request rejection kind reaches abandon and stays enabled", () => {
         for (const replyOf of [
             (c: string): string =>
                 JSON.stringify({ v: WORKSPACE_SEND_CONTRACT_VERSION, correlation_id: c, outcome: "rejected", kind: "Bogus-Kind" }),
@@ -3514,16 +3747,19 @@ describe("cosmic send-to-workspace narrow remote-clean recovery", () => {
             const correlation = requestCorrelation(mocks);
             mocks.callbacks[1]?.(replyOf(correlation));
             // Malformed kinds attempt one cancel round trip first; the
-            // unanswered deadline runs the same terminal teardown.
+            // unanswered deadline reaches abandon instead of disabling.
             assert.equal(adapter.isInFlight, true);
             mocks.timers[1]?.callback();
-            assert.equal(adapter.isEnabled, false, replyOf(correlation));
+            assert.equal(adapter.isEnabled, true, replyOf(correlation));
+            assert.equal(adapter.isInFlight, true);
+            assert.equal(abandonPayloadsOf(mocks).length, 1, replyOf(correlation));
+            assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
             assert.equal(adapter.isInFlight, false);
-            assert.equal(adapter.requestSend("ws-2"), false);
+            assert.equal(adapter.requestSend("ws-2"), true, "send reusable after abandon");
         }
     });
 
-    it("pending-exists and diverged stay terminal and disabled", () => {
+    it("pending-exists and diverged reach abandon and stay enabled", () => {
         for (const replyOf of [
             (c: string): string =>
                 JSON.stringify({ v: WORKSPACE_SEND_CONTRACT_VERSION, correlation_id: c, outcome: "rejected", kind: "pending-exists" }),
@@ -3538,29 +3774,37 @@ describe("cosmic send-to-workspace narrow remote-clean recovery", () => {
             mocks.callbacks[0]?.(":1.7");
             const correlation = requestCorrelation(mocks);
             mocks.callbacks[1]?.(replyOf(correlation));
-            // A `diverged` reply proves Rust terminal and tears down at once;
-            // any other pre-actuation failure first attempts one cancel round
-            // trip, whose unanswered deadline runs the same teardown.
+            // A `diverged` reply proves Rust terminal for cancel and reaches
+            // abandon at once; any other pre-actuation failure first attempts
+            // one cancel round trip, whose unanswered deadline reaches
+            // abandon. Neither disables.
             if (!replyOf(correlation).includes('"diverged"')) {
                 assert.equal(adapter.isInFlight, true);
                 assert.ok(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-cancel")));
                 mocks.timers[1]?.callback();
             }
-            assert.equal(adapter.isEnabled, false, replyOf(correlation));
+            assert.equal(adapter.isEnabled, true, replyOf(correlation));
+            assert.equal(adapter.isInFlight, true);
+            assert.equal(abandonPayloadsOf(mocks).length, 1, replyOf(correlation));
+            assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
             assert.equal(adapter.isInFlight, false);
-            assert.equal(adapter.requestSend("ws-2"), false);
+            assert.equal(adapter.requestSend("ws-2"), true, "send reusable after abandon");
         }
     });
 
-    it("ambiguous send/timeout/malformed/owner-loss stay terminal", () => {
+    it("ambiguous send/timeout/malformed/owner-loss reach abandon or clean release, never disable", () => {
         const refs = makeRefs();
         const timeoutMocks = mockEnv(refs);
         const timeoutAdapter = new WorkspaceSendAdapter(timeoutMocks.env);
         timeoutAdapter.enable({ owner: "owner-1", generation: "gen-1" });
         assert.equal(timeoutAdapter.requestSend("ws-2"), true);
+        // Activation never resolves, so the planner request is never
+        // dispatched: the timeout releases clean with no round trip.
         timeoutMocks.timers[0]?.callback();
-        assert.equal(timeoutAdapter.isEnabled, false);
+        assert.equal(timeoutAdapter.isEnabled, true);
+        assert.equal(timeoutAdapter.isInFlight, false);
         assert.ok(timeoutMocks.logs.some((l) => l.includes("outcome=timeout")), timeoutMocks.logs.join("\n"));
+        assert.equal(timeoutAdapter.requestSend("ws-2"), true, "send reusable after clean timeout release");
 
         const malformedRefs = makeRefs();
         const malformed = mockEnv(malformedRefs);
@@ -3570,12 +3814,12 @@ describe("cosmic send-to-workspace narrow remote-clean recovery", () => {
         malformed.callbacks[0]?.(":1.7");
         malformed.callbacks[1]?.("{not-json");
         // Pre-actuation zero-dispatch failure: one cancel attempt precedes
-        // teardown. With no Rust answer the cancel deadline runs the
-        // preserved terminal path.
+        // abandon. With no Rust answer the cancel deadline reaches abandon.
         assert.equal(malformedAdapter.isInFlight, true);
         assert.ok(malformed.dbusCalls.some((c) => c.payload.includes("send-to-workspace-cancel")));
         malformed.timers[1]?.callback();
-        assert.equal(malformedAdapter.isEnabled, false);
+        assert.equal(malformedAdapter.isEnabled, true);
+        assert.equal(abandonPayloadsOf(malformed).length, 1);
     });
 });
 
@@ -3943,34 +4187,34 @@ describe("cosmic send-to-workspace timeout settlement diagnostics", () => {
         assert.ok(line.includes("generation=gen-1"), line);
     }
 
-    function assertTerminalTimeout(
+    function assertAbandonTimeout(
         mocks: Mocks,
         adapter: WorkspaceSendAdapter,
         correlation: string,
     ): void {
-        assert.equal(adapter.isEnabled, false);
-        assert.equal(adapter.isInFlight, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")), mocks.logs.join("\n"));
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, true);
         assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
         assert.equal(
             mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
             false,
         );
         assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
-        const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
-        assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(parsePayload(lost[0]?.payload ?? "{}")["correlation_id"], correlation);
+        assert.equal(
+            mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")),
+            false,
+            JSON.stringify(mocks.dbusCalls, null, 2),
+        );
         assert.deepEqual(mocks.switches, [mocks.desktops[0]?.refs[0]]);
         assert.deepEqual(mocks.focuses, [mocks.desktops[0]?.target]);
+        void correlation;
     }
 
-    it("logs fresh-unavailable and stays terminal without commit", () => {
+    it("logs fresh-unavailable and retries abandon on the next valid observation without commit", () => {
         const refs = makeRefs();
         const { mocks, adapter, seam, correlation } = startWithheld(refs);
-        void seam;
         mocks.observeImpl = () => null;
         mocks.timers[0]?.callback();
-        assertTerminalTimeout(mocks, adapter, correlation);
         const line = settleLine(mocks.logs, correlation);
         assert.ok(line.includes("outcome=fresh-unavailable"), line);
         assert.equal(flagOf(line, "verify_reason"), "none");
@@ -3979,6 +4223,23 @@ describe("cosmic send-to-workspace timeout settlement diagnostics", () => {
         assert.equal(flagOf(line, "mover_seen"), "0");
         assert.equal(flagOf(line, "fence_idx"), "0,1,2");
         assertNoRawLeak(line);
+        // Unreadable scope sends nothing but stays retained and enabled.
+        assert.equal(abandonPayloadsOf(mocks).length, 0);
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, true);
+        assert.ok(
+            mocks.logs.some((l) => l.includes("event=abandon-retry") && l.includes(`correlation=${correlation}`)),
+            mocks.logs.join("\n"),
+        );
+        // Option B single bounded wait: the next valid echo before the
+        // deadline retries the same flight without resetting the deadline.
+        mocks.observeImpl = () => makeWorldObserved(mocks.world, refs);
+        seam.fire();
+        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.blocksPlan, false);
+        assert.deepEqual(mocks.switches, [mocks.desktops[0]?.refs[0]]);
     });
 
     it("distinguishes scope drift with redacted category", () => {
@@ -3987,7 +4248,7 @@ describe("cosmic send-to-workspace timeout settlement diagnostics", () => {
         void seam;
         mocks.observeImpl = () => makeObserved(refs, { sourceOutput: "out-9" });
         mocks.timers[0]?.callback();
-        assertTerminalTimeout(mocks, adapter, correlation);
+        assertAbandonTimeout(mocks, adapter, correlation);
         const line = settleLine(mocks.logs, correlation);
         assert.ok(line.includes("outcome=verify-failed"), line);
         assert.equal(flagOf(line, "verify_reason"), "scope-source-output");
@@ -3997,6 +4258,9 @@ describe("cosmic send-to-workspace timeout settlement diagnostics", () => {
         assert.equal(flagOf(line, "mover_seen"), "0");
         assert.equal(flagOf(line, "fence_idx"), "0,1,2");
         assertNoRawLeak(line);
+        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
+        assert.equal(adapter.isInFlight, false);
     });
 
     it("distinguishes geometry mismatch with plan-relative index", () => {
@@ -4015,7 +4279,7 @@ describe("cosmic send-to-workspace timeout settlement diagnostics", () => {
             return { ...full, sourceWindows: full.sourceWindows, targetWindows };
         };
         mocks.timers[0]?.callback();
-        assertTerminalTimeout(mocks, adapter, correlation);
+        assertAbandonTimeout(mocks, adapter, correlation);
         const line = settleLine(mocks.logs, correlation);
         assert.ok(line.includes("outcome=verify-failed"), line);
         assert.equal(flagOf(line, "verify_reason"), "geometry-rect-mismatch");
@@ -4024,6 +4288,9 @@ describe("cosmic send-to-workspace timeout settlement diagnostics", () => {
         assert.equal(flagOf(line, "fence_total"), "3");
         assert.equal(flagOf(line, "fence_idx"), "0,1,2");
         assertNoRawLeak(line);
+        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
+        assert.equal(adapter.isInFlight, false);
     });
 
     it("distinguishes retained membership with plan-relative index", () => {
@@ -4042,7 +4309,7 @@ describe("cosmic send-to-workspace timeout settlement diagnostics", () => {
                 ]),
             });
         mocks.timers[0]?.callback();
-        assertTerminalTimeout(mocks, adapter, correlation);
+        assertAbandonTimeout(mocks, adapter, correlation);
         const line = settleLine(mocks.logs, correlation);
         assert.ok(line.includes("outcome=verify-failed"), line);
         assert.equal(flagOf(line, "verify_reason"), "retained-target-membership");
@@ -4051,6 +4318,9 @@ describe("cosmic send-to-workspace timeout settlement diagnostics", () => {
         assert.equal(flagOf(line, "fence_total"), "3");
         assert.equal(flagOf(line, "fence_idx"), "0,1,2");
         assertNoRawLeak(line);
+        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
+        assert.equal(adapter.isInFlight, false);
     });
 
     it("logs settled success with armed fence and still commits", () => {
@@ -4338,16 +4608,6 @@ describe("cosmic send-to-workspace deliberate gap reload", () => {
 });
 
 describe("cosmic send-to-workspace pre-actuation cancellation", () => {
-    function cancelledReply(correlation: string): string {
-        return JSON.stringify({
-            v: WORKSPACE_SEND_CONTRACT_VERSION,
-            correlation_id: correlation,
-            outcome: "cancelled",
-            kind: "send-to-workspace",
-            base_revision: 3,
-        });
-    }
-
     function staleReply(correlation: string): string {
         return JSON.stringify({
             v: WORKSPACE_SEND_CONTRACT_VERSION,
@@ -4383,7 +4643,7 @@ describe("cosmic send-to-workspace pre-actuation cancellation", () => {
         return mocks.dbusCalls.find((c) => c.payload.includes("send-to-workspace-cancel"));
     }
 
-    it("attempts cancel on request-phase timeout and stays enabled on cancelled", () => {
+    it("abandons on request-phase timeout and stays enabled on abandoned", () => {
         const { adapter, mocks, correlation } = driveToLiveRequest();
         let observations = 0;
         const baseObserve = mocks.observeImpl;
@@ -4391,54 +4651,50 @@ describe("cosmic send-to-workspace pre-actuation cancellation", () => {
             observations += 1;
             return baseObserve();
         };
-        // The whole-flight timer fires with no plan bound and no writes.
+        // The whole-flight timer fires with no plan bound and no writes: the
+        // uncertain timeout reaches abandon directly (no cancel on timeouts).
         mocks.timers[0]?.callback();
-        const cancel = cancelCall(mocks);
-        assert.ok(cancel, JSON.stringify(mocks.dbusCalls.map((c) => c.method)));
-        assert.equal(cancel?.service, ":1.7");
-        // Exact pre observation with the original request revision (0, never a
-        // base), the dispatch correlation/identity, and the attestation.
-        const payload = parsePayload(cancel?.payload ?? "{}");
-        assert.equal(payload["correlation_id"], correlation);
-        assert.equal(payload["revision"], 0);
-        assert.equal(payload["owner"], "owner-1");
-        assert.equal(payload["generation"], "gen-1");
-        assert.equal(payload["focused_window"], "win-a");
-        assert.deepEqual(
-            (payload["windows"] as Array<Record<string, unknown>>).map((w) => w["window"]),
-            ["win-a", "win-b"],
-        );
-        assert.deepEqual(
-            (payload["target_windows"] as Array<Record<string, unknown>>).map((w) => w["window"]),
-            ["win-t"],
-        );
-        const command = payload["command"] as Record<string, unknown>;
-        assert.equal(command["op"], "send-to-workspace-cancel");
-        assert.equal(command["zero_dispatch"], true);
-        // Flight retained through the wait; exactly one fresh observation ran.
+        const abandon = abandonPayloadsOf(mocks);
+        assert.equal(abandon.length, 1, JSON.stringify(mocks.dbusCalls.map((c) => c.method)));
+        const body = abandon[0] ?? {};
+        // Exact retained identity, scope, and base revision; no windows, no
+        // focus, never a commit claim.
+        assert.equal(body["correlation_id"], correlation);
+        assert.equal(body["revision"], 0);
+        assert.equal(body["owner"], "owner-1");
+        assert.equal(body["generation"], "gen-1");
+        assert.deepEqual(body["focused_window"], "");
+        assert.deepEqual(body["windows"], []);
+        assert.deepEqual(body["target_windows"], []);
+        assert.equal((body["command"] as Record<string, unknown>)?.["op"], "send-to-workspace-abandon");
+        const request = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}");
+        assert.deepEqual(body["domain"], request["domain"]);
+        assert.deepEqual(body["target_domain"], request["target_domain"]);
+        // Flight retained through the wait; exactly one fresh gating
+        // observation ran.
         assert.equal(adapter.isInFlight, true);
         assert.equal(adapter.blocksPlan, true);
         assert.equal(observations, 1);
         assert.equal(mocks.timers[0]?.cancelled, true);
-        // Normal-level attempt record with the dispatch correlation.
+        // Structured requested record with the dispatch correlation.
         assert.ok(
             mocks.logs.some(
                 (l) =>
                     l.includes("component=cosmic-send") &&
                     l.includes("route=send-to-workspace") &&
-                    l.includes("stage=cancel") &&
+                    l.includes("stage=abandon") &&
                     l.includes(`correlation=${correlation}`) &&
                     l.includes("generation=gen-1") &&
                     l.includes("revision=0") &&
-                    l.includes("event=attempt") &&
+                    l.includes("event=abandon-requested") &&
                     l.includes("outcome=requested") &&
                     l.includes("cause=timeout"),
             ),
             mocks.logs.join("\n"),
         );
-        // Exact matching cancellation clears the flight without teardown:
-        // enabled, unblocked, no loss report, zero native writes.
-        mocks.callbacks[2]?.(cancelledReply(correlation));
+        // Exact abandonment clears the flight without teardown: enabled,
+        // unblocked, no loss report, zero native writes.
+        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
         assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.isInFlight, false);
         assert.equal(adapter.blocksPlan, false);
@@ -4447,25 +4703,26 @@ describe("cosmic send-to-workspace pre-actuation cancellation", () => {
         assert.equal(mocks.desktops.length, 0);
         assert.equal(mocks.switches.length, 0);
         assert.equal(mocks.focuses.length, 0);
-        const accepted = mocks.logs.findIndex(
-            (l) =>
-                l.includes(`correlation=${correlation}`) &&
-                l.includes("stage=cancel") &&
-                l.includes("event=reply") &&
-                l.includes("outcome=accepted") &&
-                l.includes("revision=3") &&
-                l.includes("cause=timeout"),
+        assert.ok(
+            mocks.logs.some(
+                (l) =>
+                    l.includes(`correlation=${correlation}`) &&
+                    l.includes("stage=abandon") &&
+                    l.includes("event=abandon-replied") &&
+                    l.includes("outcome=abandoned"),
+            ),
+            mocks.logs.join("\n"),
         );
-        const released = mocks.logs.findIndex(
-            (l) =>
-                l.includes(`correlation=${correlation}`) &&
-                l.includes("stage=release") &&
-                l.includes("event=local-release") &&
-                l.includes("outcome=cancelled") &&
-                l.includes("revision=3") &&
-                l.includes("cause=timeout"),
+        assert.ok(
+            mocks.logs.some(
+                (l) =>
+                    l.includes(`correlation=${correlation}`) &&
+                    l.includes("stage=abandon") &&
+                    l.includes("event=abandon-handoff") &&
+                    l.includes("outcome=resync-requested"),
+            ),
+            mocks.logs.join("\n"),
         );
-        assert.ok(accepted >= 0 && released > accepted, mocks.logs.join("\n"));
         // Later commands proceed under a new correlation.
         assert.equal(adapter.requestSend("ws-2"), true);
         mocks.callbacks[3]?.(":1.7");
@@ -4484,71 +4741,102 @@ describe("cosmic send-to-workspace pre-actuation cancellation", () => {
         );
     });
 
-    it("runs terminal teardown unchanged when cancel is refused", () => {
+    it("still withdraws provably zero-dispatch flights via cancel on reply-driven failures", () => {
         const { adapter, mocks, correlation } = driveToLiveRequest();
-        mocks.timers[0]?.callback();
+        // Malformed request reply with no plan bound and no writes: one
+        // cancel round trip runs before any abandon.
+        mocks.callbacks[1]?.("{not-json");
+        const cancel = cancelCall(mocks);
+        assert.ok(cancel, JSON.stringify(mocks.dbusCalls.map((c) => c.method)));
+        assert.equal(cancel?.service, ":1.7");
+        const payload = parsePayload(cancel?.payload ?? "{}");
+        assert.equal(payload["correlation_id"], correlation);
+        assert.equal(payload["revision"], 0);
+        assert.equal((payload["command"] as Record<string, unknown>)?.["op"], "send-to-workspace-cancel");
+        assert.equal((payload["command"] as Record<string, unknown>)?.["zero_dispatch"], true);
+        assert.equal(adapter.isInFlight, true);
+        // Exact matching cancellation clears the flight without teardown and
+        // without any abandon: enabled, unblocked, no loss report.
+        mocks.callbacks[2]?.(
+            JSON.stringify({
+                v: WORKSPACE_SEND_CONTRACT_VERSION,
+                correlation_id: correlation,
+                outcome: "cancelled",
+                kind: "send-to-workspace",
+                base_revision: 3,
+            }),
+        );
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.blocksPlan, false);
+        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
+        assert.equal(abandonPayloadsOf(mocks).length, 0);
+        assert.equal(mocks.geometries.length, 0);
+        assert.equal(mocks.desktops.length, 0);
+        assert.equal(adapter.requestSend("ws-2"), true, "later commands proceed under a new correlation");
+    });
+
+    it("reaches abandon unchanged when cancel is refused", () => {
+        const { adapter, mocks, correlation } = driveToLiveRequest();
+        // Reply-driven pre-actuation failure: the malformed request reply
+        // attempts one cancel round trip first.
+        mocks.callbacks[1]?.("{not-json");
         assert.ok(cancelCall(mocks));
         mocks.callbacks[2]?.(staleReply(correlation));
         // The Rust refusal kind is attributed on the cancel line; the
-        // fallthrough keeps the original timeout terminal line.
+        // fallthrough reaches abandon instead of disabling.
         assert.ok(
             mocks.logs.some(
                 (l) => l.includes("event=reply") && l.includes("outcome=refused-stale") && l.includes(`correlation=${correlation}`),
             ),
             mocks.logs.join("\n"),
         );
-        // Identical terminal surface to the pre-cancel timeout path.
-        assert.equal(adapter.isEnabled, false);
-        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, true);
         assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")), mocks.logs.join("\n"));
-        assert.ok(
-            mocks.logs.some(
-                (line) =>
-                    line.includes("event=timeout-request") &&
-                    line.includes("follow=not-reached gate=pre-commit phase=timeout reason=timeout-request"),
-            ),
-            mocks.logs.join("\n"),
-        );
+        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
+        assert.equal(adapter.isInFlight, false);
         assert.equal(mocks.geometries.length, 0);
         assert.equal(mocks.desktops.length, 0);
     });
 
-    it("runs terminal teardown unchanged when the cancel reply is malformed", () => {
-        const { adapter, mocks } = driveToLiveRequest();
-        mocks.timers[0]?.callback();
+    it("reaches abandon unchanged when the cancel reply is malformed", () => {
+        const { adapter, mocks, correlation } = driveToLiveRequest();
+        mocks.callbacks[1]?.("{not-json");
         assert.ok(cancelCall(mocks));
         mocks.callbacks[2]?.("{not-json");
-        assert.equal(adapter.isEnabled, false);
-        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, true);
         assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
+        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
+        assert.equal(adapter.isInFlight, false);
         assert.equal(mocks.geometries.length, 0);
         assert.equal(mocks.desktops.length, 0);
     });
 
-    it("runs terminal teardown unchanged when the cancel round trip times out", () => {
-        const { adapter, mocks } = driveToLiveRequest();
-        mocks.timers[0]?.callback();
+    it("reaches abandon unchanged when the cancel round trip times out", () => {
+        const { adapter, mocks, correlation } = driveToLiveRequest();
+        mocks.callbacks[1]?.("{not-json");
         assert.ok(cancelCall(mocks));
         assert.equal(mocks.timers[1]?.cancelled, false);
         // The cancel deadline fires with no reply: cancel-specific timeout
-        // attribution, then the same terminal teardown.
+        // attribution, then abandon.
         mocks.timers[1]?.callback();
         assert.ok(
             mocks.logs.some((l) => l.includes("event=timeout") && l.includes("outcome=timed-out")),
             mocks.logs.join("\n"),
         );
-        assert.equal(adapter.isEnabled, false);
-        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, true);
         assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")), mocks.logs.join("\n"));
-        assert.ok(
-            mocks.logs.some((line) => line.includes("event=timeout-request")),
-            mocks.logs.join("\n"),
-        );
+        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
+        assert.equal(adapter.isInFlight, false);
     });
 
-    it("runs terminal teardown unchanged when the cancel send throws", () => {
+    it("reaches abandon unchanged when the cancel send throws", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const baseCallDbus = mocks.env.callDbus.bind(mocks.env);
@@ -4565,17 +4853,17 @@ describe("cosmic send-to-workspace pre-actuation cancellation", () => {
         adapter.enable({ owner: "owner-1", generation: "gen-1" });
         assert.equal(adapter.requestSend("ws-2"), true);
         mocks.callbacks[0]?.(":1.7");
-        mocks.timers[0]?.callback();
-        // The attempt cannot leave the adapter: bounded unavailable record,
-        // then immediate terminal teardown.
+        mocks.callbacks[1]?.("{not-json");
+        // The cancel attempt cannot leave the adapter: bounded unavailable
+        // record, then abandon on the working transport.
         assert.ok(
             mocks.logs.some((l) => l.includes("event=send") && l.includes("outcome=unavailable")),
             mocks.logs.join("\n"),
         );
-        assert.equal(adapter.isEnabled, false);
-        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, true);
         assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")), mocks.logs.join("\n"));
+        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
     });
 
     it("never attempts cancel after a setter threw", () => {
@@ -4592,8 +4880,7 @@ describe("cosmic send-to-workspace pre-actuation cancellation", () => {
         // A valid plan binds, then the first geometry setter throws: the
         // flight dispatched, so no cancel may be attempted (ineligible
         // recorded with the dispatched reason, which wins over merely bound)
-        // and the established loss report still fires exactly once to the
-        // pinned owner.
+        // and the flight abandons instead of reporting adapter-lost.
         mocks.callbacks[1]?.(plannedReply(correlation));
         assert.equal(cancelCall(mocks), undefined);
         assert.ok(
@@ -4602,16 +4889,25 @@ describe("cosmic send-to-workspace pre-actuation cancellation", () => {
             ),
             mocks.logs.join("\n"),
         );
-        assert.equal(adapter.isEnabled, false);
-        const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
-        assert.equal(lost.length, 1);
-        assert.equal(lost[0]?.service, ":1.7");
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, true);
+        assert.equal(
+            mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")),
+            false,
+            JSON.stringify(mocks.dbusCalls, null, 2),
+        );
+        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
+        assert.equal(adapter.isInFlight, false);
     });
 
-    it("drops the late original reply, timer, and duplicate cancel callbacks while armed", () => {
+    it("drops the late original reply and duplicate abandon callbacks while armed", () => {
         const { adapter, mocks, correlation } = driveToLiveRequest();
+        // The whole-flight timer reaches abandon directly; no cancel runs on
+        // the timeout path.
         mocks.timers[0]?.callback();
-        assert.ok(cancelCall(mocks));
+        assert.equal(cancelCall(mocks), undefined);
+        assert.equal(abandonPayloadsOf(mocks).length, 1);
         const callsBefore = mocks.dbusCalls.length;
         // Late original planned reply while armed: inert, no actuation, no ack.
         mocks.callbacks[1]?.(plannedReply(correlation));
@@ -4622,33 +4918,35 @@ describe("cosmic send-to-workspace pre-actuation cancellation", () => {
             false,
         );
         assert.equal(adapter.isInFlight, true);
-        // Exact cancellation settles; replays of its callback and timer are inert.
-        mocks.callbacks[2]?.(cancelledReply(correlation));
+        // Exact abandonment settles; replays of its callback and timer are inert.
+        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
         assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.isInFlight, false);
-        mocks.callbacks[2]?.(cancelledReply(correlation));
+        mocks.callbacks[2]?.(abandonedReply(correlation));
         mocks.timers[1]?.callback();
         assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.isInFlight, false);
         assert.equal(mocks.dbusCalls.length, callsBefore);
         assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
         assert.equal(
-            mocks.logs.filter((l) => l.includes("event=local-release") && l.includes("outcome=cancelled")).length,
+            mocks.logs.filter((l) => l.includes("event=abandon-replied") && l.includes("outcome=abandoned")).length,
             1,
             mocks.logs.join("\n"),
         );
     });
 
-    it("maps unknown refusal kinds to refused-unknown without echo", () => {
+    it("reaches abandon for unknown cancel refusal kinds without echo", () => {
         for (const outcome of ["rejected", "diverged"]) {
             const driven = driveToLiveRequest();
-            driven.mocks.timers[0]?.callback();
+            // Reply-driven pre-actuation failure attempts cancel; the
+            // foreign-kind refusal is attributed without echo, then abandon.
+            driven.mocks.callbacks[1]?.("{not-json");
             assert.ok(cancelCall(driven.mocks));
             driven.mocks.callbacks[2]?.(
                 JSON.stringify({ v: 1, correlation_id: driven.correlation, outcome, kind: "bogus-kind" }),
             );
             // Syntax-valid but foreign kinds never echo: the record carries
-            // the allowlist fallback while the fallthrough stays terminal.
+            // the allowlist fallback while the fallthrough abandons.
             assert.ok(
                 driven.mocks.logs.some(
                     (l) => l.includes("event=reply") && l.includes("outcome=refused-unknown") && l.includes(`correlation=${driven.correlation}`),
@@ -4659,14 +4957,16 @@ describe("cosmic send-to-workspace pre-actuation cancellation", () => {
                 driven.mocks.logs.every((l) => !l.includes("bogus-kind")),
                 driven.mocks.logs.join("\n"),
             );
-            assert.equal(driven.adapter.isEnabled, false);
+            assert.equal(driven.adapter.isEnabled, true);
+            assert.equal(abandonPayloadsOf(driven.mocks).length, 1, driven.mocks.logs.join("\n"));
+            assert.equal(settleAbandon(driven.mocks, "abandoned"), driven.correlation);
             assert.equal(driven.adapter.isInFlight, false);
         }
     });
 
-    it("attributes a malformed cancel reply before the unchanged fallthrough", () => {
+    it("attributes a malformed cancel reply before the abandon fallthrough", () => {
         const { adapter, mocks, correlation } = driveToLiveRequest();
-        mocks.timers[0]?.callback();
+        mocks.callbacks[1]?.("{not-json");
         assert.ok(cancelCall(mocks));
         mocks.callbacks[2]?.("{not-json");
         assert.ok(
@@ -4675,9 +4975,12 @@ describe("cosmic send-to-workspace pre-actuation cancellation", () => {
             ),
             mocks.logs.join("\n"),
         );
-        assert.equal(adapter.isEnabled, false);
-        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, true);
         assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
+        assert.equal(abandonPayloadsOf(mocks).length, 1, mocks.logs.join("\n"));
+        assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
+        assert.equal(adapter.isInFlight, false);
     });
 
     it("keeps logging failure-harmless when the logger throws", () => {
@@ -4694,15 +4997,16 @@ describe("cosmic send-to-workspace pre-actuation cancellation", () => {
         assert.equal(adapter.requestSend("ws-2"), true);
         mocks.callbacks[0]?.(":1.7");
         const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
+        // The whole-flight timer reaches abandon directly; every abandon
+        // diagnostic throws inside the adapter and is swallowed.
         mocks.timers[0]?.callback();
-        assert.ok(cancelCall(mocks));
+        assert.equal(abandonPayloadsOf(mocks).length, 1);
         mocks.callbacks[2]?.(
             JSON.stringify({
                 v: WORKSPACE_SEND_CONTRACT_VERSION,
                 correlation_id: correlation,
-                outcome: "cancelled",
+                outcome: "abandoned",
                 kind: "send-to-workspace",
-                base_revision: 3,
             }),
         );
         // Every diagnostic above threw inside the adapter and was swallowed:

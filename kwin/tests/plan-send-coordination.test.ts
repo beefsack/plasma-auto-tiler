@@ -210,6 +210,10 @@ function planCalls(mocks: Mocks): Array<{ index: number; payload: Record<string,
         if (op === "send-to-workspace" || op === "send-to-workspace-ack" || op === "send-to-workspace-verify") {
             return;
         }
+        // The fenced abandon op is its own route: never a Plan lifecycle call.
+        if (op === "send-to-workspace-abandon") {
+            return;
+        }
         out.push({ index, payload });
     });
     return out;
@@ -234,6 +238,36 @@ function sendCalls(mocks: Mocks): Array<{ index: number; payload: Record<string,
         }
     });
     return out;
+}
+
+// Accepted 2026-09-25 abandon ops: visible to neither planCalls nor
+// sendCalls above (a distinct op by design).
+function abandonCalls(mocks: Mocks): Array<{ index: number; payload: Record<string, unknown> }> {
+    const out: Array<{ index: number; payload: Record<string, unknown> }> = [];
+    mocks.dbusCalls.forEach((call, index) => {
+        if (call.method !== "DescribePlan" || !call.payload.includes("send-to-workspace-abandon")) {
+            return;
+        }
+        let payload: Record<string, unknown> | null = null;
+        try {
+            payload = parsePayload(call.payload);
+        } catch {
+            return;
+        }
+        if ((payload["command"] as Record<string, unknown> | undefined)?.["op"] === "send-to-workspace-abandon") {
+            out.push({ index, payload });
+        }
+    });
+    return out;
+}
+
+function abandonedReply(correlation: string): string {
+    return JSON.stringify({
+        v: 1,
+        correlation_id: correlation,
+        outcome: "abandoned",
+        kind: "send-to-workspace",
+    });
 }
 
 function findOwnerCall(mocks: Mocks, fromIndex: number): number {
@@ -1192,7 +1226,7 @@ describe("plan/send P0 coordination through production wiring", () => {
         handle?.stop();
     });
 
-    it("terminal pre-ack timeout preserves confirmed native follow without commit or resync", () => {
+    it("diverged pre-ack timeout abandons, then resyncs Plan once without commit", () => {
         const world = makeWorld();
         const ws1 = world.desktops[0] as FakeDesktop;
         const ws2 = world.desktops[1] as FakeDesktop;
@@ -1303,17 +1337,30 @@ describe("plan/send P0 coordination through production wiring", () => {
             return cmd["op"] === "send-to-workspace-ack" && cmd["ack_outcome"] === "accepted";
         });
         assert.equal(acceptedAfter.length, 0, "diverged pre-ack timeout must not ack");
-        const lostAfter = sendCalls(mocks).filter((c) => {
-            const cmd = c.payload["command"] as Record<string, unknown>;
-            return cmd["op"] === "send-to-workspace-ack" && cmd["ack_outcome"] === "adapter-lost";
-        });
-        assert.equal(lostAfter.length, 1, `exactly one adapter-lost, got ${JSON.stringify(sendCalls(mocks).map((c) => c.payload["command"]))}`);
+        // The uncertain timeout abandons instead of disabling: no
+        // adapter-lost, exactly one fenced abandon on the flight correlation.
+        assert.equal(
+            sendCalls(mocks).filter((c) => {
+                const cmd = c.payload["command"] as Record<string, unknown>;
+                return cmd["op"] === "send-to-workspace-ack" && cmd["ack_outcome"] === "adapter-lost";
+            }).length,
+            0,
+            `no adapter-lost, got ${JSON.stringify(sendCalls(mocks).map((c) => c.payload["command"]))}`,
+        );
+        const abandon = abandonCalls(mocks);
+        assert.equal(abandon.length, 1, `exactly one abandon, got ${JSON.stringify(abandon.map((c) => c.payload["command"]))}`);
+        assert.equal(abandon[0]?.payload["correlation_id"], correlation);
+        assert.equal(abandon[0]?.payload["owner"], "owner-1");
+        assert.equal(abandon[0]?.payload["generation"], "gen-1");
         assert.equal(
             sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace-verify").length,
             0,
-            "no verify after terminal timeout",
+            "no verify after abandoning timeout",
         );
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")), mocks.logs.join("\n"));
+        assert.ok(
+            mocks.logs.some((l) => l.includes(`correlation=${correlation}`) && l.includes("event=abandon-requested") && l.includes("cause=timeout")),
+            mocks.logs.join("\n"),
+        );
         assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
         assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
         assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
@@ -1321,21 +1368,20 @@ describe("plan/send P0 coordination through production wiring", () => {
             mocks.logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=native-switch-")),
             mocks.logs.join("\n"),
         );
-        assert.ok(
-            mocks.logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=timeout-request") && line.includes("follow=state-confirmed gate=native-move")),
-            mocks.logs.join("\n"),
-        );
         assert.equal(currentBefore?.id, "ws-2", "native move already followed before timeout");
-        assert.equal(world.currentByOutput.get(world.outputs[0] as FakeOutput), currentBefore, "timeout does not rewrite the confirmed map");
-        assert.equal(world.workspace["activeWindow"], activeBefore, "timeout does not rewrite confirmed focus");
+        assert.equal(world.currentByOutput.get(world.outputs[0] as FakeOutput), currentBefore, "abandon does not rewrite the confirmed map");
+        assert.equal(world.workspace["activeWindow"], activeBefore, "abandon does not rewrite confirmed focus");
 
-        // No onCommitted resync and no Plan lifecycle dispatch from the terminal path.
-        assert.equal(planCalls(mocks).length, planAfterSettle, "terminal timeout must not resync Plan");
+        // No resync while the abandon is unanswered and no Plan lifecycle
+        // dispatch from the attempt itself.
+                assert.equal(planCalls(mocks).length, planAfterSettle, "unanswered abandon must not resync Plan");
         runDebounce(mocks);
-        assert.equal(planCalls(mocks).length, planAfterSettle, "no Plan dispatch after terminal timeout");
+        assert.equal(planCalls(mocks).length, planAfterSettle, "no Plan dispatch while the send flight blocks");
 
-        // No retry/replay: late echoes and duplicate planned reply stay inert.
-        const dbusAfterTerminal = mocks.dbusCalls.length;
+        // Late echoes may retry the abandon on the same correlation (never a
+        // new send request, ack, verify, commit, or refollow); the duplicate
+        // planned reply stays inert.
+        const sendRequestsBefore = sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace").length;
         for (const [, sigs] of winSignals) {
             fire(sigs.desktops);
         }
@@ -1344,24 +1390,50 @@ describe("plan/send P0 coordination through production wiring", () => {
         }
         mocks.callbacks[requests[0]?.index as number]?.(planned);
         runDebounce(mocks);
-        assert.equal(mocks.dbusCalls.length, dbusAfterTerminal, "late duplicates must not retry or replay");
+        for (const retry of abandonCalls(mocks)) {
+            assert.equal(retry.payload["correlation_id"], correlation, "abandon retries keep the flight correlation");
+        }
+        assert.equal(
+            sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace").length,
+            sendRequestsBefore,
+            "retries must not issue a new send request",
+        );
+        assert.equal(
+            sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace-verify").length,
+            0,
+            "late duplicates must not verify",
+        );
+        assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
         assert.equal(planCalls(mocks).length, planAfterSettle, "late duplicates must not dispatch Plan");
         assert.equal(world.currentByOutput.get(world.outputs[0] as FakeOutput)?.id, "ws-2", "late duplicates must not refollow");
 
-        // Send stays disabled fail-closed.
-        const dbusBeforeRetry = mocks.dbusCalls.length;
-        const logsBeforeRetry = mocks.logs.length;
-        handle?.requestWorkspaceMove(2);
+        // The exact abandon reply settles the flight, and the handoff runs
+        // one ordinary Plan resync over native observation (never a commit,
+        // never a baseline reset).
+        const lastAbandon = abandonCalls(mocks)[abandonCalls(mocks).length - 1];
+        assert.ok(lastAbandon !== undefined);
+        mocks.callbacks[lastAbandon.index]?.(abandonedReply(correlation));
         assert.ok(
-            mocks.logs.slice(logsBeforeRetry).some((l) => l.includes("busy-refused kind=workspace-move")),
-            mocks.logs.slice(logsBeforeRetry).join("\n"),
+            mocks.logs.some((l) => l.includes(`correlation=${correlation}`) && l.includes("event=abandon-replied") && l.includes("outcome=abandoned")),
+            mocks.logs.join("\n"),
         );
-        assert.ok(
-            mocks.logs.slice(logsBeforeRetry).some((line) => line.includes("stage=entry") && line.includes("event=workspace-move") && line.includes("outcome=disabled") && line.includes("follow=not-reached gate=pre-commit phase=entry reason=disabled")),
-            mocks.logs.slice(logsBeforeRetry).join("\n"),
+        runDebounce(mocks);
+        assert.ok(planCalls(mocks).length > planAfterSettle, "abandon handoff resyncs Plan once");
+
+        // Drain the resync flight, then prove the send route is reusable
+        // end to end with a fresh correlated request.
+        for (let round = 0; round < 3; round += 1) {
+            settleBackgroundPlans(mocks);
+            runDebounce(mocks);
+        }
+        const sendRequestsBeforeRetry = sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace").length;
+        handle?.requestWorkspaceMove(1);
+        drainOwners(mocks);
+        assert.equal(
+            sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace").length,
+            sendRequestsBeforeRetry + 1,
+            "send reusable after abandon retire",
         );
-        assert.equal(mocks.dbusCalls.length, dbusBeforeRetry, "disabled send must not touch D-Bus");
-        assert.equal(sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace").length, 1, "no retried send request");
 
         handle?.stop();
     });
@@ -1649,8 +1721,12 @@ describe("production Planner activation bridge", () => {
                     target_workspace: "ws-2",
                 },
             }));
-            assert.equal(calls[hasIndex + 4]?.[0], ":9.4", "partial native state reports only to the pinned owner");
-            assert.ok(String(calls[hasIndex + 4]?.[4]).includes("adapter-lost"), "false membership write must not be acknowledged");
+            assert.equal(calls[hasIndex + 4]?.[0], ":9.4", "uncertain result reports only to the pinned owner");
+            const abandonPayload = JSON.parse(calls[hasIndex + 4]?.[4] as string) as Record<string, unknown>;
+            assert.equal((abandonPayload["command"] as Record<string, unknown>)?.["op"], "send-to-workspace-abandon");
+            assert.equal(abandonPayload["correlation_id"], requestPayload["correlation_id"], "abandon binds the flight correlation");
+            assert.equal(abandonPayload["revision"], 0, "abandon echoes the plan base revision");
+            assert.ok(!String(calls[hasIndex + 4]?.[4]).includes("adapter-lost"), "false membership write abandons, never adapter-lost");
             (hasOwner as (reply: unknown) => void)(true);
             assert.equal(calls.length, hasIndex + 5, "late presence reply never rebinds or starts another request");
             handle.stop();

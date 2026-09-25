@@ -35,6 +35,13 @@ the corresponding item ships; each such entry names its replacement.
 - Size caps (AR16, shipped offline): the 64-window and 16-domain count caps are
   retired. The codec rejects requests above 1 MiB; the KWin adapter mirrors
   this bound before dispatch. Separate reply, native/FFI, and field bounds remain.
+- Workspace send (shipped offline, user 2026-09-25 option B): exact verify
+  still commits; one correlated abandon may retire ANY existing workspace-send
+  pending, including an orphan from another generation/correlation. A bounded
+  unanswered abandon also releases KWin's local Plan block as *unconfirmed*
+  and hands off to ordinary Plan without a KWin commit or Engine retirement
+  claim. Engine sessions survive; no receipts, topology reset, setter replay,
+  or permanent disabling on transient failure. Live acceptance remains pending.
 - Settings (AR15, shipped offline): tiling settings (`workspaceMode`, gaps)
   are configured from the KWin script's own Configure page, backed by a small
   host-built native script KCM. Saving changed gaps requests KWin reconfigure
@@ -235,8 +242,8 @@ the corresponding item ships; each such entry names its replacement.
   and no inference of the old session's internal history. The old in-flight
   transaction remains terminal with old-generation replies rejected; this does
   not replay interrupted commands, recover uncertain native mutation, apply
-  stale old-session replies, or resolve parked workspace-send partial recovery,
-  and stays unavailable while a workspace send blocks Plan. Normal Plan
+   stale old-session replies, or infer commit for an unresolved workspace send,
+   and stays unavailable while a workspace send blocks Plan. Normal Plan
   transport pins a unique owner via strict `NameHasOwner` plus one bounded
   `StartServiceByName(..., 0)` accepting only `PrimaryOwner`/`AlreadyOwner`
   then `GetNameOwner`; ambiguous terminals may run one bounded identity probe
@@ -275,7 +282,7 @@ the corresponding item ships; each such entry names its replacement.
   and KWin TS retaining native observation. This selects neither exact
   recognition nor historical-topology reconstruction, global optimization,
   exhaustive search, broad edge-case handling, retained-topology rewrite,
-  uncertain-send recovery, general existing-window adoption, or default
+  historical-topology recovery, general existing-window adoption, or default
   promotion. At INITIAL adoption, it attempts one straightforward deterministic
   near-layout fit; if no valid supported layout results, it uses the existing
   normal deterministic seed/reflow. The same attempt is selected for a
@@ -475,19 +482,19 @@ the corresponding item ships; each such entry names its replacement.
   confirmed canonical topology where available. Bounded reconciliation may park
   only further automatic reflow after repeated mismatch; it never blocks a
   later explicit command, retries indefinitely, fabricates acknowledgement,
-   applies stale geometry, or recovers uncertain cross-output transfers.
-   Authorization, malformed-input, owner, correlation, and stale-scope fences
-   remain fail-closed.
-   Detailed uncertain-transaction recovery remains pending. Any future design
-    must preserve safe handling of later valid commands without treating the
-    uncertain transaction as success, replaying it, resetting topology, or
-    weakening those fences.
+  applies stale geometry, or recovers uncertain cross-output transfers.
+  Authorization, malformed-input, owner, correlation, and stale-scope fences
+  remain fail-closed. Workspace-send uncertainty now uses the 2026-09-25
+  abandon decision below; directional R4 uncertainty remains pending. Future
+  recovery must preserve later valid commands without fabricating success,
+  replaying setters, resetting topology, or weakening those fences.
 - USER-APPROVED incremental direction, 2026-09-25, replacing the 2026-09-23
-  entry below: full AR11 and AR4 are parked. Add bounded post-actuation send
-  resolution to the existing send pending model, then batch simultaneous
-  admissions into one plan; both open to later refinement. Scope and the
-  lessons behind it: [proposal](changes/incremental-send-recovery-and-admission-batching.md).
-  Until those ship, the send/R4 pending entries below describe current code.
+  entry below: full AR11 and AR4 are parked. Section A of the
+  [change note](changes/incremental-send-recovery-and-admission-batching.md)
+  shipped offline as the single-operation abandon path, extended by the user's
+  2026-09-25 option B to orphan retirement and bounded unconfirmed handoff
+  under the Simplicity and Resilience principles. Batching simultaneous admissions into
+  one plan remains proposed; directional R4 pending is unchanged.
 - SUPERSEDED 2026-09-25 (parked, retained for reference) - USER-APPROVED
   transaction-model direction, 2026-09-23: adopt architecture
   review 7.8, prototyped on workspace send first. Host observations own window
@@ -507,8 +514,9 @@ the corresponding item ships; each such entry names its replacement.
   acceptance, completion and uncertainty in correlated logs. This is an
   approved direction, **not shipped behavior**: the existing send/R4 pending
   status, cancellation and verified-success entries below still describe the
-  current code; their send-specific clauses are superseded only when the
-  replacement actually ships. AR4 is deferred behind AR11.
+  current code until replaced. The 2026-09-25 incremental abandon decision
+  above now supersedes their send-specific uncertainty clauses; directional
+  R4 recovery remains deferred.
 - USER-APPROVED pending-transaction status, 2026-09-22: the existing
   same-UID-authorized `DescribePlan` route exposes only
   `send-to-workspace-status` and `directional-move-status` for an exact pending
@@ -516,9 +524,10 @@ the corresponding item ships; each such entry names its replacement.
   domain, bounds, and complete-observation fences, the read-only replies are
   `post-unacked`, `post-acked`, `unresolved`, `stale`, `diverged`, or
   `no-pending-unknown`. They expose no native/window data beyond the caller's
-  correlation and a retained pending base revision. `no-pending-unknown` never
-  means committed or safe to unblock. Status cannot acknowledge, verify,
-  clear, rebind, advance, write native state, release adapter blocks, retain
+  correlation and a retained pending base revision. A *status* reply of
+  `no-pending-unknown` alone never means committed or safe to unblock; the
+  distinct correlated abandon reply below does unblock. Status cannot
+  acknowledge, verify, clear, rebind, advance, write native state, release adapter blocks, retain
   pre-observation, keep receipts, cancel, settle, retry, discard, reseed, or
   recover. Exact pre-state and lost-commit classification remain unselected.
 - USER-APPROVED pre-actuation cancellation, 2026-09-22: one automatic bounded
@@ -535,11 +544,12 @@ the corresponding item ships; each such entry names its replacement.
   divergence. Success clears only that pending/reconciler slot and staged desired
   state, preserving canonical topology, focus, shares, exceptions, revision,
   and unrelated domains; it replies `cancelled`, never success for the original
-  transaction. Any cancellation failure or ineligible state follows existing
-  terminal behavior unchanged. Status remains read-only. Acked, post-actuation,
-  unresolved, stale, diverged, absent, and lost-commit cases remain fenced;
-   this selects no settlement, receipt, replay, rollback write, reset, reseed,
-   polling, or retry loop.
+  transaction. Workspace-send cancellation failures and ineligible uncertain
+  sends now proceed to correlated abandon; directional R4 retains its prior
+  terminal behavior. Status remains read-only. Cancellation itself never
+  settles acked, post-actuation, unresolved, stale, diverged, absent, or
+  lost-commit cases and introduces no receipt, replay, rollback write,
+  reset, reseed, polling, or retry loop.
 - Approved correlated pending observability, 2026-09-22: authorized Planner
   `DescribePlan` status/cancel requests and replies emit bounded normal-level
   `plasma-auto-tiler:plan-summary` records on Planner stderr; opt-in trace adds
@@ -628,9 +638,12 @@ the corresponding item ships; each such entry names its replacement.
   membership observation remains the sole ack/verify/commit gate. A later exact
   commit never follows twice; if no earlier fresh membership proof exists, its
   exact observation may make the one follow. Native map/focus confirmation does
-  not claim rendered visibility. A post-plan uncertain terminal result keeps
-  Plan blocked rather than adopting the visible but uncommitted target domain;
-  only a committed send requests the normal Plan resync. KWin geometry and
+  not claim rendered visibility. A post-plan uncertain result blocks Plan
+  during one bounded abandon wait. An `abandoned`, `orphan-abandoned`, or
+  `no-pending-unknown` reply releases the block; an unanswered wait releases
+  it locally as *unconfirmed*. Ordinary Plan then resyncs from native
+  observation; KWin never claims commit on abandon or unconfirmed release.
+  Exact committed sends also request normal Plan resync. KWin geometry and
   membership are non-atomic and asynchronous: waiting for whole-layout
   settlement before this confirmed native follow can strand the user after the
   move, so unrelated layout settling must not gate it. The standard US shifted aliases `Meta+!`
@@ -642,10 +655,27 @@ the corresponding item ships; each such entry names its replacement.
   transaction and one normal bounded deadline. It never rewrites, replays,
   polls, or creates a new plan. Late events cannot duplicate completion. A
   provably pre-dispatch failure or a well-formed request rejection other than
-  `pending-exists` stays available because Rust has no retained pending; sent or
-  malformed/lost request replies, request timeout, owner loss, `diverged`, and
-  post-plan ack/verify uncertainty remain terminal pending an explicit recovery
-  design.
+  `pending-exists` stays available because Rust has no retained pending.
+  User-approved 2026-09-25 under Simplicity and Resilience: unverifiable
+  sends (including lost planned or committed-verify replies, non-exact
+  post-state, missing/escaped mover and ack/verify timeout) use one fenced
+  `send-to-workspace-abandon` request. The original request revision matches
+  a lost planned reply; a known plan uses its base revision. User option B,
+  2026-09-25: this operation also retires ANY existing workspace-send pending,
+  including one from another generation/correlation/owner, regardless of
+  ack/divergence state, preserving Engine sessions and Plan membership
+  baselines. Exact retirement replies `abandoned`, orphan retirement replies
+  distinct `orphan-abandoned`, and absence replies `no-pending-unknown` under
+  the requesting correlation; none claims commit. The displaced owner sees
+  no pending and can recover through its own abandon. KWin stays enabled and
+  releases Plan to ordinary observation/admission/removal after a definitive
+  reply. Unreadable observations retry within one bounded wait; on unanswered
+  abandon or unreachable pinned owner KWin releases its local flight as
+  *unconfirmed*, unblocks and resyncs ordinary Plan, without claiming Rust
+  retirement. A later send activates the current Planner owner and can retire
+  a surviving orphan. No setter replays or new retained state. Abandon/orphan/
+  unconfirmed/handoff logs are structured, bounded, correlated, and redacted.
+  Directional R4 uncertainty is out of scope; live acceptance is pending.
 
 ## Shortcuts
 
