@@ -2693,20 +2693,41 @@ impl Planner {
     }
 
     fn evaluate_toggle_float_retained(&mut self, ctx: &Validated) -> String {
-        if ctx
-            .request
-            .windows
-            .iter()
-            .find(|entry| {
-                entry.window
-                    == ctx
+        // Probe-before-parse precedence for malformed floats on untracked
+        // floating windows (`not-tiled`, never `unknown-field` or
+        // `float-rect-invalid`): only a fully valid toggle-float command is
+        // pre-rejected here. A valid toggle-float reaches the Engine, which
+        // converges a fresh floating observation into an exception and
+        // unfloats it into the current domain.
+        let well_formed = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+            Ok(SyncCommand::ToggleFloat { window, float_rect }) => {
+                is_opaque_id(&window)
+                    && ctx
                         .request
-                        .command
-                        .get("window")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default()
-            })
-            .is_some_and(|entry| entry.floating)
+                        .windows
+                        .iter()
+                        .any(|entry| entry.window == window)
+                    && float_rect
+                        .as_ref()
+                        .is_none_or(|rect| valid_carried_rect(rect.x, rect.y, rect.w, rect.h))
+            }
+            _ => false,
+        };
+        if !well_formed
+            && ctx
+                .request
+                .windows
+                .iter()
+                .find(|entry| {
+                    entry.window
+                        == ctx
+                            .request
+                            .command
+                            .get("window")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default()
+                })
+                .is_some_and(|entry| entry.floating)
             && !self.engine.contains(&ctx.domain_key)
         {
             return rejected(
@@ -6878,6 +6899,57 @@ mod tests {
             fresh.evaluate(&floating_value.to_string()),
             "{\"v\":1,\"correlation_id\":\"gold-float-3\",\"outcome\":\"rejected\",\"kind\":\"not-tiled\",\"message\":\"focused window is not a tiled window\"}",
         );
+    }
+    #[test]
+    fn untracked_floating_toggle_float_rect_precedence_and_fresh_unfloat() {
+        // Probe precedence covers an invalid `float_rect` too: an untracked
+        // floating window on an absent session reports `not-tiled`, never
+        // `float-rect-invalid`. A valid rect (or none) reaches the Engine,
+        // which converges the fresh floating observation into an exception
+        // and unfloats it into the current domain.
+        let one = vec![("win-1", 0, 0, 100, 80)];
+        let mut bad_rect: serde_json::Value = serde_json::from_str(&retained_request(
+            "gold-float-rect-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &one,
+            serde_json::json!({"op": "toggle-float", "window": "win-1", "float_rect": {"x": 0, "y": 0, "w": 0, "h": 80}}),
+        ))
+        .expect("request JSON");
+        bad_rect["windows"][0]["floating"] = serde_json::Value::Bool(true);
+        assert_eq!(
+            Planner::new().evaluate(&bad_rect.to_string()),
+            "{\"v\":1,\"correlation_id\":\"gold-float-rect-1\",\"outcome\":\"rejected\",\"kind\":\"not-tiled\",\"message\":\"focused window is not a tiled window\"}",
+        );
+        for (correlation, command) in [
+            (
+                "gold-float-rect-2",
+                serde_json::json!({"op": "toggle-float", "window": "win-1"}),
+            ),
+            (
+                "gold-float-rect-3",
+                serde_json::json!({"op": "toggle-float", "window": "win-1", "float_rect": {"x": 240, "y": 160, "w": 720, "h": 480}}),
+            ),
+        ] {
+            let mut request: serde_json::Value = serde_json::from_str(&retained_request(
+                correlation,
+                "owner-1",
+                "gen-1",
+                "win-1",
+                &one,
+                command,
+            ))
+            .expect("request JSON");
+            request["windows"][0]["floating"] = serde_json::Value::Bool(true);
+            let reply = parse_reply(&Planner::new().evaluate(&request.to_string()));
+            assert_eq!(reply["outcome"], "planned", "{reply}");
+            assert_eq!(reply["float_geometry"], serde_json::Value::Null, "{reply}");
+            let geometry = reply["desired_geometry"].as_array().expect("geometry");
+            assert_eq!(geometry.len(), 1, "{reply}");
+            assert_eq!(geometry[0]["window"], "win-1", "{reply}");
+            assert_eq!(geometry[0]["workspace"], "ws-1", "{reply}");
+        }
     }
     #[test]
     fn typed_transaction_codec_workspace_wire_golden() {

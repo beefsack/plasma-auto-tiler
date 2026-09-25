@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { createInterface } from "node:readline";
 import { describe, it } from "node:test";
 
 import {
@@ -3254,7 +3256,7 @@ function fakeWorld(): FakeWorld {
 interface EntryMocks {
     readonly dbusCalls: Array<{ method: string; payload: string }>;
     readonly callbacks: Array<(reply: unknown) => void>;
-    readonly timers: Array<{ callback: () => void; cancelled: boolean }>;
+    readonly timers: Array<{ delayMs: number; callback: () => void; cancelled: boolean }>;
     readonly logs: string[];
     readonly shortcuts: Array<{ action: string; sequence: string; callback: () => void }>;
 }
@@ -3282,8 +3284,8 @@ function startEntry(
             mocks.dbusCalls.push({ method, payload });
             mocks.callbacks.push(callback);
         },
-        scheduleOnce: (_delayMs, callback): (() => void) => {
-            const entry = { callback, cancelled: false };
+        scheduleOnce: (delayMs, callback): (() => void) => {
+            const entry = { delayMs, callback, cancelled: false };
             mocks.timers.push(entry);
             return (): void => {
                 entry.cancelled = true;
@@ -6222,6 +6224,495 @@ describe("plan ordinary lifecycle diagnostics", () => {
             assert.deepEqual(mocks.actives, [refs.b]);
             assert.equal(adapter.isInFlight, false, "throws never wedge flight");
             (mocks.env as { log: (message: string) => void }).log = origLog;
+        }
+    });
+});
+
+describe("plan entry sticky workspace-switch regression", () => {
+    // Orchestrator decision 2026-09-25: Meta+G on a sticky window returns it
+    // to tiling ON THE CURRENT WORKSPACE where sticky-off leaves it,
+    // regardless of the prior workspace. Production KWin observer
+    // (startPlanAdapterEntry with observeNative on the fake world) against
+    // the real Engine (planner_eval: same validation and retained state as
+    // the shipped service, only D-Bus stubbed). Two KWin-native effects the
+    // fake world cannot emit are emulated explicitly and marked below:
+    // sticky-off re-homes the window onto the current desktop, and
+    // desktopsChanged echoes are fired by hand. The scope-change signal on a
+    // workspace switch is not fired; the switch takes effect on the next
+    // request's fresh observation, which is exactly the Meta+G ingress under
+    // test. Each row uses a fresh Engine so retained sessions never leak
+    // across rows.
+    type StickyHandle = NonNullable<ReturnType<typeof startPlanAdapterEntry>>;
+
+    function stickyEngineRoot(): string {
+        let dir = resolve(process.cwd());
+        for (let depth = 0; depth < 4; depth += 1) {
+            try {
+                if (existsSync(join(dir, "Cargo.toml"))) {
+                    return dir;
+                }
+            } catch (error) {
+                void error;
+            }
+            dir = dirname(dir);
+        }
+        throw new Error("fixture root not found");
+    }
+
+    class StickyEngineBridge {
+        private readonly proc: ChildProcess;
+        private readonly waiters: Array<{
+            resolve: (reply: string) => void;
+            reject: (error: Error) => void;
+        }> = [];
+        private dead: string | null = null;
+
+        private constructor(proc: ChildProcess) {
+            this.proc = proc;
+            const stdout = proc.stdout;
+            if (stdout === null || stdout === undefined) {
+                throw new Error("planner_eval stdout unavailable");
+            }
+            createInterface({ input: stdout }).on("line", (line: string) => {
+                this.waiters.shift()?.resolve(line);
+            });
+            proc.stderr?.resume();
+            proc.on("error", (error) => {
+                this.failAll(error instanceof Error ? error : new Error(String(error)));
+            });
+            proc.on("exit", (code) => {
+                this.failAll(new Error(`planner_eval exited with code ${String(code)}`));
+            });
+        }
+
+        private failAll(error: Error): void {
+            if (this.dead === null) {
+                this.dead = error.message;
+            }
+            while (this.waiters.length > 0) {
+                this.waiters.shift()?.reject(error);
+            }
+        }
+
+        private deathReason(): string | null {
+            if (this.dead !== null) {
+                return this.dead;
+            }
+            if (this.proc.exitCode !== null || this.proc.signalCode !== null) {
+                return "planner_eval process already exited";
+            }
+            return null;
+        }
+
+        static start(): StickyEngineBridge {
+            return new StickyEngineBridge(
+                spawn("cargo", ["run", "--offline", "-q", "-p", "tiler-protocol", "--example", "planner_eval"], {
+                    cwd: stickyEngineRoot(),
+                    stdio: ["pipe", "pipe", "pipe"],
+                }),
+            );
+        }
+
+        send(request: string): Promise<string> {
+            const dead = this.deathReason();
+            if (dead !== null) {
+                return Promise.reject(new Error(dead));
+            }
+            return new Promise<string>((resolve, reject) => {
+                this.waiters.push({ resolve, reject });
+                try {
+                    this.proc.stdin?.write(request + "\n");
+                } catch (error) {
+                    reject(error instanceof Error ? error : new Error(String(error)));
+                }
+            });
+        }
+
+        async close(): Promise<void> {
+            if (this.deathReason() !== null) {
+                try {
+                    this.proc.stdin?.destroy();
+                } catch (error) {
+                    void error;
+                }
+                return;
+            }
+            try {
+                this.proc.stdin?.end();
+            } catch (error) {
+                void error;
+            }
+            await new Promise<void>((resolve) => {
+                const timer = setTimeout(() => {
+                    try {
+                        this.proc.kill("SIGKILL");
+                    } catch (error) {
+                        void error;
+                    }
+                    resolve();
+                }, 3000);
+                this.proc.on("exit", () => {
+                    clearTimeout(timer);
+                    resolve();
+                });
+            });
+        }
+    }
+
+    async function flushPlan(mocks: EntryMocks, engine: StickyEngineBridge, index: number): Promise<Record<string, unknown>> {
+        const call = mocks.dbusCalls[index];
+        assert.ok(call !== undefined, `dispatch ${index} exists before flushing to the real Engine`);
+        const replyText = await engine.send(call.payload);
+        mocks.callbacks[index]?.(replyText);
+        return JSON.parse(replyText) as Record<string, unknown>;
+    }
+
+    function fireGeometry(world: FakeWorld, win: Record<string, unknown>): void {
+        const signal = world.winGeometry.get(win);
+        assert.ok(signal !== undefined, "frameGeometryChanged subscription present");
+        for (const handler of [...signal.handlers]) {
+            handler();
+        }
+    }
+
+    function runEntryDebounce(mocks: EntryMocks): void {
+        const pending = [...mocks.timers];
+        mocks.timers.length = 0;
+        for (const timer of pending) {
+            if (timer.cancelled) {
+                continue;
+            }
+            if (timer.delayMs === PLAN_DEBOUNCE_MS) {
+                timer.callback();
+            } else {
+                mocks.timers.push(timer);
+            }
+        }
+    }
+
+    function tailLogs(mocks: EntryMocks): string {
+        return mocks.logs.slice(-6).join(" | ");
+    }
+
+    // Shared ingress: tiled A -> sticky-on -> switch current desktop to B ->
+    // Meta+G clears native sticky with KWin's synchronous re-home and echo,
+    // tiling re-invoked on B and flushed through the real Engine.
+    // Intermediate replies are returned unasserted so a later fix may change
+    // them; rows assert the terminal behavior.
+    async function driveStickyToSwitchedWorkspace(
+        world: FakeWorld,
+        mocks: EntryMocks,
+        handle: StickyHandle,
+        engine: StickyEngineBridge,
+        d2: object,
+        firstIndex = 0,
+        deliverSwitch = true,
+    ): Promise<{ winA: Record<string, unknown>; floatReply: Record<string, unknown>; switchReply: Record<string, unknown> | null; switchCorrelation: string }> {
+        const winA = world.wins[0] as Record<string, unknown>;
+        assert.ok(winA !== undefined, "win-a present");
+        const current: { desktop: object } = { desktop: world.desktop };
+        world.workspace["currentDesktopForScreen"] = (): unknown => current.desktop;
+        let sticky = winA["onAllDesktops"] === true;
+        Object.defineProperty(winA, "onAllDesktops", {
+            get: (): boolean => sticky,
+            set: (value: unknown): void => {
+                sticky = value === true;
+                if (!sticky) {
+                    winA["desktops"] = [current.desktop];
+                }
+                const signal = world.winDesktops.get(winA);
+                assert.ok(signal !== undefined, "desktopsChanged subscription present for the echo");
+                for (const handler of [...signal.handlers]) {
+                    handler();
+                }
+            },
+            enumerable: true,
+            configurable: true,
+        });
+        handle.requestSticky();
+        assert.equal(mocks.dbusCalls.length, firstIndex + 1, `sticky-on floats the tiled member first, logs: ${tailLogs(mocks)}`);
+        const floatReply = await flushPlan(mocks, engine, firstIndex);
+        assert.equal(floatReply["outcome"], "planned", `setup: sticky-on float plans, engine replied ${JSON.stringify(floatReply)}`);
+        assert.equal(winA["onAllDesktops"], true, "setup: sticky-on takes native all-desktops");
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-echo-consumed"), "setup: sticky-on echo consumed synchronously");
+        current.desktop = d2;
+        handle.requestFloat();
+        assert.equal(winA["onAllDesktops"], false, "Meta+G clears native all-desktops on the current workspace");
+        assert.deepEqual(winA["desktops"], [d2], "KWin re-homes sticky-off onto the current desktop");
+        assert.ok(
+            mocks.logs.filter((line) => line === "plasma-auto-tiler:plan:sticky-echo-consumed").length >= 2,
+            `sticky-off echo consumed synchronously, logs: ${tailLogs(mocks)}`,
+        );
+        assert.equal(mocks.dbusCalls.length, firstIndex + 2, `sticky-off re-invokes tiling on the current workspace, logs: ${tailLogs(mocks)}`);
+        const payload = JSON.parse(mocks.dbusCalls[firstIndex + 1]?.payload as string) as Record<string, unknown>;
+        assert.equal((payload["domain"] as Record<string, unknown>)["workspace"], "ws-2", "tiling dispatch targets the current workspace");
+        assert.deepEqual((payload["command"] as Record<string, unknown>)["op"], "toggle-float");
+        const switchCorrelation = payload["correlation_id"] as string;
+        const switchReply = deliverSwitch ? await flushPlan(mocks, engine, firstIndex + 1) : null;
+        return { winA, floatReply, switchReply, switchCorrelation };
+    }
+
+    function assertTiledOnWorkspace(
+        world: FakeWorld,
+        mocks: EntryMocks,
+        winA: Record<string, unknown>,
+        d2: object,
+        reply: Record<string, unknown>,
+        label: string,
+    ): void {
+        const desired = reply["desired_geometry"] as Array<Record<string, unknown>> | undefined;
+        assert.ok(Array.isArray(desired), `${label}: planned reply carries desired_geometry, got ${JSON.stringify(reply)}`);
+        const home = desired.find((entry) => entry["window"] === "win-a");
+        assert.ok(home !== undefined, `${label}: planned geometry homes win-a, got ${JSON.stringify(reply)}`);
+        assert.equal(home["workspace"], "ws-2", `${label}: tile homes win-a on the current workspace`);
+        const rect = home["rect"] as { x: number; y: number; w: number; h: number };
+        assert.deepEqual(
+            winA["frameGeometry"],
+            { x: rect["x"], y: rect["y"], width: rect["w"], height: rect["h"] },
+            `${label}: tile rect applied natively`,
+        );
+        assert.equal(winA["onAllDesktops"], false, `${label}: tiled window leaves native sticky`);
+        assert.deepEqual(winA["desktops"], [d2], `${label}: tiled window homed on the current desktop`);
+        const calls = mocks.dbusCalls.length;
+        fireGeometry(world, winA);
+        const winB = world.wins[1] as Record<string, unknown>;
+        fireGeometry(world, winB);
+        runEntryDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, calls, `${label}: next complete observation stays tiled with no further dispatch`);
+    }
+
+    // Floating-state probe through observable request shape: a tiled window
+    // floats (command without float_rect, float_geometry present, window
+    // absent from tiled geometry) and the next Meta+G unfloats (command with
+    // the live float_rect, tiled result applied). Ends tiled and stable.
+    async function assertFloatProbeCycle(
+        world: FakeWorld,
+        mocks: EntryMocks,
+        handle: StickyHandle,
+        engine: StickyEngineBridge,
+        d2: object,
+        baseIndex: number,
+        label: string,
+    ): Promise<void> {
+        const winA = world.wins[0] as Record<string, unknown>;
+        handle.requestFloat();
+        assert.equal(mocks.dbusCalls.length, baseIndex + 1, `${label}: tiled window floats, logs: ${tailLogs(mocks)}`);
+        const floatCmd = (JSON.parse(mocks.dbusCalls[baseIndex]?.payload as string) as Record<string, unknown>)["command"] as Record<string, unknown>;
+        assert.deepEqual(floatCmd, { op: "toggle-float", window: "win-a" }, `${label}: float dispatch carries no float_rect`);
+        const floatReply = await flushPlan(mocks, engine, baseIndex);
+        assert.equal(floatReply["outcome"], "planned", `${label}: float plans, engine replied ${JSON.stringify(floatReply)}`);
+        const floatGeometry = floatReply["float_geometry"] as Record<string, unknown> | undefined;
+        assert.ok(floatGeometry !== undefined && floatGeometry["window"] === "win-a", `${label}: float reply carries float_geometry for win-a`);
+        const floatDesired = floatReply["desired_geometry"] as Array<Record<string, unknown>> | undefined;
+        assert.ok(
+            Array.isArray(floatDesired) && !floatDesired.some((entry) => entry["window"] === "win-a"),
+            `${label}: floated window absent from tiled geometry, got ${JSON.stringify(floatReply)}`,
+        );
+        const floatRect = floatGeometry["rect"] as { x: number; y: number; w: number; h: number };
+        assert.deepEqual(
+            winA["frameGeometry"],
+            { x: floatRect["x"], y: floatRect["y"], width: floatRect["w"], height: floatRect["h"] },
+            `${label}: float rect applied natively`,
+        );
+        handle.requestFloat();
+        assert.equal(mocks.dbusCalls.length, baseIndex + 2, `${label}: Meta+G re-invokes tiling, logs: ${tailLogs(mocks)}`);
+        const unfloatCmd = (JSON.parse(mocks.dbusCalls[baseIndex + 1]?.payload as string) as Record<string, unknown>)["command"] as Record<string, unknown>;
+        assert.ok("float_rect" in unfloatCmd, `${label}: unfloat dispatch carries the live float_rect, got ${JSON.stringify(unfloatCmd)}`);
+        const tileReply = await flushPlan(mocks, engine, baseIndex + 1);
+        assert.equal(tileReply["outcome"], "planned", `${label}: unfloat plans, engine replied ${JSON.stringify(tileReply)}`);
+        assertTiledOnWorkspace(world, mocks, winA, d2, tileReply, `${label} unfloat`);
+    }
+
+    it("sticky Meta+G after a workspace switch tiles on the current workspace and stays tiled", async () => {
+        const world = fakeWorld();
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "entry enabled");
+        const engine = StickyEngineBridge.start();
+        try {
+            const resolved = handle as StickyHandle;
+            const d2 = { id: "ws-2" };
+            const { winA, switchReply } = await driveStickyToSwitchedWorkspace(
+                world,
+                mocks,
+                resolved,
+                engine,
+                d2,
+            );
+            assert.equal(
+                switchReply?.["outcome"],
+                "planned",
+                `Meta+G after switch tiles on the current workspace, engine replied ${JSON.stringify(switchReply)}, logs: ${tailLogs(mocks)}`,
+            );
+            assert.ok(switchReply !== null);
+            assertTiledOnWorkspace(world, mocks, winA, d2, switchReply, "switched sticky return");
+            await assertFloatProbeCycle(world, mocks, resolved, engine, d2, 2, "switched sticky return");
+        } finally {
+            handle?.stop();
+            await engine.close();
+        }
+    });
+
+    it("plain float cycle after a switched sticky return tiles on the current workspace", async () => {
+        const world = fakeWorld();
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "entry enabled");
+        const engine = StickyEngineBridge.start();
+        try {
+            const resolved = handle as StickyHandle;
+            const d2 = { id: "ws-2" };
+            const { winA, switchReply } = await driveStickyToSwitchedWorkspace(world, mocks, resolved, engine, d2);
+            assert.equal(
+                switchReply?.["outcome"],
+                "planned",
+                `first switched Meta+G tiles, engine replied ${JSON.stringify(switchReply)}, logs: ${tailLogs(mocks)}`,
+            );
+            assert.ok(switchReply !== null);
+            assertTiledOnWorkspace(world, mocks, winA, d2, switchReply, "first switched Meta+G");
+            await assertFloatProbeCycle(world, mocks, resolved, engine, d2, 2, "plain float cycle");
+        } finally {
+            handle?.stop();
+            await engine.close();
+        }
+    });
+
+    // Extra tiled member for the B-survivor row: mirrors the fake world's
+    // own window shape (including the signals enable requires) and must be
+    // added before startEntry so subscriptions bind it.
+    function addTiledWindow(world: FakeWorld, id: string, desktop: object, x: number): Record<string, unknown> {
+        const geo = fakeSignal();
+        const full = fakeSignal();
+        const max = fakeSignal();
+        const desk = fakeSignal();
+        const interactive = fakeSignal();
+        const win: Record<string, unknown> = {
+            normalWindow: true,
+            internalId: id,
+            resourceClass: "test-app",
+            output: world.output,
+            desktops: [desktop],
+            frameGeometry: { x, y: 0, width: 600, height: 800 },
+            frameGeometryChanged: geo.signal,
+            moveResizedChanged: interactive.signal,
+            fullScreenChanged: full.signal,
+            fullScreen: false,
+            maximizedChanged: max.signal,
+            maximizeMode: 0,
+            desktopsChanged: desk.signal,
+            onAllDesktops: false,
+            keepAbove: false,
+            keepBelow: false,
+        };
+        win["setMaximize"] = (vertically: unknown, horizontally: unknown): void => {
+            if (vertically !== false || horizontally !== false) {
+                return;
+            }
+            world.maximizeClears.push(win);
+            win["maximizeMode"] = 0;
+            for (const handler of max.handlers) {
+                handler();
+            }
+        };
+        world.winFull.set(win, full);
+        world.winMax.set(win, max);
+        world.winDesktops.set(win, desk);
+        world.winGeometry.set(win, geo);
+        world.winInteractiveGeometry.set(win, interactive);
+        world.wins.push(win);
+        return win;
+    }
+
+    it("switched sticky return converges into a retained B session without displacing the B survivor", async () => {
+        // Bounded: B already holds tiled win-c with a retained Engine
+        // session, A keeps win-b. Meta+G must tile the floating newcomer on
+        // B while win-c keeps its placement and no A topology relocates.
+        const world = fakeWorld();
+        const d2 = { id: "ws-2" };
+        const winC = addTiledWindow(world, "win-c", d2, 600);
+        const winB = world.wins[1] as Record<string, unknown>;
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "entry enabled");
+        const engine = StickyEngineBridge.start();
+        try {
+            const resolved = handle as StickyHandle;
+            world.workspace["currentDesktopForScreen"] = (): unknown => d2;
+            world.workspace["activeWindow"] = winC;
+            resolved.requestFloat();
+            assert.equal(mocks.dbusCalls.length, 1, `B session seeds with a float, logs: ${tailLogs(mocks)}`);
+            const seedFloat = await flushPlan(mocks, engine, 0);
+            assert.equal(seedFloat["outcome"], "planned", `setup: B float plans, engine replied ${JSON.stringify(seedFloat)}`);
+            resolved.requestFloat();
+            assert.equal(mocks.dbusCalls.length, 2, `B session restores its tile, logs: ${tailLogs(mocks)}`);
+            const seedTile = await flushPlan(mocks, engine, 1);
+            assert.equal(seedTile["outcome"], "planned", `setup: B unfloat plans, engine replied ${JSON.stringify(seedTile)}`);
+            world.workspace["activeWindow"] = world.wins[0];
+            const { winA, floatReply, switchReply } = await driveStickyToSwitchedWorkspace(world, mocks, resolved, engine, d2, 2);
+            assert.equal(
+                switchReply?.["outcome"],
+                "planned",
+                `Meta+G converges the floating newcomer on B, engine replied ${JSON.stringify(switchReply)}, logs: ${tailLogs(mocks)}`,
+            );
+            assert.ok(switchReply !== null);
+            assertTiledOnWorkspace(world, mocks, winA, d2, switchReply, "B newcomer return");
+            const tiled = switchReply["desired_geometry"] as Array<Record<string, unknown>>;
+            const survivor = tiled.find((entry) => entry["window"] === "win-c");
+            assert.ok(survivor !== undefined, `B survivor stays a tiled member, got ${JSON.stringify(switchReply)}`);
+            assert.equal(survivor["workspace"], "ws-2", "B survivor stays tiled on B");
+            const survivorRect = survivor["rect"] as { x: number; y: number; w: number; h: number };
+            assert.deepEqual(
+                winC["frameGeometry"],
+                { x: survivorRect["x"], y: survivorRect["y"], width: survivorRect["w"], height: survivorRect["h"] },
+                "B survivor converges to its reflowed tile instead of being displaced",
+            );
+            assert.deepEqual(winC["desktops"], [d2], "B survivor stays homed on B");
+            const aTile = (floatReply["desired_geometry"] as Array<Record<string, unknown>>).find((entry) => entry["window"] === "win-b");
+            assert.ok(aTile !== undefined, "setup: sticky-on reflows the A survivor");
+            const aRect = aTile["rect"] as { x: number; y: number; w: number; h: number };
+            assert.deepEqual(
+                winB["frameGeometry"],
+                { x: aRect["x"], y: aRect["y"], width: aRect["w"], height: aRect["h"] },
+                "no source A topology relocation past the legitimate sticky-on reflow",
+            );
+            assert.deepEqual(winB["desktops"], [world.desktop], "A survivor stays homed on A");
+            const desired = switchReply["desired_geometry"] as Array<Record<string, unknown>>;
+            assert.ok(!desired.some((entry) => entry["window"] === "win-b"), "A survivor absent from the B tiling");
+        } finally {
+            handle?.stop();
+            await engine.close();
+        }
+    });
+
+    it("rejected switched unfloat strands nothing: plain Meta+G then tiles B", async () => {
+        // The first switched unfloat reply is rejected before apply while
+        // native sticky-off already succeeded; a plain Meta+G must still
+        // tile B instead of stranding the window floating.
+        const world = fakeWorld();
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "entry enabled");
+        const engine = StickyEngineBridge.start();
+        try {
+            const resolved = handle as StickyHandle;
+            const d2 = { id: "ws-2" };
+            const { switchCorrelation } = await driveStickyToSwitchedWorkspace(world, mocks, resolved, engine, d2, 0, false);
+            mocks.callbacks[1]?.(rejectedReply(switchCorrelation, "not-tiled"));
+            assert.ok(
+                mocks.logs.some((line) => line.includes("outcome=rejected")),
+                `rejection settles the flight, logs: ${tailLogs(mocks)}`,
+            );
+            resolved.requestFloat();
+            assert.equal(mocks.dbusCalls.length, 3, `stranded float retries tiling, logs: ${tailLogs(mocks)}`);
+            const retryCmd = (JSON.parse(mocks.dbusCalls[2]?.payload as string) as Record<string, unknown>)["command"] as Record<string, unknown>;
+            assert.ok("float_rect" in retryCmd, `retry still carries the retained float state, got ${JSON.stringify(retryCmd)}`);
+            const retryReply = await flushPlan(mocks, engine, 2);
+            assert.equal(
+                retryReply["outcome"],
+                "planned",
+                `plain Meta+G tiles B after rejection, engine replied ${JSON.stringify(retryReply)}, logs: ${tailLogs(mocks)}`,
+            );
+            const winA = world.wins[0] as Record<string, unknown>;
+            assertTiledOnWorkspace(world, mocks, winA, d2, retryReply, "post-rejection return");
+        } finally {
+            handle?.stop();
+            await engine.close();
         }
     });
 });

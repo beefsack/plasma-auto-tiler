@@ -2176,6 +2176,14 @@ impl Engine {
     /// partial-observation at their exact positions; this owns seed ordering,
     /// seeding, relocation, propose/commit, and store, including the
     /// pending-float effective rectangle.
+    ///
+    /// Fresh domains whose complete observation contains floating members
+    /// cannot seed (the seed rebuild is tiled-only): like [`Engine::admit_request`],
+    /// an empty session plus the same single convergence primitive retains
+    /// the floating exceptions first, then the ordinary toggle below unfloats
+    /// into the current domain. No staged or fabricated observations.
+    /// Relocation candidates and all-tiled fresh observations keep the legacy
+    /// route byte-for-byte.
     fn toggle_float_request(&mut self, event: &CoreEvent) -> CoreReply {
         use crate::boundary::TiledPlan;
         let CoreCommand::ToggleFloat { window, float_rect } = &event.command else {
@@ -2184,6 +2192,67 @@ impl Engine {
                 message: "request contains an unknown value",
             };
         };
+        if self.session(&event.domain_key).is_none()
+            && event.windows.iter().any(|w| w.floating)
+            && self
+                .find_unique_source_for_target(&event.domain_key)
+                .is_none()
+            && let Ok(mut fresh) = Session::new(
+                event.owner.clone(),
+                event.generation.clone(),
+                0,
+                event.fingerprint,
+                vec![event.domain.clone()],
+            )
+        {
+            fresh.set_policy(self.policy.clone());
+            let observation = crate::seed::session_observation_for(
+                &event.owner,
+                &event.generation,
+                fresh.accepted_revision(),
+                event.fingerprint,
+                &event.windows,
+            );
+            let focus = if event.focused_window.0.is_empty() {
+                None
+            } else {
+                Some(&event.focused_window)
+            };
+            match fresh.converge_observation(&observation, focus) {
+                Err(ProposeError::PendingExists) => {
+                    return CoreReply::Rejected {
+                        kind: PENDING_EXISTS_KIND,
+                        message: PENDING_EXISTS_MESSAGE,
+                    };
+                }
+                Err(ProposeError::Diverged(reason)) => return CoreReply::Diverged(reason),
+                Err(error) => {
+                    return CoreReply::Rejected {
+                        kind: error.kind(),
+                        message: error.message(),
+                    };
+                }
+                Ok(counts) => {
+                    self.converged_this_op = true;
+                    if counts.removed + counts.admitted + counts.flags_adopted > 0 {
+                        self.last_convergence = Some(EngineConvergenceReport {
+                            correlation: event.correlation.clone(),
+                            op: "toggle-float",
+                            removed: counts.removed,
+                            admitted: counts.admitted,
+                            flags_adopted: counts.flags_adopted,
+                        });
+                    }
+                    self.store_committed(event.domain_key.clone(), fresh, event.outer_gap);
+                }
+            }
+            if self.session(&event.domain_key).is_none() {
+                // Converged empty retires the slot: behave as if never
+                // converged so the legacy route keeps its exact shape.
+                self.converged_this_op = false;
+                self.last_convergence = None;
+            }
+        }
         let seed_order = crate::seed::order_spatial_with_focus_last(
             event.windows.clone(),
             &event.focused_window,

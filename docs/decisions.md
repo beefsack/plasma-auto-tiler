@@ -426,6 +426,11 @@ the corresponding item ships; each such entry names its replacement.
   window was previously tiled, an ordinary float, or adopted with unknown
   origin. `Meta+Shift+G` sticky-off still honors the previous floating origin
   as described above.
+  Orchestrator clarification applying option A, 2026-09-25: `Meta+G` tiles on
+  the workspace where it is pressed, where native sticky-off leaves the
+  window, even if its former tile belonged to another workspace. A subsequent
+  `Meta+G` on a plain floating window must still tile it; moving or resizing
+  a float alone never tiles it.
 - Intentional normal and sticky floating request KWin's public `keepAbove=true`.
   KWin owns the normal keep-above/keep-below exclusive transition. The adapter
   records the prior pair and restores a project-cleared `keepBelow` (or prior
