@@ -10,11 +10,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::contract::Observation;
+use crate::contract::{DivergenceKind, Observation};
 use crate::directional::{
     Direction, Node, NodeId, OutputId, Snapshot, WindowId, WindowLink, WorkspaceId,
 };
-use crate::geometry::Rect;
+use crate::geometry::{Rect, project};
+
+use super::{ProposeError, RefusalKind};
 
 /// Logical output domain: separate output/workspace scope with explicit
 /// portable bounds and gap for the deterministic projector, plus configured
@@ -628,4 +630,397 @@ impl super::Session {
         }
         next
     }
+
+    /// Converge retained membership and floating state to one complete
+    /// current portable observation atomically.
+    ///
+    /// Bounded production CORE primitive for the observation-convergence
+    /// design (`docs/changes/archive/observation-convergence.md`): missing known
+    /// windows are removed via the existing tree-collapse helper (survivor
+    /// order/shares preserved), brand-new normal windows are admitted via the
+    /// existing normal-placement helper, and tiled<->floating transitions are
+    /// adopted. No staged or fabricated lifecycle observations and no new
+    /// authority tokens are used. Cross-domain homing is refused (the Engine
+    /// converges each per-domain session on its own complete observation).
+    ///
+    /// Flag scope: only portable `floating` selects the floating exception.
+    /// `fullscreen`/`maximized` stay tiled (native overlays are not
+    /// represented in the portable observation), `sticky` relies on the
+    /// adapter's existing floating mapping and never forces an exception here,
+    /// and advisory `fit_excluded` (which is not even carried by
+    /// [`ObservedWindow`]) never forces an exception. Float geometry is
+    /// retained where already held and never fabricated: a tiled-to-floating
+    /// transition keeps the existing retained rectangle (or `None`), and an
+    /// unfloat preserves it for the next float.
+    ///
+    /// Focus resolves to the observed tiled focus when it names a converged
+    /// tiled window, else the existing focus when it still resolves, else the
+    /// existing MRU stack fallback, else `None`. Topology is validated before
+    /// commit; any failure leaves state exactly untouched.
+    ///
+    /// Fences: recorded divergence, pending desired/drag residue, and
+    /// owner/generation/revision binding mismatches fail closed (binding
+    /// mismatches diverge like the propose path). A change advances the
+    /// verified revision/fingerprint by exactly one via the reconciler without
+    /// using the pending slot; an exact membership/flags match advances
+    /// nothing (focus still syncs without a revision bump, as with
+    /// [`Session::sync_focus_from_window`]).
+    ///
+    /// Returns bounded counts only, never native identifiers.
+    #[allow(clippy::too_many_lines)]
+    pub fn converge_observation(
+        &mut self,
+        observation: &SessionObservation,
+        observed_focus: Option<&WindowId>,
+    ) -> Result<ObservationConvergence, ProposeError> {
+        if let Some(reason) = self.reconciler.divergence() {
+            return Err(ProposeError::Diverged(reason));
+        }
+        if self.has_pending() || self.has_pending_desired() || self.has_drag() {
+            return Err(ProposeError::PendingExists);
+        }
+        if !self.validate_current_topology() {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        let diverged = |session: &mut Self, reason: DivergenceKind| {
+            let kind = session.reconciler.diverge_convergence(reason);
+            session.pending_desired = None;
+            session.drag = None;
+            ProposeError::Diverged(kind)
+        };
+        if !observation.observation.validate() || observation.observation.owner != self.owner {
+            let reason = if observation.observation.owner != self.owner {
+                DivergenceKind::OwnerMismatch
+            } else if !crate::contract::is_generation_id(
+                observation.observation.generation.as_str(),
+            ) {
+                DivergenceKind::GenerationMismatch
+            } else {
+                DivergenceKind::StaleRevision
+            };
+            return Err(diverged(self, reason));
+        }
+        if observation.observation.generation != self.generation {
+            return Err(diverged(self, DivergenceKind::GenerationMismatch));
+        }
+        if observation.observation.revision != self.accepted_revision() {
+            return Err(diverged(self, DivergenceKind::StaleRevision));
+        }
+        if !super::valid_observed_shapes(&observation.windows) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
+        }
+        let mut observed: BTreeMap<&WindowId, &ObservedWindow> = BTreeMap::new();
+        for entry in &observation.windows {
+            if self.domain_for(&entry.output, &entry.workspace).is_none() {
+                return Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch));
+            }
+            observed.insert(&entry.window, entry);
+        }
+        // Single-domain convergence only: a retained window observed under
+        // different homing is a cross-session move (remove-from-source plus
+        // admit-into-destination on their own complete observations), refused
+        // here so the Engine handles it across its per-domain sessions.
+        for (id, entry) in &observed {
+            if let Some(link) = self.windows.get(*id) {
+                if entry.output != link.output || entry.workspace != link.workspace {
+                    return Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch));
+                }
+            } else if let Some(record) = self.exceptions.get(*id)
+                && (entry.output != record.output || entry.workspace != record.workspace)
+            {
+                return Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch));
+            }
+        }
+        let mut new_trees = self.trees.clone();
+        let mut new_windows = self.windows.clone();
+        let mut new_exceptions = self.exceptions.clone();
+        let new_retained = self.retained_float_geometry.clone();
+        let mut removed: usize = 0;
+        let mut admitted: usize = 0;
+        let mut flags_adopted: usize = 0;
+        // Missing known windows are removed first so survivor collapse
+        // preserves order/shares before any admission. BTreeMap iteration is
+        // already window-id ordered, so no extra sorting is needed.
+        for id in self.windows.keys().chain(self.exceptions.keys()) {
+            if observed.contains_key(id) {
+                continue;
+            }
+            if let Some(link) = new_windows.remove(id) {
+                let key = DomainKey {
+                    output: link.output.clone(),
+                    workspace: link.workspace.clone(),
+                };
+                let current = new_trees.get(&key).cloned().flatten();
+                let next = super::remove_leaf_from_tree(self.policy(), current, &link.leaf);
+                new_trees.insert(key, next);
+                removed += 1;
+            } else if new_exceptions.remove(id).is_some() {
+                removed += 1;
+            } else {
+                return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+            }
+        }
+        // Tiled observed floating: remove the leaf and retain a floating
+        // exception. Geometry is retained where already held, never
+        // fabricated.
+        for (id, entry) in &observed {
+            if !entry.floating || !new_windows.contains_key(*id) {
+                continue;
+            }
+            let Some(link) = new_windows.remove(*id) else {
+                return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+            };
+            let key = DomainKey {
+                output: link.output.clone(),
+                workspace: link.workspace.clone(),
+            };
+            let current = new_trees.get(&key).cloned().flatten();
+            let next = super::remove_leaf_from_tree(self.policy(), current, &link.leaf);
+            new_trees.insert(key, next);
+            new_exceptions.insert(
+                (*id).clone(),
+                floating_record(
+                    id,
+                    &entry.output,
+                    &entry.workspace,
+                    new_retained.get(*id).copied(),
+                ),
+            );
+            flags_adopted += 1;
+        }
+        // Known floating observed tiled: drop the exception and re-admit
+        // through normal placement below.
+        let mut to_tile: Vec<WindowId> = Vec::new();
+        for id in self.exceptions.keys() {
+            if observed.get(id).is_some_and(|entry| !entry.floating)
+                && new_exceptions.contains_key(id)
+            {
+                to_tile.push(id.clone());
+            }
+        }
+        for id in &to_tile {
+            new_exceptions.remove(id);
+            flags_adopted += 1;
+        }
+        // Brand-new floating windows become exceptions directly.
+        for (id, entry) in &observed {
+            if entry.floating
+                && !self.windows.contains_key(*id)
+                && !self.exceptions.contains_key(*id)
+            {
+                new_exceptions.insert(
+                    (*id).clone(),
+                    floating_record(id, &entry.output, &entry.workspace, None),
+                );
+                flags_adopted += 1;
+            }
+        }
+        // Normal admissions: brand-new tiled windows plus unfloats, in
+        // window-id order through the existing normal-placement helper.
+        // Placement reuses the exact admission policy on the evolving state
+        // (the evolving focused leaf's projected rect, else the domain
+        // bounds, mirroring `seed_target_bounds`); like successive ordinary
+        // admits, each insertion splits the previously inserted leaf. The
+        // helper wraps the whole root when no eligible focus resolves.
+        let base_revision = observation.observation.revision;
+        let mut existing_ids: BTreeSet<NodeId> = BTreeSet::new();
+        for tree in new_trees.values().flatten() {
+            super::collect_node_ids(tree, &mut existing_ids);
+        }
+        let (mut adomain, mut aleaf) = (self.focused_domain.clone(), self.focused_leaf.clone());
+        for (id, entry) in &observed {
+            if entry.floating || new_windows.contains_key(*id) {
+                continue;
+            }
+            let key = DomainKey {
+                output: entry.output.clone(),
+                workspace: entry.workspace.clone(),
+            };
+            let Some(domain) = self.domains.iter().find(|d| d.key() == key) else {
+                return Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch));
+            };
+            // Eligible focus is the evolving admission focus when homed here
+            // and still resolved; otherwise the helper root-wraps.
+            let eligible = match (&adomain, &aleaf) {
+                (Some(d), Some(l)) if d == &key => self
+                    .focus_resolves(&adomain, &aleaf, &new_trees, &new_windows)
+                    .then(|| l.clone()),
+                _ => None,
+            };
+            // Placement axis comes from the evolving focused leaf's
+            // projected rect, falling back to the domain bounds exactly as
+            // `seed_target_bounds` does for ordinary admissions.
+            let placement = match &eligible {
+                Some(l) => new_trees
+                    .get(&key)
+                    .cloned()
+                    .flatten()
+                    .and_then(|tree| project(&tree, domain.bounds, domain.gap).ok())
+                    .and_then(|leaves| leaves.into_iter().find(|e| e.leaf == *l).map(|e| e.rect))
+                    .unwrap_or(domain.bounds),
+                None => domain.bounds,
+            };
+            let orientation = self.policy().admission_axis_for_rect(&placement);
+            let leaf_id = super::ops::lifecycle::generate_leaf_id(id, &mut existing_ids);
+            existing_ids.insert(leaf_id.clone());
+            let current = new_trees.get(&key).cloned().flatten();
+            let Some(next) = super::insert_tiled(
+                self.policy(),
+                current,
+                eligible.as_ref(),
+                leaf_id.clone(),
+                orientation,
+                &mut existing_ids,
+                id,
+                base_revision,
+            ) else {
+                return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+            };
+            new_trees.insert(key.clone(), Some(next));
+            new_windows.insert(
+                (*id).clone(),
+                WindowLink {
+                    window: (*id).clone(),
+                    leaf: leaf_id.clone(),
+                    output: entry.output.clone(),
+                    workspace: entry.workspace.clone(),
+                },
+            );
+            adomain = Some(key);
+            aleaf = Some(leaf_id);
+            // Unfloat re-admits were already counted as flag adoptions.
+            if !to_tile.contains(*id) {
+                admitted += 1;
+            }
+        }
+        // Focus: observed tiled focus when valid, else retained focus when it
+        // still resolves, else the existing MRU stack fallback, else None.
+        let (mut next_focus_domain, mut next_focus_leaf): (Option<DomainKey>, Option<NodeId>) =
+            (None, None);
+        if let Some(focused) = observed_focus
+            && let Some(link) = new_windows.get(focused)
+        {
+            next_focus_domain = Some(DomainKey {
+                output: link.output.clone(),
+                workspace: link.workspace.clone(),
+            });
+            next_focus_leaf = Some(link.leaf.clone());
+        } else if self.focus_resolves(
+            &self.focused_domain,
+            &self.focused_leaf,
+            &new_trees,
+            &new_windows,
+        ) {
+            next_focus_domain = self.focused_domain.clone();
+            next_focus_leaf = self.focused_leaf.clone();
+        } else if let Some(domain) = self.focused_domain.clone()
+            && let Some(leaf) = self.focus_stack_fallback(&domain, &new_trees, &new_windows)
+        {
+            next_focus_domain = Some(domain);
+            next_focus_leaf = Some(leaf);
+        }
+        if !super::validate_topology(
+            &self.domains,
+            &new_trees,
+            &new_windows,
+            &new_exceptions,
+            &next_focus_domain,
+            &next_focus_leaf,
+        ) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        let changed = new_trees != self.trees
+            || new_windows != self.windows
+            || new_exceptions != self.exceptions
+            || new_retained != self.retained_float_geometry;
+        let fingerprint = observation.observation.fingerprint;
+        if changed {
+            // Exhaustion guard before the advance: refuse without recording a
+            // terminal divergence so a transient observation at the bound
+            // never permanently bricks the session.
+            if self.accepted_revision() >= crate::contract::MAX_REVISION {
+                return Err(ProposeError::Diverged(DivergenceKind::RevisionExhausted));
+            }
+            match self.reconciler.commit_observation_convergence(fingerprint) {
+                Ok(_) => {}
+                Err(reason) => {
+                    if self.reconciler.divergence().is_some() {
+                        self.pending_desired = None;
+                        self.drag = None;
+                    }
+                    return Err(ProposeError::Diverged(reason));
+                }
+            }
+            self.trees = new_trees;
+            self.windows = new_windows;
+            self.exceptions = new_exceptions;
+            self.retained_float_geometry = new_retained;
+            self.accepted_fingerprint = fingerprint;
+        }
+        self.focused_domain = next_focus_domain;
+        self.focused_leaf = next_focus_leaf;
+        self.focus_stack = self.updated_focus_stack(
+            &self.focused_domain,
+            &self.focused_leaf,
+            &self.trees,
+            &self.windows,
+        );
+        self.last_active = self.updated_last_active(
+            &self.focused_domain,
+            &self.focused_leaf,
+            &self.trees,
+            &self.windows,
+        );
+        debug_assert!(self.validate_current_topology());
+        if changed {
+            Ok(ObservationConvergence {
+                removed,
+                admitted,
+                flags_adopted,
+            })
+        } else {
+            Ok(ObservationConvergence {
+                removed: 0,
+                admitted: 0,
+                flags_adopted: 0,
+            })
+        }
+    }
+}
+
+/// One floating exception record: portable `floating` set, every other flag
+/// clear (fullscreen/maximized overlays stay tiled, sticky rides the
+/// adapter's floating mapping). Geometry is retained where held, never
+/// fabricated.
+fn floating_record(
+    window: &WindowId,
+    output: &OutputId,
+    workspace: &WorkspaceId,
+    geometry: Option<Rect>,
+) -> ExceptionRecord {
+    ExceptionRecord {
+        window: window.clone(),
+        output: output.clone(),
+        workspace: workspace.clone(),
+        flags: ExceptionFlags {
+            floating: true,
+            fullscreen: false,
+            maximized: false,
+            sticky: false,
+        },
+        floating_geometry: geometry,
+    }
+}
+
+/// Bounded result of [`Session::converge_observation`]: correlated
+/// removed/admitted/flag-adopted counts with no identifiers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObservationConvergence {
+    /// Missing known windows removed.
+    pub removed: usize,
+    /// Brand-new normal windows admitted.
+    pub admitted: usize,
+    /// Floating adoptions: tiled<->floating transitions and brand-new
+    /// floating exceptions.
+    pub flags_adopted: usize,
 }

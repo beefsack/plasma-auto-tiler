@@ -13,20 +13,21 @@ use std::collections::BTreeMap;
 
 use crate::boundary::{
     ActiveGroupResolution, CoreCommand, CoreEvent, CoreReply, NoGroupReason, ProjectionKind,
-    ProjectionPlan, TransactionKind, TransactionStatus, project_retained_tiled_geometry,
-    resolve_active_group,
+    ProjectionPlan, TiledKind, TiledPlan, TransactionKind, TransactionStatus,
+    project_retained_tiled_geometry, resolve_active_group,
 };
 use crate::bounds::{is_gap, is_opaque_id};
 use crate::contract::{
     AckOutcome, AdapterAck, DivergenceKind, FocusCapabilities, FocusPostObservation,
-    LifecycleCapabilities, LifecycleOperation, LifecyclePostObservation, LifecyclePrecondition,
-    Observation, PostObservation, ResizeCapabilities, ResizeMode, ResizePostObservation,
+    LIFECYCLE_POLICY_VERSION, LifecycleCapabilities, LifecycleOperation, LifecyclePostObservation,
+    LifecyclePrecondition, Observation, PostObservation, ResizeCapabilities, ResizeMode,
+    ResizePostObservation,
 };
 use crate::directional::{
     Capabilities, Direction, MoveOperation, OutputId, Precondition, WindowId, WorkspaceId,
 };
 use crate::geometry::Rect;
-use crate::ids::{GenerationId, OwnerId};
+use crate::ids::{CorrelationId, GenerationId, OwnerId};
 use crate::pending::{DirectionalMovePending, WorkspacePending};
 use crate::policy::{LayoutPolicy, default_policy};
 use crate::reconcile::{AckError, CancelUnackedError, StateKind, VerifyError};
@@ -72,6 +73,51 @@ pub struct Engine {
     generation: Option<GenerationId>,
     workspace_pending: Option<WorkspacePending>,
     directional_pending: Option<DirectionalMovePending>,
+    /// Last single-domain observation-convergence report for protocol logging.
+    ///
+    /// Set only when [`Engine::handle`] converged with nonzero counts; cleared
+    /// at the start of every [`Engine::handle`] so callers never read a stale
+    /// op. Bounded counts only, never native identifiers; the correlation
+    /// binds the existing planner summary boundary (`PLAN_SUMMARY_PREFIX`)
+    /// without any [`CoreReply`] change (core has no logging sink). Exact
+    /// (zero-count) convergence records nothing so only nonzero counts log.
+    last_convergence: Option<EngineConvergenceReport>,
+    /// Whether the current [`Engine::handle`] converged (changed or exact).
+    ///
+    /// Internal reseed guard only, never logged: once converged, partial or
+    /// diverged follow-ups fail closed without reset/reseed.
+    converged_this_op: bool,
+}
+
+/// Bounded correlated observation-convergence report for the protocol logging
+/// boundary. Counts only, no window/domain identifiers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngineConvergenceReport {
+    /// Validated correlation for this op (cross-service lookup key).
+    pub correlation: CorrelationId,
+    /// Single-domain op token (`reconcile`, `admit`, `remove`, ...).
+    pub op: &'static str,
+    /// Missing known windows removed by convergence.
+    pub removed: usize,
+    /// Brand-new normal windows admitted by convergence.
+    pub admitted: usize,
+    /// Floating adoptions by convergence.
+    pub flags_adopted: usize,
+}
+
+/// Single-domain convergence routing: absent sessions run the existing seed
+/// route, converged sessions run the ordinary operation, and primitive
+/// errors return a typed rejection with no operation and no reseed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ConvergeOutcome {
+    /// No retained slot: run the existing fit/seed/relocation route.
+    NoSession,
+    /// Primitive ran (changed or exact): run the ordinary operation; reseed
+    /// is forbidden from here on for this op.
+    Converged,
+    /// Scoped pending fence or primitive error: return this reply directly;
+    /// do not run the operation and do not reseed. Boxed: cold-path only.
+    Rejected(Box<CoreReply>),
 }
 
 pub fn session_domain_matches(session: &Session, domain: &OutputDomain) -> bool {
@@ -104,6 +150,8 @@ impl Default for Engine {
             generation: None,
             workspace_pending: None,
             directional_pending: None,
+            last_convergence: None,
+            converged_this_op: false,
         }
     }
 }
@@ -223,6 +271,237 @@ impl Engine {
     #[must_use]
     pub fn outer_gap_ref(&self, key: &DomainKey) -> Option<&i32> {
         self.outer_gaps.get(key)
+    }
+
+    /// Last single-domain convergence report for protocol logging, if the
+    /// current [`Engine::handle`] converged before its ordinary operation.
+    /// Bounded counts plus correlation/op only, never native identifiers.
+    #[must_use]
+    pub fn last_convergence(&self) -> Option<&EngineConvergenceReport> {
+        self.last_convergence.as_ref()
+    }
+
+    /// Converge one retained single-domain session to the complete current
+    /// observation before its ordinary operation.
+    ///
+    /// Uses the existing [`Session::converge_observation`] primitive with the
+    /// complete carried window set (`floating` plus advisory `fit_excluded`
+    /// as carried; no new native flags) and the carried focus. Preserves
+    /// survivor topology, exact-match revision semantics (no bump on zeros),
+    /// and first-time fit/seed ([`ConvergeOutcome::NoSession`] runs the
+    /// existing seed route). Scoped Engine pending prevalidation
+    /// ([`Engine::pending_conflict`]) applies first so unrelated domains stay
+    /// usable while a send/R4 transaction is live elsewhere; send/R4 behavior
+    /// itself is untouched. Owner/generation mismatches return terminal
+    /// divergence without mutating (never diverging the retained session).
+    /// Any other primitive error returns its typed rejection and the caller
+    /// must not run the operation or reseed.
+    fn converge_for_single_domain(
+        &mut self,
+        event: &CoreEvent,
+        op: &'static str,
+    ) -> ConvergeOutcome {
+        if let Some(reply) = self.pending_conflict(
+            op,
+            &event.owner,
+            &event.generation,
+            &event.domain_key,
+            None,
+            None,
+        ) {
+            return ConvergeOutcome::Rejected(Box::new(reply));
+        }
+        let Some(session) = self.sessions.get(&event.domain_key) else {
+            return ConvergeOutcome::NoSession;
+        };
+        if session.owner() != &event.owner {
+            return ConvergeOutcome::Rejected(Box::new(CoreReply::Diverged(
+                DivergenceKind::OwnerMismatch,
+            )));
+        }
+        if session.generation() != &event.generation {
+            return ConvergeOutcome::Rejected(Box::new(CoreReply::Diverged(
+                DivergenceKind::GenerationMismatch,
+            )));
+        }
+        let base = session.accepted_revision();
+        let observation = crate::seed::session_observation_for(
+            &event.owner,
+            &event.generation,
+            base,
+            event.fingerprint,
+            &event.windows,
+        );
+        let focus = if event.focused_window.0.is_empty() {
+            None
+        } else {
+            Some(&event.focused_window)
+        };
+        let Some(session_mut) = self.sessions.get_mut(&event.domain_key) else {
+            return ConvergeOutcome::NoSession;
+        };
+        match session_mut.converge_observation(&observation, focus) {
+            Ok(counts) => {
+                self.converged_this_op = true;
+                if counts.removed + counts.admitted + counts.flags_adopted > 0 {
+                    self.last_convergence = Some(EngineConvergenceReport {
+                        correlation: event.correlation.clone(),
+                        op,
+                        removed: counts.removed,
+                        admitted: counts.admitted,
+                        flags_adopted: counts.flags_adopted,
+                    });
+                }
+                ConvergeOutcome::Converged
+            }
+            Err(ProposeError::PendingExists) => {
+                ConvergeOutcome::Rejected(Box::new(CoreReply::Rejected {
+                    kind: PENDING_EXISTS_KIND,
+                    message: PENDING_EXISTS_MESSAGE,
+                }))
+            }
+            Err(ProposeError::Diverged(reason)) => {
+                ConvergeOutcome::Rejected(Box::new(CoreReply::Diverged(reason)))
+            }
+            Err(error) => ConvergeOutcome::Rejected(Box::new(CoreReply::Rejected {
+                kind: error.kind(),
+                message: error.message(),
+            })),
+        }
+    }
+
+    /// Complete projection success for an already-removed/admitted lifecycle
+    /// window after convergence: geometry covers the converged survivors
+    /// exactly with a valid focus and the lifecycle capability, at the
+    /// converged revision. Returns `None` when the converged state cannot
+    /// project (caller falls back to its existing rejection).
+    fn idempotent_tiled_success(
+        session: &Session,
+        domain_key: &DomainKey,
+        event: &CoreEvent,
+        kind: TiledKind,
+    ) -> Option<CoreReply> {
+        if committed_session_is_empty(session) {
+            return Some(CoreReply::Tiled(TiledPlan {
+                base_revision: session.accepted_revision(),
+                policy_version: LIFECYCLE_POLICY_VERSION,
+                kind,
+                geometry: Vec::new(),
+                focus_domain: None,
+                focus_leaf: None,
+                float_window: None,
+                float_rect: None,
+            }));
+        }
+        let (focus_domain, focus_leaf) = session.focus();
+        let (Some(focus_domain), Some(focus_leaf)) = (focus_domain, focus_leaf) else {
+            return None;
+        };
+        let hints = event
+            .windows
+            .iter()
+            .map(|entry| (entry.window.clone(), entry.hints))
+            .collect::<BTreeMap<_, _>>();
+        let plan = project_retained_tiled_geometry(
+            session,
+            domain_key,
+            event.domain.bounds,
+            event.domain.gap,
+            Some((focus_domain, focus_leaf)),
+            ProjectionKind::Reconcile,
+            &hints,
+            &event.windows,
+        )?;
+        Some(CoreReply::Tiled(TiledPlan {
+            base_revision: plan.base_revision,
+            policy_version: LIFECYCLE_POLICY_VERSION,
+            kind,
+            geometry: plan.geometry,
+            focus_domain: plan.focus_domain,
+            focus_leaf: plan.focus_leaf,
+            float_window: None,
+            float_rect: None,
+        }))
+    }
+
+    /// Converge one assembled paired Session once on the complete carried
+    /// observation, then split/store it atomically so valid convergence
+    /// persists even if the ordinary command refuses.
+    ///
+    /// Same [`Session::converge_observation`] primitive as the single-domain
+    /// path, called exactly once on the assembled two-domain world (never two
+    /// per-domain primitives): the pair already carries BOTH domains, so one
+    /// call converges source and target membership together. Focus rides from
+    /// the source observation, the observation revision rides from the
+    /// assembled Session, and nothing is fabricated. On success the converged
+    /// pair splits/stores through the existing canonical machinery
+    /// (revisions and exception state preserved, no new machinery) before the
+    /// caller rebuilds its command observation at the converged revision.
+    /// Primitive errors return their typed reply with no store and no command.
+    fn converge_assembled_pair(
+        &mut self,
+        session: &mut Session,
+        event: &CoreEvent,
+        op: &'static str,
+        source_key: &DomainKey,
+        target_key: &DomainKey,
+    ) -> Result<(u64, SessionObservation), Box<CoreReply>> {
+        let base = session.accepted_revision();
+        let observation = crate::seed::session_observation_for(
+            &event.owner,
+            &event.generation,
+            base,
+            event.fingerprint,
+            &event.windows,
+        );
+        let focus = if event.focused_window.0.is_empty() {
+            None
+        } else {
+            Some(&event.focused_window)
+        };
+        match session.converge_observation(&observation, focus) {
+            Ok(counts) => {
+                self.converged_this_op = true;
+                if counts.removed + counts.admitted + counts.flags_adopted > 0 {
+                    self.last_convergence = Some(EngineConvergenceReport {
+                        correlation: event.correlation.clone(),
+                        op,
+                        removed: counts.removed,
+                        admitted: counts.admitted,
+                        flags_adopted: counts.flags_adopted,
+                    });
+                }
+                if !self.store_canonical_pair(
+                    source_key.clone(),
+                    target_key.clone(),
+                    session.clone(),
+                    event.outer_gap,
+                ) {
+                    return Err(Box::new(CoreReply::SnapshotInvalid {
+                        message: OBSERVATION_MESSAGE,
+                        detail: "commit-rejected",
+                    }));
+                }
+                let base = session.accepted_revision();
+                let observation = crate::seed::session_observation_for(
+                    &event.owner,
+                    &event.generation,
+                    base,
+                    event.fingerprint,
+                    &event.windows,
+                );
+                Ok((base, observation))
+            }
+            Err(ProposeError::PendingExists) => Err(Box::new(CoreReply::Rejected {
+                kind: PENDING_EXISTS_KIND,
+                message: PENDING_EXISTS_MESSAGE,
+            })),
+            Err(ProposeError::Diverged(reason)) => Err(Box::new(CoreReply::Diverged(reason))),
+            Err(error) => Err(Box::new(CoreReply::Rejected {
+                kind: error.kind(),
+                message: error.message(),
+            })),
+        }
     }
 
     /// Remove a domain slot and its outer gap.
@@ -620,19 +899,113 @@ impl Engine {
     /// guard before scope validation so error order is preserved (the internal
     /// re-check below is defensive and byte-identical).
     pub fn handle(&mut self, event: &CoreEvent) -> CoreReply {
+        // Single-domain observation convergence before the ordinary operation:
+        // one primitive with the complete current observation and focus keeps
+        // survivor topology and preserves exact-match/fit/seed paths.
+        // Primitive errors return a typed rejection with no operation and no
+        // reseed; absent sessions run the existing seed route. Pair
+        // (two-domain) moves/focuses converge once on the assembled
+        // BOTH-domain world inside their request arms (same primitive, never
+        // two per-domain calls); workspace-send and ack/verify/status/cancel
+        // never converge here. `run_retained` never converges again, so no
+        // double converge.
+        self.last_convergence = None;
+        self.converged_this_op = false;
         match &event.command {
             CoreCommand::SendStatus | CoreCommand::DirectionalStatus => self.inspect(event),
-            CoreCommand::Reconcile => self.reconcile_request(event),
-            CoreCommand::UpdateGaps => self.update_gaps_request(event),
+            CoreCommand::Reconcile => match self.converge_for_single_domain(event, "reconcile") {
+                ConvergeOutcome::Rejected(reply) => *reply,
+                _ => self.reconcile_request(event),
+            },
+            CoreCommand::UpdateGaps => {
+                match self.converge_for_single_domain(event, "update-gaps") {
+                    ConvergeOutcome::Rejected(reply) => *reply,
+                    _ => self.update_gaps_request(event),
+                }
+            }
             CoreCommand::SendToWorkspace { .. } => self.workspace_request(event),
             CoreCommand::ActiveGroup => self.active_group_request(event),
-            CoreCommand::Admit { .. } => self.admit_request(event),
-            CoreCommand::Remove { .. } => self.remove_request(event),
-            CoreCommand::ToggleFloat { .. } => self.toggle_float_request(event),
-            CoreCommand::Move { .. } => self.directional_move_request(event),
-            CoreCommand::Focus { .. } => self.directional_focus_request(event),
-            CoreCommand::Resize { .. } => self.resize_request(event),
-            CoreCommand::PointerResize { .. } => self.pointer_resize_request(event),
+            CoreCommand::Admit { window, .. } => {
+                let pre_absent = self.session(&event.domain_key).is_some_and(|s| {
+                    !s.snapshot().windows.iter().any(|l| &l.window == window)
+                        && !s.is_exception(window)
+                });
+                match self.converge_for_single_domain(event, "admit") {
+                    ConvergeOutcome::Rejected(reply) => *reply,
+                    _ => {
+                        // Changed-id safety: only the requested id admitted in
+                        // this convergence may take the idempotent success;
+                        // an incidental admission alongside an existing-target
+                        // duplicate keeps the duplicate rejection.
+                        let target_admitted_here = pre_absent
+                            && self.session(&event.domain_key).is_some_and(|s| {
+                                s.snapshot().windows.iter().any(|l| &l.window == window)
+                            });
+                        self.admit_request(event, target_admitted_here)
+                    }
+                }
+            }
+            CoreCommand::Remove { window } => {
+                let pre_present = self.session(&event.domain_key).is_some_and(|s| {
+                    s.snapshot().windows.iter().any(|l| &l.window == window)
+                        || s.is_exception(window)
+                });
+                match self.converge_for_single_domain(event, "remove") {
+                    ConvergeOutcome::Rejected(reply) => *reply,
+                    _ => {
+                        // Changed-id safety: only the requested id departed in
+                        // this convergence may take the idempotent success;
+                        // an unrelated removal alongside a genuine unknown
+                        // keeps the unknown rejection.
+                        let target_departed_here = pre_present
+                            && self.session(&event.domain_key).is_some_and(|s| {
+                                !s.snapshot().windows.iter().any(|l| &l.window == window)
+                                    && !s.is_exception(window)
+                            });
+                        self.remove_request(event, target_departed_here)
+                    }
+                }
+            }
+            CoreCommand::ToggleFloat { .. } => {
+                match self.converge_for_single_domain(event, "toggle-float") {
+                    ConvergeOutcome::Rejected(reply) => *reply,
+                    _ => self.toggle_float_request(event),
+                }
+            }
+            CoreCommand::Move { .. } => {
+                if event
+                    .directional
+                    .as_ref()
+                    .is_none_or(|pair| pair.len() != 2)
+                    && let ConvergeOutcome::Rejected(reply) =
+                        self.converge_for_single_domain(event, "move")
+                {
+                    return *reply;
+                }
+                self.directional_move_request(event)
+            }
+            CoreCommand::Focus { .. } => {
+                if event
+                    .directional
+                    .as_ref()
+                    .is_none_or(|pair| pair.len() != 2)
+                    && let ConvergeOutcome::Rejected(reply) =
+                        self.converge_for_single_domain(event, "focus")
+                {
+                    return *reply;
+                }
+                self.directional_focus_request(event)
+            }
+            CoreCommand::Resize { .. } => match self.converge_for_single_domain(event, "resize") {
+                ConvergeOutcome::Rejected(reply) => *reply,
+                _ => self.resize_request(event),
+            },
+            CoreCommand::PointerResize { .. } => {
+                match self.converge_for_single_domain(event, "pointer-resize") {
+                    ConvergeOutcome::Rejected(reply) => *reply,
+                    _ => self.pointer_resize_request(event),
+                }
+            }
             CoreCommand::SendAck { ack_outcome } => self.workspace_ack(event, ack_outcome),
             CoreCommand::DirectionalAck { ack_outcome } => self.directional_ack(event, ack_outcome),
             CoreCommand::SendCancel { zero_dispatch } => {
@@ -774,7 +1147,13 @@ impl Engine {
             d.output.0 == event.domain_key.output.0 && d.workspace.0 == event.domain_key.workspace.0
         });
         if domain_view.and_then(|d| d.tree).is_none() {
-            if known.is_empty() && observed.is_empty() {
+            // An empty domain or one containing only floating exceptions has
+            // no tiled geometry to project. A missing tree with tiled links
+            // is still malformed.
+            if !snapshot.windows.iter().any(|link| {
+                link.output == event.domain_key.output
+                    && link.workspace == event.domain_key.workspace
+            }) {
                 if bounds_changed {
                     self.reproject_retained(&event.domain_key, event.domain.bounds);
                 }
@@ -1291,6 +1670,11 @@ impl Engine {
     /// typed [`CoreEvent`]: target presence gates relocation, usable sessions
     /// propose directly, rebuilds fall back to relocation then seeding, and
     /// every outcome maps to the identical typed [`CoreReply`].
+    ///
+    /// Once [`Engine::handle`] converged the domain for this op
+    /// (`converged_this_op`, changed or exact), partial/diverged mismatches
+    /// fail closed without reset/reseed: no discard, no relocation retry, no
+    /// seeding. First-time (no convergence) keeps the exact legacy rebuild.
     fn run_retained<R>(
         &mut self,
         event: &CoreEvent,
@@ -1300,6 +1684,7 @@ impl Engine {
         reply: impl Fn(&R) -> CoreReply,
         commit: impl Fn(&mut Session, &R, &CoreEvent, u64) -> bool,
     ) -> CoreReply {
+        let converged = self.converged_this_op;
         let target_existed = self.contains(&event.domain_key);
         if let Some(mut session) = self.take_usable_session(&event.domain_key, &event.domain) {
             let base = session.accepted_revision();
@@ -1324,6 +1709,12 @@ impl Engine {
                     };
                 }
                 Err(error) if engine_needs_rebuild(&error) => {
+                    if converged {
+                        return CoreReply::Rejected {
+                            kind: error.kind(),
+                            message: error.message(),
+                        };
+                    }
                     self.remove(&event.domain_key);
                 }
                 Err(error) => {
@@ -1379,6 +1770,27 @@ impl Engine {
                     *self = backup;
                 }
             }
+        }
+        // Once converged, never reseed: fail closed without reset. Ambiguous
+        // seed order keeps its exact legacy shape (no seeding either way);
+        // a concrete order refuses instead of rebuilding survivors.
+        if converged {
+            let Some(_order) = seed_order else {
+                if ambiguous_as_snapshot {
+                    return CoreReply::SnapshotInvalid {
+                        message: OBSERVATION_MESSAGE,
+                        detail: "missing-seed-order",
+                    };
+                }
+                return CoreReply::Rejected {
+                    kind: AMBIGUOUS_KIND,
+                    message: AMBIGUOUS_MESSAGE,
+                };
+            };
+            return CoreReply::Rejected {
+                kind: RefusalKind::PartialObservation.as_str(),
+                message: RefusalKind::PartialObservation.message(),
+            };
         }
         let Some(order) = seed_order else {
             if ambiguous_as_snapshot {
@@ -1468,9 +1880,16 @@ impl Engine {
     /// partial-observation, and placement-bounds validation at their exact
     /// positions; by the time an event reaches here those fences passed and
     /// the command carries the validated placement. This owns the fit
-    /// fallback, seed ordering (focused last, ties allowed, admitted member
-    /// excluded), seeding, relocation, propose/commit, and store.
-    fn admit_request(&mut self, event: &CoreEvent) -> CoreReply {
+    /// fallback, fresh floating-aware convergence build, seed ordering
+    /// (focused last, ties allowed, admitted member excluded), seeding,
+    /// relocation, propose/commit, and store.
+    ///
+    /// Fresh domains whose complete observation contains floating members
+    /// cannot seed (the seed rebuild is tiled-only): an empty session plus
+    /// the same single convergence primitive builds floating exceptions and
+    /// normal admissions atomically, then the idempotent admit below replies.
+    /// All-normal observations keep the legacy fit/seed route byte-for-byte.
+    fn admit_request(&mut self, event: &CoreEvent, target_admitted_here: bool) -> CoreReply {
         use crate::boundary::{TiledKind, TiledPlan};
         let CoreCommand::Admit {
             window,
@@ -1484,6 +1903,33 @@ impl Engine {
                 message: "request contains an unknown value",
             };
         };
+        // Idempotent admit after convergence: KWin sends the current
+        // post-admit observation, so the requested window already admitted in
+        // this convergence replies with the complete converged projection
+        // (admit capability, valid focus) instead of `duplicate-window`.
+        // Changed-id safety: only the requested id admitted here qualifies;
+        // an incidental admission alongside an existing-target duplicate keeps
+        // the duplicate rejection. Focus mirrors the ordinary admission (the
+        // admitted window) with no extra commit.
+        if target_admitted_here
+            && let Some(session) = self.session(&event.domain_key).cloned()
+            && session
+                .snapshot()
+                .windows
+                .iter()
+                .any(|l| &l.window == window)
+        {
+            let mut focused = session;
+            let _ = focused.sync_focus_from_window(&event.domain_key, window);
+            if let Some(reply) =
+                Self::idempotent_tiled_success(&focused, &event.domain_key, event, TiledKind::Admit)
+            {
+                if let Some(stored) = self.session_mut(&event.domain_key) {
+                    *stored = focused;
+                }
+                return reply;
+            }
+        }
         if placement_bounds.is_none()
             && window.0 == event.focused_window.0
             && self.session(&event.domain_key).is_none()
@@ -1526,6 +1972,95 @@ impl Engine {
                     self.store_committed(event.domain_key.clone(), fitted, event.outer_gap);
                     return typed;
                 }
+            }
+        }
+        // Fresh floating-aware build: no retained slot, no relocation source,
+        // and floating members present, so the tiled-only seed cannot run. One
+        // empty session plus the same single convergence primitive admits
+        // normal members and retains floating exceptions atomically; no staged
+        // or fabricated observations. Relocation candidates always keep the
+        // legacy route byte-for-byte, as do all-normal fresh observations.
+        if self.session(&event.domain_key).is_none()
+            && event.windows.iter().any(|w| w.floating)
+            && self
+                .find_unique_source_for_target(&event.domain_key)
+                .is_none()
+            && let Ok(mut fresh) = Session::new(
+                event.owner.clone(),
+                event.generation.clone(),
+                0,
+                event.fingerprint,
+                vec![event.domain.clone()],
+            )
+        {
+            fresh.set_policy(self.policy.clone());
+            let observation = crate::seed::session_observation_for(
+                &event.owner,
+                &event.generation,
+                fresh.accepted_revision(),
+                event.fingerprint,
+                &event.windows,
+            );
+            let focus = if event.focused_window.0.is_empty() {
+                None
+            } else {
+                Some(&event.focused_window)
+            };
+            match fresh.converge_observation(&observation, focus) {
+                Err(ProposeError::PendingExists) => {
+                    return CoreReply::Rejected {
+                        kind: PENDING_EXISTS_KIND,
+                        message: PENDING_EXISTS_MESSAGE,
+                    };
+                }
+                Err(ProposeError::Diverged(reason)) => return CoreReply::Diverged(reason),
+                Err(error) => {
+                    return CoreReply::Rejected {
+                        kind: error.kind(),
+                        message: error.message(),
+                    };
+                }
+                Ok(counts) => {
+                    self.converged_this_op = true;
+                    if counts.removed + counts.admitted + counts.flags_adopted > 0 {
+                        self.last_convergence = Some(EngineConvergenceReport {
+                            correlation: event.correlation.clone(),
+                            op: "admit",
+                            removed: counts.removed,
+                            admitted: counts.admitted,
+                            flags_adopted: counts.flags_adopted,
+                        });
+                    }
+                    self.store_committed(event.domain_key.clone(), fresh, event.outer_gap);
+                }
+            }
+            // Idempotent admit on the requested freshly admitted normal: the
+            // window was absent before (fresh domain) and is tiled now.
+            if let Some(session) = self.session(&event.domain_key).cloned()
+                && session
+                    .snapshot()
+                    .windows
+                    .iter()
+                    .any(|l| &l.window == window)
+            {
+                let mut focused = session;
+                let _ = focused.sync_focus_from_window(&event.domain_key, window);
+                if let Some(reply) = Self::idempotent_tiled_success(
+                    &focused,
+                    &event.domain_key,
+                    event,
+                    TiledKind::Admit,
+                ) {
+                    if let Some(stored) = self.session_mut(&event.domain_key) {
+                        *stored = focused;
+                    }
+                    return reply;
+                }
+            } else if self.session(&event.domain_key).is_none() {
+                // Converged empty retires the slot: behave as if never
+                // converged so the legacy route keeps its exact shape.
+                self.converged_this_op = false;
+                self.last_convergence = None;
             }
         }
         let seed_order = crate::seed::order_spatial_with_focus_last(
@@ -1574,7 +2109,7 @@ impl Engine {
     /// Protocol keeps tagged decoding and the opaque window check at their
     /// exact positions; this owns seed ordering, seeding, relocation,
     /// propose/commit, and store.
-    fn remove_request(&mut self, event: &CoreEvent) -> CoreReply {
+    fn remove_request(&mut self, event: &CoreEvent, target_departed_here: bool) -> CoreReply {
         use crate::boundary::{TiledKind, TiledPlan};
         let CoreCommand::Remove { window } = &event.command else {
             return CoreReply::Rejected {
@@ -1582,6 +2117,33 @@ impl Engine {
                 message: "request contains an unknown value",
             };
         };
+        // Idempotent remove after convergence: KWin sends the current
+        // post-removal observation, so the requested window already departed
+        // in this convergence replies with the complete converged projection
+        // (remove capability, valid focus, exact survivor geometry) instead of
+        // `unknown-window`. Changed-id safety: only the requested id departed
+        // here qualifies; an unrelated removal alongside a genuine unknown
+        // keeps the unknown rejection. No extra commit.
+        if target_departed_here
+            && let Some(session) = self.session(&event.domain_key).cloned()
+            && !session
+                .snapshot()
+                .windows
+                .iter()
+                .any(|l| &l.window == window)
+            && !session.is_exception(window)
+            && let Some(reply) = Self::idempotent_tiled_success(
+                &session,
+                &event.domain_key,
+                event,
+                TiledKind::Remove,
+            )
+        {
+            if committed_session_is_empty(&session) {
+                self.remove(&event.domain_key);
+            }
+            return reply;
+        }
         let seed_order = crate::seed::order_spatial_with_focus_last(
             event.windows.clone(),
             &event.focused_window,
@@ -1669,7 +2231,9 @@ impl Engine {
     ///
     /// Fence order matches the legacy protocol handler exactly: window opaque
     /// (`move-window-invalid`), parsed direction (`direction-invalid`), pair
-    /// presence (`domain-invalid`), canonical assembly (`canonical-*`),
+    /// presence (`domain-invalid`), scoped pending pre-fence across either
+    /// pair domain, canonical assembly (`canonical-*`), one convergence
+    /// primitive on the assembled world (split/stored before the command),
     /// propose (mapped to `Rejected` with the exact kind/message, including
     /// divergences as rejections like the legacy `propose_failure`), R4
     /// pending guards (diverged on divergence/identity loss, else
@@ -1716,6 +2280,19 @@ impl Engine {
         let (source_domain, source_key) = &pair[0];
         let (target_domain, target_key) = &pair[1];
         let window = WindowId(window.clone());
+        // Scoped pending pre-fence across either pair domain (workspace and
+        // directional pendings); send/R4 ack/verify/cancel arms are untouched.
+        let pair_keys = [source_key.clone(), target_key.clone()];
+        if let Some(reply) = self.pending_conflict(
+            "move",
+            &event.owner,
+            &event.generation,
+            &event.domain_key,
+            Some(&pair_keys),
+            None,
+        ) {
+            return reply;
+        }
         let mut session = match self.assemble_directional_pair(
             source_domain,
             source_key,
@@ -1730,14 +2307,15 @@ impl Engine {
                 };
             }
         };
-        let base = session.accepted_revision();
-        let observation = crate::seed::session_observation_for(
-            &event.owner,
-            &event.generation,
-            base,
-            event.fingerprint,
-            &event.windows,
-        );
+        // One primitive on the assembled BOTH-domain world (never two
+        // per-domain calls); the converged split persists below even if the
+        // ordinary move refuses.
+        let (base, observation) =
+            match self.converge_assembled_pair(&mut session, event, "move", source_key, target_key)
+            {
+                Ok(next) => next,
+                Err(reply) => return *reply,
+            };
         let _ = session.sync_focus_from_window(source_key, &event.focused_window.clone());
         let mut capabilities = Capabilities::full();
         capabilities.cross_output_transfer = *cross_output_transfer;
@@ -1875,7 +2453,9 @@ impl Engine {
     ///
     /// Fence order matches the legacy protocol handler exactly: window opaque
     /// (`focus-window-invalid`), parsed direction (`direction-invalid`), pair
-    /// presence (`domain-invalid`), canonical assembly (`canonical-*`),
+    /// presence (`domain-invalid`), scoped pending pre-fence across either
+    /// pair domain, canonical assembly (`canonical-*`), one convergence
+    /// primitive on the assembled world (split/stored before the command),
     /// propose (mapped like `propose_failure`), then the sync commit
     /// (`commit-rejected` on failure).
     fn directional_focus_request(&mut self, event: &CoreEvent) -> CoreReply {
@@ -1917,6 +2497,19 @@ impl Engine {
         let (source_domain, source_key) = &pair[0];
         let (target_domain, target_key) = &pair[1];
         let window = WindowId(window.clone());
+        // Scoped pending pre-fence across either pair domain (workspace and
+        // directional pendings); send/R4 ack/verify/cancel arms are untouched.
+        let pair_keys = [source_key.clone(), target_key.clone()];
+        if let Some(reply) = self.pending_conflict(
+            "focus",
+            &event.owner,
+            &event.generation,
+            &event.domain_key,
+            Some(&pair_keys),
+            None,
+        ) {
+            return reply;
+        }
         let mut session = match self.assemble_directional_pair(
             source_domain,
             source_key,
@@ -1931,14 +2524,19 @@ impl Engine {
                 };
             }
         };
-        let base = session.accepted_revision();
-        let observation = crate::seed::session_observation_for(
-            &event.owner,
-            &event.generation,
-            base,
-            event.fingerprint,
-            &event.windows,
-        );
+        // One primitive on the assembled BOTH-domain world (never two
+        // per-domain calls); the converged split persists below even if the
+        // ordinary focus refuses.
+        let (base, observation) = match self.converge_assembled_pair(
+            &mut session,
+            event,
+            "focus",
+            source_key,
+            target_key,
+        ) {
+            Ok(next) => next,
+            Err(reply) => return *reply,
+        };
         let _ = session.sync_focus_from_window(source_key, &event.focused_window.clone());
         let (plan, crossed) = match session.propose_focus(
             source_key,

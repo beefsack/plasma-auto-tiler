@@ -104,8 +104,8 @@ mod ops;
 mod world;
 
 pub use world::{
-    DomainKey, ExceptionBehavior, ExceptionFlags, ExceptionRecord, ObservedWindow, OutputDomain,
-    SessionDomainView, SessionObservation, SessionSnapshot,
+    DomainKey, ExceptionBehavior, ExceptionFlags, ExceptionRecord, ObservationConvergence,
+    ObservedWindow, OutputDomain, SessionDomainView, SessionObservation, SessionSnapshot,
 };
 
 /// Lifecycle command against the accepted session.
@@ -2761,6 +2761,302 @@ mod tests {
             Some(tree) => collect_leaves(&tree),
             None => Vec::new(),
         }
+    }
+
+    fn converge_windows(
+        session: &Session,
+        floating: &[&str],
+        extra: &[&str],
+        without: &[&str],
+    ) -> SessionObservation {
+        let mut windows = obs_windows(session);
+        for entry in &mut windows {
+            entry.floating = floating.contains(&entry.window.0.as_str());
+        }
+        windows.retain(|entry| !without.contains(&entry.window.0.as_str()));
+        for name in extra {
+            windows.push(ObservedWindow {
+                window: WindowId((*name).to_owned()),
+                output: OutputId("out-1".to_owned()),
+                workspace: WorkspaceId("ws-1".to_owned()),
+                floating: false,
+                fullscreen: false,
+                maximized: false,
+                sticky: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            });
+        }
+        SessionObservation {
+            observation: Observation::new(
+                owner(),
+                generation(),
+                session.accepted_revision(),
+                5000 + session.accepted_revision(),
+            ),
+            windows,
+        }
+    }
+
+    #[test]
+    fn converge_observation_skew_missing_new_and_exact() {
+        let mut session = session_two();
+        let base = session.accepted_revision();
+        // Floating skew: retained tiled win-1 observed floating.
+        let summary = session
+            .converge_observation(
+                &converge_windows(&session, &["win-1"], &[], &[]),
+                Some(&WindowId("win-2".to_owned())),
+            )
+            .expect("skew converges");
+        assert_eq!(
+            (summary.removed, summary.admitted, summary.flags_adopted),
+            (0, 0, 1)
+        );
+        assert_eq!(session.accepted_revision(), base + 1);
+        assert!(session.is_exception(&WindowId("win-1".to_owned())));
+        assert_eq!(leaves_of(&session), vec![leaf("leaf-win-2")]);
+        assert_eq!(session.focus().1, Some(leaf("leaf-win-2")));
+        // Missing exception plus brand-new normal in one observation.
+        let base = session.accepted_revision();
+        let summary = session
+            .converge_observation(
+                &converge_windows(&session, &[], &["win-3"], &["win-1"]),
+                Some(&WindowId("win-2".to_owned())),
+            )
+            .expect("missing/new converges");
+        assert_eq!(
+            (summary.removed, summary.admitted, summary.flags_adopted),
+            (1, 1, 0)
+        );
+        assert_eq!(session.accepted_revision(), base + 1);
+        assert!(leaves_of(&session).contains(&leaf("leaf-win-2")));
+        assert_eq!(
+            session.focus().1.map(|l| l.0.ends_with("win-2")),
+            Some(true)
+        );
+        // Exact match advances nothing.
+        let base = session.accepted_revision();
+        let summary = session
+            .converge_observation(&obs_for(&session), Some(&WindowId("win-2".to_owned())))
+            .expect("exact converges");
+        assert_eq!(
+            (summary.removed, summary.admitted, summary.flags_adopted),
+            (0, 0, 0)
+        );
+        assert_eq!(session.accepted_revision(), base);
+        // Stale revision diverges fail-closed without mutating membership.
+        let before = session.snapshot();
+        let mut stale = obs_for(&session);
+        stale.observation = Observation::new(owner(), generation(), base + 99, 0);
+        assert!(matches!(
+            session.converge_observation(&stale, None),
+            Err(ProposeError::Diverged(_))
+        ));
+        assert_eq!(session.snapshot(), before);
+    }
+
+    /// Sequential ordinary admit using the exact admission placement policy
+    /// (`seed_target_bounds`), mirroring what the Engine/seed path supplies
+    /// as `placement_bounds` for each step.
+    fn admit_seed(session: &mut Session, window: &str, index: usize) {
+        let rev = session.accepted_revision();
+        let window_id = WindowId(window.to_owned());
+        let mut windows = obs_windows(session);
+        windows.push(ObservedWindow {
+            window: window_id.clone(),
+            output: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+            floating: false,
+            fullscreen: false,
+            maximized: false,
+            sticky: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
+        });
+        let domain_state = session.domains()[0].clone();
+        let command = SessionCommand::Admit {
+            window: window_id,
+            output: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+            exceptions: ExceptionFlags::none(),
+            exception_behavior: None,
+            placement_bounds: crate::seed::seed_target_bounds(session, &domain_state),
+        };
+        let observation = SessionObservation {
+            observation: Observation::new(owner(), generation(), rev, 100 + rev),
+            windows,
+        };
+        let correlation = corr(&format!("corr-seed-{window}-{index}"));
+        let plan = session
+            .propose(
+                &command,
+                &observation,
+                &correlation,
+                &LifecycleCapabilities::full(),
+            )
+            .expect("admit propose");
+        session
+            .acknowledge(&AdapterAck::new(
+                correlation.clone(),
+                owner(),
+                generation(),
+                rev,
+                AckOutcome::Accepted,
+            ))
+            .expect("admit ack");
+        session
+            .verify_lifecycle(&LifecyclePostObservation::new(
+                Observation::new(owner(), generation(), rev, 200 + rev),
+                correlation,
+                true,
+                plan.dispatch.preconditions.clone(),
+                plan.dispatch.operation.clone(),
+            ))
+            .expect("admit verify");
+    }
+
+    /// Generated group ids are placement nonces; strip them so topology,
+    /// order, and shares compare structurally.
+    fn anonymize(node: &Node) -> Node {
+        match node {
+            Node::Leaf { id } => Node::Leaf { id: id.clone() },
+            Node::Group {
+                axis,
+                children,
+                shares,
+                ..
+            } => Node::Group {
+                id: NodeId("g".to_owned()),
+                axis: *axis,
+                children: children.iter().map(anonymize).collect(),
+                shares: shares.clone(),
+            },
+        }
+    }
+
+    fn domain_tree(session: &Session) -> Node {
+        session
+            .snapshot()
+            .domains
+            .into_iter()
+            .find(|d| d.output == domain_key().output && d.workspace == domain_key().workspace)
+            .and_then(|d| d.tree)
+            .expect("domain tree")
+    }
+
+    #[test]
+    fn converge_newcomers_match_sequential_seed_admits() {
+        // Two newcomers in one observation must land exactly where successive
+        // ordinary admits under the same placement policy put them.
+        let mut converged = session_two();
+        let base = converged.accepted_revision();
+        let summary = converged
+            .converge_observation(
+                &converge_windows(&converged, &[], &["win-3", "win-4"], &[]),
+                Some(&WindowId("win-4".to_owned())),
+            )
+            .expect("newcomers converge");
+        assert_eq!(
+            (summary.removed, summary.admitted, summary.flags_adopted),
+            (0, 2, 0)
+        );
+        assert_eq!(converged.accepted_revision(), base + 1);
+        let mut sequential = session_two();
+        admit_seed(&mut sequential, "win-3", 0);
+        admit_seed(&mut sequential, "win-4", 1);
+        assert_eq!(leaves_of(&converged), leaves_of(&sequential));
+        assert_eq!(converged.snapshot().windows, sequential.snapshot().windows);
+        assert_eq!(
+            anonymize(&domain_tree(&converged)),
+            anonymize(&domain_tree(&sequential))
+        );
+        assert_eq!(converged.focus(), sequential.focus());
+        // Focus naming a removed window falls back to surviving MRU focus.
+        let mut session = session_two();
+        let summary = session
+            .converge_observation(
+                &converge_windows(&session, &[], &[], &["win-2"]),
+                Some(&WindowId("win-2".to_owned())),
+            )
+            .expect("removed focus converges");
+        assert_eq!(
+            (summary.removed, summary.admitted, summary.flags_adopted),
+            (1, 0, 0)
+        );
+        assert_eq!(session.focus().1, Some(leaf("leaf-win-1")));
+        // Empty session plus empty observation is an exact no-op.
+        let mut session = Session::new(owner(), generation(), 0, 7, vec![domain()]).expect("new");
+        let base = session.accepted_revision();
+        let empty = SessionObservation {
+            observation: Observation::new(owner(), generation(), base, 4242),
+            windows: Vec::new(),
+        };
+        let summary = session
+            .converge_observation(&empty, None)
+            .expect("empty exact");
+        assert_eq!(
+            (summary.removed, summary.admitted, summary.flags_adopted),
+            (0, 0, 0)
+        );
+        assert_eq!(session.accepted_revision(), base);
+        assert_eq!(session.focus(), (None, None));
+    }
+
+    #[test]
+    fn converge_refuses_cross_homing() {
+        let left = OutputDomain {
+            id: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+            bounds: Rect {
+                x: 0,
+                y: 0,
+                w: 120,
+                h: 80,
+            },
+            gap: 0,
+            adjacent: [(Direction::Right, OutputId("out-2".to_owned()))]
+                .into_iter()
+                .collect(),
+        };
+        let right = OutputDomain {
+            id: OutputId("out-2".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+            bounds: Rect {
+                x: 0,
+                y: 0,
+                w: 120,
+                h: 80,
+            },
+            gap: 0,
+            adjacent: [(Direction::Left, OutputId("out-1".to_owned()))]
+                .into_iter()
+                .collect(),
+        };
+        let mut session =
+            Session::new(owner(), generation(), 0, 7, vec![left, right]).expect("new");
+        admit(&mut session, "win-a", true);
+        let before = session.snapshot();
+        let rev = session.accepted_revision();
+        // win-a retained on out-1 but observed homed on out-2: the Engine
+        // converges this as remove-from-source plus admit-into-destination.
+        let moved = SessionObservation {
+            observation: Observation::new(owner(), generation(), rev, 4242),
+            windows: vec![ObservedWindow {
+                window: WindowId("win-a".to_owned()),
+                output: OutputId("out-2".to_owned()),
+                workspace: WorkspaceId("ws-1".to_owned()),
+                floating: false,
+                fullscreen: false,
+                maximized: false,
+                sticky: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            }],
+        };
+        assert!(matches!(
+            session.converge_observation(&moved, None),
+            Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch))
+        ));
+        assert_eq!(session.snapshot(), before);
+        assert_eq!(session.accepted_revision(), rev);
     }
 
     fn begin_focused(session: &mut Session, window: &str) -> DragCapture {

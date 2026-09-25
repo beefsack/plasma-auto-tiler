@@ -347,16 +347,35 @@ describe("tiled move-drop restore (Kate drags 29-31)", () => {
         assert.ok(!mocks.logs.some((l) => l.includes("drag-rejected") && l.includes("correlation=drag-50")), "no marker for a floated drop");
         assert.ok(!mocks.logs.some((l) => l.includes("drag-reconcile") && l.includes("correlation=drag-50")), "no restore for a floated drop");
         assert.ok(!mocks.logs.some((l) => l.includes("drag-move-restore") && l.includes("correlation=drag-50")));
-        // The branch releases the hold itself (settle finds no guard left):
-        // the debounced resync runs but legitimately dispatches nothing on
-        // the already-equal snapshot. Later drift then converges ordinarily,
-        // proving the hold is gone rather than suppressing.
+        // Convergence: the debounced resync observes the native floating
+        // transition (tiled baseline vs floating finish) and dispatches one
+        // ordinary floating-skew converge reconcile carrying the current
+        // observation. This is never a drag restore: no marker or restore
+        // log names drag-50 (asserted above).
         runDebounce(mocks);
-        assert.equal(mocks.planCalls.length - callsAtStart, 0, "equal-snapshot resync dispatches nothing");
+        assert.equal(mocks.planCalls.length - callsAtStart, 1, "floating-skew resync converges ordinarily, never as a restore");
+        assert.deepEqual((JSON.parse(mocks.planCalls[mocks.planCalls.length - 1]?.payload as string) as Record<string, unknown>)["command"], { op: "reconcile" });
+        // Converge the skew through the survivor-only projection; later drift
+        // then still converges ordinarily, proving the hold is gone rather
+        // than suppressing.
+        const skewCall = mocks.planCalls[mocks.planCalls.length - 1] as { payload: string; callback: (reply: unknown) => void };
+        const skewCorr = planCorrelation(JSON.parse(skewCall.payload) as Record<string, unknown>);
+        skewCall.callback(
+            JSON.stringify({
+                v: 1,
+                correlation_id: skewCorr,
+                outcome: "planned",
+                base_revision: 2,
+                detail: { kind: "reconcile" },
+                desired_geometry: [
+                    { window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+            }),
+        );
         (world.wins["win-b"] as Record<string, unknown>)["frameGeometry"] = { x: 620, y: 0, width: 600, height: 800 };
         fireAll(world.geometry);
         runDebounce(mocks);
-        assert.equal(mocks.planCalls.length - callsAtStart, 1, "later drift converges ordinarily after the single-use release");
+        assert.equal(mocks.planCalls.length - callsAtStart, 2, "later drift converges ordinarily after the single-use release");
         assert.deepEqual((JSON.parse(mocks.planCalls[mocks.planCalls.length - 1]?.payload as string) as Record<string, unknown>)["command"], { op: "reconcile" });
         stop();
     });

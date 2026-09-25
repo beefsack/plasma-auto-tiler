@@ -65,13 +65,26 @@ decisions of 2026-09-24 are recorded under
   sends, displaced-owner late replies, inaccessible Planner owner,
   unconfirmed handoff, ordinary Plan convergence.
   [proposal](changes/incremental-send-recovery-and-admission-batching.md)
-- P1 | Simplicity review | User request (2026-09-25), next after abandon-send;
-  pauses other backlog work. Surface-level review of the project against the
-  Simplicity principle, prioritising complexity that causes reliability or
-  jank issues. Goals and constraints still stand; very complex areas become
-  discussion items for the user, not automatic rewrites.
-  [principles](principles.md#simplicity)
-- P1 | Resilience audit | New principle (user, 2026-09-25): no permanent
+- P1 | Observed-membership convergence (step 1) | User decision (2026-09-25)
+  from the Simplicity review: a complete per-domain observation is
+  authoritative for membership and flags; the Engine converges retained state
+  to it (remove missing, admit new at normal placement, adopt flag changes)
+  while keeping topology, instead of refusing (`partial-observation`) or
+  reseeding. First check which KWin states make a window transiently absent
+  from the observation. Replaces the exact-match refusal class, including
+  the floating-membership skew. Shipped offline 2026-09-25, additive (about
+  1,400 production lines). Pending live acceptance: external floating/sticky
+  skew, close/reopen and focus after closure, transient unreadable frames,
+  minimize/fullscreen/maximize restoration, rapid commands, convergence logs.
+  [change](changes/archive/observation-convergence.md)
+- P2 | Observed-membership convergence (steps 2-3) | After step 1 live
+  acceptance, user decides: (2) drop KWin Plan baseline diffing and send the
+  observation; (3) replace send and R4 pending transactions with commit plus
+  convergence. Goal is net deletion: step 1's transitional code (admit/remove
+  idempotent-success and changed-id guards, per-op exact gates,
+  reseed-on-partial) should go once lifecycle commands become convergence.
+  May subsume batched admissions and parts of the resilience audit.
+- P1 | Resilience audit | After convergence step 1. New principle (user, 2026-09-25): no permanent
   give-up short of hard failure; tolerate subtle host/client deviations;
   window self-changes are normal. Audit terminal, disable and blocked states
   (e.g. `planBlocked`, send disable, directional cross-output pending) and

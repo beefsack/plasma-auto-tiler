@@ -10,6 +10,22 @@ User-approved 2026-09-24 from the
 elsewhere in this file that conflict remain accurate for shipped code until
 the corresponding item ships; each such entry names its replacement.
 
+- Observed-membership convergence (shipped offline, live acceptance pending;
+  [change note](changes/archive/observation-convergence.md)):
+  per the user's 2026-09-25 decision, each complete per-domain observation
+  controls portable membership and floating state before ordinary Engine
+  operations. One Session convergence preserves surviving topology, removes
+  absent members, normally admits newcomers and adopts floating transitions;
+  the requested operation then runs at the converged revision. No sequence,
+  world index, fingerprint extension, tombstone, retention marker, or
+  wholesale reseed is added. Per the Orchestrator's 2026-09-25 scope decisions,
+  only the existing wire `floating` and advisory `fit_excluded` are in scope;
+  sticky/all-desktops uses KWin's existing floating mapping, while fullscreen
+  and maximized members keep their tiled allocations as native overlays.
+  KWin carries current post-removal observations, quarantines incomplete
+  foreground frames, and retains its per-domain baseline diffing. The existing
+  send/R4 settlement and verification remain; this is step 1 only, under the
+  Simplicity and Resilience principles.
 - Target shape (review section 6): a portable `tiler-core` Engine with
   world/domain state behind a `LayoutPolicy` seam; `tiler-protocol` as a thin
   codec; a Linux service crate; the KWin script as observer and actuator; the
@@ -272,7 +288,9 @@ the corresponding item ships; each such entry names its replacement.
   includes ordered N-ary `cosmic_v1` admission/removal, same-output send,
   restored backing-desktop/numbered workspace routes, bounded reconciliation,
   and the selected initial first-startup fitting direction below. General
-  existing-window adoption remains unselected.
+   general historical-layout reconstruction remains unselected; complete
+   observed membership is now incrementally adopted into retained domains as
+   described under Architecture Direction.
   Before launch, this and every other user-facing setting must apply live; that
   is a mandatory launch blocker, and the gap-only reload does not satisfy it.
 - Approved 2026-09-16: when the first startup domain has no usable retained
@@ -402,6 +420,12 @@ the corresponding item ships; each such entry names its replacement.
   leaves it a normal float on the then-current desktop with preserved geometry
   and focus, and a later ordinary float toggle tiles it. Known tiled origins
   keep fresh admission and known float origins stay float.
+  User decision 2026-09-25, option A: `Meta+G` on a sticky window uses the
+  existing sticky-off path to clear all-desktops, restores the project's
+  keep-above state, and returns to tiling regardless of whether the sticky
+  window was previously tiled, an ordinary float, or adopted with unknown
+  origin. `Meta+Shift+G` sticky-off still honors the previous floating origin
+  as described above.
 - Intentional normal and sticky floating request KWin's public `keepAbove=true`.
   KWin owns the normal keep-above/keep-below exclusive transition. The adapter
   records the prior pair and restores a project-cleared `keepBelow` (or prior
@@ -472,9 +496,14 @@ the corresponding item ships; each such entry names its replacement.
   managed layer, so the engine deliberately carries no horizontal/vertical
   maximize concept.
 - A Plan adapter retains one membership baseline per `(output, workspace)` and
-  advances that domain's baseline only after a matching `planned` reply is
-  applied. A rejected, timed-out, stale, or failed membership command never
-  changes the baseline used to derive later admissions or removals.
+   advances that domain's baseline only after a matching `planned` reply is
+   applied. A rejected, timed-out, stale, or failed membership command never
+   changes the baseline used to derive later admissions or removals. For a
+   removal it carries the current complete post-removal observation; the
+   Engine converges first and replies with survivor geometry. A floating
+   transition of an already observed member also triggers a current-observation
+   reconcile rather than silently absorbing the change. Incomplete foreground
+   frames are quarantined, never interpreted as departures.
 - USER-APPROVED recoverability, 2026-09-21: "log and continue rather than hard
   fail." A failed native geometry operation or client geometry discrepancy is
   an operation failure, not a permanently disabled window or domain. Later

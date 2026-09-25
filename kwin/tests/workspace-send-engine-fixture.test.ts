@@ -1415,6 +1415,262 @@ describe("workspace-send abandon recovery", () => {
     });
 });
 
+describe("observation-convergence (complete observation, test-first)", () => {
+    // Authorized 2026-09-25 (docs/changes/archive/observation-convergence.md):
+    // converge retained membership/floating to the complete observation
+    // before the ordinary operation; missing removed via current
+    // post-removal observation, new admitted via normal placement, floating
+    // adopted, unreadable quarantines. Real observer + real Engine only; the
+    // floating/post-removal rows drive ordinary Plan from native observation
+    // (no hand-built wire) and fail pre-implementation. Foreground quarantine
+    // lives in the ordinary Plan fixture (plan-adapter.test.ts), whose
+    // signal-rich fake world can start the real production entry; this
+    // fixture's send-path fakes cannot. The minimized row documents the
+    // unchanged path (minimized stays observed, never quarantined).
+    // Overlay (fullscreen/maximized) protection is already proven by
+    // hidden-evidence-retirement (fullscreen/maximized/sticky/floating
+    // retention rows) and background-review-fixes (exception-only domains
+    // never plan); exact-match revision semantics are pinned by the Rust
+    // Engine exact-match row.
+
+    async function backgroundWs1(h: Harness): Promise<void> {
+        h.setActive(h.win.wc);
+        h.setCurrent(h.desk.d3);
+    }
+
+    function firePlan(h: Harness): void {
+        for (const timer of h.timers.filter((item) => item.delayMs === PLAN_DEBOUNCE_MS && !item.cancelled)) {
+            timer.callback();
+        }
+    }
+
+    function wsOf(payload: string): string | null {
+        const body = tryParse(payload);
+        const domain = body?.["domain"] as Record<string, unknown> | undefined;
+        const ws = domain?.["workspace"];
+        return typeof ws === "string" ? ws : null;
+    }
+
+    it("sticky-floating skew converges then ordinary admit proceeds", async () => {
+        const h = await makeHarness();
+        const plan = h.makePlan();
+        try {
+            await backgroundWs1(h);
+            const extra = makeWindow("n-win-float", h.win.wa.output, h.desk.d1);
+            h.addWindow(extra);
+            plan.requestResync();
+            firePlan(h);
+            await waitFor(() => h.queued() > 0, "admit new member");
+            await h.flush();
+            assert.equal(parseBody(h.calls[h.calls.length - 1], "reply")["outcome"], "planned", "baseline admit planned");
+            while (h.queued() > 0) {
+                await h.flush();
+            }
+            // Sticky maps to floating via the existing KWin mapping; the
+            // complete observation now carries the skew.
+            (extra as { onAllDesktops: boolean }).onAllDesktops = true;
+            plan.requestResync();
+            firePlan(h);
+            await waitFor(() => h.queued() > 0, "converged ordinary dispatch after floating skew");
+            const payload = h.peekQueued()[0] ?? "";
+            const skewBody = tryParse(payload);
+            assert.equal(
+                (skewBody?.["command"] as Record<string, unknown>)?.["op"],
+                "reconcile",
+                "floating skew converges through ordinary reconcile on the home domain, never an admit",
+            );
+            assert.equal(wsOf(payload), "ws-1", "home domain converges the skew, no foreign admit");
+            const skewWindows = (skewBody?.["windows"] as Array<Record<string, unknown>> | undefined) ?? [];
+            const skewed = skewWindows.find((entry) => entry["window"] === "n-win-float");
+            assert.ok(skewed !== undefined, "current observation carries the skewed member");
+            assert.equal(skewed?.["floating"], true, "skewed member rides as floating evidence");
+            assert.ok(JSON.stringify(payload).includes("n-win-float"), "current observation carries the skewed member");
+            await h.flush();
+            const skewReply = parseBody(h.calls[h.calls.length - 1], "reply");
+            assert.equal(skewReply["outcome"], "planned", "floating skew converges then ordinary command proceeds");
+            const skewGeometry = JSON.stringify(skewReply["desired_geometry"] ?? skewReply);
+            assert.ok(
+                skewGeometry.includes("n-win-a") && skewGeometry.includes("n-win-b"),
+                "converged geometry covers the survivors",
+            );
+            assert.ok(!skewGeometry.includes("n-win-float"), "converged float absent from tiled geometry");
+        } finally {
+            plan.disable();
+            h.stop();
+            await h.bridge.close();
+        }
+    });
+
+    it("all-float domain never seeds a float; tiled newcomer admits with the float retained as exception", async () => {
+        // First all-float, then normal newcomer (real observer + real Engine).
+        // An all-float domain dispatches nothing and sticky multi-homing
+        // admits nowhere foreign. When a tiled member later arrives, the seed
+        // admit must name it (never the float) with the complete observation
+        // authoritative. The Engine converges the mixed seed through the same
+        // Session primitive: tiled-only geometry, valid focus, and the float
+        // retained as an exception. Opaque test ids only, no native identifiers.
+        const h = await makeHarness();
+        const plan = h.makePlan();
+        try {
+            await backgroundWs1(h);
+            const extra = makeWindow("n-win-float", h.win.wa.output, h.desk.d1);
+            h.addWindow(extra);
+            plan.requestResync();
+            firePlan(h);
+            await waitFor(() => h.queued() > 0, "baseline admit");
+            await h.flush();
+            assert.equal(parseBody(h.calls[h.calls.length - 1], "reply")["outcome"], "planned", "baseline admit planned");
+            while (h.queued() > 0) {
+                await h.flush();
+            }
+            (extra as { onAllDesktops: boolean }).onAllDesktops = true;
+            plan.requestResync();
+            firePlan(h);
+            await waitFor(() => h.queued() > 0, "skew converge");
+            while (h.queued() > 0) {
+                await h.flush();
+            }
+            assert.equal(parseBody(h.calls[h.calls.length - 1], "reply")["outcome"], "planned", "skew converges");
+            // All-float ws-4 dispatches nothing; sticky multi-homing admits
+            // the float into no foreign domain.
+            assert.ok(
+                !h.calls.some((call) => wsOf(call.payload) === "ws-4"),
+                "all-float domain seeds nothing",
+            );
+            assert.ok(
+                !h.calls.some((call) => {
+                    const body = tryParse(call.payload);
+                    const command = body?.["command"] as Record<string, unknown> | undefined;
+                    return command?.["op"] === "admit" && command?.["window"] === "n-win-float";
+                }),
+                "sticky multi-home never admits the float anywhere",
+            );
+            // Tiled newcomer on ws-4, rect sorting after the float so the
+            // structural anchor stays floating: the seed must still name the
+            // tiled member with the complete observation authoritative.
+            const fresh = makeWindow("n-win-zed", h.win.wa.output, h.desk.d4);
+            fresh.frameGeometry = { x: 10, y: 50, width: 500, height: 300 };
+            h.addWindow(fresh);
+            plan.requestResync();
+            firePlan(h);
+            await waitFor(
+                () => h.peekQueued().some((payload) => wsOf(payload) === "ws-4"),
+                "ws-4 seed dispatch",
+            );
+            const seedPayload = h.peekQueued().find((item) => wsOf(item) === "ws-4") ?? "";
+            const seedBody = tryParse(seedPayload);
+            const seedCommand = seedBody?.["command"] as Record<string, unknown> | undefined;
+            assert.equal(seedCommand?.["op"], "admit", "new domain seeds through admit");
+            assert.equal(seedCommand?.["window"], "n-win-zed", "seed names the tiled newcomer, never the float");
+            const seedWindows = (seedBody?.["windows"] as Array<Record<string, unknown>> | undefined) ?? [];
+            const seedFloat = seedWindows.find((entry) => entry["window"] === "n-win-float");
+            assert.ok(seedFloat !== undefined, "complete observation carries the float");
+            assert.equal(seedFloat?.["floating"], true, "float rides as floating evidence, not a tile");
+            assert.ok(
+                seedWindows.some((entry) => entry["window"] === "n-win-zed" && entry["floating"] !== true),
+                "newcomer rides tiled",
+            );
+            await h.flush();
+            const seedReply = parseBody(h.calls[h.calls.length - 1], "reply");
+            assert.equal(seedReply["outcome"], "planned", "mixed seed converges through the shared primitive");
+            const seedGeometry = JSON.stringify(seedReply["desired_geometry"] ?? seedReply);
+            assert.ok(seedGeometry.includes("n-win-zed"), "converged geometry covers the admitted tile");
+            assert.ok(!seedGeometry.includes("n-win-float"), "float absent from tiled geometry, never tiled");
+            const seedFocus = seedReply["desired_focus"] as Record<string, unknown> | undefined;
+            assert.ok(seedFocus !== undefined && seedFocus !== null, "converged seed carries valid focus");
+            // The float stays tracked as an exception: later drift on the
+            // same domain reconverges against the complete observation and
+            // still projects only the tile.
+            fresh.frameGeometry = { x: 11, y: 50, width: 500, height: 300 };
+            plan.requestResync();
+            firePlan(h);
+            await waitFor(
+                () => h.peekQueued().some((payload) => wsOf(payload) === "ws-4"),
+                "ws-4 drift dispatch",
+            );
+            const driftPayload = h.peekQueued().find((item) => wsOf(item) === "ws-4") ?? "";
+            assert.equal(
+                (tryParse(driftPayload)?.["command"] as Record<string, unknown> | undefined)?.["op"],
+                "reconcile",
+                "follow-up runs the ordinary reconcile",
+            );
+            await h.flush();
+            const driftReply = parseBody(h.calls[h.calls.length - 1], "reply");
+            assert.equal(driftReply["outcome"], "planned", "exception retention reconverges");
+            const driftGeometry = JSON.stringify(driftReply["desired_geometry"] ?? driftReply);
+            assert.ok(driftGeometry.includes("n-win-zed"), "retained geometry still covers the tile");
+            assert.ok(!driftGeometry.includes("n-win-float"), "retained float still absent from tiled geometry");
+        } finally {
+            plan.disable();
+            h.stop();
+            await h.bridge.close();
+        }
+    });
+
+    it("current post-removal observation omits departed member and geometry covers survivors", async () => {
+        const h = await makeHarness();
+        const plan = h.makePlan();
+        try {
+            await backgroundWs1(h);
+            const extra = makeWindow("n-win-gone", h.win.wa.output, h.desk.d1);
+            h.addWindow(extra);
+            plan.requestResync();
+            firePlan(h);
+            await waitFor(() => h.queued() > 0, "baseline admit");
+            await h.flush();
+            assert.equal(parseBody(h.calls[h.calls.length - 1], "reply")["outcome"], "planned", "baseline admit planned");
+            while (h.queued() > 0) {
+                await h.flush();
+            }
+            // Native close: departed member absent from the current observation.
+            (extra as { desktops: object[] }).desktops = [];
+            plan.requestResync();
+            firePlan(h);
+            await waitFor(
+                () => h.peekQueued().some((payload) => wsOf(payload) === "ws-1"),
+                "current post-removal dispatch",
+            );
+            const payload = h.peekQueued().find((item) => wsOf(item) === "ws-1") ?? "";
+            const body = tryParse(payload);
+            const observedWindows = JSON.stringify(body?.["windows"] ?? body);
+            assert.ok(!observedWindows.includes("n-win-gone"), "current observation windows omit the departed member");
+            await h.flush();
+            const reply = parseBody(h.calls[h.calls.length - 1], "reply");
+            assert.equal(reply["outcome"], "planned", "removal converges then projects survivors");
+            const geometry = JSON.stringify(reply["desired_geometry"] ?? reply);
+            assert.ok(geometry.includes("n-win-a") && geometry.includes("n-win-b"), "geometry covers converged survivors");
+            assert.ok(!geometry.includes("n-win-gone"), "removed member absent from converged geometry");
+        } finally {
+            plan.disable();
+            h.stop();
+            await h.bridge.close();
+        }
+    });
+
+    it("minimized member remains observed", async () => {
+        const h = await makeHarness();
+        const plan = h.makePlan();
+        try {
+            await backgroundWs1(h);
+            const extra = makeWindow("n-win-min", h.win.wa.output, h.desk.d1);
+            h.addWindow(extra);
+            (extra as { minimized: boolean }).minimized = true;
+            plan.requestResync();
+            firePlan(h);
+            await waitFor(() => h.queued() > 0, "minimized dispatch");
+            const payload = h.peekQueued()[0] ?? "";
+            assert.ok(JSON.stringify(payload).includes("n-win-min"), "minimized member remains observed");
+            await h.flush();
+            assert.equal(parseBody(h.calls[h.calls.length - 1], "reply")["outcome"], "planned", "minimized observation proceeds");
+        } finally {
+            plan.disable();
+            h.stop();
+            await h.bridge.close();
+        }
+    });
+
+});
+
 describe("workspace-send orphan retirement and bounded fallback (option B)", () => {
     // 2026-09-25 option B: a single abandon op may
     // retire ANY existing workspace-send pending (including an orphan from an

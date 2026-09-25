@@ -1337,6 +1337,15 @@ export function observeHiddenDomains(
                                             if (other.ref !== entry.ref) {
                                                 return false;
                                             }
+                                            // Flag-exact: a floating/sticky
+                                            // flip between observe and
+                                            // revalidate must fail closed.
+                                            if (other.floating !== entry.floating) {
+                                                return false;
+                                            }
+                                            if (other.sticky !== entry.sticky) {
+                                                return false;
+                                            }
                                             if (
                                                 other.rect.x !== entry.rect.x ||
                                                 other.rect.y !== entry.rect.y ||
@@ -1571,8 +1580,14 @@ function observeNative(
             seen.add(id);
             const frame = readFrameRect(ref);
             if (typeof frame === "string") {
+                // Complete-observation convergence: an unreadable frame for
+                // any otherwise eligible member quarantines the whole
+                // foreground domain until a complete observation is
+                // available, so a temporary read can never trigger a
+                // transient remove/re-admit. Partial is unknown, never
+                // empty and never a survivor-only dispatch.
                 reportEligibility?.(ref, frame);
-                continue;
+                return null;
             }
             const rect = frame;
             // Fullscreen is a compositor-owned overlay state orthogonal to the
@@ -1672,6 +1687,14 @@ function observeNative(
                                     return false;
                                 }
                                 if (candidate.maximized !== entry.maximized) {
+                                    return false;
+                                }
+                                // Flag-exact: a floating/sticky flip between
+                                // observe and revalidate must fail closed.
+                                if (candidate.floating !== entry.floating) {
+                                    return false;
+                                }
+                                if (candidate.sticky !== entry.sticky) {
                                     return false;
                                 }
                                 if (
@@ -2060,6 +2083,14 @@ export function observeDirectionalDomain(
                             if (candidate.id === entry.id) {
                                 matched = true;
                                 if (candidate.ref !== entry.ref) {
+                                    return false;
+                                }
+                                // Flag-exact: a floating/sticky flip between
+                                // observe and revalidate must fail closed.
+                                if (candidate.floating !== entry.floating) {
+                                    return false;
+                                }
+                                if (candidate.sticky !== entry.sticky) {
                                     return false;
                                 }
                                 if (

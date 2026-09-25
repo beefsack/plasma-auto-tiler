@@ -1696,6 +1696,42 @@ impl Reconciler {
         }
         self.diverge(DivergenceKind::PostconditionMismatch)
     }
+
+    /// Record a fail-closed binding divergence for direct observation
+    /// convergence (owner/generation/revision mismatch). Mirrors the
+    /// propose-path divergence without staging a pending plan.
+    pub(crate) fn diverge_convergence(&mut self, reason: DivergenceKind) -> DivergenceKind {
+        if let Some(existing) = self.diverged {
+            return existing;
+        }
+        self.diverge(reason)
+    }
+
+    /// Advance verified revision/fingerprint for one atomic observation
+    /// convergence. Requires no pending plan and no recorded divergence;
+    /// advances by exactly one revision. The caller guards revision
+    /// exhaustion before calling; every failure here leaves the reconciler
+    /// untouched so a transient observation never bricks the session.
+    pub(crate) fn commit_observation_convergence(
+        &mut self,
+        fingerprint: u64,
+    ) -> Result<Commit, DivergenceKind> {
+        if let Some(reason) = self.diverged {
+            return Err(reason);
+        }
+        if self.pending.is_some() {
+            return Err(DivergenceKind::PostconditionMismatch);
+        }
+        if self.verified_revision >= crate::contract::MAX_REVISION {
+            return Err(DivergenceKind::RevisionExhausted);
+        }
+        self.verified_revision += 1;
+        self.verified_fingerprint = fingerprint;
+        Ok(Commit {
+            revision: self.verified_revision,
+            fingerprint: self.verified_fingerprint,
+        })
+    }
 }
 
 fn resize_step_for(direction: crate::directional::Direction) -> i32 {

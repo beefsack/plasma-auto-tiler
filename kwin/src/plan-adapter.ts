@@ -373,39 +373,6 @@ function snapshotsEqual(a: PlanSnapshot, b: PlanSnapshot): boolean {
     return true;
 }
 
-function matchesRemovalSnapshot(fresh: PlanSnapshot, before: PlanSnapshot, removed: string): boolean {
-    if (
-        fresh.domainOutput !== before.domainOutput ||
-        fresh.domainWorkspace !== before.domainWorkspace ||
-        fresh.domainGap !== before.domainGap ||
-        fresh.domainOuterGap !== before.domainOuterGap ||
-        fresh.domainBounds.x !== before.domainBounds.x ||
-        fresh.domainBounds.y !== before.domainBounds.y ||
-        fresh.domainBounds.w !== before.domainBounds.w ||
-        fresh.domainBounds.h !== before.domainBounds.h ||
-        fresh.windows.length + 1 !== before.windows.length
-    ) {
-        return false;
-    }
-    const beforeById = new Map<string, PlanSnapshotWindow>();
-    for (const entry of before.windows) {
-        if (entry.id !== removed) {
-            beforeById.set(entry.id, entry);
-        }
-    }
-    if (beforeById.size !== fresh.windows.length) {
-        return false;
-    }
-    for (const entry of fresh.windows) {
-        if (!beforeById.has(entry.id)) {
-            return false;
-        }
-    }
-    return fresh.windows.length === 0
-        ? fresh.focusedId === ""
-        : fresh.windows.some((entry) => entry.id === fresh.focusedId);
-}
-
 function sameScope(a: PlanSnapshot, b: PlanSnapshot): boolean {
     if (
         a.domainOutput !== b.domainOutput ||
@@ -532,6 +499,66 @@ function sameRects(a: PlanSnapshot, b: PlanSnapshot): boolean {
         }
     }
     return true;
+}
+
+// Floating/sticky skew detection for complete-observation convergence: true
+// when a retained member is still observed but its floating exception state
+// changed (tiled to floating/sticky or back). Compares the union
+// (floating or sticky) so an adopted sticky resting as a plain float is not
+// a skew. Fullscreen/maximized are compositor overlays with silent KWin-side
+// handling and never trigger here; membership itself is compared by the
+// baseline diff, never here.
+function floatingSkewed(previous: PlanSnapshot, fresh: PlanSnapshot): boolean {
+    const freshById = new Map<string, PlanSnapshotWindow>();
+    for (const entry of fresh.windows) {
+        if (!freshById.has(entry.id)) {
+            freshById.set(entry.id, entry);
+        }
+    }
+    for (const entry of previous.windows) {
+        const current = freshById.get(entry.id);
+        if (current === undefined) {
+            continue;
+        }
+        const wasFloating = entry.floating === true || entry.sticky === true;
+        const isFloating = current.floating === true || current.sticky === true;
+        if (wasFloating !== isFloating) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Reply-boundary flag-exactness: like floatingSkewed, but tolerates a
+// toggle-float flight's own target reaching its intended end state. The
+// toggle choreography observes the target flipped before the reply lands
+// (pinned by the sticky/float toggle rows) and must still apply; any other
+// member flipping, or the target flipping away from the intended end state,
+// fails closed as stale. Baseline-diff skew detection is untouched.
+function unexpectedFloatingSkewed(flight: PendingFlight, fresh: PlanSnapshot): boolean {
+    const target = flight.floatTarget;
+    const freshById = new Map<string, PlanSnapshotWindow>();
+    for (const entry of fresh.windows) {
+        if (!freshById.has(entry.id)) {
+            freshById.set(entry.id, entry);
+        }
+    }
+    for (const entry of flight.snapshot.windows) {
+        const current = freshById.get(entry.id);
+        if (current === undefined) {
+            continue;
+        }
+        const wasFloating = entry.floating === true || entry.sticky === true;
+        const isFloating = current.floating === true || current.sticky === true;
+        if (wasFloating === isFloating) {
+            continue;
+        }
+        if (target !== null && entry.id === target.window && target.floating === isFloating) {
+            continue;
+        }
+        return true;
+    }
+    return false;
 }
 
 // Pointer-only tolerance: identical to snapshotsEqual except the drag
@@ -2421,6 +2448,33 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:float-refused-observe`);
             return;
         }
+        const resourceClass = isOpaqueId(target.resourceClass) ? target.resourceClass : "unknown";
+        if (target.sticky === true) {
+            // Option A (2026-09-25): Meta+G on a sticky window always returns
+            // to tile. Reuse the existing sticky-off path with a tiled origin
+            // so the echo fence, keep-above restore, and tiling re-invoke
+            // apply uniformly to prior-tiled, prior-float, and adopted
+            // origins. Meta+Shift+G (requestSticky) keeps honoring the tracked
+            // origin; no native all-desktops logic is duplicated here.
+            // Fullscreen/maximized overlays refuse exactly like requestSticky,
+            // before any adoption or native setter.
+            if (target.fullscreen) {
+                this.logToken(`${LOG_PREFIX}:sticky-refused-fullscreen window=${target.id} resource_class=${resourceClass}`);
+                return;
+            }
+            if (target.maximized) {
+                this.logToken(`${LOG_PREFIX}:sticky-refused-maximize window=${target.id} resource_class=${resourceClass}`);
+                return;
+            }
+            if (this.stickyPreviousFloating.get(target.id) === undefined) {
+                if (!this.adoptStickyUnknown(target, resourceClass)) {
+                    this.logToken(`${LOG_PREFIX}:sticky-refused-untracked window=${target.id} resource_class=${resourceClass}`);
+                    return;
+                }
+            }
+            this.issueSticky(target, false, false);
+            return;
+        }
         const floating = target.floating === true;
         if (!floating && observed.activeExcluded) {
             this.logToken(`${LOG_PREFIX}:float-refused-not-tiled`);
@@ -2772,8 +2826,11 @@ export class PlanAdapter {
                 this.stickyPreviousFloating.delete(target.id);
                 this.adoptedSticky.delete(target.id);
             }
+        } else {
+            // A failed write owns no focus change: retain the toggled window
+            // only when the native assignment actually landed.
+            this.retainStickyFocus(target);
         }
-        this.retainStickyFocus(target);
         if (this.stickyEcho !== null) {
             this.stickyEcho = null;
             this.logToken(`${LOG_PREFIX}:sticky-echo-cleared-no-signal`);
@@ -3768,18 +3825,47 @@ export class PlanAdapter {
         // Membership baselines advance only after a planned reply is applied.
         const previous = this.lastGoodFor(freshSnapshot);
         if (previous === null) {
+            // Never seed a float as a tile: a fresh observation with no
+            // baseline whose members are all floating/sticky exceptions
+            // dispatches nothing and advances no baseline, so a later tiling
+            // of the same window still admits.
+            let hasTiled = false;
+            for (const entry of freshSnapshot.windows) {
+                if (entry.floating !== true && entry.sticky !== true) {
+                    hasTiled = true;
+                    break;
+                }
+            }
+            if (!hasTiled && freshSnapshot.windows.length > 0) {
+                return;
+            }
             this.reconcileAttempts = 0;
             this.parked = false;
             // Membership takes the slot; a deferred drag pointer it replaces
             // joins its domain marker (the new intent satisfies it on apply).
             this.absorbDeferredDragIntent(this.deferredAuto, false);
+            // Never seed a float as a tile: when the focused window is a
+            // floating/sticky exception, name the first tiled member instead.
+            // The complete observation still rides along for convergence.
+            // With an all-tiled observation the focus names itself, so the
+            // Engine fit path and focus semantics are unchanged there.
+            let seedWindow = freshSnapshot.focusedId;
+            const focused = freshSnapshot.windows.find((entry) => entry.id === seedWindow);
+            if (focused === undefined || focused.floating === true || focused.sticky === true) {
+                for (const entry of freshSnapshot.windows) {
+                    if (entry.floating !== true && entry.sticky !== true) {
+                        seedWindow = entry.id;
+                        break;
+                    }
+                }
+            }
             this.deferredAuto = {
                 op: "admit",
                 snapshot: freshSnapshot,
                 removed: null,
                 body: {
                     op: "admit",
-                    window: freshSnapshot.focusedId,
+                    window: seedWindow,
                     output: freshSnapshot.domainOutput,
                     workspace: freshSnapshot.domainWorkspace,
                 },
@@ -3835,8 +3921,18 @@ export class PlanAdapter {
             after.add(entry.id);
         }
         let intent: AutoIntent | null = null;
+        // Never admit solely for floating/sticky exceptions: a newcomer that
+        // is already floating in the current observation converges as an
+        // exception through the Engine instead of entering tiled placement.
+        // Mixed arrivals admit the first tiled newcomer with the complete
+        // observation (carrying the exceptions for convergence).
+        let exceptionalNewcomers = false;
         for (const entry of freshSnapshot.windows) {
             if (!before.has(entry.id)) {
+                if (entry.floating === true || entry.sticky === true) {
+                    exceptionalNewcomers = true;
+                    continue;
+                }
                 intent = {
                     op: "admit",
                     snapshot: freshSnapshot,
@@ -3852,10 +3948,13 @@ export class PlanAdapter {
                 if (!after.has(entry.id)) {
                     intent = {
                         op: "remove",
-                        // Retained pre-removal snapshot, but with hints
-                        // refreshed from the fresh observation so survivors
-                        // still send fresh AR12 evidence.
-                        snapshot: this.snapshotWithFreshHints(previous, fresh),
+                        // Complete-observation convergence: the remove
+                        // dispatch carries the current complete post-removal
+                        // snapshot (survivors only, with fresh AR12 hints) so
+                        // the Engine converges then replies idempotently with
+                        // survivor geometry. The baseline diff itself is
+                        // unchanged.
+                        snapshot: this.snapshotWithFreshHints(freshSnapshot, fresh),
                         removed: entry.id,
                         body: { op: "remove", window: entry.id },
                     };
@@ -3892,6 +3991,36 @@ export class PlanAdapter {
             if (next !== null) {
                 this.dispatch(next);
             }
+            return;
+        }
+        // Retained-member floating/sticky transition with unchanged membership:
+        // converge through an ordinary reconcile carrying the current complete
+        // observation so the Engine adopts (or releases) the floating
+        // exception and projects the survivors. snapshotsEqual and sameRects
+        // below deliberately ignore these flags, so without this branch the
+        // skew would be silently absorbed and never converge.
+        if (floatingSkewed(previous, freshSnapshot)) {
+            this.absorbDeferredDragIntent(this.deferredAuto, false);
+            this.deferredAuto = {
+                op: "reconcile",
+                snapshot: freshSnapshot,
+                removed: null,
+                body: { op: "reconcile" },
+            };
+            if (this.inFlight) {
+                return;
+            }
+            const pendingReconcile = this.deferredAuto;
+            this.deferredAuto = null;
+            if (pendingReconcile !== null) {
+                this.dispatch(pendingReconcile);
+            }
+            return;
+        }
+        if (exceptionalNewcomers) {
+            // New members are all floating/sticky exceptions: never admit
+            // solely for them and leave the baseline untouched (no silent
+            // absorb, so a later tiling of the same window still admits).
             return;
         }
         if (snapshotsEqual(freshSnapshot, previous) && !knownOutOfBounds) {
@@ -4237,13 +4366,30 @@ export class PlanAdapter {
         const freshSnapshot = this.carriedSnapshot(prepared.observed);
         const previous = this.lastGoodFor(freshSnapshot);
         if (previous === null) {
+            // Never seed a float as a tile: when the structural anchor is a
+            // floating/sticky exception (e.g. an all-float domain that later
+            // gained a tiled member), name the first tiled member instead.
+            // The complete observation still rides along for convergence.
+            // An all-float domain never reaches here (exception-only guard
+            // above), so a tiled member always exists; keeping the anchor
+            // below only satisfies the types.
+            let seedWindow = freshSnapshot.focusedId;
+            const anchor = freshSnapshot.windows.find((entry) => entry.id === seedWindow);
+            if (anchor === undefined || anchor.floating === true || anchor.sticky === true) {
+                for (const entry of freshSnapshot.windows) {
+                    if (entry.floating !== true && entry.sticky !== true) {
+                        seedWindow = entry.id;
+                        break;
+                    }
+                }
+            }
             return {
                 op: "admit",
                 snapshot: freshSnapshot,
                 removed: null,
                 body: {
                     op: "admit",
-                    window: freshSnapshot.focusedId,
+                    window: seedWindow,
                     output: freshSnapshot.domainOutput,
                     workspace: freshSnapshot.domainWorkspace,
                 },
@@ -4271,8 +4417,18 @@ export class PlanAdapter {
                 }
             }
         }
+        let exceptionalNewcomers = false;
         for (const entry of freshSnapshot.windows) {
             if (!before.has(entry.id)) {
+                // Never admit solely for floating/sticky exceptions (e.g. a
+                // sticky window multi-homed into a foreign domain): it
+                // converges as an exception instead of entering tiled
+                // placement there. Mixed arrivals admit the first tiled
+                // newcomer with the complete observation.
+                if (entry.floating === true || entry.sticky === true) {
+                    exceptionalNewcomers = true;
+                    continue;
+                }
                 return {
                     op: "admit",
                     snapshot: freshSnapshot,
@@ -4304,10 +4460,12 @@ export class PlanAdapter {
             const single = missing[0] as string;
             return {
                 op: "remove",
-                // Retained pre-removal snapshot, but with hints refreshed
-                // from the fresh observation so survivors still send fresh
-                // AR12 evidence.
-                snapshot: this.snapshotWithFreshHints(previous, prepared.observed),
+                // Complete-observation convergence: the hidden remove
+                // dispatch carries the current complete post-removal
+                // snapshot (survivors only, with fresh hints) so the Engine
+                // converges then replies idempotently with survivor
+                // geometry. The baseline diff itself is unchanged.
+                snapshot: this.snapshotWithFreshHints(freshSnapshot, prepared.observed),
                 removed: single,
                 body: { op: "remove", window: single },
                 background: true,
@@ -4320,6 +4478,25 @@ export class PlanAdapter {
                 before.has(entry.id) &&
                 !rectContained(entry.rect, freshSnapshot.domainBounds),
         );
+        // Retained-member floating/sticky transition with unchanged membership:
+        // converge through an ordinary reconcile carrying the current complete
+        // observation so the Engine adopts (or releases) the floating
+        // exception and projects the survivors.
+        if (floatingSkewed(previous, freshSnapshot)) {
+            return {
+                op: "reconcile",
+                snapshot: freshSnapshot,
+                removed: null,
+                body: { op: "reconcile" },
+                background: true,
+            };
+        }
+        if (exceptionalNewcomers) {
+            // New members are all floating/sticky exceptions: never admit
+            // solely for them and leave the baseline untouched, so a later
+            // tiling of the same window still admits.
+            return null;
+        }
         if (snapshotsEqual(freshSnapshot, previous) && !knownOutOfBounds) {
             this.clearBackgroundReconcile(freshSnapshot);
             return null;
@@ -5686,7 +5863,14 @@ export class PlanAdapter {
         }
         if (flightState.workAreaReprojection) {
             const freshSnapshot = this.carriedSnapshot(fresh);
-            if (!sameReprojectionScope(freshSnapshot, flightState.snapshot)) {
+            // Reply-boundary revalidation is flag-exact: a floating/sticky
+            // flip mid-flight must fail closed even when the blind structural
+            // comparators still match. Baseline-diff skew detection runs
+            // pre-dispatch and is unaffected.
+            if (
+                !sameReprojectionScope(freshSnapshot, flightState.snapshot) ||
+                unexpectedFloatingSkewed(flightState, freshSnapshot)
+            ) {
                 this.lifecycleDiag(flightState, "observe", "observe", "mismatched", "stale-scope", this.ordinaryRevision(planned, flightState));
                 this.ordinaryTerminal(flightState, planned, "uncertain", "observe");
                 this.failFlight(flightState, "stale-scope");
@@ -5705,7 +5889,10 @@ export class PlanAdapter {
                 return;
             }
             const freshSnapshot = this.carriedSnapshot(fresh);
-            if (!rectsEqualExceptSource(freshSnapshot, flightState.snapshot, source)) {
+            if (
+                !rectsEqualExceptSource(freshSnapshot, flightState.snapshot, source) ||
+                unexpectedFloatingSkewed(flightState, freshSnapshot)
+            ) {
                 this.lifecycleDiag(flightState, "observe", "observe", "mismatched", "stale-scope", this.ordinaryRevision(planned, flightState));
                 this.ordinaryTerminal(flightState, planned, "uncertain", "observe");
                 this.failFlight(flightState, "stale-scope");
@@ -5717,7 +5904,12 @@ export class PlanAdapter {
         }
         if (flightState.op === "toggle-float") {
             const freshSnapshot = this.carriedSnapshot(fresh);
-            if (!snapshotsEqual(freshSnapshot, flightState.snapshot)) {
+            // The native flip lands at write time, so any pre-apply skew is
+            // external and must fail closed.
+            if (
+                !snapshotsEqual(freshSnapshot, flightState.snapshot) ||
+                unexpectedFloatingSkewed(flightState, freshSnapshot)
+            ) {
                 this.lifecycleDiag(flightState, "observe", "observe", "mismatched", "stale-scope", this.ordinaryRevision(planned, flightState));
                 this.ordinaryTerminal(flightState, planned, "uncertain", "observe");
                 this.failFlight(flightState, "stale-scope");
@@ -5730,8 +5922,16 @@ export class PlanAdapter {
         if (flightState.removed === null) {
             const freshSnapshot = this.carriedSnapshot(fresh);
             if (
-                !snapshotsEqual(freshSnapshot, flightState.snapshot) &&
-                !(flightState.op === "admit" && snapshotsEqualAllowingAdmissionMaximize(freshSnapshot, flightState.snapshot, flightState.admissionMaximizeClears))
+                (!snapshotsEqual(freshSnapshot, flightState.snapshot) &&
+                    !(
+                        flightState.op === "admit" &&
+                        snapshotsEqualAllowingAdmissionMaximize(
+                            freshSnapshot,
+                            flightState.snapshot,
+                            flightState.admissionMaximizeClears,
+                        )
+                    )) ||
+                unexpectedFloatingSkewed(flightState, freshSnapshot)
             ) {
                 this.lifecycleDiag(flightState, "observe", "observe", "mismatched", "stale-scope", this.ordinaryRevision(planned, flightState));
                 this.ordinaryTerminal(flightState, planned, "uncertain", "observe");
@@ -5743,7 +5943,15 @@ export class PlanAdapter {
             return;
         }
         const freshSnapshot = this.carriedSnapshot(fresh);
-        if (!matchesRemovalSnapshot(freshSnapshot, flightState.snapshot, flightState.removed)) {
+        // Complete-observation convergence: the remove flight already carries
+        // the current complete post-removal snapshot, so the reply boundary
+        // revalidates exact post-membership equality. The reply geometry must
+        // cover exactly the survivors via geometryCovers. A survivor
+        // floating/sticky flip mid-flight fails closed the same way.
+        if (
+            !snapshotsEqual(freshSnapshot, flightState.snapshot) ||
+            unexpectedFloatingSkewed(flightState, freshSnapshot)
+        ) {
             this.lifecycleDiag(flightState, "observe", "observe", "mismatched", "stale-scope", this.ordinaryRevision(planned, flightState));
             this.ordinaryTerminal(flightState, planned, "uncertain", "observe");
             this.failFlight(flightState, "stale-scope");

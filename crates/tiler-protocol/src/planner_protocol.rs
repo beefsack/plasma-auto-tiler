@@ -537,6 +537,56 @@ pub fn summarize_plan_egress(request_json: &str, reply_json: &str) -> String {
     )
 }
 
+/// Normal-level convergence summary for complete-observation convergence
+/// (`docs/changes/archive/observation-convergence.md`): bounded correlated counts
+/// emitted at the Planner protocol boundary after [`Engine::handle`]
+/// converges retained membership/floating state to the complete current
+/// observation. Counts only (removed/admitted/flag-adopted) plus the reason
+/// op and the validated correlation; never native identifiers, geometry,
+/// domains, owner, or raw payloads. Pure and total like the other summaries:
+/// unparseable sides degrade to bounded placeholders. The Engine records a
+/// report only for nonzero convergence, so exact-match operations emit
+/// nothing and stay at the ingress/egress pair.
+#[must_use]
+pub fn summarize_plan_convergence(
+    correlation: &str,
+    op: &str,
+    removed: usize,
+    admitted: usize,
+    flags_adopted: usize,
+) -> String {
+    format!(
+        "{PLAN_SUMMARY_PREFIX} direction=convergence op={} correlation={} reason=observation-mismatch removed={} admitted={} flags_adopted={}",
+        summary_token(Some(op)),
+        summary_correlation(Some(correlation)),
+        removed,
+        admitted,
+        flags_adopted,
+    )
+}
+
+/// Emit the bounded correlated convergence summary for the just-completed
+/// [`Engine::handle`] call, if it converged with nonzero counts. Called at
+/// the Planner protocol boundary after every Engine handle return; exact
+/// matches and non-converging routes record nothing so they stay silent. No
+/// reply field is added: the summary is log-only.
+fn emit_engine_convergence(engine: &Engine) {
+    if let Some(report) = engine.last_convergence() {
+        use std::io::Write;
+        let _ = writeln!(
+            std::io::stderr(),
+            "{}",
+            summarize_plan_convergence(
+                report.correlation.as_str(),
+                report.op,
+                report.removed,
+                report.admitted,
+                report.flags_adopted,
+            )
+        );
+    }
+}
+
 fn rejected(correlation_id: String, kind: &str, message: &str) -> String {
     serialize_bounded(&PlanReply {
         v: PLAN_CONTRACT_VERSION,
@@ -2468,6 +2518,21 @@ impl Planner {
             .map(|reply| serialize_core_reply(ctx, &reply))
     }
 
+    /// Engine-handle choke point: runs the owned [`Engine::handle`] entry
+    /// point, emits the bounded correlated convergence summary when the op
+    /// converged with nonzero counts, then serializes through the typed choke
+    /// point. Reply bytes are unchanged; the summary carries counts plus the
+    /// reason op only (no new reply field, no identifiers, no payloads).
+    fn handle_and_serialize(
+        &mut self,
+        ctx: &Validated,
+        event: &tiler_core::boundary::CoreEvent,
+    ) -> String {
+        let reply = self.engine.handle(event);
+        emit_engine_convergence(&self.engine);
+        serialize_core_reply(ctx, &reply)
+    }
+
     /// Direct-evaluator compatibility wrapper (test-only): exact legacy
     /// `from_value` + op-check behavior. Production `evaluate` bypasses this
     /// via the typed [`SyncCommand`] single parse + inner below.
@@ -2582,8 +2647,7 @@ impl Planner {
             placement_bounds: placement_explicit,
         };
         let event = core_event(ctx, &core_command);
-        let reply = self.engine.handle(&event);
-        serialize_core_reply(ctx, &reply)
+        self.handle_and_serialize(ctx, &event)
     }
 
     /// Direct-evaluator compatibility wrapper (test-only): exact legacy
@@ -2625,8 +2689,7 @@ impl Planner {
             window: WindowId(window.to_owned()),
         };
         let event = core_event(ctx, &core_command);
-        let reply = self.engine.handle(&event);
-        serialize_core_reply(ctx, &reply)
+        self.handle_and_serialize(ctx, &event)
     }
 
     fn evaluate_toggle_float_retained(&mut self, ctx: &Validated) -> String {
@@ -2661,8 +2724,7 @@ impl Planner {
                 float_rect,
             };
             let event = core_event(ctx, &core_command);
-            let reply = self.engine.handle(&event);
-            serialize_core_reply(ctx, &reply)
+            self.handle_and_serialize(ctx, &event)
         })
     }
 
@@ -2730,8 +2792,7 @@ impl Planner {
             cross_output_transfer: command.cross_output_transfer,
         };
         let event = core_event(ctx, &core_command);
-        let reply = self.engine.handle(&event);
-        serialize_core_reply(ctx, &reply)
+        self.handle_and_serialize(ctx, &event)
     }
 
     fn evaluate_focus_retained(&mut self, ctx: &Validated) -> String {
@@ -2800,8 +2861,7 @@ impl Planner {
             cross_output_transfer: command.cross_output_transfer,
         };
         let event = core_event(ctx, &core_command);
-        let reply = self.engine.handle(&event);
-        serialize_core_reply(ctx, &reply)
+        self.handle_and_serialize(ctx, &event)
     }
 
     /// Production directional move: envelope, tagged decoding, pair scope
@@ -2828,8 +2888,7 @@ impl Planner {
         })
         .expect("move sync op converts");
         let event = core_event(ctx, &core_command);
-        let reply = self.engine.handle(&event);
-        serialize_core_reply(ctx, &reply)
+        self.handle_and_serialize(ctx, &event)
     }
 
     /// Production directional focus: envelope, tagged decoding, pair scope
@@ -2856,8 +2915,7 @@ impl Planner {
         })
         .expect("focus sync op converts");
         let event = core_event(ctx, &core_command);
-        let reply = self.engine.handle(&event);
-        serialize_core_reply(ctx, &reply)
+        self.handle_and_serialize(ctx, &event)
     }
 
     fn evaluate_resize_retained(&mut self, ctx: &Validated) -> String {
@@ -2922,8 +2980,7 @@ impl Planner {
             press_index,
         };
         let event = core_event(ctx, &core_command);
-        let reply = self.engine.handle(&event);
-        serialize_core_reply(ctx, &reply)
+        self.handle_and_serialize(ctx, &event)
     }
 
     fn evaluate_pointer_resize_retained(&mut self, ctx: &Validated) -> String {
@@ -3003,8 +3060,7 @@ impl Planner {
             boundary2,
         };
         let event = core_event(ctx, &core_command);
-        let reply = self.engine.handle(&event);
-        serialize_core_reply(ctx, &reply)
+        self.handle_and_serialize(ctx, &event)
     }
 
     /// Direct-evaluator compatibility wrapper (test-only): exact legacy
@@ -3039,8 +3095,7 @@ impl Planner {
         // Serialization funnels through the typed choke point.
         let core_command = tiler_core::boundary::CoreCommand::Reconcile;
         let event = core_event(ctx, &core_command);
-        let reply = self.engine.handle(&event);
-        serialize_core_reply(ctx, &reply)
+        self.handle_and_serialize(ctx, &event)
     }
 
     /// Deliberate retained gap-update reprojection for the interim tiler
@@ -3065,8 +3120,7 @@ impl Planner {
         // Serialization funnels through the typed choke point.
         let core_command = tiler_core::boundary::CoreCommand::UpdateGaps;
         let event = core_event(ctx, &core_command);
-        let reply = self.engine.handle(&event);
-        serialize_core_reply(ctx, &reply)
+        self.handle_and_serialize(ctx, &event)
     }
 
     /// Retained read-only active-group highlight query over the existing
@@ -3152,8 +3206,7 @@ impl Planner {
         ctx: &Validated,
         event: &tiler_core::boundary::CoreEvent,
     ) -> String {
-        let reply = self.engine.handle(event);
-        serialize_core_reply(ctx, &reply)
+        self.handle_and_serialize(ctx, event)
     }
 
     /// Shared standalone workspace-send target scope: optional `target_domain`
@@ -3406,8 +3459,7 @@ impl Planner {
         };
         let mut event = core_event(ctx, &core_command);
         event.target_domain = Some((input.target_domain, input.target_key));
-        let reply = self.engine.handle(&event);
-        serialize_core_reply(ctx, &reply)
+        self.handle_and_serialize(ctx, &event)
     }
 
     /// Workspace-send acknowledgement phase: exact accepted acknowledgement
@@ -3437,8 +3489,7 @@ impl Planner {
         };
         let core_command = core_command_from_sync(&command).expect("non-verify sync op converts");
         let event = core_event(ctx, &core_command);
-        let reply = self.engine.handle(&event);
-        serialize_core_reply(ctx, &reply)
+        self.handle_and_serialize(ctx, &event)
     }
 
     /// Workspace-send verification phase: exact post-observation (preconditions
@@ -3492,8 +3543,7 @@ impl Planner {
             operation,
         };
         let event = core_event(ctx, &core_command);
-        let reply = self.engine.handle(&event);
-        serialize_core_reply(ctx, &reply)
+        self.handle_and_serialize(ctx, &event)
     }
 
     /// Directional R4 acknowledgement phase: exact accepted acknowledgement
@@ -3529,8 +3579,7 @@ impl Planner {
         };
         let core_command = core_command_from_sync(&command).expect("non-verify sync op converts");
         let event = core_event(ctx, &core_command);
-        let reply = self.engine.handle(&event);
-        serialize_core_reply(ctx, &reply)
+        self.handle_and_serialize(ctx, &event)
     }
 
     /// Directional R4 verification phase: exact post-observation (operation
@@ -3591,8 +3640,7 @@ impl Planner {
             echo_target_workspace: tiler_core::directional::WorkspaceId(echo.target_workspace),
         };
         let event = core_event(ctx, &core_command);
-        let reply = self.engine.handle(&event);
-        serialize_core_reply(ctx, &reply)
+        self.handle_and_serialize(ctx, &event)
     }
 
     /// Read-only workspace-send status query: classify the exact retained
@@ -3712,8 +3760,7 @@ impl Planner {
         let core_command = core_command_from_sync(&command).expect("non-verify sync op converts");
         let mut event = core_event(ctx, &core_command);
         event.target_domain = Some((target_domain, target_key));
-        let reply = self.engine.handle(&event);
-        serialize_core_reply(ctx, &reply)
+        self.handle_and_serialize(ctx, &event)
     }
 
     /// Workspace-send abandon: retire ANY existing workspace-send pending.
@@ -3811,8 +3858,7 @@ impl Planner {
         }
         let core_command = core_command_from_sync(&command).expect("non-verify sync op converts");
         let event = core_event(ctx, &core_command);
-        let reply = self.engine.handle(&event);
-        serialize_core_reply(ctx, &reply)
+        self.handle_and_serialize(ctx, &event)
     }
 }
 
@@ -4692,8 +4738,9 @@ mod tests {
         )));
         assert_eq!(removed["outcome"], "planned", "{removed}");
         assert_geometry_covers(&removed, &["win-1", "win-2", "win-3"]);
-        // Stale/failure handling stays fail-closed: an incomplete observation
-        // refuses, then the complete observation still reconciles.
+        // Stale/failure handling stays fail-closed for malformed shapes, but a
+        // complete observation with changed membership converges first: the
+        // missing member is removed and the reconcile projects the survivors.
         let partial = parse_reply(&planner.evaluate(&float_request(
             "float-seq-9",
             "win-1",
@@ -4703,8 +4750,9 @@ mod tests {
             ],
             serde_json::json!({"op": "reconcile"}),
         )));
-        assert_eq!(partial["outcome"], "rejected", "{partial}");
-        assert_eq!(partial["kind"], "partial-observation", "{partial}");
+        assert_eq!(partial["outcome"], "planned", "{partial}");
+        assert_eq!(partial["detail"]["kind"], "reconcile", "{partial}");
+        assert_geometry_covers(&partial, &["win-1", "win-2"]);
         let converged = parse_reply(&planner.evaluate(&float_request(
             "float-seq-10",
             "win-1",
@@ -7991,27 +8039,40 @@ mod tests {
     }
 
     #[test]
-    fn update_gaps_refuses_membership_change_without_mutation() {
+    fn update_gaps_converges_membership_change_then_projects() {
         let mut planner = seed_gap_planner();
         let baseline = parse_reply(&planner.evaluate(&reconcile_gaps_request("gap-part-1", 8, 8)));
         assert_eq!(baseline["outcome"], "planned", "{baseline}");
-        let before = geometry_by_window(&baseline);
+        assert_geometry_covers(&baseline, &["win-1", "win-2"]);
 
+        // Complete-observation convergence
+        // (docs/changes/archive/observation-convergence.md): the missing retained
+        // member is removed before the ordinary gap update projects the
+        // survivor with the new gaps. No `partial-observation` remains on
+        // this path.
         let mut partial: serde_json::Value =
             serde_json::from_str(&update_gaps_request("gap-part-2", 16, 8)).expect("valid request");
         partial["windows"] = serde_json::json!([
             {"window": "win-1", "output": "out-1", "workspace": "ws-1",
              "rect": {"x": 0, "y": 0, "w": 100, "h": 80}},
         ]);
-        let refused = parse_reply(&planner.evaluate(&partial.to_string()));
-        assert_eq!(refused["outcome"], "rejected", "{refused}");
-        assert_eq!(refused["kind"], "partial-observation", "{refused}");
-
-        // The refused update mutated nothing: the old gaps still converge to
-        // the exact baseline allocation.
-        let converged = parse_reply(&planner.evaluate(&reconcile_gaps_request("gap-part-3", 8, 8)));
+        let converged = parse_reply(&planner.evaluate(&partial.to_string()));
         assert_eq!(converged["outcome"], "planned", "{converged}");
-        assert_eq!(geometry_by_window(&converged), before, "{converged}");
+        assert_eq!(converged["detail"]["kind"], "update-gaps", "{converged}");
+        assert_geometry_covers(&converged, &["win-1"]);
+
+        // The converged state is retained: an exact observation of the
+        // survivor at the adopted gaps still plans.
+        let mut exact: serde_json::Value =
+            serde_json::from_str(&reconcile_gaps_request("gap-part-3", 16, 8))
+                .expect("valid request");
+        exact["windows"] = serde_json::json!([
+            {"window": "win-1", "output": "out-1", "workspace": "ws-1",
+             "rect": {"x": 0, "y": 0, "w": 100, "h": 80}},
+        ]);
+        let replanned = parse_reply(&planner.evaluate(&exact.to_string()));
+        assert_eq!(replanned["outcome"], "planned", "{replanned}");
+        assert_geometry_covers(&replanned, &["win-1"]);
     }
 
     #[test]
@@ -8145,7 +8206,12 @@ mod tests {
     }
 
     #[test]
-    fn reconcile_membership_mismatch_rejects_with_single_reason() {
+    fn reconcile_membership_change_converges_before_projecting() {
+        // Complete-observation convergence (docs/changes/archive/observation-convergence.md):
+        // a missing retained member is removed and an unexpected new normal
+        // member is admitted through normal placement before the ordinary
+        // reconcile projects the converged survivors. No single-reason
+        // `partial-observation` remains on this path.
         let mut planner = seed_two_window_planner();
         let mismatched = retained_request(
             "rec-mismatch-1",
@@ -8156,27 +8222,118 @@ mod tests {
             serde_json::json!({"op": "reconcile"}),
         );
         let reply = parse_reply(&planner.evaluate(&mismatched));
-        assert_eq!(reply["outcome"], "rejected", "{reply}");
-        assert_eq!(reply["kind"], "partial-observation", "{reply}");
-        assert_eq!(
-            reply["message"], "observation does not cover the known window set",
-            "{reply}"
-        );
-        assert!(reply.get("detail").is_none(), "{reply}");
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["detail"]["kind"], "reconcile", "{reply}");
+        assert_geometry_covers(&reply, &["win-1", "win-3"]);
         assert_ne!(reply["kind"], "diverged", "{reply}");
-        // Preserved state: the next complete observation still reconciles.
+        // Converged state is retained: the next complete observation of the
+        // converged set still reconciles.
         assert_eq!(planner.retained_domains(), 1);
         let recover = retained_request(
             "rec-mismatch-2",
             "owner-1",
             "gen-1",
             "win-1",
-            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            &[("win-1", 0, 0, 100, 80), ("win-3", 400, 0, 100, 80)],
             serde_json::json!({"op": "reconcile"}),
         );
         let recovered = parse_reply(&planner.evaluate(&recover));
         assert_eq!(recovered["outcome"], "planned", "{recovered}");
-        assert_geometry_covers(&recovered, &["win-1", "win-2"]);
+        assert_geometry_covers(&recovered, &["win-1", "win-3"]);
+    }
+
+    #[test]
+    fn reconcile_converges_floating_skew_without_partial_observation() {
+        // Retained tiled win-1 observed floating: convergence removes its
+        // leaf, retains a floating exception, and the reconcile projects the
+        // survivors without `partial-observation` or reset.
+        let mut planner = seed_two_window_planner();
+        let mut skewed: serde_json::Value = serde_json::from_str(&retained_request(
+            "rec-float-1",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        ))
+        .expect("valid request");
+        skewed["windows"][0]["floating"] = serde_json::json!(true);
+        let reply = parse_reply(&planner.evaluate(&skewed.to_string()));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["detail"]["kind"], "reconcile", "{reply}");
+        assert_geometry_covers(&reply, &["win-2"]);
+    }
+
+    #[test]
+    fn remove_with_current_post_removal_observation_replies_idempotent() {
+        // KWin sends the current post-removal observation: the requested
+        // window already departed in convergence, so the remove replies with
+        // the complete converged projection (remove capability, valid focus)
+        // instead of `unknown-window`, with no extra commit.
+        let mut planner = seed_two_window_planner();
+        let request = retained_request(
+            "rem-post-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "remove", "window": "win-2"}),
+        );
+        let reply = parse_reply(&planner.evaluate(&request));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["detail"]["kind"], "remove", "{reply}");
+        assert_geometry_covers(&reply, &["win-1"]);
+    }
+
+    #[test]
+    fn exact_reconcile_keeps_revision_without_convergence() {
+        // Exact-match observation: no convergence bump. Two identical
+        // reconciles report the same base revision; the projection is a pure
+        // function of retained state, not a mutation.
+        let mut planner = seed_two_window_planner();
+        let windows = &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)];
+        let first = parse_reply(&planner.evaluate(&retained_request(
+            "rec-exact-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            windows,
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(first["outcome"], "planned", "{first}");
+        let second = parse_reply(&planner.evaluate(&retained_request(
+            "rec-exact-2",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            windows,
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(second["outcome"], "planned", "{second}");
+        assert_eq!(second["base_revision"], first["base_revision"], "{second}");
+        assert_eq!(
+            geometry_by_window(&second),
+            geometry_by_window(&first),
+            "{second}"
+        );
+    }
+
+    #[test]
+    fn convergence_summaries_are_bounded_and_redacted() {
+        let line = summarize_plan_convergence("conv-sum-1", "reconcile", 1, 2, 3);
+        assert_eq!(
+            line,
+            "plasma-auto-tiler:plan-summary direction=convergence op=reconcile correlation=conv-sum-1 reason=observation-mismatch removed=1 admitted=2 flags_adopted=3"
+        );
+        // Malformed sides degrade to bounded placeholders without echoing
+        // anything caller-controlled: no window ids, rects, owner, or
+        // payload bytes.
+        let garbage = summarize_plan_convergence("evil correlation!!", "Reconcile!!", 0, 0, 0);
+        assert_eq!(
+            garbage,
+            "plasma-auto-tiler:plan-summary direction=convergence op=unknown correlation=- reason=observation-mismatch removed=0 admitted=0 flags_adopted=0"
+        );
+        assert!(!garbage.contains("evil"), "{garbage}");
     }
 
     #[test]
@@ -11414,10 +11571,11 @@ mod tests {
     }
 
     #[test]
-    fn retained_multi_member_collapse_is_not_falsely_committed() {
-        // Two members vanishing before one observation cannot be committed
-        // through the single-remove transaction: the empty post-observation
-        // must not produce a planned empty commit. Offline only.
+    fn retained_multi_member_collapse_converges_to_empty_idempotent_remove() {
+        // Both members vanishing before one observation converges both away;
+        // the single remove then takes the idempotent success with the
+        // complete converged (empty) projection and retires the emptied
+        // domain slot. Offline only.
         let mut planner = Planner::new();
         for (correlation, focused, windows, command) in [
             (
@@ -11449,8 +11607,9 @@ mod tests {
             );
         }
         assert_eq!(planner.retained_domains(), 1);
-        // Both members gone: an empty observation with a single-remove
-        // command must stay fail-closed, never a planned empty commit.
+        // Both members gone: convergence removes both, then the remove takes
+        // the idempotent success with the complete converged empty
+        // projection (remove capability) and retires the emptied slot.
         let collapsed = retained_request_for_domain(
             "collapse-3",
             "owner-1",
@@ -11462,10 +11621,14 @@ mod tests {
             serde_json::json!({"op": "remove", "window": "win-1"}),
         );
         let reply = parse_reply(&planner.evaluate(&collapsed));
-        assert_ne!(reply["outcome"], "planned", "{reply}");
-        if let Some(geometry) = reply.get("desired_geometry") {
-            assert_ne!(geometry.as_array().map(Vec::len), Some(0), "{reply}");
-        }
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["detail"]["kind"], "remove", "{reply}");
+        assert_eq!(
+            reply["desired_geometry"].as_array().map(Vec::len),
+            Some(0),
+            "{reply}"
+        );
+        assert_eq!(planner.retained_domains(), 0, "{reply}");
     }
 
     fn fit_excluded_request(
@@ -11897,8 +12060,10 @@ mod tests {
         assert_eq!(fitted["outcome"], "planned", "{fitted}");
         assert_eq!(fitted["base_revision"], 0, "{fitted}");
         let before = geometry_by_window(&fitted)["win-1"];
-        // A retained follow-up (existing session) always uses the normal
-        // path: base 1 proves the fit committed exactly once, and the fitted
+        // A retained follow-up converges first: the unexpected member is
+        // admitted by convergence (base 1 -> 2), then the ordinary admit
+        // takes the idempotent success with no extra commit. Base 2 proves
+        // the fit committed exactly once plus one convergence, and the fitted
         // first child is not rewritten.
         let follow = parse_reply(&planner.evaluate(&retained_request(
             "fit-r-2",
@@ -11913,7 +12078,7 @@ mod tests {
             admit_body("win-3"),
         )));
         assert_eq!(follow["outcome"], "planned", "{follow}");
-        assert_eq!(follow["base_revision"], 1, "{follow}");
+        assert_eq!(follow["base_revision"], 2, "{follow}");
         assert_geometry_covers(&follow, &["win-1", "win-2", "win-3"]);
         assert_eq!(
             geometry_by_window(&follow)["win-1"],

@@ -863,8 +863,52 @@ describe("plan adapter recovery and fencing", () => {
         assert.equal(mocks.dbusCalls.length, 2);
     });
 
-    it("refuses busy shortcut commands with one bounded refusal line per kind", () => {
+    it("drops a planned reply when a member flips floating mid-flight without native writes", () => {
+        // Race fixture: dispatch observes both members tiled, then native
+        // float takes effect before the reply. The reply geometry still
+        // covers the dispatch set, so only flag-exact revalidation can fail
+        // it closed; a stale apply would write the floated window.
         const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let floatingA = false;
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, floating: { "win-a": floatingA } });
+        const adapter = enableAdapter(mocks);
+        adapter.requestMove("right");
+        assert.equal(mocks.dbusCalls.length, 1);
+        const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+        floatingA = true;
+        mocks.callbacks[0]?.(
+            plannedReply(
+                correlation,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 200, h: 200 } },
+                    { window: "win-b", rect: { x: 200, y: 0, w: 100, h: 100 } },
+                ],
+                null,
+            ),
+        );
+        assert.equal(mocks.geometries.length, 0, "no stale geometry reaches a newly floating window");
+        assert.equal(mocks.actives.length, 0);
+        assert.ok(mocks.logs.some((line) => line.includes("outcome=stale-scope")));
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("fresh no-baseline all-floating foreground observation sends no admit", () => {
+        // Complete-observation convergence: a fresh foreground observation
+        // with no baseline whose members are all floating/sticky exceptions
+        // dispatches nothing and advances no baseline, so a later tiling of
+        // the same window still admits. No planner contact happens here.
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, floating: { "win-a": true, "win-b": true }, sticky: { "win-a": true } });
+        const adapter = enableAdapter(mocks);
+        fire(mocks, "added");
+        runTimers(mocks);
+        assert.equal(mocks.dbusCalls.length, 0, "all-floating fresh observation must not seed an admit");
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("refuses busy shortcut commands with one bounded refusal line per kind", () => {        const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = enableAdapter(mocks);
         adapter.requestFocus("left");
@@ -943,8 +987,18 @@ describe("plan adapter recovery and fencing", () => {
         const removeIndex = mocks.dbusCalls.length - 1;
         const removeCmd = plannerPayload(mocks, removeIndex)["command"] as Record<string, unknown>;
         assert.deepEqual(removeCmd, { op: "remove", window: "win-c" });
-        const removeWindows = plannerPayload(mocks, removeIndex)["windows"] as Array<Record<string, unknown>>;
-        assert.ok(removeWindows.some((entry) => entry["window"] === "win-c"));
+        const removePayload = plannerPayload(mocks, removeIndex);
+        const removeWindows = removePayload["windows"] as Array<Record<string, unknown>>;
+        assert.ok(
+            !removeWindows.some((entry) => entry["window"] === "win-c"),
+            "remove carries the current post-removal snapshot omitting the departed member",
+        );
+        assert.ok(
+            removeWindows.some((entry) => entry["window"] === "win-a") &&
+                removeWindows.some((entry) => entry["window"] === "win-b"),
+            "remove geometry covers the converged survivors",
+        );
+        assert.equal(removePayload["focused_window"], "win-a", "post-removal focus stays on an observed survivor");
     });
 
     it("retains per-workspace baselines across a rejected admission without duplicate probes", () => {
@@ -2158,6 +2212,317 @@ describe("plan adapter sticky and maximize toggles", () => {
         assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:maximize-toggle-echo-cleared-no-signal"));
         assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:maximize-refused-attempted window=win-a resource_class=unknown"));
     });
+
+    it("option A Meta+G on sticky from tiled origin clears all-desktops, restores keep-above, tiles, and stays tiled", () => {
+        // User decision 2026-09-25 option A (tiled origin, trace-essential):
+        // sticky-on (Meta+Shift+G) -> Meta+G -> native sticky off -> tile ->
+        // next observation stable. Meta+G on the sticky window clears
+        // all-desktops via the existing sticky-off path, restores project
+        // keep-above, and returns to tiling.
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let floating = false;
+        let sticky = false;
+        let keepAbove = false;
+        let rects: Record<string, { x: number; y: number; w: number; h: number }> | undefined = undefined;
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": floating }, sticky: { "win-a": sticky }, ...(rects === undefined ? {} : { rects }) });
+        mocks.keepAboveReadImpl = (target) => (target === refs.a ? keepAbove : null);
+        mocks.keepAboveToggleImpl = (target, value) => {
+            assert.equal(target, refs.a);
+            keepAbove = value;
+            return "invoked";
+        };
+        mocks.desktopToggleImpl = (target, allDesktops) => {
+            assert.equal(target, refs.a);
+            sticky = allDesktops;
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        // Sticky-on (Meta+Shift+G): tiled member floats first, then takes native all-desktops.
+        adapter.requestSticky();
+        const floatPayload = plannerPayload(mocks, 0);
+        assert.deepEqual(floatPayload["command"], { op: "toggle-float", window: "win-a" });
+        floating = true;
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: floatPayload["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [{ window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            float_geometry: { window: "win-a", rect: { x: 100, y: 100, w: 600, h: 400 } },
+        }));
+        assert.deepEqual(mocks.desktopToggles, [{ target: refs.a, allDesktops: true }], "sticky stays on until the Meta+G call");
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-echo-consumed"));
+        // Meta+G on the sticky window clears all-desktops via the existing sticky-off path.
+        adapter.requestFloat();
+        assert.ok(
+            mocks.desktopToggles.some((entry) => entry.target === refs.a && entry.allDesktops === false),
+            "Meta+G clears native all-desktops via the existing sticky-off path",
+        );
+        assert.ok(
+            mocks.keepAboveToggles.some((entry) => entry.target === refs.a && entry.keepAbove === false),
+            "Meta+G restores project keep-above",
+        );
+        const tileIndex = mocks.dbusCalls.length - 1;
+        assert.ok(tileIndex >= 0, "Meta+G returns to tiling through a fresh toggle-float");
+        assert.deepEqual((plannerPayload(mocks, tileIndex)["command"] as Record<string, unknown>)["op"], "toggle-float");
+        assert.equal((plannerPayload(mocks, tileIndex)["command"] as Record<string, unknown>)["window"], "win-a");
+        // Native sticky off plus the tile reply: the next complete observation stays tiled.
+        sticky = false;
+        floating = false;
+        const tileCorrelation = plannerPayload(mocks, tileIndex)["correlation_id"] as string;
+        mocks.callbacks[tileIndex]?.(JSON.stringify({
+            v: 1,
+            correlation_id: tileCorrelation,
+            outcome: "planned",
+            desired_geometry: [
+                { window: "win-a", leaf: "win-a-leaf", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                { window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } },
+            ],
+        }));
+        // The native frames now match the converged tiling, so the next
+        // complete observation is exactly the retained baseline.
+        rects = { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } };
+        const callsAfterTile = mocks.dbusCalls.length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsAfterTile, "next complete observation stays tiled with no further dispatch");
+    });
+
+    it("option A Meta+G on sticky from prior ordinary float clears all-desktops, restores keep-above, tiles, and stays tiled", () => {
+        // User decision 2026-09-25 option A (prior-float origin, trace-essential):
+        // ordinary float (saves pre-float keep-above) -> sticky-on
+        // (Meta+Shift+G) -> Meta+G -> native sticky off -> tile -> next
+        // observation stable. Meta+G clears all-desktops via the existing
+        // sticky-off path, restores project keep-above, and returns to tiling
+        // instead of leaving a plain float.
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let sticky = false;
+        let floating = false;
+        let keepAbove = false;
+        let rects: Record<string, { x: number; y: number; w: number; h: number }> | undefined = undefined;
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": floating }, sticky: { "win-a": sticky }, ...(rects === undefined ? {} : { rects }), resourceClasses: { "win-a": "ghostty" } });
+        mocks.keepAboveReadImpl = (target) => (target === refs.a ? keepAbove : null);
+        mocks.keepAboveToggleImpl = (target, value) => {
+            assert.equal(target, refs.a);
+            keepAbove = value;
+            return "invoked";
+        };
+        mocks.desktopToggleImpl = (target, allDesktops) => {
+            assert.equal(target, refs.a);
+            sticky = allDesktops;
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        // Prior ordinary float first, so the pre-float keep-above is saved by the real float path.
+        adapter.requestFloat();
+        const floatPayload = plannerPayload(mocks, 0);
+        assert.deepEqual(floatPayload["command"], { op: "toggle-float", window: "win-a" });
+        floating = true;
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: floatPayload["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [{ window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            float_geometry: { window: "win-a", rect: { x: 100, y: 100, w: 600, h: 400 } },
+        }));
+        assert.deepEqual(mocks.keepAboveToggles, [{ target: refs.a, keepAbove: true }]);
+        assert.deepEqual(mocks.floatingCalls, [{ id: "win-a", floating: true }]);
+        // Sticky-on (Meta+Shift+G) from the ordinary float claims no planner admission.
+        adapter.requestSticky();
+        assert.deepEqual(mocks.desktopToggles, [{ target: refs.a, allDesktops: true }], "sticky stays on until the Meta+G call");
+        assert.equal(mocks.dbusCalls.length, 1, "prior-float sticky-on issues no planner command");
+        // Meta+G on the sticky window clears all-desktops via the existing sticky-off path.
+        adapter.requestFloat();
+        assert.ok(
+            mocks.desktopToggles.some((entry) => entry.target === refs.a && entry.allDesktops === false),
+            "Meta+G clears native all-desktops via the existing sticky-off path",
+        );
+        assert.deepEqual(mocks.keepAboveToggles, [
+            { target: refs.a, keepAbove: true },
+            { target: refs.a, keepAbove: false },
+        ], "Meta+G restores the saved pre-float keep-above");
+        assert.equal(mocks.dbusCalls.length, 2, "Meta+G returns to tiling even from a prior float");
+        assert.deepEqual((plannerPayload(mocks, 1)["command"] as Record<string, unknown>)["op"], "toggle-float");
+        assert.equal((plannerPayload(mocks, 1)["command"] as Record<string, unknown>)["window"], "win-a");
+        // Native sticky off plus the tile reply: the next complete observation stays tiled.
+        sticky = false;
+        floating = false;
+        const tileCorrelation = plannerPayload(mocks, 1)["correlation_id"] as string;
+        mocks.callbacks[1]?.(JSON.stringify({
+            v: 1,
+            correlation_id: tileCorrelation,
+            outcome: "planned",
+            desired_geometry: [
+                { window: "win-a", leaf: "win-a-leaf", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                { window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } },
+            ],
+        }));
+        // The native frames now match the converged tiling, so the next
+        // complete observation is exactly the retained baseline.
+        rects = { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } };
+        const callsAfterTile = mocks.dbusCalls.length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsAfterTile, "next complete observation stays tiled with no further dispatch");
+    });
+
+    it("option A Meta+G on adopted sticky clears all-desktops and tiles with no planner admission for the unstick", () => {
+        // User decision 2026-09-25 option A (adopted origin): an eligible
+        // window already native-sticky is adopted, then Meta+G clears
+        // all-desktops via the existing sticky-off path and returns to tiling.
+        // The unstick itself claims no planner admission; only the tiling does.
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        (mocks.env as { readDesktopIds?: (target: object) => ReadonlyArray<string> | null }).readDesktopIds = () => [];
+        let sticky = true;
+        let floating = true;
+        let rects: Record<string, { x: number; y: number; w: number; h: number }> | undefined = {
+            "win-a": { x: 100, y: 100, w: 600, h: 400 },
+        };
+        mocks.observeImpl = () => makeObserved(refs, {
+            floating: { "win-a": floating },
+            sticky: { "win-a": sticky },
+            ...(rects === undefined ? {} : { rects }),
+            resourceClasses: { "win-a": "firefox" },
+        });
+        mocks.desktopToggleImpl = (target, allDesktops) => {
+            assert.equal(target, refs.a);
+            sticky = allDesktops;
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestFloat();
+        assert.ok(mocks.logs.some((line) => line.includes("sticky-adopted window=win-a")), "unknown origin is adopted");
+        assert.deepEqual(mocks.desktopToggles, [{ target: refs.a, allDesktops: false }], "Meta+G clears native all-desktops");
+        assert.deepEqual(mocks.floatingCalls, [{ id: "win-a", floating: true }], "adopted unstick marks the normal float before tiling");
+        const tileIndex = mocks.dbusCalls.length - 1;
+        assert.ok(tileIndex >= 0, "Meta+G returns to tiling from an adopted sticky");
+        assert.deepEqual((plannerPayload(mocks, tileIndex)["command"] as Record<string, unknown>)["op"], "toggle-float");
+        assert.equal((plannerPayload(mocks, tileIndex)["command"] as Record<string, unknown>)["window"], "win-a");
+        sticky = false;
+        floating = false;
+        const tileCorrelation = plannerPayload(mocks, tileIndex)["correlation_id"] as string;
+        mocks.callbacks[tileIndex]?.(JSON.stringify({
+            v: 1,
+            correlation_id: tileCorrelation,
+            outcome: "planned",
+            desired_geometry: [
+                { window: "win-a", leaf: "win-a-leaf", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                { window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } },
+            ],
+        }));
+        rects = { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } };
+        const callsAfterTile = mocks.dbusCalls.length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsAfterTile, "next complete observation stays tiled with no further dispatch");
+    });
+
+    it("Meta+G on sticky fullscreen and sticky maximized overlays refuses before any native setter", () => {
+        // Overlays keep their retained tile as native overlays: Meta+G on a
+        // sticky overlay refuses exactly like Meta+Shift+G, with no desktop
+        // toggles and no planner dispatch.
+        for (const [overlay, token] of [["fullscreen", "sticky-refused-fullscreen"], ["maximized", "sticky-refused-maximize"]] as const) {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            const shape = overlay === "fullscreen"
+                ? { fullscreen: { "win-a": true }, maximized: {} as Record<string, boolean> }
+                : { fullscreen: {} as Record<string, boolean>, maximized: { "win-a": true } };
+            mocks.observeImpl = () => makeObserved(refs, {
+                ...shape,
+                floating: { "win-a": true },
+                sticky: { "win-a": true },
+                resourceClasses: { "win-a": "steam" },
+            });
+            const adapter = enableAdapter(mocks);
+            adapter.requestFloat();
+            assert.equal(mocks.desktopToggles.length, 0, `sticky ${overlay} issues no native all-desktops write`);
+            assert.equal(mocks.dbusCalls.length, 0, `sticky ${overlay} dispatches no planner command`);
+            assert.ok(
+                mocks.logs.includes(`plasma-auto-tiler:plan:${token} window=win-a resource_class=steam`),
+                `sticky ${overlay} refuses with the sticky overlay token`,
+            );
+        }
+    });
+
+    it("Meta+G sticky-off failure preserves sticky with no tiling, and a later explicit Meta+G retries", () => {
+        // A refusing native all-desktops setter keeps the sticky window
+        // sticky with no planner tiling; the failed origin is retained so one
+        // later explicit Meta+G retries once the host still reports sticky.
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let floating = false;
+        let sticky = false;
+        let keepAbove = false;
+        let fail = true;
+        // A foreign active window forces focus retention to run whenever it
+        // is invoked, so the failed-write focus assertion below is exact.
+        mocks.activeImpl = () => refs.b;
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": floating }, sticky: { "win-a": sticky } });
+        mocks.keepAboveReadImpl = (target) => (target === refs.a ? keepAbove : null);
+        mocks.keepAboveToggleImpl = (target, value) => {
+            assert.equal(target, refs.a);
+            keepAbove = value;
+            return "invoked";
+        };
+        mocks.desktopToggleImpl = (target, allDesktops) => {
+            assert.equal(target, refs.a);
+            if (fail) {
+                return "threw";
+            }
+            sticky = allDesktops;
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        // Sticky-on succeeds first (tiled member floats, then takes native all-desktops).
+        fail = false;
+        adapter.requestSticky();
+        const floatPayload = plannerPayload(mocks, 0);
+        floating = true;
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: floatPayload["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [{ window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            float_geometry: { window: "win-a", rect: { x: 100, y: 100, w: 600, h: 400 } },
+        }));
+        assert.deepEqual(mocks.desktopToggles, [{ target: refs.a, allDesktops: true }]);
+        // A refusing native all-desktops setter keeps the sticky window
+        // sticky with no planner tiling; the failed origin is retained.
+        fail = true;
+        const callsBeforeMetaG = mocks.dbusCalls.length;
+        const activesBeforeFailed = mocks.actives.length;
+        adapter.requestFloat();
+        assert.equal(mocks.desktopToggles.length, 2, "failed Meta+G attempt issues exactly one native write with no automatic retry");
+        assert.equal(sticky, true, "failed write preserves native sticky");
+        assert.equal(mocks.dbusCalls.length, callsBeforeMetaG, "failed write issues no planner tiling");
+        assert.equal(mocks.actives.length, activesBeforeFailed, "failed Meta+G writes no focus");
+        // Later explicit Meta+G retries while the host still reports sticky, then tiles.
+        fail = false;
+        adapter.requestFloat();
+        assert.deepEqual(mocks.desktopToggles[mocks.desktopToggles.length - 1], { target: refs.a, allDesktops: false });
+        const tileIndex = mocks.dbusCalls.length - 1;
+        assert.ok(tileIndex >= callsBeforeMetaG, "retry returns to tiling");
+        assert.deepEqual((plannerPayload(mocks, tileIndex)["command"] as Record<string, unknown>)["op"], "toggle-float");
+        sticky = false;
+        floating = false;
+        const tileCorrelation = plannerPayload(mocks, tileIndex)["correlation_id"] as string;
+        mocks.callbacks[tileIndex]?.(JSON.stringify({
+            v: 1,
+            correlation_id: tileCorrelation,
+            outcome: "planned",
+            desired_geometry: [
+                { window: "win-a", leaf: "win-a-leaf", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                { window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } },
+            ],
+        }));
+        assert.ok(mocks.keepAboveToggles.some((entry) => entry.target === refs.a && entry.keepAbove === false), "retry restores project keep-above through the shared sticky-off path");
+    });
 });
 
 describe("plan adapter sticky adoption", () => {
@@ -2987,6 +3352,62 @@ describe("plan entry live observation and shortcuts", () => {
         handle?.stop();
     });
 
+    it("unreadable foreground frame quarantines the whole domain, then resumes complete", () => {
+        // Observation-convergence (2026-09-25): an unreadable foreground
+        // member frame quarantines the whole foreground domain until a
+        // complete observation is available, so a temporary frame read can
+        // never trigger a transient remove/re-admit. Real production entry
+        // (real foreground observeNative) on the signal-rich fake world.
+        // Foreground is ws-1 with active win-a plus valid win-b.
+        const world = fakeWorld();
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        const focusLeft = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-focus-left") as {
+            callback: () => void;
+        };
+        const windowsOf = (payload: string): string =>
+            JSON.stringify((JSON.parse(payload) as Record<string, unknown>)["windows"] ?? payload);
+        // Baseline: complete foreground observation dispatches both members.
+        focusLeft.callback();
+        assert.equal(mocks.dbusCalls.length, 1, "baseline foreground command dispatches");
+        assert.ok(
+            windowsOf(mocks.dbusCalls[0]?.payload as string).includes("win-a") &&
+                windowsOf(mocks.dbusCalls[0]?.payload as string).includes("win-b"),
+            "baseline carries the complete foreground membership",
+        );
+        const correlation = (JSON.parse(mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>)[
+            "correlation_id"
+        ] as string;
+        mocks.callbacks[0]?.(rejectedReply(correlation, "snapshot-invalid"));
+        // Unreadable member frame with a valid active window: no partial
+        // dispatch carrying only the survivors.
+        const broken = world.wins[1];
+        assert.ok(broken !== undefined, "second foreground member present");
+        broken["frameGeometry"] = null;
+        const before = mocks.dbusCalls.length;
+        focusLeft.callback();
+        const fresh = mocks.dbusCalls.slice(before);
+        assert.ok(
+            fresh.length === 0 ||
+                fresh.every(
+                    (call) =>
+                        windowsOf(call.payload).includes("win-a") && windowsOf(call.payload).includes("win-b"),
+                ),
+            "quarantine: no partial-foreground dispatch on an unreadable member frame",
+        );
+        // Later complete observation resumes with full membership and no
+        // transient removal of the survivor.
+        broken["frameGeometry"] = { x: 600, y: 0, width: 600, height: 800 };
+        const resumedBefore = mocks.dbusCalls.length;
+        focusLeft.callback();
+        const resumed = mocks.dbusCalls.slice(resumedBefore);
+        const resumedComplete = resumed.filter(
+            (call) => windowsOf(call.payload).includes("win-a") && windowsOf(call.payload).includes("win-b"),
+        );
+        assert.ok(resumedComplete.length > 0, "complete observation resumes dispatch with full membership");
+        handle?.stop();
+    });
+
     it("routes the internal float request through DescribePlan, writes the replied rectangle, and toggles back", () => {
         const world = fakeWorld();
         const { handle, mocks } = startEntry(world);
@@ -3248,17 +3669,9 @@ describe("plan entry live observation and shortcuts", () => {
             frameGeometry: { x: 0, y: 0, width: 50, height: 50 },
             moveResizedChanged: fakeSignal().signal,
         });
-        world.wins.push({
-            normalWindow: true,
-            internalId: "broken-frame",
-            resourceClass: "broken-app",
-            output: world.output,
-            desktops: [world.desktop],
-            moveResizedChanged: fakeSignal().signal,
-            fullScreen: false,
-            maximizedChanged: fakeSignal().signal,
-            maximizeMode: 0,
-        });
+        // An unreadable member frame quarantines the whole foreground domain
+        // (covered by the dedicated quarantine row), so it cannot live in this
+        // normal-only observation row.
         world.wins.push({
             normalWindow: true,
             internalId: "{12345678-1234-1234-1234-1234567890ab}",
@@ -3281,12 +3694,6 @@ describe("plan entry live observation and shortcuts", () => {
                 (line) => line === "plasma-auto-tiler:plan:observe-excluded reason=normal-window window=dock-1 resource_class=org.kde.plasmashell",
             ),
             "a non-normal window is excluded with its exact reason",
-        );
-        assert.ok(
-            mocks.logs.some(
-                (line) => line === "plasma-auto-tiler:plan:observe-excluded reason=frame-rect-missing window=broken-frame resource_class=broken-app",
-            ),
-            "an unhandleable member is refused independently while eligible members remain observed",
         );
         handle?.stop();
     });
@@ -5589,6 +5996,11 @@ describe("plan ordinary lifecycle diagnostics", () => {
             assert.equal(adapter.isInFlight, false);
         }
         {
+            // Mid-flight floating drift fails closed: the move was planned
+            // with win-b tiled, so applying any of it after win-b floats
+            // would be a stale partial application. The whole flight drops
+            // with stale-scope and no native writes; a fresh observation
+            // reconverges afterwards.
             const refs = makeRefs();
             const mocks = mockEnv(refs);
             mocks.observeImpl = () => makeObserved(refs, { focused: refs.a });
@@ -5597,10 +6009,12 @@ describe("plan ordinary lifecycle diagnostics", () => {
             const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
             mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, floating: { "win-b": true } });
             mocks.callbacks[0]?.(plannedReply(correlation, [{ window: "win-a", rect: succA }, { window: "win-b", rect: succB }], "win-a-leaf"));
-            assert.ok(!mocks.geometries.some((g) => g.target === refs.b), "floating drift never actuated");
+            assert.equal(mocks.geometries.length, 0, "stale flight writes nothing after a mid-flight float");
+            assert.equal(mocks.actives.length, 0);
             const lines = lifecycle(mocks);
-            assert.ok(lines.some((l) => l.includes("event=setters") && l.includes("outcome=applied") && l.includes("skipped-floating")), lines.join("\n"));
+            assert.ok(lines.some((l) => l.includes("event=observe") && l.includes("outcome=mismatched") && l.includes("stale-scope")), lines.join("\n"));
             assert.equal(adapter.isInFlight, false);
+            assert.equal(adapter.isEnabled, true);
         }
     });
 
