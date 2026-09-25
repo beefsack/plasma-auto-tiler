@@ -339,18 +339,23 @@ describe("background tiling through production entry", () => {
         assert.equal(calls.length, 3);
         const foreground = calls[0]?.payload as Record<string, unknown>;
         assert.equal((foreground["domain"] as Record<string, unknown>)["workspace"], "ws-1");
-        assert.deepEqual(foreground["command"], { op: "admit", window: "win-a", output: "out-1", workspace: "ws-1" });
+        assert.deepEqual(foreground["command"], { op: "reconcile" });
 
         const hiddenAdopt = calls[1]?.payload as Record<string, unknown>;
         assert.equal((hiddenAdopt["domain"] as Record<string, unknown>)["workspace"], "ws-2");
         assert.equal(hiddenAdopt["focused_window"], "win-d", "anchor is spatial-first, not insertion order");
-        assert.deepEqual(hiddenAdopt["command"], { op: "admit", window: "win-d", output: "out-1", workspace: "ws-2" });
+        assert.deepEqual(hiddenAdopt["command"], { op: "reconcile" });
         const hiddenWindows = (hiddenAdopt["windows"] as PayloadWindow[]).map((entry) => entry.window).sort();
         assert.deepEqual(hiddenWindows, ["win-c", "win-d"]);
 
         const third = calls[2]?.payload as Record<string, unknown>;
         assert.equal((third["domain"] as Record<string, unknown>)["workspace"], "ws-3");
         assert.equal(third["focused_window"], "win-e");
+        assert.deepEqual(third["command"], { op: "reconcile" });
+        assert.deepEqual(
+            (third["windows"] as PayloadWindow[]).map((entry) => entry.window),
+            ["win-e"],
+        );
 
         assert.ok(
             mocks.logs.some((line) => line.includes("outcome=planned-applied")),
@@ -386,13 +391,17 @@ describe("background tiling through production entry", () => {
         fire(world.signals.windowAdded, winF);
         runDebounce(mocks);
         const answered = converge(mocks, new Set(["ws-2"]));
-        assert.equal(answered, 1, "exactly one hidden admit flight for the opened window");
+        assert.equal(answered, 1, "exactly one hidden reconcile flight for the opened window");
 
         const calls = planCalls(mocks);
         const admit = calls[calls.length - 1]?.payload as Record<string, unknown>;
         assert.equal((admit["domain"] as Record<string, unknown>)["workspace"], "ws-2");
-        assert.deepEqual(admit["command"], { op: "admit", window: "win-f", output: "out-1", workspace: "ws-2" });
+        assert.deepEqual(admit["command"], { op: "reconcile" });
         assert.equal(admit["focused_window"], "win-d", "anchor unchanged by the later admission");
+        assert.deepEqual(
+            (admit["windows"] as PayloadWindow[]).map((entry) => entry.window).sort(),
+            ["win-c", "win-d", "win-f"],
+        );
 
         assert.deepEqual(winA.frameGeometry, foregroundBefore.a, "foreground geometry untouched");
         assert.deepEqual(beforeB.frameGeometry, foregroundBefore.b, "foreground geometry untouched");
@@ -429,15 +438,23 @@ describe("background tiling through production entry", () => {
         fire(moverSignals.desktops, winC);
         runDebounce(mocks);
         const answered = converge(mocks, new Set(["ws-2", "ws-3"]));
-        assert.equal(answered, 2, "hidden remove from ws-2 then hidden admit on ws-3");
+        assert.equal(answered, 2, "one hidden reconcile per touched domain");
 
         const calls = planCalls(mocks);
         const remove = calls[calls.length - 2]?.payload as Record<string, unknown>;
         assert.equal((remove["domain"] as Record<string, unknown>)["workspace"], "ws-2");
-        assert.deepEqual(remove["command"], { op: "remove", window: "win-c" });
+        assert.deepEqual(remove["command"], { op: "reconcile" });
+        assert.deepEqual(
+            (remove["windows"] as PayloadWindow[]).map((entry) => entry.window),
+            ["win-d"],
+        );
         const admit = calls[calls.length - 1]?.payload as Record<string, unknown>;
         assert.equal((admit["domain"] as Record<string, unknown>)["workspace"], "ws-3");
-        assert.deepEqual(admit["command"], { op: "admit", window: "win-c", output: "out-1", workspace: "ws-3" });
+        assert.deepEqual(admit["command"], { op: "reconcile" });
+        assert.deepEqual(
+            (admit["windows"] as PayloadWindow[]).map((entry) => entry.window).sort(),
+            ["win-c", "win-e"],
+        );
 
         assert.equal(world.activeSets, 0, "move reconciliation never writes native focus");
         assert.equal(activeWindowOf(world), winA);
@@ -555,5 +572,272 @@ describe("background tiling through production entry", () => {
 
         assert.equal(world.activeSets, 0, "observation itself never writes focus");
         assert.equal(currentDesktopOf(world), ws1);
+    });
+
+    it("converges fresh mixed and exception-only hidden domains via reconcile", () => {
+        const world = makeWorld();
+        const ws1 = world.desktops[0] as FakeDesktop;
+        const ws2 = world.desktops[1] as FakeDesktop;
+        const ws3 = world.desktops[2] as FakeDesktop;
+        const winA = addWindow(world, "win-a", ws1, { x: 0, y: 0, width: 600, height: 800 });
+        addWindow(world, "win-b", ws1, { x: 600, y: 0, width: 600, height: 800 });
+        addWindow(world, "win-d", ws2, { x: 0, y: 0, width: 1200, height: 400 });
+        const winF = addWindow(world, "win-f", ws2, { x: 0, y: 400, width: 1200, height: 400 });
+        winF.fullScreen = true;
+        const winG = addWindow(world, "win-g", ws3, { x: 0, y: 0, width: 1200, height: 800 });
+        winG.fullScreen = true;
+        (world.workspace as { activeWindow: unknown }).activeWindow = winA;
+        world.activeSets = 0;
+
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        runDebounce(mocks);
+        const answered = converge(mocks, new Set(["ws-2", "ws-3"]));
+        assert.equal(answered, 3, "foreground plus mixed plus exception-only hidden");
+
+        const calls = planCalls(mocks);
+        const mixed = calls.find(
+            (call) => (call.payload["domain"] as Record<string, unknown>)["workspace"] === "ws-2",
+        )?.payload as Record<string, unknown>;
+        assert.deepEqual(mixed["command"], { op: "reconcile" });
+        assert.deepEqual(
+            (mixed["windows"] as PayloadWindow[]).map((entry) => entry.window).sort(),
+            ["win-d", "win-f"],
+        );
+        const mixedRaw = mixed["windows"] as Array<Record<string, unknown>>;
+        assert.equal(
+            mixedRaw.find((entry) => entry["window"] === "win-f")?.["fit_excluded"],
+            true,
+            "fullscreen exception rides the complete observation",
+        );
+
+        const only = calls.find(
+            (call) => (call.payload["domain"] as Record<string, unknown>)["workspace"] === "ws-3",
+        )?.payload as Record<string, unknown>;
+        assert.deepEqual(only["command"], { op: "reconcile" });
+        assert.deepEqual(
+            (only["windows"] as PayloadWindow[]).map((entry) => entry.window),
+            ["win-g"],
+        );
+
+        assert.equal(world.activeSets, 0, "hidden reconcile never writes native focus");
+        assert.equal(activeWindowOf(world), winA);
+        assert.equal(currentDesktopOf(world), ws1);
+        assert.equal(world.desktopSwitches, 0);
+        handle?.stop();
+    });
+
+    it("retires simultaneous hidden removals through one explicit-empty reconcile", () => {
+        const world = makeWorld(2);
+        const ws1 = world.desktops[0] as FakeDesktop;
+        const ws2 = world.desktops[1] as FakeDesktop;
+        const winA = addWindow(world, "win-a", ws1, { x: 0, y: 0, width: 600, height: 800 });
+        addWindow(world, "win-b", ws1, { x: 600, y: 0, width: 600, height: 800 });
+        addWindow(world, "win-c", ws2, { x: 0, y: 400, width: 1200, height: 400 });
+        addWindow(world, "win-d", ws2, { x: 0, y: 0, width: 1200, height: 400 });
+        (world.workspace as { activeWindow: unknown }).activeWindow = winA;
+        world.activeSets = 0;
+
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        runDebounce(mocks);
+        converge(mocks, new Set(["ws-2"]));
+        world.activeSets = 0;
+        const settled = planCalls(mocks).length;
+
+        world.wins = world.wins.filter((win) => win.internalId !== "win-c" && win.internalId !== "win-d");
+        fire(world.signals.windowRemoved, undefined);
+        runDebounce(mocks);
+        const answered = converge(mocks, new Set());
+        assert.equal(answered, 1, "simultaneous departures retire through one reconcile");
+
+        const calls = planCalls(mocks);
+        assert.equal(calls.length, settled + 1);
+        const retire = calls[calls.length - 1]?.payload as Record<string, unknown>;
+        assert.equal((retire["domain"] as Record<string, unknown>)["workspace"], "ws-2");
+        assert.deepEqual(retire["command"], { op: "reconcile" });
+        assert.deepEqual(retire["windows"], []);
+
+        runDebounce(mocks);
+        assert.equal(planCalls(mocks).length, settled + 1, "retired domain sends nothing further");
+        assert.equal(world.activeSets, 0);
+        assert.equal(activeWindowOf(world), winA);
+        assert.equal(currentDesktopOf(world), ws1);
+        assert.equal(world.desktopSwitches, 0);
+        handle?.stop();
+    });
+
+    it("visits each hidden domain once per chain and revisits on a fresh signal", () => {
+        const world = makeWorld();
+        const ws1 = world.desktops[0] as FakeDesktop;
+        const ws2 = world.desktops[1] as FakeDesktop;
+        const ws3 = world.desktops[2] as FakeDesktop;
+        const winA = addWindow(world, "win-a", ws1, { x: 0, y: 0, width: 600, height: 800 });
+        addWindow(world, "win-b", ws1, { x: 600, y: 0, width: 600, height: 800 });
+        const winD = addWindow(world, "win-d", ws2, { x: 0, y: 0, width: 1200, height: 800 });
+        const winE = addWindow(world, "win-e", ws3, { x: 0, y: 0, width: 1200, height: 800 });
+        (world.workspace as { activeWindow: unknown }).activeWindow = winA;
+        world.activeSets = 0;
+
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        runDebounce(mocks);
+        converge(mocks, new Set(["ws-2", "ws-3"]));
+        world.activeSets = 0;
+        const settled = planCalls(mocks).length;
+
+        winD.frameGeometry = { x: 0, y: 0, width: 500, height: 800 };
+        winE.frameGeometry = { x: 0, y: 0, width: 500, height: 800 };
+        const driftD = world.windowSignals.get("win-d") as { desktops: FakeSignal; geometry: FakeSignal };
+        const driftE = world.windowSignals.get("win-e") as { desktops: FakeSignal; geometry: FakeSignal };
+        fire(driftD.geometry, winD);
+        fire(driftE.geometry, winE);
+        runDebounce(mocks);
+        const answered = converge(mocks, new Set(["ws-2", "ws-3"]));
+        assert.equal(answered, 2, "one reconcile per drifted hidden domain in the same chain");
+
+        runDebounce(mocks);
+        assert.equal(planCalls(mocks).length, settled + 2, "unchanged chain does not self-chain");
+
+        const winF = addWindow(world, "win-f", ws2, { x: 600, y: 0, width: 600, height: 800 });
+        fire(world.signals.windowAdded, winF);
+        runDebounce(mocks);
+        const later = converge(mocks, new Set(["ws-2", "ws-3"]));
+        assert.equal(later, 1, "fresh later signal revisits the changed hidden domain");
+        const last = planCalls(mocks)[planCalls(mocks).length - 1]?.payload as Record<string, unknown>;
+        assert.equal((last["domain"] as Record<string, unknown>)["workspace"], "ws-2");
+        assert.deepEqual(last["command"], { op: "reconcile" });
+        assert.equal(world.activeSets, 0);
+        assert.equal(world.desktopSwitches, 0);
+        handle?.stop();
+    });
+
+    it("parks pure hidden drift after three signals but bypasses on membership change", () => {
+        const world = makeWorld(2);
+        const ws1 = world.desktops[0] as FakeDesktop;
+        const ws2 = world.desktops[1] as FakeDesktop;
+        const winA = addWindow(world, "win-a", ws1, { x: 0, y: 0, width: 600, height: 800 });
+        addWindow(world, "win-b", ws1, { x: 600, y: 0, width: 600, height: 800 });
+        const winD = addWindow(world, "win-d", ws2, { x: 0, y: 0, width: 1200, height: 800 });
+        (world.workspace as { activeWindow: unknown }).activeWindow = winA;
+        world.activeSets = 0;
+
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        runDebounce(mocks);
+        converge(mocks, new Set(["ws-2"]));
+        world.activeSets = 0;
+        const settled = planCalls(mocks).length;
+
+        const drifted = { x: 0, y: 0, width: 500, height: 800 };
+        const stable = { x: 0, y: 0, w: 1200, h: 800 };
+        const driftSignals = world.windowSignals.get("win-d") as { desktops: FakeSignal; geometry: FakeSignal };
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            winD.frameGeometry = { ...drifted };
+            fire(driftSignals.geometry, winD);
+            runDebounce(mocks);
+            const calls = planCalls(mocks);
+            assert.equal(calls.length, settled + attempt + 1, `drift attempt ${String(attempt)} dispatches`);
+            const flight = calls[calls.length - 1] as { payload: Record<string, unknown>; raw: string };
+            assert.deepEqual(flight.payload["command"], { op: "reconcile" });
+            const correlation = String(flight.payload["correlation_id"]);
+            mocks.callbacks[mocks.dbusCalls.length - 1]?.(
+                JSON.stringify({
+                    v: 1,
+                    correlation_id: correlation,
+                    outcome: "planned",
+                    desired_geometry: [
+                        { window: "win-d", leaf: "leaf-win-d", output: "out-1", workspace: "ws-2", rect: { x: stable.x, y: stable.y, w: stable.w, h: stable.h } },
+                    ],
+                }),
+            );
+            winD.frameGeometry = { ...drifted };
+        }
+        assert.ok(
+            mocks.logs.some((line) => line.includes("reconcile-parked")),
+            "three pure-drift terminals park the hidden domain",
+        );
+
+        winD.frameGeometry = { ...drifted };
+        fire(driftSignals.geometry, winD);
+        runDebounce(mocks);
+        assert.equal(planCalls(mocks).length, settled + 3, "parked pure drift sends nothing");
+
+        const winF = addWindow(world, "win-f", ws2, { x: 600, y: 0, width: 600, height: 800 });
+        fire(world.signals.windowAdded, winF);
+        runDebounce(mocks);
+        const afterPark = planCalls(mocks);
+        assert.equal(afterPark.length, settled + 4, "membership change bypasses the drift park");
+        const bypass = afterPark[afterPark.length - 1]?.payload as Record<string, unknown>;
+        assert.equal((bypass["domain"] as Record<string, unknown>)["workspace"], "ws-2");
+        assert.deepEqual(bypass["command"], { op: "reconcile" });
+        assert.deepEqual(
+            (bypass["windows"] as PayloadWindow[]).map((entry) => entry.window).sort(),
+            ["win-d", "win-f"],
+        );
+        converge(mocks, new Set(["ws-2"]));
+        assert.equal(world.activeSets, 0);
+        assert.equal(world.desktopSwitches, 0);
+        handle?.stop();
+    });
+
+    it("retries hidden gap+membership rejection on the same hidden domain exactly once", () => {
+        const world = makeWorld(2);
+        const ws1 = world.desktops[0] as FakeDesktop;
+        const ws2 = world.desktops[1] as FakeDesktop;
+        const winA = addWindow(world, "win-a", ws1, { x: 0, y: 0, width: 600, height: 800 });
+        addWindow(world, "win-b", ws1, { x: 600, y: 0, width: 600, height: 800 });
+        addWindow(world, "win-d", ws2, { x: 0, y: 0, width: 1200, height: 800 });
+        (world.workspace as { activeWindow: unknown }).activeWindow = winA;
+        world.activeSets = 0;
+
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        runDebounce(mocks);
+        converge(mocks, new Set(["ws-2"]));
+        world.activeSets = 0;
+        const settled = planCalls(mocks).length;
+
+        addWindow(world, "win-f", ws2, { x: 600, y: 0, width: 600, height: 800 });
+        fire(world.signals.windowAdded, undefined);
+        runDebounce(mocks);
+        assert.equal(planCalls(mocks).length, settled + 1, "membership change dispatches hidden reconcile");
+        const flight = planCalls(mocks)[planCalls(mocks).length - 1] as { payload: Record<string, unknown>; raw: string };
+        assert.equal((flight.payload["domain"] as Record<string, unknown>)["workspace"], "ws-2");
+        assert.deepEqual(flight.payload["command"], { op: "reconcile" });
+        const correlation = String(flight.payload["correlation_id"]);
+
+        mocks.callbacks[mocks.dbusCalls.length - 1]?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: correlation,
+                outcome: "rejected",
+                kind: "domain-mismatch",
+                message: "domain gap does not match retained state",
+            }),
+        );
+        assert.equal(planCalls(mocks).length, settled + 2, "correlated gap rejection retries exactly once");
+        const retry = planCalls(mocks)[planCalls(mocks).length - 1]?.payload as Record<string, unknown>;
+        assert.equal((retry["domain"] as Record<string, unknown>)["workspace"], "ws-2", "retry stays hidden, not foreground");
+        assert.deepEqual(retry["command"], { op: "update-gaps" });
+        assert.deepEqual(
+            (retry["windows"] as PayloadWindow[]).map((entry) => entry.window).sort(),
+            ["win-d", "win-f"],
+        );
+        assert.ok(
+            mocks.logs.some((line) => line.includes("gap-reprojection selected=retry")),
+            "retry logs the correlated gap reprojection",
+        );
+
+        const retryCorrelation = String(retry["correlation_id"]);
+        mocks.callbacks[mocks.dbusCalls.length - 1]?.(replyFor({ payload: JSON.stringify(retry) }, false));
+        assert.equal(retryCorrelation.length > 0, true);
+        runDebounce(mocks);
+        assert.equal(planCalls(mocks).length, settled + 2, "single-flight: no extra dispatch after retry");
+        assert.equal(world.activeSets, 0, "hidden gap retry never writes native focus");
+        assert.equal(activeWindowOf(world), winA);
+        assert.equal(currentDesktopOf(world), ws1);
+        assert.equal(world.desktopSwitches, 0);
+        handle?.stop();
     });
 });

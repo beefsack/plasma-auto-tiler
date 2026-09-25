@@ -415,13 +415,14 @@ describe("hidden terminal isolation", () => {
         enableAdapter(mocks);
         baselineFgAndHidden(mocks, world, "ws-2");
         const hiddenRef = world.hiddenRefs.get("ws-2") as object;
+        const settled = mocks.dbusCalls.length;
         mocks.observeImpl = () => fgObserved(world.fgA, world.fgB, ALLOC_A);
-        mocks.observeHiddenImpl = () => [hiddenObserved("ws-2", "win-ws-2", hiddenRef, HIDDEN_DRIFT)];
-        fire(mocks, "geometry");
-        runDebounce(mocks);
-        assert.equal(mocks.dbusCalls.length, 3, "first drift reconcile dispatches");
         for (let attempt = 0; attempt < 3; attempt += 1) {
-            const index = 2 + attempt;
+            mocks.observeHiddenImpl = () => [hiddenObserved("ws-2", "win-ws-2", hiddenRef, HIDDEN_DRIFT)];
+            fire(mocks, "geometry");
+            runDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, settled + attempt + 1, `drift attempt ${String(attempt)} dispatches`);
+            const index = settled + attempt;
             const call = payload(mocks, index);
             assert.equal((call["domain"] as Record<string, unknown>)["workspace"], "ws-2");
             assert.deepEqual((call["command"] as Record<string, unknown>)["op"], "reconcile");
@@ -439,12 +440,20 @@ describe("hidden terminal isolation", () => {
                 }],
             }));
         }
-        assert.equal(mocks.dbusCalls.length, 5, "exactly three successful background reconciles");
+        assert.equal(mocks.dbusCalls.length, settled + 3, "exactly three successful background reconciles");
         assert.equal(mocks.logs.filter((line) => line === "plasma-auto-tiler:plan:reconcile-parked").length, 1);
         const parkedCalls = mocks.dbusCalls.length;
+        mocks.observeHiddenImpl = () => [hiddenObserved("ws-2", "win-ws-2", hiddenRef, HIDDEN_DRIFT)];
         fire(mocks, "geometry");
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, parkedCalls, "parked hidden domain dispatches nothing further");
+        mocks.observeImpl = () => fgObserved(world.fgA, world.fgB, DRIFT_A);
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, parkedCalls + 1, "parked hidden never blocks the foreground domain");
+        const fgCall = payload(mocks, parkedCalls);
+        assert.equal((fgCall["domain"] as Record<string, unknown>)["workspace"], "ws-1");
+        assert.deepEqual((fgCall["command"] as Record<string, unknown>)["op"], "reconcile");
     });
 
     it("synchronous hidden dispatch failure chains at most one hidden step per round", () => {

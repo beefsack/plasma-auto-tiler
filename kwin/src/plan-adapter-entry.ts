@@ -1251,7 +1251,7 @@ export function observeHiddenDomains(
                 // exception semantics are untouched and mixed domains keep
                 // their Rust handling.
                 const sortedIds = entries.map((entry) => entry.id).sort();
-                const anchor = [...entries].sort((a, b) =>
+                const bySpatial = (a: (typeof entries)[number], b: (typeof entries)[number]): number =>
                     a.rect.y !== b.rect.y
                         ? a.rect.y - b.rect.y
                         : a.rect.x !== b.rect.x
@@ -1264,8 +1264,16 @@ export function observeHiddenDomains(
                                 ? -1
                                 : a.id > b.id
                                   ? 1
-                                  : 0,
-                )[0] as { id: string; ref: object };
+                                  : 0;
+                // Mixed hidden domains must anchor session focus on a tiled
+                // member: a spatial-first float would otherwise seed
+                // focused_window on an exception while the retained Engine
+                // session holds focus None and rejects the reconcile as a
+                // focus-mismatch. Exception-only domains keep the
+                // spatial-first member.
+                const tiled = entries.filter((entry) => !entry.floating && !entry.sticky);
+                const anchorPool = tiled.length > 0 ? tiled : entries;
+                const anchor = [...anchorPool].sort(bySpatial)[0] as { id: string; ref: object };
                 const anchorRef = anchor.ref;
                 const anchorId = anchor.id;
                 const fingerprint = String(planFingerprint(screen.name, desktop.id, anchorId, sortedIds));

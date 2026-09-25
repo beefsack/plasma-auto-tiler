@@ -1188,9 +1188,11 @@ describe("workspace-send abandon recovery", () => {
             }
             await waitFor(() => h.queued() > 0, "ordinary Plan observer dispatch after abandon");
             const observed = tryParse(h.peekQueued()[0] ?? "");
-            assert.equal(opOf(h.peekQueued()[0] ?? ""), "admit", "abandon: ordinary Plan admits from native observation");
+            assert.equal(opOf(h.peekQueued()[0] ?? ""), "reconcile", "abandon: ordinary Plan reconciles complete observation from native observation");
             assert.equal((observed?.["domain"] as Record<string, unknown>)?.["workspace"], "ws-1");
             assert.ok(JSON.stringify(observed?.["windows"]).includes("n-win-new"), "abandon: ordinary observation includes newly admitted member");
+            assert.ok(JSON.stringify(observed?.["windows"]).includes("n-win-a"), "abandon: complete observation retains survivors");
+            assert.ok(h.logs.some((line) => line.includes(`correlation=${String(firstPayload["correlation_id"])}`) && line.includes("abandon-handoff") && line.includes("resync-requested")), "abandon: automatic resync handoff logged without new native signal");
             assert.notEqual(observed?.["correlation_id"], firstPayload["correlation_id"], "abandon: Plan owns a new correlation");
             await h.flush();
             assert.equal(parseBody(h.calls[h.calls.length - 1], "reply")["outcome"], "planned", "abandon: Engine accepts ordinary Plan after retire");
@@ -1501,7 +1503,7 @@ describe("observation-convergence (complete observation, test-first)", () => {
         }
     });
 
-    it("all-float domain never seeds a float; tiled newcomer admits with the float retained as exception", async () => {
+    it("all-float domain never seeds a float; tiled newcomer converges with the float retained as exception", async () => {
         // First all-float, then normal newcomer (real observer + real Engine).
         // An all-float domain dispatches nothing and sticky multi-homing
         // admits nowhere foreign. When a tiled member later arrives, the seed
@@ -1531,12 +1533,24 @@ describe("observation-convergence (complete observation, test-first)", () => {
                 await h.flush();
             }
             assert.equal(parseBody(h.calls[h.calls.length - 1], "reply")["outcome"], "planned", "skew converges");
-            // All-float ws-4 dispatches nothing; sticky multi-homing admits
-            // the float into no foreign domain.
-            assert.ok(
-                !h.calls.some((call) => wsOf(call.payload) === "ws-4"),
-                "all-float domain seeds nothing",
-            );
+            // All-float ws-4 converges via reconcile carrying the complete
+            // floating observation; sticky multi-homing admits the float into
+            // no foreign domain and never tiles it.
+            const ws4Calls = h.calls.filter((call) => wsOf(call.payload) === "ws-4");
+            assert.ok(ws4Calls.length >= 1, "all-float domain converges via reconcile");
+            for (const call of ws4Calls) {
+                const body = tryParse(call.payload);
+                assert.equal((body?.["command"] as Record<string, unknown> | undefined)?.["op"], "reconcile", "all-float domain converges through reconcile, never admit/remove");
+                const windows = (body?.["windows"] as Array<Record<string, unknown>> | undefined) ?? [];
+                const floatEntry = windows.find((entry) => entry["window"] === "n-win-float");
+                assert.ok(floatEntry !== undefined, "complete observation carries the float");
+                assert.equal(floatEntry?.["floating"], true, "float rides as floating evidence, not a tile");
+            }
+            for (const call of ws4Calls) {
+                const reply = tryParse(call.reply);
+                assert.equal(reply?.["outcome"], "planned", "all-float converge settles planned");
+                assert.ok(!JSON.stringify(reply?.["desired_geometry"] ?? reply).includes("n-win-float"), "float absent from tiled geometry, never tiled");
+            }
             assert.ok(
                 !h.calls.some((call) => {
                     const body = tryParse(call.payload);
@@ -1560,8 +1574,7 @@ describe("observation-convergence (complete observation, test-first)", () => {
             const seedPayload = h.peekQueued().find((item) => wsOf(item) === "ws-4") ?? "";
             const seedBody = tryParse(seedPayload);
             const seedCommand = seedBody?.["command"] as Record<string, unknown> | undefined;
-            assert.equal(seedCommand?.["op"], "admit", "new domain seeds through admit");
-            assert.equal(seedCommand?.["window"], "n-win-zed", "seed names the tiled newcomer, never the float");
+            assert.equal(seedCommand?.["op"], "reconcile", "new domain converges through reconcile carrying complete observation");
             const seedWindows = (seedBody?.["windows"] as Array<Record<string, unknown>> | undefined) ?? [];
             const seedFloat = seedWindows.find((entry) => entry["window"] === "n-win-float");
             assert.ok(seedFloat !== undefined, "complete observation carries the float");
@@ -1572,6 +1585,7 @@ describe("observation-convergence (complete observation, test-first)", () => {
             );
             await h.flush();
             const seedReply = parseBody(h.calls[h.calls.length - 1], "reply");
+            assert.equal(seedBody?.["focused_window"], "n-win-zed", "mixed hidden anchor names the spatial-first tiled newcomer, never the float");
             assert.equal(seedReply["outcome"], "planned", "mixed seed converges through the shared primitive");
             const seedGeometry = JSON.stringify(seedReply["desired_geometry"] ?? seedReply);
             assert.ok(seedGeometry.includes("n-win-zed"), "converged geometry covers the admitted tile");
@@ -1736,7 +1750,8 @@ describe("workspace-send orphan retirement and bounded fallback (option B)", () 
                     timer.callback();
                 }
                 await waitFor(() => hNew.queued() > 0, "ordinary Plan observer dispatch after orphan retire");
-                assert.equal(opOf(hNew.peekQueued()[0] ?? ""), "admit", "orphan: ordinary Plan admits from native observation");
+                assert.equal(opOf(hNew.peekQueued()[0] ?? ""), "reconcile", "orphan: ordinary Plan reconciles complete observation from native observation");
+                assert.ok(JSON.stringify(hNew.peekQueued()[0] ?? "").includes("n-win-new"), "orphan: complete observation includes newly admitted member");
                 await hNew.flush();
                 assert.equal(parseBody(hNew.calls[hNew.calls.length - 1], "reply")["outcome"], "planned", "orphan: Engine accepts ordinary Plan after retire");
                 assert.ok(!hNew.committed(), "orphan: handoff never fabricates send commit");
@@ -1872,7 +1887,8 @@ describe("workspace-send orphan retirement and bounded fallback (option B)", () 
                 timer.callback();
             }
             await waitFor(() => h.queued() > 0, "ordinary Plan observer dispatch after fallback");
-            assert.equal(opOf(h.peekQueued()[0] ?? ""), "admit", "fallback: ordinary Plan admits from native observation");
+            assert.equal(opOf(h.peekQueued()[0] ?? ""), "reconcile", "fallback: ordinary Plan reconciles complete observation from native observation");
+            assert.ok(JSON.stringify(h.peekQueued()[0] ?? "").includes("n-win-new"), "fallback: complete observation includes newly admitted member");
             await h.flush();
             assert.equal(parseBody(h.calls[h.calls.length - 1], "reply")["outcome"], "planned", "fallback: Engine accepts ordinary Plan without a restart");
             assert.ok(!h.committed(), "fallback: never claims commit or retirement");

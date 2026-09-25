@@ -1105,7 +1105,7 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
         assert.equal(mocks.logs.filter((line) => line.includes("planned-applied")).length, 1);
     });
 
-    it("processes deferred admission exactly once after settle once send protection releases", () => {
+    it("processes deferred newcomer reconcile exactly once after settle once send protection releases", () => {
         const r = refs();
         const { mocks, native } = r4Mocks(r);
         let sendActive = false;
@@ -1160,7 +1160,7 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
             entry.callback();
         }
         assert.equal(mocks.dbusCalls.length, 3);
-        // Releasing protection admits the queued new window exactly once.
+        // Releasing protection reconciles the queued new window exactly once.
         sendActive = false;
         adapter.requestResync();
         const pending = mocks.timers.filter((entry) => entry.delayMs === 120 && !entry.cancelled);
@@ -1168,10 +1168,10 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
         pending[pending.length - 1]?.callback();
         assert.equal(mocks.dbusCalls.length, 4);
         const admission = payload(mocks, 3);
-        assert.equal((admission["command"] as Record<string, unknown>)["op"], "admit");
+        assert.equal((admission["command"] as Record<string, unknown>)["op"], "reconcile");
         const admitted = (admission["windows"] as Array<Record<string, unknown>>).map((entry) => entry["window"] as string);
-        assert.ok(admitted.includes("win-b"), `queued win-b admitted, got ${JSON.stringify(admitted)}`);
-        assert.ok(admitted.includes("win-a"), `admission retains win-a, got ${JSON.stringify(admitted)}`);
+        assert.ok(admitted.includes("win-b"), `queued win-b converged, got ${JSON.stringify(admitted)}`);
+        assert.ok(admitted.includes("win-a"), `reconcile retains win-a, got ${JSON.stringify(admitted)}`);
         // Completing the queued admission converges once with no replay.
         const admissionCorrelation = admission["correlation_id"] as string;
         mocks.callbacks[3]?.(

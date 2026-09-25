@@ -12,9 +12,10 @@ use std::collections::BTreeSet;
 
 use tiler_protocol::planner_protocol::Planner as CorePlanner;
 
-/// Test harness which establishes canonical per-domain state through the
-/// ordinary admission lifecycle before exercising a directional request.
-/// Production directional paths never perform this spatial construction.
+/// Test harness which establishes canonical per-domain state through a
+/// fresh complete reconcile on each domain before exercising a directional
+/// request. Production directional paths never perform this spatial
+/// construction.
 struct Planner {
     inner: CorePlanner,
     binding: Option<(String, String)>,
@@ -93,7 +94,7 @@ impl Planner {
                 })
                 .cloned()
                 .collect();
-            let Some(admitted) = members
+            let Some(seed_focus) = members
                 .iter()
                 .find(|window| {
                     window.get("window").and_then(serde_json::Value::as_str) == Some(focused)
@@ -117,13 +118,10 @@ impl Planner {
                     "gap": domain["gap"],
                     "outer_gap": domain["outer_gap"],
                 },
-                "focused_window": admitted,
+                "focused_window": seed_focus,
                 "windows": members,
                 "command": {
-                    "op": "admit",
-                    "window": admitted,
-                    "output": output,
-                    "workspace": workspace,
+                    "op": "reconcile",
                 },
             });
             let reply: serde_json::Value =
@@ -167,9 +165,9 @@ fn domains_payload() -> serde_json::Value {
 }
 
 // Left-hand source variant for move tests: the focused right-edge window
-// moves right into the adjacent target. Seeding admits the left window
-// first and the focused right window last, yielding H[left, focused-right]
-// with the mover at the outward right edge (S20 mirror).
+// moves right into the adjacent target. The reconcile seed keeps the left
+// window first and the focused right window last, yielding H[left,
+// focused-right] with the mover at the outward right edge (S20 mirror).
 fn left_source_domain() -> serde_json::Value {
     serde_json::json!({
         "output": "out-1",

@@ -192,6 +192,16 @@ function rejectedReply(correlation: string, kind: string): string {
     return JSON.stringify({ v: 1, correlation_id: correlation, outcome: "rejected", kind, message: "no" });
 }
 
+function gapRejected(correlation: string, message: string): string {
+    return JSON.stringify({
+        v: 1,
+        correlation_id: correlation,
+        outcome: "rejected",
+        kind: "domain-mismatch",
+        message,
+    });
+}
+
 function runDebounce(mocks: Mocks): void {
     const pending = [...mocks.timers];
     mocks.timers.length = 0;
@@ -207,15 +217,15 @@ function runDebounce(mocks: Mocks): void {
     }
 }
 
-// Establish a converged (8, 8) baseline through one applied auto-admit
-// flight so later gap resyncs have retained state to reproject. Interactive
+// Establish a converged (8, 8) baseline through one applied automatic
+// reconcile flight so later gap resyncs have retained state to reproject. Interactive
 // focus flights never write geometry, so only the auto path seeds baselines.
 function seedBaseline(mocks: Mocks, adapter: PlanAdapter): void {
     adapter.requestResync();
     runDebounce(mocks);
     assert.equal(mocks.dbusCalls.length, 1);
     assert.equal(mocks.dbusCalls[0]?.method, PLAN_METHOD);
-    assert.equal(commandOf(mocks, 0)["op"], "admit");
+    assert.equal(commandOf(mocks, 0)["op"], "reconcile");
     replyTo(
         mocks,
         0,
@@ -235,7 +245,7 @@ function seedBaseline(mocks: Mocks, adapter: PlanAdapter): void {
 }
 
 describe("deliberate gap reprojection dispatch", () => {
-    it("dispatches retained update-gaps with a changed inner gap on resync", () => {
+    it("dispatches reconcile with a changed inner gap on resync, then one bounded update-gaps retry", () => {
         const refs: Refs = { a: {}, b: {} };
         const mocks = mockEnv(refs);
         const adapter = enableAdapter(mocks);
@@ -246,18 +256,27 @@ describe("deliberate gap reprojection dispatch", () => {
         runDebounce(mocks);
 
         assert.equal(mocks.dbusCalls.length, 2);
-        assert.deepEqual(commandOf(mocks, 1), { op: "update-gaps" });
+        assert.deepEqual(commandOf(mocks, 1), { op: "reconcile" });
         const domain = domainOf(mocks, 1);
         assert.equal(domain["gap"], 16);
         assert.equal(domain["outer_gap"], 8);
+        assert.equal((payloadOf(mocks, 1)["windows"] as Array<unknown>).length, 2);
+
+        // Only the correlated exact-message gap refusal retries, exactly once.
+        replyTo(mocks, 1, gapRejected(correlationOf(mocks, 1), "domain gap does not match retained state"));
+        assert.equal(mocks.dbusCalls.length, 3);
+        assert.deepEqual(commandOf(mocks, 2), { op: "update-gaps" });
+        assert.equal(domainOf(mocks, 2)["gap"], 16);
         assert.ok(
-            mocks.logs.some((line) => line.includes("gap-reprojection selected=retained")),
-            `expected gap-reprojection log, got ${JSON.stringify(mocks.logs)}`,
+            mocks.logs.some((line) => line.includes("gap-reprojection selected=retry")),
+            `expected gap retry log, got ${JSON.stringify(mocks.logs)}`,
         );
+        replyTo(mocks, 2, gapRejected(correlationOf(mocks, 2), "domain outer gap does not match retained state"));
+        assert.equal(mocks.dbusCalls.length, 3);
         adapter.disable();
     });
 
-    it("dispatches retained update-gaps with a changed outer gap on resync", () => {
+    it("dispatches reconcile with a changed outer gap on resync, then one update-gaps retry", () => {
         const refs: Refs = { a: {}, b: {} };
         const mocks = mockEnv(refs);
         const adapter = enableAdapter(mocks);
@@ -268,14 +287,18 @@ describe("deliberate gap reprojection dispatch", () => {
         runDebounce(mocks);
 
         assert.equal(mocks.dbusCalls.length, 2);
-        assert.deepEqual(commandOf(mocks, 1), { op: "update-gaps" });
+        assert.deepEqual(commandOf(mocks, 1), { op: "reconcile" });
         const domain = domainOf(mocks, 1);
         assert.equal(domain["gap"], 8);
         assert.equal(domain["outer_gap"], 0);
+        replyTo(mocks, 1, gapRejected(correlationOf(mocks, 1), "domain outer gap does not match retained state"));
+        assert.equal(mocks.dbusCalls.length, 3);
+        assert.deepEqual(commandOf(mocks, 2), { op: "update-gaps" });
+        assert.equal(domainOf(mocks, 2)["outer_gap"], 0);
         adapter.disable();
     });
 
-    it("dispatches one update-gaps for a combined bounds and gap change", () => {
+    it("dispatches reconcile for a combined bounds and gap change, then one update-gaps retry", () => {
         const refs: Refs = { a: {}, b: {} };
         const mocks = mockEnv(refs);
         const adapter = enableAdapter(mocks);
@@ -288,11 +311,15 @@ describe("deliberate gap reprojection dispatch", () => {
         runDebounce(mocks);
 
         assert.equal(mocks.dbusCalls.length, 2);
-        assert.deepEqual(commandOf(mocks, 1), { op: "update-gaps" });
+        assert.deepEqual(commandOf(mocks, 1), { op: "reconcile" });
         const domain = domainOf(mocks, 1);
         assert.equal(domain["gap"], 4);
         assert.equal(domain["outer_gap"], 12);
         assert.deepEqual(domain["bounds"], { x: 0, y: 0, w: 1600, h: 900 });
+        replyTo(mocks, 1, gapRejected(correlationOf(mocks, 1), "domain gap does not match retained state"));
+        assert.equal(mocks.dbusCalls.length, 3);
+        assert.deepEqual(commandOf(mocks, 2), { op: "update-gaps" });
+        assert.equal(domainOf(mocks, 2)["gap"], 4);
         adapter.disable();
     });
 
@@ -386,7 +413,7 @@ describe("deliberate gap reprojection application", () => {
             ]),
         );
         assert.equal(mocks.dbusCalls.length, 3);
-        assert.deepEqual(commandOf(mocks, 2), { op: "update-gaps" });
+        assert.deepEqual(commandOf(mocks, 2), { op: "reconcile" });
         assert.notEqual(correlationOf(mocks, 2), oldCorrelation);
         assert.equal(domainOf(mocks, 2)["gap"], 16);
         adapter.disable();
@@ -402,6 +429,7 @@ describe("deliberate gap reprojection application", () => {
         adapter.requestResync();
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, 2);
+        assert.deepEqual(commandOf(mocks, 1), { op: "reconcile" });
 
         replyTo(
             mocks,
@@ -413,17 +441,17 @@ describe("deliberate gap reprojection application", () => {
         );
         assert.equal(mocks.geometries.length, 0);
 
-        // The baseline never moved: the next resync retries the same gap
-        // reprojection instead of converging or reseeding.
+        // The applied state never moved: the next resync retries the same
+        // gap-carrying reconcile instead of converging or reseeding.
         adapter.requestResync();
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, 3);
-        assert.deepEqual(commandOf(mocks, 2), { op: "update-gaps" });
+        assert.deepEqual(commandOf(mocks, 2), { op: "reconcile" });
         assert.equal(domainOf(mocks, 2)["gap"], 16);
         adapter.disable();
     });
 
-    it("keeps the old baseline when the retained route refuses the gap update", () => {
+    it("keeps applied state when the route refuses the gap-carrying reconcile", () => {
         const refs: Refs = { a: {}, b: {} };
         const mocks = mockEnv(refs);
         const adapter = enableAdapter(mocks);
@@ -433,11 +461,14 @@ describe("deliberate gap reprojection application", () => {
         adapter.requestResync();
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, 2);
+        assert.deepEqual(commandOf(mocks, 1), { op: "reconcile" });
 
-        // The retained route refuses while a plan is pending server-side: no
-        // native write, no baseline clobber.
+        // The route refuses while a plan is pending server-side: no
+        // native write, no applied-state clobber, and no exact-message
+        // retry on this non-gap refusal.
         replyTo(mocks, 1, rejectedReply(correlationOf(mocks, 1), "pending-exists"));
         assert.equal(mocks.geometries.length, 0);
+        assert.equal(mocks.dbusCalls.length, 2);
         assert.ok(
             mocks.logs.some((line) => line.includes("kind=pending-exists")),
             `expected pending-exists rejection log, got ${JSON.stringify(mocks.logs)}`,
@@ -446,7 +477,7 @@ describe("deliberate gap reprojection application", () => {
         adapter.requestResync();
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, 3);
-        assert.deepEqual(commandOf(mocks, 2), { op: "update-gaps" });
+        assert.deepEqual(commandOf(mocks, 2), { op: "reconcile" });
         assert.equal(domainOf(mocks, 2)["gap"], 16);
         adapter.disable();
     });
@@ -524,7 +555,7 @@ function fakeWorkspace(): Record<string, unknown> {
 }
 
 describe("deliberate gap reload production route", () => {
-    it("sends retained update-gaps on Options configChanged after a converged baseline", () => {
+    it("sends a gap-carrying reconcile on Options configChanged, then one update-gaps retry", () => {
         let innerGap = 8;
         let outerGap = 8;
         const optionsChanged = fakeSignal();
@@ -591,12 +622,12 @@ describe("deliberate gap reload production route", () => {
         const shortcutCount = shortcuts.length;
         assert.ok(shortcutCount > 0);
 
-        // Converge the startup baseline through the automatic admit flight.
+        // Converge the startup baseline through the automatic reconcile flight.
         fireDebounce();
         assert.equal(dbusCalls.length, 1);
         assert.deepEqual(
             (JSON.parse(dbusCalls[0]?.payload as string) as { command: unknown }).command as Record<string, unknown>,
-            { op: "admit", window: "win-a", output: "out-1", workspace: "ws-1" },
+            { op: "reconcile" },
         );
         const admitCorrelation = (JSON.parse(dbusCalls[0]?.payload as string) as { correlation_id: string })
             .correlation_id;
@@ -616,7 +647,8 @@ describe("deliberate gap reload production route", () => {
         );
 
         // The deliberate reload: Options configChanged re-reads gaps and the
-        // resync dispatches the retained gap reprojection, not silent adopt.
+        // resync dispatches a gap-carrying reconcile, not silent adopt; only
+        // the correlated exact-message refusal retries one update-gaps.
         innerGap = 16;
         for (const fire of [...optionsChanged.handlers]) {
             fire();
@@ -629,10 +661,28 @@ describe("deliberate gap reload production route", () => {
         const second = JSON.parse(dbusCalls[1]?.payload as string) as {
             command: Record<string, unknown>;
             domain: Record<string, unknown>;
+            correlation_id: string;
         };
-        assert.deepEqual(second.command, { op: "update-gaps" });
+        assert.deepEqual(second.command, { op: "reconcile" });
         assert.equal(second.domain["gap"], 16);
         assert.equal(second.domain["outer_gap"], 8);
+        callbacks[1]?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: second.correlation_id,
+                outcome: "rejected",
+                kind: "domain-mismatch",
+                message: "domain gap does not match retained state",
+            }),
+        );
+        assert.equal(dbusCalls.length, 3);
+        const retry = JSON.parse(dbusCalls[2]?.payload as string) as {
+            command: Record<string, unknown>;
+            domain: Record<string, unknown>;
+        };
+        assert.deepEqual(retry.command, { op: "update-gaps" });
+        assert.equal(retry.domain["gap"], 16);
+        assert.equal(retry.domain["outer_gap"], 8);
         // No shortcut re-registration on the reload path.
         assert.equal(shortcuts.length, shortcutCount);
         handle?.stop();

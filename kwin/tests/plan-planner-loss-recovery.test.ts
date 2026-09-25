@@ -254,7 +254,7 @@ describe("plan planner-loss recovery", () => {
         adapter.disable();
     });
 
-    it("absent probe triggers a fresh admit without replaying the old command", () => {
+    it("absent probe triggers a fresh reconcile without replaying the old command", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = enableAdapter(mocks);
@@ -268,7 +268,7 @@ describe("plan planner-loss recovery", () => {
         assert.equal(mocks.dbusCalls[lastProbe]?.method, PLAN_HAS_OWNER_METHOD);
         mocks.callbacks[lastProbe]?.(false);
         assert.ok(mocks.logs.some((l) => l.includes("plan:recovery") && l.includes("reason=absent")));
-        // Recovery clears the baseline and dispatches one fresh admit through
+        // Recovery clears the baseline and dispatches one fresh reconcile through
         // the existing route: one bounded activation plus one current
         // observation. The old move command is never replayed.
         drainRecovery(mocks);
@@ -278,7 +278,7 @@ describe("plan planner-loss recovery", () => {
             .slice(-1);
         assert.equal(freshPlans.length, 1);
         const freshPayload = payloadOf(mocks, freshPlans[0]?.i as number);
-        assert.deepEqual((freshPayload["command"] as Record<string, unknown>)["op"], "admit");
+        assert.deepEqual((freshPayload["command"] as Record<string, unknown>)["op"], "reconcile");
         adapter.disable();
     });
 
@@ -399,7 +399,7 @@ describe("plan planner-loss recovery", () => {
         adapter.disable();
     });
 
-    it("fresh admit after recovery carries current windows with fit exclusion", () => {
+    it("fresh reconcile after recovery carries current windows with fit exclusion", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = enableAdapter(mocks);
@@ -415,7 +415,7 @@ describe("plan planner-loss recovery", () => {
         drainRecovery(mocks);
         const freshIndex = mocks.dbusCalls.map((c, i) => ({ c, i })).filter(({ c }) => c.method === PLAN_METHOD).slice(-1)[0]?.i as number;
         const fresh = payloadOf(mocks, freshIndex);
-        assert.equal((fresh["command"] as Record<string, unknown>)["op"], "admit");
+        assert.equal((fresh["command"] as Record<string, unknown>)["op"], "reconcile");
         const windows = fresh["windows"] as Array<Record<string, unknown>>;
         assert.equal(windows.length, 2);
         assert.equal((windows.find((w) => w["window"] === "win-a") as Record<string, unknown>)["fit_excluded"], true);
@@ -439,7 +439,11 @@ describe("plan planner-loss recovery", () => {
         drainRecovery(mocks);
         const freshIndex = mocks.dbusCalls.map((c, i) => ({ c, i })).filter(({ c }) => c.method === PLAN_METHOD).slice(-1)[0]?.i as number;
         const fresh = payloadOf(mocks, freshIndex);
-        assert.equal((fresh["command"] as Record<string, unknown>)["op"], "admit");
+        assert.equal((fresh["command"] as Record<string, unknown>)["op"], "reconcile");
+        const freshWindows = fresh["windows"] as Array<Record<string, unknown>>;
+        assert.equal(freshWindows.length, 2);
+        assert.ok(freshWindows.some((w) => w["window"] === "win-a"));
+        assert.ok(freshWindows.some((w) => w["window"] === "win-b"));
         adapter.disable();
     });
 

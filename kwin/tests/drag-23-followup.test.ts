@@ -320,7 +320,7 @@ describe("drag-23 terminal-class converge", () => {
         stop();
     });
 
-    it("stale drop is satisfied by the queued admit with no extra dispatch", () => {
+    it("stale drop is satisfied by the queued reconcile with no extra dispatch", () => {
         const live = world();
         const { stop, mocks } = startEntry(live);
         fireAll(live.signals["startedA"]);
@@ -332,15 +332,15 @@ describe("drag-23 terminal-class converge", () => {
         // admit holds the single slot.
         fireAll(live.signals["geoA"]);
         runDebounce(mocks);
-        assert.equal(mocks.planCalls.length, 1, "admit deferred behind the pointer flight");
+        assert.equal(mocks.planCalls.length, 1, "reconcile deferred behind the pointer flight");
         const pointer = correlationOf(mocks.planCalls[0]);
         mocks.planCalls[0]?.callback(pointerPlanned(pointer));
         assert.ok(mocks.logs.some((line) => line.includes("drag-rejected") && line.includes("correlation=drag-41") && line.includes("reason=stale-dropped")));
         assert.ok(mocks.logs.some((line) => line.includes("drag-reconcile") && line.includes("correlation=drag-41") && line.includes("dispatch=deferred")));
-        // The superseding admit dispatches as the single follow-up and its
+        // The superseding reconcile dispatches as the single follow-up and its
         // application satisfies the marker: no second reconcile is sent.
         assert.equal(mocks.planCalls.length, 2, "exactly one follow-up after the stale drop");
-        assert.deepEqual(commandOf(mocks.planCalls[1])["op"], "admit");
+        assert.deepEqual(commandOf(mocks.planCalls[1])["op"], "reconcile");
         const follow = correlationOf(mocks.planCalls[1]);
         mocks.planCalls[1]?.callback(planned(follow, [
             { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
@@ -532,7 +532,11 @@ describe("drag-23 rejected-drop converge", () => {
         mocks.planCalls[1]?.callback(rejected(pointer));
         assert.equal(mocks.planCalls.length, 3, "exactly one marker reconcile for the shared marker");
         assert.deepEqual(commandOf(mocks.planCalls[2]), { op: "reconcile" });
-        const reconciles = mocks.planCalls.filter((call) => (commandOf(call) as Record<string, unknown>)["op"] === "reconcile");
+        // The baseline seed reconcile plus exactly one marker reconcile: no
+        // retries, no per-drag queue.
+        const reconciles = mocks.planCalls
+            .slice(1)
+            .filter((call) => (commandOf(call) as Record<string, unknown>)["op"] === "reconcile");
         assert.equal(reconciles.length, 1, "no retries, no per-drag queue");
         // Its application satisfies every drop with the same plan
         // correlation and restores the retained geometry.

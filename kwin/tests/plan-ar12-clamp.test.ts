@@ -568,7 +568,7 @@ describe("plan adapter AR12 membership-skew diagnostics", () => {
         );
     });
 
-    it("compares against adapter last-good evidence for partial-observation", () => {
+    it("compares against applied evidence for partial-observation", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const rects = { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } };
@@ -580,8 +580,8 @@ describe("plan adapter AR12 membership-skew diagnostics", () => {
         mocks.callbacks[0]?.(
             plannedReplyWithFlags(admitCorr, [{ window: "win-a", rect: rects["win-a"] }, { window: "win-b", rect: rects["win-b"] }]),
         );
-        // win-b floats after admission; the next focus flight wants only
-        // win-a while last-good still retains both as tiled.
+        // win-b floats after application; the next focus flight wants only
+        // win-a while applied evidence still retains both as tiled.
         mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects, floating: { "win-b": true } });
         adapter.requestFocus("left");
         const correlation = plannerPayload(mocks, 1)["correlation_id"] as string;
@@ -593,16 +593,15 @@ describe("plan adapter AR12 membership-skew diagnostics", () => {
                     line ===
                     `plasma-auto-tiler:plan:membership-skew correlation=${correlation} op=focus reason=partial-observation wanted=1 planned=unknown missing=0 extra=1 floating=1 sticky=0 fullscreen=0 maximized=0 retained=known retained-wanted=2 retained-ids=win-a,win-b`,
             ),
-            "retained tiled membership is shown as adapter evidence",
+            "applied tiled membership is shown as adapter evidence",
         );
         assert.ok(
             mocks.logs.some(
                 (line) =>
                     line ===
-                    // Retained baselines carry no sticky flag, so sticky is
-                    // truthfully unknown here; the tiled floating/src flags
-                    // are retained evidence, not asserted core state.
-                    `plasma-auto-tiler:plan:membership-skew-member correlation=${correlation} window=win-b side=extra floating=false sticky=unknown fullscreen=false maximized=false float-src=none`,
+                    // Sticky and floating flags are applied evidence, not
+                    // assertions about current core state.
+                    `plasma-auto-tiler:plan:membership-skew-member correlation=${correlation} window=win-b side=extra floating=false sticky=false fullscreen=false maximized=false float-src=none`,
             ),
             "extra retained member carries retained flags, not asserted core state",
         );

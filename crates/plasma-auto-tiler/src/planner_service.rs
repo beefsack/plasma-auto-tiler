@@ -616,7 +616,7 @@ mod tests {
             "plan-dbus-bad-1",
             "win-1",
             &["win-1", "win-2"],
-            serde_json::json!({"op": "remove", "window": "win-9"}),
+            serde_json::json!({"op": "focus", "window": "win-9", "direction": "left"}),
         );
         let bad_reply = endpoint
             .evaluate_plan_request(&bad)
@@ -630,8 +630,8 @@ mod tests {
         let good = plan_request_for(
             "plan-dbus-good-1",
             "win-1",
-            &["win-1", "win-2"],
-            serde_json::json!({"op": "remove", "window": "win-2"}),
+            &["win-1"],
+            serde_json::json!({"op": "reconcile"}),
         );
         let good_reply = endpoint
             .evaluate_plan_request(&good)

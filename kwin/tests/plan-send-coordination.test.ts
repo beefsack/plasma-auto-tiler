@@ -511,6 +511,39 @@ describe("plan/send P0 coordination through production wiring", () => {
         assert.ok(mocks.logs.some((l) => l.includes("busy-refused kind=workspace-move")), "second send while send active busy-refuses");
         assert.equal(mocks.dbusCalls.length, dbusBeforeSecond, "blocked send must not touch D-Bus");
 
+        // Automatic fresh hidden-domain admission: an eligible fresh member
+        // arrives on a separate new hidden workspace during the held send
+        // with no native signal. Production must not dispatch Plan while
+        // the send blocks; the committed settlement below must auto-resync
+        // (production onCommitted wiring) to a complete reconcile for ws-3.
+        // Fake replies below are test echoes, not the Rust Engine.
+        const ws3 = { id: "ws-3", x11DesktopNumber: 3 } as FakeDesktop;
+        world.desktops.push(ws3);
+        world.workspace["desktops"] = world.desktops;
+        const freshOutput = world.outputs[0] as FakeOutput;
+        const winFresh = {
+            normalWindow: true,
+            managed: true,
+            minimized: false,
+            fullScreen: false,
+            maximizeMode: 0,
+            onAllDesktops: false,
+            internalId: "win-f",
+            resourceClass: "test-app",
+            output: freshOutput,
+            desktops: [ws3],
+            frameGeometry: { x: 0, y: 0, width: 100, height: 100 },
+            desktopsChanged: fakeSignal().signal,
+            frameGeometryChanged: fakeSignal().signal,
+            moveResizedChanged: fakeSignal().signal,
+            fullScreenChanged: fakeSignal().signal,
+            maximizedChanged: fakeSignal().signal,
+        } as unknown as FakeWindow;
+        world.wins.push(winFresh);
+        const planBeforeFreshHidden = planCalls(mocks).length;
+        runDebounce(mocks);
+        assert.equal(planCalls(mocks).length, planBeforeFreshHidden, "no Plan dispatch for fresh hidden ws-3 while send active");
+
         // The delayed target eventually converges, then the original exact
         // transaction acknowledges and commits without a second follow.
         holdTargetGeometry = false;
@@ -564,7 +597,10 @@ describe("plan/send P0 coordination through production wiring", () => {
             "commit must not follow twice",
         );
 
-        // Exactly one Plan resync after settlement.
+        // Exactly one Plan resync after settlement via production onCommitted
+        // auto resync: no test requestResync and no native signal after the
+        // committed reply above, only the debounce timer the production
+        // wiring scheduled. Fake replies below are test echoes, not Rust.
         const planBeforeResync = planCalls(mocks).length;
         runDebounce(mocks);
         const planAfterResync = planCalls(mocks).length;
@@ -586,16 +622,45 @@ describe("plan/send P0 coordination through production wiring", () => {
             }),
         );
         runDebounce(mocks);
-        // Answering the resync chains exactly one background remove for the
-        // vacated source window on the now-hidden ws-1 domain.
-        assert.equal(planCalls(mocks).length, planAfterResync + 1, "resync chains one background remove");
+        // Answering the resync chains background convergence for the vacated
+        // ws-1 domain plus the fresh hidden ws-3 domain added during the
+        // held send. Settle ws-1 first when it leads so the ws-3 reconcile
+        // below is the production onCommitted chain, still with no test
+        // requestResync and no native signal.
+        const firstChained = planCalls(mocks)[planCalls(mocks).length - 1];
+        const firstDomain = (firstChained?.payload["domain"] as Record<string, unknown> | undefined)?.["workspace"] as string | undefined;
+        if (firstDomain !== "ws-3") {
+            assert.equal(planCalls(mocks).length, planAfterResync + 1, "resync chains first background");
+            settleBackgroundPlans(mocks);
+            runDebounce(mocks);
+        }
+        const ws3Calls = planCalls(mocks).filter((c) => {
+            const cmd = c.payload["command"] as Record<string, unknown>;
+            const domain = c.payload["domain"] as Record<string, unknown> | undefined;
+            return cmd["op"] === "reconcile" && domain?.["workspace"] === "ws-3";
+        });
+        assert.equal(ws3Calls.length, 1, `auto resync must make one complete reconcile for ws-3, got ${JSON.stringify(planCalls(mocks).map((c) => ({ op: (c.payload["command"] as Record<string, unknown>)["op"], ws: ((c.payload["domain"] as Record<string, unknown> | undefined)?.["workspace"] as string | undefined) })))}`);
+        const ws3Correlation = ws3Calls[0]?.payload["correlation_id"] as string;
+        const ws3Windows = ws3Calls[0]?.payload["windows"] as Array<Record<string, unknown>>;
+        assert.ok(ws3Windows.some((w) => w["window"] === "win-f"), "ws-3 reconcile must carry fresh member");
+        mocks.callbacks[ws3Calls[0]?.index as number]?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: ws3Correlation,
+                outcome: "planned",
+                desired_geometry: [
+                    { window: "win-f", leaf: "win-f-leaf", output: "out-1", workspace: "ws-3", rect: { x: 0, y: 0, w: 1200, h: 800 } },
+                ],
+            }),
+        );
+        assert.deepEqual(winFresh.frameGeometry, { x: 0, y: 0, width: 1200, height: 800 }, "fresh hidden member adopts reconciled geometry");
         // Background convergence removes the vacated source window from the
-        // now-hidden ws-1 domain; settle it so the late-duplicate checks below
-        // observe quiet.
+        // now-hidden ws-1 domain and admits the fresh ws-3 domain; settle
+        // the remainder so the late-duplicate checks below observe quiet.
         settleBackgroundPlans(mocks);
         runDebounce(mocks);
         const planAfterBackground = planCalls(mocks).length;
-        assert.equal(planAfterBackground, planAfterResync + 1, "exactly one background remove after resync");
+        assert.equal(planAfterBackground, planAfterResync + 2, "foreground resync chains ws-1 plus fresh ws-3 background");
 
         // Late callback isolation: duplicate committed reply ignored.
         const switchesBefore = JSON.stringify(world.workspace["currentDesktop"]);

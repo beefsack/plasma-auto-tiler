@@ -849,10 +849,19 @@ fn parse_directional_domain(
 }
 
 /// Shared request validation: bounds, opaque ids, geometry containment for
-/// existing tiled-state operations, and domain binding. Admission assigns every
-/// member a new geometry, so carried member rectangles do not gate it.
+/// existing tiled-state operations, and domain binding. A fresh
+/// complete reconcile seeds through fresh admission machinery, so its
+/// out-of-bounds containment is relaxed while invalid rectangles still reject.
 /// Returns the ready-made rejected reply on failure.
+#[cfg(test)]
 fn validate_request(request_json: &str) -> Result<Validated, String> {
+    validate_request_with_engine(request_json, None)
+}
+
+fn validate_request_with_engine(
+    request_json: &str,
+    engine: Option<&Engine>,
+) -> Result<Validated, String> {
     if request_json.len() > PLAN_MAX_REQUEST_BYTES {
         return Err(rejected(String::new(), "oversized", MSG_OVERSIZED));
     }
@@ -1010,7 +1019,25 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
         .get("op")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
-    let admission = op_str == "admit";
+    // Fresh complete reconcile is the admission route: when the domain
+    // is absent (or the owner/generation binding would reset, making it
+    // absent after sync) it seeds through fresh admission
+    // machinery, so out-of-bounds containment must not gate it. Retained
+    // reconcile keeps the refusal; invalid rectangles still reject first.
+    let fresh_reconcile = op_str == "reconcile"
+        && engine.is_some_and(|eng| {
+            let binding_fresh = eng.owner().is_none_or(|o| o.as_str() != request.owner)
+                || eng
+                    .generation()
+                    .is_none_or(|g| g.as_str() != request.generation);
+            if binding_fresh {
+                return true;
+            }
+            !eng.contains(&DomainKey {
+                output: OutputId(request.domain.output.clone()),
+                workspace: WorkspaceId(request.domain.workspace.clone()),
+            })
+        });
     // Production directional payload: only focus/move may carry `domains`;
     // every other op (including the standalone workspace-send route) keeps
     // legacy single-domain behavior and refuses it fail-closed. The
@@ -1127,8 +1154,7 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
         .as_ref()
         .map(|parsed| parsed.iter().map(|(d, _)| d.bounds).collect());
     for entry in &request.windows {
-        if !admission && !valid_carried_rect(entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h)
-        {
+        if !valid_carried_rect(entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h) {
             return Err(snapshot_invalid(
                 request.correlation_id.clone(),
                 MSG_OBSERVATION,
@@ -1147,7 +1173,7 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
             for ((domain, _), bounds) in parsed.iter().zip(bounds_list.iter()) {
                 if entry.output == domain.id.0 && entry.workspace == domain.workspace.0 {
                     homed = true;
-                    if !admission && !entry.floating && !rect_contained(entry_rect, *bounds) {
+                    if !fresh_reconcile && !entry.floating && !rect_contained(entry_rect, *bounds) {
                         return Err(snapshot_invalid(
                             request.correlation_id.clone(),
                             MSG_OBSERVATION,
@@ -1165,7 +1191,7 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
                 ));
             }
         } else {
-            if !admission
+            if !fresh_reconcile
                 && !entry.floating
                 && !rect_contained(
                     Rect {
@@ -1473,7 +1499,7 @@ fn planned_projection_reply(
     )
 }
 
-/// Typed versioned-tiled serializer for the admit/remove/toggle-float family:
+/// Typed versioned-tiled serializer for the toggle-float family:
 /// funnels a [`tiler_core::boundary::TiledPlan`] through the exact planned
 /// wire shape, so output stays byte identical. Detail
 /// `kind`/`policy_version`/`capability` tokens come from the core plan
@@ -2402,7 +2428,7 @@ impl Planner {
     /// `orphan-abandoned`, and absent pending replies `no-pending-unknown`
     /// without mutation. A directional R4 pending is out of scope.
     pub fn evaluate(&mut self, request_json: &str) -> String {
-        let ctx = match validate_request(request_json) {
+        let ctx = match validate_request_with_engine(request_json, Some(&self.engine)) {
             Ok(ctx) => ctx,
             Err(reply) => return reply,
         };
@@ -2429,7 +2455,7 @@ impl Planner {
             return self.evaluate_workspace_request(&ctx);
         }
         self.sync_binding(&ctx.owner, &ctx.generation);
-        // Typed codec: reconcile/update-gaps/admit/remove/active-group
+        // Typed codec: reconcile/update-gaps/active-group
         // parse once via `SyncCommand` after all boundaries (validation, async
         // dispatch, pending conflict, send dispatch, binding sync) and call the
         // inner bodies directly, eliminating the second `from_value` + op-string
@@ -2440,23 +2466,10 @@ impl Planner {
         // once in place inside their handlers (see `SyncCommand` docs for the
         // exact probe/ordering reasons), so these arms dispatch by op string.
         match validated_op(&ctx).as_str() {
-            "reconcile" | "update-gaps" | "admit" | "remove" | "active-group" => {
+            "reconcile" | "update-gaps" | "active-group" => {
                 match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
                     Ok(SyncCommand::Reconcile {}) => self.evaluate_reconcile_inner(&ctx),
                     Ok(SyncCommand::UpdateGaps {}) => self.evaluate_update_gaps_inner(&ctx),
-                    Ok(SyncCommand::Admit {
-                        window,
-                        output,
-                        workspace,
-                        placement_bounds,
-                    }) => self.evaluate_admit_inner(
-                        &ctx,
-                        &window,
-                        &output,
-                        &workspace,
-                        placement_bounds,
-                    ),
-                    Ok(SyncCommand::Remove { window }) => self.evaluate_remove_inner(&ctx, &window),
                     Ok(command @ SyncCommand::ActiveGroup {}) => {
                         // Production typed-boundary route: convert the
                         // already-decoded command after all fences, then run
@@ -2465,7 +2478,7 @@ impl Planner {
                             core_command_from_sync(&command).expect("non-verify sync op converts");
                         self.evaluate_active_group_typed(&ctx, &core_command)
                     }
-                    // Unreachable: the outer string guard admits only the five
+                    // Unreachable: the outer string guard admits only the three
                     // ops above, so no other variant can decode here.
                     Ok(_) => rejected(
                         valid_correlation_echo(&ctx.raw),
@@ -2531,165 +2544,6 @@ impl Planner {
         let reply = self.engine.handle(event);
         emit_engine_convergence(&self.engine);
         serialize_core_reply(ctx, &reply)
-    }
-
-    /// Direct-evaluator compatibility wrapper (test-only): exact legacy
-    /// `from_value` + op-check behavior. Production `evaluate` bypasses this
-    /// via the typed [`SyncCommand`] single parse + inner below.
-    #[cfg(test)]
-    fn evaluate_admit_retained(&mut self, ctx: &Validated) -> String {
-        let command: AdmitCommand = match serde_json::from_value(ctx.request.command.clone()) {
-            Ok(command) => command,
-            Err(error) => {
-                let (kind, message) = classify_parse_error(&error);
-                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-            }
-        };
-        if command.op != "admit" {
-            return snapshot_invalid(
-                ctx.request.correlation_id.clone(),
-                MSG_OPAQUE_ID,
-                "admit-op-invalid",
-            );
-        }
-        self.evaluate_admit_inner(
-            ctx,
-            &command.window,
-            &command.output,
-            &command.workspace,
-            command.placement_bounds.clone(),
-        )
-    }
-
-    /// Production admit body without a second command parse/op check.
-    /// Same boundary contract as [`Self::evaluate_reconcile_inner`].
-    fn evaluate_admit_inner(
-        &mut self,
-        ctx: &Validated,
-        window: &str,
-        output: &str,
-        workspace: &str,
-        placement_bounds: Option<RectDto>,
-    ) -> String {
-        if !is_opaque_id(window) {
-            return snapshot_invalid(
-                ctx.request.correlation_id.clone(),
-                MSG_OPAQUE_ID,
-                "admit-window-invalid",
-            );
-        }
-        if !is_opaque_id(output) {
-            return snapshot_invalid(
-                ctx.request.correlation_id.clone(),
-                MSG_OPAQUE_ID,
-                "admit-output-invalid",
-            );
-        }
-        if !is_opaque_id(workspace) {
-            return snapshot_invalid(
-                ctx.request.correlation_id.clone(),
-                MSG_OPAQUE_ID,
-                "admit-workspace-invalid",
-            );
-        }
-        if output != ctx.request.domain.output || workspace != ctx.request.domain.workspace {
-            return rejected(
-                ctx.request.correlation_id.clone(),
-                "cross-domain-mismatch",
-                MSG_CROSS_DOMAIN,
-            );
-        }
-        let Some(admitted) = ctx
-            .request
-            .windows
-            .iter()
-            .find(|w| w.window.as_str() == window)
-        else {
-            return rejected(
-                ctx.request.correlation_id.clone(),
-                "partial-observation",
-                MSG_OBSERVATION,
-            );
-        };
-        if admitted.output.as_str() != output || admitted.workspace.as_str() != workspace {
-            return rejected(
-                ctx.request.correlation_id.clone(),
-                "partial-observation",
-                MSG_OBSERVATION,
-            );
-        };
-        let placement_explicit = match &placement_bounds {
-            Some(rect) => {
-                if !valid_carried_rect(rect.x, rect.y, rect.w, rect.h) {
-                    return snapshot_invalid(
-                        ctx.request.correlation_id.clone(),
-                        MSG_OBSERVATION,
-                        "placement-bounds-invalid",
-                    );
-                }
-                Some(Rect {
-                    x: rect.x,
-                    y: rect.y,
-                    w: rect.w,
-                    h: rect.h,
-                })
-            }
-            None => None,
-        };
-        // Engine-owned admit orchestration: the validated placement crosses in
-        // the typed command; fit fallback, seed ordering, relocation,
-        // propose/commit, and store run in `Engine::handle`. Serialization
-        // funnels through the typed choke point.
-        let core_command = tiler_core::boundary::CoreCommand::Admit {
-            window: WindowId(window.to_owned()),
-            output: OutputId(output.to_owned()),
-            workspace: WorkspaceId(workspace.to_owned()),
-            placement_bounds: placement_explicit,
-        };
-        let event = core_event(ctx, &core_command);
-        self.handle_and_serialize(ctx, &event)
-    }
-
-    /// Direct-evaluator compatibility wrapper (test-only): exact legacy
-    /// `from_value` + op-check behavior. Production `evaluate` bypasses this
-    /// via the typed [`SyncCommand`] single parse + inner below.
-    #[cfg(test)]
-    fn evaluate_remove_retained(&mut self, ctx: &Validated) -> String {
-        let command: RemoveCommand = match serde_json::from_value(ctx.request.command.clone()) {
-            Ok(command) => command,
-            Err(error) => {
-                let (kind, message) = classify_parse_error(&error);
-                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-            }
-        };
-        if command.op != "remove" {
-            return snapshot_invalid(
-                ctx.request.correlation_id.clone(),
-                MSG_OPAQUE_ID,
-                "remove-op-invalid",
-            );
-        }
-        self.evaluate_remove_inner(ctx, &command.window)
-    }
-
-    /// Production remove body without a second command parse/op check.
-    /// Same boundary contract as [`Self::evaluate_reconcile_inner`].
-    fn evaluate_remove_inner(&mut self, ctx: &Validated, window: &str) -> String {
-        if !is_opaque_id(window) {
-            return snapshot_invalid(
-                ctx.request.correlation_id.clone(),
-                MSG_OPAQUE_ID,
-                "remove-window-invalid",
-            );
-        }
-        // Engine-owned remove orchestration: the validated window crosses in
-        // the typed command; seed ordering, relocation, propose/commit, and
-        // store run in `Engine::handle`.
-        let core_command = tiler_core::boundary::CoreCommand::Remove {
-            window: WindowId(window.to_owned()),
-        };
-        let event = core_event(ctx, &core_command);
-        self.handle_and_serialize(ctx, &event)
     }
 
     fn evaluate_toggle_float_retained(&mut self, ctx: &Validated) -> String {
@@ -3128,11 +2982,11 @@ impl Planner {
     /// natively. Fail-closed without mutation on unknown/diverged/pending
     /// domains, membership or focus mismatch, unprojectable results, or an
     /// unadoptable gap/bounds update. Never seeds, relocates, resets, or
-    /// reseeds a session: an unknown domain refuses so the normal admit path
+    /// reseeds a session: an unknown domain refuses so the normal reconcile path
     /// seeds it with the new gaps instead. A simultaneous work-area change
     /// folds into the same projection with reconcile-equivalent safety; a
     /// simultaneous membership change refuses as partial-observation and the
-    /// normal admit/remove path owns it.
+    /// normal reconcile path owns it.
     /// Production update-gaps body without a second command parse/op check.
     /// Same boundary contract as [`Self::evaluate_reconcile_inner`].
     fn evaluate_update_gaps_inner(&mut self, ctx: &Validated) -> String {
@@ -3883,26 +3737,6 @@ impl Planner {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[cfg(test)]
-struct AdmitCommand {
-    op: String,
-    window: String,
-    output: String,
-    workspace: String,
-    #[serde(default)]
-    placement_bounds: Option<RectDto>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[cfg(test)]
-struct RemoveCommand {
-    op: String,
-    window: String,
-}
-
 fn evaluate_toggle_float_with(
     ctx: &Validated,
     evaluate: impl FnOnce(&str, Option<Rect>) -> String,
@@ -4009,8 +3843,8 @@ struct ActiveGroupCommand {
 
 /// Typed synchronous command codec (narrow).
 ///
-/// Internally tagged on `op` with `deny_unknown_fields` for all twenty
-/// command ops: the ten synchronous ops plus `send-to-workspace`, the eight
+/// Internally tagged on `op` with `deny_unknown_fields` for all eighteen
+/// command ops: the eight synchronous ops plus `send-to-workspace`, the eight
 /// R4 ack/verify/status/cancel phases, and `send-to-workspace-abandon`. Sync
 /// handlers parse
 /// [`SyncCommand`] once in place after the existing dispatch boundaries
@@ -4043,16 +3877,6 @@ enum SyncCommand {
     Reconcile {},
     #[serde(rename = "update-gaps")]
     UpdateGaps {},
-    #[serde(rename = "admit")]
-    Admit {
-        window: String,
-        output: String,
-        workspace: String,
-        #[serde(default)]
-        placement_bounds: Option<RectDto>,
-    },
-    #[serde(rename = "remove")]
-    Remove { window: String },
     #[serde(rename = "active-group")]
     ActiveGroup {},
     #[serde(rename = "move")]
@@ -4170,29 +3994,9 @@ fn is_unknown_variant(error: &serde_json::Error) -> bool {
 /// the workspace-send target stays route-local (validated `WorkspaceInput`).
 fn core_command_from_sync(command: &SyncCommand) -> Option<tiler_core::boundary::CoreCommand> {
     use tiler_core::boundary::CoreCommand;
-    use tiler_core::directional::{OutputId, WorkspaceId};
     match command {
         SyncCommand::Reconcile {} => Some(CoreCommand::Reconcile),
         SyncCommand::UpdateGaps {} => Some(CoreCommand::UpdateGaps),
-        SyncCommand::Admit {
-            window,
-            output,
-            workspace,
-            placement_bounds,
-        } => Some(CoreCommand::Admit {
-            window: WindowId(window.clone()),
-            output: OutputId(output.clone()),
-            workspace: WorkspaceId(workspace.clone()),
-            placement_bounds: placement_bounds.as_ref().map(|rect| Rect {
-                x: rect.x,
-                y: rect.y,
-                w: rect.w,
-                h: rect.h,
-            }),
-        }),
-        SyncCommand::Remove { window } => Some(CoreCommand::Remove {
-            window: WindowId(window.clone()),
-        }),
         SyncCommand::ActiveGroup {} => Some(CoreCommand::ActiveGroup),
         SyncCommand::Move {
             window,
@@ -4592,11 +4396,12 @@ mod tests {
     }
 
     #[test]
-    fn retained_float_admits_then_moved_reconcile_then_unfloat() {
+    fn retained_float_reconciles_then_moved_reconcile_then_unfloat() {
         // Exact-float incident: p5 float removes the tile and retains
-        // placement, later tiled admissions proceed around the exception, a
-        // native float move arrives as reconcile, unfloat freshly admits, and
-        // a later tiling command still plans. Membership stays canonical and
+        // placement, later reconciles converge newcomers around the
+        // exception, a native float move arrives as reconcile, unfloat
+        // returns the exception to tiled, and a later post-removal
+        // reconcile still plans. Membership stays canonical and
         // incomplete observations still refuse fail-closed.
         fn float_request(
             correlation: &str,
@@ -4642,13 +4447,13 @@ mod tests {
         }
 
         let mut planner = Planner::new();
-        // Two tiled admissions seed the domain.
+        // Two tiled reconciles seed the domain.
         for (correlation, focused, windows, command) in [
             (
                 "float-seq-1",
                 "win-1",
                 vec![("win-1", 0, 0, 100, 80, false)],
-                serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
+                serde_json::json!({"op": "reconcile"}),
             ),
             (
                 "float-seq-2",
@@ -4657,7 +4462,7 @@ mod tests {
                     ("win-1", 0, 0, 100, 80, false),
                     ("win-2", 200, 0, 100, 80, false),
                 ],
-                serde_json::json!({"op": "admit", "window": "win-2", "output": "out-1", "workspace": "ws-1"}),
+                serde_json::json!({"op": "reconcile"}),
             ),
         ] {
             let reply = parse_reply(&planner.evaluate(&float_request(
@@ -4681,7 +4486,7 @@ mod tests {
         assert_eq!(floated["outcome"], "planned", "{floated}");
         assert_geometry_covers(&floated, &["win-1"]);
         assert_eq!(floated["float_geometry"]["window"], "win-2");
-        // Later tiled admissions proceed around the retained exception.
+        // Later reconciles converge newcomers around the retained exception.
         let admitted3 = parse_reply(&planner.evaluate(&float_request(
             "float-seq-4",
             "win-3",
@@ -4690,7 +4495,7 @@ mod tests {
                 ("win-2", 240, 160, 720, 480, true),
                 ("win-3", 400, 0, 100, 80, false),
             ],
-            serde_json::json!({"op": "admit", "window": "win-3", "output": "out-1", "workspace": "ws-1"}),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(admitted3["outcome"], "planned", "{admitted3}");
         assert_geometry_covers(&admitted3, &["win-1", "win-3"]);
@@ -4703,7 +4508,7 @@ mod tests {
                 ("win-3", 400, 0, 100, 80, false),
                 ("win-4", 600, 0, 100, 80, false),
             ],
-            serde_json::json!({"op": "admit", "window": "win-4", "output": "out-1", "workspace": "ws-1"}),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(admitted4["outcome"], "planned", "{admitted4}");
         assert_geometry_covers(&admitted4, &["win-1", "win-3", "win-4"]);
@@ -4730,7 +4535,7 @@ mod tests {
             before,
             "{reconciled} vs {admitted4}"
         );
-        // Unfloat freshly admits the exception back to tiled.
+        // Unfloat returns the exception to tiled.
         let untiled = parse_reply(&planner.evaluate(&float_request(
             "float-seq-7",
             "win-2",
@@ -4745,7 +4550,7 @@ mod tests {
         assert_eq!(untiled["outcome"], "planned", "{untiled}");
         assert_eq!(untiled["float_geometry"], serde_json::Value::Null);
         assert_geometry_covers(&untiled, &["win-1", "win-2", "win-3", "win-4"]);
-        // A later tiling command still plans on the reunited topology.
+        // A later post-removal observation still plans on the reunited topology.
         let removed = parse_reply(&planner.evaluate(&float_request(
             "float-seq-8",
             "win-1",
@@ -4753,9 +4558,8 @@ mod tests {
                 ("win-1", 0, 0, 100, 80, false),
                 ("win-2", 200, 0, 100, 80, false),
                 ("win-3", 400, 0, 100, 80, false),
-                ("win-4", 600, 0, 100, 80, false),
             ],
-            serde_json::json!({"op": "remove", "window": "win-4"}),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(removed["outcome"], "planned", "{removed}");
         assert_geometry_covers(&removed, &["win-1", "win-2", "win-3"]);
@@ -4788,7 +4592,7 @@ mod tests {
         assert_geometry_covers(&converged, &["win-1", "win-2", "win-3"]);
     }
 
-    /// Admit request with explicit domain bounds and per-window rects, so
+    /// Reconcile request with explicit domain bounds and per-window rects, so
     /// portrait/landscape/square targets can carry deliberately misleading
     /// (opposite-orientation) observed window geometry.
     fn custom_request(
@@ -4877,22 +4681,20 @@ mod tests {
     }
 
     #[test]
-    fn retained_admit_portrait_output_splits_top_bottom_despite_landscape_rects() {
-        // The split axis derives from the rebuild target (here the full
-        // portrait output), never from the admitted window's own observed
-        // rect. Both observed rects are landscape, which must not select a
-        // left/right split on this portrait output.
+    fn reconcile_fresh_portrait_output_splits_top_bottom_despite_landscape_rects() {
+        // The split axis derives from the complete observation fit on the
+        // portrait target: x intervals overlap (horizontal unsupported) while
+        // y intervals stay sequential, so the vertical near-strip projects
+        // top/bottom. Both observed rects stay landscape, which must not
+        // select a left/right split on this portrait output. Product fit
+        // policy is unchanged (fixed Horizontal tie-break when both axes
+        // support; here only vertical supports).
         let request = custom_request(
             "admit-portrait-1",
             "win-1",
             (0, 0, 800, 1200),
-            &[("win-1", 0, 0, 400, 300), ("win-2", 400, 300, 400, 300)],
-            serde_json::json!({
-                "op": "admit",
-                "window": "win-2",
-                "output": "out-1",
-                "workspace": "ws-1",
-            }),
+            &[("win-1", 0, 0, 800, 300), ("win-2", 0, 300, 800, 300)],
+            serde_json::json!({"op": "reconcile"}),
         );
         let mut planner = Planner::new();
         let reply = parse_reply(&planner.evaluate(&request));
@@ -4906,7 +4708,7 @@ mod tests {
     }
 
     #[test]
-    fn retained_admit_landscape_output_splits_left_right_despite_portrait_rects() {
+    fn reconcile_fresh_landscape_output_splits_left_right_despite_portrait_rects() {
         // Portrait observed rects must not select a
         // top/bottom split on a landscape output.
         let request = custom_request(
@@ -4914,12 +4716,7 @@ mod tests {
             "win-1",
             (0, 0, 1200, 800),
             &[("win-1", 0, 0, 300, 400), ("win-2", 300, 400, 300, 400)],
-            serde_json::json!({
-                "op": "admit",
-                "window": "win-2",
-                "output": "out-1",
-                "workspace": "ws-1",
-            }),
+            serde_json::json!({"op": "reconcile"}),
         );
         let mut planner = Planner::new();
         let reply = parse_reply(&planner.evaluate(&request));
@@ -4933,42 +4730,10 @@ mod tests {
     }
 
     #[test]
-    fn retained_admit_square_tie_splits_top_bottom() {
-        // Exact-square tie selects Vertical (top/bottom stacking). This keeps
-        // the COSMIC tall/tied-to-portable-Vertical rule and the historic tie
-        // direction deterministic; a square output has no wider axis, so the
-        // choice is stacking rather than side-by-side.
-        let request = custom_request(
-            "admit-square-1",
-            "win-1",
-            (0, 0, 500, 500),
-            &[("win-1", 0, 0, 200, 100), ("win-2", 200, 100, 200, 100)],
-            serde_json::json!({
-                "op": "admit",
-                "window": "win-2",
-                "output": "out-1",
-                "workspace": "ws-1",
-            }),
-        );
-        let mut planner = Planner::new();
-        let reply = parse_reply(&planner.evaluate(&request));
-        assert_eq!(reply["outcome"], "planned", "{reply}");
-        assert_geometry_covers(&reply, &["win-1", "win-2"]);
-        assert_eq!(
-            geometry_rects(&reply),
-            vec![(0, 0, 500, 250), (0, 250, 500, 250)],
-            "{reply}"
-        );
-    }
-
-    #[test]
     fn admit_reflows_an_out_of_bounds_member_after_planner_restart() {
-        let command = serde_json::json!({
-            "op": "admit",
-            "window": "firefox-new",
-            "output": "out-1",
-            "workspace": "ws-1",
-        });
+        // Fresh complete reconcile is the admission route: an older
+        // out-of-work-area member must not wedge a fresh domain.
+        let command = serde_json::json!({"op": "reconcile"});
         // This is the reported shape: an older Firefox member extends 26px
         // below the work area while a new Firefox window is admitted.
         let request = custom_request(
@@ -5030,11 +4795,13 @@ mod tests {
 
     #[test]
     fn rejection_kinds_are_bounded_without_echo() {
+        // Surviving directional op with an unknown window id: the rejection
+        // stays bounded and never echoes the raw native id.
         let bad = plan_request(
             "bounded-1",
             "win-1",
             &["win-1"],
-            serde_json::json!({"op": "remove", "window": "evil-window-xyz"}),
+            serde_json::json!({"op": "focus", "window": "evil-window-xyz", "direction": "left"}),
         );
         let mut planner = Planner::new();
         let reply = parse_reply(&planner.evaluate(&bad));
@@ -5106,15 +4873,6 @@ mod tests {
         request.to_string()
     }
 
-    fn admit_body(window: &str) -> serde_json::Value {
-        serde_json::json!({
-            "op": "admit",
-            "window": window,
-            "output": "out-1",
-            "workspace": "ws-1",
-        })
-    }
-
     /// Retained request variant carrying AR12 per-window size hints:
     /// `hints` maps window id to `(min_size, max_size)` as `(w, h)` pairs.
     /// Windows absent from the map carry no hint fields (legacy shape).
@@ -5180,13 +4938,13 @@ mod tests {
                 "d4-equal-1",
                 "win-1",
                 vec![("win-1", 0, 0, 100, 80)],
-                admit_body("win-1"),
+                serde_json::json!({"op": "reconcile"}),
             ),
             (
                 "d4-equal-2",
                 "win-1",
                 vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-                admit_body("win-2"),
+                serde_json::json!({"op": "reconcile"}),
             ),
             (
                 "d4-equal-3",
@@ -5196,7 +4954,7 @@ mod tests {
                     ("win-2", 200, 0, 100, 80),
                     ("win-3", 400, 0, 100, 80),
                 ],
-                admit_body("win-3"),
+                serde_json::json!({"op": "reconcile"}),
             ),
         ] {
             let request =
@@ -5217,11 +4975,11 @@ mod tests {
                 ("win-2", 200, 0, 100, 80),
                 ("win-3", 200, 0, 100, 80),
             ],
-            serde_json::json!({"op": "remove", "window": "win-3"}),
+            serde_json::json!({"op": "reconcile"}),
         );
         let retained = parse_reply(&planner.evaluate(&ambiguous));
         assert_eq!(retained["outcome"], "planned", "{retained}");
-        assert_geometry_covers(&retained, &["win-1", "win-2"]);
+        assert_geometry_covers(&retained, &["win-1", "win-2", "win-3"]);
         assert_eq!(planner.retained_domains(), 1);
     }
 
@@ -5236,7 +4994,7 @@ mod tests {
             "gen-1",
             "win-1",
             &[("win-1", 0, 0, 100, 80)],
-            admit_body("win-1"),
+            serde_json::json!({"op": "reconcile"}),
         );
         assert_eq!(parse_reply(&planner.evaluate(&first))["outcome"], "planned");
         let second = retained_request(
@@ -5245,7 +5003,7 @@ mod tests {
             "gen-1",
             "win-1",
             &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-            admit_body("win-2"),
+            serde_json::json!({"op": "reconcile"}),
         );
         assert_eq!(
             parse_reply(&planner.evaluate(&second))["outcome"],
@@ -5260,7 +5018,7 @@ mod tests {
             "gen-2",
             "win-1",
             &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-            admit_body("win-2"),
+            serde_json::json!({"op": "reconcile"}),
         );
         let reply = parse_reply(&planner.evaluate(&restarted));
         assert_eq!(reply["outcome"], "planned", "{reply}");
@@ -5272,8 +5030,8 @@ mod tests {
             "owner-1",
             "gen-2",
             "win-1",
-            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-            serde_json::json!({"op": "remove", "window": "win-2"}),
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
         );
         let follow_reply = parse_reply(&planner.evaluate(&follow));
         assert_eq!(follow_reply["outcome"], "planned", "{follow_reply}");
@@ -5281,61 +5039,11 @@ mod tests {
     }
 
     #[test]
-    fn retained_divergence_discards_and_rebuilds_once() {
-        // Recovery: membership divergence discards the domain and rebuilds
-        // once; the rebuilt topology then commits so later calls stay live.
-        let mut planner = Planner::new();
-        for (correlation, windows, command) in [
-            (
-                "d4-div-1",
-                vec![("win-1", 0, 0, 100, 80)],
-                admit_body("win-1"),
-            ),
-            (
-                "d4-div-2",
-                vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-                admit_body("win-2"),
-            ),
-        ] {
-            let request =
-                retained_request(correlation, "owner-1", "gen-1", "win-1", &windows, command);
-            assert_eq!(
-                parse_reply(&planner.evaluate(&request))["outcome"],
-                "planned"
-            );
-        }
-        // win-2 vanished externally; retained {win-1,win-2} diverges, rebuilds
-        // from {win-1} plus the admitted win-3.
-        let divergent = retained_request(
-            "d4-div-3",
-            "owner-1",
-            "gen-1",
-            "win-1",
-            &[("win-1", 0, 0, 100, 80), ("win-3", 400, 0, 100, 80)],
-            admit_body("win-3"),
-        );
-        let reply = parse_reply(&planner.evaluate(&divergent));
-        assert_eq!(reply["outcome"], "planned", "{reply}");
-        assert_geometry_covers(&reply, &["win-1", "win-3"]);
-        // Committed rebuild: a follow-up remove plans without wedging.
-        let follow = retained_request(
-            "d4-div-4",
-            "owner-1",
-            "gen-1",
-            "win-1",
-            &[("win-1", 0, 0, 100, 80), ("win-3", 400, 0, 100, 80)],
-            serde_json::json!({"op": "remove", "window": "win-3"}),
-        );
-        let follow_reply = parse_reply(&planner.evaluate(&follow));
-        assert_eq!(follow_reply["outcome"], "planned", "{follow_reply}");
-        assert_geometry_covers(&follow_reply, &["win-1"]);
-    }
-
-    #[test]
-    fn retained_rejects_when_safe_rebuild_is_impossible() {
-        // Fail-closed: when no retained topology exists and the observation
-        // cannot safely infer one (equal non-focused rects), reject rather
-        // than wedge; the next fresh observation still recovers.
+    fn retained_directional_rejects_tied_seed_without_retained_state() {
+        // Fail-closed: a directional command with no retained topology that
+        // cannot safely infer one (equal non-focused rects) rejects
+        // `missing-seed-order` without retaining state; the next fresh
+        // observation still recovers.
         let mut planner = Planner::new();
         let ambiguous = retained_request(
             "d4-reject-1",
@@ -5347,77 +5055,25 @@ mod tests {
                 ("win-2", 200, 0, 100, 80),
                 ("win-3", 200, 0, 100, 80),
             ],
-            serde_json::json!({"op": "remove", "window": "win-3"}),
+            serde_json::json!({"op": "move", "window": "win-1", "direction": "left"}),
         );
         let reply = parse_reply(&planner.evaluate(&ambiguous));
         assert_eq!(reply["outcome"], "rejected", "{reply}");
-        assert_eq!(reply["kind"], "ambiguous-placement", "{reply}");
+        assert_eq!(reply["kind"], "snapshot-invalid", "{reply}");
+        assert_eq!(reply["detail"], "missing-seed-order", "{reply}");
         assert_eq!(planner.retained_domains(), 0);
         let valid = retained_request(
             "d4-reject-2",
             "owner-1",
             "gen-1",
             "win-1",
-            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-            serde_json::json!({"op": "remove", "window": "win-2"}),
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
         );
-        // Rebuild from the distinct observation succeeds: no wedge.
-        // Note: no retained base exists, so this rebuilds {win-1,win-2} then
-        // removes win-2.
+        // The next fresh observation still plans: no wedge, no retained base.
         let valid_reply = parse_reply(&planner.evaluate(&valid));
         assert_eq!(valid_reply["outcome"], "planned", "{valid_reply}");
         assert_geometry_covers(&valid_reply, &["win-1"]);
-        // An admission may rebuild from tied carried rectangles because it
-        // assigns a fresh geometry to every member.
-        let mut planner2 = Planner::new();
-        let seed = retained_request(
-            "d4-reject-3",
-            "owner-1",
-            "gen-1",
-            "win-1",
-            &[("win-1", 0, 0, 100, 80)],
-            admit_body("win-1"),
-        );
-        assert_eq!(parse_reply(&planner2.evaluate(&seed))["outcome"], "planned");
-        let seed2 = retained_request(
-            "d4-reject-4",
-            "owner-1",
-            "gen-1",
-            "win-1",
-            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-            admit_body("win-2"),
-        );
-        assert_eq!(
-            parse_reply(&planner2.evaluate(&seed2))["outcome"],
-            "planned"
-        );
-        let divergent_ambiguous = retained_request(
-            "d4-reject-5",
-            "owner-1",
-            "gen-1",
-            "win-1",
-            &[
-                ("win-1", 0, 0, 100, 80),
-                ("win-2", 200, 0, 100, 80),
-                ("win-3", 200, 0, 100, 80),
-                ("win-4", 400, 0, 100, 80),
-            ],
-            admit_body("win-4"),
-        );
-        let bad = parse_reply(&planner2.evaluate(&divergent_ambiguous));
-        assert_eq!(bad["outcome"], "planned", "{bad}");
-        assert_geometry_covers(&bad, &["win-1", "win-2", "win-3", "win-4"]);
-        // Still recoverable afterwards.
-        let recover = retained_request(
-            "d4-reject-6",
-            "owner-1",
-            "gen-1",
-            "win-1",
-            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-            serde_json::json!({"op": "remove", "window": "win-2"}),
-        );
-        let recovered = parse_reply(&planner2.evaluate(&recover));
-        assert_eq!(recovered["outcome"], "planned", "{recovered}");
     }
 
     #[test]
@@ -5434,16 +5090,16 @@ mod tests {
             "gen-1",
             "win-1",
             &[("win-1", 0, 0, 100, 80)],
-            admit_body("win-1"),
+            serde_json::json!({"op": "reconcile"}),
         );
         assert_eq!(parse_reply(&planner.evaluate(&first))["outcome"], "planned");
         let second = retained_request(
             "d4-focus-sync-2",
             "owner-1",
             "gen-1",
-            "win-1",
+            "win-2",
             &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-            admit_body("win-2"),
+            serde_json::json!({"op": "reconcile"}),
         );
         assert_eq!(
             parse_reply(&planner.evaluate(&second))["outcome"],
@@ -5487,13 +5143,13 @@ mod tests {
                     "d6-resize-cap-1",
                     "win-1",
                     vec![("win-1", 0, 0, 100, 80)],
-                    admit_body("win-1"),
+                    serde_json::json!({"op": "reconcile"}),
                 ),
                 (
                     "d6-resize-cap-2",
-                    "win-1",
+                    "win-2",
                     vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-                    admit_body("win-2"),
+                    serde_json::json!({"op": "reconcile"}),
                 ),
             ] {
                 let request =
@@ -5540,13 +5196,13 @@ mod tests {
                 "ptr-seed-1",
                 "win-1",
                 vec![("win-1", 0, 0, 100, 80)],
-                admit_body("win-1"),
+                serde_json::json!({"op": "reconcile"}),
             ),
             (
                 "ptr-seed-2",
-                "win-1",
+                "win-2",
                 vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-                admit_body("win-2"),
+                serde_json::json!({"op": "reconcile"}),
             ),
         ] {
             let request =
@@ -5561,8 +5217,8 @@ mod tests {
 
     #[test]
     fn retained_pointer_resize_corner_commits_both_axes_in_one_request() {
-        // Nested retained layout from two horizontal admits plus one tall
-        // admit: root H [win-1 | V[win-2, win-3]] over 1200x800 with the
+        // Nested retained layout from two horizontal reconciles plus one tall
+        // reconcile: root H [win-1 | V[win-2, win-3]] over 1200x800 with the
         // shared horizontal edge at 600 and the shared vertical edge at
         // 400, focused on win-3. One corner request must plan and commit
         // both axes atomically: a single planned reply whose geometry moves
@@ -5578,7 +5234,7 @@ mod tests {
                 ("win-2", 200, 0, 100, 80),
                 ("win-3", 400, 0, 100, 300),
             ],
-            admit_body("win-3"),
+            serde_json::json!({"op": "reconcile"}),
         );
         let seeded = parse_reply(&planner.evaluate(&seed3));
         assert_eq!(seeded["outcome"], "planned", "{seeded}");
@@ -5655,7 +5311,7 @@ mod tests {
                 ("win-2", 200, 0, 100, 80),
                 ("win-3", 400, 0, 100, 300),
             ],
-            admit_body("win-3"),
+            serde_json::json!({"op": "reconcile"}),
         );
         assert_eq!(parse_reply(&planner.evaluate(&seed3))["outcome"], "planned");
         let mut corner = |correlation: &str, command: serde_json::Value| {
@@ -5844,7 +5500,7 @@ mod tests {
             cid,
             "win-1",
             &["win-1", "win-2"],
-            serde_json::json!({"op": "remove", "window": "win-2"}),
+            serde_json::json!({"op": "move", "window": "win-1", "direction": "left"}),
         ))
         .expect("valid base")
     }
@@ -5920,7 +5576,7 @@ mod tests {
     #[test]
     fn many_observed_windows_plan_without_count_cap() {
         // No observed-window count cap: 70 windows in one horizontal strip
-        // admit through the flat N-ary fit path on a fresh planner. Each
+        // reconcile through the flat N-ary fit path on a fresh planner. Each
         // carried rectangle is valid, contained, and strictly sequential.
         let names: Vec<String> = (0..70).map(|i| format!("win-{i}")).collect();
         let windows: Vec<(&str, i32, i32, i32, i32)> = names
@@ -5929,7 +5585,7 @@ mod tests {
             .map(|(i, name)| (name.as_str(), i as i32 * 17, 0, 10, 800))
             .collect();
         let focused = names.last().expect("names").clone();
-        let command = serde_json::json!({"op": "admit", "window": focused, "output": "out-1", "workspace": "ws-1"});
+        let command = serde_json::json!({"op": "reconcile"});
         let mut planner = Planner::new();
         let reply = parse_reply(&planner.evaluate(&retained_request(
             "many-win-1",
@@ -5950,22 +5606,6 @@ mod tests {
     fn command_and_construction_details_are_exact() {
         let cases: Vec<(&str, serde_json::Value)> = vec![
             (
-                "admit-window-invalid",
-                serde_json::json!({"op": "admit", "window": "bad!", "output": "out-1", "workspace": "ws-1"}),
-            ),
-            (
-                "admit-output-invalid",
-                serde_json::json!({"op": "admit", "window": "win-2", "output": "bad!", "workspace": "ws-1"}),
-            ),
-            (
-                "admit-workspace-invalid",
-                serde_json::json!({"op": "admit", "window": "win-2", "output": "out-1", "workspace": "bad!"}),
-            ),
-            (
-                "remove-window-invalid",
-                serde_json::json!({"op": "remove", "window": "bad!"}),
-            ),
-            (
                 "move-window-invalid",
                 serde_json::json!({"op": "move", "window": "bad!", "direction": "left"}),
             ),
@@ -5977,16 +5617,9 @@ mod tests {
                 "resize-window-invalid",
                 serde_json::json!({"op": "resize", "window": "bad!", "direction": "left", "mode": "outwards", "press_index": 0}),
             ),
-            (
-                "placement-bounds-invalid",
-                serde_json::json!({"op": "admit", "window": "win-2", "output": "out-1", "workspace": "ws-1", "placement_bounds": {"x": 0, "y": 0, "w": 0, "h": 80}}),
-            ),
         ];
         for (index, (expected, command)) in cases.into_iter().enumerate() {
             let mut value = base_valid_value(&format!("snap-c-{index}"));
-            if expected == "placement-bounds-invalid" {
-                value["focused_window"] = serde_json::json!("win-1");
-            }
             value["command"] = command;
             assert_retained_detail(value, &format!("snap-c-{index}"), expected);
         }
@@ -6011,19 +5644,9 @@ mod tests {
     fn retained_op_details_are_exact() {
         let cases = [
             (
-                "admit-op-invalid",
-                serde_json::json!({"op": "admit", "window": "win-2", "output": "out-1", "workspace": "ws-1"}),
-                Planner::evaluate_admit_retained as fn(&mut Planner, &Validated) -> String,
-            ),
-            (
-                "remove-op-invalid",
-                serde_json::json!({"op": "remove", "window": "win-2"}),
-                Planner::evaluate_remove_retained,
-            ),
-            (
                 "move-op-invalid",
                 serde_json::json!({"op": "move", "window": "win-1", "direction": "left"}),
-                Planner::evaluate_move_retained,
+                Planner::evaluate_move_retained as fn(&mut Planner, &Validated) -> String,
             ),
             (
                 "focus-op-invalid",
@@ -6051,83 +5674,33 @@ mod tests {
         }
     }
     #[test]
-    fn typed_sync_codec_admit_remove_active_group_wire_golden() {
-        // Wire golden for the typed `SyncCommand` (admit, remove,
-        // active-group): valid requests plan byte-exact through the single
-        // typed parse + inner path, malformed commands reject byte-exact with
-        // unchanged kinds. Literals recorded from the production `evaluate`
-        // path (offline, no host mutation).
+    fn typed_sync_codec_active_group_wire_golden() {
+        // Wire golden for the typed `SyncCommand` active-group: valid requests
+        // plan byte-exact through the single typed parse + inner path,
+        // malformed commands reject byte-exact with unchanged kinds. Retired
+        // admit/remove wire goldens deleted; seeding uses complete-observation
+        // reconcile. Literals recorded from the production `evaluate` path
+        // (offline, no host mutation).
+        // Seed a two-window domain through complete observations.
         let mut planner = Planner::new();
-        let admit = retained_request(
-            "gold-admit-1",
-            "owner-1",
-            "gen-1",
-            "win-1",
-            &[("win-1", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
-        );
-        let text = planner.evaluate(&admit);
-        assert_eq!(
-            text,
-            "{\"v\":1,\"correlation_id\":\"gold-admit-1\",\"outcome\":\"planned\",\"base_revision\":0,\"detail\":{\"capability\":\"admit-tiled\",\"kind\":\"admit\",\"policy_version\":1},\"desired_geometry\":[{\"window\":\"win-1\",\"leaf\":\"leaf-win-1\",\"output\":\"out-1\",\"workspace\":\"ws-1\",\"rect\":{\"x\":0,\"y\":0,\"w\":1200,\"h\":800}}],\"desired_focus\":{\"domain_output\":\"out-1\",\"domain_workspace\":\"ws-1\",\"leaf\":\"leaf-win-1\"}}",
-        );
-        let admit_extra = retained_request(
-            "gold-admit-2",
-            "owner-1",
-            "gen-1",
-            "win-1",
-            &[("win-1", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1", "bogus": 1}),
-        );
-        assert_eq!(
-            planner.evaluate(&admit_extra),
-            "{\"v\":1,\"correlation_id\":\"gold-admit-2\",\"outcome\":\"rejected\",\"kind\":\"unknown-field\",\"message\":\"request contains an unknown field\"}",
-        );
-        // Seed a two-window domain, then remove byte-exact.
-        let mut planner = Planner::new();
-        for (cid, focused, windows, command) in [
-            (
-                "s1",
-                "win-1",
-                vec![("win-1", 0, 0, 100, 80)],
-                serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
-            ),
+        for (cid, focused, windows) in [
+            ("s1", "win-1", vec![("win-1", 0, 0, 100, 80)]),
             (
                 "s2",
                 "win-2",
                 vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-                serde_json::json!({"op": "admit", "window": "win-2", "output": "out-1", "workspace": "ws-1"}),
             ),
         ] {
             let reply = parse_reply(&planner.evaluate(&retained_request(
-                cid, "owner-1", "gen-1", focused, &windows, command,
+                cid,
+                "owner-1",
+                "gen-1",
+                focused,
+                &windows,
+                serde_json::json!({"op": "reconcile"}),
             )));
             assert_eq!(reply["outcome"], "planned", "{reply}");
         }
-        let remove = retained_request(
-            "gold-remove-1",
-            "owner-1",
-            "gen-1",
-            "win-1",
-            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-            serde_json::json!({"op": "remove", "window": "win-2"}),
-        );
-        assert_eq!(
-            planner.evaluate(&remove),
-            "{\"v\":1,\"correlation_id\":\"gold-remove-1\",\"outcome\":\"planned\",\"base_revision\":2,\"detail\":{\"capability\":\"remove-tiled\",\"kind\":\"remove\",\"policy_version\":1},\"desired_geometry\":[{\"window\":\"win-1\",\"leaf\":\"leaf-win-1\",\"output\":\"out-1\",\"workspace\":\"ws-1\",\"rect\":{\"x\":0,\"y\":0,\"w\":1200,\"h\":800}}],\"desired_focus\":{\"domain_output\":\"out-1\",\"domain_workspace\":\"ws-1\",\"leaf\":\"leaf-win-1\"}}",
-        );
-        let remove_missing = retained_request(
-            "gold-remove-2",
-            "owner-1",
-            "gen-1",
-            "win-1",
-            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-            serde_json::json!({"op": "remove"}),
-        );
-        assert_eq!(
-            planner.evaluate(&remove_missing),
-            "{\"v\":1,\"correlation_id\":\"gold-remove-2\",\"outcome\":\"rejected\",\"kind\":\"request-malformed\",\"message\":\"request is malformed\"}",
-        );
         let active_group = retained_request(
             "gold-ag-1",
             "owner-1",
@@ -6138,7 +5711,7 @@ mod tests {
         );
         assert_eq!(
             planner.evaluate(&active_group),
-            "{\"v\":1,\"correlation_id\":\"gold-ag-1\",\"outcome\":\"no-group\",\"kind\":\"no-group\",\"base_revision\":3,\"detail\":{\"generation\":\"gen-1\",\"kind\":\"no-group\",\"owner\":\"owner-1\",\"reason\":\"no-parent-group\"}}",
+            "{\"v\":1,\"correlation_id\":\"gold-ag-1\",\"outcome\":\"active-group\",\"kind\":\"active-group\",\"base_revision\":2,\"detail\":{\"bounds\":{\"h\":800,\"w\":1200,\"x\":0,\"y\":0},\"domain_output\":\"out-1\",\"domain_workspace\":\"ws-1\",\"focused_leaf\":\"leaf-win-1\",\"focused_window\":\"win-1\",\"generation\":\"gen-1\",\"group\":\"grp-win-2-r1\",\"kind\":\"active-group\",\"members\":[{\"leaf\":\"leaf-win-1\",\"rect\":{\"h\":800,\"w\":600,\"x\":0,\"y\":0},\"window\":\"win-1\"},{\"leaf\":\"leaf-win-2\",\"rect\":{\"h\":800,\"w\":600,\"x\":600,\"y\":0},\"window\":\"win-2\"}],\"owner\":\"owner-1\"},\"desired_geometry\":[{\"window\":\"win-1\",\"leaf\":\"leaf-win-1\",\"output\":\"out-1\",\"workspace\":\"ws-1\",\"rect\":{\"x\":0,\"y\":0,\"w\":600,\"h\":800}},{\"window\":\"win-2\",\"leaf\":\"leaf-win-2\",\"output\":\"out-1\",\"workspace\":\"ws-1\",\"rect\":{\"x\":600,\"y\":0,\"w\":600,\"h\":800}}],\"desired_focus\":{\"domain_output\":\"out-1\",\"domain_workspace\":\"ws-1\",\"leaf\":\"leaf-win-1\"}}",
         );
         let active_group_extra = retained_request(
             "gold-ag-2",
@@ -6154,8 +5727,8 @@ mod tests {
         );
     }
     #[test]
-    fn typed_boundary_conversion_covers_all_nineteen_ops_total() {
-        // Fence proof for the boundary conversion: the 17 non-verify wire ops
+    fn typed_boundary_conversion_covers_all_seventeen_ops_total() {
+        // Fence proof for the boundary conversion: the 15 non-verify wire ops
         // decode once via `SyncCommand`, then convert into `CoreCommand` with
         // the identical `op` token. Fallible vocabularies (direction/mode/ack)
         // cross opaquely. Both verify echoes arrive as deferred `RawEcho`
@@ -6167,8 +5740,6 @@ mod tests {
         let commands = [
             serde_json::json!({"op": "reconcile"}),
             serde_json::json!({"op": "update-gaps"}),
-            serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
-            serde_json::json!({"op": "remove", "window": "win-1"}),
             serde_json::json!({"op": "active-group"}),
             serde_json::json!({"op": "move", "window": "win-1", "direction": "left"}),
             serde_json::json!({"op": "focus", "window": "win-1", "direction": "left"}),
@@ -6183,7 +5754,7 @@ mod tests {
             serde_json::json!({"op": "directional-move-status"}),
             serde_json::json!({"op": "directional-move-cancel", "zero_dispatch": false}),
         ];
-        assert_eq!(commands.len(), 17);
+        assert_eq!(commands.len(), 15);
         let mut ops = std::collections::HashSet::new();
         for command in &commands {
             let decoded: SyncCommand =
@@ -6193,7 +5764,7 @@ mod tests {
             assert_eq!(converted.op(), expected);
             ops.insert(converted.op());
         }
-        assert_eq!(ops.len(), 17);
+        assert_eq!(ops.len(), 15);
         // Verify wire tokens decode; conversion defers (`None`).
         let ws_verify = serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": ["window-observed", "desired-topology-valid", "adapter-must-verify-postconditions"], "operation": {"op": "move-tiled", "window": "win-1", "leaf": "leaf-1", "source_output": "out-1", "source_workspace": "ws-1", "target_output": "out-1", "target_workspace": "ws-2"}});
         let decoded: SyncCommand =
@@ -6248,7 +5819,7 @@ mod tests {
         } else {
             panic!("expected DirectionalMoveVerify");
         }
-        assert_eq!(ops.len() + 2, 19);
+        assert_eq!(ops.len() + 2, 17);
         // Opaque crossings: unknown direction/mode/ack strings convert without
         // validation; handlers own precedence. Bogus verify echoes decode
         // opaquely at the outer `SyncCommand` boundary (deferred `RawEcho`)
@@ -6272,11 +5843,33 @@ mod tests {
         .expect("deferred echo decodes opaquely");
         assert!(core_command_from_sync(&decoded).is_none());
     }
+
+    #[test]
+    fn retired_lifecycle_commands_refuse_without_mutation() {
+        let mut planner = Planner::new();
+        for command in [
+            serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
+            serde_json::json!({"op": "remove", "window": "win-1"}),
+        ] {
+            let reply = parse_reply(&planner.evaluate(&retained_request(
+                "retired-wire-1",
+                "owner-1",
+                "gen-1",
+                "win-1",
+                &[("win-1", 0, 0, 100, 80)],
+                command,
+            )));
+            assert_eq!(reply["outcome"], "rejected", "{reply}");
+            assert_eq!(reply["kind"], "unknown-value", "{reply}");
+            assert_eq!(planner.retained_domains(), 0);
+        }
+    }
+
     #[test]
     fn core_reply_choke_point_matches_legacy_constructors_byte_exact() {
         // Proof that `serialize_core_reply` is a byte-exact funnel for every
         // `CoreReply` shape: each arm must equal its legacy constructor.
-        // Production-real arms (Projection, Tiled admit/remove,
+        // Production-real arms (Projection, fresh Tiled admission,
         // ActiveGroup/NoGroup) are additionally covered by wire goldens
         // through `evaluate`; the remaining arms pin bytes here until their
         // routes migrate.
@@ -6291,7 +5884,7 @@ mod tests {
             "gen-1",
             "win-1",
             &[("win-1", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
+            serde_json::json!({"op": "reconcile"}),
         );
         let ctx = validate_request(&request).expect("fixture validates");
         assert_eq!(
@@ -6390,7 +5983,7 @@ mod tests {
         let tiled = TiledPlan {
             base_revision: 2,
             policy_version: 1,
-            kind: TiledKind::Remove,
+            kind: TiledKind::Admit,
             geometry: Vec::new(),
             focus_domain: None,
             focus_leaf: None,
@@ -6432,7 +6025,7 @@ mod tests {
             "gen-1",
             "win-1",
             &[("win-1", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
+            serde_json::json!({"op": "reconcile"}),
         );
         let ctx = validate_request(&request).expect("fixture validates");
         let focus_leaf = NodeId::from("leaf-1");
@@ -6605,7 +6198,7 @@ mod tests {
             "gen-1",
             "win-1",
             &[("win-1", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
+            serde_json::json!({"op": "reconcile"}),
         );
         let ctx = validate_request(&request).expect("fixture validates");
         let plan = tiler_core::session::SessionPlan {
@@ -6728,13 +6321,13 @@ mod tests {
                     "s1",
                     "win-1",
                     vec![("win-1", 0, 0, 100, 80)],
-                    serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
+                    serde_json::json!({"op": "reconcile"}),
                 ),
                 (
                     "s2",
                     "win-2",
                     vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-                    serde_json::json!({"op": "admit", "window": "win-2", "output": "out-1", "workspace": "ws-1"}),
+                    serde_json::json!({"op": "reconcile"}),
                 ),
             ] {
                 let reply = parse_reply(&planner.evaluate(&retained_request(
@@ -7351,13 +6944,13 @@ mod tests {
                 "rec-seed-1",
                 "win-1",
                 vec![("win-1", 0, 0, 100, 80)],
-                admit_body("win-1"),
+                serde_json::json!({"op": "reconcile"}),
             ),
             (
                 "rec-seed-2",
                 "win-1",
                 vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-                admit_body("win-2"),
+                serde_json::json!({"op": "reconcile"}),
             ),
         ] {
             let request =
@@ -7425,6 +7018,271 @@ mod tests {
         );
         let follow_reply = parse_reply(&planner.evaluate(&follow));
         assert_eq!(follow_reply["outcome"], "planned", "{follow_reply}");
+    }
+
+    #[test]
+    fn reconcile_fresh_horizontal_fit_projects_exact_geometry() {
+        // A fresh two-window strip reconciles through the flat-strip fit
+        // without any admit derivation: equal shares project back with fit
+        // leaves.
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&retained_request(
+            "fresh-fit-rec",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_geometry_covers(&reply, &["win-1", "win-2"]);
+        assert_eq!(
+            geometry_by_window(&reply),
+            std::collections::BTreeMap::from([
+                ("win-1".to_owned(), (0, 0, 600, 800)),
+                ("win-2".to_owned(), (600, 0, 600, 800)),
+            ]),
+            "{reply}"
+        );
+        assert_eq!(fit_leaves(&reply), vec!["fit-l0", "fit-l1"], "{reply}");
+        assert_eq!(planner.retained_domains(), 1);
+    }
+
+    #[test]
+    fn reconcile_fresh_fallback_seeds_deterministic_geometry() {
+        // Overlapping carried rectangles decline fitting, so fresh reconcile
+        // takes the deterministic spatial seed with no fit leaves.
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&retained_request(
+            "fresh-seed-rec",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &[("win-1", 0, 0, 1200, 800), ("win-2", 0, 0, 1200, 800)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_geometry_covers(&reply, &["win-1", "win-2"]);
+        assert_eq!(
+            geometry_by_window(&reply),
+            std::collections::BTreeMap::from([
+                ("win-1".to_owned(), (0, 0, 600, 800)),
+                ("win-2".to_owned(), (600, 0, 600, 800)),
+            ]),
+            "{reply}"
+        );
+        assert!(
+            !fit_leaves(&reply)
+                .iter()
+                .any(|leaf| leaf.starts_with("fit-l")),
+            "{reply}"
+        );
+        assert_eq!(planner.retained_domains(), 1);
+    }
+
+    #[test]
+    fn reconcile_fresh_mixed_converges_exception() {
+        // Focused tiled newcomer plus a floating member: the tiled set
+        // plans while the floating member converges as an exception.
+        let mut value: serde_json::Value = serde_json::from_str(&retained_request(
+            "fresh-mixed-rec",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        ))
+        .expect("valid retained request");
+        value["windows"][1]["floating"] = serde_json::json!(true);
+        value["windows"][1]["fit_excluded"] = serde_json::json!(true);
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&value.to_string()));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_geometry_covers(&reply, &["win-1"]);
+        assert_eq!(planner.retained_domains(), 1);
+    }
+
+    #[test]
+    fn reconcile_fresh_all_floating_projects_empty() {
+        let mut value: serde_json::Value = serde_json::from_str(&retained_request(
+            "fresh-float-rec",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        ))
+        .expect("valid retained request");
+        for entry in value["windows"].as_array_mut().expect("windows") {
+            entry["floating"] = serde_json::json!(true);
+            entry["fit_excluded"] = serde_json::json!(true);
+        }
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&value.to_string()));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(
+            reply["desired_geometry"].as_array().map(Vec::len),
+            Some(0),
+            "{reply}"
+        );
+        // Floating exceptions retain the slot without tiled geometry.
+        assert_eq!(planner.retained_domains(), 1);
+    }
+
+    #[test]
+    fn reconcile_fresh_empty_projects_empty_without_session() {
+        let mut value: serde_json::Value = serde_json::from_str(&retained_request(
+            "fresh-empty-rec",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        ))
+        .expect("valid retained request");
+        value["windows"] = serde_json::json!([]);
+        value["focused_window"] = serde_json::json!("");
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&value.to_string()));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(
+            reply["desired_geometry"].as_array().map(Vec::len),
+            Some(0),
+            "{reply}"
+        );
+        assert_eq!(planner.retained_domains(), 0);
+    }
+
+    #[test]
+    fn reconcile_fresh_relocation_uses_retained_source() {
+        // Same-workspace displaced source relocates on a fresh reconcile
+        // carrying the complete moved observation instead of seeding anew.
+        let mut planner = seed_two_window_planner();
+        let moved = retained_request_for_domain(
+            "fresh-reloc-rec",
+            "owner-1",
+            "gen-1",
+            "out-2",
+            "ws-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        // Entries above are homed to out-1 by the helper; re-home the
+        // complete observation to the target output for the moved domain.
+        let mut value: serde_json::Value = serde_json::from_str(&moved).expect("valid request");
+        for entry in value["windows"].as_array_mut().expect("windows") {
+            entry["output"] = serde_json::json!("out-2");
+        }
+        let reply = parse_reply(&planner.evaluate(&value.to_string()));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_geometry_covers(&reply, &["win-1", "win-2"]);
+    }
+
+    #[test]
+    fn update_gaps_exception_only_adopts_without_topology_error() {
+        // Both members observed floating: convergence drops the tiled tree,
+        // and update-gaps adopts the carried gaps while projecting empty
+        // instead of `malformed-topology`.
+        let mut planner = seed_two_window_planner();
+        // Float win-2 first (win-1 still tiles), then both: convergence
+        // adopts each exception while the tree drains to nothing.
+        for (correlation, float_win_1) in [("gap-float-1", false), ("gap-float-2", true)] {
+            let mut value: serde_json::Value = serde_json::from_str(&retained_request(
+                correlation,
+                "owner-1",
+                "gen-1",
+                "win-1",
+                &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                serde_json::json!({"op": "reconcile"}),
+            ))
+            .expect("valid retained request");
+            value["windows"][1]["floating"] = serde_json::json!(true);
+            value["windows"][1]["fit_excluded"] = serde_json::json!(true);
+            if float_win_1 {
+                value["windows"][0]["floating"] = serde_json::json!(true);
+                value["windows"][0]["fit_excluded"] = serde_json::json!(true);
+            }
+            let reply = parse_reply(&planner.evaluate(&value.to_string()));
+            assert_eq!(reply["outcome"], "planned", "{reply}");
+        }
+        let mut gaps: serde_json::Value =
+            serde_json::from_str(&retained_request_with_selected_gaps(
+                "gap-exc-1",
+                "owner-1",
+                "gen-1",
+                "win-1",
+                &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                serde_json::json!({"op": "update-gaps"}),
+            ))
+            .expect("valid gaps request");
+        for entry in gaps["windows"].as_array_mut().expect("windows") {
+            entry["floating"] = serde_json::json!(true);
+            entry["fit_excluded"] = serde_json::json!(true);
+        }
+        let reply = parse_reply(&planner.evaluate(&gaps.to_string()));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(
+            reply["desired_geometry"].as_array().map(Vec::len),
+            Some(0),
+            "{reply}"
+        );
+        // The adopted gaps bind later fences: old gaps mismatch, new gaps plan.
+        let stale = retained_request(
+            "gap-exc-stale",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let stale_reply = parse_reply(&planner.evaluate(&stale));
+        assert_eq!(stale_reply["outcome"], "rejected", "{stale_reply}");
+    }
+
+    #[test]
+    fn update_gaps_fresh_tiled_still_unknown_domain() {
+        // update-gaps never seeds: a fresh tiled domain refuses so the
+        // reconcile seed path owns it.
+        let mut planner = Planner::new();
+        let request = retained_request(
+            "gap-fresh-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "update-gaps"}),
+        );
+        let reply = parse_reply(&planner.evaluate(&request));
+        assert_eq!(reply["outcome"], "rejected", "{reply}");
+        assert_eq!(reply["kind"], "unknown-domain", "{reply}");
+        assert_eq!(planner.retained_domains(), 0);
+    }
+
+    #[test]
+    fn reconcile_retained_empty_reconcile_retires_slot() {
+        // A retained domain whose complete observation is empty retires on
+        // reconcile, freeing the slot for a later admission.
+        let mut planner = seed_two_window_planner();
+        let mut value: serde_json::Value = serde_json::from_str(&retained_request(
+            "empty-retire-rec",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        ))
+        .expect("valid retained request");
+        value["windows"] = serde_json::json!([]);
+        value["focused_window"] = serde_json::json!("");
+        let reply = parse_reply(&planner.evaluate(&value.to_string()));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(
+            reply["desired_geometry"].as_array().map(Vec::len),
+            Some(0),
+            "{reply}"
+        );
+        assert_eq!(planner.retained_domains(), 0);
     }
 
     #[test]
@@ -7594,14 +7452,14 @@ mod tests {
     }
 
     #[test]
-    fn admit_honors_satisfiable_minimum_from_observed_hints() {
+    fn reconcile_honors_satisfiable_minimum_from_observed_hints() {
         let mut planner = seed_two_window_planner();
-        // Wide placement forces a horizontal split of the focused leaf;
-        // win-3 needs 400 wide, so win-1 yields inside the new pair.
+        // A satisfiable observed minimum converges the newcomer through the
+        // fresh complete observation; win-3 needs 400 wide.
         let mut hints = std::collections::BTreeMap::new();
         hints.insert("win-3", (Some((400, 10)), None));
         let request: serde_json::Value = serde_json::from_str(&retained_request_with_hints(
-            "rec-admit-hint",
+            "rec-hint-1",
             "owner-1",
             "gen-1",
             "win-1",
@@ -7611,22 +7469,16 @@ mod tests {
                 ("win-3", 400, 0, 100, 80),
             ],
             &hints,
-            serde_json::json!({
-                "op": "admit",
-                "window": "win-3",
-                "output": "out-1",
-                "workspace": "ws-1",
-                "placement_bounds": {"x": 0, "y": 0, "w": 400, "h": 100},
-            }),
+            serde_json::json!({"op": "reconcile"}),
         ))
         .expect("valid request");
-        // Admit through the normal path with the hinted observation.
+        // Converge through the normal path with the hinted observation.
         let reply = parse_reply(&planner.evaluate(&request.to_string()));
         assert_eq!(reply["outcome"], "planned", "{reply}");
         let geometry = geometry_by_window(&reply);
         assert_eq!(geometry.len(), 3, "{reply}");
         let win3 = geometry["win-3"];
-        assert!(win3.2 >= 400, "admitted minimum honored: {reply}");
+        assert!(win3.2 >= 400, "converged minimum honored: {reply}");
         for entry in reply["desired_geometry"]
             .as_array()
             .expect("planned geometry present")
@@ -7721,12 +7573,12 @@ mod tests {
             (
                 "rec-gap-seed-1",
                 vec![("win-1", 0, 0, 100, 80)],
-                admit_body("win-1"),
+                serde_json::json!({"op": "reconcile"}),
             ),
             (
                 "rec-gap-seed-2",
                 vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-                admit_body("win-2"),
+                serde_json::json!({"op": "reconcile"}),
             ),
         ] {
             let reply = parse_reply(&planner.evaluate(&retained_request_with_selected_gaps(
@@ -7782,12 +7634,12 @@ mod tests {
             (
                 "rec-outer-seed-1",
                 vec![("win-1", 0, 0, 100, 80)],
-                admit_body("win-1"),
+                serde_json::json!({"op": "reconcile"}),
             ),
             (
                 "rec-outer-seed-2",
                 vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-                admit_body("win-2"),
+                serde_json::json!({"op": "reconcile"}),
             ),
         ] {
             let reply = parse_reply(&planner.evaluate(&retained_request_with_selected_gaps(
@@ -7827,12 +7679,12 @@ mod tests {
             (
                 "gap-seed-1",
                 vec![("win-1", 0, 0, 100, 80)],
-                admit_body("win-1"),
+                serde_json::json!({"op": "reconcile"}),
             ),
             (
                 "gap-seed-2",
                 vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-                admit_body("win-2"),
+                serde_json::json!({"op": "reconcile"}),
             ),
         ] {
             let reply = parse_reply(&planner.evaluate(&retained_request_with_selected_gaps(
@@ -8192,34 +8044,30 @@ mod tests {
     #[test]
     fn reconcile_reprojects_unequal_nested_retained_shares_not_observed_rects() {
         let mut planner = Planner::new();
-        for (correlation, windows, command) in [
-            (
-                "rec-nested-seed-1",
-                vec![("win-1", 0, 0, 100, 80)],
-                admit_body("win-1"),
-            ),
+        for (correlation, focused, windows) in [
+            ("rec-nested-seed-1", "win-1", vec![("win-1", 0, 0, 100, 80)]),
             (
                 "rec-nested-seed-2",
+                "win-2",
                 vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-                admit_body("win-2"),
             ),
             (
                 "rec-nested-seed-3",
+                "win-3",
                 vec![
                     ("win-1", 0, 0, 100, 80),
                     ("win-2", 200, 0, 100, 80),
                     ("win-3", 400, 0, 100, 80),
                 ],
-                admit_body("win-3"),
             ),
         ] {
             let reply = parse_reply(&planner.evaluate(&retained_request_with_selected_gaps(
                 correlation,
                 "owner-1",
                 "gen-1",
-                "win-1",
+                focused,
                 &windows,
-                command,
+                serde_json::json!({"op": "reconcile"}),
             )));
             assert_eq!(reply["outcome"], "planned", "{reply}");
         }
@@ -8337,24 +8185,33 @@ mod tests {
     }
 
     #[test]
-    fn remove_with_current_post_removal_observation_replies_idempotent() {
-        // KWin sends the current post-removal observation: the requested
-        // window already departed in convergence, so the remove replies with
-        // the complete converged projection (remove capability, valid focus)
-        // instead of `unknown-window`, with no extra commit.
-        let mut planner = seed_two_window_planner();
-        let request = retained_request(
-            "rem-post-1",
+    fn reconcile_with_post_removal_observation_projects_survivor() {
+        // KWin sends the current post-removal observation: win-2 already
+        // departed, so complete-observation reconcile converges it away and
+        // projects the survivor (reconcile capability, valid focus).
+        let mut planner = Planner::new();
+        let seed = parse_reply(&planner.evaluate(&retained_request(
+            "post-rem-rec-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(seed["outcome"], "planned", "{seed}");
+        assert_eq!(planner.retained_domains(), 1);
+        let reply = parse_reply(&planner.evaluate(&retained_request(
+            "post-rem-rec-2",
             "owner-1",
             "gen-1",
             "win-1",
             &[("win-1", 0, 0, 100, 80)],
-            serde_json::json!({"op": "remove", "window": "win-2"}),
-        );
-        let reply = parse_reply(&planner.evaluate(&request));
+            serde_json::json!({"op": "reconcile"}),
+        )));
         assert_eq!(reply["outcome"], "planned", "{reply}");
-        assert_eq!(reply["detail"]["kind"], "remove", "{reply}");
+        assert_eq!(reply["detail"]["kind"], "reconcile", "{reply}");
         assert_geometry_covers(&reply, &["win-1"]);
+        assert_eq!(planner.retained_domains(), 1);
     }
 
     #[test]
@@ -10237,7 +10094,7 @@ mod tests {
         // orphan as `orphan-abandoned` while every canonical per-domain
         // Engine session survives and stays reusable.
         let mut planner = Planner::new();
-        let admit = retained_request_for_domain(
+        let seed = retained_request_for_domain(
             "ws-orphan-owner-1",
             "owner-1",
             "gen-1",
@@ -10245,9 +10102,9 @@ mod tests {
             "ws-9",
             "win-keep",
             &[("win-keep", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-keep", "output": "out-9", "workspace": "ws-9"}),
+            serde_json::json!({"op": "reconcile"}),
         );
-        assert_eq!(parse_reply(&planner.evaluate(&admit))["outcome"], "planned");
+        assert_eq!(parse_reply(&planner.evaluate(&seed))["outcome"], "planned");
         assert_eq!(planner.retained_domains(), 1);
         let (planned, post_source, post_target) =
             stage_workspace_send(&mut planner, "ws-orphan-owner-2");
@@ -10609,11 +10466,11 @@ mod tests {
 
     #[test]
     fn workspace_abandon_preserves_canonical_sessions_and_rejects_malformed() {
-        // Canonical domain sessions survive abandon: seed an unrelated legacy
-        // domain, stage and abandon a workspace flight, then prove the legacy
-        // slot is intact and reusable.
+        // Canonical domain sessions survive abandon: seed an unrelated
+        // canonical domain, stage and abandon a workspace flight, then prove
+        // the slot is intact and reusable.
         let mut planner = Planner::new();
-        let admit = retained_request_for_domain(
+        let seed = retained_request_for_domain(
             "ws-abandon-keep-1",
             "owner-1",
             "gen-1",
@@ -10621,9 +10478,9 @@ mod tests {
             "ws-9",
             "win-keep",
             &[("win-keep", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-keep", "output": "out-9", "workspace": "ws-9"}),
+            serde_json::json!({"op": "reconcile"}),
         );
-        assert_eq!(parse_reply(&planner.evaluate(&admit))["outcome"], "planned");
+        assert_eq!(parse_reply(&planner.evaluate(&seed))["outcome"], "planned");
         assert_eq!(planner.retained_domains(), 1);
         let (planned, post_source, post_target) =
             stage_workspace_send(&mut planner, "ws-abandon-keep-2");
@@ -10803,13 +10660,13 @@ mod tests {
         );
         // An invalid correlation shape never echoes, even when well-formed.
         let bad_corr = summarize_plan_ingress(
-            r#"{"v":1,"correlation_id":"evil correlation!!","owner":"owner-1","generation":"gen-1","revision":0,"command":{"op":"remove"}}"#,
+            r#"{"v":1,"correlation_id":"evil correlation!!","owner":"owner-1","generation":"gen-1","revision":0,"command":{"op":"reconcile"}}"#,
         );
         assert!(bad_corr.contains("correlation=-"), "{bad_corr}");
         assert!(!bad_corr.contains("evil"), "{bad_corr}");
         // Out-of-bounds revisions never echo.
         let bad_rev = summarize_plan_ingress(
-            r#"{"v":1,"correlation_id":"ws-sum-1","revision":99999999,"command":{"op":"remove"}}"#,
+            r#"{"v":1,"correlation_id":"ws-sum-1","revision":99999999,"command":{"op":"reconcile"}}"#,
         );
         assert!(bad_rev.contains("revision=-"), "{bad_rev}");
         assert!(!bad_rev.contains("99999999"), "{bad_rev}");
@@ -10986,13 +10843,13 @@ mod tests {
                 "ag-seed-1",
                 "win-1",
                 vec![("win-1", 0, 0, 100, 80)],
-                admit_body("win-1"),
+                serde_json::json!({"op": "reconcile"}),
             ),
             (
                 "ag-seed-2",
-                "win-1",
+                "win-2",
                 vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-                admit_body("win-2"),
+                serde_json::json!({"op": "reconcile"}),
             ),
         ] {
             let request =
@@ -11007,7 +10864,7 @@ mod tests {
     #[test]
     fn retained_active_group_returns_parent_members_and_engine_projection() {
         let mut planner = seed_active_group_planner();
-        // Retained focus after the second admit is win-2 at base revision 2.
+        // Retained focus after the second reconcile is win-2.
         let baseline = parse_reply(&planner.evaluate(&retained_request(
             "ag-rec-1",
             "owner-1",
@@ -11104,7 +10961,7 @@ mod tests {
             "gen-1",
             "win-1",
             &[("win-1", 0, 0, 100, 80)],
-            admit_body("win-1"),
+            serde_json::json!({"op": "reconcile"}),
         );
         assert_eq!(parse_reply(&planner.evaluate(&seed))["outcome"], "planned");
         let solo = active_group_request(
@@ -11268,32 +11125,32 @@ mod tests {
 
     #[test]
     fn retained_active_group_aligns_focus_and_resolves_nested_after_move() {
-        // Real admitted/planned lifecycle producing H[win-1, V[win-2, win-3]]:
-        // two landscape admits build root H, the third admit nests V under
-        // the tall focused leaf. No hand-seeded sessions.
+        // Real reconciled/planned lifecycle producing H[win-1, V[win-2, win-3]]:
+        // two landscape reconciles build root H, the third reconcile nests V
+        // under the tall focused leaf. No hand-seeded sessions.
         let mut planner = Planner::new();
         for (correlation, focused, windows, command) in [
             (
                 "ag-nested-1",
                 "win-1",
                 vec![("win-1", 0, 0, 100, 80)],
-                admit_body("win-1"),
+                serde_json::json!({"op": "reconcile"}),
             ),
             (
                 "ag-nested-2",
-                "win-1",
+                "win-2",
                 vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-                admit_body("win-2"),
+                serde_json::json!({"op": "reconcile"}),
             ),
             (
                 "ag-nested-3",
-                "win-2",
+                "win-3",
                 vec![
                     ("win-1", 0, 0, 100, 80),
                     ("win-2", 200, 0, 100, 80),
                     ("win-3", 400, 0, 100, 80),
                 ],
-                admit_body("win-3"),
+                serde_json::json!({"op": "reconcile"}),
             ),
         ] {
             let request =
@@ -11461,12 +11318,12 @@ mod tests {
     }
 
     #[test]
-    fn retained_last_remove_retires_empty_session_and_frees_slot() {
-        // Closing the final member retires the empty session at the same
+    fn retained_empty_reconcile_retires_session_and_frees_slot() {
+        // An empty complete observation retires the session at the same
         // committed boundary so a later background domain can be admitted.
         // Offline only: retained Planner evaluation, no bus.
         let mut planner = Planner::new();
-        let admit = retained_request_for_domain(
+        let seed = retained_request_for_domain(
             "empty-retire-1",
             "owner-1",
             "gen-1",
@@ -11474,27 +11331,27 @@ mod tests {
             "ws-2",
             "win-h",
             &[("win-h", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-h", "output": "out-1", "workspace": "ws-2"}),
+            serde_json::json!({"op": "reconcile"}),
         );
-        let admit_reply = parse_reply(&planner.evaluate(&admit));
-        assert_eq!(admit_reply["outcome"], "planned", "{admit_reply}");
+        let seed_reply = parse_reply(&planner.evaluate(&seed));
+        assert_eq!(seed_reply["outcome"], "planned", "{seed_reply}");
         assert_eq!(planner.retained_domains(), 1);
-        let remove = retained_request_for_domain(
+        let empty = retained_request_for_domain(
             "empty-retire-2",
             "owner-1",
             "gen-1",
             "out-1",
             "ws-2",
-            "win-h",
-            &[("win-h", 0, 0, 100, 80)],
-            serde_json::json!({"op": "remove", "window": "win-h"}),
+            "",
+            &[],
+            serde_json::json!({"op": "reconcile"}),
         );
-        let remove_reply = parse_reply(&planner.evaluate(&remove));
-        assert_eq!(remove_reply["outcome"], "planned", "{remove_reply}");
+        let empty_reply = parse_reply(&planner.evaluate(&empty));
+        assert_eq!(empty_reply["outcome"], "planned", "{empty_reply}");
         assert_eq!(
-            remove_reply["desired_geometry"].as_array().map(Vec::len),
+            empty_reply["desired_geometry"].as_array().map(Vec::len),
             Some(0),
-            "{remove_reply}"
+            "{empty_reply}"
         );
         assert_eq!(planner.retained_domains(), 0);
         // The freed slot admits a subsequent background domain.
@@ -11506,7 +11363,7 @@ mod tests {
             "ws-3",
             "win-n",
             &[("win-n", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-n", "output": "out-1", "workspace": "ws-3"}),
+            serde_json::json!({"op": "reconcile"}),
         );
         let next_reply = parse_reply(&planner.evaluate(&next));
         assert_eq!(next_reply["outcome"], "planned", "{next_reply}");
@@ -11516,12 +11373,12 @@ mod tests {
     #[test]
     fn retained_many_domains_plan_without_count_cap() {
         // No retained-domain count cap: well beyond the old 16-domain bound,
-        // every distinct domain admits and stays retained. Offline only.
+        // every distinct domain converges and stays retained. Offline only.
         let mut planner = Planner::new();
         for index in 1..=24 {
             let workspace = format!("ws-{index}");
             let window = format!("win-{index}");
-            let correlation = format!("many-domain-admit-{index}");
+            let correlation = format!("many-domain-reconcile-{index}");
             let request = retained_request_for_domain(
                 &correlation,
                 "owner-1",
@@ -11530,30 +11387,29 @@ mod tests {
                 &workspace,
                 &window,
                 &[(window.as_str(), 0, 0, 100, 80)],
-                serde_json::json!({"op": "admit", "window": window, "output": "out-1", "workspace": workspace}),
+                serde_json::json!({"op": "reconcile"}),
             );
             let reply = parse_reply(&planner.evaluate(&request));
             assert_eq!(reply["outcome"], "planned", "{reply} {index}");
         }
         assert_eq!(planner.retained_domains(), 24);
-        // Empty the first retained domain with its exact single-member
-        // observation: the committed remove retires it.
-        let remove = retained_request_for_domain(
-            "many-domain-remove-1",
+        // An empty complete observation for the first domain retires it.
+        let retire = retained_request_for_domain(
+            "many-domain-retire-1",
             "owner-1",
             "gen-1",
             "out-1",
             "ws-1",
-            "win-1",
-            &[("win-1", 0, 0, 100, 80)],
-            serde_json::json!({"op": "remove", "window": "win-1"}),
+            "",
+            &[],
+            serde_json::json!({"op": "reconcile"}),
         );
-        let remove_reply = parse_reply(&planner.evaluate(&remove));
-        assert_eq!(remove_reply["outcome"], "planned", "{remove_reply}");
+        let retire_reply = parse_reply(&planner.evaluate(&retire));
+        assert_eq!(retire_reply["outcome"], "planned", "{retire_reply}");
         assert_eq!(
-            remove_reply["desired_geometry"].as_array().map(Vec::len),
+            retire_reply["desired_geometry"].as_array().map(Vec::len),
             Some(0),
-            "{remove_reply}"
+            "{retire_reply}"
         );
         assert_eq!(planner.retained_domains(), 23);
     }
@@ -11570,7 +11426,7 @@ mod tests {
             "gen-1",
             "win-1",
             &[("win-1", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
+            serde_json::json!({"op": "reconcile"}),
         );
         assert!(base.len() < PLAN_MAX_REQUEST_BYTES);
         let mut at_cap = base.clone();
@@ -11619,7 +11475,7 @@ mod tests {
             "gen-1",
             &focused,
             &windows,
-            serde_json::json!({"op": "admit", "window": focused, "output": "out-1", "workspace": "ws-1"}),
+            serde_json::json!({"op": "reconcile"}),
         );
         assert!(request.len() < PLAN_MAX_REQUEST_BYTES, "{}", request.len());
         let mut planner = Planner::new();
@@ -11640,67 +11496,6 @@ mod tests {
         assert!(ingress.contains("correlation=big-reply-1"), "{ingress}");
         assert!(egress.contains("correlation=big-reply-1"), "{egress}");
         assert!(egress.contains("kind=reply-oversize"), "{egress}");
-    }
-
-    #[test]
-    fn retained_multi_member_collapse_converges_to_empty_idempotent_remove() {
-        // Both members vanishing before one observation converges both away;
-        // the single remove then takes the idempotent success with the
-        // complete converged (empty) projection and retires the emptied
-        // domain slot. Offline only.
-        let mut planner = Planner::new();
-        for (correlation, focused, windows, command) in [
-            (
-                "collapse-1",
-                "win-1",
-                vec![("win-1", 0, 0, 100, 80)],
-                serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
-            ),
-            (
-                "collapse-2",
-                "win-1",
-                vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
-                serde_json::json!({"op": "admit", "window": "win-2", "output": "out-1", "workspace": "ws-1"}),
-            ),
-        ] {
-            let request = retained_request_for_domain(
-                correlation,
-                "owner-1",
-                "gen-1",
-                "out-1",
-                "ws-1",
-                focused,
-                &windows,
-                command,
-            );
-            assert_eq!(
-                parse_reply(&planner.evaluate(&request))["outcome"],
-                "planned"
-            );
-        }
-        assert_eq!(planner.retained_domains(), 1);
-        // Both members gone: convergence removes both, then the remove takes
-        // the idempotent success with the complete converged empty
-        // projection (remove capability) and retires the emptied slot.
-        let collapsed = retained_request_for_domain(
-            "collapse-3",
-            "owner-1",
-            "gen-1",
-            "out-1",
-            "ws-1",
-            "",
-            &[],
-            serde_json::json!({"op": "remove", "window": "win-1"}),
-        );
-        let reply = parse_reply(&planner.evaluate(&collapsed));
-        assert_eq!(reply["outcome"], "planned", "{reply}");
-        assert_eq!(reply["detail"]["kind"], "remove", "{reply}");
-        assert_eq!(
-            reply["desired_geometry"].as_array().map(Vec::len),
-            Some(0),
-            "{reply}"
-        );
-        assert_eq!(planner.retained_domains(), 0, "{reply}");
     }
 
     fn fit_excluded_request(
@@ -11739,21 +11534,20 @@ mod tests {
     }
 
     #[test]
-    fn fit_horizontal_strip_commits_through_lifecycle_at_base_zero() {
+    fn fit_horizontal_strip_commits_through_reconcile() {
         // Unequal 400/800 side-by-side strip: the normal seed would reflow to
         // an equal split, so exact observed geometry proves the fit path.
         let windows = [("win-1", 0, 0, 400, 800), ("win-2", 400, 0, 800, 800)];
-        let mut first = Planner::new();
-        let reply = parse_reply(&first.evaluate(&retained_request(
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&retained_request(
             "fit-h-1",
             "owner-1",
             "gen-1",
             "win-2",
             &windows,
-            admit_body("win-2"),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(reply["outcome"], "planned", "{reply}");
-        assert_eq!(reply["base_revision"], 0, "{reply}");
         assert_geometry_covers(&reply, &["win-1", "win-2"]);
         assert_eq!(
             geometry_by_window(&reply),
@@ -11764,20 +11558,6 @@ mod tests {
             "{reply}"
         );
         assert_eq!(fit_leaves(&reply), vec!["fit-l0", "fit-l1"], "{reply}");
-        // Deterministic across fresh planners.
-        let mut second = Planner::new();
-        let again = parse_reply(&second.evaluate(&retained_request(
-            "fit-h-1",
-            "owner-1",
-            "gen-1",
-            "win-2",
-            &windows,
-            admit_body("win-2"),
-        )));
-        assert_eq!(
-            again["desired_geometry"], reply["desired_geometry"],
-            "{reply}"
-        );
     }
 
     #[test]
@@ -11796,7 +11576,7 @@ mod tests {
             "gen-1",
             "win-3",
             &windows,
-            admit_body("win-3"),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(reply["outcome"], "planned", "{reply}");
         assert_eq!(reply["base_revision"], 0, "{reply}");
@@ -11827,7 +11607,7 @@ mod tests {
             "gen-1",
             "win-2",
             &windows,
-            admit_body("win-2"),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(reply["outcome"], "planned", "{reply}");
         assert_eq!(reply["base_revision"], 0, "{reply}");
@@ -11838,90 +11618,6 @@ mod tests {
         assert_eq!(
             got["win-2"].0,
             got["win-1"].0 + got["win-1"].2 + 8,
-            "{reply}"
-        );
-    }
-
-    #[test]
-    fn fit_falls_back_to_normal_seed_on_overlap_grid_and_out_of_domain() {
-        // Overlap and out-of-domain stay on the initial overlap/containment
-        // boundary; a T arrangement with primary-interval overlap on both axes
-        // is genuinely unsupported under the near-strip interval policy, so
-        // every case must take the normal deterministic seed/reflow.
-        let normal = std::collections::BTreeMap::from([
-            ("win-1".to_owned(), (0, 0, 600, 800)),
-            ("win-2".to_owned(), (600, 0, 600, 800)),
-        ]);
-        for (correlation, windows) in [
-            (
-                "fit-fb-1",
-                vec![("win-1", 0, 0, 700, 800), ("win-2", 500, 0, 700, 800)],
-            ),
-            (
-                "fit-fb-3",
-                vec![("win-1", 0, 0, 600, 800), ("win-2", 600, 0, 700, 800)],
-            ),
-        ] {
-            let mut planner = Planner::new();
-            let reply = parse_reply(&planner.evaluate(&retained_request(
-                correlation,
-                "owner-1",
-                "gen-1",
-                "win-2",
-                &windows,
-                admit_body("win-2"),
-            )));
-            assert_eq!(reply["outcome"], "planned", "{correlation} {reply}");
-            assert_geometry_covers(&reply, &["win-1", "win-2"]);
-            assert_eq!(geometry_by_window(&reply), normal, "{correlation} {reply}");
-            assert!(
-                !fit_leaves(&reply)
-                    .iter()
-                    .any(|leaf| leaf.starts_with("fit-l")),
-                "{correlation} {reply}"
-            );
-        }
-        // T arrangement: top full-width plus two bottom siblings. Sorted x
-        // intervals overlap (top spans both bottom cells) and sorted y
-        // intervals overlap (bottom siblings share one row), so neither axis
-        // supports a near strip.
-        let mut planner = Planner::new();
-        let reply = parse_reply(&planner.evaluate(&retained_request(
-            "fit-fb-grid-1",
-            "owner-1",
-            "gen-1",
-            "win-3",
-            &[
-                ("win-1", 0, 0, 1200, 400),
-                ("win-2", 0, 400, 600, 400),
-                ("win-3", 600, 400, 600, 400),
-            ],
-            admit_body("win-3"),
-        )));
-        assert_eq!(reply["outcome"], "planned", "{reply}");
-        assert_geometry_covers(&reply, &["win-1", "win-2", "win-3"]);
-        assert!(
-            !fit_leaves(&reply)
-                .iter()
-                .any(|leaf| leaf.starts_with("fit-l")),
-            "{reply}"
-        );
-        // Deterministic normal fallback across fresh planners.
-        let mut second = Planner::new();
-        let again = parse_reply(&second.evaluate(&retained_request(
-            "fit-fb-grid-1",
-            "owner-1",
-            "gen-1",
-            "win-3",
-            &[
-                ("win-1", 0, 0, 1200, 400),
-                ("win-2", 0, 400, 600, 400),
-                ("win-3", 600, 400, 600, 400),
-            ],
-            admit_body("win-3"),
-        )));
-        assert_eq!(
-            again["desired_geometry"], reply["desired_geometry"],
             "{reply}"
         );
     }
@@ -11942,7 +11638,7 @@ mod tests {
             "gen-1",
             "win-2",
             &windows,
-            admit_body("win-2"),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(reply["outcome"], "planned", "{reply}");
         assert_eq!(reply["base_revision"], 0, "{reply}");
@@ -11976,43 +11672,7 @@ mod tests {
     }
 
     #[test]
-    fn fit_horizontal_near_strip_with_configured_gaps() {
-        // Same interval policy under the configured outer/inner gaps: edge
-        // offsets, cross-axis drift, and a nonconfigured observed 10px gap
-        // still support a horizontal near strip with the observed widths as
-        // shares, projected with the configured 8px gap.
-        let windows = [("win-1", 10, 10, 400, 780), ("win-2", 420, 12, 760, 778)];
-        let mut planner = Planner::new();
-        let reply = parse_reply(&planner.evaluate(&retained_request_with_selected_gaps(
-            "fit-near-gap-1",
-            "owner-1",
-            "gen-1",
-            "win-2",
-            &windows,
-            admit_body("win-2"),
-        )));
-        assert_eq!(reply["outcome"], "planned", "{reply}");
-        assert_eq!(reply["base_revision"], 0, "{reply}");
-        assert_geometry_covers(&reply, &["win-1", "win-2"]);
-        let got = geometry_by_window(&reply);
-        assert_eq!(
-            got,
-            std::collections::BTreeMap::from([
-                ("win-1".to_owned(), (8, 8, 405, 784)),
-                ("win-2".to_owned(), (421, 8, 771, 784)),
-            ]),
-            "{reply}"
-        );
-        assert_eq!(fit_leaves(&reply), vec!["fit-l0", "fit-l1"], "{reply}");
-        assert_eq!(
-            got["win-2"].0,
-            got["win-1"].0 + got["win-1"].2 + 8,
-            "{reply}"
-        );
-    }
-
-    #[test]
-    fn fit_vertical_near_strip_with_drift_is_deterministic() {
+    fn fit_vertical_near_strip_with_drift_projects_canonical() {
         // Imperfect vertical near strip: cross-axis drift with x intervals
         // overlapping (so horizontal is unsupported) while y intervals stay
         // sequential. Canonical heights come from the observed spans.
@@ -12024,7 +11684,7 @@ mod tests {
             "gen-1",
             "win-2",
             &windows,
-            admit_body("win-2"),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(reply["outcome"], "planned", "{reply}");
         assert_eq!(reply["base_revision"], 0, "{reply}");
@@ -12038,19 +11698,6 @@ mod tests {
             "{reply}"
         );
         assert_eq!(fit_leaves(&reply), vec!["fit-l0", "fit-l1"], "{reply}");
-        let mut second = Planner::new();
-        let again = parse_reply(&second.evaluate(&retained_request(
-            "fit-near-v-1",
-            "owner-1",
-            "gen-1",
-            "win-2",
-            &windows,
-            admit_body("win-2"),
-        )));
-        assert_eq!(
-            again["desired_geometry"], reply["desired_geometry"],
-            "{reply}"
-        );
     }
 
     #[test]
@@ -12064,7 +11711,7 @@ mod tests {
             "win-2",
             &windows,
             &["win-1"],
-            admit_body("win-2"),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(reply["outcome"], "planned", "{reply}");
         assert_geometry_covers(&reply, &["win-1", "win-2"]);
@@ -12079,46 +11726,6 @@ mod tests {
     }
 
     #[test]
-    fn fit_gates_on_focused_admit_without_explicit_placement() {
-        // Admitting a non-focused window never fits, even on exact strip
-        // geometry: the focused window must be the admitted one.
-        let windows = [("win-1", 0, 0, 400, 800), ("win-2", 400, 0, 800, 800)];
-        let normal = std::collections::BTreeMap::from([
-            ("win-1".to_owned(), (0, 0, 600, 800)),
-            ("win-2".to_owned(), (600, 0, 600, 800)),
-        ]);
-        let mut unfocused = Planner::new();
-        let reply = parse_reply(&unfocused.evaluate(&retained_request(
-            "fit-g-1",
-            "owner-1",
-            "gen-1",
-            "win-1",
-            &windows,
-            admit_body("win-2"),
-        )));
-        assert_eq!(reply["outcome"], "planned", "{reply}");
-        assert_eq!(geometry_by_window(&reply), normal, "{reply}");
-        // Explicit placement bounds also opt out of fitting.
-        let mut placed = Planner::new();
-        let placed_reply = parse_reply(&placed.evaluate(&retained_request(
-            "fit-g-2",
-            "owner-1",
-            "gen-1",
-            "win-2",
-            &windows,
-            serde_json::json!({
-                "op": "admit",
-                "window": "win-2",
-                "output": "out-1",
-                "workspace": "ws-1",
-                "placement_bounds": {"x": 0, "y": 0, "w": 1200, "h": 800},
-            }),
-        )));
-        assert_eq!(placed_reply["outcome"], "planned", "{placed_reply}");
-        assert_eq!(geometry_by_window(&placed_reply), normal, "{placed_reply}");
-    }
-
-    #[test]
     fn fit_commits_once_and_retained_followup_never_refits() {
         let mut planner = Planner::new();
         let fitted = parse_reply(&planner.evaluate(&retained_request(
@@ -12127,16 +11734,12 @@ mod tests {
             "gen-1",
             "win-2",
             &[("win-1", 0, 0, 400, 800), ("win-2", 400, 0, 800, 800)],
-            admit_body("win-2"),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(fitted["outcome"], "planned", "{fitted}");
-        assert_eq!(fitted["base_revision"], 0, "{fitted}");
         let before = geometry_by_window(&fitted)["win-1"];
-        // A retained follow-up converges first: the unexpected member is
-        // admitted by convergence (base 1 -> 2), then the ordinary admit
-        // takes the idempotent success with no extra commit. Base 2 proves
-        // the fit committed exactly once plus one convergence, and the fitted
-        // first child is not rewritten.
+        // A retained follow-up reconciles the newcomer into the fitted tree
+        // without rewriting the fitted first child.
         let follow = parse_reply(&planner.evaluate(&retained_request(
             "fit-r-2",
             "owner-1",
@@ -12147,10 +11750,9 @@ mod tests {
                 ("win-2", 400, 0, 800, 800),
                 ("win-3", 0, 0, 100, 80),
             ],
-            admit_body("win-3"),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(follow["outcome"], "planned", "{follow}");
-        assert_eq!(follow["base_revision"], 2, "{follow}");
         assert_geometry_covers(&follow, &["win-1", "win-2", "win-3"]);
         assert_eq!(
             geometry_by_window(&follow)["win-1"],
@@ -12172,7 +11774,7 @@ mod tests {
             "ws-9",
             "win-2",
             &[("win-1", 0, 0, 100, 80), ("win-2", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-2", "output": "out-removed", "workspace": "ws-9"}),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(first["outcome"], "planned", "{first}");
         assert_eq!(planner.retained_domains(), 1);
@@ -12197,9 +11799,9 @@ mod tests {
 
     #[test]
     fn output_relocation_returns_with_current_contents_after_edits() {
-        // Membership edits while displaced converge through the normal
-        // remove/admit path on the relocated tree: moved-out stays out,
-        // moved-in admits into the relocated topology.
+        // Membership edits while displaced converge through complete-observation
+        // reconcile on the relocated tree: moved-out stays out, moved-in
+        // reconciles into the relocated topology.
         let mut planner = Planner::new();
         let seed = parse_reply(&planner.evaluate(&retained_request_for_domain(
             "reloc-edit-1",
@@ -12209,7 +11811,7 @@ mod tests {
             "ws-7",
             "win-2",
             &[("win-1", 0, 0, 100, 80), ("win-2", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-2", "output": "out-old", "workspace": "ws-7"}),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(seed["outcome"], "planned", "{seed}");
         // Displace with the same set: relocation preserves the tree.
@@ -12233,11 +11835,11 @@ mod tests {
             "out-new",
             "ws-7",
             "win-1",
-            &[("win-1", 0, 0, 100, 80), ("win-2", 0, 0, 100, 80)],
-            serde_json::json!({"op": "remove", "window": "win-2"}),
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(removed["outcome"], "planned", "{removed}");
-        // Admit win-3 into the displaced workspace (moved-in returns with it).
+        // Reconcile win-3 into the displaced workspace (moved-in returns with it).
         let admitted = parse_reply(&planner.evaluate(&retained_request_for_domain(
             "reloc-edit-4",
             "owner-1",
@@ -12246,7 +11848,7 @@ mod tests {
             "ws-7",
             "win-3",
             &[("win-1", 0, 0, 100, 80), ("win-3", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-3", "output": "out-new", "workspace": "ws-7"}),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(admitted["outcome"], "planned", "{admitted}");
         assert_geometry_covers(&admitted, &["win-1", "win-3"]);
@@ -12279,7 +11881,7 @@ mod tests {
             "ws-keep",
             "win-k",
             &[("win-k", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-k", "output": "out-keep", "workspace": "ws-keep"}),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(survivor["outcome"], "planned", "{survivor}");
         let displaced = parse_reply(&planner.evaluate(&retained_request_for_domain(
@@ -12290,7 +11892,7 @@ mod tests {
             "ws-away",
             "win-a",
             &[("win-a", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-a", "output": "out-gone", "workspace": "ws-away"}),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(displaced["outcome"], "planned", "{displaced}");
         assert_eq!(planner.retained_domains(), 2);
@@ -12313,8 +11915,9 @@ mod tests {
 
     #[test]
     fn output_relocation_target_collision_is_atomic() {
-        // A usable non-empty target is a collision: fail closed with no
-        // source mutation. Both domains stay retained and usable.
+        // A usable non-empty target is a collision: complete-observation
+        // reconcile follows the normal path with no source mutation. Both
+        // domains stay retained and usable.
         let mut planner = Planner::new();
         let source = parse_reply(&planner.evaluate(&retained_request_for_domain(
             "reloc-coll-1",
@@ -12324,7 +11927,7 @@ mod tests {
             "ws-away",
             "win-a",
             &[("win-a", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-a", "output": "out-gone", "workspace": "ws-away"}),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(source["outcome"], "planned", "{source}");
         let target = parse_reply(&planner.evaluate(&retained_request_for_domain(
@@ -12335,7 +11938,7 @@ mod tests {
             "ws-away",
             "win-k",
             &[("win-k", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-k", "output": "out-keep", "workspace": "ws-away"}),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(target["outcome"], "planned", "{target}");
         assert_eq!(planner.retained_domains(), 2);
@@ -12370,9 +11973,9 @@ mod tests {
     #[test]
     fn output_relocation_mismatched_target_does_not_relocate_source() {
         // A target session that existed at handling start is never removed
-        // or superseded for relocation, even when normal target cleanup
-        // drops it as mismatched. The stale target follows the normal
-        // seed path while the source stays retained and usable.
+        // or superseded for relocation, even when the carried bounds skew.
+        // The stale target follows the normal complete-observation reconcile
+        // path while the source stays retained and usable.
         let mut planner = Planner::new();
         let source = parse_reply(&planner.evaluate(&retained_request_for_domain(
             "reloc-mismatch-1",
@@ -12382,7 +11985,7 @@ mod tests {
             "ws-away",
             "win-a",
             &[("win-a", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-a", "output": "out-gone", "workspace": "ws-away"}),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(source["outcome"], "planned", "{source}");
         let target = parse_reply(&planner.evaluate(&retained_request_for_domain(
@@ -12393,29 +11996,29 @@ mod tests {
             "ws-away",
             "win-k",
             &[("win-k", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-k", "output": "out-keep", "workspace": "ws-away"}),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(target["outcome"], "planned", "{target}");
         assert_eq!(planner.retained_domains(), 2);
-        // Admit on the existing target with different bounds: normal cleanup
-        // drops the mismatched target slot, but source relocation must not
-        // run because the target existed at handling start.
-        let mut mismatched: serde_json::Value =
-            serde_json::from_str(&retained_request_for_domain(
-                "reloc-mismatch-3",
-                "owner-1",
-                "gen-1",
-                "out-keep",
-                "ws-away",
-                "win-k2",
-                &[("win-k", 0, 0, 100, 80), ("win-k2", 0, 0, 100, 80)],
-                serde_json::json!({"op": "admit", "window": "win-k2", "output": "out-keep", "workspace": "ws-away"}),
-            ))
-            .expect("request JSON");
+        // Reconcile on the existing target with different bounds: the
+        // retained target reprojects/converges through the normal path, but
+        // source relocation must not run because the target existed at
+        // handling start.
+        let mut mismatched: serde_json::Value = serde_json::from_str(&retained_request_for_domain(
+            "reloc-mismatch-3",
+            "owner-1",
+            "gen-1",
+            "out-keep",
+            "ws-away",
+            "win-k2",
+            &[("win-k", 0, 0, 100, 80), ("win-k2", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        ))
+        .expect("request JSON");
         mismatched["domain"]["bounds"] = serde_json::json!({"x": 0, "y": 0, "w": 800, "h": 600});
         let reseeded = parse_reply(&planner.evaluate(&mismatched.to_string()));
         assert_eq!(reseeded["outcome"], "planned", "{reseeded}");
-        // Normal seeding replaced the target; the source was not relocated.
+        // Normal reconcile kept the target; the source was not relocated.
         assert_eq!(planner.retained_domains(), 2, "{reseeded}");
         let source_key = DomainKey {
             output: OutputId("out-gone".to_owned()),
@@ -12446,7 +12049,8 @@ mod tests {
     #[test]
     fn output_relocation_outer_gap_mismatch_is_atomic() {
         // Outer-gap mismatch against the source fails closed with no retained
-        // mutation: the source stays and no target is created.
+        // mutation: the source stays and no target is created. Complete
+        // observation carries the exact source/target ids.
         let mut planner = Planner::new();
         let seed = parse_reply(&planner.evaluate(&retained_request_for_domain(
             "reloc-gap-1",
@@ -12456,7 +12060,7 @@ mod tests {
             "ws-away",
             "win-a",
             &[("win-a", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-a", "output": "out-gone", "workspace": "ws-away"}),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(seed["outcome"], "planned", "{seed}");
         assert_eq!(planner.retained_domains(), 1);
@@ -12492,8 +12096,10 @@ mod tests {
 
     #[test]
     fn output_relocation_ambiguous_source_is_atomic() {
-        // Two usable sources with the same workspace refuse relocation with
-        // no mutation: both stay retained.
+        // Two usable sources with the same workspace never relocate: with no
+        // pending, a fresh reconcile seeds the new domain through the same
+        // admission route while both sources stay retained (Orchestrator
+        // ambiguous-source fresh-seed rule).
         let mut planner = Planner::new();
         for (correlation, output, window) in [
             ("reloc-amb-1", "out-a", "win-a"),
@@ -12507,12 +12113,12 @@ mod tests {
                 "ws-x",
                 window,
                 &[(window, 0, 0, 100, 80)],
-                serde_json::json!({"op": "admit", "window": window, "output": output, "workspace": "ws-x"}),
+                serde_json::json!({"op": "reconcile"}),
             )));
             assert_eq!(seeded["outcome"], "planned", "{seeded}");
         }
         assert_eq!(planner.retained_domains(), 2);
-        let ambiguous = parse_reply(&planner.evaluate(&retained_request_for_domain(
+        let seeded = parse_reply(&planner.evaluate(&retained_request_for_domain(
             "reloc-amb-3",
             "owner-1",
             "gen-1",
@@ -12522,8 +12128,27 @@ mod tests {
             &[("win-a", 0, 0, 100, 80)],
             serde_json::json!({"op": "reconcile"}),
         )));
-        assert_eq!(ambiguous["outcome"], "rejected", "{ambiguous}");
-        assert_eq!(planner.retained_domains(), 2, "{ambiguous}");
+        assert_eq!(seeded["outcome"], "planned", "{seeded}");
+        assert_geometry_covers(&seeded, &["win-a"]);
+        assert_eq!(planner.retained_domains(), 3, "{seeded}");
+        // Neither source moved: both still reconcile their own members.
+        for (correlation, output, window) in [
+            ("reloc-amb-4", "out-a", "win-a"),
+            ("reloc-amb-5", "out-b", "win-b"),
+        ] {
+            let source = parse_reply(&planner.evaluate(&retained_request_for_domain(
+                correlation,
+                "owner-1",
+                "gen-1",
+                output,
+                "ws-x",
+                window,
+                &[(window, 0, 0, 100, 80)],
+                serde_json::json!({"op": "reconcile"}),
+            )));
+            assert_eq!(source["outcome"], "planned", "{source}");
+            assert_geometry_covers(&source, &[window]);
+        }
     }
 
     #[test]
@@ -12540,7 +12165,7 @@ mod tests {
             "ws-9",
             "win-a",
             &[("win-a", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-a", "output": "out-gone", "workspace": "ws-9"}),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(seed["outcome"], "planned", "{seed}");
         // Open a standalone workspace-send pending session (out-1/ws-1 ->
@@ -12602,10 +12227,107 @@ mod tests {
     }
 
     #[test]
+    fn fresh_reconcile_refused_while_send_pending_then_lands_after_commit() {
+        // Strict pending B: a fresh reconcile on a genuinely absent domain
+        // refuses while the workspace send is pending (no target created),
+        // then seeds via complete-observation reconcile once ack/verify
+        // commits and releases the transaction. No transaction behavior
+        // changes. The pre-existing domain also seeds via reconcile.
+        let mut planner = Planner::new();
+        let seed = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "fresh-pend-seed-1",
+            "owner-1",
+            "gen-1",
+            "out-gone",
+            "ws-9",
+            "win-a",
+            &[("win-a", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(seed["outcome"], "planned", "{seed}");
+        let source = vec![
+            workspace_entry("win-1", "ws-1", 0),
+            workspace_entry("win-2", "ws-1", 100),
+        ];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let send = parse_reply(&planner.evaluate(&workspace_request(
+            "fresh-pend-send-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source,
+            target,
+            workspace_send_body(),
+        )));
+        assert_eq!(send["outcome"], "planned", "{send}");
+        // Genuinely absent domain (no relocation candidates): refused while
+        // pending, nothing retained for it.
+        let refused = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "fresh-pend-rec-1",
+            "owner-1",
+            "gen-1",
+            "out-9",
+            "ws-fresh",
+            "win-n",
+            &[("win-n", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(refused["outcome"], "rejected", "{refused}");
+        assert_eq!(refused["kind"], "unknown-domain", "{refused}");
+        assert_eq!(planner.retained_domains(), 1, "{refused}");
+        // Commit the send through the realistic ack/verify fixture shape.
+        let base = send["base_revision"].as_u64().expect("base revision");
+        let preconditions = send["preconditions"].clone();
+        let operation = send["operation"].clone();
+        let (ack_source, ack_target) = observation_from_geometry(&send["desired_geometry"]);
+        let acked = parse_reply(&planner.evaluate(&workspace_request(
+            "fresh-pend-send-1",
+            "owner-1",
+            "gen-1",
+            base,
+            "",
+            ack_source,
+            ack_target,
+            workspace_ack_body(),
+        )));
+        assert_eq!(acked["outcome"], "acknowledged", "{acked}");
+        let (verify_source, verify_target) = observation_from_geometry(&send["desired_geometry"]);
+        let committed = parse_reply(&planner.evaluate(&workspace_request(
+            "fresh-pend-send-1",
+            "owner-1",
+            "gen-1",
+            base,
+            "",
+            verify_source,
+            verify_target,
+            workspace_verify_body(preconditions, operation),
+        )));
+        assert_eq!(committed["outcome"], "committed", "{committed}");
+        // Pending released: the same fresh reconcile now seeds.
+        let before = planner.retained_domains();
+        let landed = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "fresh-pend-rec-2",
+            "owner-1",
+            "gen-1",
+            "out-9",
+            "ws-fresh",
+            "win-n",
+            &[("win-n", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(landed["outcome"], "planned", "{landed}");
+        assert_geometry_covers(&landed, &["win-n"]);
+        assert_eq!(planner.retained_domains(), before + 1, "{landed}");
+    }
+
+    #[test]
     fn output_relocation_preserves_exception_class_and_float_geometry() {
         // A floated exception keeps its class (flags) and floating geometry
-        // across relocation; only the homing output moves. Revision is
-        // preserved.
+        // across relocation; only the homing output moves. Seed and relocate
+        // through complete-observation reconcile (no admit newcomer on the
+        // move); a later complete reconcile admits win-3. Revision is
+        // preserved across the move and advances once for the admit.
         let mut planner = Planner::new();
         let seed = parse_reply(&planner.evaluate(&retained_request_for_domain(
             "reloc-exc-1",
@@ -12615,7 +12337,7 @@ mod tests {
             "ws-9",
             "win-2",
             &[("win-1", 0, 0, 100, 80), ("win-2", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-2", "output": "out-removed", "workspace": "ws-9"}),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(seed["outcome"], "planned", "{seed}");
         let floated = parse_reply(&planner.evaluate(&retained_request_for_domain(
@@ -12647,61 +12369,120 @@ mod tests {
             .expect("float exception");
         assert!(before_exception.floating, "{floated}");
         let before_float_geometry = before.floating_geometry(&before_exception.window);
-        // Displaced observation carries the floated window flagged floating and
-        // admits a new tiled window through the normal admit path (reconcile
-        // projects tiled leaves only, so membership changes converge via
-        // admit/remove instead).
+        // Relocated exact overlapping observation (no newcomer) reconciles on
+        // the moved tree: the floated window stays flagged floating.
         let mut displaced: serde_json::Value = serde_json::from_str(&retained_request_for_domain(
             "reloc-exc-3",
             "owner-1",
             "gen-1",
             "out-survivor",
             "ws-9",
-            "win-3",
-            &[("win-1", 0, 0, 100, 80), ("win-2", 0, 0, 100, 80), ("win-3", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-3", "output": "out-survivor", "workspace": "ws-9"}),
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
         ))
         .expect("request JSON");
         displaced["windows"][0]["floating"] = serde_json::json!(true);
         let moved = parse_reply(&planner.evaluate(&displaced.to_string()));
         assert_eq!(moved["outcome"], "planned", "{moved}");
+        assert_eq!(moved["detail"]["kind"], "reconcile", "{moved}");
         assert_eq!(planner.retained_domains(), 1, "{moved}");
         let target_key = DomainKey {
             output: OutputId("out-survivor".to_owned()),
             workspace: WorkspaceId("ws-9".to_owned()),
         };
-        let after = planner
+        let relocated = planner
             .engine
             .session(&target_key)
             .expect("target retained");
-        // One admit applied on the relocated tree: revision advances by
-        // exactly one (relocation itself adds zero).
-        assert_eq!(after.accepted_revision(), before_revision + 1, "{moved}");
-        assert_eq!(after.exception_count(), 1, "{moved}");
-        let after_exception = after
+        // Relocation itself adds zero: revision preserved.
+        assert_eq!(relocated.accepted_revision(), before_revision, "{moved}");
+        assert_eq!(relocated.exception_count(), 1, "{moved}");
+        let relocated_exception = relocated
             .exception_observed()
             .into_iter()
             .next()
             .expect("relocated exception");
         assert_eq!(
-            after_exception.floating, before_exception.floating,
+            relocated_exception.floating, before_exception.floating,
             "{moved}"
+        );
+        assert_eq!(
+            relocated_exception.fullscreen, before_exception.fullscreen,
+            "{moved}"
+        );
+        assert_eq!(
+            relocated_exception.maximized, before_exception.maximized,
+            "{moved}"
+        );
+        assert_eq!(
+            relocated_exception.sticky, before_exception.sticky,
+            "{moved}"
+        );
+        assert_eq!(relocated_exception.output.0, "out-survivor", "{moved}");
+        assert_eq!(relocated_exception.workspace.0, "ws-9", "{moved}");
+        assert_eq!(
+            relocated.floating_geometry(&relocated_exception.window),
+            before_float_geometry,
+            "{moved}"
+        );
+        // Separate retained complete reconcile admits win-3 on the relocated
+        // tree, preserving topology and exception class; revision advances
+        // exactly once.
+        let mut admit: serde_json::Value = serde_json::from_str(&retained_request_for_domain(
+            "reloc-exc-4",
+            "owner-1",
+            "gen-1",
+            "out-survivor",
+            "ws-9",
+            "win-3",
+            &[
+                ("win-1", 0, 0, 100, 80),
+                ("win-2", 0, 0, 100, 80),
+                ("win-3", 0, 0, 100, 80),
+            ],
+            serde_json::json!({"op": "reconcile"}),
+        ))
+        .expect("request JSON");
+        admit["windows"][0]["floating"] = serde_json::json!(true);
+        let admitted = parse_reply(&planner.evaluate(&admit.to_string()));
+        assert_eq!(admitted["outcome"], "planned", "{admitted}");
+        assert_eq!(admitted["detail"]["kind"], "reconcile", "{admitted}");
+        assert_geometry_covers(&admitted, &["win-2", "win-3"]);
+        assert_eq!(planner.retained_domains(), 1, "{admitted}");
+        let after = planner
+            .engine
+            .session(&target_key)
+            .expect("target retained");
+        assert_eq!(after.accepted_revision(), before_revision + 1, "{admitted}");
+        assert_eq!(after.exception_count(), 1, "{admitted}");
+        let after_exception = after
+            .exception_observed()
+            .into_iter()
+            .next()
+            .expect("admitted exception");
+        assert_eq!(
+            after_exception.floating, before_exception.floating,
+            "{admitted}"
         );
         assert_eq!(
             after_exception.fullscreen, before_exception.fullscreen,
-            "{moved}"
+            "{admitted}"
         );
         assert_eq!(
             after_exception.maximized, before_exception.maximized,
-            "{moved}"
+            "{admitted}"
         );
-        assert_eq!(after_exception.sticky, before_exception.sticky, "{moved}");
-        assert_eq!(after_exception.output.0, "out-survivor", "{moved}");
-        assert_eq!(after_exception.workspace.0, "ws-9", "{moved}");
+        assert_eq!(
+            after_exception.sticky, before_exception.sticky,
+            "{admitted}"
+        );
+        assert_eq!(after_exception.output.0, "out-survivor", "{admitted}");
+        assert_eq!(after_exception.workspace.0, "ws-9", "{admitted}");
         assert_eq!(
             after.floating_geometry(&after_exception.window),
             before_float_geometry,
-            "{moved}"
+            "{admitted}"
         );
     }
 
@@ -12718,7 +12499,7 @@ mod tests {
             "ws-9",
             "win-2",
             &[("win-1", 0, 0, 100, 80), ("win-2", 0, 0, 100, 80)],
-            serde_json::json!({"op": "admit", "window": "win-2", "output": "out-removed", "workspace": "ws-9"}),
+            serde_json::json!({"op": "reconcile"}),
         )));
         assert_eq!(seed["outcome"], "planned", "{seed}");
         let source_key = DomainKey {

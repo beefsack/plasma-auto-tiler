@@ -13,8 +13,8 @@ use std::collections::BTreeMap;
 
 use crate::boundary::{
     ActiveGroupResolution, CoreCommand, CoreEvent, CoreReply, NoGroupReason, ProjectionKind,
-    ProjectionPlan, TiledKind, TiledPlan, TransactionKind, TransactionStatus,
-    project_retained_tiled_geometry, resolve_active_group,
+    ProjectionPlan, TransactionKind, TransactionStatus, project_retained_tiled_geometry,
+    resolve_active_group,
 };
 use crate::bounds::{is_gap, is_opaque_id};
 use crate::contract::{
@@ -368,60 +368,6 @@ impl Engine {
                 message: error.message(),
             })),
         }
-    }
-
-    /// Complete projection success for an already-removed/admitted lifecycle
-    /// window after convergence: geometry covers the converged survivors
-    /// exactly with a valid focus and the lifecycle capability, at the
-    /// converged revision. Returns `None` when the converged state cannot
-    /// project (caller falls back to its existing rejection).
-    fn idempotent_tiled_success(
-        session: &Session,
-        domain_key: &DomainKey,
-        event: &CoreEvent,
-        kind: TiledKind,
-    ) -> Option<CoreReply> {
-        if committed_session_is_empty(session) {
-            return Some(CoreReply::Tiled(TiledPlan {
-                base_revision: session.accepted_revision(),
-                policy_version: LIFECYCLE_POLICY_VERSION,
-                kind,
-                geometry: Vec::new(),
-                focus_domain: None,
-                focus_leaf: None,
-                float_window: None,
-                float_rect: None,
-            }));
-        }
-        let (focus_domain, focus_leaf) = session.focus();
-        let (Some(focus_domain), Some(focus_leaf)) = (focus_domain, focus_leaf) else {
-            return None;
-        };
-        let hints = event
-            .windows
-            .iter()
-            .map(|entry| (entry.window.clone(), entry.hints))
-            .collect::<BTreeMap<_, _>>();
-        let plan = project_retained_tiled_geometry(
-            session,
-            domain_key,
-            event.domain.bounds,
-            event.domain.gap,
-            Some((focus_domain, focus_leaf)),
-            ProjectionKind::Reconcile,
-            &hints,
-            &event.windows,
-        )?;
-        Some(CoreReply::Tiled(TiledPlan {
-            base_revision: plan.base_revision,
-            policy_version: LIFECYCLE_POLICY_VERSION,
-            kind,
-            geometry: plan.geometry,
-            focus_domain: plan.focus_domain,
-            focus_leaf: plan.focus_leaf,
-            float_window: None,
-            float_rect: None,
-        }))
     }
 
     /// Converge one assembled paired Session once on the complete carried
@@ -925,47 +871,6 @@ impl Engine {
             }
             CoreCommand::SendToWorkspace { .. } => self.workspace_request(event),
             CoreCommand::ActiveGroup => self.active_group_request(event),
-            CoreCommand::Admit { window, .. } => {
-                let pre_absent = self.session(&event.domain_key).is_some_and(|s| {
-                    !s.snapshot().windows.iter().any(|l| &l.window == window)
-                        && !s.is_exception(window)
-                });
-                match self.converge_for_single_domain(event, "admit") {
-                    ConvergeOutcome::Rejected(reply) => *reply,
-                    _ => {
-                        // Changed-id safety: only the requested id admitted in
-                        // this convergence may take the idempotent success;
-                        // an incidental admission alongside an existing-target
-                        // duplicate keeps the duplicate rejection.
-                        let target_admitted_here = pre_absent
-                            && self.session(&event.domain_key).is_some_and(|s| {
-                                s.snapshot().windows.iter().any(|l| &l.window == window)
-                            });
-                        self.admit_request(event, target_admitted_here)
-                    }
-                }
-            }
-            CoreCommand::Remove { window } => {
-                let pre_present = self.session(&event.domain_key).is_some_and(|s| {
-                    s.snapshot().windows.iter().any(|l| &l.window == window)
-                        || s.is_exception(window)
-                });
-                match self.converge_for_single_domain(event, "remove") {
-                    ConvergeOutcome::Rejected(reply) => *reply,
-                    _ => {
-                        // Changed-id safety: only the requested id departed in
-                        // this convergence may take the idempotent success;
-                        // an unrelated removal alongside a genuine unknown
-                        // keeps the unknown rejection.
-                        let target_departed_here = pre_present
-                            && self.session(&event.domain_key).is_some_and(|s| {
-                                !s.snapshot().windows.iter().any(|l| &l.window == window)
-                                    && !s.is_exception(window)
-                            });
-                        self.remove_request(event, target_departed_here)
-                    }
-                }
-            }
             CoreCommand::ToggleFloat { .. } => {
                 match self.converge_for_single_domain(event, "toggle-float") {
                     ConvergeOutcome::Rejected(reply) => *reply,
@@ -1040,31 +945,404 @@ impl Engine {
         }
     }
 
+    /// Fresh-domain seed anchor for public reconcile: the focused tiled
+    /// member, else the first tiled member in observation order. Mirrors the
+    /// KWin fresh-admit naming so fit eligibility (`window == focused`) and
+    /// seed order match the admit route exactly. `None` when no tiled
+    /// member exists (all-floating or truly empty observation).
+    fn fresh_reconcile_seed_anchor(event: &CoreEvent) -> Option<WindowId> {
+        if !event.focused_window.0.is_empty()
+            && event
+                .windows
+                .iter()
+                .any(|entry| entry.window == event.focused_window && !entry.floating)
+        {
+            return Some(event.focused_window.clone());
+        }
+        event
+            .windows
+            .iter()
+            .find(|entry| !entry.floating)
+            .map(|entry| entry.window.clone())
+    }
+
+    /// Shared fresh-domain admission route: flat-strip fit fast path,
+    /// floating-aware convergence build, deterministic seed order, seeding,
+    /// relocation, propose/commit, and store.
+    ///
+    /// Invoked by the fresh public reconcile path (`report_op = "reconcile"`)
+    /// with the same anchor/placement inputs, so startup fit, seed fallback,
+    /// focus-last placement, mixed float+tiled handling, and revision shape
+    /// stay byte-identical without fabricating a synthetic admit command.
+    fn fresh_admit_shared(
+        &mut self,
+        event: &CoreEvent,
+        window: &WindowId,
+        output: &OutputId,
+        workspace: &WorkspaceId,
+        placement_bounds: Option<Rect>,
+        report_op: &'static str,
+    ) -> CoreReply {
+        use crate::boundary::{TiledKind, TiledPlan};
+        if placement_bounds.is_none()
+            && window.0 == event.focused_window.0
+            && self.session(&event.domain_key).is_none()
+            && let Some((tree, links)) =
+                crate::seed::try_flat_strip_fit(&event.domain, &event.windows)
+            && let Some(focus_leaf) = links
+                .iter()
+                .find(|l| l.window.0 == window.0)
+                .map(|l| l.leaf.clone())
+            && let Ok(mut fitted) = Session::new(
+                event.owner.clone(),
+                event.generation.clone(),
+                0,
+                event.fingerprint,
+                vec![event.domain.clone()],
+            )
+        {
+            fitted.set_policy(self.policy.clone());
+            let base = fitted.accepted_revision();
+            let observation = crate::seed::session_observation_for(
+                &event.owner,
+                &event.generation,
+                base,
+                event.fingerprint,
+                &event.windows,
+            );
+            if let Ok(plan) = fitted.propose_fitted_admit(
+                tree,
+                links,
+                focus_leaf,
+                window,
+                output,
+                workspace,
+                &observation,
+                &event.correlation,
+                &LifecycleCapabilities::full(),
+            ) {
+                let typed = CoreReply::Tiled(TiledPlan::from_lifecycle(TiledKind::Admit, &plan));
+                if Self::commit_lifecycle(&mut fitted, &plan, event, base) {
+                    self.store_committed(event.domain_key.clone(), fitted, event.outer_gap);
+                    return typed;
+                }
+            }
+        }
+        // Fresh floating-aware build: no retained slot, no relocation source,
+        // and floating members present, so the tiled-only seed cannot run. One
+        // empty session plus the same single convergence primitive admits
+        // normal members and retains floating exceptions atomically; no staged
+        // or fabricated observations. Relocation candidates always keep the
+        // legacy route byte-for-byte, as do all-normal fresh observations.
+        if self.session(&event.domain_key).is_none()
+            && event.windows.iter().any(|w| w.floating)
+            && self
+                .find_unique_source_for_target(&event.domain_key)
+                .is_none()
+            && let Ok(mut fresh) = Session::new(
+                event.owner.clone(),
+                event.generation.clone(),
+                0,
+                event.fingerprint,
+                vec![event.domain.clone()],
+            )
+        {
+            fresh.set_policy(self.policy.clone());
+            let observation = crate::seed::session_observation_for(
+                &event.owner,
+                &event.generation,
+                fresh.accepted_revision(),
+                event.fingerprint,
+                &event.windows,
+            );
+            let focus = if event.focused_window.0.is_empty() {
+                None
+            } else {
+                Some(&event.focused_window)
+            };
+            match fresh.converge_observation(&observation, focus) {
+                Err(ProposeError::PendingExists) => {
+                    return CoreReply::Rejected {
+                        kind: PENDING_EXISTS_KIND,
+                        message: PENDING_EXISTS_MESSAGE,
+                    };
+                }
+                Err(ProposeError::Diverged(reason)) => return CoreReply::Diverged(reason),
+                Err(error) => {
+                    return CoreReply::Rejected {
+                        kind: error.kind(),
+                        message: error.message(),
+                    };
+                }
+                Ok(counts) => {
+                    self.converged_this_op = true;
+                    if counts.removed + counts.admitted + counts.flags_adopted > 0 {
+                        self.last_convergence = Some(EngineConvergenceReport {
+                            correlation: event.correlation.clone(),
+                            op: report_op,
+                            removed: counts.removed,
+                            admitted: counts.admitted,
+                            flags_adopted: counts.flags_adopted,
+                        });
+                    }
+                    self.store_committed(event.domain_key.clone(), fresh, event.outer_gap);
+                }
+            }
+            // Fresh mixed float+tiled projection: convergence above already
+            // admitted normals and retained floating exceptions; project the
+            // newly converged session directly at its committed revision.
+            if let Some(session) = self.session(&event.domain_key).cloned()
+                && session
+                    .snapshot()
+                    .windows
+                    .iter()
+                    .any(|l| &l.window == window)
+            {
+                let mut focused = session;
+                let _ = focused.sync_focus_from_window(&event.domain_key, window);
+                if committed_session_is_empty(&focused) {
+                    return CoreReply::Tiled(TiledPlan {
+                        base_revision: focused.accepted_revision(),
+                        policy_version: LIFECYCLE_POLICY_VERSION,
+                        kind: TiledKind::Admit,
+                        geometry: Vec::new(),
+                        focus_domain: None,
+                        focus_leaf: None,
+                        float_window: None,
+                        float_rect: None,
+                    });
+                }
+                let (focus_domain, focus_leaf) = focused.focus();
+                if let (Some(focus_domain), Some(focus_leaf)) = (focus_domain, focus_leaf) {
+                    let hints = event
+                        .windows
+                        .iter()
+                        .map(|entry| (entry.window.clone(), entry.hints))
+                        .collect::<BTreeMap<_, _>>();
+                    if let Some(plan) = project_retained_tiled_geometry(
+                        &focused,
+                        &event.domain_key,
+                        event.domain.bounds,
+                        event.domain.gap,
+                        Some((focus_domain, focus_leaf)),
+                        ProjectionKind::Reconcile,
+                        &hints,
+                        &event.windows,
+                    ) {
+                        if let Some(stored) = self.session_mut(&event.domain_key) {
+                            *stored = focused;
+                        }
+                        return CoreReply::Tiled(TiledPlan {
+                            base_revision: plan.base_revision,
+                            policy_version: LIFECYCLE_POLICY_VERSION,
+                            kind: TiledKind::Admit,
+                            geometry: plan.geometry,
+                            focus_domain: plan.focus_domain,
+                            focus_leaf: plan.focus_leaf,
+                            float_window: None,
+                            float_rect: None,
+                        });
+                    }
+                }
+            }
+        }
+        let seed_order = crate::seed::order_spatial_with_focus_last(
+            event
+                .windows
+                .iter()
+                .filter(|w| w.window != *window)
+                .cloned()
+                .collect(),
+            &event.focused_window,
+            true,
+        );
+        let window = window.clone();
+        let output = output.clone();
+        let workspace = workspace.clone();
+        let domain = event.domain.clone();
+        let placement_explicit = placement_bounds;
+        self.run_retained(
+            event,
+            seed_order,
+            false,
+            |session, observation| {
+                let placement = placement_explicit
+                    .unwrap_or_else(|| crate::seed::seed_target_bounds(session, &domain));
+                session.propose(
+                    &SessionCommand::Admit {
+                        window: window.clone(),
+                        output: output.clone(),
+                        workspace: workspace.clone(),
+                        exceptions: ExceptionFlags::none(),
+                        exception_behavior: None,
+                        placement_bounds: placement,
+                    },
+                    observation,
+                    &event.correlation,
+                    &LifecycleCapabilities::full(),
+                )
+            },
+            |plan| CoreReply::Tiled(TiledPlan::from_lifecycle(TiledKind::Admit, plan)),
+            Self::commit_lifecycle,
+        )
+    }
+
+    /// Fresh-domain reconcile on an absent domain: seed through the SAME
+    /// existing fresh admission machinery (flat-strip fit fast path,
+    /// floating-aware convergence build, deterministic seed order) without
+    /// requiring KWin to derive an admit.
+    ///
+    /// Tiled observations route internally via [`Engine::fresh_admit_shared`]
+    /// with the anchor window, event domain/output/workspace, and no
+    /// placement bounds; the reply is the complete admission projection at
+    /// the committed revision.
+    /// All-floating observations build an empty session and run the same
+    /// single convergence primitive, then project no geometry. Truly empty
+    /// observations retain nothing and project no geometry at revision 0.
+    /// No lifecycle observation is fabricated: every path consumes the
+    /// validated carried window set. Send/R4 state is untouched.
+    ///
+    /// Fail-closed send/R4 preservation: while any Engine pair transaction
+    /// is pending, an absent domain refuses `unknown-domain` exactly like
+    /// before (no target is created and pending stays untouched), same as
+    /// the admit path. Ambiguous same-workspace sources do NOT refuse: with
+    /// no pending, the fresh domain seeds without relocating (again like a
+    /// fresh admit), leaving every candidate source untouched. Only a
+    /// genuinely absent domain with no pending seeds here; a unique safe
+    /// source relocates in [`Engine::reconcile_request`] before this arm
+    /// runs.
+    fn fresh_reconcile_request(&mut self, event: &CoreEvent) -> CoreReply {
+        if self.has_any_pending() {
+            return CoreReply::Rejected {
+                kind: RefusalKind::UnknownDomain.as_str(),
+                message: RefusalKind::UnknownDomain.message(),
+            };
+        }
+        if event.windows.is_empty() {
+            return CoreReply::Projection(ProjectionPlan {
+                base_revision: 0,
+                kind: ProjectionKind::Reconcile,
+                geometry: Vec::new(),
+                focus_domain: None,
+                focus_leaf: None,
+            });
+        }
+        if let Some(anchor) = Self::fresh_reconcile_seed_anchor(event) {
+            return self.fresh_admit_shared(
+                event,
+                &anchor,
+                &event.domain.id,
+                &event.domain.workspace,
+                None,
+                "reconcile",
+            );
+        }
+        let mut fresh = match Session::new(
+            event.owner.clone(),
+            event.generation.clone(),
+            0,
+            event.fingerprint,
+            vec![event.domain.clone()],
+        ) {
+            Ok(session) => session,
+            Err(_) => {
+                return CoreReply::SnapshotInvalid {
+                    message: OBSERVATION_MESSAGE,
+                    detail: "seed-failed",
+                };
+            }
+        };
+        fresh.set_policy(self.policy.clone());
+        let observation = crate::seed::session_observation_for(
+            &event.owner,
+            &event.generation,
+            fresh.accepted_revision(),
+            event.fingerprint,
+            &event.windows,
+        );
+        let focus = if event.focused_window.0.is_empty() {
+            None
+        } else {
+            Some(&event.focused_window)
+        };
+        match fresh.converge_observation(&observation, focus) {
+            Ok(counts) => {
+                self.converged_this_op = true;
+                if counts.removed + counts.admitted + counts.flags_adopted > 0 {
+                    self.last_convergence = Some(EngineConvergenceReport {
+                        correlation: event.correlation.clone(),
+                        op: "reconcile",
+                        removed: counts.removed,
+                        admitted: counts.admitted,
+                        flags_adopted: counts.flags_adopted,
+                    });
+                }
+                let base = fresh.accepted_revision();
+                self.store_committed(event.domain_key.clone(), fresh, event.outer_gap);
+                CoreReply::Projection(ProjectionPlan {
+                    base_revision: base,
+                    kind: ProjectionKind::Reconcile,
+                    geometry: Vec::new(),
+                    focus_domain: None,
+                    focus_leaf: None,
+                })
+            }
+            Err(ProposeError::PendingExists) => CoreReply::Rejected {
+                kind: PENDING_EXISTS_KIND,
+                message: PENDING_EXISTS_MESSAGE,
+            },
+            Err(ProposeError::Diverged(reason)) => CoreReply::Diverged(reason),
+            Err(error) => CoreReply::Rejected {
+                kind: error.kind(),
+                message: error.message(),
+            },
+        }
+    }
+
     /// Reconcile request phase: retained-tree projection with displaced
     /// workspace relocation and work-area reprojection.
     ///
     /// Fence order matches the legacy protocol handler exactly: unknown
-    /// session (`unknown-domain`), divergence (as rejection, never terminal),
-    /// pending/drag (`pending-exists`), retained domain binding
-    /// (`unknown-domain`), inner-gap and outer-gap binding (`domain-mismatch`
-    /// with the exact message), membership (`partial-observation`, retained
-    /// windows plus deferred exceptions against the carried set), empty-domain
-    /// projection (reproject on bounds change, else `malformed-topology`),
-    /// focus binding (`focus-mismatch`), pure projection
-    /// (`malformed-topology` on shape failure), then work-area reprojection on
-    /// bounds change. The projection honors carried client size hints (AR12:
-    /// satisfiable minimums take sibling slack, unsatisfiable windows flag
-    /// `overconstrained`) and assesses observed rectangles as client clamps
-    /// (`client_clamped` flags for accepted clamps, never adopted, shares
-    /// untouched). Relocation is atomic: the outer gap is pre-validated
-    /// against the unique source before mutating, and any later rejection
-    /// restores the pre-request world exactly.
+    /// session (fresh domains seed below instead of refusing, except while
+    /// any pair transaction is pending, which keeps the exact
+    /// `unknown-domain` refusal), divergence
+    /// (as rejection, never terminal), pending/drag (`pending-exists`),
+    /// retained domain binding (`unknown-domain`), inner-gap and outer-gap
+    /// binding (`domain-mismatch` with the exact message), membership on the
+    /// relocated target-miss path only (`partial-observation` with atomic
+    /// rollback; retained targets ride the pre-request convergence),
+    /// empty-domain projection (retire a fully empty slot, else reproject on
+    /// bounds change, else `malformed-topology`), focus binding
+    /// (`focus-mismatch`), pure projection (`malformed-topology` on shape
+    /// failure), then work-area reprojection on bounds change. The projection
+    /// honors carried client size hints (AR12: satisfiable minimums take
+    /// sibling slack, unsatisfiable windows flag `overconstrained`) and
+    /// assesses observed rectangles as client clamps (`client_clamped` flags
+    /// for accepted clamps, never adopted, shares untouched). Relocation is
+    /// atomic: the outer gap is pre-validated against the unique source
+    /// before mutating, and any later rejection restores the pre-request
+    /// world exactly.
     fn reconcile_request(&mut self, event: &CoreEvent) -> CoreReply {
         let backup = self.clone();
         let mut relocated_here = false;
         if !self.contains(&event.domain_key) {
             let outer_ok = match self.find_unique_source_for_target(&event.domain_key) {
-                Some(source) => self.outer_gap_matches(&source, event.outer_gap),
+                Some(source) => {
+                    if !self.outer_gap_matches(&source, event.outer_gap) {
+                        false
+                    } else if let Some(session) = self.sessions.get(&source) {
+                        let snapshot = session.snapshot();
+                        event.windows.iter().any(|entry| {
+                            snapshot
+                                .windows
+                                .iter()
+                                .any(|link| link.window == entry.window)
+                                || session.is_exception(&entry.window)
+                        })
+                    } else {
+                        false
+                    }
+                }
                 None => false,
             };
             if outer_ok {
@@ -1079,10 +1357,11 @@ impl Engine {
         };
         let Some(session) = self.session(&event.domain_key).cloned() else {
             restore(self, &backup, relocated_here);
-            return CoreReply::Rejected {
-                kind: RefusalKind::UnknownDomain.as_str(),
-                message: RefusalKind::UnknownDomain.message(),
-            };
+            // Absent domain with no relocation source: seed through the same
+            // fresh admission route instead of refusing `unknown-domain`, so
+            // KWin never derives an admit. Relocation already ran above; this
+            // arm only sees genuinely fresh domains.
+            return self.fresh_reconcile_request(event);
         };
         if let Some(reason) = session.divergence() {
             restore(self, &backup, relocated_here);
@@ -1126,22 +1405,27 @@ impl Engine {
         }
         let bounds_changed = retained_domain.bounds != event.domain.bounds;
         let snapshot = session.snapshot();
-        let mut known: std::collections::BTreeSet<String> = snapshot
-            .windows
-            .iter()
-            .map(|l| l.window.0.clone())
-            .collect();
-        for entry in session.exception_observed() {
-            known.insert(entry.window.0.clone());
-        }
-        let observed: std::collections::BTreeSet<String> =
-            event.windows.iter().map(|w| w.window.0.clone()).collect();
-        if observed != known {
-            restore(self, &backup, relocated_here);
-            return CoreReply::Rejected {
-                kind: RefusalKind::PartialObservation.as_str(),
-                message: RefusalKind::PartialObservation.message(),
-            };
+        // Membership rides the pre-request convergence for retained targets.
+        // A relocated target missed convergence (`NoSession` before the move),
+        // so only that path keeps its exact-set fence with atomic rollback.
+        if relocated_here {
+            let mut known: std::collections::BTreeSet<String> = snapshot
+                .windows
+                .iter()
+                .map(|l| l.window.0.clone())
+                .collect();
+            for entry in session.exception_observed() {
+                known.insert(entry.window.0.clone());
+            }
+            let observed: std::collections::BTreeSet<String> =
+                event.windows.iter().map(|w| w.window.0.clone()).collect();
+            if observed != known {
+                restore(self, &backup, relocated_here);
+                return CoreReply::Rejected {
+                    kind: RefusalKind::PartialObservation.as_str(),
+                    message: RefusalKind::PartialObservation.message(),
+                };
+            }
         }
         let domain_view = snapshot.domains.into_iter().find(|d| {
             d.output.0 == event.domain_key.output.0 && d.workspace.0 == event.domain_key.workspace.0
@@ -1154,6 +1438,20 @@ impl Engine {
                 link.output == event.domain_key.output
                     && link.workspace == event.domain_key.workspace
             }) {
+                if committed_session_is_empty(&session) {
+                    // Post-convergence empty: retire the slot at this applied
+                    // boundary and report the converged revision. Bounds
+                    // changes are moot once retired.
+                    let base = session.accepted_revision();
+                    self.remove(&event.domain_key);
+                    return CoreReply::Projection(ProjectionPlan {
+                        base_revision: base,
+                        kind: ProjectionKind::Reconcile,
+                        geometry: Vec::new(),
+                        focus_domain: None,
+                        focus_leaf: None,
+                    });
+                }
                 if bounds_changed {
                     self.reproject_retained(&event.domain_key, event.domain.bounds);
                 }
@@ -1217,10 +1515,15 @@ impl Engine {
     ///
     /// Same fence order as [`Engine::reconcile_request`] minus relocation:
     /// unknown session, divergence (as rejection), pending/drag, domain
-    /// binding, membership, empty-domain gap adoption, focus binding, pure
-    /// projection with the new inner gap into the new bounds before mutating,
-    /// then gap adoption plus store. Never seeds, relocates, resets, or
-    /// reseeds: an unknown domain refuses so the normal admit path seeds it.
+    /// binding, empty/exception-only gap adoption (a missing tree with no
+    /// tiled links and no tiled observation adopts the gaps and projects
+    /// empty; a missing tree alongside tiled links or a tiled observation
+    /// stays `malformed-topology`), focus binding, pure projection with the
+    /// new inner gap into the new bounds before mutating, then gap adoption
+    /// plus store. Membership rides the pre-request convergence, like the
+    /// non-relocated reconcile path. A fully empty slot retires instead of
+    /// retaining. Never seeds, relocates, resets, or reseeds: an unknown
+    /// domain refuses so the fresh reconcile path seeds it.
     fn update_gaps_request(&mut self, event: &CoreEvent) -> CoreReply {
         let Some(session) = self.session(&event.domain_key).cloned() else {
             return CoreReply::Rejected {
@@ -1252,27 +1555,38 @@ impl Engine {
             };
         }
         let snapshot = session.snapshot();
-        let mut known: std::collections::BTreeSet<String> = snapshot
-            .windows
-            .iter()
-            .map(|l| l.window.0.clone())
-            .collect();
-        for entry in session.exception_observed() {
-            known.insert(entry.window.0.clone());
-        }
-        let observed: std::collections::BTreeSet<String> =
-            event.windows.iter().map(|w| w.window.0.clone()).collect();
-        if observed != known {
-            return CoreReply::Rejected {
-                kind: RefusalKind::PartialObservation.as_str(),
-                message: RefusalKind::PartialObservation.message(),
-            };
-        }
         let domain_view = snapshot.domains.into_iter().find(|d| {
             d.output.0 == event.domain_key.output.0 && d.workspace.0 == event.domain_key.workspace.0
         });
         if domain_view.and_then(|d| d.tree).is_none() {
-            if known.is_empty() && observed.is_empty() {
+            // No tiled tree: adopt gaps and project empty when neither the
+            // converged session nor the complete observation holds a tiled
+            // member for this domain (truly empty or floating exceptions
+            // only). A missing tree alongside tiled links or a tiled
+            // observation stays malformed.
+            let has_tiled_links = snapshot.windows.iter().any(|link| {
+                link.output == event.domain_key.output
+                    && link.workspace == event.domain_key.workspace
+            });
+            let has_tiled_observed = event.windows.iter().any(|entry| {
+                !entry.floating
+                    && entry.output == event.domain.id
+                    && entry.workspace == event.domain.workspace
+            });
+            if !has_tiled_links && !has_tiled_observed {
+                if event.windows.is_empty() && committed_session_is_empty(&session) {
+                    // Post-convergence fully empty: retire the slot and
+                    // report the converged revision; gap adoption is moot.
+                    let base = session.accepted_revision();
+                    self.remove(&event.domain_key);
+                    return CoreReply::Projection(ProjectionPlan {
+                        base_revision: base,
+                        kind: ProjectionKind::UpdateGaps,
+                        geometry: Vec::new(),
+                        focus_domain: None,
+                        focus_leaf: None,
+                    });
+                }
                 let base = session.accepted_revision();
                 if let Some(stored) = self.session_mut(&event.domain_key)
                     && !stored.update_domain_gaps(
@@ -1664,9 +1978,8 @@ impl Engine {
 
     /// Shared retained propose/commit: try the usable retained session, then
     /// rebuild once from `seed_order`. `ambiguous_as_snapshot` selects the
-    /// fail-closed kind when no safe order exists (admit/remove use
-    /// `ambiguous-placement`; toggle-float reuses the `snapshot-invalid`
-    /// mapping). Mirrors the legacy protocol `run_retained` exactly, over the
+    /// fail-closed kind when no safe order exists (toggle-float uses
+    /// `snapshot-invalid`). Mirrors the legacy protocol `run_retained` over the
     /// typed [`CoreEvent`]: target presence gates relocation, usable sessions
     /// propose directly, rebuilds fall back to relocation then seeding, and
     /// every outcome maps to the identical typed [`CoreReply`].
@@ -1686,7 +1999,20 @@ impl Engine {
     ) -> CoreReply {
         let converged = self.converged_this_op;
         let target_existed = self.contains(&event.domain_key);
-        if let Some(mut session) = self.take_usable_session(&event.domain_key, &event.domain) {
+        // Do not let the mutating take discard a just-converged mismatched
+        // domain; the existing converged refusal below keeps its topology.
+        let candidate = if converged
+            && target_existed
+            && self.sessions.get(&event.domain_key).is_some_and(|session| {
+                !session_usable(session)
+                    || !session_domain_matches(session, &event.domain)
+                    || committed_session_is_empty(session)
+            }) {
+            None
+        } else {
+            self.take_usable_session(&event.domain_key, &event.domain)
+        };
+        if let Some(mut session) = candidate {
             let base = session.accepted_revision();
             let observation = crate::seed::session_observation_for(
                 &event.owner,
@@ -1871,304 +2197,6 @@ impl Engine {
         session.verify_lifecycle(&post).is_ok()
     }
 
-    /// Admit request phase: propose one tiled admission through the shared
-    /// retained lifecycle, with the flat-strip fit fast path for truly fresh
-    /// domains.
-    ///
-    /// Protocol keeps tagged command decoding, opaque window/output/workspace
-    /// checks, cross-domain binding, carried-bounds validation,
-    /// partial-observation, and placement-bounds validation at their exact
-    /// positions; by the time an event reaches here those fences passed and
-    /// the command carries the validated placement. This owns the fit
-    /// fallback, fresh floating-aware convergence build, seed ordering
-    /// (focused last, ties allowed, admitted member excluded), seeding,
-    /// relocation, propose/commit, and store.
-    ///
-    /// Fresh domains whose complete observation contains floating members
-    /// cannot seed (the seed rebuild is tiled-only): an empty session plus
-    /// the same single convergence primitive builds floating exceptions and
-    /// normal admissions atomically, then the idempotent admit below replies.
-    /// All-normal observations keep the legacy fit/seed route byte-for-byte.
-    fn admit_request(&mut self, event: &CoreEvent, target_admitted_here: bool) -> CoreReply {
-        use crate::boundary::{TiledKind, TiledPlan};
-        let CoreCommand::Admit {
-            window,
-            output,
-            workspace,
-            placement_bounds,
-        } = &event.command
-        else {
-            return CoreReply::Rejected {
-                kind: "unknown-value",
-                message: "request contains an unknown value",
-            };
-        };
-        // Idempotent admit after convergence: KWin sends the current
-        // post-admit observation, so the requested window already admitted in
-        // this convergence replies with the complete converged projection
-        // (admit capability, valid focus) instead of `duplicate-window`.
-        // Changed-id safety: only the requested id admitted here qualifies;
-        // an incidental admission alongside an existing-target duplicate keeps
-        // the duplicate rejection. Focus mirrors the ordinary admission (the
-        // admitted window) with no extra commit.
-        if target_admitted_here
-            && let Some(session) = self.session(&event.domain_key).cloned()
-            && session
-                .snapshot()
-                .windows
-                .iter()
-                .any(|l| &l.window == window)
-        {
-            let mut focused = session;
-            let _ = focused.sync_focus_from_window(&event.domain_key, window);
-            if let Some(reply) =
-                Self::idempotent_tiled_success(&focused, &event.domain_key, event, TiledKind::Admit)
-            {
-                if let Some(stored) = self.session_mut(&event.domain_key) {
-                    *stored = focused;
-                }
-                return reply;
-            }
-        }
-        if placement_bounds.is_none()
-            && window.0 == event.focused_window.0
-            && self.session(&event.domain_key).is_none()
-            && let Some((tree, links)) =
-                crate::seed::try_flat_strip_fit(&event.domain, &event.windows)
-            && let Some(focus_leaf) = links
-                .iter()
-                .find(|l| l.window.0 == window.0)
-                .map(|l| l.leaf.clone())
-            && let Ok(mut fitted) = Session::new(
-                event.owner.clone(),
-                event.generation.clone(),
-                0,
-                event.fingerprint,
-                vec![event.domain.clone()],
-            )
-        {
-            fitted.set_policy(self.policy.clone());
-            let base = fitted.accepted_revision();
-            let observation = crate::seed::session_observation_for(
-                &event.owner,
-                &event.generation,
-                base,
-                event.fingerprint,
-                &event.windows,
-            );
-            if let Ok(plan) = fitted.propose_fitted_admit(
-                tree,
-                links,
-                focus_leaf,
-                window,
-                output,
-                workspace,
-                &observation,
-                &event.correlation,
-                &LifecycleCapabilities::full(),
-            ) {
-                let typed = CoreReply::Tiled(TiledPlan::from_lifecycle(TiledKind::Admit, &plan));
-                if Self::commit_lifecycle(&mut fitted, &plan, event, base) {
-                    self.store_committed(event.domain_key.clone(), fitted, event.outer_gap);
-                    return typed;
-                }
-            }
-        }
-        // Fresh floating-aware build: no retained slot, no relocation source,
-        // and floating members present, so the tiled-only seed cannot run. One
-        // empty session plus the same single convergence primitive admits
-        // normal members and retains floating exceptions atomically; no staged
-        // or fabricated observations. Relocation candidates always keep the
-        // legacy route byte-for-byte, as do all-normal fresh observations.
-        if self.session(&event.domain_key).is_none()
-            && event.windows.iter().any(|w| w.floating)
-            && self
-                .find_unique_source_for_target(&event.domain_key)
-                .is_none()
-            && let Ok(mut fresh) = Session::new(
-                event.owner.clone(),
-                event.generation.clone(),
-                0,
-                event.fingerprint,
-                vec![event.domain.clone()],
-            )
-        {
-            fresh.set_policy(self.policy.clone());
-            let observation = crate::seed::session_observation_for(
-                &event.owner,
-                &event.generation,
-                fresh.accepted_revision(),
-                event.fingerprint,
-                &event.windows,
-            );
-            let focus = if event.focused_window.0.is_empty() {
-                None
-            } else {
-                Some(&event.focused_window)
-            };
-            match fresh.converge_observation(&observation, focus) {
-                Err(ProposeError::PendingExists) => {
-                    return CoreReply::Rejected {
-                        kind: PENDING_EXISTS_KIND,
-                        message: PENDING_EXISTS_MESSAGE,
-                    };
-                }
-                Err(ProposeError::Diverged(reason)) => return CoreReply::Diverged(reason),
-                Err(error) => {
-                    return CoreReply::Rejected {
-                        kind: error.kind(),
-                        message: error.message(),
-                    };
-                }
-                Ok(counts) => {
-                    self.converged_this_op = true;
-                    if counts.removed + counts.admitted + counts.flags_adopted > 0 {
-                        self.last_convergence = Some(EngineConvergenceReport {
-                            correlation: event.correlation.clone(),
-                            op: "admit",
-                            removed: counts.removed,
-                            admitted: counts.admitted,
-                            flags_adopted: counts.flags_adopted,
-                        });
-                    }
-                    self.store_committed(event.domain_key.clone(), fresh, event.outer_gap);
-                }
-            }
-            // Idempotent admit on the requested freshly admitted normal: the
-            // window was absent before (fresh domain) and is tiled now.
-            if let Some(session) = self.session(&event.domain_key).cloned()
-                && session
-                    .snapshot()
-                    .windows
-                    .iter()
-                    .any(|l| &l.window == window)
-            {
-                let mut focused = session;
-                let _ = focused.sync_focus_from_window(&event.domain_key, window);
-                if let Some(reply) = Self::idempotent_tiled_success(
-                    &focused,
-                    &event.domain_key,
-                    event,
-                    TiledKind::Admit,
-                ) {
-                    if let Some(stored) = self.session_mut(&event.domain_key) {
-                        *stored = focused;
-                    }
-                    return reply;
-                }
-            } else if self.session(&event.domain_key).is_none() {
-                // Converged empty retires the slot: behave as if never
-                // converged so the legacy route keeps its exact shape.
-                self.converged_this_op = false;
-                self.last_convergence = None;
-            }
-        }
-        let seed_order = crate::seed::order_spatial_with_focus_last(
-            event
-                .windows
-                .iter()
-                .filter(|w| w.window != *window)
-                .cloned()
-                .collect(),
-            &event.focused_window,
-            true,
-        );
-        let window = window.clone();
-        let output = output.clone();
-        let workspace = workspace.clone();
-        let domain = event.domain.clone();
-        let placement_explicit = *placement_bounds;
-        self.run_retained(
-            event,
-            seed_order,
-            false,
-            |session, observation| {
-                let placement = placement_explicit
-                    .unwrap_or_else(|| crate::seed::seed_target_bounds(session, &domain));
-                session.propose(
-                    &SessionCommand::Admit {
-                        window: window.clone(),
-                        output: output.clone(),
-                        workspace: workspace.clone(),
-                        exceptions: ExceptionFlags::none(),
-                        exception_behavior: None,
-                        placement_bounds: placement,
-                    },
-                    observation,
-                    &event.correlation,
-                    &LifecycleCapabilities::full(),
-                )
-            },
-            |plan| CoreReply::Tiled(TiledPlan::from_lifecycle(TiledKind::Admit, plan)),
-            Self::commit_lifecycle,
-        )
-    }
-
-    /// Remove request phase through the shared retained lifecycle.
-    ///
-    /// Protocol keeps tagged decoding and the opaque window check at their
-    /// exact positions; this owns seed ordering, seeding, relocation,
-    /// propose/commit, and store.
-    fn remove_request(&mut self, event: &CoreEvent, target_departed_here: bool) -> CoreReply {
-        use crate::boundary::{TiledKind, TiledPlan};
-        let CoreCommand::Remove { window } = &event.command else {
-            return CoreReply::Rejected {
-                kind: "unknown-value",
-                message: "request contains an unknown value",
-            };
-        };
-        // Idempotent remove after convergence: KWin sends the current
-        // post-removal observation, so the requested window already departed
-        // in this convergence replies with the complete converged projection
-        // (remove capability, valid focus, exact survivor geometry) instead of
-        // `unknown-window`. Changed-id safety: only the requested id departed
-        // here qualifies; an unrelated removal alongside a genuine unknown
-        // keeps the unknown rejection. No extra commit.
-        if target_departed_here
-            && let Some(session) = self.session(&event.domain_key).cloned()
-            && !session
-                .snapshot()
-                .windows
-                .iter()
-                .any(|l| &l.window == window)
-            && !session.is_exception(window)
-            && let Some(reply) = Self::idempotent_tiled_success(
-                &session,
-                &event.domain_key,
-                event,
-                TiledKind::Remove,
-            )
-        {
-            if committed_session_is_empty(&session) {
-                self.remove(&event.domain_key);
-            }
-            return reply;
-        }
-        let seed_order = crate::seed::order_spatial_with_focus_last(
-            event.windows.clone(),
-            &event.focused_window,
-            false,
-        );
-        let window = window.clone();
-        self.run_retained(
-            event,
-            seed_order,
-            false,
-            |session, observation| {
-                session.propose(
-                    &SessionCommand::Remove {
-                        window: window.clone(),
-                    },
-                    observation,
-                    &event.correlation,
-                    &LifecycleCapabilities::full(),
-                )
-            },
-            |plan| CoreReply::Tiled(TiledPlan::from_lifecycle(TiledKind::Remove, plan)),
-            Self::commit_lifecycle,
-        )
-    }
-
     /// Toggle-float request phase through the shared retained lifecycle.
     ///
     /// Protocol keeps the raw-window floating `not-tiled` probe, tagged
@@ -2178,7 +2206,8 @@ impl Engine {
     /// pending-float effective rectangle.
     ///
     /// Fresh domains whose complete observation contains floating members
-    /// cannot seed (the seed rebuild is tiled-only): like [`Engine::admit_request`],
+    /// cannot seed (the seed rebuild is tiled-only): like the fresh reconcile
+    /// path,
     /// an empty session plus the same single convergence primitive retains
     /// the floating exceptions first, then the ordinary toggle below unfloats
     /// into the current domain. No staged or fabricated observations.
@@ -3883,6 +3912,141 @@ mod tests {
     }
 
     #[test]
+    fn converged_move_with_changed_bounds_retains_session() {
+        use crate::boundary::{CoreCommand, CoreEvent, CoreReply};
+        use crate::ids::CorrelationId;
+        use crate::seed::EngineWindow;
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let d = domain("out", "ws");
+        let key = d.key();
+        let seed_order = ["win-1", "win-2"]
+            .iter()
+            .map(|window| EngineWindow {
+                window: WindowId(window.to_string()),
+                output: OutputId("out".to_owned()),
+                workspace: WorkspaceId("ws".to_owned()),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    w: 10,
+                    h: 10,
+                },
+                floating: false,
+                fit_excluded: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            })
+            .collect::<Vec<_>>();
+        let seeded =
+            crate::seed::seed_session(&owner, &gen_id, 7, &d, &seed_order).expect("seeds two");
+        let pre_revision = seeded.accepted_revision();
+        engine.store_committed(key.clone(), seeded, 0);
+        let mut changed = d.clone();
+        changed.bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 1024,
+            h: 768,
+        };
+        let windows = ["win-1", "win-2", "win-3"]
+            .iter()
+            .enumerate()
+            .map(|(i, window)| EngineWindow {
+                window: WindowId(window.to_string()),
+                output: OutputId("out".to_owned()),
+                workspace: WorkspaceId("ws".to_owned()),
+                rect: Rect {
+                    x: (i as i32) * 100,
+                    y: 0,
+                    w: 10,
+                    h: 10,
+                },
+                floating: false,
+                fit_excluded: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            })
+            .collect::<Vec<_>>();
+        let event = CoreEvent {
+            owner: owner.clone(),
+            generation: gen_id.clone(),
+            correlation: CorrelationId::parse("corr-conv-bounds-retain").expect("valid"),
+            revision: 0,
+            fingerprint: 7,
+            domain: changed,
+            domain_key: key.clone(),
+            outer_gap: 0,
+            focused_window: WindowId("win-1".to_owned()),
+            windows: windows.clone(),
+            directional: None,
+            directional_target_outer_gap: None,
+            target_domain: None,
+            target_windows: vec![],
+            command: CoreCommand::Move {
+                window: "win-1".to_owned(),
+                direction: "left".to_owned(),
+                cross_output_transfer: false,
+            },
+        };
+        match engine.handle(&event) {
+            CoreReply::Rejected { kind, message } => {
+                assert_eq!(kind, "partial-observation");
+                assert_eq!(message, "observation does not cover the known window set");
+            }
+            other => panic!("changed-bounds move must reject partial-observation, got {other:?}"),
+        }
+        assert!(engine.contains(&key), "refused op must retain slot");
+        assert_eq!(engine.outer_gap(&key), Some(0), "outer gap preserved");
+        let retained = engine.session(&key).expect("session retained");
+        assert!(
+            retained.accepted_revision() >= pre_revision,
+            "converged revision preserved"
+        );
+        let mut members: Vec<String> = retained
+            .snapshot()
+            .windows
+            .iter()
+            .map(|l| l.window.0.clone())
+            .collect();
+        members.sort();
+        assert_eq!(
+            members,
+            vec![
+                "win-1".to_string(),
+                "win-2".to_string(),
+                "win-3".to_string()
+            ],
+            "converged membership preserved"
+        );
+        let reconcile = CoreEvent {
+            owner: owner.clone(),
+            generation: gen_id.clone(),
+            correlation: CorrelationId::parse("corr-conv-bounds-reconcile").expect("valid"),
+            revision: 0,
+            fingerprint: 7,
+            domain: d.clone(),
+            domain_key: key.clone(),
+            outer_gap: 0,
+            focused_window: WindowId("win-1".to_owned()),
+            windows,
+            directional: None,
+            directional_target_outer_gap: None,
+            target_domain: None,
+            target_windows: vec![],
+            command: CoreCommand::Reconcile,
+        };
+        match engine.handle(&reconcile) {
+            CoreReply::Projection(plan) => assert_eq!(
+                plan.geometry.len(),
+                3,
+                "correct-domain reconcile projects survivors"
+            ),
+            other => panic!("reconcile must project survivors, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn relocate_refuses_pending_gap_collision_and_ambiguity() {
         let mut engine = Engine::new();
         let owner = OwnerId::parse("owner-a").expect("valid");
@@ -4023,6 +4187,697 @@ mod tests {
         let moved = engine.session(&target_key).expect("moved");
         assert_eq!(moved.accepted_revision(), revision);
         assert_eq!(moved.snapshot().windows.len(), 1);
+    }
+
+    #[test]
+    fn relocated_target_skew_rejects_partial_observation_with_rollback() {
+        use crate::boundary::CoreCommand;
+        use crate::directional::WindowId;
+        use crate::ids::CorrelationId;
+        use crate::seed::EngineWindow;
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        // Source with two committed members; the target slot is absent so the
+        // reconcile relocates (same outer gap) without converging first.
+        let source_domain = domain("out", "ws");
+        let source_key = source_domain.key();
+        let seed_order = ["win-1", "win-2"]
+            .iter()
+            .map(|window| EngineWindow {
+                window: WindowId(window.to_string()),
+                output: OutputId("out".to_owned()),
+                workspace: WorkspaceId("ws".to_owned()),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    w: 10,
+                    h: 10,
+                },
+                floating: false,
+                fit_excluded: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            })
+            .collect::<Vec<_>>();
+        let source = crate::seed::seed_session(&owner, &gen_id, 7, &source_domain, &seed_order)
+            .expect("seeds two");
+        let source_revision = source.accepted_revision();
+        engine.store_committed(source_key.clone(), source, 3);
+        let target_domain = domain("out-2", "ws");
+        let target_key = target_domain.key();
+        let event = CoreEvent {
+            owner: owner.clone(),
+            generation: gen_id.clone(),
+            correlation: CorrelationId::parse("corr-reloc-skew").expect("valid"),
+            revision: 0,
+            fingerprint: 7,
+            domain: target_domain.clone(),
+            domain_key: target_key.clone(),
+            outer_gap: 3,
+            focused_window: WindowId("win-1".to_owned()),
+            windows: vec![EngineWindow {
+                window: WindowId("win-1".to_owned()),
+                output: OutputId("out-2".to_owned()),
+                workspace: WorkspaceId("ws".to_owned()),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    w: 10,
+                    h: 10,
+                },
+                floating: false,
+                fit_excluded: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            }],
+            directional: None,
+            directional_target_outer_gap: None,
+            target_domain: None,
+            target_windows: vec![],
+            command: CoreCommand::Reconcile,
+        };
+        match engine.handle(&event) {
+            CoreReply::Rejected { kind, .. } => assert_eq!(
+                kind, "partial-observation",
+                "relocated skew must reject without projecting"
+            ),
+            other => panic!("relocated skew must reject partial-observation, got {other:?}"),
+        }
+        // Atomic rollback: the exact source state returns, the target stays
+        // absent, and no revision or outer gap moved.
+        assert!(!engine.contains(&target_key), "target stays absent");
+        assert!(engine.contains(&source_key), "source restored");
+        let restored = engine.session(&source_key).expect("source restored");
+        assert_eq!(restored.accepted_revision(), source_revision);
+        let mut members: Vec<String> = restored
+            .snapshot()
+            .windows
+            .iter()
+            .map(|l| l.window.0.clone())
+            .collect();
+        members.sort();
+        assert_eq!(members, vec!["win-1".to_string(), "win-2".to_string()]);
+        assert_eq!(engine.outer_gap(&source_key), Some(3));
+        assert_eq!(engine.outer_gap(&target_key), None);
+    }
+
+    #[test]
+    fn fresh_reconcile_mixed_float_names_first_tiled() {
+        use crate::boundary::{CoreCommand, CoreEvent, CoreReply};
+        use crate::ids::CorrelationId;
+        // Focused window is floating, so the anchor is the first tiled
+        // member; the complete observation still converges the exception.
+        let d = domain("out", "ws");
+        let key = d.key();
+        let windows = vec![
+            EngineWindow {
+                window: WindowId("win-float".to_owned()),
+                output: OutputId("out".to_owned()),
+                workspace: WorkspaceId("ws".to_owned()),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 100,
+                },
+                floating: true,
+                fit_excluded: true,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            },
+            EngineWindow {
+                window: WindowId("win-1".to_owned()),
+                output: OutputId("out".to_owned()),
+                workspace: WorkspaceId("ws".to_owned()),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    w: 400,
+                    h: 600,
+                },
+                floating: false,
+                fit_excluded: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            },
+            EngineWindow {
+                window: WindowId("win-2".to_owned()),
+                output: OutputId("out".to_owned()),
+                workspace: WorkspaceId("ws".to_owned()),
+                rect: Rect {
+                    x: 400,
+                    y: 0,
+                    w: 400,
+                    h: 600,
+                },
+                floating: false,
+                fit_excluded: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            },
+        ];
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        let mut engine = Engine::new();
+        engine.sync_binding(&owner, &gen_id);
+        let event = CoreEvent {
+            owner: owner.clone(),
+            generation: gen_id.clone(),
+            correlation: CorrelationId::parse("corr-rec-mixed").expect("valid"),
+            revision: 0,
+            fingerprint: 7,
+            domain: d,
+            domain_key: key.clone(),
+            outer_gap: 0,
+            focused_window: WindowId("win-float".to_owned()),
+            windows,
+            directional: None,
+            directional_target_outer_gap: None,
+            target_domain: None,
+            target_windows: vec![],
+            command: CoreCommand::Reconcile,
+        };
+        match engine.handle(&event) {
+            CoreReply::Tiled(plan) => {
+                let mut members: Vec<String> = plan
+                    .geometry
+                    .iter()
+                    .map(|entry| entry.window.0.clone())
+                    .collect();
+                members.sort();
+                assert_eq!(members, vec!["win-1".to_string(), "win-2".to_string()]);
+            }
+            other => panic!("fresh mixed reconcile must plan tiled, got {other:?}"),
+        }
+        let session = engine.session(&key).expect("fresh domain retained");
+        assert!(
+            session.is_exception(&WindowId("win-float".to_owned())),
+            "floating member converges as an exception"
+        );
+    }
+
+    #[test]
+    fn fresh_reconcile_prefers_relocation_over_seeding() {
+        use crate::boundary::{CoreCommand, CoreEvent, CoreReply};
+        use crate::ids::CorrelationId;
+        // A unique same-workspace source relocates exactly like the retained
+        // path instead of seeding a second session.
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        let mut engine = Engine::new();
+        engine.sync_binding(&owner, &gen_id);
+        let source_domain = domain("out", "ws");
+        let source_key = source_domain.key();
+        let order = vec![EngineWindow {
+            window: WindowId("win-1".to_owned()),
+            output: OutputId("out".to_owned()),
+            workspace: WorkspaceId("ws".to_owned()),
+            rect: Rect {
+                x: 0,
+                y: 0,
+                w: 10,
+                h: 10,
+            },
+            floating: false,
+            fit_excluded: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
+        }];
+        let seeded =
+            crate::seed::seed_session(&owner, &gen_id, 7, &source_domain, &order).expect("seeds");
+        engine.store_committed(source_key.clone(), seeded, 3);
+        let target_domain = domain("out-2", "ws");
+        let target_key = target_domain.key();
+        let event = CoreEvent {
+            owner: owner.clone(),
+            generation: gen_id.clone(),
+            correlation: CorrelationId::parse("corr-rec-reloc").expect("valid"),
+            revision: 0,
+            fingerprint: 7,
+            domain: target_domain,
+            domain_key: target_key.clone(),
+            outer_gap: 3,
+            focused_window: WindowId("win-1".to_owned()),
+            windows: vec![EngineWindow {
+                window: WindowId("win-1".to_owned()),
+                output: OutputId("out-2".to_owned()),
+                workspace: WorkspaceId("ws".to_owned()),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    w: 10,
+                    h: 10,
+                },
+                floating: false,
+                fit_excluded: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            }],
+            directional: None,
+            directional_target_outer_gap: None,
+            target_domain: None,
+            target_windows: vec![],
+            command: CoreCommand::Reconcile,
+        };
+        match engine.handle(&event) {
+            CoreReply::Projection(plan) => assert_eq!(plan.geometry.len(), 1),
+            other => panic!("relocated fresh reconcile must project, got {other:?}"),
+        }
+        assert!(!engine.contains(&source_key), "source moved");
+        assert!(engine.contains(&target_key), "target retained");
+    }
+
+    #[test]
+    fn fresh_reconcile_disjoint_unique_source_seeds_separate_domain() {
+        use crate::boundary::{CoreCommand, CoreEvent, CoreReply};
+        use crate::ids::CorrelationId;
+        // Unique same-workspace source with disjoint observed windows must
+        // not relocate: the fresh domain seeds separately and the source
+        // stays untouched. Overlap relocation exact-set/rollback stays
+        // covered by `fresh_reconcile_prefers_relocation_over_seeding` and
+        // `relocated_target_skew_rejects_partial_observation_with_rollback`.
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        let mut engine = Engine::new();
+        engine.sync_binding(&owner, &gen_id);
+        let source_domain = domain("out", "ws");
+        let source_key = source_domain.key();
+        let order = vec![EngineWindow {
+            window: WindowId("win-1".to_owned()),
+            output: OutputId("out".to_owned()),
+            workspace: WorkspaceId("ws".to_owned()),
+            rect: Rect {
+                x: 0,
+                y: 0,
+                w: 10,
+                h: 10,
+            },
+            floating: false,
+            fit_excluded: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
+        }];
+        let seeded =
+            crate::seed::seed_session(&owner, &gen_id, 7, &source_domain, &order).expect("seeds");
+        let source_revision = seeded.accepted_revision();
+        engine.store_committed(source_key.clone(), seeded, 3);
+        let target_domain = domain("out-2", "ws");
+        let target_key = target_domain.key();
+        let event = CoreEvent {
+            owner: owner.clone(),
+            generation: gen_id.clone(),
+            correlation: CorrelationId::parse("corr-rec-disjoint").expect("valid"),
+            revision: 0,
+            fingerprint: 7,
+            domain: target_domain,
+            domain_key: target_key.clone(),
+            outer_gap: 3,
+            focused_window: WindowId("win-9".to_owned()),
+            windows: vec![EngineWindow {
+                window: WindowId("win-9".to_owned()),
+                output: OutputId("out-2".to_owned()),
+                workspace: WorkspaceId("ws".to_owned()),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    w: 10,
+                    h: 10,
+                },
+                floating: false,
+                fit_excluded: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            }],
+            directional: None,
+            directional_target_outer_gap: None,
+            target_domain: None,
+            target_windows: vec![],
+            command: CoreCommand::Reconcile,
+        };
+        match engine.handle(&event) {
+            CoreReply::Tiled(plan) => assert_eq!(plan.geometry.len(), 1),
+            other => panic!("disjoint fresh reconcile must seed, got {other:?}"),
+        }
+        assert!(engine.contains(&target_key), "fresh target seeded");
+        assert!(engine.contains(&source_key), "disjoint source preserved");
+        let restored = engine.session(&source_key).expect("source kept");
+        assert_eq!(restored.accepted_revision(), source_revision);
+        assert_eq!(engine.retained_domains(), 2);
+    }
+
+    #[test]
+    fn retained_reconcile_empty_retires_slot() {
+        use crate::boundary::{CoreCommand, CoreEvent, CoreReply};
+        use crate::ids::CorrelationId;
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        let mut engine = Engine::new();
+        engine.sync_binding(&owner, &gen_id);
+        let d = domain("out", "ws");
+        let key = d.key();
+        let order = ["win-1", "win-2"]
+            .iter()
+            .map(|window| EngineWindow {
+                window: WindowId(window.to_string()),
+                output: OutputId("out".to_owned()),
+                workspace: WorkspaceId("ws".to_owned()),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    w: 10,
+                    h: 10,
+                },
+                floating: false,
+                fit_excluded: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            })
+            .collect::<Vec<_>>();
+        let seeded = crate::seed::seed_session(&owner, &gen_id, 7, &d, &order).expect("seeds");
+        let pre = seeded.accepted_revision();
+        engine.store_committed(key.clone(), seeded, 0);
+        let event = CoreEvent {
+            owner: owner.clone(),
+            generation: gen_id.clone(),
+            correlation: CorrelationId::parse("corr-rec-retire").expect("valid"),
+            revision: 0,
+            fingerprint: 7,
+            domain: d,
+            domain_key: key.clone(),
+            outer_gap: 0,
+            focused_window: WindowId(String::new()),
+            windows: vec![],
+            directional: None,
+            directional_target_outer_gap: None,
+            target_domain: None,
+            target_windows: vec![],
+            command: CoreCommand::Reconcile,
+        };
+        match engine.handle(&event) {
+            CoreReply::Projection(plan) => {
+                assert!(plan.geometry.is_empty());
+                assert_eq!(
+                    plan.base_revision,
+                    pre + 1,
+                    "retire reports the converged revision"
+                );
+            }
+            other => panic!("retained empty reconcile must project empty, got {other:?}"),
+        }
+        assert!(!engine.contains(&key), "empty slot retires");
+        assert_eq!(engine.outer_gap(&key), None);
+    }
+
+    #[test]
+    fn retained_reconcile_empty_keeps_gap_fence_before_retire() {
+        use crate::boundary::{CoreCommand, CoreEvent, CoreReply};
+        use crate::ids::CorrelationId;
+        // Gap mismatch still refuses before any retire: the slot survives.
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        let mut engine = Engine::new();
+        engine.sync_binding(&owner, &gen_id);
+        let d = domain("out", "ws");
+        let key = d.key();
+        let order = vec![EngineWindow {
+            window: WindowId("win-1".to_owned()),
+            output: OutputId("out".to_owned()),
+            workspace: WorkspaceId("ws".to_owned()),
+            rect: Rect {
+                x: 0,
+                y: 0,
+                w: 10,
+                h: 10,
+            },
+            floating: false,
+            fit_excluded: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
+        }];
+        let seeded = crate::seed::seed_session(&owner, &gen_id, 7, &d, &order).expect("seeds");
+        engine.store_committed(key.clone(), seeded, 0);
+        let mut gapped = d.clone();
+        gapped.gap = 8;
+        let event = CoreEvent {
+            owner: owner.clone(),
+            generation: gen_id.clone(),
+            correlation: CorrelationId::parse("corr-rec-gapfence").expect("valid"),
+            revision: 0,
+            fingerprint: 7,
+            domain: gapped,
+            domain_key: key.clone(),
+            outer_gap: 0,
+            focused_window: WindowId(String::new()),
+            windows: vec![],
+            directional: None,
+            directional_target_outer_gap: None,
+            target_domain: None,
+            target_windows: vec![],
+            command: CoreCommand::Reconcile,
+        };
+        match engine.handle(&event) {
+            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "domain-mismatch"),
+            other => panic!("gap-skewed empty reconcile must reject, got {other:?}"),
+        }
+        assert!(engine.contains(&key), "fenced slot survives");
+    }
+
+    #[test]
+    fn retained_reconcile_empty_keeps_owner_fence_before_retire() {
+        use crate::boundary::{CoreCommand, CoreEvent, CoreReply};
+        use crate::ids::CorrelationId;
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        let mut engine = Engine::new();
+        engine.sync_binding(&owner, &gen_id);
+        let d = domain("out", "ws");
+        let key = d.key();
+        let order = vec![EngineWindow {
+            window: WindowId("win-1".to_owned()),
+            output: OutputId("out".to_owned()),
+            workspace: WorkspaceId("ws".to_owned()),
+            rect: Rect {
+                x: 0,
+                y: 0,
+                w: 10,
+                h: 10,
+            },
+            floating: false,
+            fit_excluded: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
+        }];
+        let seeded = crate::seed::seed_session(&owner, &gen_id, 7, &d, &order).expect("seeds");
+        engine.store_committed(key.clone(), seeded, 0);
+        let event = CoreEvent {
+            owner: OwnerId::parse("owner-b").expect("valid"),
+            generation: gen_id.clone(),
+            correlation: CorrelationId::parse("corr-rec-owner").expect("valid"),
+            revision: 0,
+            fingerprint: 7,
+            domain: d,
+            domain_key: key.clone(),
+            outer_gap: 0,
+            focused_window: WindowId(String::new()),
+            windows: vec![],
+            directional: None,
+            directional_target_outer_gap: None,
+            target_domain: None,
+            target_windows: vec![],
+            command: CoreCommand::Reconcile,
+        };
+        match engine.handle(&event) {
+            CoreReply::Diverged(_) => {}
+            other => panic!("foreign-owner empty reconcile must diverge, got {other:?}"),
+        }
+        assert!(engine.contains(&key), "diverged slot survives");
+    }
+
+    #[test]
+    fn update_gaps_malformed_tiled_links_still_reject() {
+        use crate::boundary::{CoreCommand, CoreEvent, CoreReply};
+        use crate::ids::CorrelationId;
+        // A tiled observation homed to the domain while the converged tree
+        // is missing cannot happen through convergence, so this pins the
+        // fail-closed shape indirectly: a tiled member observed under an
+        // unknown domain refuses instead of seeding through update-gaps.
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        let mut engine = Engine::new();
+        engine.sync_binding(&owner, &gen_id);
+        let d = domain("out", "ws");
+        let key = d.key();
+        let event = CoreEvent {
+            owner: owner.clone(),
+            generation: gen_id.clone(),
+            correlation: CorrelationId::parse("corr-gap-unknown").expect("valid"),
+            revision: 0,
+            fingerprint: 7,
+            domain: d,
+            domain_key: key,
+            outer_gap: 0,
+            focused_window: WindowId("win-1".to_owned()),
+            windows: vec![EngineWindow {
+                window: WindowId("win-1".to_owned()),
+                output: OutputId("out".to_owned()),
+                workspace: WorkspaceId("ws".to_owned()),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    w: 10,
+                    h: 10,
+                },
+                floating: false,
+                fit_excluded: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            }],
+            directional: None,
+            directional_target_outer_gap: None,
+            target_domain: None,
+            target_windows: vec![],
+            command: CoreCommand::UpdateGaps,
+        };
+        match engine.handle(&event) {
+            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "unknown-domain"),
+            other => panic!("fresh tiled update-gaps must refuse, got {other:?}"),
+        }
+        assert_eq!(engine.retained_domains(), 0, "refused update never seeds");
+    }
+
+    #[test]
+    fn fresh_reconcile_rejects_while_pair_transaction_pending() {
+        use crate::boundary::{CoreCommand, CoreEvent, CoreReply};
+        use crate::ids::CorrelationId;
+        use crate::pending::WorkspacePending;
+        // Any live Engine pair transaction blocks fresh seeding exactly like
+        // relocation: the absent domain refuses `unknown-domain`, no target
+        // is created, and the pending stays live.
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        let mut engine = Engine::new();
+        engine.sync_binding(&owner, &gen_id);
+        let pair_session = Session::new(
+            owner.clone(),
+            gen_id.clone(),
+            0,
+            7,
+            vec![domain("out", "ws"), domain("out", "ws-2")],
+        )
+        .expect("pair session");
+        engine.set_workspace_pending(WorkspacePending::new(
+            owner.clone(),
+            gen_id.clone(),
+            CorrelationId::parse("corr-pend-1").expect("valid"),
+            0,
+            0,
+            pair_session,
+            Vec::new(),
+            WindowId("win-1".to_owned()),
+            Vec::new(),
+            Vec::new(),
+        ));
+        assert!(engine.has_any_pending());
+        let target = domain("out-fresh", "ws-fresh");
+        let target_key = target.key();
+        let event = CoreEvent {
+            owner: owner.clone(),
+            generation: gen_id.clone(),
+            correlation: CorrelationId::parse("corr-rec-pend").expect("valid"),
+            revision: 0,
+            fingerprint: 7,
+            domain: target,
+            domain_key: target_key.clone(),
+            outer_gap: 0,
+            focused_window: WindowId("win-n".to_owned()),
+            windows: vec![EngineWindow {
+                window: WindowId("win-n".to_owned()),
+                output: OutputId("out-fresh".to_owned()),
+                workspace: WorkspaceId("ws-fresh".to_owned()),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    w: 10,
+                    h: 10,
+                },
+                floating: false,
+                fit_excluded: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            }],
+            directional: None,
+            directional_target_outer_gap: None,
+            target_domain: None,
+            target_windows: vec![],
+            command: CoreCommand::Reconcile,
+        };
+        match engine.handle(&event) {
+            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "unknown-domain"),
+            other => panic!("pending fresh reconcile must refuse, got {other:?}"),
+        }
+        assert!(!engine.contains(&target_key), "no target created");
+        assert!(engine.has_any_pending(), "pending untouched");
+    }
+
+    #[test]
+    fn fresh_reconcile_seeds_despite_ambiguous_candidates() {
+        use crate::boundary::{CoreCommand, CoreEvent, CoreReply};
+        use crate::ids::CorrelationId;
+        // Multiple same-workspace other-output sessions make relocation
+        // ambiguous, so no source moves; with no pending, the absent domain
+        // still seeds fresh (same as the admit path) while both candidates
+        // stay untouched.
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        let mut engine = Engine::new();
+        engine.sync_binding(&owner, &gen_id);
+        for (output, window) in [("out-a", "win-a"), ("out-b", "win-b")] {
+            let d = domain(output, "ws-x");
+            let key = d.key();
+            let order = vec![EngineWindow {
+                window: WindowId(window.to_owned()),
+                output: OutputId(output.to_owned()),
+                workspace: WorkspaceId("ws-x".to_owned()),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    w: 10,
+                    h: 10,
+                },
+                floating: false,
+                fit_excluded: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            }];
+            let seeded = crate::seed::seed_session(&owner, &gen_id, 7, &d, &order).expect("seeds");
+            engine.store_committed(key, seeded, 0);
+        }
+        assert_eq!(engine.retained_domains(), 2);
+        let target = domain("out-c", "ws-x");
+        let target_key = target.key();
+        let event = CoreEvent {
+            owner: owner.clone(),
+            generation: gen_id.clone(),
+            correlation: CorrelationId::parse("corr-rec-amb").expect("valid"),
+            revision: 0,
+            fingerprint: 7,
+            domain: target,
+            domain_key: target_key.clone(),
+            outer_gap: 0,
+            focused_window: WindowId("win-a".to_owned()),
+            windows: vec![EngineWindow {
+                window: WindowId("win-a".to_owned()),
+                output: OutputId("out-c".to_owned()),
+                workspace: WorkspaceId("ws-x".to_owned()),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    w: 10,
+                    h: 10,
+                },
+                floating: false,
+                fit_excluded: false,
+                hints: crate::size_hints::WindowSizeHints::none(),
+            }],
+            directional: None,
+            directional_target_outer_gap: None,
+            target_domain: None,
+            target_windows: vec![],
+            command: CoreCommand::Reconcile,
+        };
+        match engine.handle(&event) {
+            CoreReply::Tiled(plan) => assert_eq!(plan.geometry.len(), 1),
+            other => panic!("ambiguous fresh reconcile must seed, got {other:?}"),
+        }
+        assert!(engine.contains(&target_key), "fresh target seeded");
+        assert_eq!(engine.retained_domains(), 3, "candidates untouched");
     }
 
     #[test]

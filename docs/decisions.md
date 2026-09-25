@@ -10,7 +10,7 @@ User-approved 2026-09-24 from the
 elsewhere in this file that conflict remain accurate for shipped code until
 the corresponding item ships; each such entry names its replacement.
 
-- Observed-membership convergence (shipped offline, live acceptance pending;
+- Observed-membership convergence (steps 1-2 shipped offline, live acceptance pending;
   [change note](changes/archive/observation-convergence.md)):
   per the user's 2026-09-25 decision, each complete per-domain observation
   controls portable membership and floating state before ordinary Engine
@@ -22,10 +22,17 @@ the corresponding item ships; each such entry names its replacement.
   only the existing wire `floating` and advisory `fit_excluded` are in scope;
   sticky/all-desktops uses KWin's existing floating mapping, while fullscreen
   and maximized members keep their tiled allocations as native overlays.
-  KWin carries current post-removal observations, quarantines incomplete
-  foreground frames, and retains its per-domain baseline diffing. The existing
-  send/R4 settlement and verification remain; this is step 1 only, under the
-  Simplicity and Resilience principles.
+  KWin carries current post-removal observations and quarantines incomplete
+  foreground frames. Per the user's 2026-09-25 step-2 go-ahead, automatic
+  foreground and hidden tiling now send complete observations through
+  `reconcile`; the applied membership baseline and public admit/remove wire
+  commands are retired. Fresh observations keep deterministic fitting and
+  admission placement. Orchestrator rules: a fresh domain waits while any
+  send/R4 pair is pending, and a unique same-workspace source relocates only
+  when the new observation shares a retained tiled or floating-exception id;
+  disjoint and ambiguous sources seed fresh. Exact overlapping relocation
+  retains its skew/rollback fence. The existing send/R4 settlement and
+  verification remain unchanged pending step 3, under Simplicity and Resilience.
 - Target shape (review section 6): a portable `tiler-core` Engine with
   world/domain state behind a `LayoutPolicy` seam; `tiler-protocol` as a thin
   codec; a Linux service crate; the KWin script as observer and actuator; the
@@ -500,15 +507,20 @@ the corresponding item ships; each such entry names its replacement.
   a recorded overlay state over the original layer, not a distinct topology or
   managed layer, so the engine deliberately carries no horizontal/vertical
   maximize concept.
-- A Plan adapter retains one membership baseline per `(output, workspace)` and
-   advances that domain's baseline only after a matching `planned` reply is
-   applied. A rejected, timed-out, stale, or failed membership command never
-   changes the baseline used to derive later admissions or removals. For a
-   removal it carries the current complete post-removal observation; the
-   Engine converges first and replies with survivor geometry. A floating
-   transition of an already observed member also triggers a current-observation
-   reconcile rather than silently absorbing the change. Incomplete foreground
-   frames are quarantined, never interpreted as departures.
+- Complete automatic per-domain observations, not an applied membership
+   baseline, drive `reconcile` for foreground and hidden tiling. The Engine
+   converges departures, arrivals, and floating transitions before projecting
+   surviving topology; explicit complete hidden empties may retire a domain.
+   KWin retains only applied per-window geometry/domain/flag evidence for
+   overlays, first-admission maximize, drag fallback, drift and reply checks,
+   never as membership authority. Incomplete foreground frames and unreadable
+   hidden domains cannot establish a departure. Changed gaps use one bounded
+   fresh same-domain `update-gaps` retry only after an exact correlated gap
+   mismatch; unrelated/malformed refusals do not retry. The redundant
+   post-convergence ID-set checks for ordinary retained reconcile and
+   update-gaps are gone; relocated but previously unconverged sources still
+   require exact membership and atomic rollback. Other operation and reply
+   fences remain where needed for pending, changed scope, or uncertain state.
 - USER-APPROVED recoverability, 2026-09-21: "log and continue rather than hard
   fail." A failed native geometry operation or client geometry discrepancy is
   an operation failure, not a permanently disabled window or domain. Later
@@ -697,12 +709,12 @@ the corresponding item ships; each such entry names its replacement.
   a lost planned reply; a known plan uses its base revision. User option B,
   2026-09-25: this operation also retires ANY existing workspace-send pending,
   including one from another generation/correlation/owner, regardless of
-  ack/divergence state, preserving Engine sessions and Plan membership
-  baselines. Exact retirement replies `abandoned`, orphan retirement replies
+  ack/divergence state, preserving Engine sessions. Exact retirement replies
+  `abandoned`, orphan retirement replies
   distinct `orphan-abandoned`, and absence replies `no-pending-unknown` under
   the requesting correlation; none claims commit. The displaced owner sees
   no pending and can recover through its own abandon. KWin stays enabled and
-  releases Plan to ordinary observation/admission/removal after a definitive
+  releases Plan to ordinary complete-observation reconciliation after a definitive
   reply. Unreadable observations retry within one bounded wait; on unanswered
   abandon or unreachable pinned owner KWin releases its local flight as
   *unconfirmed*, unblocks and resyncs ordinary Plan, without claiming Rust

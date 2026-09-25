@@ -465,103 +465,6 @@ fn engine_focus_with_exact_match_keeps_revision_semantics() {
     );
 }
 
-fn admit_command(window: &str) -> CoreCommand {
-    CoreCommand::Admit {
-        window: WindowId(window.to_owned()),
-        output: OutputId("out-1".to_owned()),
-        workspace: WorkspaceId("ws-1".to_owned()),
-        placement_bounds: None,
-    }
-}
-
-fn remove_command(window: &str) -> CoreCommand {
-    CoreCommand::Remove {
-        window: WindowId(window.to_owned()),
-    }
-}
-
-#[test]
-fn engine_admit_duplicate_with_incidental_new_member_rejects() {
-    // Changed-id safety: admit win-a is already present, so even though the
-    // same convergence incidentally admits unexpected win-n, the reply must
-    // stay `duplicate-window` rather than a false idempotent success.
-    let (mut engine, k, domain_state, base) = seed_engine();
-    let event = core_event(
-        &domain_state,
-        &k,
-        base,
-        "win-c",
-        strip(&[
-            ("win-a", false),
-            ("win-b", false),
-            ("win-c", false),
-            ("win-n", false),
-        ]),
-        "admit-dup-n",
-        admit_command("win-a"),
-    );
-    match engine.handle(&event) {
-        CoreReply::Rejected { kind, .. } => assert_eq!(
-            kind, "duplicate-window",
-            "incidental admission must not mask the duplicate"
-        ),
-        other => panic!("duplicate admit must reject, got {other:?}"),
-    }
-    let retained = engine.session(&k).expect("retained session survives");
-    assert_eq!(
-        retained.accepted_revision(),
-        base + 1,
-        "convergence (+1) with no op commit and no reseed"
-    );
-    assert!(
-        retained
-            .snapshot()
-            .windows
-            .iter()
-            .any(|l| l.window.0 == "win-n"),
-        "incidentally converged member stays retained"
-    );
-    assert!(
-        retained
-            .snapshot()
-            .windows
-            .iter()
-            .any(|l| l.window.0 == "win-a"),
-        "duplicate target stays retained"
-    );
-}
-
-#[test]
-fn engine_remove_unknown_with_unrelated_departure_rejects() {
-    // Changed-id safety: remove win-z never existed, so even though the same
-    // convergence removes unrelated win-b, the reply must stay
-    // `unknown-window` rather than a false idempotent success.
-    let (mut engine, k, domain_state, base) = seed_engine();
-    let event = core_event(
-        &domain_state,
-        &k,
-        base,
-        "win-c",
-        strip(&[("win-a", false), ("win-c", false)]),
-        "rem-unknown-b",
-        remove_command("win-z"),
-    );
-    match engine.handle(&event) {
-        CoreReply::Rejected { kind, .. } => assert_eq!(
-            kind, "unknown-window",
-            "unrelated departure must not mask the unknown window"
-        ),
-        other => panic!("unknown remove must reject, got {other:?}"),
-    }
-    let retained = engine.session(&k).expect("retained session survives");
-    assert_eq!(
-        retained.accepted_revision(),
-        base + 1,
-        "convergence (+1) with no op commit and no reseed"
-    );
-    assert_eq!(leaves(retained), vec!["leaf-win-a", "leaf-win-c"]);
-}
-
 #[test]
 fn engine_converge_error_returns_typed_rejection_without_reset() {
     // Cross-homed observation (win-a on ws-2): typed `cross-domain-mismatch`
@@ -692,10 +595,10 @@ fn engine_reconcile_with_floating_skew_converges() {
 }
 
 #[test]
-fn engine_fresh_mixed_float_and_tiled_admits() {
-    // Fresh domain with a mixed floating/tiled observation: converges the
-    // float exception plus the normal admission atomically, replies planned
-    // at the converged revision with tiled-only geometry.
+fn engine_fresh_mixed_float_and_tiled_reconciles() {
+    // Fresh domain with a mixed floating/tiled observation: public reconcile
+    // converges the float exception plus the normal admission atomically,
+    // replies planned at the converged revision with tiled-only geometry.
     let mut engine = Engine::new();
     engine.sync_binding(&owner(), &generation());
     let k = key("out-1", "ws-1");
@@ -707,7 +610,7 @@ fn engine_fresh_mixed_float_and_tiled_admits() {
         "win-n",
         strip(&[("win-f", true), ("win-n", false)]),
         "fresh-mix",
-        admit_command("win-n"),
+        CoreCommand::Reconcile,
     );
     match engine.handle(&event) {
         CoreReply::Tiled(plan) => {
@@ -723,7 +626,7 @@ fn engine_fresh_mixed_float_and_tiled_admits() {
             );
             assert!(plan.focus_domain.is_some() && plan.focus_leaf.is_some());
         }
-        other => panic!("fresh mixed admit must plan, got {other:?}"),
+        other => panic!("fresh mixed reconcile must plan, got {other:?}"),
     }
     let retained = engine.session(&k).expect("fresh domain retained");
     assert_eq!(retained.accepted_revision(), 1);

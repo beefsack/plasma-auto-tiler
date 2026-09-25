@@ -437,98 +437,6 @@ function sameReprojectionScope(a: PlanSnapshot, b: PlanSnapshot): boolean {
     );
 }
 
-// Deliberate gap-update scope: the same logical domain and complete window
-// set with a changed inner and/or outer gap. Work-area bounds may or may not
-// have changed alongside; the retained route folds both into one projection.
-// Membership changes never qualify: admit/remove own those. Gap values here
-// only ever change on the deliberate Options `configChanged` reload, so this
-// branch cannot fire on ordinary drift.
-function sameGapUpdateScope(a: PlanSnapshot, b: PlanSnapshot): boolean {
-    if (a.domainGap === b.domainGap && a.domainOuterGap === b.domainOuterGap) {
-        return false;
-    }
-    if (a.domainOutput !== b.domainOutput || a.domainWorkspace !== b.domainWorkspace) {
-        return false;
-    }
-    if (a.windows.length !== b.windows.length) {
-        return false;
-    }
-    const byId = new Map<string, PlanSnapshotWindow>();
-    for (const entry of a.windows) {
-        byId.set(entry.id, entry);
-    }
-    for (const entry of b.windows) {
-        const other = byId.get(entry.id);
-        if (other === undefined || other.output !== entry.output || other.workspace !== entry.workspace) {
-            return false;
-        }
-    }
-    return true;
-}
-
-// Geometry-only equality ignoring focus and fingerprint: true when the same
-// scope/window set carries identical rectangles. Used to separate a
-// focus/fingerprint-only change (adopt the new baseline, no reconcile) from
-// genuine same-scope geometry drift (reassert via reconcile). A window that
-// is fullscreen or maximized in `b` is excluded: its rectangle is
-// compositor-owned while fullscreen or maximized, so it never counts as
-// drift and never triggers a reflow.
-function sameRects(a: PlanSnapshot, b: PlanSnapshot): boolean {
-    if (a.windows.length !== b.windows.length) {
-        return false;
-    }
-    const byId = new Map<string, PlanSnapshotWindow>();
-    for (const entry of a.windows) {
-        byId.set(entry.id, entry);
-    }
-    for (const entry of b.windows) {
-        const other = byId.get(entry.id);
-        if (other === undefined) {
-            return false;
-        }
-        if (entry.fullscreen || entry.maximized) {
-            continue;
-        }
-        if (
-            other.rect.x !== entry.rect.x ||
-            other.rect.y !== entry.rect.y ||
-            other.rect.w !== entry.rect.w ||
-            other.rect.h !== entry.rect.h
-        ) {
-            return false;
-        }
-    }
-    return true;
-}
-
-// Floating/sticky skew detection for complete-observation convergence: true
-// when a retained member is still observed but its floating exception state
-// changed (tiled to floating/sticky or back). Compares the union
-// (floating or sticky) so an adopted sticky resting as a plain float is not
-// a skew. Fullscreen/maximized are compositor overlays with silent KWin-side
-// handling and never trigger here; membership itself is compared by the
-// baseline diff, never here.
-function floatingSkewed(previous: PlanSnapshot, fresh: PlanSnapshot): boolean {
-    const freshById = new Map<string, PlanSnapshotWindow>();
-    for (const entry of fresh.windows) {
-        if (!freshById.has(entry.id)) {
-            freshById.set(entry.id, entry);
-        }
-    }
-    for (const entry of previous.windows) {
-        const current = freshById.get(entry.id);
-        if (current === undefined) {
-            continue;
-        }
-        const wasFloating = entry.floating === true || entry.sticky === true;
-        const isFloating = current.floating === true || current.sticky === true;
-        if (wasFloating !== isFloating) {
-            return true;
-        }
-    }
-    return false;
-}
-
 // Reply-boundary flag-exactness: like floatingSkewed, but tolerates a
 // toggle-float flight's own target reaching its intended end state. The
 // toggle choreography observes the target flipped before the reply lands
@@ -988,6 +896,19 @@ function sanitizeDetail(value: unknown): string | null {
         }
     }
     return value;
+}
+
+// Exact Engine gap-mismatch messages for the correlated update-gaps retry.
+// Rejected gap replies carry no wire `detail`, so only `message` binds the
+// signal: matching is exact-string equality against these fixed Engine
+// literals, never substring or kind-only.
+const GAP_MISMATCH_MESSAGES: readonly string[] = Object.freeze([
+    "domain gap does not match retained state",
+    "domain outer gap does not match retained state",
+]);
+
+function isGapMismatchMessage(value: unknown): boolean {
+    return typeof value === "string" && GAP_MISMATCH_MESSAGES.indexOf(value) >= 0;
 }
 
 interface PlanGeometryEntry {
@@ -1794,19 +1715,31 @@ export class PlanAdapter {
     private deferredAuto: AutoIntent | null = null;
     private epoch = 0;
     private seq = 0;
-    // The Planner retains one session per (output, workspace), so retain the
-    // matching applied projection for every live Planner domain as well.
-    private lastGoodByDomain = new Map<string, PlanSnapshot>();
+    // Per-id applied evidence (rect, output/workspace, floating/sticky/
+    // fullscreen/maximized), written only on applied replies. Read-only hint
+    // for overlays, first-admission maximize, and drag lookup; never authority
+    // for Plan membership.
+    private appliedById = new Map<string, { rect: PlanRect; output: string; workspace: string; floating: boolean; sticky: boolean; fullscreen: boolean; maximized: boolean }>();
+    // Per-domain applied scope (bounds, gap, outerGap), keyed by domain
+    // output/workspace. Written only on successful applied plan replies
+    // alongside appliedById; never admission or membership authority.
+    private appliedScopeByDomain = new Map<string, { bounds: PlanRect; gap: number; outerGap: number }>();
     private reconcileAttempts = 0;
     private parked = false;
-    // Per-domain background reconcile accounting, keyed exactly like
-    // lastGoodByDomain. Foreground counters above are never touched by
+    // Per-domain background reconcile accounting, keyed by domain
+    // output/workspace. Foreground counters above are never touched by
     // hidden-domain flights so background drift can never park foreground.
     private backgroundAttempts = new Map<string, number>();
     private backgroundParked = new Set<string>();
     // Reentrancy guard for the finishFlight hidden-domain chain: a
     // synchronously failing background dispatch must not recurse.
     private chainingHidden = false;
+    // Once-per-chain bound for hidden domains: every complete hidden domain
+    // visited in one refresh/finishFlight chain is recorded here so unchanged
+    // domains cannot self-chain endlessly. Cleared only at a new top-level
+    // debounced refresh; the next independent signal revisits genuinely new
+    // evidence.
+    private hiddenVisited = new Set<string>();
     private repeatFocused: string | null = null;
     private repeatDirection: PlanDirection | null = null;
     private repeatMode: PlanResizeMode | null = null;
@@ -1833,8 +1766,8 @@ export class PlanAdapter {
     private maximizeToggleAttempts = new Map<object, boolean>();
     private stickyAttempts = new Map<object, boolean>();
     // Owner-pinned Planner transport plus confirmed-loss recovery. The
-    // in-memory Planner survives sleep: same-owner failures retain every
-    // baseline and never rebuild. Only actual absence/identity evidence
+    // in-memory Planner survives sleep: same-owner failures retain applied
+    // evidence and never rebuild. Only actual absence/identity evidence
     // (strict NameHasOwner false or a changed unique owner, via normal
     // activation or one bounded post-terminal probe) triggers a fresh
     // session. No polling, retry, or Legacy path.
@@ -1879,8 +1812,8 @@ export class PlanAdapter {
     // the marker persists, and exactly one existing-route reconcile
     // dispatches per marker when free, unless an applied plan for the same
     // domain already satisfied it. A failed marker reconcile logs one
-    // terminal per drag and never retries. Keyed exactly like
-    // lastGoodByDomain.
+    // terminal per drag and never retries. Keyed by domain
+    // output/workspace.
     private dragRestore = new Map<string, DragRestoreMarker>();
 
     constructor(private readonly env: PlanAdapterEnv) {}
@@ -1941,7 +1874,8 @@ export class PlanAdapter {
         this.r4Flight = null;
         this.deferredAuto = null;
         this.epoch = 0;
-        this.lastGoodByDomain.clear();
+        this.appliedById.clear();
+        this.appliedScopeByDomain.clear();
         this.settleDragRestoreUnavailable();
         this.reconcileAttempts = 0;
         this.parked = false;
@@ -1982,7 +1916,8 @@ export class PlanAdapter {
         this.pending = null;
         this.clearR4Flight();
         this.deferredAuto = null;
-        this.lastGoodByDomain.clear();
+        this.appliedById.clear();
+        this.appliedScopeByDomain.clear();
         this.settleDragRestoreUnavailable();
         this.reconcileAttempts = 0;
         this.parked = false;
@@ -2151,30 +2086,26 @@ export class PlanAdapter {
         return false;
     }
 
-    // Carried snapshot for dispatch and baseline comparison: a fullscreen or
-    // maximized member carries its retained in-bounds rectangle (the last
-    // planned projection) in place of the compositor-owned fullscreen or
-    // maximized frame rect, which can exceed the work area and would otherwise
-    // be rejected as window-out-of-bounds. A member with no retained
-    // projection yet is clamped into the domain bounds. The raw frame rect is
-    // never carried for a fullscreen or maximized member. A known tiled member
-    // can transiently report an out-of-bounds frame while KWin applies a state
+    // Carried snapshot for dispatch and reply-boundary comparison: a
+    // fullscreen or maximized member carries its per-id applied rectangle
+    // (the last planned projection for that id on the same output/workspace)
+    // in place of the compositor-owned fullscreen or maximized frame rect,
+    // which can exceed the work area and would otherwise be rejected as
+    // window-out-of-bounds. A member with no applied projection yet is
+    // clamped into the domain bounds. The raw frame rect is never carried
+    // for a fullscreen or maximized member. A known tiled member can
+    // transiently report an out-of-bounds frame while KWin applies a state
     // change, so carry its applied projection rather than invalidating the
     // complete snapshot. Unknown non-overlay windows still fail closed.
+    // Applied evidence is read-only here; only applied replies mutate it.
     private carriedSnapshot(observed: PlanObserved): PlanSnapshot {
         const snapshot = snapshotOf(observed);
-        const retained = this.lastGoodFor(snapshot);
-        if (retained === null && !snapshot.windows.some((entry) => entry.fullscreen || entry.maximized)) {
-            return this.attachHintSizes(snapshot, observed);
-        }
-        const retainedById = new Map<string, PlanRect>();
-        if (retained !== null) {
-            for (const entry of retained.windows) {
-                retainedById.set(entry.id, entry.rect);
-            }
-        }
         const windows = snapshot.windows.map((entry) => {
-            const retainedRect = retainedById.get(entry.id);
+            const evidence = this.appliedById.get(entry.id);
+            const retainedRect =
+                evidence !== undefined && evidence.output === entry.output && evidence.workspace === entry.workspace
+                    ? evidence.rect
+                    : undefined;
             if (!entry.fullscreen && !entry.maximized && (retainedRect === undefined || rectContained(entry.rect, snapshot.domainBounds))) {
                 return entry;
             }
@@ -2187,17 +2118,118 @@ export class PlanAdapter {
         return this.attachHintSizes({ ...snapshot, windows: Object.freeze(windows) }, observed);
     }
 
+    // Per-domain applied scope: bounds, gap, outerGap keyed by
+    // output/workspace. Written only on successful applied plan replies
+    // alongside appliedById; never admission or membership authority.
+    private appliedScopeFor(
+        snapshot: Pick<PlanSnapshot, "domainOutput" | "domainWorkspace">,
+    ): { bounds: PlanRect; gap: number; outerGap: number } | null {
+        return this.appliedScopeByDomain.get(this.domainKey(snapshot)) ?? null;
+    }
+
+    // Same-domain window-set match from per-id applied evidence only: every
+    // observed id carries same output/workspace evidence and no extra applied
+    // id remains in the domain. Flags, rects, bounds, and gaps never count.
+    private appliedWindowSetMatches(fresh: PlanSnapshot): boolean {
+        const observedIds = new Set<string>();
+        for (const entry of fresh.windows) {
+            observedIds.add(entry.id);
+            const evidence = this.appliedById.get(entry.id);
+            if (
+                evidence === undefined ||
+                evidence.output !== entry.output ||
+                evidence.workspace !== entry.workspace
+            ) {
+                return false;
+            }
+        }
+        for (const [id, evidence] of this.appliedById) {
+            if (
+                evidence.output === fresh.domainOutput &&
+                evidence.workspace === fresh.domainWorkspace &&
+                !observedIds.has(id)
+            ) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Whether any before-apply per-id evidence exists for a single domain:
+    // an applied id homed to the domain, or an observed id carrying any
+    // applied slot (including a sticky multi-homed slot last written by
+    // another domain). Absent only before the first apply of the domain
+    // (fresh worker or seeded retained baseline without applies).
+    private hasAppliedEvidenceFor(snapshot: PlanSnapshot): boolean {
+        for (const entry of snapshot.windows) {
+            if (this.appliedById.has(entry.id)) {
+                return true;
+            }
+        }
+        for (const [, evidence] of this.appliedById) {
+            if (evidence.output === snapshot.domainOutput && evidence.workspace === snapshot.domainWorkspace) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Tiled membership/flag difference versus before-apply per-id evidence:
+    // an id-set change or a floating/sticky flip on a retained id, scoped
+    // to a single domain. Overlays (fullscreen/maximized), focus,
+    // fingerprint, rects, bounds, and gaps never count. Sticky windows are
+    // multi-homed across domains sharing one per-id slot: matching sticky
+    // flags forgive domain homing so consecutive domain applies do not
+    // flap. Extra applied ids homed to the domain stay strict. True when
+    // no evidence exists yet (fresh seeds converge like the retired admit).
+    private appliedMembershipOrFlagsChanged(snapshot: PlanSnapshot): boolean {
+        const observedIds = new Set<string>();
+        for (const entry of snapshot.windows) {
+            observedIds.add(entry.id);
+            const evidence = this.appliedById.get(entry.id);
+            if (evidence === undefined) {
+                return true;
+            }
+            const floating = entry.floating === true;
+            const sticky = entry.sticky === true;
+            if (evidence.floating !== floating || evidence.sticky !== sticky) {
+                return true;
+            }
+            const multiHomed = sticky && evidence.sticky === true;
+            if (!multiHomed && (evidence.output !== entry.output || evidence.workspace !== entry.workspace)) {
+                return true;
+            }
+        }
+        if (!this.hasAppliedEvidenceFor(snapshot)) {
+            return true;
+        }
+        for (const [id, evidence] of this.appliedById) {
+            if (
+                evidence.output === snapshot.domainOutput &&
+                evidence.workspace === snapshot.domainWorkspace &&
+                !observedIds.has(id)
+            ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Reprojection carries the prior planner allocation for every member. The
     // current client rectangles are drift inputs only, and are clamped solely
-    // to keep the transport representation inside the new work area.
-    private reprojectionSnapshot(observed: PlanObserved, retained: PlanSnapshot): PlanSnapshot {
+    // to keep the transport representation inside the new work area. Source is
+    // per-id applied evidence for same-domain entries only; never baseline
+    // authority.
+    private reprojectionSnapshot(observed: PlanObserved): PlanSnapshot {
         const snapshot = snapshotOf(observed);
-        const retainedById = new Map<string, PlanRect>();
-        for (const entry of retained.windows) {
-            retainedById.set(entry.id, entry.rect);
-        }
         const windows = snapshot.windows.map((entry) => {
-            const carried = retainedById.get(entry.id) ?? entry.rect;
+            const evidence = this.appliedById.get(entry.id);
+            const carried =
+                evidence !== undefined &&
+                evidence.output === entry.output &&
+                evidence.workspace === entry.workspace
+                    ? evidence.rect
+                    : entry.rect;
             const rect = clampCarriedRect(carried, snapshot.domainBounds);
             return { ...entry, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h } };
         });
@@ -2267,14 +2299,6 @@ export class PlanAdapter {
             };
         });
         return { ...snapshot, windows };
-    }
-
-    // Refresh a retained snapshot's hints from a fresh observation (remove
-    // intents reuse the pre-removal snapshot but must still send fresh
-    // hints for the survivors). Members absent from the fresh observation
-    // keep their retained hints.
-    private snapshotWithFreshHints(snapshot: PlanSnapshot, observed: PlanObserved): PlanSnapshot {
-        return this.attachHintSizes(snapshot, observed);
     }
 
     requestMove(direction: unknown): void {
@@ -3115,10 +3139,9 @@ export class PlanAdapter {
             return null;
         }
         try {
-            for (const snapshot of this.lastGoodByDomain.values()) {
-                if (snapshot.windows.some((entry) => entry.id === windowId)) {
-                    return { output: snapshot.domainOutput, workspace: snapshot.domainWorkspace };
-                }
+            const evidence = this.appliedById.get(windowId);
+            if (evidence !== undefined) {
+                return { output: evidence.output, workspace: evidence.workspace };
             }
         } catch (error) {
             void error;
@@ -3759,6 +3782,9 @@ export class PlanAdapter {
         if (this.r4Flight !== null) {
             return;
         }
+        if (!this.chainingHidden) {
+            this.hiddenVisited.clear();
+        }
         if (this.chainingHidden) {
             this.refreshForegroundNow();
             return;
@@ -3796,6 +3822,15 @@ export class PlanAdapter {
         }
     }
 
+    // Foreground automatic reconcile: one complete-observation reconcile per
+    // debounced foreground signal. Membership converges in the Engine; KWin
+    // never derives admit/remove, floating-skew, or gap/bounds choices here.
+    // A correlated exact-message gap refusal triggers the existing single
+    // update-gaps retry on the reply path. The carried snapshot preserves
+    // per-id applied rectangles for fullscreen/transient out-of-bounds.
+    // Only park counters reset here; applied evidence mutates solely on
+    // applied replies. Fresh/changed membership or flags always dispatch and
+    // never park, even when a previous drift parked.
     private refreshForegroundNow(): void {
         if (!this.enabled) {
             return;
@@ -3813,8 +3848,7 @@ export class PlanAdapter {
         if (fresh === null) {
             return;
         }
-        const prior = this.lastGoodFor(snapshotOf(fresh));
-        const prepared = this.clearMaximizeAtAdmission(fresh, prior);
+        const prepared = this.clearMaximizeAtAdmission(fresh, null);
         if (prepared === null) {
             return;
         }
@@ -3822,216 +3856,137 @@ export class PlanAdapter {
         const freshSnapshot = this.carriedSnapshot(fresh);
         this.epoch += 1;
         this.noteObservation(freshSnapshot.fingerprint);
-        // Membership baselines advance only after a planned reply is applied.
-        const previous = this.lastGoodFor(freshSnapshot);
-        if (previous === null) {
-            // Never seed a float as a tile: a fresh observation with no
-            // baseline whose members are all floating/sticky exceptions
-            // dispatches nothing and advances no baseline, so a later tiling
-            // of the same window still admits.
-            let hasTiled = false;
-            for (const entry of freshSnapshot.windows) {
-                if (entry.floating !== true && entry.sticky !== true) {
-                    hasTiled = true;
+        // Quiet equal no-op from applied evidence only (never baseline
+        // authority): skip dispatch when every observed id matches applied
+        // output/workspace, floating/sticky flags and carried rect, with no
+        // extra applied ids in this domain, and bounds/gaps match the
+        // per-domain applied scope. Fresh/not-yet-applied, membership
+        // or flag change, gap/bounds change, client drift, and pending drag
+        // markers all fall through to dispatch below. Overlays stay quiet
+        // through carried rects. No baseline writes here.
+        let pureDrift = true;
+        let converged = true;
+        const observedIds = new Set<string>();
+        for (const entry of freshSnapshot.windows) {
+            observedIds.add(entry.id);
+            const evidence = this.appliedById.get(entry.id);
+            if (
+                evidence === undefined ||
+                evidence.output !== entry.output ||
+                evidence.workspace !== entry.workspace ||
+                evidence.floating !== (entry.floating === true) ||
+                evidence.sticky !== (entry.sticky === true)
+            ) {
+                pureDrift = false;
+                converged = false;
+                break;
+            }
+            if (
+                evidence.rect.x !== entry.rect.x ||
+                evidence.rect.y !== entry.rect.y ||
+                evidence.rect.w !== entry.rect.w ||
+                evidence.rect.h !== entry.rect.h
+            ) {
+                converged = false;
+            }
+        }
+        if (pureDrift) {
+            for (const [id, evidence] of this.appliedById) {
+                if (
+                    evidence.output === freshSnapshot.domainOutput &&
+                    evidence.workspace === freshSnapshot.domainWorkspace &&
+                    !observedIds.has(id)
+                ) {
+                    pureDrift = false;
+                    converged = false;
                     break;
                 }
             }
-            if (!hasTiled && freshSnapshot.windows.length > 0) {
-                return;
-            }
-            this.reconcileAttempts = 0;
-            this.parked = false;
-            // Membership takes the slot; a deferred drag pointer it replaces
-            // joins its domain marker (the new intent satisfies it on apply).
-            this.absorbDeferredDragIntent(this.deferredAuto, false);
-            // Never seed a float as a tile: when the focused window is a
-            // floating/sticky exception, name the first tiled member instead.
-            // The complete observation still rides along for convergence.
-            // With an all-tiled observation the focus names itself, so the
-            // Engine fit path and focus semantics are unchanged there.
-            let seedWindow = freshSnapshot.focusedId;
-            const focused = freshSnapshot.windows.find((entry) => entry.id === seedWindow);
-            if (focused === undefined || focused.floating === true || focused.sticky === true) {
-                for (const entry of freshSnapshot.windows) {
-                    if (entry.floating !== true && entry.sticky !== true) {
-                        seedWindow = entry.id;
-                        break;
-                    }
-                }
-            }
-            this.deferredAuto = {
-                op: "admit",
-                snapshot: freshSnapshot,
-                removed: null,
-                body: {
-                    op: "admit",
-                    window: seedWindow,
-                    output: freshSnapshot.domainOutput,
-                    workspace: freshSnapshot.domainWorkspace,
-                },
-                admissionMaximizeClears: prepared.cleared,
-            };
-            if (!this.inFlight) {
-                const next = this.deferredAuto;
-                this.deferredAuto = null;
-                if (next !== null) {
-                    this.dispatch(next);
-                }
-            }
-            return;
         }
-        const knownOutOfBounds = fresh.windows.some(
-            (entry) =>
-                !entry.fullscreen &&
-                !entry.maximized &&
-                previous.windows.some((retained) => retained.id === entry.id) &&
-                !rectContained(entry.rect, freshSnapshot.domainBounds),
-        );
+        const appliedScope = this.appliedScopeFor(freshSnapshot);
+        const scopeEqual =
+            appliedScope !== null &&
+            appliedScope.bounds.x === freshSnapshot.domainBounds.x &&
+            appliedScope.bounds.y === freshSnapshot.domainBounds.y &&
+            appliedScope.bounds.w === freshSnapshot.domainBounds.w &&
+            appliedScope.bounds.h === freshSnapshot.domainBounds.h &&
+            appliedScope.gap === freshSnapshot.domainGap &&
+            appliedScope.outerGap === freshSnapshot.domainOuterGap;
+        // Raw retained tiled out-of-bounds drift: the carried snapshot clamps
+        // it back to the applied rect, so carried equality alone would go
+        // quiet. Bypass equal/park and reconcile; the reply path never writes
+        // a fullscreen member.
+        let rawRetainedOutOfBounds = false;
         for (const entry of fresh.windows) {
-            const trace = this.constraintTracePending.get(entry.id);
-            if (trace === undefined) {
+            if (entry.fullscreen || entry.maximized) {
                 continue;
             }
-            this.constraintTracePending.delete(entry.id);
+            const evidence = this.appliedById.get(entry.id);
             if (
-                entry.rect.x !== trace.requested.x ||
-                entry.rect.y !== trace.requested.y ||
-                entry.rect.w !== trace.requested.w ||
-                entry.rect.h !== trace.requested.h
+                evidence !== undefined &&
+                evidence.output === entry.output &&
+                evidence.workspace === entry.workspace &&
+                !rectContained(entry.rect, freshSnapshot.domainBounds)
             ) {
-                this.traceConstraints(
-                    trace.correlation,
-                    "post-signal",
-                    entry.id,
-                    freshSnapshot.domainOutput,
-                    trace.resourceClass,
-                    entry.ref,
-                    freshSnapshot.domainBounds,
-                    trace.requested,
-                    entry.rect,
-                );
-            }
-        }
-        const before = new Set<string>();
-        for (const entry of previous.windows) {
-            before.add(entry.id);
-        }
-        const after = new Set<string>();
-        for (const entry of freshSnapshot.windows) {
-            after.add(entry.id);
-        }
-        let intent: AutoIntent | null = null;
-        // Never admit solely for floating/sticky exceptions: a newcomer that
-        // is already floating in the current observation converges as an
-        // exception through the Engine instead of entering tiled placement.
-        // Mixed arrivals admit the first tiled newcomer with the complete
-        // observation (carrying the exceptions for convergence).
-        let exceptionalNewcomers = false;
-        for (const entry of freshSnapshot.windows) {
-            if (!before.has(entry.id)) {
-                if (entry.floating === true || entry.sticky === true) {
-                    exceptionalNewcomers = true;
-                    continue;
-                }
-                intent = {
-                    op: "admit",
-                    snapshot: freshSnapshot,
-                    removed: null,
-                    body: { op: "admit", window: entry.id, output: freshSnapshot.domainOutput, workspace: freshSnapshot.domainWorkspace },
-                    admissionMaximizeClears: prepared.cleared,
-                };
+                rawRetainedOutOfBounds = true;
                 break;
             }
         }
-        if (intent === null) {
-            for (const entry of previous.windows) {
-                if (!after.has(entry.id)) {
-                    intent = {
-                        op: "remove",
-                        // Complete-observation convergence: the remove
-                        // dispatch carries the current complete post-removal
-                        // snapshot (survivors only, with fresh AR12 hints) so
-                        // the Engine converges then replies idempotently with
-                        // survivor geometry. The baseline diff itself is
-                        // unchanged.
-                        snapshot: this.snapshotWithFreshHints(freshSnapshot, fresh),
-                        removed: entry.id,
-                        body: { op: "remove", window: entry.id },
-                    };
-                    break;
-                }
-            }
+        if (rawRetainedOutOfBounds) {
+            converged = false;
         }
-        for (const entry of previous.windows) {
-            if (!after.has(entry.id)) {
-                this.maximizeAdmissionAttempts.delete(entry.id);
-                this.keepAbovePrevious.delete(entry.id);
-                this.stickyPreviousFloating.delete(entry.id);
-                this.adoptedSticky.delete(entry.id);
-                try {
-                    this.env.noteRemoved?.(entry.id);
-                } catch (error) {
-                    void error;
-                }
-            }
-        }
-        if (intent !== null) {
-            this.reconcileAttempts = 0;
-            this.parked = false;
+        // Work-area scope transition: same applied window set with changed
+        // bounds and equal applied gaps. Dispatches applied reprojection even
+        // while interactive or parked, even in-flight deferred, with park
+        // reset.
+        if (
+            appliedScope !== null &&
+            appliedScope.gap === freshSnapshot.domainGap &&
+            appliedScope.outerGap === freshSnapshot.domainOuterGap &&
+            (appliedScope.bounds.x !== freshSnapshot.domainBounds.x ||
+                appliedScope.bounds.y !== freshSnapshot.domainBounds.y ||
+                appliedScope.bounds.w !== freshSnapshot.domainBounds.w ||
+                appliedScope.bounds.h !== freshSnapshot.domainBounds.h) &&
+            this.appliedWindowSetMatches(freshSnapshot)
+        ) {
+            const oldBounds = appliedScope.bounds;
+            const newBounds = freshSnapshot.domainBounds;
+            this.logToken(
+                `${LOG_PREFIX}:scope-transition old=${String(oldBounds.x)},${String(oldBounds.y)},${String(oldBounds.w)},${String(oldBounds.h)} new=${String(newBounds.x)},${String(newBounds.y)},${String(newBounds.w)},${String(newBounds.h)}`,
+            );
+            this.logToken(`${LOG_PREFIX}:work-area-reprojection selected=retained`);
             this.pointerEcho = null;
-            // Membership takes the slot; a deferred drag pointer it replaces
-            // joins its domain marker (the new intent satisfies it on apply).
-            this.absorbDeferredDragIntent(this.deferredAuto, false);
-            this.deferredAuto = intent;
-            if (this.inFlight) {
-                return;
-            }
-            const next = this.deferredAuto;
-            this.deferredAuto = null;
-            if (next !== null) {
-                this.dispatch(next);
-            }
-            return;
-        }
-        // Retained-member floating/sticky transition with unchanged membership:
-        // converge through an ordinary reconcile carrying the current complete
-        // observation so the Engine adopts (or releases) the floating
-        // exception and projects the survivors. snapshotsEqual and sameRects
-        // below deliberately ignore these flags, so without this branch the
-        // skew would be silently absorbed and never converge.
-        if (floatingSkewed(previous, freshSnapshot)) {
+            this.resetReconcileState();
             this.absorbDeferredDragIntent(this.deferredAuto, false);
             this.deferredAuto = {
                 op: "reconcile",
-                snapshot: freshSnapshot,
+                snapshot: this.reprojectionSnapshot(fresh),
                 removed: null,
                 body: { op: "reconcile" },
+                workAreaReprojection: true,
+                admissionMaximizeClears: prepared.cleared,
             };
             if (this.inFlight) {
                 return;
             }
-            const pendingReconcile = this.deferredAuto;
+            const nextReprojection = this.deferredAuto;
             this.deferredAuto = null;
-            if (pendingReconcile !== null) {
-                this.dispatch(pendingReconcile);
+            if (nextReprojection !== null) {
+                this.dispatch(nextReprojection);
             }
             return;
         }
-        if (exceptionalNewcomers) {
-            // New members are all floating/sticky exceptions: never admit
-            // solely for them and leave the baseline untouched (no silent
-            // absorb, so a later tiling of the same window still admits).
-            return;
-        }
-        if (snapshotsEqual(freshSnapshot, previous) && !knownOutOfBounds) {
+        const restoreKey = this.domainKey(freshSnapshot);
+        const restoreMarker = this.dragRestore.get(restoreKey);
+        const hasPendingMarker =
+            restoreMarker !== undefined && !restoreMarker.dispatched && restoreMarker.drags.length > 0;
+        if (pureDrift && converged && scopeEqual && !hasPendingMarker && freshSnapshot.windows.length > 0 && !rawRetainedOutOfBounds) {
             if (this.pointerEcho !== null) {
                 this.logToken(`${LOG_PREFIX}:echo-fence-cleared-equality`);
             }
             this.pointerEcho = null;
             this.reconcileAttempts = 0;
             this.parked = false;
-            // Redundant queued reconciles clear; a deferred drag pointer is
-            // folded into its marker first and converges through the marker.
             this.absorbDeferredDragIntent(this.deferredAuto, true);
             if (this.deferredAuto !== null && this.deferredAuto.op === "reconcile") {
                 this.deferredAuto = null;
@@ -4046,110 +4001,15 @@ export class PlanAdapter {
             }
             return;
         }
-        if (
-            sameDomainAndWindowSet(previous, freshSnapshot) &&
-            (previous.domainBounds.x !== freshSnapshot.domainBounds.x ||
-                previous.domainBounds.y !== freshSnapshot.domainBounds.y ||
-                previous.domainBounds.w !== freshSnapshot.domainBounds.w ||
-                previous.domainBounds.h !== freshSnapshot.domainBounds.h)
-        ) {
-            const oldBounds = previous.domainBounds;
-            const newBounds = freshSnapshot.domainBounds;
-            this.logToken(
-                `${LOG_PREFIX}:scope-transition old=${String(oldBounds.x)},${String(oldBounds.y)},${String(oldBounds.w)},${String(oldBounds.h)} new=${String(newBounds.x)},${String(newBounds.y)},${String(newBounds.w)},${String(newBounds.h)}`,
-            );
-            this.logToken(`${LOG_PREFIX}:work-area-reprojection selected=retained`);
-            this.pointerEcho = null;
-            this.resetReconcileState();
-            this.absorbDeferredDragIntent(this.deferredAuto, false);
-            this.deferredAuto = {
-                op: "reconcile",
-                snapshot: this.reprojectionSnapshot(fresh, previous),
-                removed: null,
-                body: { op: "reconcile" },
-                workAreaReprojection: true,
-            };
-            if (this.inFlight) {
-                return;
-            }
-            const next = this.deferredAuto;
-            this.deferredAuto = null;
-            if (next !== null) {
-                this.dispatch(next);
-            }
-            return;
-        }
-        // Deliberate gap reload: the same domain and complete window set with
-        // a changed inner and/or outer gap reprojection through the retained
-        // route, preserving topology, shares, and focus. Bounds may have
-        // changed alongside; the retained route folds both into one
-        // projection. This never reseeds: a rejected update keeps the old
-        // baseline and ordinary drift accounting is untouched.
-        if (sameGapUpdateScope(previous, freshSnapshot)) {
-            const oldInner = previous.domainGap;
-            const oldOuter = previous.domainOuterGap;
-            this.logToken(
-                `${LOG_PREFIX}:gap-reprojection selected=retained inner=${String(oldInner)}->${String(freshSnapshot.domainGap)} outer=${String(oldOuter)}->${String(freshSnapshot.domainOuterGap)}`,
-            );
-            this.pointerEcho = null;
-            this.absorbDeferredDragIntent(this.deferredAuto, false);
-            this.deferredAuto = {
-                op: "update-gaps",
-                snapshot: freshSnapshot,
-                removed: null,
-                body: { op: "update-gaps" },
-            };
-            if (this.inFlight) {
-                return;
-            }
-            const next = this.deferredAuto;
-            this.deferredAuto = null;
-            if (next !== null) {
-                this.dispatch(next);
-            }
-            return;
-        }
-        if (sameRects(previous, freshSnapshot) && !knownOutOfBounds) {
-            this.pointerEcho = null;
-            this.setLastGood(freshSnapshot);
-            this.reconcileAttempts = 0;
-            this.parked = false;
-            if (this.inFlight) {
-                return;
-            }
-            const next = this.deferredAuto;
-            this.deferredAuto = null;
-            if (next !== null) {
-                this.dispatch(next);
-            }
-            return;
-        }
-        if (!sameScope(previous, freshSnapshot)) {
-            this.setLastGood(freshSnapshot);
-            this.reconcileAttempts = 0;
-            this.parked = false;
-            this.pointerEcho = null;
-            if (this.inFlight) {
-                return;
-            }
-            const next = this.deferredAuto;
-            this.deferredAuto = null;
-            if (next !== null) {
-                this.dispatch(next);
-            }
-            return;
-        }
-        // Echo fence: exactly one one-shot neighbour-write expectation
-        // keyed by pointer correlation and source. Consume only when same-scope
-        // fresh neighbour rectangles equal the planned rectangles; update
-        // lastGood and return. Any mismatch falls through to bounded
-        // reconciliation. Never applies to broad scope signals above.
+        // Pointer echo consume: a matching neighbour echo means the planned
+        // geometry already landed, so consume the one-shot fence with no
+        // second write and no baseline mutation. A mismatch falls through to
+        // one ordinary reconcile below.
         const echo = this.pointerEcho;
         if (echo !== null) {
             this.pointerEcho = null;
             if (this.echoMatches(freshSnapshot, echo)) {
                 this.logToken(`${LOG_PREFIX}:echo-fence-consumed`);
-                this.setLastGood(freshSnapshot);
                 this.reconcileAttempts = 0;
                 this.parked = false;
                 this.absorbDeferredDragIntent(this.deferredAuto, true);
@@ -4168,10 +4028,6 @@ export class PlanAdapter {
             }
             this.logToken(`${LOG_PREFIX}:echo-fence-mismatched`);
         }
-        if (this.parked || this.reconcileAttempts >= MAX_RECONCILE_ATTEMPTS) {
-            this.parked = true;
-            return;
-        }
         if (this.interactiveResizeActive()) {
             // A deferred drag pointer waits out the live gesture inside its
             // marker; ordinary queued reconciles keep the established clear.
@@ -4181,8 +4037,23 @@ export class PlanAdapter {
             }
             return;
         }
-        // Ordinary drift converge. A deferred drag pointer superseded here
-        // joins its domain marker (the fresh reconcile below satisfies it on
+        // Bounded park gate from per-id applied evidence only (never baseline
+        // authority): pure geometry drift parks after three failed
+        // reassertions, but only when every observed member is already applied
+        // on this domain with unchanged floating/sticky flags and equal
+        // transitional scope. Any fresh newcomer, departure, flag change, or
+        // gap/bounds change resets the counters and always dispatches, even
+        // when a previous drift parked. Raw retained out-of-bounds drift
+        // bypasses the park like a scope change: it always converges.
+        if (!pureDrift || converged || rawRetainedOutOfBounds) {
+            this.reconcileAttempts = 0;
+            this.parked = false;
+        } else if ((this.parked || this.reconcileAttempts >= MAX_RECONCILE_ATTEMPTS) && scopeEqual) {
+            this.parked = true;
+            return;
+        }
+        // Ordinary converge: a deferred drag pointer superseded here joins
+        // its domain marker (the fresh reconcile below satisfies it on
         // apply); the slot itself carries no drag binding.
         this.absorbDeferredDragIntent(this.deferredAuto, false);
         this.deferredAuto = {
@@ -4190,6 +4061,7 @@ export class PlanAdapter {
             snapshot: freshSnapshot,
             removed: null,
             body: { op: "reconcile" },
+            admissionMaximizeClears: prepared.cleared,
         };
         if (this.inFlight) {
             return;
@@ -4201,14 +4073,6 @@ export class PlanAdapter {
         }
     }
 
-    // Background tiling: adopt/reconcile hidden (non-visible output,
-    // workspace) domains without touching desktop visibility or native focus.
-    // Runs only while idle (no flight, no deferred foreground intent) and
-    // never while a send flight blocks Plan. Dispatches at most one
-    // admit/remove/reconcile flight per round through the shared single-flight;
-    // the finishFlight chain picks up the next domain. Per-domain baselines
-    // advance only on applied replies via the shared writeGeometries path, and
-    // the existing domain/window protocol caps fail closed here as everywhere.
     private refreshHiddenNow(): void {
         if (!this.enabled || this.inFlight || this.deferredAuto !== null) {
             return;
@@ -4237,12 +4101,19 @@ export class PlanAdapter {
             }
         }
         // Every validated hidden domain is considered: explicit empty-source
-        // cleanup for an already-retained domain releases its baseline, and
-        // new domains admit without a domain-count gate. Retained domains
-        // converge below.
+        // cleanup for an already-retained domain converges through reconcile,
+        // and new domains converge without a domain-count gate. Retained
+        // domains converge below. Each complete domain is visited at most
+        // once per chain (marked even when no intent is sent); absence stays
+        // unknown and never synthesizes empty evidence.
         const nonEmpty = valid.filter((entry) => entry.windows.length > 0);
         const emptyExplicit = valid.filter((entry) => entry.windows.length === 0);
         for (const observed of nonEmpty) {
+            const key = this.domainKey(observed);
+            if (this.hiddenVisited.has(key)) {
+                continue;
+            }
+            this.hiddenVisited.add(key);
             const intent = this.hiddenIntentFor(observed);
             if (intent !== null) {
                 this.dispatch(intent);
@@ -4253,8 +4124,8 @@ export class PlanAdapter {
         // empty-domain evidence whose output is not tainted/unclassifiable.
         // Absence is unknown (exception transition, tainted output,
         // unreadable domain, or overall failure) and must never synthesize
-        // an empty snapshot. Per-domain baselines are cleaned
-        // only via applied removes; attempts/parked use the per-domain
+        // an empty snapshot. Per-domain baselines are retired
+        // only via applied reconcile convergence; attempts/parked use the per-domain
         // background accounting. No visibility history or polling is invented.
         let foregroundKey: string | null = null;
         try {
@@ -4271,17 +4142,14 @@ export class PlanAdapter {
             if (foregroundKey !== null && key === foregroundKey) {
                 continue;
             }
-            const previous = this.lastGoodByDomain.get(key);
-            if (previous === undefined || previous.windows.length === 0) {
+            if (this.hiddenVisited.has(key)) {
                 continue;
             }
-            // Single-remove transaction only: when several members vanish
-            // together the exact missing set cannot be committed safely, so
-            // stay fail-closed without dispatching (no retry noise, no false
-            // commit). The retained baseline is kept; see residual notes.
-            if (previous.windows.length !== 1) {
-                continue;
-            }
+            this.hiddenVisited.add(key);
+            // Explicit complete empty with retained applied members converges
+            // through one reconcile (Engine retires the slot after its
+            // fences), even when several members vanished together. Domains
+            // without applied evidence/scope stay quiet inside hiddenIntentFor.
             const intent = this.hiddenIntentFor(observed);
             if (intent !== null) {
                 this.dispatch(intent);
@@ -4322,193 +4190,177 @@ export class PlanAdapter {
     }
 
     // Single hidden-domain lifecycle step mirroring the foreground
-    // admit/remove/reconcile derivation, minus focus advancement, echo fences,
-    // and interactive commands. The anchor focusedId is recomputed
-    // deterministically from the same members and rects, so the shared
-    // snapshot-equality reply checks apply unchanged.
+    // reconcile derivation, minus focus advancement, echo fences,
+    // and interactive commands. Every complete observation (fresh, retained
+    // membership/departure, exception-only, explicit empty) converges through
+    // reconcile; the Engine adopts newcomers/departures/exceptions and
+    // retires explicit-empty domains. KWin never selects admit/remove here.
+    // Membership/flags/rects use per-id applied evidence only (never baseline
+    // authority); the per-domain applied scope below supplies applied
+    // bounds/gaps scope. Quiet equal reads write no baseline. Never dispatches
+    // for hidden domains (no focus writes).
     private hiddenIntentFor(observed: PlanObserved): AutoIntent | null {
-        const key = this.domainKey(observed);
-        if (this.backgroundParked.has(key) || (this.backgroundAttempts.get(key) ?? 0) >= MAX_RECONCILE_ATTEMPTS) {
-            if (!this.backgroundParked.has(key)) {
-                this.backgroundParked.add(key);
-                this.logToken(`${LOG_PREFIX}:reconcile-parked`);
-            }
-            return null;
-        }
-        // Exception-only domains stay observable to protect a retained
-        // baseline but never dispatch admission/reconcile/removal solely for
-        // exception members. Existing exceptional geometry/no-focus behavior
-        // is preserved by leaving the baseline untouched.
-        if (observed.windows.length > 0) {
-            let hasEligibleTiled = false;
-            for (const entry of observed.windows) {
-                if (!entry.fullscreen && !entry.maximized && entry.floating !== true && entry.sticky !== true) {
-                    hasEligibleTiled = true;
-                    break;
-                }
-            }
-            if (!hasEligibleTiled) {
-                return null;
-            }
-        } else {
-            // Explicit empty evidence never admits: without a retained
-            // baseline there is nothing to retire.
-            if (this.lastGoodFor(snapshotOf(observed)) === null) {
-                return null;
-            }
-        }
-        const prepared = this.clearMaximizeAtAdmission(observed, this.lastGoodFor(snapshotOf(observed)), () =>
+        const prepared = this.clearMaximizeAtAdmission(observed, null, () =>
             this.freshHiddenFor(observed),
         );
         if (prepared === null) {
             return null;
         }
         const freshSnapshot = this.carriedSnapshot(prepared.observed);
-        const previous = this.lastGoodFor(freshSnapshot);
-        if (previous === null) {
-            // Never seed a float as a tile: when the structural anchor is a
-            // floating/sticky exception (e.g. an all-float domain that later
-            // gained a tiled member), name the first tiled member instead.
-            // The complete observation still rides along for convergence.
-            // An all-float domain never reaches here (exception-only guard
-            // above), so a tiled member always exists; keeping the anchor
-            // below only satisfies the types.
-            let seedWindow = freshSnapshot.focusedId;
-            const anchor = freshSnapshot.windows.find((entry) => entry.id === seedWindow);
-            if (anchor === undefined || anchor.floating === true || anchor.sticky === true) {
-                for (const entry of freshSnapshot.windows) {
-                    if (entry.floating !== true && entry.sticky !== true) {
-                        seedWindow = entry.id;
-                        break;
-                    }
+        const appliedScope = this.appliedScopeFor(freshSnapshot);
+        const observedIds = new Set<string>();
+        for (const entry of freshSnapshot.windows) {
+            observedIds.add(entry.id);
+        }
+        // Explicit empty dispatches only with actual applied evidence/scope
+        // for that domain; absence is unknown and never synthesizes empty.
+        if (freshSnapshot.windows.length === 0) {
+            if (appliedScope === null && !this.hasAppliedEvidenceFor(freshSnapshot)) {
+                return null;
+            }
+        }
+        // Observation-driven equal/flag/rect via applied evidence only: every
+        // observed id must match applied output/workspace and floating/sticky
+        // flags (pureDrift), with identical carried rects (converged). Extra
+        // applied ids in this domain break both. Overlays stay quiet through
+        // carried rects. Exception-only newcomers/changes fall out as
+        // non-pure-drift below and always converge, never park.
+        let pureDrift = true;
+        let converged = true;
+        for (const entry of freshSnapshot.windows) {
+            const evidence = this.appliedById.get(entry.id);
+            const floating = entry.floating === true;
+            const sticky = entry.sticky === true;
+            if (evidence === undefined || evidence.floating !== floating || evidence.sticky !== sticky) {
+                pureDrift = false;
+                converged = false;
+                break;
+            }
+            // Sticky windows are multi-homed across domains sharing one
+            // per-id evidence slot: every domain's apply rewrites the slot's
+            // output/workspace/rect, so a strict domain/rect comparison would
+            // flap and ping-pong dispatches between domains, starving fresh
+            // domains of the single-flight slot. Matching sticky flags prove
+            // the same multi-homed window; its geometry is natively owned per
+            // domain and never actuated, so domain and rect are forgiven here.
+            // Flag transitions still mismatch above and always converge.
+            const multiHomed = sticky && evidence.sticky === true;
+            if (!multiHomed && (evidence.output !== entry.output || evidence.workspace !== entry.workspace)) {
+                pureDrift = false;
+                converged = false;
+                break;
+            }
+            if (
+                !multiHomed &&
+                (evidence.rect.x !== entry.rect.x ||
+                    evidence.rect.y !== entry.rect.y ||
+                    evidence.rect.w !== entry.rect.w ||
+                    evidence.rect.h !== entry.rect.h)
+            ) {
+                converged = false;
+            }
+        }
+        if (pureDrift) {
+            for (const [id, evidence] of this.appliedById) {
+                if (
+                    evidence.output === freshSnapshot.domainOutput &&
+                    evidence.workspace === freshSnapshot.domainWorkspace &&
+                    !observedIds.has(id)
+                ) {
+                    pureDrift = false;
+                    converged = false;
+                    break;
                 }
             }
-            return {
-                op: "admit",
-                snapshot: freshSnapshot,
-                removed: null,
-                body: {
-                    op: "admit",
-                    window: seedWindow,
-                    output: freshSnapshot.domainOutput,
-                    workspace: freshSnapshot.domainWorkspace,
-                },
-                admissionMaximizeClears: prepared.cleared,
-                background: true,
-            };
         }
-        const before = new Set<string>();
-        for (const entry of previous.windows) {
-            before.add(entry.id);
+        // Raw retained out-of-bounds drift: the carried snapshot clamps it
+        // back to the applied rect, so carried equality alone would go quiet.
+        // Bypass equal/park and reconcile; the reply path never writes a
+        // fullscreen member.
+        let rawRetainedOutOfBounds = false;
+        for (const entry of prepared.observed.windows) {
+            if (entry.fullscreen || entry.maximized) {
+                continue;
+            }
+            const evidence = this.appliedById.get(entry.id);
+            if (
+                evidence !== undefined &&
+                evidence.output === entry.output &&
+                evidence.workspace === entry.workspace &&
+                !rectContained(entry.rect, freshSnapshot.domainBounds)
+            ) {
+                rawRetainedOutOfBounds = true;
+                break;
+            }
         }
-        const after = new Set<string>();
-        for (const entry of freshSnapshot.windows) {
-            after.add(entry.id);
+        if (rawRetainedOutOfBounds) {
+            converged = false;
         }
-        for (const entry of previous.windows) {
-            if (!after.has(entry.id)) {
-                this.maximizeAdmissionAttempts.delete(entry.id);
-                this.stickyPreviousFloating.delete(entry.id);
-                this.adoptedSticky.delete(entry.id);
+        const scopeEqual =
+            appliedScope !== null &&
+            appliedScope.bounds.x === freshSnapshot.domainBounds.x &&
+            appliedScope.bounds.y === freshSnapshot.domainBounds.y &&
+            appliedScope.bounds.w === freshSnapshot.domainBounds.w &&
+            appliedScope.bounds.h === freshSnapshot.domainBounds.h &&
+            appliedScope.gap === freshSnapshot.domainGap &&
+            appliedScope.outerGap === freshSnapshot.domainOuterGap;
+        // Proven-departure cleanup only: an applied id in this domain omitted
+        // from the complete observation retires its sticky/keep-above state
+        // and emits noteRemoved. Covers single, simultaneous, and explicit
+        // empty departures in one place.
+        for (const [id, evidence] of [...this.appliedById]) {
+            if (
+                evidence.output === freshSnapshot.domainOutput &&
+                evidence.workspace === freshSnapshot.domainWorkspace &&
+                !observedIds.has(id)
+            ) {
+                this.maximizeAdmissionAttempts.delete(id);
+                this.keepAbovePrevious.delete(id);
+                this.stickyPreviousFloating.delete(id);
+                this.adoptedSticky.delete(id);
                 try {
-                    this.env.noteRemoved?.(entry.id);
+                    this.env.noteRemoved?.(id);
                 } catch (error) {
                     void error;
                 }
             }
         }
-        let exceptionalNewcomers = false;
-        for (const entry of freshSnapshot.windows) {
-            if (!before.has(entry.id)) {
-                // Never admit solely for floating/sticky exceptions (e.g. a
-                // sticky window multi-homed into a foreign domain): it
-                // converges as an exception instead of entering tiled
-                // placement there. Mixed arrivals admit the first tiled
-                // newcomer with the complete observation.
-                if (entry.floating === true || entry.sticky === true) {
-                    exceptionalNewcomers = true;
-                    continue;
-                }
-                return {
-                    op: "admit",
-                    snapshot: freshSnapshot,
-                    removed: null,
-                    body: {
-                        op: "admit",
-                        window: entry.id,
-                        output: freshSnapshot.domainOutput,
-                        workspace: freshSnapshot.domainWorkspace,
-                    },
-                    admissionMaximizeClears: prepared.cleared,
-                    background: true,
-                };
-            }
-        }
-        const missing: string[] = [];
-        for (const entry of previous.windows) {
-            if (!after.has(entry.id)) {
-                missing.push(entry.id);
-            }
-        }
-        // Single-remove transaction only: several simultaneous disappearances
-        // cannot be committed safely, so stay fail-closed without dispatching
-        // (no retry noise, no false commit). The baseline is preserved.
-        if (missing.length > 1) {
-            return null;
-        }
-        if (missing.length === 1) {
-            const single = missing[0] as string;
-            return {
-                op: "remove",
-                // Complete-observation convergence: the hidden remove
-                // dispatch carries the current complete post-removal
-                // snapshot (survivors only, with fresh hints) so the Engine
-                // converges then replies idempotently with survivor
-                // geometry. The baseline diff itself is unchanged.
-                snapshot: this.snapshotWithFreshHints(freshSnapshot, prepared.observed),
-                removed: single,
-                body: { op: "remove", window: single },
-                background: true,
-            };
-        }
-        const knownOutOfBounds = prepared.observed.windows.some(
-            (entry) =>
-                !entry.fullscreen &&
-                !entry.maximized &&
-                before.has(entry.id) &&
-                !rectContained(entry.rect, freshSnapshot.domainBounds),
-        );
-        // Retained-member floating/sticky transition with unchanged membership:
-        // converge through an ordinary reconcile carrying the current complete
-        // observation so the Engine adopts (or releases) the floating
-        // exception and projects the survivors.
-        if (floatingSkewed(previous, freshSnapshot)) {
+        // Explicit empty with retained applied members retires through one
+        // reconcile (Engine retires the slot after its fences), even when
+        // several members vanished together. Membership/exception-only
+        // changed never parks: any id-set or floating/sticky flag difference
+        // versus applied evidence converges through one reconcile carrying
+        // the complete observation.
+        if (freshSnapshot.windows.length === 0 || !pureDrift) {
             return {
                 op: "reconcile",
                 snapshot: freshSnapshot,
                 removed: null,
                 body: { op: "reconcile" },
+                admissionMaximizeClears: prepared.cleared,
                 background: true,
             };
         }
-        if (exceptionalNewcomers) {
-            // New members are all floating/sticky exceptions: never admit
-            // solely for them and leave the baseline untouched, so a later
-            // tiling of the same window still admits.
-            return null;
-        }
-        if (snapshotsEqual(freshSnapshot, previous) && !knownOutOfBounds) {
+        // Quiet unchanged hidden domains: fully converged with equal applied
+        // scope. Writes no baseline; clears drift accounting so the
+        // once-per-chain bound cannot self-chain.
+        if (converged && scopeEqual && !rawRetainedOutOfBounds) {
             this.clearBackgroundReconcile(freshSnapshot);
             return null;
         }
+        // Work-area scope transition: same applied window set (pureDrift holds
+        // here) with changed bounds and equal applied gaps. Dispatches applied
+        // reprojection with park bypass.
         if (
-            sameDomainAndWindowSet(previous, freshSnapshot) &&
-            (previous.domainBounds.x !== freshSnapshot.domainBounds.x ||
-                previous.domainBounds.y !== freshSnapshot.domainBounds.y ||
-                previous.domainBounds.w !== freshSnapshot.domainBounds.w ||
-                previous.domainBounds.h !== freshSnapshot.domainBounds.h)
+            appliedScope !== null &&
+            appliedScope.gap === freshSnapshot.domainGap &&
+            appliedScope.outerGap === freshSnapshot.domainOuterGap &&
+            (appliedScope.bounds.x !== freshSnapshot.domainBounds.x ||
+                appliedScope.bounds.y !== freshSnapshot.domainBounds.y ||
+                appliedScope.bounds.w !== freshSnapshot.domainBounds.w ||
+                appliedScope.bounds.h !== freshSnapshot.domainBounds.h)
         ) {
-            const oldBounds = previous.domainBounds;
+            const oldBounds = appliedScope.bounds;
             const newBounds = freshSnapshot.domainBounds;
             this.logToken(
                 `${LOG_PREFIX}:scope-transition old=${String(oldBounds.x)},${String(oldBounds.y)},${String(oldBounds.w)},${String(oldBounds.h)} new=${String(newBounds.x)},${String(newBounds.y)},${String(newBounds.w)},${String(newBounds.h)}`,
@@ -4517,17 +4369,20 @@ export class PlanAdapter {
             this.clearBackgroundReconcile(freshSnapshot);
             return {
                 op: "reconcile",
-                snapshot: this.reprojectionSnapshot(prepared.observed, previous),
+                snapshot: this.reprojectionSnapshot(prepared.observed),
                 removed: null,
                 body: { op: "reconcile" },
                 workAreaReprojection: true,
                 background: true,
             };
         }
-        // Deliberate gap reload for a background domain: same membership with
-        // a changed inner and/or outer gap, converged through the shared
-        // single-flight without touching visibility or focus.
-        if (sameGapUpdateScope(previous, freshSnapshot)) {
+        // Deliberate gap reload: same applied window set with a changed inner
+        // and/or outer gap, converged without touching focus.
+        if (
+            appliedScope !== null &&
+            (appliedScope.gap !== freshSnapshot.domainGap ||
+                appliedScope.outerGap !== freshSnapshot.domainOuterGap)
+        ) {
             this.logToken(`${LOG_PREFIX}:gap-reprojection selected=retained`);
             return {
                 op: "update-gaps",
@@ -4537,14 +4392,14 @@ export class PlanAdapter {
                 background: true,
             };
         }
-        if (sameRects(previous, freshSnapshot) && !knownOutOfBounds) {
-            this.setLastGood(freshSnapshot);
-            this.clearBackgroundReconcile(freshSnapshot);
-            return null;
-        }
-        if (!sameScope(previous, freshSnapshot)) {
-            this.setLastGood(freshSnapshot);
-            this.clearBackgroundReconcile(freshSnapshot);
+        // Bounded parking applies only to pure geometry drift below:
+        // membership/flag changes already returned above and never park.
+        const key = this.domainKey(observed);
+        if (this.backgroundParked.has(key) || (this.backgroundAttempts.get(key) ?? 0) >= MAX_RECONCILE_ATTEMPTS) {
+            if (!this.backgroundParked.has(key)) {
+                this.backgroundParked.add(key);
+                this.logToken(`${LOG_PREFIX}:reconcile-parked`);
+            }
             return null;
         }
         return {
@@ -4579,12 +4434,8 @@ export class PlanAdapter {
         previous: PlanSnapshot | null,
         refetch: () => PlanObserved | null = () => this.freshObserved(),
     ): { observed: PlanObserved; cleared: ReadonlyArray<string> } | null {
-        const known = new Set<string>();
-        if (previous !== null) {
-            for (const entry of previous.windows) {
-                known.add(entry.id);
-            }
-        }
+        void previous;
+        const known = this.appliedById;
         const attempted: Array<{ id: string; ref: object; resourceClass: string }> = [];
         for (const entry of observed.windows) {
             if (entry.fullscreen || !entry.maximized || known.has(entry.id) || this.maximizeAdmissionAttempts.has(entry.id)) {
@@ -4679,6 +4530,26 @@ export class PlanAdapter {
             // signal. A later work-area reprojection clears the park.
             this.logToken(`${LOG_PREFIX}:reconcile-parked`);
         }
+    }
+
+    // Bounded park accounting for the automatic foreground route: only
+    // same-membership pure-drift reconciles advance the three-strike park.
+    // A reconcile carrying tiled membership or floating/sticky flag changes
+    // (the retired admit/remove shape, including fresh seeds with no
+    // applied evidence yet) never advances it; work-area reprojections keep
+    // their existing early return through the delegate below. Reads
+    // before-apply per-id evidence only, never baseline authority.
+    private noteAutoReconcileTerminal(flightState: PendingFlight): void {
+        if (
+            flightState.op === "reconcile" &&
+            flightState.background !== true &&
+            flightState.workAreaReprojection !== true
+        ) {
+            if (this.appliedMembershipOrFlagsChanged(flightState.snapshot)) {
+                return;
+            }
+        }
+        this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
     }
 
     private dispatch(intent: AutoIntent): void {
@@ -5271,9 +5142,9 @@ export class PlanAdapter {
             return;
         }
         // Old flight is already terminal here; late old-generation callbacks
-        // are fenced by the session bump below. Clear the KWin lifecycle
-        // baseline so CURRENT eligible windows form a fresh session through
-        // the existing fresh-admit route (Rust near-strip fitting with normal
+        // are fenced by the session bump below. Clear KWin lifecycle
+        // evidence so CURRENT eligible windows form a fresh session through
+        // the existing fresh-observation route (Rust near-strip fitting with normal
         // tiling when no fit applies). Never replay the old command. While a workspace send is
         // active, uncertain (plan-blocked), or otherwise blocking Plan, this
         // edge stays unavailable. A failed fresh activation stays
@@ -5285,7 +5156,8 @@ export class PlanAdapter {
         this.pending = null;
         this.knownOwner = null;
         this.activeProbe = 0;
-        this.lastGoodByDomain.clear();
+        this.appliedById.clear();
+        this.appliedScopeByDomain.clear();
         this.reconcileAttempts = 0;
         this.parked = false;
         this.backgroundAttempts.clear();
@@ -5487,7 +5359,7 @@ export class PlanAdapter {
             if (flightState.background === true) {
                 this.noteBackgroundTerminal(flightState.snapshot);
             } else {
-                this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
+                this.noteAutoReconcileTerminal(flightState);
             }
             // A Planner-rejected drag pointer feeds its domain marker for one
             // bounded converge; a rejected marker reconcile itself only logs
@@ -5497,6 +5369,46 @@ export class PlanAdapter {
                 this.noteDragRejected(dragPointer, kind, flightState.pointerSource, flightState.snapshot.domainOutput, flightState.snapshot.domainWorkspace);
             } else {
                 this.failDragRestore(flightState, "rejected");
+            }
+            // Correlated gap-mismatch retry: an automatic reconcile refused
+            // solely for inner/outer gaps re-observes the same domain fresh
+            // (foreground observation, or same hidden-domain observation for
+            // background flights) and dispatches at most one update-gaps
+            // through the ordinary single-flight below. Never from update-gaps,
+            // diverged, owner/stale/uncertain/malformed, cross-domain
+            // evidence, marker/pointer flights, or a superseded slot: an
+            // update-gaps rejection never retries, and a queued intent wins
+            // so its own flight governs the next attempt.
+            if (
+                kind === "domain-mismatch" &&
+                isGapMismatchMessage(parsed["message"]) &&
+                flightState.op === "reconcile" &&
+                flightState.workAreaReprojection !== true &&
+                (flightState.restoreMarker ?? null) === null &&
+                this.dragSourceOf(flightState) === null &&
+                this.deferredAuto === null
+            ) {
+                const isHiddenRetry = flightState.background === true;
+                const retryObserved = isHiddenRetry
+                    ? this.freshHiddenFor(flightState.snapshot)
+                    : this.freshObserved();
+                if (retryObserved !== null) {
+                    const retrySnapshot = this.carriedSnapshot(retryObserved);
+                    if (this.domainKey(snapshotOf(retryObserved)) === this.domainKey(flightState.snapshot)) {
+                        this.logToken(
+                            `${LOG_PREFIX}:gap-reprojection selected=retry inner=${String(flightState.snapshot.domainGap)}->${String(retrySnapshot.domainGap)} outer=${String(flightState.snapshot.domainOuterGap)}->${String(retrySnapshot.domainOuterGap)}`,
+                        );
+                        this.pointerEcho = null;
+                        this.deferredAuto = {
+                            op: "update-gaps",
+                            snapshot: retrySnapshot,
+                            removed: null,
+                            body: { op: "update-gaps" },
+                            admissionMaximizeClears: flightState.admissionMaximizeClears,
+                            ...(isHiddenRetry ? { background: true as const } : {}),
+                        };
+                    }
+                }
             }
             this.finishFlight();
             return;
@@ -5522,7 +5434,7 @@ export class PlanAdapter {
             if (flightState.background === true) {
                 this.noteBackgroundTerminal(flightState.snapshot);
             } else {
-                this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
+                this.noteAutoReconcileTerminal(flightState);
             }
             // A stale drag pointer feeds its marker; a stale marker
             // reconcile gets one terminal per drag naming this plan.
@@ -5572,13 +5484,13 @@ export class PlanAdapter {
     // line plus one bounded record per mismatched member using the existing
     // opaque window id convention, each with its observed
     // floating/sticky/fullscreen/maximized flags and known floating source.
-    // Retained tiled membership comes from the adapter last-good baseline
-    // when available and is labeled adapter-last-good evidence, never
-    // asserted as core state. For core partial-observation (no planned
-    // geometry) members compare only against actual retained evidence;
-    // without it the log reports retained=unknown and claims no precise
-    // cause. Counts only otherwise; no rects, no raw native ids. Member
-    // records are bounded by the built request byte cap.
+    // Retained tiled membership comes from before-apply per-id applied
+    // evidence on the same domain (never baseline authority, never core
+    // state). For core partial-observation (no planned geometry) members
+    // compare only against actual applied evidence; without it the log
+    // reports retained=unknown and claims no precise cause. Counts only
+    // otherwise; no rects, no raw native ids. Member records are bounded
+    // by the built request byte cap.
     private logCoverSkew(flightState: PendingFlight, planned: PlannedReply | null, reason: string): void {
         try {
             interface SkewFlags {
@@ -5621,19 +5533,46 @@ export class PlanAdapter {
             if (flightState.removed !== null) {
                 wanted.delete(flightState.removed);
             }
-            // Adapter last-good evidence (never core state): retained tiled
-            // members under the flight domain key.
-            const retained = this.lastGoodFor(flightState.snapshot);
+            // Before-apply per-id evidence (never core state, never baseline
+            // authority): retained tiled members homed to the flight domain,
+            // plus sticky multi-homed members observed here with matching
+            // sticky flags even when the shared slot was last written by
+            // another domain.
+            const hasApplied = this.hasAppliedEvidenceFor(flightState.snapshot);
             const retainedTiled = new Map<string, SkewFlags>();
-            if (retained !== null) {
-                for (const entry of retained.windows) {
-                    if (entry.floating !== true) {
+            if (hasApplied) {
+                for (const [id, evidence] of this.appliedById) {
+                    if (
+                        evidence.output === flightState.snapshot.domainOutput &&
+                        evidence.workspace === flightState.snapshot.domainWorkspace &&
+                        evidence.floating !== true
+                    ) {
+                        retainedTiled.set(id, {
+                            floating: evidence.floating,
+                            sticky: evidence.sticky,
+                            fullscreen: evidence.fullscreen,
+                            maximized: evidence.maximized,
+                            src: this.floatSourceOf({ floating: evidence.floating, sticky: evidence.sticky }),
+                        });
+                    }
+                }
+                for (const entry of flightState.snapshot.windows) {
+                    if (retainedTiled.has(entry.id) || entry.floating === true) {
+                        continue;
+                    }
+                    const evidence = this.appliedById.get(entry.id);
+                    if (
+                        evidence !== undefined &&
+                        evidence.floating === false &&
+                        entry.sticky === true &&
+                        evidence.sticky === true
+                    ) {
                         retainedTiled.set(entry.id, {
-                            floating: entry.floating,
-                            sticky: entry.sticky,
-                            fullscreen: entry.fullscreen,
-                            maximized: entry.maximized,
-                            src: this.floatSourceOf(entry),
+                            floating: evidence.floating,
+                            sticky: evidence.sticky,
+                            fullscreen: evidence.fullscreen,
+                            maximized: evidence.maximized,
+                            src: this.floatSourceOf({ floating: evidence.floating, sticky: evidence.sticky }),
                         });
                     }
                 }
@@ -5678,7 +5617,7 @@ export class PlanAdapter {
                 for (const id of extra) {
                     flagOf.set(id, snapById.get(id) ?? unknownFlags);
                 }
-            } else if (retained !== null) {
+            } else if (hasApplied) {
                 for (const id of wanted) {
                     if (!retainedTiled.has(id)) {
                         missing.push(id);
@@ -5705,9 +5644,9 @@ export class PlanAdapter {
             missing.sort();
             extra.sort();
             const retainedIds = [...retainedTiled.keys()].sort();
-            const hasReference = planned !== null || retained !== null;
+            const hasReference = planned !== null || hasApplied;
             this.logToken(
-                `${LOG_PREFIX}:membership-skew correlation=${flightState.correlation} op=${flightState.op} reason=${sanitizeKind(reason)} wanted=${String(wanted.size)} planned=${plannedText} missing=${hasReference ? String(missing.length) : "unknown"} extra=${hasReference ? String(extra.length) : "unknown"} floating=${String(floating)} sticky=${String(sticky)} fullscreen=${String(fullscreen)} maximized=${String(maximized)} retained=${retained === null ? "unknown" : "known"} retained-wanted=${retained === null ? "-" : String(retainedTiled.size)} retained-ids=${retained === null || retainedIds.length === 0 ? "-" : retainedIds.join(",")}`,
+                `${LOG_PREFIX}:membership-skew correlation=${flightState.correlation} op=${flightState.op} reason=${sanitizeKind(reason)} wanted=${String(wanted.size)} planned=${plannedText} missing=${hasReference ? String(missing.length) : "unknown"} extra=${hasReference ? String(extra.length) : "unknown"} floating=${String(floating)} sticky=${String(sticky)} fullscreen=${String(fullscreen)} maximized=${String(maximized)} retained=${hasApplied ? "known" : "unknown"} retained-wanted=${hasApplied ? String(retainedTiled.size) : "-"} retained-ids=${!hasApplied || retainedIds.length === 0 ? "-" : retainedIds.join(",")}`,
             );
             for (const id of missing) {
                 const flags = flagOf.get(id);
@@ -5921,14 +5860,19 @@ export class PlanAdapter {
         }
         if (flightState.removed === null) {
             const freshSnapshot = this.carriedSnapshot(fresh);
+            // Admission-time maximize tolerance rides the clears list, not
+            // the op: foreground auto reconciles carry the same
+            // admissionMaximizeClears as the retired admit, so a cleared
+            // window that re-maximizes before the reply still applies.
+            const maximizeClears = flightState.admissionMaximizeClears;
             if (
                 (!snapshotsEqual(freshSnapshot, flightState.snapshot) &&
                     !(
-                        flightState.op === "admit" &&
+                        maximizeClears.length > 0 &&
                         snapshotsEqualAllowingAdmissionMaximize(
                             freshSnapshot,
                             flightState.snapshot,
-                            flightState.admissionMaximizeClears,
+                            maximizeClears,
                         )
                     )) ||
                 unexpectedFloatingSkewed(flightState, freshSnapshot)
@@ -6810,6 +6754,15 @@ export class PlanAdapter {
                 }
             }
         }
+        // Whether a foreground auto reconcile changed tiled membership or
+        // floating/sticky flags versus before-apply per-id evidence
+        // (computed inside the geometry branch below, consumed by the
+        // highlight edge after it).
+        let autoMembershipChanged = false;
+        // Before-write per-id evidence presence for the flight domain, read
+        // before appliedById advances below. Fresh seeds with no evidence
+        // yet converge like the retired admit/remove.
+        let hasAppliedBefore = false;
         if (flightState.op !== "focus") {
             const base = this.carriedSnapshot(current);
             // A local reply to a directional two-domain request only owns the
@@ -6837,6 +6790,19 @@ export class PlanAdapter {
             for (const entry of planned.geometry) {
                 rectById.set(entry.window, entry.rect);
             }
+            // Auto-reconcile membership edge, read before applied evidence
+            // advances below: a reconcile that changed tiled membership or
+            // floating/sticky flags versus before-apply per-id evidence on
+            // the same domain (including fresh seeds with no evidence yet)
+            // converges like the retired admit/remove. Foreground uses it
+            // for the highlight refresh and park reset below; background
+            // uses it to keep membership convergence out of the bounded
+            // drift park. Equal reflows stay quiet and keep existing park
+            // accounting. Never baseline authority.
+            hasAppliedBefore = this.hasAppliedEvidenceFor(flightState.snapshot);
+            if (flightState.op === "reconcile" && this.appliedMembershipOrFlagsChanged(flightState.snapshot)) {
+                autoMembershipChanged = true;
+            }
             const windows = retainedBase.windows.map((entry) => {
                 // Every member (including a fullscreen or maximized one)
                 // records the planner's retained projection from the reply: the
@@ -6849,12 +6815,18 @@ export class PlanAdapter {
                 const next = floatRect ?? rect;
                 return { id: entry.id, rect: { x: next.x, y: next.y, w: next.w, h: next.h }, output: entry.output, workspace: entry.workspace, fullscreen: entry.fullscreen, maximized: entry.maximized, floating, resourceClass: entry.resourceClass };
             });
-            // A committed remove that empties the domain retires its baseline
-            // and all background accounting at the same applied boundary so
-            // the slot is released. Zero-window baselines are never retained.
+            // A committed remove that empties the domain retires its applied
+            // evidence and all background accounting at the same applied
+            // boundary so the slot is released. Zero-window scope is never
+            // retained.
             if (flightState.op === "remove" && windows.length === 0) {
                 const emptyKey = this.domainKey(base);
-                this.lastGoodByDomain.delete(emptyKey);
+                this.appliedScopeByDomain.delete(emptyKey);
+                for (const [id, evidence] of [...this.appliedById]) {
+                    if (evidence.output === base.domainOutput && evidence.workspace === base.domainWorkspace) {
+                        this.appliedById.delete(id);
+                    }
+                }
                 if (flightState.background === true) {
                     this.clearBackgroundReconcile(base);
                 }
@@ -6870,7 +6842,44 @@ export class PlanAdapter {
                     }
                 }
             } else {
-                this.setLastGood({ ...retainedBase, windows: Object.freeze(windows) });
+                const scopeKey = this.domainKey(retainedBase);
+                if (windows.length === 0) {
+                    this.appliedScopeByDomain.delete(scopeKey);
+                } else {
+                    this.appliedScopeByDomain.set(scopeKey, {
+                        bounds: {
+                            x: retainedBase.domainBounds.x,
+                            y: retainedBase.domainBounds.y,
+                            w: retainedBase.domainBounds.w,
+                            h: retainedBase.domainBounds.h,
+                        },
+                        gap: retainedBase.domainGap,
+                        outerGap: retainedBase.domainOuterGap,
+                    });
+                }
+                const live = new Set<string>();
+                for (const entry of windows) {
+                    live.add(entry.id);
+                    const source = retainedBase.windows.find((candidate) => candidate.id === entry.id);
+                    this.appliedById.set(entry.id, {
+                        rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
+                        output: entry.output,
+                        workspace: entry.workspace,
+                        floating: entry.floating === true,
+                        sticky: source?.sticky === true,
+                        fullscreen: entry.fullscreen,
+                        maximized: entry.maximized,
+                    });
+                }
+                for (const [id, evidence] of [...this.appliedById]) {
+                    if (
+                        evidence.output === retainedBase.domainOutput &&
+                        evidence.workspace === retainedBase.domainWorkspace &&
+                        !live.has(id)
+                    ) {
+                        this.appliedById.delete(id);
+                    }
+                }
             }
             if (flightState.op === "pointer-resize" && flightState.pointerSource !== null) {
                 const neighbours = planned.geometry
@@ -6891,6 +6900,10 @@ export class PlanAdapter {
                 if (flightState.background === true) {
                     if (flightState.workAreaReprojection === true) {
                         this.clearBackgroundReconcile(flightState.snapshot);
+                    } else if (autoMembershipChanged) {
+                        // A membership/flag-changing hidden reconcile applies
+                        // like the retired admit/remove: converge, never park.
+                        this.clearBackgroundReconcile(flightState.snapshot);
                     } else if (honoredAr12Skips > 0 && pendingWrites === 0) {
                         // Fully explained drift converges: every difference
                         // was covered by a honored client-clamped or
@@ -6906,6 +6919,11 @@ export class PlanAdapter {
                     // skip, so no genuine reassert ran and park must not
                     // advance. A mixed apply that also wrote genuine drift
                     // keeps the existing bounded increment below.
+                    this.reconcileAttempts = 0;
+                    this.parked = false;
+                } else if (!hasAppliedBefore || autoMembershipChanged) {
+                    // A membership/flag-changing auto reconcile applies like
+                    // the retired admit/remove: converge, never park.
                     this.reconcileAttempts = 0;
                     this.parked = false;
                 } else {
@@ -6958,19 +6976,22 @@ export class PlanAdapter {
         // Exactly one observational active-group refresh after an actual
         // successful geometry-plan boundary, even when focus is unchanged.
         // Geometry writes emit no highlight signal, so without this edge the
-        // entry-owned highlight would stay stale. Only admit/move/remove/
-        // resize qualify; focus/reconcile/pointer-resize/toggle-float never
-        // refresh here (focus already re-queries via its signal). Stale,
-        // rejected, error, and unfinished boundaries return through
-        // failFlight or earlier exits and never reach this edge. The callback
-        // is best-effort and non-blocking: it must not delay the deferred
-        // foreground command below.
+        // entry-owned highlight would stay stale. Admit/move/remove/resize
+        // qualify, plus a foreground auto reconcile that changed tiled
+        // membership or floating/sticky flags; focus, equal-reflow
+        // reconcile, pointer-resize, and toggle-float never refresh here
+        // (focus already re-queries via its signal). Stale, rejected, error,
+        // and unfinished boundaries return through failFlight or earlier
+        // exits and never reach this edge. The callback is best-effort and
+        // non-blocking: it must not delay the deferred foreground command
+        // below.
         if (
             flightState.background !== true &&
             (flightState.op === "admit" ||
                 flightState.op === "move" ||
                 flightState.op === "remove" ||
-                flightState.op === "resize")
+                flightState.op === "resize" ||
+                (flightState.op === "reconcile" && autoMembershipChanged))
         ) {
             try {
                 this.env.onPlannedApplied?.(flightState.op);
@@ -8232,15 +8253,5 @@ export class PlanAdapter {
 
     private domainKey(snapshot: Pick<PlanSnapshot, "domainOutput" | "domainWorkspace">): string {
         return `${snapshot.domainOutput}\u0000${snapshot.domainWorkspace}`;
-    }
-
-    private lastGoodFor(snapshot: Pick<PlanSnapshot, "domainOutput" | "domainWorkspace">): PlanSnapshot | null {
-        return this.lastGoodByDomain.get(this.domainKey(snapshot)) ?? null;
-    }
-
-    private setLastGood(snapshot: PlanSnapshot): boolean {
-        const key = this.domainKey(snapshot);
-        this.lastGoodByDomain.set(key, snapshot);
-        return true;
     }
 }

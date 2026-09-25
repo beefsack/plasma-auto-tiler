@@ -578,13 +578,6 @@ describe("plan adapter geometry application", () => {
         assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
         adapter.requestMove("left");
         const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
-        assert.ok(
-            mocks.logs.some(
-                (line) =>
-                    line ===
-                    "plasma-auto-tiler:plan:constraint-trace corr=pre-plan phase=plan window=win-b output=out-1 resource_class=unknown resizeable=true min=80,60 max=1600,900 workarea=0,0,1200,800 requested=unknown observed=100,0,500,500",
-            ),
-        );
         mocks.callbacks[0]?.(
             plannedReply(
                 correlation,
@@ -609,15 +602,14 @@ describe("plan adapter geometry application", () => {
                     `plasma-auto-tiler:plan:constraint-trace corr=${correlation} phase=write window=win-b output=out-1 resource_class=unknown resizeable=true min=80,60 max=1600,900 workarea=0,0,1200,800 requested=100,0,400,500 observed=100,0,400,500`,
             ),
         );
+        // Auto no longer emits pre-plan/post-signal: the bounded trace is
+        // exactly plan/write for the applied member, with redacted identity.
         observedB = { x: 100, y: 0, w: 400, h: 450 };
         mocks.subscribes.find((entry) => entry.kind === "geometry")?.handler(refs.b);
         mocks.timers[mocks.timers.length - 1]?.callback();
         assert.ok(
-            mocks.logs.some(
-                (line) =>
-                    line ===
-                    `plasma-auto-tiler:plan:constraint-trace corr=${correlation} phase=post-signal window=win-b output=out-1 resource_class=unknown resizeable=true min=80,60 max=1600,900 workarea=0,0,1200,800 requested=100,0,400,500 observed=100,0,400,450`,
-            ),
+            mocks.logs.every((line) => !line.includes("phase=post-signal")),
+            "auto removed post-signal trace",
         );
     });
 
@@ -716,7 +708,7 @@ describe("plan adapter recovery and fencing", () => {
         );
     });
 
-    it("keeps a rejected admission out of the committed baseline so a reopened window is admitted", () => {
+    it("keeps a rejected reconcile out of the committed baseline so a reopened window is converged", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         let ids = ["win-a", "win-b"];
@@ -777,7 +769,11 @@ describe("plan adapter recovery and fencing", () => {
         ids = ["win-a", "win-b", "win-c"];
         fire(mocks, "added");
         runTimers(mocks);
-        assert.deepEqual((plannerPayload(mocks, 1)["command"] as Record<string, unknown>)["window"], "win-c");
+        assert.deepEqual((plannerPayload(mocks, 1)["command"] as Record<string, unknown>)["op"], "reconcile");
+        assert.ok(
+            ((plannerPayload(mocks, 1)["windows"] as Array<Record<string, unknown>>).map((entry) => entry["window"])).includes("win-c"),
+            "reconcile carries the complete observation including the newcomer",
+        );
         correlation = plannerPayload(mocks, 1)["correlation_id"] as string;
         mocks.callbacks[1]?.(
             JSON.stringify({
@@ -804,12 +800,11 @@ describe("plan adapter recovery and fencing", () => {
         fire(mocks, "added");
         runTimers(mocks);
         assert.equal(mocks.dbusCalls.length, 3);
-        assert.deepEqual(plannerPayload(mocks, 2)["command"], {
-            op: "admit",
-            window: "win-c-reopened",
-            output: "out-1",
-            workspace: "ws-1",
-        });
+        assert.deepEqual(plannerPayload(mocks, 2)["command"], { op: "reconcile" });
+        assert.ok(
+            ((plannerPayload(mocks, 2)["windows"] as Array<Record<string, unknown>>).map((entry) => entry["window"])).includes("win-c-reopened"),
+            "reconcile carries the complete observation including the reopened window",
+        );
         correlation = plannerPayload(mocks, 2)["correlation_id"] as string;
         mocks.callbacks[2]?.(
             plannedReply(
@@ -897,16 +892,31 @@ describe("plan adapter recovery and fencing", () => {
 
     it("fresh no-baseline all-floating foreground observation sends no admit", () => {
         // Complete-observation convergence: a fresh foreground observation
-        // with no baseline whose members are all floating/sticky exceptions
-        // dispatches nothing and advances no baseline, so a later tiling of
-        // the same window still admits. No planner contact happens here.
+        // with no applied evidence whose members are all floating/sticky
+        // exceptions converges through one reconcile carrying the complete
+        // float-only observation; the Engine records exceptions and projects
+        // no tiles, so no native focus/write happens and never an admit.
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, floating: { "win-a": true, "win-b": true }, sticky: { "win-a": true } });
         const adapter = enableAdapter(mocks);
         fire(mocks, "added");
         runTimers(mocks);
-        assert.equal(mocks.dbusCalls.length, 0, "all-floating fresh observation must not seed an admit");
+        assert.equal(mocks.dbusCalls.length, 1, "all-floating fresh observation converges via reconcile");
+        const payload = plannerPayload(mocks, 0);
+        assert.deepEqual((payload["command"] as Record<string, unknown>)["op"], "reconcile");
+        const windows = payload["windows"] as Array<Record<string, unknown>>;
+        assert.equal(windows.length, 2, "reconcile carries the complete float-only observation");
+        for (const entry of windows) {
+            assert.equal(entry["floating"], true, "float rides as floating evidence, not a tile");
+            assert.equal(entry["fit_excluded"], true, "exception member stays fit-excluded");
+        }
+        assert.ok(
+            mocks.dbusCalls.every((call) => (JSON.parse(call.payload) as Record<string, unknown>)["command"] !== undefined && ((JSON.parse(call.payload) as Record<string, unknown>)["command"] as Record<string, unknown>)["op"] !== "admit"),
+            "all-floating converge never admits",
+        );
+        assert.equal(mocks.geometries.length, 0, "float-only converge writes no geometry");
+        assert.equal(mocks.actives.length, 0, "float-only converge writes no native focus");
         assert.equal(adapter.isEnabled, true);
     });
 
@@ -924,7 +934,7 @@ describe("plan adapter recovery and fencing", () => {
         assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:busy-refused kind=focus"));
     });
 
-    it("drives admit and remove from debounced membership diffs", () => {
+    it("drives reconcile from debounced membership diffs", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         let ids: string[] = ["win-a", "win-b"];
@@ -951,7 +961,7 @@ describe("plan adapter recovery and fencing", () => {
         fire(mocks, "added");
         runTimers(mocks);
         assert.equal(mocks.dbusCalls.length, 1);
-        assert.deepEqual((plannerPayload(mocks, 0)["command"] as Record<string, unknown>)["op"], "admit");
+        assert.deepEqual((plannerPayload(mocks, 0)["command"] as Record<string, unknown>)["op"], "reconcile");
         const initialCorrelation = plannerPayload(mocks, 0)["correlation_id"] as string;
         mocks.callbacks[0]?.(
             plannedReply(
@@ -967,8 +977,11 @@ describe("plan adapter recovery and fencing", () => {
         fire(mocks, "added");
         runTimers(mocks);
         assert.equal(mocks.dbusCalls.length, 2);
-        assert.deepEqual((plannerPayload(mocks, 1)["command"] as Record<string, unknown>)["op"], "admit");
-        assert.equal((plannerPayload(mocks, 1)["command"] as Record<string, unknown>)["window"], "win-c");
+        assert.deepEqual((plannerPayload(mocks, 1)["command"] as Record<string, unknown>)["op"], "reconcile");
+        assert.ok(
+            ((plannerPayload(mocks, 1)["windows"] as Array<Record<string, unknown>>).map((entry) => entry["window"])).includes("win-c"),
+            "newcomer reconcile carries the complete observation",
+        );
         const admitCorr = plannerPayload(mocks, 1)["correlation_id"] as string;
         mocks.callbacks[1]?.(
             plannedReply(
@@ -988,7 +1001,7 @@ describe("plan adapter recovery and fencing", () => {
         assert.ok(mocks.dbusCalls.length >= 3);
         const removeIndex = mocks.dbusCalls.length - 1;
         const removeCmd = plannerPayload(mocks, removeIndex)["command"] as Record<string, unknown>;
-        assert.deepEqual(removeCmd, { op: "remove", window: "win-c" });
+        assert.deepEqual(removeCmd, { op: "reconcile" });
         const removePayload = plannerPayload(mocks, removeIndex);
         const removeWindows = removePayload["windows"] as Array<Record<string, unknown>>;
         assert.ok(
@@ -1003,7 +1016,7 @@ describe("plan adapter recovery and fencing", () => {
         assert.equal(removePayload["focused_window"], "win-a", "post-removal focus stays on an observed survivor");
     });
 
-    it("retains per-workspace baselines across a rejected admission without duplicate probes", () => {
+    it("retains per-workspace baselines across a rejected reconcile without duplicate probes", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         let workspace = "ws-a";
@@ -1058,19 +1071,89 @@ describe("plan adapter recovery and fencing", () => {
         ids = ["win-b", "win-c"];
         fire(mocks, "scope");
         runTimers(mocks);
-        assert.deepEqual(plannerPayload(mocks, 2)["command"], { op: "admit", window: "win-b", output: "out-1", workspace: "ws-b" });
+        assert.deepEqual(plannerPayload(mocks, 2)["command"], { op: "reconcile" });
         mocks.callbacks[2]?.(rejectedReply(plannerPayload(mocks, 2)["correlation_id"] as string, "snapshot-invalid"));
 
         workspace = "ws-a";
         ids = ["win-a"];
         fire(mocks, "scope");
         runTimers(mocks);
-        assert.equal(mocks.dbusCalls.length, 3, "a rejected admission in another workspace cannot discard this baseline");
+        assert.equal(mocks.dbusCalls.length, 3, "a rejected reconcile in another workspace cannot discard this baseline");
         assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:rejected kind=duplicate-window"));
         assert.equal(adapter.isEnabled, true);
     });
 });
 
+describe("foreground automatic reconcile gap retry", () => {
+    function gapRejected(correlation: string, message: string): string {
+        return JSON.stringify({
+            v: 1,
+            correlation_id: correlation,
+            outcome: "rejected",
+            kind: "domain-mismatch",
+            message,
+        });
+    }
+    function freshReconcile(mocks: Mocks): string {
+        fire(mocks, "added");
+        runTimers(mocks);
+        assert.equal(mocks.dbusCalls.length, 1);
+        assert.deepEqual((plannerPayload(mocks, 0)["command"] as Record<string, unknown>)["op"], "reconcile");
+        return plannerPayload(mocks, 0)["correlation_id"] as string;
+    }
+    it("retries one fresh same-domain update-gaps on an exact inner-gap mismatch", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = enableAdapter(mocks);
+        const corr = freshReconcile(mocks);
+        mocks.callbacks[0]?.(gapRejected(corr, "domain gap does not match retained state"));
+        assert.equal(mocks.dbusCalls.length, 2, "exactly one update-gaps retry");
+        const retry = plannerPayload(mocks, 1);
+        assert.deepEqual(retry["command"], { op: "update-gaps" });
+        assert.equal((retry["domain"] as Record<string, unknown>)["workspace"], "ws-1");
+        assert.equal((retry["windows"] as Array<unknown>).length, 2, "retry carries the fresh complete observation");
+        assert.ok(
+            mocks.logs.some((line) => line.includes("gap-reprojection selected=retry")),
+            "bounded retry diagnostic",
+        );
+        // A rejected retry never retries again.
+        const retryCorr = retry["correlation_id"] as string;
+        mocks.callbacks[1]?.(gapRejected(retryCorr, "domain outer gap does not match retained state"));
+        assert.equal(mocks.dbusCalls.length, 2, "no retry from update-gaps");
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.isEnabled, true);
+    });
+    it("ignores a domain-mismatch refusal without the exact gap message", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = enableAdapter(mocks);
+        const corr = freshReconcile(mocks);
+        mocks.callbacks[0]?.(rejectedReply(corr, "domain-mismatch"));
+        assert.equal(mocks.dbusCalls.length, 1, "kind-only mismatch never retries");
+        assert.equal(adapter.isInFlight, false);
+    });
+    it("never retries from a cross-domain fresh observation", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = enableAdapter(mocks);
+        const corr = freshReconcile(mocks);
+        mocks.observeImpl = (): PlanObserved | null => ({
+            domainOutput: "out-1",
+            domainWorkspace: "ws-2",
+            domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
+            domainGap: 0,
+            domainOuterGap: 0,
+            focusedId: "",
+            windows: Object.freeze([]),
+            activeRef: refs.a,
+            fingerprint: "fp-other",
+            revalidate: () => true,
+        });
+        mocks.callbacks[0]?.(gapRejected(corr, "domain gap does not match retained state"));
+        assert.equal(mocks.dbusCalls.length, 1, "cross-domain evidence never retries");
+        assert.equal(adapter.isInFlight, false);
+    });
+});
 describe("plan adapter explicit-only floating", () => {
     it("never calls setFloating or emits toggle-float from automatic, admission, reconcile, or directional routes", () => {
         const refs = makeRefs();
@@ -1081,11 +1164,11 @@ describe("plan adapter explicit-only floating", () => {
             { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
         ];
 
-        // Automatic admission from a signal-driven membership diff.
+        // Automatic reconcile from a signal-driven membership diff.
         fire(mocks, "added");
         runTimers(mocks);
         assert.equal(mocks.dbusCalls.length, 1);
-        assert.deepEqual((plannerPayload(mocks, 0)["command"] as Record<string, unknown>)["op"], "admit");
+        assert.deepEqual((plannerPayload(mocks, 0)["command"] as Record<string, unknown>)["op"], "reconcile");
         mocks.callbacks[0]?.(
             plannedReply(plannerPayload(mocks, 0)["correlation_id"] as string, allocations, "win-a-leaf"),
         );
@@ -1125,7 +1208,7 @@ describe("plan adapter explicit-only floating", () => {
             plannedReply(plannerPayload(mocks, reconcileIndex)["correlation_id"] as string, allocations, "win-a-leaf"),
         );
 
-        // Automatic admission again after a fresh window appears, completing
+        // Automatic reconcile again after a fresh window appears, completing
         // through writeGeometries rather than any float transition.
         mocks.observeImpl = () => {
             const wins = [
@@ -1149,7 +1232,7 @@ describe("plan adapter explicit-only floating", () => {
         fire(mocks, "added");
         runDebounce(mocks);
         const admitIndex = mocks.dbusCalls.length - 1;
-        assert.deepEqual((plannerPayload(mocks, admitIndex)["command"] as Record<string, unknown>), { op: "admit", window: "win-c", output: "out-1", workspace: "ws-1" });
+        assert.deepEqual((plannerPayload(mocks, admitIndex)["command"] as Record<string, unknown>), { op: "reconcile" });
         mocks.callbacks[admitIndex]?.(
             plannedReply(
                 plannerPayload(mocks, admitIndex)["correlation_id"] as string,
@@ -1458,7 +1541,7 @@ describe("plan adapter client self-resize reconcile", () => {
         ]);
         assert.ok(mocks.logs.some((line) => line.includes(`cmd=${retryCorrelation}`) && line.includes("outcome=planned-applied")));
     });
-    it("routes an outer-gap change through retained update-gaps, not work-area reprojection", () => {
+    it("routes an outer-gap change through reconcile, then one update-gaps retry on the exact refusal", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         baseline(mocks, refs);
@@ -1472,23 +1555,31 @@ describe("plan adapter client self-resize reconcile", () => {
             });
         fire(mocks, "geometry");
         runDebounce(mocks);
-        // The deliberate gap reload path dispatches exactly one retained
-        // gap reprojection: never a work-area reconcile, never silent adopt.
+        // The foreground automatic route sends the complete observation as
+        // reconcile, never silent adopt; only the correlated exact-message
+        // gap refusal retries one update-gaps.
         assert.equal(mocks.dbusCalls.length, callsBefore + 1);
         const cmd = plannerPayload(mocks, callsBefore)["command"] as Record<string, unknown>;
-        assert.deepEqual(cmd, { op: "update-gaps" });
+        assert.deepEqual(cmd, { op: "reconcile" });
         assert.equal((plannerPayload(mocks, callsBefore)["domain"] as Record<string, unknown>)["outer_gap"], 0);
-        assert.ok(
-            mocks.logs.some((line) => line.includes("gap-reprojection selected=retained")),
-            "distinct retained gap reprojection event, not the generic reconcile line",
-        );
-        assert.ok(
-            !mocks.logs.some((line) => line.includes("work-area-reprojection selected=retained")),
-            "a gap-only change must not log work-area reprojection",
-        );
-        // The applied reply converges the new gaps natively.
-        const corr = plannerPayload(mocks, callsBefore)["correlation_id"] as string;
+        const firstCorr = plannerPayload(mocks, callsBefore)["correlation_id"] as string;
         mocks.callbacks[callsBefore]?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: firstCorr,
+                outcome: "rejected",
+                kind: "domain-mismatch",
+                message: "domain outer gap does not match retained state",
+            }),
+        );
+        assert.equal(mocks.dbusCalls.length, callsBefore + 2);
+        assert.deepEqual((plannerPayload(mocks, callsBefore + 1)["command"] as Record<string, unknown>), {
+            op: "update-gaps",
+        });
+        assert.equal((plannerPayload(mocks, callsBefore + 1)["domain"] as Record<string, unknown>)["outer_gap"], 0);
+        // The applied retry reply converges the new gaps natively.
+        const corr = plannerPayload(mocks, callsBefore + 1)["correlation_id"] as string;
+        mocks.callbacks[callsBefore + 1]?.(
             plannedReply(
                 corr,
                 [
@@ -4240,7 +4331,7 @@ describe("plan adapter destroyed-window reply boundary", () => {
         assert.equal(adapter.isEnabled, true);
     });
 
-    it("applies remove replies from a fresh observation covering survivors", () => {
+    it("applies reconcile replies from a fresh observation covering survivors", () => {
         const refs = makeRefs();
         let ids: string[] = ["win-a", "win-b", "win-c"];
         const byId: Record<string, object> = { "win-a": refs.a, "win-b": refs.b, "win-c": refs.c };
@@ -4294,7 +4385,7 @@ describe("plan adapter destroyed-window reply boundary", () => {
         runTimers(mocks);
         const removeIndex = mocks.dbusCalls.length - 1;
         const removeCmd = plannerPayload(mocks, removeIndex)["command"] as Record<string, unknown>;
-        assert.deepEqual(removeCmd, { op: "remove", window: "win-c" });
+        assert.deepEqual(removeCmd, { op: "reconcile" });
         const removeCorr = plannerPayload(mocks, removeIndex)["correlation_id"] as string;
         const writesBeforeRemove = mocks.geometries.length;
         mocks.callbacks[removeIndex]?.(
@@ -4311,7 +4402,7 @@ describe("plan adapter destroyed-window reply boundary", () => {
         assert.ok(mocks.logs.some((line) => line.includes("outcome=planned-applied")));
     });
 
-    it("applies remove replies without reading the destroyed window while resolving live survivors", () => {
+    it("applies reconcile replies without reading the destroyed window while resolving live survivors", () => {
         const liveA: object = {};
         const liveB: object = {};
         let destroyedReads = 0;
@@ -4374,7 +4465,7 @@ describe("plan adapter destroyed-window reply boundary", () => {
         fire(mocks, "removed");
         runTimers(mocks);
         const removeIndex = mocks.dbusCalls.length - 1;
-        assert.deepEqual(plannerPayload(mocks, removeIndex)["command"], { op: "remove", window: "win-c" });
+        assert.deepEqual(plannerPayload(mocks, removeIndex)["command"], { op: "reconcile" });
         const removeCorr = plannerPayload(mocks, removeIndex)["correlation_id"] as string;
         const writesBeforeRemove = mocks.geometries.length;
         const activesBefore = mocks.actives.length;
@@ -4434,7 +4525,6 @@ describe("plan native identity sharing and string-keyed cache", () => {
         assert.ok(src.includes("snapshotOf"), "snapshot capture");
         assert.ok(src.includes("snapshotsEqual"), "snapshot comparison");
         assert.ok(src.includes("snapshot: PlanSnapshot"), "snapshot-typed flight/intent");
-        assert.ok(src.includes("lastGoodByDomain = new Map<string, PlanSnapshot>()"), "snapshot-typed baselines");
         assert.ok(src.includes("noteRemoved"), "removed-id eviction hook");
         assert.ok(!src.includes("flightState.observed"), "no retained observed");
         assert.ok(!src.includes("captured.revalidate"), "no retained revalidation call");
@@ -4556,7 +4646,7 @@ describe("plan adapter fullscreen isolation", () => {
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, 2);
         const cmd = plannerPayload(mocks, 1)["command"] as Record<string, unknown>;
-        assert.deepEqual(cmd, { op: "admit", window: "win-c", output: "out-1", workspace: "ws-1" });
+        assert.deepEqual(cmd, { op: "reconcile" });
         const sent = plannerPayload(mocks, 1)["windows"] as Array<Record<string, unknown>>;
         assert.ok(sent.some((entry) => entry["window"] === "win-c"), "fullscreen member stays observed");
         const corr = plannerPayload(mocks, 1)["correlation_id"] as string;
@@ -4842,7 +4932,7 @@ describe("plan adapter fullscreen isolation", () => {
         assert.ok(mocks.logs.some((line) => line.includes(`cmd=${correlation}`) && line.includes("outcome=planned-applied")));
     });
 
-    it("routes simultaneous work-area and membership changes through admission", () => {
+    it("routes simultaneous work-area and membership changes through reconcile", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         twoWindowBaseline(mocks, refs);
@@ -4864,7 +4954,7 @@ describe("plan adapter fullscreen isolation", () => {
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, 2);
         const payload = plannerPayload(mocks, 1);
-        assert.deepEqual(payload["command"], { op: "admit", window: "win-c", output: "out-1", workspace: "ws-1" });
+        assert.deepEqual(payload["command"], { op: "reconcile" });
         assert.deepEqual(payload["domain"], {
             output: "out-1",
             workspace: "ws-1",
@@ -4891,7 +4981,7 @@ describe("plan adapter fullscreen isolation", () => {
             new Set([refs.a, refs.b, refs.c]),
         );
         assert.ok(applied.some((entry) => entry.target === refs.c && entry.rect.w === 600));
-        assert.ok(mocks.logs.some((line) => line.includes(`cmd=${correlation}`) && line.includes("kind=admit") && line.includes("outcome=planned-applied")));
+        assert.ok(mocks.logs.some((line) => line.includes(`cmd=${correlation}`) && line.includes("kind=reconcile") && line.includes("outcome=planned-applied")));
     });
 
     it("fullscreen-only rect drift adopts the baseline without dispatching reconcile", () => {
@@ -5046,7 +5136,7 @@ describe("plan adapter fullscreen isolation", () => {
         fire(mocks, "added");
         runTimers(mocks);
         assert.equal(mocks.dbusCalls.length, 1);
-        assert.deepEqual((plannerPayload(mocks, 0)["command"] as Record<string, unknown>)["op"], "admit");
+        assert.deepEqual((plannerPayload(mocks, 0)["command"] as Record<string, unknown>)["op"], "reconcile");
         const payload = plannerPayload(mocks, 0);
         const db = (payload["domain"] as Record<string, unknown>)["bounds"] as { x: number; y: number; w: number; h: number };
         const carried = payload["windows"] as Array<Record<string, unknown>>;
@@ -5165,7 +5255,7 @@ describe("plan adapter maximize isolation", () => {
         adapter.requestResync();
         runDebounce(mocks);
         assert.deepEqual(mocks.maximizeClears, [refs.a]);
-        assert.equal((plannerPayload(mocks, 0)["command"] as Record<string, unknown>)["op"], "admit");
+        assert.equal((plannerPayload(mocks, 0)["command"] as Record<string, unknown>)["op"], "reconcile");
         const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
         mocks.callbacks[0]?.(
             plannedReply(
@@ -5278,7 +5368,7 @@ describe("plan adapter maximize isolation", () => {
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, 2);
         const cmd = plannerPayload(mocks, 1)["command"] as Record<string, unknown>;
-        assert.deepEqual(cmd, { op: "admit", window: "win-c", output: "out-1", workspace: "ws-1" });
+        assert.deepEqual(cmd, { op: "reconcile" });
         const sent = plannerPayload(mocks, 1)["windows"] as Array<Record<string, unknown>>;
         assert.ok(sent.some((entry) => entry["window"] === "win-c"), "maximized member stays observed");
         const corr = plannerPayload(mocks, 1)["correlation_id"] as string;
@@ -5471,6 +5561,54 @@ describe("plan adapter maximize isolation", () => {
         runDebounce(mocks);
         assert.equal(mocks.maximizeClears.length, 1, "the admission clear is one-shot");
         assert.equal(mocks.dbusCalls.length, 1, "post-admission maximize does not dispatch a loop");
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("applies an admission reconcile when the cleared window re-maximizes before the reply", () => {
+        // Race tolerance rides the clears list: the fresh reconcile carries
+        // the same admissionMaximizeClears as the retired admit, so a
+        // same-rect re-maximize between dispatch and reply still applies
+        // instead of failing stale-scope, with no second clear.
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let maximized = true;
+        let remaximized = false;
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
+                maximized: { "win-a": maximized || remaximized },
+            });
+        mocks.maximizeClearImpl = (): MaximizeClearOutcome => {
+            maximized = false;
+            fire(mocks, "maximize", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestResync();
+        runDebounce(mocks);
+        assert.deepEqual(mocks.maximizeClears, [refs.a]);
+        assert.equal((plannerPayload(mocks, 0)["command"] as Record<string, unknown>)["op"], "reconcile");
+        const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+        remaximized = true;
+        const writesBefore = mocks.geometries.length;
+        mocks.callbacks[0]?.(
+            plannedReply(
+                correlation,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 500, h: 800 } },
+                    { window: "win-b", rect: { x: 500, y: 0, w: 700, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        assert.ok(
+            mocks.logs.some((line) => line.includes(`cmd=${correlation}`) && line.includes("outcome=planned-applied")),
+            "re-maximized admission reconcile applies through the clears tolerance",
+        );
+        assert.ok(mocks.geometries.some((entry) => entry.target === refs.b), "unaffected sibling still tiled");
+        assert.ok(!mocks.geometries.slice(writesBefore).some((entry) => entry.target === refs.a), "re-maximized member never actuated");
+        assert.equal(mocks.maximizeClears.length, 1, "no second clear");
         assert.equal(adapter.isEnabled, true);
     });
 
@@ -5756,6 +5894,95 @@ describe("plan adapter observational highlight refresh edge", () => {
         );
         assert.ok(mocks.logs.some((line) => line.includes("outcome=stale-dropped")));
         assert.deepEqual(applied, []);
+    });
+
+    it("refreshes after an automatic reconcile that converged a newcomer", () => {
+        const refs = makeRefs();
+        const applied: string[] = [];
+        const mocks = mockEnvWithApplied(refs, applied);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 100, h: 100 },
+                    "win-b": { x: 100, y: 0, w: 500, h: 500 },
+                },
+            });
+        enableAdapter(mocks);
+        fire(mocks, "added");
+        runTimers(mocks);
+        succeedMove(mocks, "win-a-leaf");
+        assert.deepEqual(applied, ["reconcile"], "fresh auto reconcile refreshes like the retired admit edge");
+        applied.length = 0;
+        // Newcomer win-c with complete observation.
+        mocks.observeImpl = () => {
+            const wins = [
+                Object.freeze({ id: "win-a", ref: refs.a, rect: { x: 0, y: 0, w: 100, h: 100 }, output: "out-1", workspace: "ws-1", fullscreen: false, maximized: false }),
+                Object.freeze({ id: "win-b", ref: refs.b, rect: { x: 100, y: 0, w: 500, h: 500 }, output: "out-1", workspace: "ws-1", fullscreen: false, maximized: false }),
+                Object.freeze({ id: "win-c", ref: refs.c, rect: { x: 0, y: 0, w: 100, h: 100 }, output: "out-1", workspace: "ws-1", fullscreen: false, maximized: false }),
+            ];
+            return {
+                domainOutput: "out-1",
+                domainWorkspace: "ws-1",
+                domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
+                domainGap: DOMAIN_GAP,
+                domainOuterGap: OUTER_DOMAIN_GAP,
+                focusedId: "win-a",
+                windows: Object.freeze(wins),
+                activeRef: refs.a,
+                fingerprint: "fp-a,b,c",
+                revalidate: () => true,
+            };
+        };
+        fire(mocks, "added");
+        runDebounce(mocks);
+        assert.deepEqual((plannerPayload(mocks, 1)["command"] as Record<string, unknown>)["op"], "reconcile");
+        mocks.callbacks[1]?.(
+            plannedReply(
+                plannerPayload(mocks, 1)["correlation_id"] as string,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 400, h: 800 } },
+                    { window: "win-b", rect: { x: 400, y: 0, w: 400, h: 800 } },
+                    { window: "win-c", rect: { x: 800, y: 0, w: 400, h: 800 } },
+                ],
+                "win-c-leaf",
+            ),
+        );
+        assert.deepEqual(applied, ["reconcile"], "membership-changing auto reconcile refreshes");
+    });
+
+    it("stays quiet after an automatic reconcile with unchanged membership", () => {
+        const refs = makeRefs();
+        const applied: string[] = [];
+        const mocks = mockEnvWithApplied(refs, applied);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 100, h: 100 },
+                    "win-b": { x: 100, y: 0, w: 500, h: 500 },
+                },
+            });
+        enableAdapter(mocks);
+        fire(mocks, "added");
+        runTimers(mocks);
+        succeedMove(mocks, "win-a-leaf");
+        assert.deepEqual(applied, ["reconcile"]);
+        applied.length = 0;
+        // Pure client drift: same membership, changed rects.
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 200, h: 200 },
+                    "win-b": { x: 100, y: 0, w: 500, h: 500 },
+                },
+            });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.deepEqual((plannerPayload(mocks, 1)["command"] as Record<string, unknown>)["op"], "reconcile");
+        succeedMove(mocks, "win-a-leaf");
+        assert.deepEqual(applied, [], "equal-membership reflow never refreshes");
     });
 
     it("a throwing refresh hook never wedges foreground commands", () => {
@@ -6715,4 +6942,134 @@ describe("plan entry sticky workspace-switch regression", () => {
             await engine.close();
         }
     });
+
+    // Foreground automatic reconcile through the production observer and
+    // the real Engine: every dispatch below carries op reconcile with the
+    // complete observation, never a baseline-derived admit/remove.
+    function fireAdded(world: FakeWorld, mocks: EntryMocks): void {
+        for (const handler of [...world.added.handlers]) {
+            handler();
+        }
+        runEntryDebounce(mocks);
+    }
+
+    function reconcileOp(mocks: EntryMocks, index: number): Record<string, unknown> {
+        const payload = JSON.parse(mocks.dbusCalls[index]?.payload as string) as Record<string, unknown>;
+        assert.deepEqual(
+            (payload["command"] as Record<string, unknown>)["op"],
+            "reconcile",
+            `dispatch ${index} carries op reconcile, logs: ${tailLogs(mocks)}`,
+        );
+        return payload;
+    }
+
+    it("foreground automatic reconcile seeds a fresh fit through the real Engine", async () => {
+        const world = fakeWorld();
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "entry enabled");
+        const engine = StickyEngineBridge.start();
+        try {
+            fireAdded(world, mocks);
+            assert.equal(mocks.dbusCalls.length, 1, `fresh signal dispatches once, logs: ${tailLogs(mocks)}`);
+            reconcileOp(mocks, 0);
+            const reply = await flushPlan(mocks, engine, 0);
+            assert.equal(reply["outcome"], "planned", `fresh fit plans, engine replied ${JSON.stringify(reply)}`);
+            const desired = reply["desired_geometry"] as Array<Record<string, unknown>>;
+            const windows = desired.map((entry) => entry["window"]).sort();
+            assert.deepEqual(windows, ["win-a", "win-b"]);
+            const rectA = (desired.find((entry) => entry["window"] === "win-a") as Record<string, unknown>)["rect"] as {
+                x: number; y: number; w: number; h: number;
+            };
+            assert.deepEqual(
+                (world.wins[0] as Record<string, unknown>)["frameGeometry"],
+                { x: rectA["x"], y: rectA["y"], width: rectA["w"], height: rectA["h"] },
+                "fresh tile applied natively",
+            );
+            // A settled observation dispatches nothing further.
+            const calls = mocks.dbusCalls.length;
+            fireAdded(world, mocks);
+            assert.equal(mocks.dbusCalls.length, calls, "converged observation stays quiet");
+        } finally {
+            handle?.stop();
+            await engine.close();
+        }
+    });
+
+    it("foreground automatic reconcile converges membership transitions through the real Engine", async () => {
+        const world = fakeWorld();
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "entry enabled");
+        const engine = StickyEngineBridge.start();
+        try {
+            fireAdded(world, mocks);
+            const seed = await flushPlan(mocks, engine, 0);
+            assert.equal(seed["outcome"], "planned", `setup seed plans, engine replied ${JSON.stringify(seed)}`);
+            // Newcomer win-c joins through the same automatic route.
+            addTiledWindow(world, "win-c", world.desktop, 400);
+            fireAdded(world, mocks);
+            assert.equal(mocks.dbusCalls.length, 2, `newcomer dispatches once, logs: ${tailLogs(mocks)}`);
+            reconcileOp(mocks, 1);
+            const grown = await flushPlan(mocks, engine, 1);
+            assert.equal(grown["outcome"], "planned", `newcomer converges, engine replied ${JSON.stringify(grown)}`);
+            const grownWindows = ((grown["desired_geometry"] as Array<Record<string, unknown>>).map((entry) => entry["window"]) as string[]).sort();
+            assert.deepEqual(grownWindows, ["win-a", "win-b", "win-c"]);
+            // Departure converges back to the survivors.
+            const [departed] = world.wins.splice(2, 1);
+            for (const handler of [...world.removed.handlers]) {
+                (handler as unknown as (removed?: unknown) => void)(departed);
+            }
+            const survivor = world.wins[0] as Record<string, unknown>;
+            fireGeometry(world, survivor);
+            runEntryDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, 3, `departure dispatches once, logs: ${tailLogs(mocks)}`);
+            reconcileOp(mocks, 2);
+            const shrunk = await flushPlan(mocks, engine, 2);
+            assert.equal(shrunk["outcome"], "planned", `departure converges, engine replied ${JSON.stringify(shrunk)}`);
+            const shrunkWindows = ((shrunk["desired_geometry"] as Array<Record<string, unknown>>).map((entry) => entry["window"]) as string[]).sort();
+            assert.deepEqual(shrunkWindows, ["win-a", "win-b"]);
+        } finally {
+            handle?.stop();
+            await engine.close();
+        }
+    });
+
+    it("foreground gap-mismatch retry lands one update-gaps through the real Engine", async () => {
+        const world = fakeWorld();
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "entry enabled");
+        const engine = StickyEngineBridge.start();
+        try {
+            fireAdded(world, mocks);
+            const seed = await flushPlan(mocks, engine, 0);
+            assert.equal(seed["outcome"], "planned", `setup seed plans, engine replied ${JSON.stringify(seed)}`);
+            // Drift the native frame so the next signal dispatches a
+            // reconcile, then refuse it with the exact Engine inner-gap
+            // message: the adapter must retry once with update-gaps.
+            const winA = world.wins[0] as Record<string, unknown>;
+            winA["frameGeometry"] = { x: 0, y: 0, width: 750, height: 800 };
+            fireGeometry(world, winA);
+            runEntryDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, 2, `drift dispatches, logs: ${tailLogs(mocks)}`);
+            reconcileOp(mocks, 1);
+            const correlation = (JSON.parse(mocks.dbusCalls[1]?.payload as string) as Record<string, unknown>)["correlation_id"] as string;
+            mocks.callbacks[1]?.(
+                JSON.stringify({
+                    v: 1,
+                    correlation_id: correlation,
+                    outcome: "rejected",
+                    kind: "domain-mismatch",
+                    message: "domain gap does not match retained state",
+                }),
+            );
+            assert.equal(mocks.dbusCalls.length, 3, `exactly one update-gaps retry, logs: ${tailLogs(mocks)}`);
+            const retry = JSON.parse(mocks.dbusCalls[2]?.payload as string) as Record<string, unknown>;
+            assert.deepEqual((retry["command"] as Record<string, unknown>)["op"], "update-gaps");
+            const retried = await flushPlan(mocks, engine, 2);
+            assert.equal(retried["outcome"], "planned", `update-gaps retry plans, engine replied ${JSON.stringify(retried)}`);
+        } finally {
+            handle?.stop();
+            await engine.close();
+        }
+    });
+
 });

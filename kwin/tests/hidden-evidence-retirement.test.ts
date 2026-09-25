@@ -23,6 +23,7 @@ function makeEnv(
     callbacks: Array<(reply: unknown) => void>,
     timers: Array<{ delayMs: number; callback: () => void; cancelled: boolean }>,
     subs: Sub[],
+    activeSets: Array<object>,
 ): PlanAdapterEnv {
     return {
         callDbus: (_s, _p, _i, _m, payload, callback): void => {
@@ -44,7 +45,10 @@ function makeEnv(
         observeHidden: hidden,
         clearMaximize: (): "invoked" => "invoked",
         setGeometry: (): boolean => true,
-        setActive: (): boolean => true,
+        setActive: (target: object): boolean => {
+            activeSets.push(target);
+            return true;
+        },
         active: (): object | null => null,
         subscribe: (kind, handler): (() => void) => {
             subs.push({ kind, handler });
@@ -126,27 +130,6 @@ function hiddenEmpty(workspace: string, activeRef: object): PlanObserved {
     };
 }
 
-function hiddenPair(workspace: string, first: string, firstRef: object, second: string, secondRef: object): PlanObserved {
-    const windows = Object.freeze([
-        Object.freeze({
-            id: first, ref: firstRef, rect: { x: 0, y: 0, w: 600, h: 800 },
-            output: "out-1", workspace,
-            fullscreen: false, maximized: false, floating: false, sticky: false, resourceClass: "unknown",
-        }),
-        Object.freeze({
-            id: second, ref: secondRef, rect: { x: 600, y: 0, w: 600, h: 800 },
-            output: "out-1", workspace,
-            fullscreen: false, maximized: false, floating: false, sticky: false, resourceClass: "unknown",
-        }),
-    ]);
-    return {
-        domainOutput: "out-1", domainWorkspace: workspace,
-        domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
-        domainGap: DOMAIN_GAP, domainOuterGap: OUTER_DOMAIN_GAP,
-        focusedId: first, windows, activeRef: firstRef, fingerprint: `fp-${workspace}`, revalidate: () => true,
-    };
-}
-
 function runDebounce(timers: Array<{ delayMs: number; callback: () => void; cancelled: boolean }>): void {
     const pending = [...timers];
     timers.length = 0;
@@ -193,16 +176,13 @@ function answerAll(calls: Array<{ payload: string }>, callbacks: Array<(reply: u
     return answered;
 }
 
-function innerState(adapter: PlanAdapter): { lastGoodByDomain: Map<string, { windows: ReadonlyArray<{ id: string }> }> } {
-    return adapter as unknown as { lastGoodByDomain: Map<string, { windows: ReadonlyArray<{ id: string }> }> };
-}
-
 function setupBaseline(): {
     adapter: PlanAdapter;
     calls: Array<{ payload: string }>;
     callbacks: Array<(reply: unknown) => void>;
     timers: Array<{ delayMs: number; callback: () => void; cancelled: boolean }>;
     subs: Sub[];
+    activeSets: Array<object>;
     hiddenRef: object;
     setHidden: (value: ReadonlyArray<PlanObserved>) => void;
     fire: (kind: string) => void;
@@ -216,7 +196,8 @@ function setupBaseline(): {
     const callbacks: Array<(reply: unknown) => void> = [];
     const timers: Array<{ delayMs: number; callback: () => void; cancelled: boolean }> = [];
     const subs: Sub[] = [];
-    const env = makeEnv(() => fgObserved(fgA, fgB), () => [...hidden], calls, callbacks, timers, subs);
+    const activeSets: Array<object> = [];
+    const env = makeEnv(() => fgObserved(fgA, fgB), () => [...hidden], calls, callbacks, timers, subs, activeSets);
     const adapter = new PlanAdapter(env);
     assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
     const fire = (kind: string): void => {
@@ -225,9 +206,21 @@ function setupBaseline(): {
     fire("added");
     runDebounce(timers);
     const answered = answerAll(calls, callbacks, 0);
-    assert.equal(innerState(adapter).lastGoodByDomain.size, 2);
+    const seededDomains = calls.map(
+        (call) => (payloadAt(calls, calls.indexOf(call))["domain"] as Record<string, unknown>)["workspace"],
+    ).sort();
+    assert.deepEqual(seededDomains, ["ws-1", "ws-2"], "foreground plus hidden domain seed via complete observations");
+    const seededHidden = payloadAt(calls, calls.findIndex(
+        (call) => (payloadAt(calls, calls.indexOf(call))["domain"] as Record<string, unknown>)["workspace"] === "ws-2",
+    ));
+    assert.deepEqual(
+        (seededHidden["windows"] as Array<Record<string, unknown>>).map((entry) => entry["window"]),
+        ["win-h"],
+        "hidden domain seeds with complete observation",
+    );
+    assert.equal(activeSets.length, 0, "baseline converge never writes native focus");
     return {
-        adapter, calls, callbacks, timers, subs, hiddenRef,
+        adapter, calls, callbacks, timers, subs, activeSets, hiddenRef,
         setHidden: (value) => {
             hidden = value;
         },
@@ -243,27 +236,48 @@ describe("hidden evidence-correct retirement", () => {
         ctx.fire("geometry");
         runDebounce(ctx.timers);
         assert.equal(ctx.calls.length, before, "exception-only fullscreen must not dispatch removal");
-        assert.equal(innerState(ctx.adapter).lastGoodByDomain.get("out-1\u0000ws-2")?.windows.length, 1);
     });
 
-    it("retained tiled -> floating stays protected without removal", () => {
+    it("retained tiled -> floating converges via complete reconcile", () => {
         const ctx = setupBaseline();
         ctx.setHidden([hiddenException("ws-2", "win-h", ctx.hiddenRef, { floating: true })]);
         const before = ctx.calls.length;
         ctx.fire("geometry");
         runDebounce(ctx.timers);
-        assert.equal(ctx.calls.length, before, "exception-only floating must not dispatch removal");
-        assert.equal(innerState(ctx.adapter).lastGoodByDomain.get("out-1\u0000ws-2")?.windows.length, 1);
+        assert.equal(ctx.calls.length, before + 1, "exception-only floating converges via reconcile");
+        const flight = payloadAt(ctx.calls, before);
+        assert.equal((flight["domain"] as Record<string, unknown>)["workspace"], "ws-2");
+        assert.deepEqual(flight["command"], { op: "reconcile" });
+        const windows = flight["windows"] as Array<Record<string, unknown>>;
+        assert.deepEqual(windows.map((entry) => entry["window"]), ["win-h"]);
+        assert.equal(windows[0]?.["floating"], true, "floating exception rides complete evidence");
+        assert.equal(windows[0]?.["fit_excluded"], true);
+        assert.deepEqual(
+            windows[0]?.["rect"],
+            { x: 0, y: 0, w: 1200, h: 800 },
+            "complete observation preserves geometry",
+        );
+        assert.equal(ctx.activeSets.length, 0, "hidden exception reconcile never writes native focus");
+        ctx.callbacks[before]?.(plannedFor(flight));
+        assert.equal(ctx.activeSets.length, 0);
     });
 
-    it("retained tiled -> sticky stays protected without removal", () => {
+    it("retained tiled -> sticky converges via complete reconcile", () => {
         const ctx = setupBaseline();
         ctx.setHidden([hiddenException("ws-2", "win-h", ctx.hiddenRef, { sticky: true, floating: true })]);
         const before = ctx.calls.length;
         ctx.fire("geometry");
         runDebounce(ctx.timers);
-        assert.equal(ctx.calls.length, before, "exception-only sticky must not dispatch removal");
-        assert.equal(innerState(ctx.adapter).lastGoodByDomain.get("out-1\u0000ws-2")?.windows.length, 1);
+        assert.equal(ctx.calls.length, before + 1, "exception-only sticky converges via reconcile");
+        const flight = payloadAt(ctx.calls, before);
+        assert.equal((flight["domain"] as Record<string, unknown>)["workspace"], "ws-2");
+        assert.deepEqual(flight["command"], { op: "reconcile" });
+        const windows = flight["windows"] as Array<Record<string, unknown>>;
+        assert.deepEqual(windows.map((entry) => entry["window"]), ["win-h"]);
+        assert.equal(windows[0]?.["fit_excluded"], true, "sticky exception rides complete evidence");
+        assert.equal(ctx.activeSets.length, 0, "hidden exception reconcile never writes native focus");
+        ctx.callbacks[before]?.(plannedFor(flight));
+        assert.equal(ctx.activeSets.length, 0);
     });
 
     it("retained tiled -> maximized stays protected without removal", () => {
@@ -273,7 +287,6 @@ describe("hidden evidence-correct retirement", () => {
         ctx.fire("geometry");
         runDebounce(ctx.timers);
         assert.equal(ctx.calls.length, before, "exception-only maximized must not dispatch removal");
-        assert.equal(innerState(ctx.adapter).lastGoodByDomain.get("out-1\u0000ws-2")?.windows.length, 1);
     });
 
     it("omitted (tainted/unreadable) domain stays untouched without removal", () => {
@@ -283,10 +296,9 @@ describe("hidden evidence-correct retirement", () => {
         ctx.fire("geometry");
         runDebounce(ctx.timers);
         assert.equal(ctx.calls.length, before, "absence is unknown and must not synthesize removal");
-        assert.equal(innerState(ctx.adapter).lastGoodByDomain.get("out-1\u0000ws-2")?.windows.length, 1);
     });
 
-    it("explicit empty final close retires baseline and frees capacity", () => {
+    it("explicit empty final close retires via complete reconcile", () => {
         const ctx = setupBaseline();
         const emptyAnchor: object = {};
         ctx.setHidden([hiddenEmpty("ws-2", emptyAnchor)]);
@@ -295,40 +307,21 @@ describe("hidden evidence-correct retirement", () => {
         assert.equal(ctx.calls.length, ctx.answered + 1);
         const cleanup = payloadAt(ctx.calls, ctx.answered);
         assert.equal((cleanup["domain"] as Record<string, unknown>)["workspace"], "ws-2");
-        assert.deepEqual(cleanup["command"], { op: "remove", window: "win-h" });
+        assert.deepEqual(cleanup["command"], { op: "reconcile" });
+        assert.deepEqual(cleanup["windows"], [], "explicit empty carries complete empty evidence");
+        assert.equal(ctx.activeSets.length, 0, "hidden empty reconcile never writes native focus");
         ctx.callbacks[ctx.answered]?.(plannedFor(cleanup));
-        assert.equal(innerState(ctx.adapter).lastGoodByDomain.size, 1);
-        assert.ok(!innerState(ctx.adapter).lastGoodByDomain.has("out-1\u0000ws-2"));
+        // Retired domain sends nothing further on the next signal.
+        ctx.fire("geometry");
+        runDebounce(ctx.timers);
+        assert.equal(ctx.calls.length, ctx.answered + 1, "retired empty domain sends nothing further");
+        assert.equal(ctx.activeSets.length, 0);
     });
 
-    it("explicit empty multi-member collapse stays fail-closed", () => {
-        const fgA: object = {};
-        const fgB: object = {};
-        const firstRef: object = {};
-        const secondRef: object = {};
-        let hidden: ReadonlyArray<PlanObserved> = [hiddenPair("ws-2", "win-h1", firstRef, "win-h2", secondRef)];
-        const calls: Array<{ payload: string }> = [];
-        const callbacks: Array<(reply: unknown) => void> = [];
-        const timers: Array<{ delayMs: number; callback: () => void; cancelled: boolean }> = [];
-        const subs: Sub[] = [];
-        const env = makeEnv(() => fgObserved(fgA, fgB), () => [...hidden], calls, callbacks, timers, subs);
-        const adapter = new PlanAdapter(env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        const fire = (kind: string): void => {
-            for (const sub of subs) if (sub.kind === kind) sub.handler();
-        };
-        fire("added");
-        runDebounce(timers);
-        answerAll(calls, callbacks, 0);
-        assert.equal(innerState(adapter).lastGoodByDomain.get("out-1\u0000ws-2")?.windows.length, 2);
-        const emptyAnchor: object = {};
-        hidden = [hiddenEmpty("ws-2", emptyAnchor)];
-        const before = calls.length;
-        fire("geometry");
-        runDebounce(timers);
-        assert.equal(calls.length, before, "explicit empty multi-member must stay fail-closed");
-        assert.equal(innerState(adapter).lastGoodByDomain.get("out-1\u0000ws-2")?.windows.length, 2);
-    });
+    // Simultaneous explicit-empty multi-remove converges through one
+    // reconcile; covered by background-tiling.test.ts "retires simultaneous
+    // hidden removals through one explicit-empty reconcile". Old fail-closed
+    // row deleted with the retired admit/remove lifecycle.
 });
 
 interface FakeSignal {

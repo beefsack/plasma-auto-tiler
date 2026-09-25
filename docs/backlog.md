@@ -72,18 +72,23 @@ decisions of 2026-09-24 are recorded under
   while keeping topology, instead of refusing (`partial-observation`) or
   reseeding. First check which KWin states make a window transiently absent
   from the observation. Replaces the exact-match refusal class, including
-  the floating-membership skew. Shipped offline 2026-09-25, additive (about
-  1,400 production lines). Pending live acceptance: external floating/sticky
-  skew, close/reopen and focus after closure, transient unreadable frames,
-  minimize/fullscreen/maximize restoration, rapid commands, convergence logs.
+  the floating-membership skew. Shipped 2026-09-25, additive (about 1,500
+  production lines incl. sticky/float fixes). User live-tested generally
+  working, sticky/Meta+G cross-workspace fixed and confirmed live. Not
+  individually confirmed: close/reopen focus, transient unreadable frames,
+  minimize/fullscreen/maximize restoration, rapid commands.
   [change](changes/archive/observation-convergence.md)
-- P2 | Observed-membership convergence (steps 2-3) | After step 1 live
-  acceptance, user decides: (2) drop KWin Plan baseline diffing and send the
-  observation; (3) replace send and R4 pending transactions with commit plus
-  convergence. Goal is net deletion: step 1's transitional code (admit/remove
-  idempotent-success and changed-id guards, per-op exact gates,
-  reseed-on-partial) should go once lifecycle commands become convergence.
-  May subsume batched admissions and parts of the resilience audit.
+- P1 | Observed-membership convergence (steps 2-3) | User go-ahead
+  (2026-09-25) to remove the old paths. Step 2 shipped offline: automatic
+  foreground and hidden tiling send complete observations via `reconcile`;
+  applied baseline, public admit/remove codec and handlers, and step-1
+  transitional guards removed (production net -162 vs `718a58e`). Pending
+  live re-test: startup fit, multi-window open/close (foreground and
+  hidden), float/sticky/maximize/fullscreen restore, gap reload, displaced
+  workspace return, hidden admission after send commit/abandon. Active:
+  step 3 (replace send and R4 pending transactions with commit plus
+  convergence; removes pending rule B). Goal remains net deletion.
+  Batched admissions fall out of complete-observation reconcile.
 - P1 | Resilience audit | After convergence step 1. New principle (user, 2026-09-25): no permanent
   give-up short of hard failure; tolerate subtle host/client deviations;
   window self-changes are normal. Audit terminal, disable and blocked states

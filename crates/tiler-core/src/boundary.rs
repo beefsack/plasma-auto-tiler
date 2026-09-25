@@ -36,7 +36,7 @@ use crate::session::{
     SessionPlan, SessionResizePlan,
 };
 
-/// Typed command for all 19 wire ops: the 10 synchronous ops plus
+/// Typed command for all 17 wire ops: the 10 synchronous ops plus
 /// `send-to-workspace` and the 8 R4 ack/verify/status/cancel phases.
 /// Payloads are already-decoded clones; fallible wire vocabularies
 /// (direction/mode/ack outcome) cross opaquely so this conversion stays total
@@ -49,15 +49,6 @@ use crate::session::{
 pub enum CoreCommand {
     Reconcile,
     UpdateGaps,
-    Admit {
-        window: WindowId,
-        output: OutputId,
-        workspace: WorkspaceId,
-        placement_bounds: Option<Rect>,
-    },
-    Remove {
-        window: WindowId,
-    },
     ActiveGroup,
     Move {
         window: String,
@@ -132,8 +123,6 @@ impl CoreCommand {
         match self {
             Self::Reconcile => "reconcile",
             Self::UpdateGaps => "update-gaps",
-            Self::Admit { .. } => "admit",
-            Self::Remove { .. } => "remove",
             Self::ActiveGroup => "active-group",
             Self::Move { .. } => "move",
             Self::Focus { .. } => "focus",
@@ -185,7 +174,6 @@ pub enum TiledKind {
     Reconcile,
     UpdateGaps,
     Admit,
-    Remove,
     Move,
     Focus,
     Resize,
@@ -203,7 +191,6 @@ impl TiledKind {
             Self::Reconcile => "reconcile",
             Self::UpdateGaps => "update-gaps",
             Self::Admit => "admit",
-            Self::Remove => "remove",
             Self::Move => "move",
             Self::Focus => "focus",
             Self::Resize => "resize",
@@ -223,7 +210,6 @@ impl TiledKind {
     pub const fn capability_str(self) -> Option<&'static str> {
         match self {
             Self::Admit => Some("admit-tiled"),
-            Self::Remove => Some("remove-tiled"),
             Self::Focus => Some("directional-focus"),
             Self::Resize => Some("keyboard-resize"),
             Self::PointerResize => Some("pointer-resize"),
@@ -1005,20 +991,11 @@ mod tests {
     }
 
     #[test]
-    fn all_nineteen_ops_have_distinct_wire_tokens() {
+    fn all_seventeen_ops_have_distinct_wire_tokens() {
         use std::collections::HashSet;
         let commands = vec![
             CoreCommand::Reconcile,
             CoreCommand::UpdateGaps,
-            CoreCommand::Admit {
-                window: WindowId("w".to_owned()),
-                output: OutputId("o".to_owned()),
-                workspace: WorkspaceId("s".to_owned()),
-                placement_bounds: None,
-            },
-            CoreCommand::Remove {
-                window: WindowId("w".to_owned()),
-            },
             CoreCommand::ActiveGroup,
             CoreCommand::Move {
                 window: "w".to_owned(),
@@ -1101,9 +1078,9 @@ mod tests {
                 zero_dispatch: false,
             },
         ];
-        assert_eq!(commands.len(), 19);
+        assert_eq!(commands.len(), 17);
         let tokens: HashSet<&'static str> = commands.iter().map(|c| c.op()).collect();
-        assert_eq!(tokens.len(), 19);
+        assert_eq!(tokens.len(), 17);
         assert!(tokens.contains("reconcile"));
         assert!(tokens.contains("directional-move-cancel"));
     }
@@ -1380,7 +1357,6 @@ mod tests {
     #[test]
     fn tiled_capability_tokens_match_wire_detail() {
         assert_eq!(TiledKind::Admit.capability_str(), Some("admit-tiled"));
-        assert_eq!(TiledKind::Remove.capability_str(), Some("remove-tiled"));
         assert_eq!(TiledKind::Focus.capability_str(), Some("directional-focus"));
         assert_eq!(TiledKind::Resize.capability_str(), Some("keyboard-resize"));
         assert_eq!(

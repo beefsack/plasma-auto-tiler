@@ -433,14 +433,19 @@ describe("background review fixes", () => {
         fire(moverSignals.desktops, winC);
         runDebounce(mocks);
         const answered = converge(mocks, new Set(["ws-2", "ws-3"]));
-        assert.equal(answered, 2, "hidden admit on the target plus remove of the emptied source");
+        assert.equal(answered, 2, "one hidden reconcile per touched domain");
         const calls = planCalls(mocks);
-        const ops = calls.slice(-2).map((call) => ({
+        const tail = calls.slice(-2).map((call) => ({
             domain: (call.payload["domain"] as Record<string, unknown>)["workspace"],
             command: call.payload["command"],
+            windows: (call.payload["windows"] as PayloadWindow[]).map((entry) => entry.window).sort(),
         }));
-        assert.ok(ops.some((entry) => entry.domain === "ws-3" && (entry.command as Record<string, unknown>)["op"] === "admit"));
-        assert.ok(ops.some((entry) => entry.domain === "ws-2" && (entry.command as Record<string, unknown>)["op"] === "remove"));
+        const target = tail.find((entry) => entry.domain === "ws-3");
+        assert.deepEqual(target?.command, { op: "reconcile" });
+        assert.deepEqual(target?.windows, ["win-c", "win-e"]);
+        const source = tail.find((entry) => entry.domain === "ws-2");
+        assert.deepEqual(source?.command, { op: "reconcile" });
+        assert.deepEqual(source?.windows, []);
 
         runDebounce(mocks);
         const quiet = converge(mocks, new Set(["ws-2", "ws-3"]));
@@ -472,11 +477,12 @@ describe("background review fixes", () => {
         fire(world.signals.windowRemoved, undefined);
         runDebounce(mocks);
         const answered = converge(mocks, new Set(["ws-2"]));
-        assert.equal(answered, 1, "exactly one background remove for the emptied domain");
+        assert.equal(answered, 1, "exactly one background reconcile retiring the emptied domain");
         const calls = planCalls(mocks);
         const last = calls[calls.length - 1]?.payload as Record<string, unknown>;
         assert.equal((last["domain"] as Record<string, unknown>)["workspace"], "ws-2");
-        assert.deepEqual(last["command"], { op: "remove", window: "win-c" });
+        assert.deepEqual(last["command"], { op: "reconcile" });
+        assert.deepEqual(last["windows"], []);
 
         runDebounce(mocks);
         assert.equal(converge(mocks, new Set(["ws-2"])), 0, "no stale retry after empty removal");
@@ -487,13 +493,12 @@ describe("background review fixes", () => {
         handle?.stop();
     });
 
-    it("proposes no plan for floating, sticky, fullscreen, or maximized-only hidden domains", () => {
+    it("converges exception-only hidden domains through reconcile without touching native state", () => {
         const gaps = readDomainGaps({ readInnerGapFn: () => 8, readOuterGapFn: () => 8 });
         const rect = { x: 0, y: 0, width: 1200, height: 800 };
         // Precise offline coverage for every exception flag: a hidden domain
-        // with no eligible tiled member stays observable to protect a
-        // retained baseline, but the adapter never dispatches for it,
-        // preserving the existing foreground exception semantics (untouched).
+        // with no eligible tiled member stays observable as complete
+        // exception-only evidence for reconcile convergence.
         const offlineVariants: Array<{ name: string; extra?: Partial<Pick<FakeWindow, "fullScreen" | "maximizeMode" | "onAllDesktops">>; floatingIds?: ReadonlySet<string> }> = [
             { name: "floating", floatingIds: new Set(["win-h"]) },
             { name: "sticky", extra: { onAllDesktops: true } },
@@ -534,11 +539,18 @@ describe("background review fixes", () => {
             assert.ok(handle !== null);
             runDebounce(mocks);
             const answered = converge(mocks, new Set());
-            assert.equal(answered, 1, `${variant.name}-only hidden domain must not dispatch a plan`);
-            for (const call of planCalls(mocks)) {
-                assert.equal((call.payload["domain"] as Record<string, unknown>)["workspace"], "ws-1");
-            }
+            assert.equal(answered, 2, `${variant.name}-only hidden domain converges through reconcile`);
+            const hiddenCall = planCalls(mocks).find(
+                (call) => (call.payload["domain"] as Record<string, unknown>)["workspace"] === "ws-2",
+            )?.payload as Record<string, unknown>;
+            assert.ok(hiddenCall !== undefined, `${variant.name}-only hidden domain must dispatch`);
+            assert.deepEqual(hiddenCall["command"], { op: "reconcile" });
+            assert.deepEqual(
+                (hiddenCall["windows"] as PayloadWindow[]).map((entry) => entry.window),
+                ["win-h"],
+            );
             assert.equal(world.activeSets, 0);
+            assert.equal(activeWindowOf(world), winA);
             assert.equal(world.desktopSwitches, 0);
             handle?.stop();
         }
@@ -694,8 +706,15 @@ describe("background review fixes", () => {
             }
         }
         assert.equal(dbusCalls.length, 21, "foreground plus twenty hidden domains retained");
-        const inner = adapter as unknown as { lastGoodByDomain: Map<string, { domainOutput: string; domainWorkspace: string }> };
-        assert.equal(inner.lastGoodByDomain.size, 21);
+        const seededWorkspaces = dbusCalls.map(
+            (call) => (payloadAt(dbusCalls.indexOf(call))["domain"] as Record<string, unknown>)["workspace"],
+        ).sort();
+        assert.ok(seededWorkspaces.includes("ws-1"), "foreground domain seeded via complete observation");
+        assert.equal(
+            seededWorkspaces.filter((workspace) => workspace !== "ws-1").length,
+            20,
+            "twenty hidden domains seeded via complete observations",
+        );
 
         const raceRef: object = {};
         const raceObserved = hiddenObserved("ws-race", "win-race", raceRef);
@@ -703,14 +722,12 @@ describe("background review fixes", () => {
         fireKind("geometry");
         runDebounceLocal();
         const raceIndex = dbusCalls.length - 1;
+        assert.equal(dbusCalls.length, 22, "twenty-second domain retained via dispatch");
         assert.equal((payloadAt(raceIndex)["domain"] as Record<string, unknown>)["workspace"], "ws-race");
-        assert.equal((payloadAt(raceIndex)["command"] as Record<string, unknown>)["op"], "admit");
+        assert.deepEqual((payloadAt(raceIndex)["command"] as Record<string, unknown>), { op: "reconcile" });
         callbacks[raceIndex]?.(plannedFor(payloadAt(raceIndex)));
         // No domain-count gate: the twenty-second domain is retained and the
-        // foreground baseline survives with no parking.
-        assert.equal(inner.lastGoodByDomain.size, 22);
-        assert.ok(inner.lastGoodByDomain.has("out-1\u0000ws-1"), "foreground baseline must survive admission beyond sixteen domains");
-        assert.ok(inner.lastGoodByDomain.has("out-1\u0000ws-race"), "admission beyond sixteen domains must retain");
+        // foreground stays usable with no parking.
         assert.ok(
             !logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"),
             "admission beyond sixteen domains must not park",
