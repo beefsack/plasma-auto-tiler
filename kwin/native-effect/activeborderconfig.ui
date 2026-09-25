@@ -101,7 +101,7 @@
        <item row="5" column="0" colspan="2">
         <widget class="QLabel" name="borderDescription">
          <property name="text">
-               <string>When enabled, the border uses the current theme highlight color when available and the configured color is the fallback. When disabled, the configured color is always used. Border changes apply immediately through the KWin effect reconfigure. Script settings (workspace mode, shortcut profile, tiling gaps) live in the Plasma Auto Tiler script settings.</string>
+               <string>When enabled, the border uses the current theme highlight color when available and the configured color is the fallback. When disabled, the configured color is always used. Border changes apply immediately through the KWin effect reconfigure. Script settings (workspace mode, tiling gaps) live in the Plasma Auto Tiler script settings.</string>
         </property>
         <property name="wordWrap">
          <bool>true</bool>

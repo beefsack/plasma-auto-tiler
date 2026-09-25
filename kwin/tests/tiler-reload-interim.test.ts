@@ -180,7 +180,7 @@ describe("interim tiler reload contract", () => {
         assert.doesNotMatch(module, /tilerReloadButton/);
     });
 
-    it("marks changed gaps for reconfigure and startup settings restart-required with auto-send", () => {
+    it("marks changed gaps for reconfigure and workspace mode restart-required with auto-send", () => {
         assert.match(module, /m_scriptRestartRequired = true/);
         assert.match(module, /gapChanged/);
         assert.match(module, /startupConsumedChanged/);
@@ -204,7 +204,7 @@ describe("interim tiler reload contract", () => {
         assert.match(module, /application unconfirmed/i);
         assert.match(module, /Reconfigure request failed; the running tiler still uses startup gap values/);
         assert.match(module, /restart the session to guarantee pickup/i);
-        assert.match(module, /session restart remains required for startup settings/i);
+        assert.match(module, /session restart remains required for workspace mode/i);
         assert.doesNotMatch(module, /No running tiler effect for unconsumed settings/);
         const saveBody = functionBody(module, "void ScriptConfigModule::save()");
         const saveStrings = saveBody
@@ -245,10 +245,10 @@ describe("interim tiler reload contract", () => {
         assert.match(ui, /Session restart is the guaranteed pickup mechanism/);
         assert.match(ui, /never claims the running tiler applied the settings/);
         assert.match(ui, /Saving changed gaps sends one typed KWin reconfigure request/);
-        assert.match(ui, /startup settings require a session restart/i);
+        assert.match(ui, /workspace mode requires a session restart/i);
         assert.doesNotMatch(ui, /unconsumed settings have no running effect/i);
         assert.match(effectUi, /Border changes apply immediately through the KWin effect reconfigure\./);
-        assert.match(effectUi, /Script settings \(workspace mode, shortcut profile, tiling gaps\) live in the Plasma Auto Tiler script settings\./);
+        assert.match(effectUi, /Script settings \(workspace mode, tiling gaps\) live in the Plasma Auto Tiler script settings\./);
     });
 });
 

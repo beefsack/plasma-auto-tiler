@@ -268,8 +268,9 @@ bash scripts/dogfood-install.sh dry-run
 
 ### Shortcut catalog
 
-Shortcut registration is catalog-driven under the selected profile (default
-`cosmic`; config key `shortcutProfile`). Every implemented catalog row registers
+Shortcut registration uses one COSMIC-style catalog. The startup read of the
+saved `shortcutProfile` key remains, but the script Configure page hides this
+setting until distinct profiles exist. Every implemented catalog row registers
 under a stable `plasma-auto-tiler-*` shortcut ID, so reload/restart re-registers
 the same IDs and a user-customized KGlobalAccel sequence survives without being
 silently overwritten. This is KWin-local registration: it never displaces or
@@ -402,8 +403,8 @@ bash scripts/dogfood-install.sh uninstall
 `scripts/dogfood-install.sh` also builds and stages the experimental,
 disabled-by-default native `plasma-auto-tiler-active-border` effect, its
 effect-scoped QWidget KCM, and the native script settings KCM
-(`kwin/scripts/configs/plasma-auto-tiler-kwin_config`, the sole owner of the
-workspace mode, shortcut profile, and tiling gap settings). The KWin script
+(`kwin/scripts/configs/plasma-auto-tiler-kwin_config`, the owner of the
+workspace mode and tiling gap settings). The KWin script
 uses its project-owned native script KCM without migrating existing values; it is opened from
 the script's Configure entry, while the effect KCM is opened from
 Desktop Effects. These commands describe the intended user-local lifecycle;

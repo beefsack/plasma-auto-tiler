@@ -2,10 +2,10 @@
 
 ## Current state
 
-| User-facing control | Running behavior after Save |
+| Setting (2026-09-25 update: `shortcutProfile` hidden from page) | Running behavior after Save |
 | --- | --- |
 | `workspaceMode` (`per-output-local`, `global-unique`, `shared`) | Startup snapshot only; changing it writes `kwinrc`, but no mapping transition occurs. |
-| `shortcutProfile` (`cosmic`, `hyprland`, `bspwm`) | Startup snapshot only; no re-registration. All three currently use the **same** directional catalog (`planShortcutCatalog` ignores its argument). |
+| `shortcutProfile` (`cosmic`, `hyprland`, `bspwm`; hidden from the Configure page per the 2026-09-25 decision) | Startup snapshot only; no re-registration. All three currently use the **same** directional catalog (`planShortcutCatalog` ignores its argument). Saved values remain untouched. |
 | `innerGap`, `outerGap` (each 0..64, default 8) | Script KCM saves, queues an unconfirmed `/KWin reconfigure`; `Options.configChanged` rereads validated values and requests retained resync for changed gaps. Visible application is not live-accepted; restart guarantees pickup. |
 | `BorderColor`, `BorderWidth`, `BorderRadius`, `BorderGap`, `UseThemeColor` | Effect KCM saves and requests effect reconfigure; loaded effect rereads and redraws. Code-path live; live acceptance pending. |
 | Five explicit shortcut conflict overrides | Effect KCM Apply/Force/Revert/Restore uses live KGlobalAccel operations with an exact reversible journal. This is a separate explicit operation, not an ordinary settings Save. |

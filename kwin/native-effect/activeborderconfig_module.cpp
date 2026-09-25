@@ -591,7 +591,7 @@ void ActiveBorderConfigModule::save()
         }
     }
     // Border hot-apply stays live through the native effect reconfigure.
-    // Script settings (workspace mode, shortcut profile, tiling gaps) live in
+    // Script settings (workspace mode, tiling gaps) live in
     // the native script KCM and never pass through this module.
 }
 

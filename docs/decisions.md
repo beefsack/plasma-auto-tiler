@@ -35,16 +35,19 @@ the corresponding item ships; each such entry names its replacement.
 - Size caps (AR16, shipped offline): the 64-window and 16-domain count caps are
   retired. The codec rejects requests above 1 MiB; the KWin adapter mirrors
   this bound before dispatch. Separate reply, native/FFI, and field bounds remain.
-- Settings (AR15, shipped offline): tiling settings (`workspaceMode`,
-  `shortcutProfile`, gaps) are configured from the KWin script's own Configure
-  page, backed by a small host-built native script KCM. Saving changed gaps
-  requests KWin reconfigure and the running controller re-reads validated gaps
+- Settings (AR15, shipped offline): tiling settings (`workspaceMode`, gaps)
+  are configured from the KWin script's own Configure page, backed by a small
+  host-built native script KCM. Saving changed gaps requests KWin reconfigure
+  and the running controller re-reads validated gaps
   for debounced retained resync; the request alone does not confirm application.
-  `workspaceMode` and `shortcutProfile` remain startup-only and the page states
-  that a session restart is required. The effect KCM keeps border and explicit
-  shortcut overrides only. Storage remains in the same `kwinrc` group. The
-  script KPackage needs the host-built native KCM companion for its Configure
-  page; the effect need not be enabled. Live acceptance remains pending.
+  `workspaceMode` remains startup-only and the page states that changing it
+  requires a session restart. Per the user's 2026-09-25 decision,
+  `shortcutProfile` is hidden until distinct profiles exist post-MVP; its saved
+  value remains untouched and its startup read remains. The effect KCM keeps
+  border and explicit shortcut overrides only. Storage remains in the same
+  `kwinrc` group. The script KPackage needs the host-built native KCM companion
+  for its Configure page; the effect need not be enabled. Live acceptance remains
+  pending.
 - Threat model (AR13, shipped offline): processes of the same user are trusted.
   The tray has no KWin executable allowlist or `/proc`/pidfd/inode binding;
   it runs single-instance by owning its D-Bus name with `DoNotQueue` and
@@ -128,15 +131,15 @@ the corresponding item ships; each such entry names its replacement.
 
 ## Settings And Distribution
 
-- The script Configure page owns `workspaceMode`, `shortcutProfile`, and both
-  gaps through a native script KCM; the effect-scoped KCM retains border and
-  shortcut-override settings. Existing script groups, keys, values, and
+- The script Configure page owns `workspaceMode` and both gaps through a native
+  script KCM; the effect-scoped KCM retains border and shortcut-override
+  settings. Existing script groups, keys, values, and
   defaults remain unchanged. Saving changed gaps queues the existing KWin
   reconfigure path automatically; the controller re-reads gaps on
   `Options.configChanged` and requests a debounced retained `update-gaps`.
   The queued D-Bus send is unconfirmed, and a session restart guarantees pickup
-  if it cannot converge. Startup-read `shortcutProfile`/`workspaceMode` still
-  require session restart. The ineffective `tilingAlgorithm`,
+  if it cannot converge. Changing `workspaceMode` on the page still requires
+  a session restart. The ineffective `tilingAlgorithm`,
   `automaticSplitTarget`, and `dropOutlinePreview` controls remain removed;
   existing values are neither read nor rewritten. Shortcut re-registration
   remains unselected: the pinned scripting surface offers no unregister
@@ -145,7 +148,10 @@ the corresponding item ships; each such entry names its replacement.
   user-facing setting must apply live; this remains a mandatory launch blocker.
   User exceptions (2026-09-25): `workspaceMode` stays startup-only for MVP and
   the Configure page states the restart requirement clearly; `shortcutProfile`
-  is hidden until distinct profiles exist (post-MVP).
+  is hidden until distinct profiles exist (post-MVP). Lead implementation
+  choice: preserve the existing script startup read (and its unchanged single
+  COSMIC-style catalog); the script KCM does not read, modify, migrate, delete,
+  or create any saved `kwinrc` `shortcutProfile` value.
 - The core distribution remains the script KPackage for KDE Store and an
   identical GitHub Release artifact. Platform-native packages for the native
   effect and KCM are permitted; their formats and publication are unselected.
@@ -895,8 +901,9 @@ the corresponding item ships; each such entry names its replacement.
 - Use a portable Rust StatusNotifierItem carrier with the KWin backend first;
   fail closed without a watcher. The bridge is outbound state-snapshot based,
   reconnecting, idempotent, with no KWin executable allowlist, and has no
-  shell, input, or helper-to-KWin action route. The KCM remains the settings
-  owner.
+  shell, input, or helper-to-KWin action route. Tiling settings belong to the
+  KWin script Configure page; the effect KCM keeps border and explicit
+  shortcut-override settings only.
 - Snapshot publication requires the sender's unique D-Bus name to equal the
   current `org.kde.KWin` name owner. Owner loss or replacement clears the old
   snapshot; the tray remains available for the new owner's snapshot.

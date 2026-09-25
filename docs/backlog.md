@@ -427,9 +427,9 @@ Existing work:
   user-facing setting must apply live, including tiling, workspace, shortcut,
   and effect settings. Overall liveness is PARTIAL: saving gaps from the script
   Configure page now automatically requests the validated retained gap resync,
-  pending live acceptance; borders remain live. `shortcutProfile` and
-  `workspaceMode` still require a session restart, so the launch blocker is not
-  satisfied. The three ineffective controls have been removed; legacy values
+  pending live acceptance; borders remain live. `workspaceMode` still requires
+  a session restart as a user-approved exception (below). The three
+  ineffective controls have been removed; legacy values
   are left untouched. Verify running behavior reflects saved settings without
   requiring a tiler reload. Research (2026-09-25): the three shortcut profiles
   currently produce the same catalog; KWin 6.7.5 scripting cannot unregister
@@ -438,11 +438,13 @@ Existing work:
   recommended. User decision (2026-09-25): hide `shortcutProfile` from the
   Configure page until real profiles exist, keep the single COSMIC-style
   catalog, leave any saved value untouched in `kwinrc`, and fold profiles into
-  "Post-MVP tiling profiles"; this removes it from the launch blocker. Not yet
-  implemented. User decision (2026-09-25): `workspaceMode` stays startup-only
-  for MVP as an explicit launch-blocker exception; verify the Configure page
-  states the restart requirement clearly. Remaining blocker: implement the
-  `shortcutProfile` hide and live-accept gaps and borders.
+  "Post-MVP tiling profiles"; this removes it from the launch blocker.
+  Implemented offline (2026-09-25). User decision (2026-09-25): `workspaceMode`
+  stays startup-only for MVP as an explicit launch-blocker exception; the
+  Configure page now labels it as requiring a session restart. Remaining
+  blocker: live-accept the Configure page (profile hidden, restart wording),
+  gaps and borders.
+  [hide profile](changes/archive/hide-shortcut-profile.md)
   [investigation](changes/reliability-condition-investigation.md)
   [live settings research](research/live-settings-after-ar15.md)
 - P2 | Interim runtime configuration reload | PARTIAL: the gap-only portion is

@@ -15,7 +15,7 @@
           <cstring>workspaceModeCombo</cstring>
          </property>
         <property name="text">
-         <string>The multi-output workspace model</string>
+         <string>The multi-output workspace model (requires session restart):</string>
         </property>
        </widget>
       </item>
@@ -23,19 +23,6 @@
        <widget class="QComboBox" name="workspaceModeCombo"/>
       </item>
        <item row="1" column="0">
-        <widget class="QLabel" name="label_shortcutProfile">
-         <property name="buddy">
-          <cstring>shortcutProfileCombo</cstring>
-         </property>
-        <property name="text">
-         <string>The startup shortcut profile</string>
-        </property>
-       </widget>
-      </item>
-        <item row="1" column="1">
-        <widget class="QComboBox" name="shortcutProfileCombo"/>
-       </item>
-       <item row="2" column="0">
         <widget class="QLabel" name="label_innerGap">
          <property name="buddy">
           <cstring>innerGapSpinBox</cstring>
@@ -45,7 +32,7 @@
         </property>
        </widget>
       </item>
-       <item row="2" column="1">
+       <item row="1" column="1">
        <widget class="QSpinBox" name="innerGapSpinBox">
         <property name="minimum">
          <number>0</number>
@@ -61,7 +48,7 @@
         </property>
        </widget>
       </item>
-       <item row="3" column="0">
+       <item row="2" column="0">
         <widget class="QLabel" name="label_outerGap">
          <property name="buddy">
           <cstring>outerGapSpinBox</cstring>
@@ -71,7 +58,7 @@
         </property>
        </widget>
       </item>
-       <item row="3" column="1">
+       <item row="2" column="1">
        <widget class="QSpinBox" name="outerGapSpinBox">
         <property name="minimum">
          <number>0</number>
@@ -109,7 +96,7 @@
       <item>
        <widget class="QLabel" name="scriptStatusDescription">
         <property name="text">
-         <string>Gap settings are saved to kwinrc. Saving changed gaps sends one typed KWin reconfigure request; the send is unconfirmed and never claims the running tiler applied the settings. Session restart is the guaranteed pickup mechanism for gaps and startup settings. Startup settings require a session restart: workspace mode and shortcut profile are consumed at startup.</string>
+         <string>Gap settings are saved to kwinrc. Saving changed gaps sends one typed KWin reconfigure request; the send is unconfirmed and never claims the running tiler applied the settings. Session restart is the guaranteed pickup mechanism for gaps and the startup setting. Workspace mode requires a session restart: it is consumed at startup.</string>
         </property>
         <property name="wordWrap">
          <bool>true</bool>

@@ -145,8 +145,9 @@ target_link_libraries(plasma-auto-tiler-active-border_config PRIVATE
 target_compile_options(plasma-auto-tiler-active-border_config PRIVATE -Wall -Wextra -Werror)
 
 # AR15 script settings: a small independent native QWidget script KCM owning
-# workspaceMode, shortcutProfile, innerGap, and outerGap from the existing
-# Script-plasma-auto-tiler-kwin group. Discovered through the script
+# workspaceMode, innerGap, and outerGap from the existing
+# Script-plasma-auto-tiler-kwin group (the hidden shortcutProfile key is never
+# read or written here). Discovered through the script
 # package metadata X-KDE-ConfigModule qualified reference
 # (kwin/scripts/configs/plasma-auto-tiler-kwin_config) via the KWin scripts
 # KCM configure path; no effect enablement required.

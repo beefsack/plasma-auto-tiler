@@ -87,21 +87,6 @@ QString otherWorkspaceMode(const QString &current)
     return QStringLiteral("shared");
 }
 
-QString otherShortcutProfile(const QString &current)
-{
-    const QStringList candidates = {
-        QStringLiteral("cosmic"),
-        QStringLiteral("hyprland"),
-        QStringLiteral("bspwm"),
-    };
-    for (const QString &candidate : candidates) {
-        if (candidate != current) {
-            return candidate;
-        }
-    }
-    return QStringLiteral("hyprland");
-}
-
 bool containsRestartRequirement(const QString &text)
 {
     return text.contains(QStringLiteral("Session restart required"))
@@ -406,7 +391,8 @@ void startupOnlySaveDisablesSendWithRestartMessage()
     CHECK(scriptGroup().readEntry(QStringLiteral("workspaceMode"), QString()) == modeTarget);
     CHECK(module.scriptCalls == 0);
     CHECK(module.isScriptRestartRequired());
-    CHECK(containsRestartRequirement(module.scriptStatusText()));
+    CHECK(module.scriptStatusText().contains(QStringLiteral("Workspace mode")));
+    CHECK(!module.scriptStatusText().contains(QStringLiteral("startup settings")));
     CHECK(!containsAppliedClaim(module.scriptStatusText()));
     CHECK(!module.needsSave());
     // An unchanged follow-up save must not send and must keep the restart flag.
@@ -415,28 +401,99 @@ void startupOnlySaveDisablesSendWithRestartMessage()
     CHECK(module.isScriptRestartRequired());
 }
 
-void shortcutProfileSaveDisablesSendWithRestartMessage()
+void hiddenShortcutProfileIsAbsentAndPreservedUntouched()
 {
-    CountingScriptModule module(nullptr, KPluginMetaData());
-    module.load();
-    QComboBox *profile = shortcutProfileCombo(module);
-    CHECK(profile != nullptr);
-    if (!profile) {
-        return;
+    // The profile control is hidden until distinct profiles exist, but any
+    // saved kwinrc value must survive every dialog operation untouched.
+    const QStringList profiles = {
+        QStringLiteral("cosmic"),
+        QStringLiteral("hyprland"),
+        QStringLiteral("bspwm"),
+    };
+    for (const QString &seeded : profiles) {
+        {
+            KConfigGroup group = scriptGroup();
+            group.writeEntry(QStringLiteral("shortcutProfile"), seeded);
+            group.sync();
+        }
+        CountingScriptModule module(nullptr, KPluginMetaData());
+        module.load();
+        CHECK(shortcutProfileCombo(module) == nullptr);
+        CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("label_shortcutProfile")) == nullptr);
+        CHECK(storedShortcutProfile() == seeded);
+        // Unchanged save: no send, no restart, value untouched.
+        module.scriptSucceed = true;
+        module.save();
+        CHECK(storedShortcutProfile() == seeded);
+        CHECK(module.scriptCalls == 0);
+        CHECK(!module.isScriptRestartRequired());
+        // Gap change: sends reconfigure, value untouched.
+        QSpinBox *inner = innerGapSpinBox(module);
+        CHECK(inner != nullptr);
+        if (!inner) {
+            return;
+        }
+        const int gapTarget = (inner->value() == 12) ? 20 : 12;
+        inner->setValue(gapTarget);
+        module.save();
+        CHECK(storedShortcutProfile() == seeded);
+        CHECK(module.scriptCalls == 1);
+        CHECK(!module.isScriptRestartRequired());
+        // Workspace-mode change: restart required, no send, value untouched.
+        QComboBox *mode = workspaceModeCombo(module);
+        CHECK(mode != nullptr);
+        if (!mode) {
+            return;
+        }
+        const QString modeTarget = otherWorkspaceMode(storedWorkspaceMode());
+        const int modeIndex = mode->findData(modeTarget);
+        CHECK(modeIndex >= 0);
+        mode->setCurrentIndex(modeIndex);
+        module.save();
+        CHECK(storedShortcutProfile() == seeded);
+        CHECK(scriptGroup().readEntry(QStringLiteral("workspaceMode"), QString()) == modeTarget);
+        CHECK(module.scriptCalls == 1);
+        CHECK(module.isScriptRestartRequired());
+        CHECK(containsRestartRequirement(module.scriptStatusText()));
+        // Defaults must not introduce or alter the hidden key either.
+        module.defaults();
+        module.save();
+        CHECK(storedShortcutProfile() == seeded);
     }
-    const QString profileTarget = otherShortcutProfile(storedShortcutProfile());
-    const int profileIndex = profile->findData(profileTarget);
-    CHECK(profileIndex >= 0);
-    profile->setCurrentIndex(profileIndex);
-    CHECK(module.needsSave());
-    module.scriptSucceed = true;
-    module.save();
-    CHECK(scriptGroup().readEntry(QStringLiteral("shortcutProfile"), QString()) == profileTarget);
-    CHECK(module.scriptCalls == 0);
-    CHECK(module.isScriptRestartRequired());
-    CHECK(containsRestartRequirement(module.scriptStatusText()));
-    CHECK(!containsAppliedClaim(module.scriptStatusText()));
-    CHECK(!module.needsSave());
+    // A missing hidden key must stay missing through gap and mode saves.
+    {
+        KConfigGroup group = scriptGroup();
+        group.deleteEntry(QStringLiteral("shortcutProfile"));
+        group.sync();
+    }
+    {
+        CountingScriptModule module(nullptr, KPluginMetaData());
+        module.load();
+        CHECK(shortcutProfileCombo(module) == nullptr);
+        CHECK(!scriptGroup().hasKey(QStringLiteral("shortcutProfile")));
+        QSpinBox *inner = innerGapSpinBox(module);
+        CHECK(inner != nullptr);
+        if (!inner) {
+            return;
+        }
+        const int gapTarget = (inner->value() == 12) ? 20 : 12;
+        inner->setValue(gapTarget);
+        module.scriptSucceed = true;
+        module.save();
+        CHECK(!scriptGroup().hasKey(QStringLiteral("shortcutProfile")));
+        QComboBox *mode = workspaceModeCombo(module);
+        CHECK(mode != nullptr);
+        if (!mode) {
+            return;
+        }
+        const QString modeTarget = otherWorkspaceMode(storedWorkspaceMode());
+        const int modeIndex = mode->findData(modeTarget);
+        CHECK(modeIndex >= 0);
+        mode->setCurrentIndex(modeIndex);
+        module.save();
+        CHECK(!scriptGroup().hasKey(QStringLiteral("shortcutProfile")));
+        CHECK(module.isScriptRestartRequired());
+    }
 }
 
 void combinedGapAndStartupSaveSendsWithResidualRestart()
@@ -464,6 +521,27 @@ void combinedGapAndStartupSaveSendsWithResidualRestart()
     CHECK(module.scriptCalls == 1);
     CHECK(module.isScriptRestartRequired());
     CHECK(module.scriptStatusText().contains(QStringLiteral("unconfirmed")));
+    CHECK(module.scriptStatusText().contains(QStringLiteral("workspace mode")));
+    CHECK(!module.scriptStatusText().contains(QStringLiteral("startup settings")));
+    CHECK(containsRestartRequirement(module.scriptStatusText()));
+    CHECK(!containsAppliedClaim(module.scriptStatusText()));
+    CHECK(!module.needsSave());
+    // A later gap-only save keeps the standing workspace-mode restart without
+    // claiming workspace mode was just saved again.
+    QSpinBox *laterGap = innerGapSpinBox(module);
+    CHECK(laterGap != nullptr);
+    if (!laterGap) {
+        return;
+    }
+    const int laterGapTarget = (laterGap->value() == 12) ? 20 : 12;
+    laterGap->setValue(laterGapTarget);
+    module.save();
+    CHECK(scriptGroup().readEntry(QStringLiteral("innerGap"), -1) == laterGapTarget);
+    CHECK(module.scriptCalls == 2);
+    CHECK(module.isScriptRestartRequired());
+    CHECK(module.scriptStatusText().contains(QStringLiteral("workspace mode")));
+    CHECK(!module.scriptStatusText().contains(QStringLiteral("startup settings")));
+    CHECK(!module.scriptStatusText().contains(QStringLiteral("Workspace mode saved")));
     CHECK(containsRestartRequirement(module.scriptStatusText()));
     CHECK(!containsAppliedClaim(module.scriptStatusText()));
     CHECK(!module.needsSave());
@@ -494,6 +572,8 @@ void combinedGapAndStartupSendFailureKeepsResidualRestart()
     CHECK(module.scriptStatusText().contains(QStringLiteral("failed")));
     CHECK(module.scriptStatusText().contains(QStringLiteral("retry on the next save")));
     CHECK(module.scriptStatusText().contains(QStringLiteral("saved to kwinrc")));
+    CHECK(module.scriptStatusText().contains(QStringLiteral("workspace mode")));
+    CHECK(!module.scriptStatusText().contains(QStringLiteral("startup settings")));
     CHECK(containsRestartRequirement(module.scriptStatusText()));
     CHECK(!containsAppliedClaim(module.scriptStatusText()));
     CHECK(module.needsSave());
@@ -505,6 +585,8 @@ void combinedGapAndStartupSendFailureKeepsResidualRestart()
     CHECK(module.scriptStatusText().contains(QStringLiteral("failed")));
     CHECK(module.scriptStatusText().contains(QStringLiteral("saved nothing")));
     CHECK(!module.scriptStatusText().contains(QStringLiteral("saved to kwinrc")));
+    CHECK(module.scriptStatusText().contains(QStringLiteral("workspace mode")));
+    CHECK(!module.scriptStatusText().contains(QStringLiteral("startup settings")));
     CHECK(containsRestartRequirement(module.scriptStatusText()));
     CHECK(!containsAppliedClaim(module.scriptStatusText()));
     // Retry success keeps the restart residual while clearing the pending flag.
@@ -516,6 +598,8 @@ void combinedGapAndStartupSendFailureKeepsResidualRestart()
     CHECK(module.scriptStatusText().contains(QStringLiteral("unconfirmed")));
     CHECK(module.scriptStatusText().contains(QStringLiteral("saved nothing")));
     CHECK(!module.scriptStatusText().contains(QStringLiteral("saved to kwinrc")));
+    CHECK(module.scriptStatusText().contains(QStringLiteral("workspace mode")));
+    CHECK(!module.scriptStatusText().contains(QStringLiteral("startup settings")));
     CHECK(containsRestartRequirement(module.scriptStatusText()));
     CHECK(!containsAppliedClaim(module.scriptStatusText()));
     CHECK(!module.needsSave());
@@ -547,7 +631,8 @@ QString startupRestartLog()
 
 void startupRestartLogEnumeratesOnlyChangedKeys()
 {
-    // Single changed key: only it may be listed.
+    // Only workspaceMode can be changed from this dialog: the startup log
+    // must list exactly that key and never the hidden shortcutProfile.
     capturedScriptConfigMessages.clear();
     const QtMessageHandler previous = qInstallMessageHandler(captureScriptConfigMessage);
     {
@@ -569,36 +654,6 @@ void startupRestartLogEnumeratesOnlyChangedKeys()
     CHECK(!single.isEmpty());
     CHECK(single.contains(QStringLiteral("keys=workspaceMode")));
     CHECK(!single.contains(QStringLiteral("shortcutProfile")));
-
-    // Both changed keys: both are listed in ownership order.
-    capturedScriptConfigMessages.clear();
-    qInstallMessageHandler(captureScriptConfigMessage);
-    {
-        CountingScriptModule module(nullptr, KPluginMetaData());
-        module.load();
-        QComboBox *mode = workspaceModeCombo(module);
-        QComboBox *profile = shortcutProfileCombo(module);
-        CHECK(mode != nullptr);
-        CHECK(profile != nullptr);
-        if (mode) {
-            const QString modeTarget = otherWorkspaceMode(storedWorkspaceMode());
-            const int modeIndex = mode->findData(modeTarget);
-            CHECK(modeIndex >= 0);
-            mode->setCurrentIndex(modeIndex);
-        }
-        if (profile) {
-            const QString profileTarget = otherShortcutProfile(storedShortcutProfile());
-            const int profileIndex = profile->findData(profileTarget);
-            CHECK(profileIndex >= 0);
-            profile->setCurrentIndex(profileIndex);
-        }
-        module.scriptSucceed = true;
-        module.save();
-    }
-    qInstallMessageHandler(previous);
-    const QString both = startupRestartLog();
-    CHECK(!both.isEmpty());
-    CHECK(both.contains(QStringLiteral("keys=workspaceMode,shortcutProfile")));
 }
 
 } // namespace
@@ -635,7 +690,7 @@ int main(int argc, char **argv)
         gapSaveSendFailureArmsRetryOnNextSave();
         startupRestartLogEnumeratesOnlyChangedKeys();
         startupOnlySaveDisablesSendWithRestartMessage();
-        shortcutProfileSaveDisablesSendWithRestartMessage();
+        hiddenShortcutProfileIsAbsentAndPreservedUntouched();
         combinedGapAndStartupSaveSendsWithResidualRestart();
         combinedGapAndStartupSendFailureKeepsResidualRestart();
     } else {

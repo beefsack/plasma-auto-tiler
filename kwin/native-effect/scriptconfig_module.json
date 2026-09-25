@@ -2,7 +2,7 @@
     "KPlugin": {
         "Id": "plasma-auto-tiler-kwin_config",
         "Name": "Plasma Auto Tiler",
-        "Description": "Configure the Plasma Auto Tiler script workspace model, shortcut profile, and tiling gaps.",
+        "Description": "Configure the Plasma Auto Tiler script workspace model and tiling gaps.",
         "Icon": "preferences-system-windows",
         "License": "GPL-2.0-or-later"
     }

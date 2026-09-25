@@ -88,6 +88,7 @@ describe("native KCM static contract", () => {
         for (const field of ["Name", "Description", "Icon", "License"] as const) {
             assert.notEqual(scriptKcmMetadata.KPlugin[field], "");
         }
+        assert.doesNotMatch(scriptKcmMetadata.KPlugin.Description, /shortcut profile/i);
         assert.ok(cmake.includes("add_test(NAME native-effect-metadata-factory-validation"));
         assert.ok(cmake.includes("-P ${CMAKE_CURRENT_SOURCE_DIR}/validate-metadata.cmake"));
         assert.ok(cmake.includes("add_test(NAME native-effect-unified-lifecycle"));
@@ -134,7 +135,7 @@ describe("native KCM static contract", () => {
         assert.match(kcfg, /<group name="Effect-plasma-auto-tiler-active-border">/);
 
         for (const [key, setting] of Object.entries(SCRIPT_SETTINGS)) {
-            if (key === "innerGap" || key === "outerGap") {
+            if (key === "innerGap" || key === "outerGap" || key === "shortcutProfile") {
                 continue;
             }
             const defaultExpression = `QStringLiteral("${setting.defaultValue}")`;
@@ -155,7 +156,9 @@ describe("native KCM static contract", () => {
         }
 
         assert.match(scriptModule, /workspaceModeCombo->findData\(QStringLiteral\("per-output-local"\)\)/);
-        assert.match(scriptModule, /shortcutProfileCombo->findData\(QStringLiteral\("cosmic"\)\)/);
+        assert.doesNotMatch(scriptModule, /shortcutProfileCombo/);
+        assert.doesNotMatch(scriptModule, /readEntry\(QStringLiteral\("shortcutProfile"\)/);
+        assert.doesNotMatch(scriptModule, /writeEntry\(QStringLiteral\("shortcutProfile"\)/);
         assert.doesNotMatch(scriptModule, /engineAuthorityModeCombo/);
         assert.doesNotMatch(scriptModule, /tilingAlgorithm|automaticSplitTarget|dropOutlinePreview/);
         assert.match(scriptModule, /innerGapSpinBox->setValue\((8|kGapDefault)\)/);
@@ -235,12 +238,13 @@ describe("native KCM static contract", () => {
     it("associates every labeled native control with its buddy", () => {
         for (const [label, control] of [
             ["label_workspaceMode", "workspaceModeCombo"],
-            ["label_shortcutProfile", "shortcutProfileCombo"],
             ["label_innerGap", "innerGapSpinBox"],
             ["label_outerGap", "outerGapSpinBox"],
         ]) {
             assert.match(scriptUi, new RegExp(`name="${label}"[\\s\\S]*?<property name="buddy">[\\s\\S]*?<cstring>${control}</cstring>`));
         }
+        assert.doesNotMatch(scriptUi, /shortcutProfileCombo/);
+        assert.doesNotMatch(scriptUi, /label_shortcutProfile/);
         for (const [label, control] of [
             ["label_BorderColor", "kcfg_BorderColor"],
             ["label_BorderWidth", "kcfg_BorderWidth"],
@@ -272,6 +276,8 @@ describe("native KCM static contract", () => {
         assert.match(scriptModule, /if \(gapChanged \|\| m_gapReconfigurePending\)/);
         assert.match(scriptModule, /if \(!widgetsChanged\)/);
         assert.match(scriptModule, /This retry saved nothing/);
+        assert.match(scriptModule, /Session restart remains required for workspace mode/);
+        assert.doesNotMatch(scriptModule, /startup settings/);
         assert.match(scriptModule, /retry on the next save/);
         assert.match(scriptModule, /startupWritten/);
         assert.doesNotMatch(scriptModule, /"keys=workspaceMode,shortcutProfile"/);
@@ -289,11 +295,13 @@ describe("native KCM static contract", () => {
         assert.doesNotMatch(ui, /engine authority[^.]*takes effect immediately/i);
         assert.doesNotMatch(ui, /workspaceModeCombo|shortcutProfileCombo|innerGapSpinBox|outerGapSpinBox/);
         assert.doesNotMatch(ui, /tilerReloadButton|tilerReloadStatusLabel|Reload Tiler/);
-        assert.match(ui, /Script settings \(workspace mode, shortcut profile, tiling gaps\) live in the Plasma Auto Tiler script settings\./);
+        assert.match(ui, /Script settings \(workspace mode, tiling gaps\) live in the Plasma Auto Tiler script settings\./);
         assert.doesNotMatch(ui, /unconsumed settings have no running effect/i);
-        assert.match(scriptUi, /startup settings require a session restart/i);
+        assert.match(scriptUi, /workspace mode requires a session restart/i);
+        assert.match(scriptUi, /requires session restart/);
         assert.match(scriptUi, /Saving changed gaps sends one typed KWin reconfigure request/);
         assert.match(scriptUi, /never claims the running tiler applied the settings/);
+        assert.doesNotMatch(scriptUi, /shortcut profile/i);
         assert.doesNotMatch(scriptUi, /unconsumed settings have no running effect/i);
         assert.doesNotMatch(read("metadata.json"), /Other script settings require a script reload or session restart\./);
     });
