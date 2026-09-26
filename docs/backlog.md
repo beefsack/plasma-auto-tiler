@@ -16,7 +16,15 @@ decisions of 2026-09-24 are recorded under
   Trace `~/Downloads/plasma-auto-tiler-dev.caWaFc.log` (Orchestrator
   skim: 87 `observe-excluded reason=output-mismatch`, rejected focus/move
   with `snapshot-invalid detail=window-out-of-bounds`). Cross-output moves
-  not yet reachable. Diagnose and fix before other work.
+  not yet reachable. Diagnose and fix before other work. Diagnosis: (2)
+  directional focus/move check edge-tiled windows against inset (gap)
+  bounds while single-domain commands use raw bounds - fix to raw
+  containment. (1) Apply/Force accept only a compiled claimant table; old
+  project action IDs are unknown claimants. User decision (2026-09-26):
+  Force clears any holder of a required key, listed in the confirmation;
+  Revert restores each cleared action to its KDE default
+  (`defaultShortcutKeys` then `setForeignShortcutKeys`), accepting loss of a
+  custom binding on a cleared action; retire the exact-preimage journal.
 - P2 | Drop-intent edge drag live cases | Shipped with passive native press
   capture and interim move-drop snap-back
   ([follow-up](changes/archive/passive-press-move-snapback.md)). User manually
