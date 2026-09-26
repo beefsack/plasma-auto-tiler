@@ -345,13 +345,13 @@ describe("plan adapter AR12 Ghostty-like client clamp", () => {
         }
     });
 
-    it("still advances park attempts for genuine drift mixed with a clamp", () => {
+    it("still advances acceptance attempts for genuine drift mixed with a clamp", () => {
         const { refs, mocks } = ghosttyMocks();
         const adapter = admitBaseline(mocks, refs);
         void adapter;
         // Each cycle: win-b stays client-clamped (skipped) while win-a
         // drifts genuinely (rewritten). The genuine reassert must keep
-        // advancing the bounded park attempts.
+        // advancing the bounded acceptance attempts.
         const driftA = { x: 0, y: 0, w: 900, h: 1092 };
         for (let cycle = 0; cycle < 3; cycle += 1) {
             mocks.observeImpl = () =>
@@ -384,9 +384,19 @@ describe("plan adapter AR12 Ghostty-like client clamp", () => {
                 ),
             );
         }
+        const acceptedCalls = mocks.dbusCalls.length;
+        mocks.observeImpl = () =>
+            makeObserved(refs, { focused: refs.a, bounds, rects: { "win-a": driftA, "win-b": clampedB } });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, acceptedCalls, "stable mixed drift accepts without dispatching");
         assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"),
-            "genuine drift mixed with a clamp still parks boundedly",
+            mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:reconcile-accepted") && line.includes("cause=stable-drift")),
+            "genuine drift mixed with a clamp still accepts boundedly",
+        );
+        assert.ok(
+            !mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"),
+            "no domain-wide park remains",
         );
     });
 });

@@ -1298,24 +1298,46 @@ describe("plan adapter R4 immediate transfer (lean, no wire protocol)", () => {
         void native;
     });
 
-    it("refuses stale reply after newer observation with no native writes", () => {
+    it("replans a stale directional pre-write once, then drops a second staleness", () => {
         const r = refs();
         const { mocks, native } = r4Mocks(r);
         const adapter = enable(mocks);
         adapter.requestMove("right");
         const correlation = payload(mocks, 0)["correlation_id"] as string;
+        const firstCommand = payload(mocks, 0)["command"];
         mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
             status: "ready",
             observed: twoDomainObserved(r, { xRect: { x: 20, y: 10, w: 100, h: 80 } }),
         });
         mocks.callbacks[0]?.(crossMoveReply(correlation));
-        assert.equal(native.sentTransfers.length, 0);
+        assert.equal(native.sentTransfers.length, 0, "stale pre-write transfers nothing");
         assert.equal(native.sentMemberships.length, 0);
         assert.equal(mocks.geometries.length, 0);
         assert.equal(mocks.actives.length, 0);
         assert.equal(adapter.isR4InFlight, false);
-        assert.equal(adapter.isInFlight, false);
         assert.ok(mocks.logs.some((line) => line.includes(correlation) && line.includes("stale")));
+        assert.equal(mocks.dbusCalls.length, 2, "stale directional pre-write replans once");
+        const replan = payload(mocks, 1);
+        const replanCorrelation = replan["correlation_id"] as string;
+        assert.notEqual(replanCorrelation, correlation, "replan uses a fresh correlation");
+        assert.deepEqual(replan["command"], firstCommand, "replan carries the same move command");
+        assert.equal(adapter.isInFlight, true, "replanned move is in flight");
+        assertNoWireProtocol(mocks);
+        // Second staleness against the replanned flight drops with no
+        // further dispatch and no native writes.
+        mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
+            status: "ready",
+            observed: twoDomainObserved(r, { xRect: { x: 30, y: 12, w: 100, h: 80 } }),
+        });
+        mocks.callbacks[1]?.(crossMoveReply(replanCorrelation));
+        assert.equal(native.sentTransfers.length, 0, "second staleness transfers nothing");
+        assert.equal(native.sentMemberships.length, 0);
+        assert.equal(mocks.geometries.length, 0);
+        assert.equal(mocks.actives.length, 0);
+        assert.equal(adapter.isR4InFlight, false);
+        assert.equal(adapter.isInFlight, false, "dropped flight converges");
+        assert.equal(mocks.dbusCalls.length, 2, "second staleness dispatches nothing further");
+        assert.ok(mocks.logs.some((line) => line.includes(replanCorrelation) && line.includes("stale-scope")));
         assertNoWireProtocol(mocks);
         const before = mocks.dbusCalls.length;
         fireDebounce(mocks);
@@ -1369,6 +1391,52 @@ describe("plan adapter R4 immediate transfer (lean, no wire protocol)", () => {
         assertCorrelated(mocks, correlation, "arrival-timeout");
         assertNoWireProtocol(mocks);
         void native;
+    });
+});
+
+describe("directional target overlay bounds", () => {
+    it("reports the target's own bounds without a native id when Rust rejects its frame", () => {
+        const r = refs();
+        const mocks = mockEnv(r);
+        mocks.directionalImpl = () => ({
+            status: "ready",
+            observed: twoDomainObserved(r, { aRect: { x: 10, y: 10, w: 100, h: 80 } }),
+        });
+        const adapter = enable(mocks);
+        adapter.requestFocus("right");
+        const body = payload(mocks, 0);
+        assert.equal((body["domains"] as Array<unknown>).length, 2);
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: body["correlation_id"],
+            outcome: "rejected",
+            kind: "snapshot-invalid",
+            detail: "window-out-of-bounds",
+        }));
+        assert.ok(mocks.logs.includes(
+            "plasma-auto-tiler:plan:rejected kind=snapshot-invalid detail=window-out-of-bounds output=out-2 ordinal=1 resource_class=unknown rect=10,10,100,80 bounds=800,0,800,600",
+        ));
+    });
+
+    it("clamps a target overlay into its own output, retaining the two-domain route", () => {
+        const r = refs();
+        const mocks = mockEnv(r);
+        const observed = twoDomainObserved(r, { aRect: { x: 10, y: 10, w: 100, h: 80 }, xRect: { x: 0, y: 0, w: 100, h: 80 } });
+        mocks.directionalImpl = () => ({
+            status: "ready",
+            observed: {
+                ...observed,
+                windows: observed.windows.map((entry) =>
+                    entry.id === "win-x" ? { ...entry, fullscreen: true } : entry,
+                ),
+            },
+        });
+        const adapter = enable(mocks);
+        adapter.requestFocus("right");
+        const body = payload(mocks, 0);
+        assert.equal((body["domains"] as Array<unknown>).length, 2);
+        const target = (body["windows"] as Array<Record<string, unknown>>).find((entry) => entry["window"] === "win-x");
+        assert.deepEqual(target?.["rect"], { x: 800, y: 0, w: 100, h: 80 });
     });
 });
 

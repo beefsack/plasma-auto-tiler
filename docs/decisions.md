@@ -468,11 +468,10 @@ the corresponding item ships; each such entry names its replacement.
   receives no geometry write, and on unmaximize is restored to its exact
   retained allocation. Fullscreen takes precedence when a window is both
   fullscreen and maximized: fullscreen refusal tokens and the `skip-fullscreen`
-  disposition win over maximize. A missing per-window `maximizedChanged`
-  attachment for any eligible observed normal window refuses fail-closed with
-  the exact `plasma-auto-tiler:plan:maximize-refused-signal` token, at startup
-  or when a later-added eligible window lacks the signal, unlike best-effort
-  fullscreen.
+   disposition win over maximize. User decision I (2026-09-26): a normal window
+   without a connectable `maximizedChanged` remains tiled; log once and use
+   fresh `maximizeMode` reads on later observations. An unseen native change
+   remains unknown until a subsequent observation.
 - Admission-time maximize clearing is a deliberate, user-approved KWin-native
   deviation from cosmic-comp parity, authorized 2026-09-14. For a non-fullscreen
   window first observed without a retained tiled slot, the adapter calls KWin
@@ -528,15 +527,23 @@ the corresponding item ships; each such entry names its replacement.
   fail." A failed native geometry operation or client geometry discrepancy is
   an operation failure, not a permanently disabled window or domain. Later
   valid commands and fresh observations remain usable while the adapter retains
-  confirmed canonical topology where available. Bounded reconciliation may park
-  only further automatic reflow after repeated mismatch; it never blocks a
-  later explicit command, retries indefinitely, fabricates acknowledgement,
-  applies stale geometry, or recovers uncertain cross-output transfers.
+   confirmed canonical topology where available. User decision A (2026-09-26,
+   interim): after three bounded reassertions, automatic reconciliation accepts
+   each exact client-held rectangle as per-window applied geometry evidence,
+   rather than parking the domain; other or later drift still reconciles. This
+   does not fabricate a native write or change canonical Rust topology. Learned
+   size limits and neighbour replans are deferred. Later explicit commands
+   remain usable; no infinite retries, fabricated acknowledgement, stale
+   geometry or uncertain cross-output transfer recovery is authorized.
   Authorization, malformed-input, owner, correlation, and stale-scope fences
   remain fail-closed. Send/R4 uncertainty now uses the 2026-09-25
   step-3 observation convergence below. Future
   recovery must preserve later valid commands without fabricating success,
-  replaying setters, resetting topology, or weakening those fences.
+   replaying setters, resetting topology, or weakening those fences. User
+   decision G (2026-09-26): a stale pre-write snapshot replans the same
+   command once against a fresh complete observation under identity,
+   correlation, owner and scope fences. A second staleness logs, drops and
+   converges; never replay after any setter has run.
 - USER-APPROVED observation-convergence step 3, decided 2026-09-25:
   complete per-domain observations are authoritative for membership and portable
   flags, retaining survivor topology. The user authorized retiring send/R4
@@ -615,7 +622,7 @@ the corresponding item ships; each such entry names its replacement.
   existing members. In particular, an older out-of-work-area window must not
   prevent a later window from tiling or create a restart-persistent admission
   deadlock. Bounds validation remains mandatory for non-admission operations,
-  where observed geometry is the client-drift input for the park policy and
+   where observed geometry is the client-drift input for bounded per-window acceptance and
   echo fence.
 - `workspaceMode` supports `per-output-local`, `global-unique`, and `shared`
   through a session-local, project-owned KWin backing-desktop mapping. KWin's
@@ -1115,11 +1122,11 @@ the corresponding item ships; each such entry names its replacement.
 - Retain JavaScript for discrete window add/remove management. Group behavior,
   inactive borders, Steam-specific handling, and complete keyboard-layout
   support remain deferred.
-- Production self-resize reconciliation, authorized 2026-09-13: retained Rust
-  session allocation is authoritative over same-scope client geometry drift.
-  The KWin plan adapter sends strict `DescribePlan` `{ "op": "reconcile" }`,
-  applies the retained projection, and never derives sibling shares from an
-  actual client rectangle. It makes at most three terminal reassertion attempts
-  before parking that scope; this is an explicit KWin bounded-retry policy, not
-  a COSMIC threshold or KWin acknowledgement claim. Focus/fingerprint changes
-  do not permit drift adoption.
+- Production self-resize reconciliation, authorized 2026-09-13 and updated by
+  user decision A on 2026-09-26: retained Rust session allocation owns the
+  topology over same-scope client geometry drift. The KWin plan adapter sends
+  strict `DescribePlan` `{ "op": "reconcile" }` and never derives sibling shares
+  from an actual client rectangle. After three terminal reassertions, it
+  accepts the exact client-held rectangle as per-window applied evidence;
+  other drift in the domain still reconciles normally. This bounded policy
+  is not a COSMIC threshold or KWin acknowledgement claim.

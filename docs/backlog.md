@@ -8,22 +8,17 @@ each review claim before acting; it was a static sampling review. User
 decisions of 2026-09-24 are recorded under
 [Architecture Direction](decisions.md#architecture-direction).
 
-- P0 | Multi-output PC re-test | First multi-output test (2026-09-26,
-  trace `~/Downloads/plasma-auto-tiler-dev.caWaFc.log`) failed before
-  cross-output moves: (1) shortcut Apply refused old project action IDs as
-  claimants; (2) directional focus/move rejected edge-tiled windows
-  (`window-out-of-bounds`). Fixed offline: (2) raw output bounds for
-  directional commands, `8162377` (Rust only); (1) user decision: Force
-  clears any holder listed in the confirmation, Revert restores cleared
-  non-project actions to KDE defaults (custom bindings on them are lost),
-  exact-preimage journal retired (old journal files untouched); Orchestrator
-  chose an ID-only cleared list `~/.config/plasma-auto-tiler/shortcut-
-  clearedrc` written before clearing, `e69739f` (native; fresh Plasma login
-  after `just build-native-effect` and `just dev-native-setup`). User
-  re-test on the multi-output PC: Apply/Force/Revert per
-  docs/live-shortcut-override-verification.md, then directional focus/move
-  and cross-output moves, then the step 2-3 list below. Note the commit SHA
-  tested. [record](changes/archive/multi-output-failures.md)
+- P1 | Multi-output PC remaining re-test | Directional focus/move and
+  cross-output focus/move accepted live by the user (2026-09-26, trace
+  `~/Downloads/plasma-auto-tiler-dev.rRHFMS.log`) after carrying each
+  window against its own output bounds; the earlier `window-out-of-bounds`
+  offender was never identified, so an ID-redacted rejection diagnostic
+  remains ([record](changes/archive/multi-output-directional-snapshot.md)).
+  The accepted trace has one focus timeout and one move stale-scope terminal
+  with later commands usable. Still to re-test there: shortcut
+  Apply/Force/Revert per docs/live-shortcut-override-verification.md
+  (`e69739f`), then the step 2-3 list below.
+  [record](changes/archive/multi-output-failures.md)
 - P2 | Drop-intent edge drag live cases | Shipped with passive native press
   capture and interim move-drop snap-back
   ([follow-up](changes/archive/passive-press-move-snapback.md)). User manually

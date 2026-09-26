@@ -524,4 +524,147 @@ describe("tiled move-drop restore (Kate drags 29-31)", () => {
         assert.ok(!mocks.logs.some((l) => l.includes("drag-rejected") && l.includes("correlation=drag-35")), "no late marker");
         stop();
     });
+
+    it("move Started with no Finished releases boundedly; stale expiry cannot clear a later Start; normal Finish cancels", () => {
+        const world = moveWorld();
+        const { stop, mocks } = startMoveEntry(world);
+        baselineConverge(world, mocks);
+        const moveStartTimeouts = (): number =>
+            mocks.logs.filter(
+                (l) =>
+                    l.includes("drag-move-timeout") &&
+                    l.includes("correlation=move-start-") &&
+                    l.includes("cause=missing-finished") &&
+                    l.includes("recovery=move-hold-released"),
+            ).length;
+
+        // Normal Finish cancels the Started expiry: the per-finish verdict
+        // path converges without a missing-Finished line.
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = true;
+        fireAll(world.startedA);
+        assert.equal(
+            mocks.timers.filter((t) => !t.cancelled && t.delayMs === DRAG_MEASURE_VERDICT_TIMEOUT_MS).length,
+            1,
+            "one Start-keyed move expiry armed",
+        );
+        fireAll(world.finishedA);
+        assert.equal(mocks.oracleCalls.length, 1);
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = false;
+        (mocks.oracleCalls[0] as (reply: unknown) => void)(
+            moveVerdict({ x: 40, y: 0, w: 600, h: 800 }, "win-a", "drag-60"),
+        );
+        runMoveTimeout(mocks);
+        assert.equal(moveStartTimeouts(), 0, "finished move emits no missing-Finished timeout");
+        assert.ok(
+            !mocks.logs.some((l) => l.includes("drag-move-timeout") && /win-a|internalId/.test(l)),
+            "no native identity in move logs",
+        );
+
+        // Missing Finished on a living window: hold suppresses, then the
+        // bound releases exactly once through the ordinary resync.
+        const callsBeforeHold = mocks.planCalls.length;
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = true;
+        fireAll(world.startedA);
+        (world.wins["win-a"] as Record<string, unknown>)["frameGeometry"] = { x: 10, y: 0, width: 600, height: 800 };
+        fireAll(world.geometry);
+        runDebounce(mocks);
+        assert.equal(mocks.planCalls.length, callsBeforeHold, "held move dispatches no ordinary reconcile");
+        runMoveTimeout(mocks);
+        assert.equal(moveStartTimeouts(), 1, "bounded move expiry is logged once");
+        (world.wins["win-a"] as Record<string, unknown>)["frameGeometry"] = { x: 20, y: 0, width: 600, height: 800 };
+        fireAll(world.geometry);
+        runDebounce(mocks);
+        assert.equal(mocks.planCalls.length, callsBeforeHold + 1, "released hold resyncs ordinarily");
+        assert.deepEqual(
+            (JSON.parse(mocks.planCalls[mocks.planCalls.length - 1]?.payload as string) as Record<string, unknown>)["command"],
+            { op: "reconcile" },
+            "expiry invents no drag terminal",
+        );
+        assert.ok(
+            !mocks.logs.some((l) => l.includes("drag-move-restore") && l.includes("move-start-")),
+            "no fabricated restore for the expiry",
+        );
+
+        // Stale expiry safety: a second Start re-arms; forcing the stale
+        // timer must not clear the newer hold, the fresh timer still releases.
+        const callsBeforeStale = mocks.planCalls.length;
+        const timeoutsBeforeStale = moveStartTimeouts();
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = true;
+        fireAll(world.startedA);
+        const stale = mocks.timers[mocks.timers.length - 1] as { callback: () => void; cancelled: boolean };
+        fireAll(world.startedA);
+        const fresh = mocks.timers[mocks.timers.length - 1] as { callback: () => void; cancelled: boolean };
+        assert.ok(stale.cancelled, "re-arm cancels the previous expiry");
+        stale.callback();
+        assert.equal(moveStartTimeouts(), timeoutsBeforeStale, "stale expiry is a no-op");
+        (world.wins["win-a"] as Record<string, unknown>)["frameGeometry"] = { x: 30, y: 0, width: 600, height: 800 };
+        fireAll(world.geometry);
+        runDebounce(mocks);
+        assert.equal(mocks.planCalls.length, callsBeforeStale, "later Start survives the stale expiry");
+        fresh.callback();
+        assert.equal(moveStartTimeouts(), timeoutsBeforeStale + 1, "fresh expiry still releases");
+        stop();
+    });
+
+    it("move Started then resize Started without move Finished: stale move timer releases only the move hold", () => {
+        const world = moveWorld();
+        const { stop, mocks } = startMoveEntry(world);
+        baselineConverge(world, mocks);
+        const moveStartTimeouts = (): number =>
+            mocks.logs.filter(
+                (l) =>
+                    l.includes("drag-move-timeout") &&
+                    l.includes("correlation=move-start-") &&
+                    l.includes("cause=missing-finished") &&
+                    l.includes("recovery=move-hold-released"),
+            ).length;
+        const resizeStartTimeouts = (): number =>
+            mocks.logs.filter(
+                (l) =>
+                    l.includes("drag-resize-timeout") &&
+                    l.includes("correlation=resize-start-") &&
+                    l.includes("cause=missing-finished") &&
+                    l.includes("recovery=resize-hold-released"),
+            ).length;
+
+        // Lost move Finished: a move Start holds, then a resize Start on the
+        // same window overwrites the epoch without re-arming the move guard.
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = true;
+        fireAll(world.startedA);
+        const moveTimer = mocks.timers[mocks.timers.length - 1] as { callback: () => void; cancelled: boolean };
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = false;
+        (world.wins["win-a"] as Record<string, unknown>)["resize"] = true;
+        fireAll(world.startedA);
+        const resizeTimer = mocks.timers[mocks.timers.length - 1] as { callback: () => void; cancelled: boolean };
+        assert.ok(!moveTimer.cancelled, "resize Started does not cancel the older move guard");
+        const callsBeforeExpiry = mocks.planCalls.length;
+
+        // Stale move expiry releases the move hold but keeps the newer resize
+        // hold and its captured start.
+        moveTimer.callback();
+        assert.equal(moveStartTimeouts(), 1, "stale move expiry releases the move hold once");
+        (world.wins["win-a"] as Record<string, unknown>)["frameGeometry"] = { x: 30, y: 0, width: 590, height: 800 };
+        fireAll(world.geometry);
+        runDebounce(mocks);
+        assert.equal(mocks.planCalls.length, callsBeforeExpiry, "newer resize hold survives the stale move expiry");
+
+        // The newer resize hold still releases boundedly through the ordinary
+        // resync with no drag terminal.
+        resizeTimer.callback();
+        assert.equal(resizeStartTimeouts(), 1, "resize hold still releases boundedly");
+        (world.wins["win-a"] as Record<string, unknown>)["frameGeometry"] = { x: 40, y: 0, width: 580, height: 800 };
+        fireAll(world.geometry);
+        runDebounce(mocks);
+        assert.equal(mocks.planCalls.length, callsBeforeExpiry + 1, "released resize hold resyncs ordinarily");
+        assert.deepEqual(
+            (JSON.parse(mocks.planCalls[mocks.planCalls.length - 1]?.payload as string) as Record<string, unknown>)["command"],
+            { op: "reconcile" },
+            "expiry invents no drag terminal",
+        );
+        assert.ok(
+            !mocks.logs.some((l) => l.includes("drag-move-restore") && l.includes("move-start-")),
+            "no fabricated restore for the expiry",
+        );
+        stop();
+    });
 });

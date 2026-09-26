@@ -33,6 +33,21 @@ Priority order (highest first; letters identify rows): **H, I, J, O, B, A, G, E,
 | T | `kwin/src/active-group-highlight.ts:41,656-665,844-912` | After 1,000,001 successful refresh sequences the group bridge refuses every later refresh as `seq-exhausted`; failure to subscribe to focus/domain/tree at bridge startup also returns `null` with no reattach. Tiling and the ordinary border stay usable. The cap is verified; reaching it or transient signal failure in a real session is unverified. | Full script reload resets sequence/reattaches; no in-session recovery on either path. | user action (group-only) | **Ordinary:** rotate a bounded correlation epoch before exhaustion while invalidating old replies; on subscription failure log and retry attachment on a later existing Plan-applied/config event, without guessing missing group geometry. |
 | U | `kwin/src/plan-adapter.ts:60,4588-4594`; `kwin/src/workspace-send-adapter.ts:99,1078-1081,1116-1120` | Each route permanently refuses all future commands after its 1,000,001st generated correlation; Plan silently returns and send logs `sequence-invalid`. This requires an exceptionally long/high-volume script lifetime (runtime occurrence unverified), but is a deterministic session-local give-up even while KWin/Planner are healthy. | Full script reload resets both instances; adapter disable/enable does not reset Plan's sequence (`plan-adapter.ts:1825-1866`). | indefinite if reached | **Fixed offline:** non-reused correlation epoch/sequence rotation retains Engine topology and old-reply fences. [Change note](archive/resilience-fixes-kwin.md). |
 
+## Change 2 status (offline, 2026-09-26)
+
+| Row | Status | Evidence and remaining boundary |
+| --- | --- | --- |
+| I | Fixed offline | Signal-less eligible windows stay tiled, with one bounded log and fresh maximize reads. |
+| G | Fixed offline | One fresh complete pre-write replan of the original command; second stale reply drops and converges, no setter replay. |
+| A | Fixed offline (interim) | Three bounded reassertions then per-window exact client-rect acceptance; other drift still reconciles. Learned limits/neighbour replan deferred. |
+| F | Fixed offline | Quiet-equal foreground observation no longer advances the stale-reply epoch. |
+| K | Fixed offline | Exact native removal evicts the object-keyed sticky attempt. |
+| T | Skipped - decision needed | Rotation is small; retrying a null bridge after subscription failure needs entry-owned reattach or a degraded-handle contract. |
+| D | Skipped - decision needed | Unobserved-domain markers need an authorized expiry event/ownership rule; park-based deferral ended with A. |
+| L | Skipped - decision needed | Exact removal eviction needs a ref-to-ID ownership rule or reading removal payloads; current cache is string-keyed. |
+
+Batch-1 follow-up: a move Started without Finished now has a bounded Started-keyed hold expiry and ordinary resync, with no fabricated drag terminal. See [Change 2 note](archive/resilience-change-2.md). No live verification is claimed. The original finding descriptions and recovery columns above remain historical citations at `9549721`.
+
 ## Acceptable or bounded states
 
 | Location | Trigger, recovery, and why acceptable |
@@ -56,4 +71,4 @@ Priority order (highest first; letters identify rows): **H, I, J, O, B, A, G, E,
 
 - At audit time, user choices were needed for **A** client-held geometry parking, **G** pre-write drift, **I** missing maximize signal, **M** tray watcher lifetime, and **R/S** native endpoint retry. Those choices have since been recorded; M is fixed offline here. All other fixes were ordinary, including the first-priority empty-startup case **H**.
 - Code and recovery paths inspected at `9549721`; no test or live behavior evidence is claimed. Conditional triggers explicitly marked hypothetical remain source-verified *paths*, not verified runtime events. **P** additionally depends on unverified zbus hang/timeout behavior. No code changed; only this note was created.
-- H/J/B/C/E/U were implemented in a subsequent offline change; see [archived change note](archive/resilience-fixes-kwin.md). M/N/O/P/Q were fixed offline in [the tray change](archive/resilience-fixes-tray.md). All file:line references in finding descriptions remain historical source citations at `9549721`, not current line numbers. A/G/I/R/S choices are recorded but their fixes remain separate.
+- H/J/B/C/E/U were implemented in a subsequent offline change; see [archived change note](archive/resilience-fixes-kwin.md). M/N/O/P/Q were fixed offline in [the tray change](archive/resilience-fixes-tray.md). Change 2 status for A/G/I/F/K/T/D/L and the lost-move-Finished follow-up is above. All file:line references in finding descriptions remain historical source citations at `9549721`, not current line numbers. R/S choices remain separate.

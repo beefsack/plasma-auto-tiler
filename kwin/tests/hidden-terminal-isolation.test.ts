@@ -279,7 +279,7 @@ function baselineFgAndHidden(mocks: Mocks, world: World, hiddenWs = "ws-2"): voi
 }
 
 describe("hidden terminal isolation", () => {
-    it("rejected hidden flights park background only and leave foreground usable", () => {
+    it("rejected hidden flights accept background only and leave foreground usable", () => {
         const world: World = { fgA: makeRef(), fgB: makeRef(), hiddenRefs: new Map() };
         const mocks = mockEnv();
         enableAdapter(mocks);
@@ -296,23 +296,26 @@ describe("hidden terminal isolation", () => {
             const correlation = payload(mocks, index)["correlation_id"] as string;
             mocks.callbacks[index]?.(rejectedReply(correlation));
         }
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"));
-        const parkedCalls = mocks.dbusCalls.length;
+        assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"), "no domain-wide park remains");
         mocks.observeHiddenImpl = () => [hiddenObserved("ws-2", "win-ws-2", hiddenRef, HIDDEN_DRIFT)];
         mocks.observeImpl = () => fgObserved(world.fgA, world.fgB, ALLOC_A);
         fire(mocks, "geometry");
         runDebounce(mocks);
-        assert.equal(mocks.dbusCalls.length, parkedCalls, "parked hidden domain dispatches nothing further");
+        assert.ok(mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:reconcile-accepted") && line.includes("cause=stable-drift")), "stable hidden drift accepts");
+        const acceptedCalls = mocks.dbusCalls.length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, acceptedCalls, "accepted hidden domain dispatches nothing further");
         mocks.observeImpl = () => fgObserved(world.fgA, world.fgB, DRIFT_A);
         fire(mocks, "geometry");
         runDebounce(mocks);
-        assert.equal(mocks.dbusCalls.length, parkedCalls + 1);
-        const fgCall = payload(mocks, parkedCalls);
+        assert.equal(mocks.dbusCalls.length, acceptedCalls + 1);
+        const fgCall = payload(mocks, acceptedCalls);
         assert.equal((fgCall["domain"] as Record<string, unknown>)["workspace"], "ws-1");
         assert.deepEqual((fgCall["command"] as Record<string, unknown>)["op"], "reconcile");
     });
 
-    it("timeout hidden flights park background only and leave foreground usable", () => {
+    it("timeout hidden flights accept background only and leave foreground usable", () => {
         const world: World = { fgA: makeRef(), fgB: makeRef(), hiddenRefs: new Map() };
         const mocks = mockEnv();
         enableAdapter(mocks);
@@ -409,7 +412,7 @@ describe("hidden terminal isolation", () => {
         );
     });
 
-    it("successful background same-scope drift reconciles park after three", () => {
+    it("successful background same-scope drift accepts after three", () => {
         const world: World = { fgA: makeRef(), fgB: makeRef(), hiddenRefs: new Map() };
         const mocks = mockEnv();
         enableAdapter(mocks);
@@ -441,17 +444,21 @@ describe("hidden terminal isolation", () => {
             }));
         }
         assert.equal(mocks.dbusCalls.length, settled + 3, "exactly three successful background reconciles");
-        assert.equal(mocks.logs.filter((line) => line === "plasma-auto-tiler:plan:reconcile-parked").length, 1);
-        const parkedCalls = mocks.dbusCalls.length;
+        assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"), "no domain-wide park remains");
         mocks.observeHiddenImpl = () => [hiddenObserved("ws-2", "win-ws-2", hiddenRef, HIDDEN_DRIFT)];
         fire(mocks, "geometry");
         runDebounce(mocks);
-        assert.equal(mocks.dbusCalls.length, parkedCalls, "parked hidden domain dispatches nothing further");
+        assert.ok(mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:reconcile-accepted") && line.includes("cause=stable-drift")), "stable hidden drift accepts");
+        const acceptedCalls = mocks.dbusCalls.length;
+        assert.equal(acceptedCalls, settled + 3, "acceptance quiets without dispatching");
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, acceptedCalls, "accepted hidden domain dispatches nothing further");
         mocks.observeImpl = () => fgObserved(world.fgA, world.fgB, DRIFT_A);
         fire(mocks, "geometry");
         runDebounce(mocks);
-        assert.equal(mocks.dbusCalls.length, parkedCalls + 1, "parked hidden never blocks the foreground domain");
-        const fgCall = payload(mocks, parkedCalls);
+        assert.equal(mocks.dbusCalls.length, acceptedCalls + 1, "accepted hidden never blocks the foreground domain");
+        const fgCall = payload(mocks, acceptedCalls);
         assert.equal((fgCall["domain"] as Record<string, unknown>)["workspace"], "ws-1");
         assert.deepEqual((fgCall["command"] as Record<string, unknown>)["op"], "reconcile");
     });

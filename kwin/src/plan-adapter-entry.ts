@@ -2419,15 +2419,29 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             const seen = new Set<object>();
             const windowDetaches = new Map<object, () => void>();
             const topDetaches: Array<() => void> = [];
-            // Returns false only when an eligible normal window (the same
-            // `normalWindow === true` classification observeNative uses) lacks
-            // this state signal; non-normal windows are never observed.
+            // A missing maximize signal leaves the window tiled; ordinary
+            // observations still read its current maximizeMode.
+            let maximizeMissingLogged = false;
+            // Only required signals can refuse an eligible normal window.
             const connectOne = (ref: object): boolean => {
                 if (seen.has(ref)) {
                     return true;
                 }
                 const detach = connectSignal(readSignal(ref, signalName), () => handler(ref));
                 if (detach === null) {
+                    if (signalName === "maximizedChanged" && readProp(ref, "normalWindow") === true) {
+                        if (!maximizeMissingLogged) {
+                            maximizeMissingLogged = true;
+                            try {
+                                log(
+                                    "plasma-auto-tiler:plan:maximize-signal-unavailable cause=maximizedChanged-unconnectable recovery=fresh-maximizeMode-read",
+                                );
+                            } catch (error) {
+                                void error;
+                            }
+                        }
+                        return true;
+                    }
                     return !hard || readProp(ref, "normalWindow") !== true;
                 }
                 seen.add(ref);
@@ -2490,10 +2504,11 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             };
             const initial = connectAll();
             if (initial.list !== null && !initial.ok) {
-                // Startup refusal: an eligible observed normal window cannot
-                // expose a connectable `maximizedChanged`. Release every
-                // per-window subscription made before the failure so the failed
-                // enable leaves nothing attached, then fail closed.
+                // Startup refusal for a required signal other than
+                // best-effort `maximizedChanged` (which never returns false
+                // above). Release every per-window subscription made before
+                // the failure so the failed enable leaves nothing attached,
+                // then fail closed.
                 detachAll();
                 return null;
             }
@@ -2501,11 +2516,11 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 const ok =
                     typeof added === "object" && added !== null ? connectOne(added as object) : connectAll().ok;
                 if (!ok) {
-                    // A window added after enable is an eligible normal window
-                    // lacking the signal: fail closed with the exact token
-                    // instead of leaving an enabled/blind adapter. Every
-                    // maximize subscription is released and the adapter is
-                    // disabled.
+                    // A window added after enable lacks a required signal
+                    // other than best-effort `maximizedChanged`: fail closed
+                    // with the exact token instead of leaving an enabled/blind
+                    // adapter. Every subscription of this kind is released and
+                    // the adapter is disabled.
                     try {
                         log(failureToken);
                     } catch (error) {
@@ -2942,10 +2957,12 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             if (kind === "maximize") {
                 const detach = subWindowRequiredSignal("maximizedChanged", "plasma-auto-tiler:plan:maximize-refused-signal", handler, true);
                 if (detach === null) {
-                    // Maximize observation is a hard startup requirement, unlike
-                    // best-effort fullscreen: refuse fail-closed with the exact
-                    // maximize-specific token so a missing signal cannot leave
-                    // the adapter blind to maximize transitions.
+                    // Infrastructure failure (e.g. unreadable window list):
+                    // refuse fail-closed with the exact maximize-specific
+                    // token. A merely unconnectable per-window
+                    // `maximizedChanged` never reaches here; that window stays
+                    // tiled on fresh `maximizeMode` reads with a single
+                    // best-effort unavailable line from the subscription.
                     try {
                         log("plasma-auto-tiler:plan:maximize-refused-signal");
                     } catch (error) {
@@ -3643,6 +3660,13 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // particular resize Start (epoch-guarded) so a later Start survives a
     // stale expiry; a normal Finish or removal cancels it.
     const resizeGuardCancels = new Map<object, { epoch: number; cancel: () => void }>();
+    // Move-hold Started expiry: a move Started with no Finished must not hold
+    // automatic reconcile indefinitely. Mirrors the resize guard: re-armed
+    // per tiled move Start, epoch-guarded so a later Start survives a stale
+    // expiry; a normal Finish (per-finish guard takes over), route/settle, or
+    // removal cancels it. Expiry releases only this move hold through the
+    // ordinary resync, never a drag terminal.
+    const moveStartGuardCancels = new Map<object, { epoch: number; cancel: () => void }>();
     let oracleEpoch = 0;
     const readLiveState = (target: object): { move: boolean; resize: boolean } | null => {
         try {
@@ -3747,7 +3771,13 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                     // never enters the hold and stays native-only. The start
                     // floating state is recorded so a move that STARTS
                     // floating stays unaffected even if tiled at finish.
-                    if (state.move === true && !interactiveMoveRefs.has(ref)) {
+                    // A Started with no Finished cannot hold forever: the
+                    // Started-keyed bound below releases only this hold
+                    // through the ordinary resync (never a drag terminal); a
+                    // newer Started re-arms and survives a stale expiry via
+                    // the epoch guard. A normal Finish cancels this guard and
+                    // the per-finish guard takes over.
+                    if (state.move === true) {
                         let floating = false;
                         try {
                             floating = (entry as { floating?: unknown }).floating === true;
@@ -3756,8 +3786,51 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                             floating = false;
                         }
                         if (!floating) {
-                            interactiveMoveRefs.add(ref);
-                            adapter.setInteractiveResizeActive(true);
+                            if (!interactiveMoveRefs.has(ref)) {
+                                interactiveMoveRefs.add(ref);
+                                adapter.setInteractiveResizeActive(true);
+                            }
+                            try {
+                                const started = oracleStarts.get(ref);
+                                const armedEpoch = started !== undefined ? started.epoch : oracleEpoch;
+                                const prev = moveStartGuardCancels.get(ref);
+                                if (prev !== undefined) {
+                                    moveStartGuardCancels.delete(ref);
+                                    try { prev.cancel(); } catch (error) { void error; }
+                                }
+                                const cancel = scheduleOnce(DRAG_MEASURE_VERDICT_TIMEOUT_MS, () => {
+                                    try {
+                                        const current = moveStartGuardCancels.get(ref);
+                                        if (current === undefined || current.epoch !== armedEpoch) {
+                                            return;
+                                        }
+                                        moveStartGuardCancels.delete(ref);
+                                        if (!interactiveMoveRefs.has(ref)) {
+                                            return;
+                                        }
+                                        try {
+                                            const start = oracleStarts.get(ref);
+                                            if (start !== undefined && start.epoch === armedEpoch) {
+                                                oracleStarts.delete(ref);
+                                            }
+                                        } catch (error) {
+                                            void error;
+                                        }
+                                        const had = interactiveMoveRefs.delete(ref);
+                                        if (had && interactiveMoveRefs.size === 0 && interactiveResizeRefs.size === 0) {
+                                            try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
+                                        }
+                                        try { log(`plasma-auto-tiler:route-diag:drag-move-timeout generation=${String(overrides.generation)} correlation=move-start-${armedEpoch} cause=missing-finished recovery=move-hold-released`); } catch (error) { void error; }
+                                    } catch (error) {
+                                        void error;
+                                    }
+                                });
+                                if (typeof cancel === "function") {
+                                    moveStartGuardCancels.set(ref, { epoch: armedEpoch, cancel });
+                                }
+                            } catch (error) {
+                                void error;
+                            }
                         }
                     }
                     return;
@@ -4119,9 +4192,19 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         // Settle cancels it; if no verdict ever settles, the timer consumes
         // only this finish's own start (newer Started stays) and releases
         // the hold once through the ordinary resync. No marker and no drag
-        // terminal is created here.
+        // terminal is created here. The Started-keyed missing-Finished guard
+        // is cancelled here: the per-finish guard takes over from Finish on.
         try {
             if (interactiveMoveRefs.has(ref)) {
+                try {
+                    const startGuard = moveStartGuardCancels.get(ref);
+                    if (startGuard !== undefined) {
+                        moveStartGuardCancels.delete(ref);
+                        try { startGuard.cancel(); } catch (error) { void error; }
+                    }
+                } catch (error) {
+                    void error;
+                }
                 const cancel = scheduleOnce(DRAG_MEASURE_VERDICT_TIMEOUT_MS, () => {
                     try {
                         moveGuardCancels.delete(ctx);
@@ -4206,6 +4289,15 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                     }
                     if (owned) {
                         try { takeOwnStart(ctx); } catch (error) { void error; }
+                        try {
+                            const startGuard = moveStartGuardCancels.get(ctx.ref);
+                            if (startGuard !== undefined && startGuard.epoch <= ctx.finishEpoch) {
+                                moveStartGuardCancels.delete(ctx.ref);
+                                try { startGuard.cancel(); } catch (error) { void error; }
+                            }
+                        } catch (error) {
+                            void error;
+                        }
                         const had = interactiveMoveRefs.delete(ctx.ref);
                         if (had && interactiveMoveRefs.size === 0 && interactiveResizeRefs.size === 0) {
                             try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
@@ -4298,11 +4390,23 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                     // resync below; a floating-at-start move never held, so
                     // this is a no-op beyond the ignored line. Settle finds
                     // no guard afterwards and only feeds measurement.
+                    // The Started-keyed guard is already cancelled at Finish;
+                    // cancel defensively only when it predates this finish so
+                    // a newer Started survives.
                     try {
                         const cancel = moveGuardCancels.get(ctx);
                         if (cancel !== undefined) {
                             moveGuardCancels.delete(ctx);
                             try { cancel(); } catch (error) { void error; }
+                        }
+                    } catch (error) {
+                        void error;
+                    }
+                    try {
+                        const startGuard = moveStartGuardCancels.get(ctx.ref);
+                        if (startGuard !== undefined && startGuard.epoch <= ctx.finishEpoch) {
+                            moveStartGuardCancels.delete(ctx.ref);
+                            try { startGuard.cancel(); } catch (error) { void error; }
                         }
                     } catch (error) {
                         void error;
@@ -4323,6 +4427,15 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                     if (cancel !== undefined) {
                         moveGuardCancels.delete(ctx);
                         try { cancel(); } catch (error) { void error; }
+                    }
+                } catch (error) {
+                    void error;
+                }
+                try {
+                    const startGuard = moveStartGuardCancels.get(ctx.ref);
+                    if (startGuard !== undefined && startGuard.epoch <= ctx.finishEpoch) {
+                        moveStartGuardCancels.delete(ctx.ref);
+                        try { startGuard.cancel(); } catch (error) { void error; }
                     }
                 } catch (error) {
                     void error;
@@ -4485,6 +4598,15 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 void error;
             }
             try {
+                const startGuard = moveStartGuardCancels.get(ref);
+                if (startGuard !== undefined) {
+                    moveStartGuardCancels.delete(ref);
+                    try { startGuard.cancel(); } catch (error) { void error; }
+                }
+            } catch (error) {
+                void error;
+            }
+            try {
                 for (const [ctx, cancel] of [...moveGuardCancels]) {
                     if (ctx.ref === ref) {
                         moveGuardCancels.delete(ctx);
@@ -4539,6 +4661,16 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                         // bounded per-finish timer releases it. When the
                         // global pull never attached, no verdict can arrive,
                         // so release now through the ordinary resync.
+                        // The Started-keyed missing-Finished guard is done at
+                        // Finish: the per-finish guard (or the immediate
+                        // release below) takes over.
+                        try {
+                            const startGuard = moveStartGuardCancels.get(ref);
+                            if (startGuard !== undefined) {
+                                moveStartGuardCancels.delete(ref);
+                                try { startGuard.cancel(); } catch (error) { void error; }
+                            }
+                        } catch (error) { void error; }
                         let available = false;
                         try { available = measurePullAvailable === true; } catch (error) { void error; }
                         if (!available) {
@@ -4893,6 +5025,10 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 try { guard.cancel(); } catch (error) { void error; }
             }
             resizeGuardCancels.clear();
+            for (const guard of moveStartGuardCancels.values()) {
+                try { guard.cancel(); } catch (error) { void error; }
+            }
+            moveStartGuardCancels.clear();
             try {
                 for (const pending of [...measurePending.values()]) {
                     dropMeasureWindow(pending.ref);

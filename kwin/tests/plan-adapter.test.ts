@@ -703,7 +703,7 @@ describe("plan adapter recovery and fencing", () => {
             mocks.logs.some(
                 (line) =>
                     line ===
-                    "plasma-auto-tiler:plan:rejected kind=snapshot-invalid detail=window-out-of-bounds window=win-a resource_class=firefox rect=-8,24,600,776 bounds=0,24,1200,776",
+                    "plasma-auto-tiler:plan:rejected kind=snapshot-invalid detail=window-out-of-bounds output=out-1 ordinal=0 resource_class=firefox rect=-8,24,600,776 bounds=0,24,1200,776",
             ),
         );
     });
@@ -1665,7 +1665,17 @@ describe("plan adapter client self-resize reconcile", () => {
             const correlation = plannerPayload(mocks, index)["correlation_id"] as string;
             mocks.callbacks[index]?.(plannedReply(correlation, [{ window: "win-a", rect: allocA }, { window: "win-b", rect: allocB }], "win-a-leaf"));
         }
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"), "only the third post-finish reconcile parks");
+        assert.ok(
+            !mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"),
+            "no domain-wide park remains",
+        );
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.ok(
+            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-accepted windows=1 cause=stable-drift recovery=accept-client-rect"),
+            "third post-finish drift accepts the exact client rect",
+        );
+        assert.equal(mocks.dbusCalls.length, 5, "acceptance quiets without dispatching");
     });
     it("lets a pointer resize preempt the queued interactive-finish resync", () => {
         const refs = makeRefs();
@@ -1733,7 +1743,7 @@ describe("plan adapter client self-resize reconcile", () => {
         assert.ok(mocks.logs.some((l) => l.includes("kind=reconcile") && l.includes("outcome=planned-applied")));
         assert.equal(adapter.isEnabled, true);
     });
-    it("constrained drifts hit three writes then park without oscillation", () => {
+    it("accepts stable drift after three writes without oscillation", () => {
         for (const kind of ["increment", "minimum"]) {
             const refs = makeRefs();
             const mocks = mockEnv(refs);
@@ -1749,29 +1759,108 @@ describe("plan adapter client self-resize reconcile", () => {
                 assert.ok(mocks.logs.some((l) => l.includes(`cmd=gen-1-p${String(index)}`) && l.includes("outcome=planned-applied")));
             }
             assert.ok(
-                mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"),
-                "bounded parking transition token",
+                !mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"),
+                "no domain-wide park remains",
             );
-            const parkedCalls = mocks.dbusCalls.length;
-            const parkedWrites = mocks.geometries.length;
-            const parkedLogs = mocks.logs.length;
+            const acceptedBefore = mocks.dbusCalls.length;
+            fire(mocks, "geometry");
+            runDebounce(mocks);
+            assert.ok(
+                mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-accepted windows=1 cause=stable-drift recovery=accept-client-rect"),
+                "bounded acceptance transition token",
+            );
+            assert.equal(mocks.dbusCalls.length, acceptedBefore, "acceptance quiets without dispatching");
+            const acceptedWrites = mocks.geometries.length;
+            const acceptedLogs = mocks.logs.length;
             fire(mocks, "geometry");
             runDebounce(mocks);
             fire(mocks, "geometry");
             runDebounce(mocks);
-            assert.equal(mocks.dbusCalls.length, parkedCalls);
-            assert.equal(mocks.geometries.length, parkedWrites);
-            assert.equal(mocks.logs.length, parkedLogs);
+            assert.equal(mocks.dbusCalls.length, acceptedBefore, "stable accepted drift stays quiet");
+            assert.equal(mocks.geometries.length, acceptedWrites);
+            assert.equal(mocks.logs.length, acceptedLogs, "quiet accepted drift logs nothing further");
             mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: { "win-a": allocA, "win-b": allocB } });
             fire(mocks, "geometry");
             runDebounce(mocks);
-            assert.equal(mocks.dbusCalls.length, parkedCalls);
-            mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: driftRects(kind) });
+            assert.equal(mocks.dbusCalls.length, acceptedBefore + 1, "changed client rect resumes ordinary reconcile");
+            assert.deepEqual((plannerPayload(mocks, acceptedBefore)["command"] as Record<string, unknown>)["op"], "reconcile");
+        }
+    });
+    it("per-window acceptance lets other drift keep reconciling while stable stays quiet", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = baseline(mocks, refs);
+        void adapter;
+        const driftA = { x: 0, y: 0, w: 616, h: 800 };
+        const driftB = { x: 600, y: 0, w: 500, h: 800 };
+        const both = { "win-a": driftA, "win-b": driftB };
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: both });
             fire(mocks, "geometry");
             runDebounce(mocks);
-            assert.equal(mocks.dbusCalls.length, parkedCalls + 1);
-            assert.deepEqual((plannerPayload(mocks, parkedCalls)["command"] as Record<string, unknown>)["op"], "reconcile");
+            const index = 1 + attempt;
+            reconcileOnce(mocks, index, both);
         }
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: both });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.ok(
+            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-accepted windows=2 cause=stable-drift recovery=accept-client-rect"),
+            "two-window stable drift accepts per-window",
+        );
+        const acceptedCalls = mocks.dbusCalls.length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, acceptedCalls, "stable pair stays quiet");
+        const movedB = { x: 600, y: 0, w: 550, h: 800 };
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: { "win-a": driftA, "win-b": movedB } });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, acceptedCalls + 1, "moving window resumes ordinary reconcile");
+        assert.deepEqual((plannerPayload(mocks, acceptedCalls)["command"] as Record<string, unknown>)["op"], "reconcile");
+        const sent = plannerPayload(mocks, acceptedCalls)["windows"] as Array<Record<string, unknown>>;
+        assert.deepEqual(
+            (sent.find((entry) => entry["window"] === "win-a") as Record<string, unknown>)["rect"],
+            driftA,
+            "stable window carries its accepted rect",
+        );
+        assert.deepEqual(
+            (sent.find((entry) => entry["window"] === "win-b") as Record<string, unknown>)["rect"],
+            movedB,
+            "moving window carries its exact client rect",
+        );
+        assert.ok(
+            mocks.logs
+                .filter((line) => line.includes("reconcile-accepted"))
+                .every((line) => !line.includes("win-a") && !line.includes("win-b") && !line.includes("[object")),
+            "acceptance logs carry no window identity",
+        );
+    });
+    it("explicit commands still dispatch after per-window acceptance", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = baseline(mocks, refs);
+        const drift = driftRects("increment");
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: drift });
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            fire(mocks, "geometry");
+            runDebounce(mocks);
+            reconcileOnce(mocks, 1 + attempt, drift);
+        }
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.ok(mocks.logs.some((line) => line.includes("reconcile-accepted")), "drift accepted");
+        const acceptedCalls = mocks.dbusCalls.length;
+        adapter.requestMove("left");
+        assert.equal(mocks.dbusCalls.length, acceptedCalls + 1, "explicit move never blocked");
+        const moveCorrelation = plannerPayload(mocks, acceptedCalls)["correlation_id"] as string;
+        mocks.callbacks[acceptedCalls]?.(
+            plannedReply(moveCorrelation, [{ window: "win-a", rect: allocA }, { window: "win-b", rect: allocB }], "win-a-leaf"),
+        );
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: drift });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, acceptedCalls + 2, "post-command drift reconciles normally");
     });
     it("reconcile rejected and planned paths emit one precise reason", () => {
         const refs = makeRefs();
@@ -1815,7 +1904,7 @@ describe("plan adapter client self-resize reconcile", () => {
             "route entry line for the dispatched reconcile",
         );
     });
-    it("parks repeated rejected reconcile signals after three with no further D-Bus", () => {
+    it("accepts repeated rejected drift after three without further D-Bus for stable rects", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         baseline(mocks, refs);
@@ -1828,16 +1917,19 @@ describe("plan adapter client self-resize reconcile", () => {
             const corr = plannerPayload(mocks, index)["correlation_id"] as string;
             mocks.callbacks[index]?.(rejectedReply(corr, "snapshot-invalid"));
         }
-        const parkedCalls = mocks.dbusCalls.length;
-        const parkedLogs = mocks.logs.length;
+        const acceptedCalls = mocks.dbusCalls.length;
         fire(mocks, "geometry");
         runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, acceptedCalls, "stable rejected drift accepts without dispatching");
+        assert.ok(
+            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-accepted windows=1 cause=stable-drift recovery=accept-client-rect"),
+            "bounded acceptance token for stable rejected drift",
+        );
         fire(mocks, "geometry");
         runDebounce(mocks);
-        assert.equal(mocks.dbusCalls.length, parkedCalls);
-        assert.equal(mocks.logs.length, parkedLogs);
+        assert.equal(mocks.dbusCalls.length, acceptedCalls, "accepted drift stays quiet");
     });
-    it("allows an explicit move after reconcile parking and clears the park on success", () => {
+    it("allows an explicit move after drift acceptance and reconciles afterwards", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = baseline(mocks, refs);
@@ -1866,7 +1958,7 @@ describe("plan adapter client self-resize reconcile", () => {
         assert.equal(mocks.dbusCalls.length, parkedCalls + 2);
         assert.deepEqual((plannerPayload(mocks, parkedCalls + 1)["command"] as Record<string, unknown>)["op"], "reconcile");
     });
-    it("parks repeated stale reconcile signals after three with no further D-Bus", () => {
+    it("accepts repeated stale drift after three with no further D-Bus for stable rects", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         baseline(mocks, refs);
@@ -1886,7 +1978,7 @@ describe("plan adapter client self-resize reconcile", () => {
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, parkedCalls);
     });
-    it("clears drift parking when a deferred work-area reprojection supersedes a flight", () => {
+    it("clears drift acceptance counters when a deferred work-area reprojection supersedes a flight", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         baseline(mocks, refs);
@@ -2304,6 +2396,39 @@ describe("plan adapter sticky and maximize toggles", () => {
         assert.equal(mocks.maximizeToggles.length, 1);
         assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:maximize-toggle-echo-cleared-no-signal"));
         assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:maximize-refused-attempted window=win-a resource_class=unknown"));
+    });
+
+    it("evicts only the exact removed sticky attempt and survives churn without inferring from incomplete observations", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": true } });
+        mocks.keepAboveReadImpl = () => true;
+        const adapter = enableAdapter(mocks);
+        adapter.requestSticky();
+        assert.equal(mocks.desktopToggles.length, 1);
+        adapter.requestSticky();
+        assert.equal(mocks.desktopToggles.length, 1, "live ref retains the one-shot fence");
+        assert.ok(mocks.logs.some((line) => line.includes("sticky-refused-attempted")), "repeat on the live ref refuses");
+        const savedObserve = mocks.observeImpl;
+        mocks.observeImpl = () => null;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        mocks.observeImpl = savedObserve;
+        adapter.requestSticky();
+        assert.equal(mocks.desktopToggles.length, 1, "incomplete observation never infers removal");
+        fire(mocks, "removed", refs.b);
+        adapter.requestSticky();
+        assert.equal(mocks.desktopToggles.length, 1, "unrelated removal retains the live fence");
+        fire(mocks, "removed", refs.a);
+        adapter.requestSticky();
+        assert.equal(mocks.desktopToggles.length, 2, "exact removed object evicts its fence");
+        for (let index = 0; index < 3; index += 1) {
+            fire(mocks, "removed", refs.a);
+            adapter.requestSticky();
+        }
+        assert.equal(mocks.desktopToggles.length, 5, "removal plus retry churn converges without pinning");
+        adapter.requestSticky();
+        assert.equal(mocks.desktopToggles.length, 5, "fence re-arms after churn");
     });
 
     it("a failed maximize write clears its attempt so a later identical press retries once", () => {
@@ -4204,35 +4329,64 @@ describe("plan entry live observation and shortcuts", () => {
         handle?.stop();
     });
 
-    it("refuses startup with an exact maximize-specific token when maximizedChanged cannot attach", () => {
+    it("tiles startup when maximizedChanged cannot attach and logs once without identity", () => {
         const world = fakeWorld();
         for (const win of world.wins) {
             delete win["maximizedChanged"];
         }
         const { handle, mocks } = startEntry(world);
-        assert.equal(handle, null, "missing maximize attachment refuses the entry");
-        assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:maximize-refused-signal"),
-            "exact maximize-specific attachment refusal token",
+        assert.ok(handle !== null, "missing maximize signal keeps tiling");
+        const unavailable = mocks.logs.filter(
+            (line) =>
+                line ===
+                "plasma-auto-tiler:plan:maximize-signal-unavailable cause=maximizedChanged-unconnectable recovery=fresh-maximizeMode-read",
         );
+        assert.equal(unavailable.length, 1, "single bounded unavailable line for all missing windows");
+        assert.ok(
+            !mocks.logs.some((line) => line === "plasma-auto-tiler:plan:maximize-refused-signal"),
+            "no global refusal token for a missing per-window signal",
+        );
+        assert.ok(
+            !mocks.logs.some((line) => line.includes("win-a") || line.includes("win-b")),
+            "unavailable line carries no window identity",
+        );
+        handle?.requestFocus("left");
+        assert.equal(mocks.dbusCalls.length, 1, "missing-signal windows still dispatch");
+        handle?.stop();
     });
 
-    it("refuses startup when only one of several eligible windows lacks maximizedChanged", () => {
+    it("tiles startup when only one eligible window lacks maximizedChanged and keeps fresh maximize reads", () => {
         const world = fakeWorld();
         const winA = world.wins[0] as object;
         const winB = world.wins[1] as object;
-        delete (winB as Record<string, unknown>)["maximizedChanged"];
+        delete (winA as Record<string, unknown>)["maximizedChanged"];
+        (winA as Record<string, unknown>)["maximizeMode"] = 3;
         const { handle, mocks } = startEntry(world);
-        assert.equal(handle, null, "mixed availability refuses the entry");
-        assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:maximize-refused-signal"),
-            "exact maximize-specific attachment refusal token",
+        assert.ok(handle !== null, "mixed availability keeps tiling");
+        assert.equal(
+            mocks.logs.filter(
+                (line) =>
+                    line ===
+                    "plasma-auto-tiler:plan:maximize-signal-unavailable cause=maximizedChanged-unconnectable recovery=fresh-maximizeMode-read",
+            ).length,
+            1,
+            "single bounded unavailable line",
         );
         assert.equal(
-            world.winMax.get(winA)?.handlers.length,
-            0,
-            "subscription made before the startup refusal is released",
+            world.winMax.get(winB)?.handlers.length,
+            1,
+            "connectable window keeps its subscription",
         );
+        const move = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-move-left") as {
+            callback: () => void;
+        };
+        move.callback();
+        assert.equal(mocks.dbusCalls.length, 0, "fresh maximizeMode read still isolates the maximized window");
+        assert.ok(
+            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:move-refused-maximize"),
+            "maximized window refused from the fresh read",
+        );
+        handle?.stop();
     });
 
     it("detaches maximizedChanged for a window removed after enable", () => {
@@ -4265,7 +4419,7 @@ describe("plan entry live observation and shortcuts", () => {
         handle?.stop();
     });
 
-    it("fails closed when a window added after enable lacks maximizedChanged", () => {
+    it("keeps tiling when a window added after enable lacks maximizedChanged and logs once", () => {
         const world = fakeWorld();
         const winA = world.wins[0] as object;
         const { handle, mocks } = startEntry(world);
@@ -4285,21 +4439,44 @@ describe("plan entry live observation and shortcuts", () => {
         for (const handler of world.added.handlers) {
             (handler as (payload?: unknown) => void)(winC);
         }
+        const winD = {
+            normalWindow: true,
+            internalId: "win-d",
+            output: world.output,
+            desktops: [world.desktop],
+            frameGeometry: { x: 600, y: 0, width: 600, height: 800 },
+            moveResizedChanged: fakeSignal().signal,
+            fullScreenChanged: fakeSignal().signal,
+            fullScreen: false,
+        };
+        world.wins.push(winD);
+        for (const handler of world.added.handlers) {
+            (handler as (payload?: unknown) => void)(winD);
+        }
+        assert.equal(
+            mocks.logs.filter(
+                (line) =>
+                    line ===
+                    "plasma-auto-tiler:plan:maximize-signal-unavailable cause=maximizedChanged-unconnectable recovery=fresh-maximizeMode-read",
+            ).length,
+            1,
+            "added-window misses share the single bounded line",
+        );
         assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:maximize-refused-signal"),
-            "exact maximize-specific attachment refusal token",
+            !mocks.logs.some((line) => line === "plasma-auto-tiler:plan:maximize-refused-signal"),
+            "no global refusal token for an added window without the signal",
         );
         assert.equal(
             world.winMax.get(winA)?.handlers.length,
-            0,
-            "prior maximize subscriptions are released on the added-window refusal",
+            1,
+            "prior maximize subscriptions are retained",
         );
         const callsBefore = mocks.dbusCalls.length;
         handle?.requestFocus("left");
-        assert.equal(mocks.dbusCalls.length, callsBefore, "disabled adapter dispatches nothing");
+        assert.equal(mocks.dbusCalls.length, callsBefore + 1, "enabled adapter still dispatches");
         assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:focus-refused-disabled"),
-            "adapter is disabled, never left enabled and blind",
+            !mocks.logs.some((line) => line === "plasma-auto-tiler:plan:focus-refused-disabled"),
+            "adapter stays enabled, never disabled by the missing signal",
         );
         handle?.stop();
     });
@@ -4439,6 +4616,7 @@ describe("plan adapter destroyed-window reply boundary", () => {
         assert.equal(mocks.geometries.length, writesBefore);
         assert.equal(mocks.actives.length, 0);
         assert.ok(mocks.logs.some((line) => line.includes("outcome=stale-scope")));
+        assert.equal(mocks.dbusCalls.length, 1, "membership change never replans; removal converges via observation");
         assert.equal(revalidateCalls, 0);
         assert.equal(destroyedReads, 0);
         assert.equal(adapter.isEnabled, true);
@@ -6294,6 +6472,54 @@ describe("plan ordinary lifecycle diagnostics", () => {
         }
     });
 
+    it("quiet-equal ticks never stale an in-flight reply while real drift still stales", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const { adapter, correlation: first } = driveMove(mocks, refs);
+        mocks.callbacks[0]?.(plannedReply(first, [{ window: "win-a", rect: succA }, { window: "win-b", rect: succB }], "win-b-leaf"));
+        assert.equal(mocks.geometries.length, 2, "seed apply writes");
+        assert.equal(adapter.isInFlight, false);
+        // Windows have landed on the planned geometry: further identical
+        // observations are proven quiet-equal against applied evidence.
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { ...succA }, "win-b": { ...succB } },
+            });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 1, "landed geometry stays quiet");
+        // Second flight from the landed state; its snapshot equals applied.
+        adapter.requestMove("right");
+        assert.equal(mocks.dbusCalls.length, 2, "second move dispatches");
+        const quietCorrelation = plannerPayload(mocks, 1)["correlation_id"] as string;
+        assert.equal(adapter.isInFlight, true);
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 2, "quiet tick dispatches nothing while in-flight");
+        assert.equal(adapter.isInFlight, true, "quiet tick holds the flight");
+        mocks.callbacks[1]?.(plannedReply(quietCorrelation, [{ window: "win-a", rect: succA }, { window: "win-b", rect: succB }], "win-b-leaf"));
+        assert.equal(adapter.isInFlight, false, "quiet-equal lets the in-flight reply settle");
+        assert.ok(mocks.logs.some((l) => l.includes(`cmd=${quietCorrelation}`) && l.includes("outcome=planned-applied")), "quiet survivor applies");
+        assert.ok(!mocks.logs.some((l) => l.includes(`cmd=${quietCorrelation}`) && l.includes("outcome=stale")), "quiet survivor never stales");
+        // Real drift while in-flight must still stale the superseded reply.
+        adapter.requestMove("right");
+        assert.equal(mocks.dbusCalls.length, 3, "third move dispatches");
+        const driftCorrelation = plannerPayload(mocks, 2)["correlation_id"] as string;
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                fingerprint: "fp-drift",
+                rects: { "win-a": { x: 5, y: 5, w: 500, h: 500 }, "win-b": { ...succB } },
+            });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        mocks.callbacks[2]?.(plannedReply(driftCorrelation, [{ window: "win-a", rect: succA }, { window: "win-b", rect: succB }], "win-b-leaf"));
+        assert.equal(mocks.geometries.length, 2, "real drift still stales the old reply");
+        const lines = lifecycle(mocks);
+        assert.ok(lines.some((l) => l.includes("event=validate") && l.includes("outcome=stale")), lines.join("\n"));
+    });
+
     it("fails one setter logging-only with unchanged order/count and terminal uncertain", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
@@ -6339,11 +6565,11 @@ describe("plan ordinary lifecycle diagnostics", () => {
             assert.equal(adapter.isInFlight, false);
         }
         {
-            // Mid-flight floating drift fails closed: the move was planned
-            // with win-b tiled, so applying any of it after win-b floats
-            // would be a stale partial application. The whole flight drops
-            // with stale-scope and no native writes; a fresh observation
-            // reconverges afterwards.
+            // Mid-flight floating drift replans once (resilience row G): the
+            // move was planned with win-b tiled, so the stale reply writes
+            // nothing; the same command dispatches again against the fresh
+            // floating observation with a new correlation. A second staleness
+            // drops and converges normally with no third dispatch.
             const refs = makeRefs();
             const mocks = mockEnv(refs);
             mocks.observeImpl = () => makeObserved(refs, { focused: refs.a });
@@ -6356,7 +6582,54 @@ describe("plan ordinary lifecycle diagnostics", () => {
             assert.equal(mocks.actives.length, 0);
             const lines = lifecycle(mocks);
             assert.ok(lines.some((l) => l.includes("event=observe") && l.includes("outcome=mismatched") && l.includes("stale-scope")), lines.join("\n"));
+            assert.equal(mocks.dbusCalls.length, 2, "stale pre-write replans once");
+            const replan = plannerPayload(mocks, 1);
+            const replanCorrelation = replan["correlation_id"] as string;
+            assert.notEqual(replanCorrelation, correlation, "replan uses a fresh correlation");
+            assert.deepEqual(replan["command"], { op: "move", window: "win-a", direction: "right" }, "replan carries the same command");
+            const replanWindows = replan["windows"] as Array<Record<string, unknown>>;
+            assert.equal((replanWindows.find((entry) => entry["window"] === "win-b") as Record<string, unknown>)["floating"], true, "replan carries fresh floating evidence");
+            const replanLine = mocks.logs.find((l) => l.includes(":stale-replan") && l.includes(`correlation=${correlation}`));
+            assert.ok(replanLine?.includes("cause=stale-scope") && replanLine?.includes("recovery=replan-once"), mocks.logs.join("\n"));
+            assert.ok(!replanLine?.includes("win-a") && !replanLine?.includes("win-b"), `no window id leak: ${replanLine}`);
+            assert.equal(adapter.isInFlight, true, "replanned command is in flight");
+            // The replanned move converges: only win-a stays wanted once
+            // win-b floats, so the covering reply carries win-a alone.
+            mocks.callbacks[1]?.(plannedReply(replanCorrelation, [{ window: "win-a", rect: succA }], "win-a-leaf"));
+            assert.equal(mocks.geometries.length, 1, "replanned command applies against fresh observation");
+            assert.equal(mocks.geometries[0]?.target, refs.a);
+            assert.ok(mocks.logs.some((l) => l.includes("outcome=planned-applied") && l.includes(`cmd=${replanCorrelation}`)));
             assert.equal(adapter.isInFlight, false);
+            assert.equal(adapter.isEnabled, true);
+        }
+        {
+            // Second staleness drops: the replanned flight observes another
+            // drift, fails closed with stale-scope, and dispatches nothing
+            // further.
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            mocks.observeImpl = () => makeObserved(refs, { focused: refs.a });
+            const adapter = enableAdapter(mocks);
+            adapter.requestMove("right");
+            const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+            mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, floating: { "win-b": true } });
+            mocks.callbacks[0]?.(plannedReply(correlation, [{ window: "win-a", rect: succA }, { window: "win-b", rect: succB }], "win-a-leaf"));
+            assert.equal(mocks.dbusCalls.length, 2, "first staleness replans");
+            const replanCorrelation = plannerPayload(mocks, 1)["correlation_id"] as string;
+            mocks.observeImpl = () =>
+                makeObserved(refs, {
+                    focused: refs.a,
+                    floating: { "win-b": true },
+                    rects: { "win-a": { x: 7, y: 7, w: 100, h: 100 }, "win-b": { x: 100, y: 0, w: 100, h: 100 } },
+                    fingerprint: "fp-2",
+                });
+            mocks.callbacks[1]?.(plannedReply(replanCorrelation, [{ window: "win-a", rect: succA }], "win-a-leaf"));
+            assert.equal(mocks.geometries.length, 0, "second staleness writes nothing");
+            assert.equal(mocks.dbusCalls.length, 2, "second staleness dispatches nothing further");
+            const lines = lifecycle(mocks);
+            assert.equal(lines.filter((l) => l.includes("event=observe") && l.includes("outcome=mismatched")).length, 2, lines.join("\n"));
+            assert.ok(mocks.logs.some((l) => l.includes(`cmd=${replanCorrelation}`) && l.includes("outcome=stale-scope")), mocks.logs.join("\n"));
+            assert.equal(adapter.isInFlight, false, "dropped flight converges");
             assert.equal(adapter.isEnabled, true);
         }
     });
@@ -6425,16 +6698,30 @@ describe("plan ordinary lifecycle diagnostics", () => {
 
     it("covers observation mismatch and timeout with last phase and no ack/verify", () => {
         {
+            // Pre-write rect drift replans the same move once (resilience row
+            // G): the stale reply writes nothing, the same command dispatches
+            // again with fresh geometry, and the covering second reply
+            // applies.
             const refs = makeRefs();
             const mocks = mockEnv(refs);
             const { adapter, correlation } = driveMove(mocks, refs);
+            const firstCommand = plannerPayload(mocks, 0)["command"];
             mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, fingerprint: "fp-other", rects: { "win-a": { x: 9, y: 9, w: 50, h: 50 }, "win-b": { x: 100, y: 0, w: 500, h: 500 } } });
             mocks.callbacks[0]?.(plannedReply(correlation, [{ window: "win-a", rect: succA }, { window: "win-b", rect: succB }], "win-b-leaf"));
-            assert.equal(mocks.geometries.length, 0);
+            assert.equal(mocks.geometries.length, 0, "stale pre-write writes nothing");
             const lines = lifecycle(mocks);
             assert.ok(lines.some((l) => l.includes("stage=observe") && l.includes("outcome=mismatched")), lines.join("\n"));
             assert.ok(lines.some((l) => l.includes("stage=terminal") && l.includes("outcome=uncertain") && l.includes("cause=observe")), lines.join("\n"));
             assert.ok(mocks.logs.some((l) => l.includes("outcome=stale-scope")));
+            assert.equal(mocks.dbusCalls.length, 2, "stale pre-write replans once");
+            const replan = plannerPayload(mocks, 1);
+            assert.deepEqual(replan["command"], firstCommand, "replan carries the same command");
+            assert.notEqual(replan["correlation_id"], correlation, "replan uses a fresh correlation");
+            const replanCorrelation = replan["correlation_id"] as string;
+            assert.equal(adapter.isInFlight, true, "replanned command is in flight");
+            mocks.callbacks[1]?.(plannedReply(replanCorrelation, [{ window: "win-a", rect: succA }, { window: "win-b", rect: succB }], "win-b-leaf"));
+            assert.equal(mocks.geometries.length, 2, "replanned command applies against fresh observation");
+            assert.ok(mocks.logs.some((l) => l.includes("outcome=planned-applied") && l.includes(`cmd=${replanCorrelation}`)));
             assert.equal(adapter.isInFlight, false);
         }
         {

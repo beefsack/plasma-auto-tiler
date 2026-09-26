@@ -379,7 +379,8 @@ shortcut and pointer-route refusal carries its own fixed token):
 - `plasma-auto-tiler:plan:pointer-refused-absent`
 - `plasma-auto-tiler:plan:pointer-refused-fullscreen` (pointer-resize target refused while fullscreen)
 - `plasma-auto-tiler:plan:pointer-refused-maximize` (pointer-resize target refused while maximized; fullscreen wins when both)
-- `plasma-auto-tiler:plan:maximize-refused-signal` (`maximizedChanged` cannot attach for any eligible observed normal window, at startup or on a window added later; maximize attachment is a hard requirement and the adapter fails closed)
+- `plasma-auto-tiler:plan:maximize-signal-unavailable` (logged once if an eligible window lacks `maximizedChanged`; tiling continues using fresh `maximizeMode` reads)
+- `plasma-auto-tiler:plan:maximize-refused-signal` (maximize subscription infrastructure unavailable)
 - `plasma-auto-tiler:plan:float-refused-disabled` (toggle-float while the adapter is disabled)
 - `plasma-auto-tiler:plan:float-refused-observe` (toggle-float target not found in the observation)
 - `plasma-auto-tiler:plan:float-refused-not-tiled` (toggle-float on an active-excluded or otherwise non-tiled target)
@@ -390,7 +391,8 @@ shortcut and pointer-route refusal carries its own fixed token):
 - `plasma-auto-tiler:plan:maximize-refused-disabled|observe`
 - `plasma-auto-tiler:plan:maximize-refused-fullscreen|attempted window=<id> resource_class=<class>`
 - `plasma-auto-tiler:plan:busy-refused kind=<focus|move|resize|toggle-float|toggle-sticky|toggle-maximize>` (shortcut dropped while a flight is in flight)
-- `plasma-auto-tiler:plan:reconcile-parked` (reconcile budget exhausted; bounded once per park transition)
+- `plasma-auto-tiler:plan:reconcile-accepted windows=<count> cause=stable-drift recovery=accept-client-rect` (bounded reassertions exhausted; exact per-window geometry accepted)
+- `plasma-auto-tiler:plan:stale-replan` (pre-write stale reply replanned once against fresh complete observation)
 - `plasma-auto-tiler:plan:shortcut-failed action=<action> sequence=<sequence>` (per failed shortcut registration)
 - `plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=<action> sequence=<sequence> holder_component=<component> holder_action=<action>`
 

@@ -712,7 +712,7 @@ describe("background tiling through production entry", () => {
         handle?.stop();
     });
 
-    it("parks pure hidden drift after three signals but bypasses on membership change", () => {
+    it("accepts pure hidden drift after three signals but bypasses on membership change", () => {
         const world = makeWorld(2);
         const ws1 = world.desktops[0] as FakeDesktop;
         const ws2 = world.desktops[1] as FakeDesktop;
@@ -754,20 +754,24 @@ describe("background tiling through production entry", () => {
             winD.frameGeometry = { ...drifted };
         }
         assert.ok(
-            mocks.logs.some((line) => line.includes("reconcile-parked")),
-            "three pure-drift terminals park the hidden domain",
+            !mocks.logs.some((line) => line.includes("reconcile-parked")),
+            "no domain-wide park remains",
         );
 
         winD.frameGeometry = { ...drifted };
         fire(driftSignals.geometry, winD);
         runDebounce(mocks);
-        assert.equal(planCalls(mocks).length, settled + 3, "parked pure drift sends nothing");
+        assert.equal(planCalls(mocks).length, settled + 3, "accepted pure drift sends nothing");
+        assert.ok(
+            mocks.logs.some((line) => line.includes("reconcile-accepted") && line.includes("cause=stable-drift")),
+            "stable hidden drift accepts per-window",
+        );
 
         const winF = addWindow(world, "win-f", ws2, { x: 600, y: 0, width: 600, height: 800 });
         fire(world.signals.windowAdded, winF);
         runDebounce(mocks);
         const afterPark = planCalls(mocks);
-        assert.equal(afterPark.length, settled + 4, "membership change bypasses the drift park");
+        assert.equal(afterPark.length, settled + 4, "membership change bypasses the drift acceptance");
         const bypass = afterPark[afterPark.length - 1]?.payload as Record<string, unknown>;
         assert.equal((bypass["domain"] as Record<string, unknown>)["workspace"], "ws-2");
         assert.deepEqual(bypass["command"], { op: "reconcile" });
