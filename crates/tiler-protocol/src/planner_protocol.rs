@@ -1118,11 +1118,20 @@ fn validate_request_with_engine(
         }
         directional_parsed = Some(parsed);
     }
-    // Per-domain carried bounds for containment (projected bounds above are
-    // per domain; containment uses the already-inset domain bounds).
-    let directional_bounds: Option<Vec<Rect>> = directional_parsed
-        .as_ref()
-        .map(|parsed| parsed.iter().map(|(d, _)| d.bounds).collect());
+    // Per-domain carried bounds for containment (raw wire bounds per
+    // domain; the already-inset projected bounds stay on the domains for
+    // planning/projection).
+    let directional_bounds: Option<Vec<Rect>> = directional.as_ref().map(|entries| {
+        entries
+            .iter()
+            .map(|entry| Rect {
+                x: entry.bounds.x,
+                y: entry.bounds.y,
+                w: entry.bounds.w,
+                h: entry.bounds.h,
+            })
+            .collect()
+    });
     for entry in &request.windows {
         if !valid_carried_rect(entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h) {
             return Err(snapshot_invalid(
@@ -4024,6 +4033,233 @@ mod tests {
         let valid_reply = parse_reply(&planner.evaluate(&valid));
         assert_eq!(valid_reply["outcome"], "planned", "{valid_reply}");
         assert_geometry_covers(&valid_reply, &["win-1"]);
+    }
+
+    #[test]
+    fn directional_edge_windows_use_raw_bounds_for_focus_and_move() {
+        // Two horizontally adjacent outputs with a non-zero target origin and
+        // an outer-gap inset: edge-tiled windows sit inside the raw work
+        // areas but outside the inset projection. Directional containment
+        // must use the raw bounds (like the single-domain route), while
+        // planning still projects from the inset domains.
+        fn reconcile_for(
+            correlation: &str,
+            output: &str,
+            workspace: &str,
+            bounds: serde_json::Value,
+            focused: &str,
+            windows: serde_json::Value,
+        ) -> String {
+            serde_json::json!({
+                "v": 1,
+                "correlation_id": correlation,
+                "owner": "owner-1",
+                "generation": "gen-1",
+                "revision": 0,
+                "fingerprint": 7,
+                "domain": {
+                    "output": output,
+                    "workspace": workspace,
+                    "bounds": bounds,
+                    "gap": 8,
+                    "outer_gap": 8,
+                },
+                "focused_window": focused,
+                "windows": windows,
+                "command": {"op": "reconcile"},
+            })
+            .to_string()
+        }
+        fn directional_for(correlation: &str, focused: &str, command: serde_json::Value) -> String {
+            let domains = serde_json::json!([
+                {
+                    "output": "DP-6",
+                    "workspace": "ws-1",
+                    "bounds": {"x": 0, "y": 44, "w": 2048, "h": 1108},
+                    "gap": 8,
+                    "outer_gap": 8,
+                    "adjacent": {"right": "HDMI-A-2"},
+                },
+                {
+                    "output": "HDMI-A-2",
+                    "workspace": "ws-1",
+                    "bounds": {"x": 2048, "y": 116, "w": 1920, "h": 1036},
+                    "gap": 8,
+                    "outer_gap": 8,
+                    "adjacent": {"left": "DP-6"},
+                },
+            ]);
+            let windows = serde_json::json!([
+                {
+                    "window": "win-1",
+                    "output": "DP-6",
+                    "workspace": "ws-1",
+                    "rect": {"x": 0, "y": 44, "w": 1024, "h": 1108},
+                },
+                {
+                    "window": "win-1b",
+                    "output": "DP-6",
+                    "workspace": "ws-1",
+                    "rect": {"x": 1024, "y": 44, "w": 1024, "h": 1108},
+                },
+                {
+                    "window": "win-2",
+                    "output": "HDMI-A-2",
+                    "workspace": "ws-1",
+                    "rect": {"x": 2048, "y": 116, "w": 960, "h": 1036},
+                },
+            ]);
+            let domain_entries: Vec<DirectionalDomainDto> =
+                serde_json::from_value(domains.clone()).expect("domains decode");
+            let window_entries: Vec<ObservedDto> =
+                serde_json::from_value(windows.clone()).expect("windows decode");
+            let fingerprint = directional_fingerprint(&domain_entries, focused, &window_entries);
+            serde_json::json!({
+                "v": 1,
+                "correlation_id": correlation,
+                "owner": "owner-1",
+                "generation": "gen-1",
+                "revision": 0,
+                "fingerprint": fingerprint,
+                "domain": {
+                    "output": "DP-6",
+                    "workspace": "ws-1",
+                    "bounds": {"x": 0, "y": 44, "w": 2048, "h": 1108},
+                    "gap": 8,
+                    "outer_gap": 8,
+                },
+                "domains": domains,
+                "focused_window": focused,
+                "windows": windows,
+                "command": command,
+            })
+            .to_string()
+        }
+        fn seed_pair() -> Planner {
+            let mut planner = Planner::new();
+            let source_windows = serde_json::json!([
+                {
+                    "window": "win-1",
+                    "output": "DP-6",
+                    "workspace": "ws-1",
+                    "rect": {"x": 0, "y": 44, "w": 1024, "h": 1108},
+                },
+                {
+                    "window": "win-1b",
+                    "output": "DP-6",
+                    "workspace": "ws-1",
+                    "rect": {"x": 1024, "y": 44, "w": 1024, "h": 1108},
+                },
+            ]);
+            let target_windows = serde_json::json!([
+                {
+                    "window": "win-2",
+                    "output": "HDMI-A-2",
+                    "workspace": "ws-1",
+                    "rect": {"x": 2048, "y": 116, "w": 960, "h": 1036},
+                },
+            ]);
+            let source = parse_reply(&planner.evaluate(&reconcile_for(
+                "edge-raw-seed-1",
+                "DP-6",
+                "ws-1",
+                serde_json::json!({"x": 0, "y": 44, "w": 2048, "h": 1108}),
+                "win-1",
+                source_windows,
+            )));
+            assert_eq!(source["outcome"], "planned", "{source}");
+            let target = parse_reply(&planner.evaluate(&reconcile_for(
+                "edge-raw-seed-2",
+                "HDMI-A-2",
+                "ws-1",
+                serde_json::json!({"x": 2048, "y": 116, "w": 1920, "h": 1036}),
+                "win-2",
+                target_windows,
+            )));
+            assert_eq!(target["outcome"], "planned", "{target}");
+            planner
+        }
+        let mut focus_planner = seed_pair();
+        let focus = parse_reply(&focus_planner.evaluate(&directional_for(
+            "edge-raw-focus-1",
+            "win-1b",
+            serde_json::json!({"op": "focus", "window": "win-1b", "direction": "right"}),
+        )));
+        assert_eq!(focus["outcome"], "planned", "{focus}");
+        assert_eq!(focus["detail"]["kind"], "focus", "{focus}");
+        assert_eq!(
+            focus["detail"]["capability"], "directional-focus",
+            "{focus}"
+        );
+        assert_eq!(focus["detail"]["direction"], "right", "{focus}");
+        assert_eq!(focus["detail"]["to_window"], "win-1", "{focus}");
+        assert_eq!(focus["desired_focus"]["domain_output"], "DP-6", "{focus}");
+        let mut move_planner = seed_pair();
+        let moved = parse_reply(&move_planner.evaluate(&directional_for(
+            "edge-raw-move-1",
+            "win-1",
+            serde_json::json!({"op": "move", "window": "win-1", "direction": "right"}),
+        )));
+        assert_eq!(moved["outcome"], "planned", "{moved}");
+        assert_eq!(moved["detail"]["kind"], "move", "{moved}");
+        assert_eq!(moved["detail"]["direction"], "right", "{moved}");
+        assert_eq!(
+            moved["detail"]["capability"], "CrossOutputTransfer",
+            "{moved}"
+        );
+        assert_eq!(moved["detail"]["rule"], "R4", "{moved}");
+        assert_eq!(moved["operation"]["target_output"], "HDMI-A-2", "{moved}");
+        assert_eq!(moved["operation"]["source_output"], "DP-6", "{moved}");
+        assert_eq!(moved["operation"]["window"], "win-1", "{moved}");
+        assert_eq!(moved["operation"]["target"], "occupied", "{moved}");
+        assert_eq!(
+            moved["desired_focus"]["domain_output"], "HDMI-A-2",
+            "{moved}"
+        );
+        for reply in [&focus, &moved] {
+            for entry in reply["desired_geometry"]
+                .as_array()
+                .expect("planned geometry present")
+            {
+                let output = entry["output"].as_str().expect("output");
+                let (bx, by, bw, bh) = match output {
+                    "DP-6" => (8, 52, 2032, 1092),
+                    "HDMI-A-2" => (2056, 124, 1904, 1020),
+                    _ => panic!("unexpected output {reply}"),
+                };
+                let rect = &entry["rect"];
+                let (x, y, w, h) = (
+                    rect["x"].as_i64().expect("x"),
+                    rect["y"].as_i64().expect("y"),
+                    rect["w"].as_i64().expect("w"),
+                    rect["h"].as_i64().expect("h"),
+                );
+                assert!(
+                    x >= bx && y >= by && x + w <= bx + bw && y + h <= by + bh,
+                    "{reply} {entry}"
+                );
+            }
+        }
+        let mut oob_request: serde_json::Value = serde_json::from_str(&directional_for(
+            "edge-raw-oob-1",
+            "win-1b",
+            serde_json::json!({"op": "focus", "window": "win-1b", "direction": "right"}),
+        ))
+        .expect("directional request");
+        oob_request["windows"][1]["rect"]["w"] = serde_json::json!(1025);
+        let oob_domains: Vec<DirectionalDomainDto> =
+            serde_json::from_value(oob_request["domains"].clone()).expect("domains decode");
+        let oob_windows: Vec<ObservedDto> =
+            serde_json::from_value(oob_request["windows"].clone()).expect("windows decode");
+        oob_request["fingerprint"] = serde_json::json!(directional_fingerprint(
+            &oob_domains,
+            "win-1b",
+            &oob_windows
+        ));
+        let mut oob_planner = seed_pair();
+        let oob = parse_reply(&oob_planner.evaluate(&oob_request.to_string()));
+        assert_eq!(oob["kind"], "snapshot-invalid", "{oob}");
+        assert_eq!(oob["detail"], "window-out-of-bounds", "{oob}");
     }
 
     #[test]
