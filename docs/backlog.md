@@ -88,8 +88,27 @@ decisions of 2026-09-24 are recorded under
   Started without Finished still holding automatic reconcile (found in
   batch 1). User decisions: I - option 2 (user, 2026-09-26): tile a window
   lacking `maximizedChanged`, log once, rely on fresh `maximizeMode` reads.
-  Pending: A (client-held geometry parking), G (pre-write drift drops the
-  command), M (tray watcher loss), R/S (native endpoint registration retry).
+  G - option 3 (user, 2026-09-26): on a stale pre-write snapshot, replan the
+  same command once against a fresh complete observation; never replay after
+  any setter; if the replan is also stale, log and drop and let observation
+  converge. A - option 3 (user, 2026-09-26; accepted as an interim, not
+  great UX): replace the domain-wide park with per-window acceptance of the
+  exact client-held rectangle after the existing bounded reassertions; any
+  other drift, or that window changing size, reconciles normally; explicit
+  commands never blocked. Learned limits (option 4) are deferred to Robust
+  difference reconciliation. M - option 2 (user, 2026-09-26): the tray
+  stays alive when no watcher exists or the watcher is lost, and registers
+  whenever a watcher owner appears; it still exits on loss of its own name or
+  connection. R/S - option 2 (user, 2026-09-26): while the group or drag
+  oracle endpoint is unregistered, retry registration on events the effect
+  already receives (window activation, reconfigure); no timer; log the
+  transition once. The press spy installs late on the same events when input
+  redirection was unavailable at construction (ordinary).
+- P1 | Tray icon not appearing | User report (2026-09-26): the tray icon has
+  not been seen for some time, across many rebuilds and restarts; believed
+  non-functional. Cause unknown. Investigate from the tray journald
+  diagnostics and how the tray is started in dev and dogfood before or with
+  the decision M fix; the M fix alone may not explain it.
   [audit](changes/resilience-audit.md)
 - P1 | Fail-closed sweep | New Resilience rule (user, 2026-09-26): fail
   closed only when recovery is impossible or continuing would cause harm such
@@ -99,11 +118,20 @@ decisions of 2026-09-24 are recorded under
   decision. Unsafe-write fences that refuse one operation and let the next
   observation converge are consistent with the rule.
   [principles](principles.md#resilience)
+- P2 | Process-loss and sleep recovery testing | User request (2026-09-26),
+  not urgent: test how the system recovers when components are killed or
+  stopped (Planner, tray, KWin script reload, native effect reload, KWin
+  restart) and around sleep/resume, and make recovery graceful for the user.
+  Overlaps the Wake transport recovery live acceptance below. Follow
+  docs/live-kwin-testing.md; any live mutation needs explicit authorization.
 - P2 | Robust difference reconciliation | User direction (2026-09-26, with
   decision I): find a way to make the implementation more robust and able to
   reconcile differences between expected and observed state where they
-  occur, rather than depending on individual native signals. Design work;
-  scope with the user before implementation.
+  occur, rather than depending on individual native signals. Includes
+  learned size limits (decision A option 4, user-approved direction): treat a
+  client-held size unexplained by hints as a learned min/max/step for that
+  window and replan neighbours around it, expiring when the client changes.
+  Design work; scope with the user before implementation.
 - P3 | AR6 Logical workspace model in core | 7.10. Deferred 2026-09-24 until a
   non-KWin host needs it. The current KWin implementation is the "native
   workspaces" mode of a future native/custom choice.
