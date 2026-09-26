@@ -317,7 +317,7 @@ function currentDesktopOf(world: FakeWorld): unknown {
 }
 
 describe("background review fixes", () => {
-    it("startup enables with empty foreground but populated hidden, and stays fail-closed when neither exists", () => {
+    it("startup enables with empty foreground but populated hidden, and stays enabled when neither exists", () => {
         const world = makeWorld();
         const ws2 = world.desktops[1] as FakeDesktop;
         addWindow(world, "win-c", ws2, { x: 0, y: 400, width: 1200, height: 400 });
@@ -341,7 +341,43 @@ describe("background review fixes", () => {
         (emptyWorld.workspace as { activeWindow: unknown }).activeWindow = null;
         emptyWorld.activeSets = 0;
         const second = startEntry(emptyWorld);
-        assert.equal(second.handle, null, "preserves old behavior when neither foreground nor hidden exists");
+        assert.ok(second.handle !== null, "empty startup keeps an enabled observer for the next window");
+        assert.ok(
+            second.mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready owner=owner-1 generation=gen-1")),
+            "empty startup still logs the truthful ready line",
+        );
+        assert.ok(
+            second.mocks.logs.some((line) =>
+                line.includes("plasma-auto-tiler:plan:empty-startup") &&
+                line.includes("cause=no-eligible-windows") &&
+                line.includes("recovery=await-next-window"),
+            ),
+            "empty startup logs bounded cause/recovery without window ids",
+        );
+        second.handle?.stop();
+    });
+
+    it("empty startup tiles the next added window through the retained observer", () => {
+        const world = makeWorld(2);
+        (world.workspace as { activeWindow: unknown }).activeWindow = null;
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "empty startup returns a non-null handle");
+        runDebounce(mocks);
+        const ws1 = world.desktops[0] as FakeDesktop;
+        const win = addWindow(world, "win-late", ws1, { x: 0, y: 0, width: 600, height: 800 });
+        (world.workspace as { activeWindow: unknown }).activeWindow = win;
+        fire(world.signals.windowAdded, win);
+        runDebounce(mocks);
+        converge(mocks, new Set(["ws-1"]));
+        const calls = planCalls(mocks);
+        assert.ok(calls.length > 0, "late window addition dispatches through the retained observer");
+        assert.ok(
+            calls.some((call) =>
+                (call.payload["windows"] as PayloadWindow[]).some((entry) => entry.window === "win-late"),
+            ),
+            "late window is carried in a complete observation",
+        );
+        handle?.stop();
     });
 
     it("includes non-active output visible domains as background without touching native state", () => {

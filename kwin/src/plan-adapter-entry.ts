@@ -2989,11 +2989,8 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     }
     const initial = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility);
     const initialHidden = observeHiddenDomains(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility);
-    // Startup enables when the foreground is observable or when any eligible
-    // background domain exists (non-empty with at least one tiled,
-    // non-exception member). Explicit empty and exception-only observations
-    // never enable by themselves; only when neither foreground nor eligible
-    // hidden exists is the old fail-closed disable preserved.
+    // Distinguish a foreground/hidden eligible startup from an empty one for
+    // diagnostics. Both retain the enabled observer for later observations.
     let hasEligibleHidden = false;
     for (const entry of initialHidden) {
         if (entry.windows.length === 0) {
@@ -3011,9 +3008,16 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             break;
         }
     }
-    if ((initial === null || initial.windows.length === 0) && !hasEligibleHidden) {
-        adapter.disable();
-        return null;
+    const emptyStartup = (initial === null || initial.windows.length === 0) && !hasEligibleHidden;
+    if (emptyStartup) {
+        // Keep the observer so the next complete window observation can tile.
+        try {
+            log(
+                `plasma-auto-tiler:plan:empty-startup owner=${String(overrides.owner)} generation=${String(overrides.generation)} cause=no-eligible-windows recovery=await-next-window`,
+            );
+        } catch (error) {
+            void error;
+        }
     }
     // Startup session context from the existing owner/generation provenance
     // plus the compiled-in source revision: one bounded ready line identifies
@@ -3034,73 +3038,89 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         try {
             const native: unknown = registerShortcut;
             if (typeof native !== "function") {
-                adapter.disable();
-                return null;
-            }
-            const bound = native as (
-                name: string,
-                text: string,
-                sequence: string,
-                callback: () => void,
-            ) => boolean;
-            registerFn = (name, text, sequence, callback) => bound(name, text, sequence, callback);
-        } catch (error) {
-            void error;
-            adapter.disable();
-            return null;
-        }
-    }
-    for (const row of catalog) {
-        const action = row.action;
-        const text = row.text;
-        const sequence = row.sequence;
-        const op = row.op;
-        const direction = row.direction;
-        const mode = row.mode;
-        try {
-            const ok =
-                op === "resize"
-                    ? registerFn(action, text, sequence, () => adapter.requestResize(direction, mode))
-                    : op === "move"
-                      ? registerFn(action, text, sequence, () => adapter.requestMove(direction))
-                      : op === "float"
-                        ? registerFn(action, text, sequence, () => adapter.requestFloat())
-                        : op === "sticky"
-                          ? registerFn(action, text, sequence, () => adapter.requestSticky())
-                          : op === "maximize"
-                            ? registerFn(action, text, sequence, () => adapter.requestMaximize())
-                            : op === "fullscreen"
-                              ? registerFn(action, text, sequence, () => adapter.requestFullscreen())
-                              : registerFn(action, text, sequence, () => adapter.requestFocus(direction));
-            if (ok !== true) {
+                // Automatic observation-driven tiling operates independently
+                // of shortcuts: keep the enabled observer/handle and skip
+                // only shortcut registration. Re-register on explicit reload.
                 try {
-                    log(`plasma-auto-tiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
+                    log(
+                        `plasma-auto-tiler:plan:shortcut-catalog-unavailable owner=${String(overrides.owner)} generation=${String(overrides.generation)} cause=register-shortcut-missing recovery=automatic-tiling-continue`,
+                    );
                 } catch (error) {
                     void error;
                 }
-            } else if (action === "plasma-auto-tiler-toggle-float") {
-                // KGlobalAccel keeps both registrations and dispatches the
-                // earliest serial holder. Grid View is already registered by
-                // KWin, so this new action is visible in Settings but cannot
-                // receive Meta+G until the user resolves that conflict there.
-                try {
-                    log("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-float sequence=Meta+G holder_component=kwin holder_action=Grid View");
-                } catch (error) {
-                    void error;
-                }
-            } else if (action === "plasma-auto-tiler-toggle-maximize") {
-                try {
-                    log("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-maximize sequence=Meta+M holder_component=kwin holder_action=KrohnkiteMonocleLayout");
-                } catch (error) {
-                    void error;
-                }
+            } else {
+                const bound = native as (
+                    name: string,
+                    text: string,
+                    sequence: string,
+                    callback: () => void,
+                ) => boolean;
+                registerFn = (name, text, sequence, callback) => bound(name, text, sequence, callback);
             }
         } catch (error) {
             void error;
             try {
-                log(`plasma-auto-tiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
+                log(
+                    `plasma-auto-tiler:plan:shortcut-catalog-unavailable owner=${String(overrides.owner)} generation=${String(overrides.generation)} cause=register-shortcut-threw recovery=automatic-tiling-continue`,
+                );
             } catch (inner) {
                 void inner;
+            }
+        }
+    }
+    if (registerFn !== undefined) {
+        for (const row of catalog) {
+            const action = row.action;
+            const text = row.text;
+            const sequence = row.sequence;
+            const op = row.op;
+            const direction = row.direction;
+            const mode = row.mode;
+            try {
+                const ok =
+                    op === "resize"
+                        ? registerFn(action, text, sequence, () => adapter.requestResize(direction, mode))
+                        : op === "move"
+                          ? registerFn(action, text, sequence, () => adapter.requestMove(direction))
+                          : op === "float"
+                            ? registerFn(action, text, sequence, () => adapter.requestFloat())
+                            : op === "sticky"
+                              ? registerFn(action, text, sequence, () => adapter.requestSticky())
+                              : op === "maximize"
+                                ? registerFn(action, text, sequence, () => adapter.requestMaximize())
+                                : op === "fullscreen"
+                                  ? registerFn(action, text, sequence, () => adapter.requestFullscreen())
+                                  : registerFn(action, text, sequence, () => adapter.requestFocus(direction));
+                if (ok !== true) {
+                    try {
+                        log(`plasma-auto-tiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
+                    } catch (error) {
+                        void error;
+                    }
+                } else if (action === "plasma-auto-tiler-toggle-float") {
+                    // KGlobalAccel keeps both registrations and dispatches the
+                    // earliest serial holder. Grid View is already registered by
+                    // KWin, so this new action is visible in Settings but cannot
+                    // receive Meta+G until the user resolves that conflict there.
+                    try {
+                        log("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-float sequence=Meta+G holder_component=kwin holder_action=Grid View");
+                    } catch (error) {
+                        void error;
+                    }
+                } else if (action === "plasma-auto-tiler-toggle-maximize") {
+                    try {
+                        log("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-maximize sequence=Meta+M holder_component=kwin holder_action=KrohnkiteMonocleLayout");
+                    } catch (error) {
+                        void error;
+                    }
+                }
+            } catch (error) {
+                void error;
+                try {
+                    log(`plasma-auto-tiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
+                } catch (inner) {
+                    void inner;
+                }
             }
         }
     }
@@ -3474,30 +3494,32 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             void error;
         }
     };
-    for (const row of workspaceShortcutCatalog()) {
-        const action = row.action;
-        const text = row.text;
-        const sequence = row.sequence;
-        const kind = row.kind;
-        const index = row.index;
-        try {
-            const ok =
-                kind === "move"
-                    ? registerFn(action, text, sequence, () => requestWorkspaceMove(index))
-                    : registerFn(action, text, sequence, () => requestWorkspaceSelect(index));
-            if (ok !== true) {
+    if (registerFn !== undefined) {
+        for (const row of workspaceShortcutCatalog()) {
+            const action = row.action;
+            const text = row.text;
+            const sequence = row.sequence;
+            const kind = row.kind;
+            const index = row.index;
+            try {
+                const ok =
+                    kind === "move"
+                        ? registerFn(action, text, sequence, () => requestWorkspaceMove(index))
+                        : registerFn(action, text, sequence, () => requestWorkspaceSelect(index));
+                if (ok !== true) {
+                    try {
+                        log(`plasma-auto-tiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
+                    } catch (error) {
+                        void error;
+                    }
+                }
+            } catch (error) {
+                void error;
                 try {
                     log(`plasma-auto-tiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
-                } catch (error) {
-                    void error;
+                } catch (inner) {
+                    void inner;
                 }
-            }
-        } catch (error) {
-            void error;
-            try {
-                log(`plasma-auto-tiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
-            } catch (inner) {
-                void inner;
             }
         }
     }
@@ -3616,6 +3638,11 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // drag terminal is invented without a validated drag-N correlation.
     const interactiveMoveRefs = new Set<object>();
     const moveGuardCancels = new Map<DragOracleFinishContext, () => void>();
+    // Resize-hold expiry mirrors the move-hold guard: a missing Finished on
+    // a living window cannot suppress reconcile forever. Keyed to the
+    // particular resize Start (epoch-guarded) so a later Start survives a
+    // stale expiry; a normal Finish or removal cancels it.
+    const resizeGuardCancels = new Map<object, { epoch: number; cancel: () => void }>();
     let oracleEpoch = 0;
     const readLiveState = (target: object): { move: boolean; resize: boolean } | null => {
         try {
@@ -3662,9 +3689,57 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                         void error;
                     }
                     oracleStarts.set(ref, { id: entry.id, rect, move: state.move, resize: state.resize, epoch: (oracleEpoch += 1), grabbed, grabSource, pointerStart, floatingStart: (entry as { floating?: unknown }).floating === true });
-                    if (state.move === false && state.resize === true && !interactiveResizeRefs.has(ref)) {
-                        interactiveResizeRefs.add(ref);
-                        adapter.setInteractiveResizeActive(true);
+                    if (state.move === false && state.resize === true) {
+                        if (!interactiveResizeRefs.has(ref)) {
+                            interactiveResizeRefs.add(ref);
+                            adapter.setInteractiveResizeActive(true);
+                        }
+                        // Bounded expiry for a missing Finished on a living
+                        // window: re-armed per Start and keyed to this Start's
+                        // epoch. Expiry releases only this hold through the
+                        // ordinary resync (never a drag terminal); a newer
+                        // Started survives a stale expiry via the epoch guard.
+                        try {
+                            const started = oracleStarts.get(ref);
+                            const armedEpoch = started !== undefined ? started.epoch : oracleEpoch;
+                            const prev = resizeGuardCancels.get(ref);
+                            if (prev !== undefined) {
+                                resizeGuardCancels.delete(ref);
+                                try { prev.cancel(); } catch (error) { void error; }
+                            }
+                            const cancel = scheduleOnce(DRAG_MEASURE_VERDICT_TIMEOUT_MS, () => {
+                                try {
+                                    const current = resizeGuardCancels.get(ref);
+                                    if (current === undefined || current.epoch !== armedEpoch) {
+                                        return;
+                                    }
+                                    resizeGuardCancels.delete(ref);
+                                    if (!interactiveResizeRefs.has(ref)) {
+                                        return;
+                                    }
+                                    try {
+                                        const start = oracleStarts.get(ref);
+                                        if (start !== undefined && start.epoch === armedEpoch) {
+                                            oracleStarts.delete(ref);
+                                        }
+                                    } catch (error) {
+                                        void error;
+                                    }
+                                    const had = interactiveResizeRefs.delete(ref);
+                                    if (had && interactiveResizeRefs.size === 0 && interactiveMoveRefs.size === 0) {
+                                        try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
+                                    }
+                                    try { log(`plasma-auto-tiler:route-diag:drag-resize-timeout generation=${String(overrides.generation)} correlation=resize-start-${armedEpoch} cause=missing-finished recovery=resize-hold-released`); } catch (error) { void error; }
+                                } catch (error) {
+                                    void error;
+                                }
+                            });
+                            if (typeof cancel === "function") {
+                                resizeGuardCancels.set(ref, { epoch: armedEpoch, cancel });
+                            }
+                        } catch (error) {
+                            void error;
+                        }
                     }
                     // Tiled-move hold: any move gesture on a tiled member
                     // suppresses ordinary reconcile exactly as a resize hold.
@@ -4401,6 +4476,15 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             measureStandaloneClaimed.delete(ref);
             completeMeasureRemoval(ref);
             try {
+                const guard = resizeGuardCancels.get(ref);
+                if (guard !== undefined) {
+                    resizeGuardCancels.delete(ref);
+                    try { guard.cancel(); } catch (error) { void error; }
+                }
+            } catch (error) {
+                void error;
+            }
+            try {
                 for (const [ctx, cancel] of [...moveGuardCancels]) {
                     if (ctx.ref === ref) {
                         moveGuardCancels.delete(ctx);
@@ -4439,6 +4523,13 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             finishedDetach = connectSignal(finished, () => {
                 try {
                     if (interactiveResizeRefs.delete(ref)) {
+                        try {
+                            const guard = resizeGuardCancels.get(ref);
+                            if (guard !== undefined) {
+                                resizeGuardCancels.delete(ref);
+                                try { guard.cancel(); } catch (error) { void error; }
+                            }
+                        } catch (error) { void error; }
                         if (interactiveResizeRefs.size === 0 && interactiveMoveRefs.size === 0) {
                             adapter.setInteractiveResizeActive(false);
                         }
@@ -4798,6 +4889,10 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             for (const detach of oracleDetaches) {
                 try { detach(); } catch (error) { void error; }
             }
+            for (const guard of resizeGuardCancels.values()) {
+                try { guard.cancel(); } catch (error) { void error; }
+            }
+            resizeGuardCancels.clear();
             try {
                 for (const pending of [...measurePending.values()]) {
                     dropMeasureWindow(pending.ref);

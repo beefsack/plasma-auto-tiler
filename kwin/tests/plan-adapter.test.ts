@@ -2306,6 +2306,25 @@ describe("plan adapter sticky and maximize toggles", () => {
         assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:maximize-refused-attempted window=win-a resource_class=unknown"));
     });
 
+    it("a failed maximize write clears its attempt so a later identical press retries once", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let fail = true;
+        mocks.maximizeToggleImpl = () => (fail ? "missing" : "invoked");
+        const adapter = enableAdapter(mocks);
+        adapter.requestMaximize();
+        assert.equal(mocks.maximizeToggles.length, 1);
+        const retryLine = mocks.logs.find((line) => line.includes("plasma-auto-tiler:plan:maximize-retry-armed"));
+        assert.ok(retryLine !== undefined, "failed write logs bounded retry recovery");
+        assert.ok(retryLine.includes("window=win-a"));
+        assert.ok(retryLine.includes("cause=native-write-missing"));
+        assert.ok(retryLine.includes("recovery=retry-on-next-press"));
+        fail = false;
+        adapter.requestMaximize();
+        assert.equal(mocks.maximizeToggles.length, 2, "identical repeat retries after a non-invoked write");
+        assert.deepEqual(mocks.maximizeToggles[1], { target: refs.a, maximized: true });
+    });
+
     it("option A Meta+G on sticky from tiled origin clears all-desktops, restores keep-above, tiles, and stays tiled", () => {
         // User decision 2026-09-25 option A (tiled origin, trace-essential):
         // sticky-on (Meta+Shift+G) -> Meta+G -> native sticky off -> tile ->
@@ -2997,7 +3016,8 @@ describe("plan adapter float focus retention", () => {
         assert.ok(mocks.logs.some((line) => line.includes("float-focus-failed window=win-a")));
         assert.ok(mocks.logs.some((line) => line.includes("outcome=write-failed")), "flight fails write-failed");
         assert.equal(mocks.desktopsWrites.length, 0, "no desktop membership write on focus failure");
-        assert.equal(mocks.timers.length, timersBefore + 1, "no retry timer beyond the dispatch timeout");
+        assert.equal(mocks.timers.length, timersBefore + 2, "dispatch timeout plus the single bounded probe deadline only");
+        assert.ok(mocks.timers.filter((timer) => !timer.cancelled).length <= 1, "no live retry timer beyond the single probe deadline");
         assert.equal(adapter.isInFlight, false, "flight is terminal");
     });
 
@@ -3845,8 +3865,12 @@ describe("plan entry live observation and shortcuts", () => {
         assert.equal(startEntry(world, { owner: "owner-1", generation: "GEN BANG" }).handle, null);
         world.workspace["activeWindow"] = null;
         const { handle, mocks } = startEntry(world);
-        assert.equal(handle, null);
-        assert.equal(mocks.logs.length, 0);
+        assert.ok(handle !== null, "null-active startup keeps the enabled observer for the next window");
+        assert.ok(
+            mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")),
+            "null-active startup still logs the truthful ready line",
+        );
+        handle?.stop();
     });
 
     it("uses only the DescribePlan transport for every command", () => {
@@ -3886,6 +3910,95 @@ describe("plan entry live observation and shortcuts", () => {
             "plasma-auto-tiler:plan:shortcut-failed action=plasma-auto-tiler-focus-left sequence=Meta+H",
         );
         handle?.stop();
+    });
+
+    it("keeps automatic tiling enabled when the shortcut catalog is missing or throws", () => {
+        const key = "registerShortcut";
+        const holder = globalThis as Record<string, unknown>;
+        const had = Object.prototype.hasOwnProperty.call(holder, key);
+        const saved = holder[key];
+        const startWithoutShortcuts = (world: FakeWorld): { handle: ReturnType<typeof startPlanAdapterEntry>; mocks: EntryMocks } => {
+            const mocks: EntryMocks = { dbusCalls: [], callbacks: [], timers: [], logs: [], shortcuts: [] };
+            const handle = startPlanAdapterEntry({
+                workspace: world.workspace,
+                callDbus: (_service, _path, _iface, method, payload, callback): void => {
+                    if (method === "NameHasOwner") {
+                        callback(true);
+                        return;
+                    }
+                    if (method === "GetNameOwner") {
+                        callback(":1.7");
+                        return;
+                    }
+                    if (method === "StartServiceByName") {
+                        callback(1);
+                        return;
+                    }
+                    mocks.dbusCalls.push({ method, payload });
+                    mocks.callbacks.push(callback);
+                },
+                scheduleOnce: (delayMs, callback): (() => void) => {
+                    const entry = { delayMs, callback, cancelled: false };
+                    mocks.timers.push(entry);
+                    return (): void => {
+                        entry.cancelled = true;
+                    };
+                },
+                log: (message): void => {
+                    mocks.logs.push(message);
+                },
+                owner: "owner-1",
+                generation: "gen-1",
+                readProfileFn: (): string => "cosmic",
+            });
+            return { handle, mocks };
+        };
+        try {
+            // Missing catalog: non-function lookup logs and keeps the handle.
+            holder[key] = 0;
+            const missingWorld = fakeWorld();
+            const missing = startWithoutShortcuts(missingWorld);
+            assert.ok(missing.handle !== null, "missing catalog keeps observation-driven tiling enabled");
+            const missingLine = missing.mocks.logs.find((entry) =>
+                entry.includes("plasma-auto-tiler:plan:shortcut-catalog-unavailable"),
+            );
+            assert.ok(missingLine !== undefined, "missing catalog logs unavailable catalog");
+            assert.ok(missingLine.includes("cause=register-shortcut-missing"));
+            assert.ok(missingLine.includes("recovery=automatic-tiling-continue"));
+            assert.ok(!missingLine.includes("window="), "catalog log carries no native ids");
+            assert.ok(
+                missing.mocks.logs.some((entry) => entry.includes("plasma-auto-tiler:plan:ready")),
+                "ready line still identifies the session",
+            );
+            missing.handle?.requestFocus("left");
+            assert.equal(missing.mocks.dbusCalls[0]?.method, "DescribePlan");
+            missing.handle?.stop();
+
+            // Throwing lookup: bare global access throws, same bounded recovery.
+            delete holder[key];
+            const throwingWorld = fakeWorld();
+            const throwing = startWithoutShortcuts(throwingWorld);
+            assert.ok(throwing.handle !== null, "throwing lookup keeps observation-driven tiling enabled");
+            const throwingLine = throwing.mocks.logs.find((entry) =>
+                entry.includes("plasma-auto-tiler:plan:shortcut-catalog-unavailable"),
+            );
+            assert.ok(throwingLine !== undefined, "throwing lookup logs unavailable catalog");
+            assert.ok(
+                throwingLine.includes("cause=register-shortcut-threw") ||
+                    throwingLine.includes("cause=register-shortcut-missing"),
+                `throwing lookup names a bounded cause, got ${throwingLine}`,
+            );
+            assert.ok(throwingLine.includes("recovery=automatic-tiling-continue"));
+            throwing.handle?.requestFocus("left");
+            assert.equal(throwing.mocks.dbusCalls[0]?.method, "DescribePlan");
+            throwing.handle?.stop();
+        } finally {
+            if (had) {
+                holder[key] = saved;
+            } else {
+                delete holder[key];
+            }
+        }
     });
 
     it("carries the bounded 8px domain gap in live DescribePlan requests", () => {
@@ -7074,4 +7187,36 @@ describe("plan entry sticky workspace-switch regression", () => {
         }
     });
 
+});
+
+describe("plan sequence rotation", () => {
+    it("rotates the correlation namespace after 1M plans without permanent refusal", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = enableAdapter(mocks);
+        const sessionBefore = (adapter as unknown as { plannerSession: number }).plannerSession;
+        (adapter as unknown as { seq: number }).seq = 1000000;
+        adapter.requestFocus("left");
+        assert.equal(mocks.dbusCalls.length, 1);
+        const first = plannerPayload(mocks, 0)["correlation_id"] as string;
+        assert.equal(first, "gen-1-p1000000");
+        mocks.callbacks[0]?.(rejectedReply(first, "snapshot-invalid"));
+        assert.equal(adapter.isInFlight, false);
+        adapter.requestFocus("left");
+        assert.equal(mocks.dbusCalls.length, 2);
+        const second = plannerPayload(mocks, 1)["correlation_id"] as string;
+        assert.equal(second, "gen-1-p1r0");
+        assert.notEqual(second, first);
+        assert.ok(second.length > 0 && second.length <= 128);
+        mocks.callbacks[0]?.(rejectedReply(first, "snapshot-invalid"));
+        assert.equal(adapter.isInFlight, true, "a delayed old-epoch reply cannot settle the new flight");
+        const line = mocks.logs.find((l) => l.includes("sequence-rotated") && l.includes(`correlation=${second}`));
+        assert.ok(line !== undefined, mocks.logs.join("\n"));
+        assert.ok(line.includes("cause=sequence-exhausted") && line.includes("recovery=rotated"), line);
+        for (const raw of ["win-a", "win-b", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
+            assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
+        }
+        assert.equal(adapter.isEnabled, true);
+        assert.equal((adapter as unknown as { plannerSession: number }).plannerSession, sessionBefore);
+    });
 });

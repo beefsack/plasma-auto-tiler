@@ -447,6 +447,90 @@ describe("plan planner-loss recovery", () => {
         adapter.disable();
     });
 
+    it("probe presence silence clears only the probe and resumes the marker pump without recovery", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = enableAdapter(mocks);
+        establishBaseline(mocks, adapter, ":1.5");
+        const geoBefore = mocks.geometries.length;
+        const base = mocks.dbusCalls.length;
+        adapter.requestMove("left");
+        assert.equal(mocks.dbusCalls[base]?.method, PLAN_HAS_OWNER_METHOD);
+        adapter.noteMoveDropped("drag-1", "win-a", "out-1", "ws-1");
+        assert.ok(mocks.logs.some((l) => l.includes("drag-reconcile") && l.includes("correlation=drag-1") && l.includes("dispatch=deferred")));
+        mocks.callbacks[base]?.(true);
+        mocks.callbacks[base + 1]?.(":1.5");
+        const planIndex = base + 2;
+        assert.equal(mocks.dbusCalls[planIndex]?.method, PLAN_METHOD);
+        const correlation = payloadOf(mocks, planIndex)["correlation_id"] as string;
+        fireTimeout(mocks);
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")));
+        const probeIndex = mocks.dbusCalls.length - 1;
+        assert.equal(mocks.dbusCalls[probeIndex]?.method, PLAN_HAS_OWNER_METHOD);
+        const lateProbe = mocks.callbacks[probeIndex] as (reply: unknown) => void;
+        const callsDuringProbe = mocks.dbusCalls.length;
+        assert.ok(!mocks.logs.some((l) => l.includes("plan:recovery")));
+        assert.ok(!mocks.logs.some((l) => l.includes("plan:probe-timeout")));
+        fireTimeout(mocks);
+        const timeoutLines = mocks.logs.filter((l) => l.includes("plan:probe-timeout"));
+        assert.equal(timeoutLines.length, 1);
+        assert.ok(timeoutLines[0]?.includes(`correlation=${correlation}`));
+        assert.ok(timeoutLines[0]?.includes("cause=probe-silence"));
+        assert.ok(timeoutLines[0]?.includes("outcome=pump-resumed"));
+        for (const token of [":1.5", "org.plasmaautotiler", "org.freedesktop", "win-a", "drag-1"]) {
+            assert.ok(!timeoutLines[0]?.includes(token), `${token} leaked in: ${timeoutLines[0]}`);
+        }
+        assert.ok(!mocks.logs.some((l) => l.includes("plan:recovery")));
+        assert.equal(mocks.geometries.length, geoBefore);
+        assert.equal(mocks.dbusCalls.length, callsDuringProbe + 1);
+        assert.equal(mocks.dbusCalls[mocks.dbusCalls.length - 1]?.method, PLAN_HAS_OWNER_METHOD);
+        const callsBeforeLate = mocks.dbusCalls.length;
+        const logsBeforeLate = mocks.logs.length;
+        lateProbe(false);
+        assert.equal(mocks.dbusCalls.length, callsBeforeLate);
+        assert.equal(mocks.logs.length, logsBeforeLate);
+        assert.ok(!mocks.logs.some((l) => l.includes("plan:recovery")));
+        adapter.disable();
+    });
+
+    it("probe owner silence shares the same single deadline without recovery", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = enableAdapter(mocks);
+        establishBaseline(mocks, adapter, ":1.5");
+        const geoBefore = mocks.geometries.length;
+        const base = mocks.dbusCalls.length;
+        adapter.requestFocus("left");
+        assert.equal(mocks.dbusCalls[base]?.method, PLAN_HAS_OWNER_METHOD);
+        mocks.callbacks[base]?.(true);
+        assert.equal(mocks.dbusCalls[base + 1]?.method, PLAN_GET_OWNER_METHOD);
+        fireTimeout(mocks);
+        const probeIndex = mocks.dbusCalls.length - 1;
+        assert.equal(mocks.dbusCalls[probeIndex]?.method, PLAN_HAS_OWNER_METHOD);
+        mocks.callbacks[probeIndex]?.(true);
+        const ownerProbe = mocks.dbusCalls.length - 1;
+        assert.equal(mocks.dbusCalls[ownerProbe]?.method, PLAN_GET_OWNER_METHOD);
+        const lateOwner = mocks.callbacks[ownerProbe] as (reply: unknown) => void;
+        const callsDuringProbe = mocks.dbusCalls.length;
+        fireTimeout(mocks);
+        const timeoutLines = mocks.logs.filter((l) => l.includes("plan:probe-timeout"));
+        assert.equal(timeoutLines.length, 1);
+        assert.ok(timeoutLines[0]?.includes("cause=probe-silence"));
+        assert.ok(timeoutLines[0]?.includes("outcome=pump-resumed"));
+        for (const token of [":1.5", ":1.9", "org.plasmaautotiler", "org.freedesktop"]) {
+            assert.ok(!timeoutLines[0]?.includes(token), `${token} leaked in: ${timeoutLines[0]}`);
+        }
+        assert.ok(!mocks.logs.some((l) => l.includes("plan:recovery")));
+        assert.equal(mocks.geometries.length, geoBefore);
+        assert.equal(mocks.dbusCalls.length, callsDuringProbe);
+        const logsBeforeLate = mocks.logs.length;
+        lateOwner(":1.9");
+        assert.equal(mocks.dbusCalls.length, callsDuringProbe);
+        assert.equal(mocks.logs.length, logsBeforeLate);
+        assert.ok(!mocks.logs.some((l) => l.includes("plan:recovery")));
+        adapter.disable();
+    });
+
 });
 
 function drainOwnersFor(mocks: Mocks): void {

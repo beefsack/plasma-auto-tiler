@@ -936,6 +936,10 @@ export class WorkspaceSendAdapter {
     // first signal and on every terminal path.
     private arrivalDetach: (() => void) | null = null;
     private seq = 0;
+    // Bounded correlation rotation: after WORKSPACE_SEND_MAX_SEQ correlations
+    // the sequence wraps with a rotation prefix so correlations are never
+    // reused within a bounded length. Same session/topology: no enable reset.
+    private seqEpoch = 0;
     private diagSeq = 0;
     // KWin signals may be delivered synchronously from a setter. Do not let
     // them follow or settle while the write stack is live; the immediate
@@ -1076,8 +1080,19 @@ export class WorkspaceSendAdapter {
             return false;
         }
         if (this.seq < 0 || this.seq > WORKSPACE_SEND_MAX_SEQ) {
-            this.refuse("sequence-invalid");
-            return false;
+            const nextEpoch = this.seqEpoch + 1;
+            if (!Number.isSafeInteger(nextEpoch)) {
+                this.refuse("sequence-invalid");
+                return false;
+            }
+            const candidate = `${this.generation}-w${String(nextEpoch)}r0`;
+            if (!isCorrelationId(candidate)) {
+                this.refuse("sequence-invalid");
+                return false;
+            }
+            this.seqEpoch = nextEpoch;
+            this.seq = 0;
+            this.diag("request", candidate, 0, "sequence-exhausted", "correlation-rotated");
         }
         const observed = this.freshObserved(targetWorkspace);
         if (observed === null) {
@@ -1113,7 +1128,10 @@ export class WorkspaceSendAdapter {
             this.refuse("desktop-cap");
             return false;
         }
-        const correlation = `${this.generation}-w${String(this.seq)}`;
+        const correlation =
+            this.seqEpoch === 0
+                ? `${this.generation}-w${String(this.seq)}`
+                : `${this.generation}-w${String(this.seqEpoch)}r${String(this.seq)}`;
         this.seq += 1;
         if (!isCorrelationId(correlation)) {
             this.refuse("correlation-invalid");

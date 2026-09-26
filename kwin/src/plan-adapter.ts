@@ -1672,6 +1672,11 @@ export class PlanAdapter {
     private deferredAuto: AutoIntent | null = null;
     private epoch = 0;
     private seq = 0;
+    // Bounded correlation rotation: after PLAN_MAX_SEQ correlations the
+    // sequence wraps with a rotation prefix (seqEpoch) so correlations are
+    // never reused within a bounded length. Same Engine session/topology:
+    // rotation never bumps plannerSession and never clears applied evidence.
+    private seqEpoch = 0;
     // Per-id applied evidence (rect, output/workspace, floating/sticky/
     // fullscreen/maximized), written only on applied replies. Read-only hint
     // for overlays, first-admission maximize, and drag lookup; never authority
@@ -1745,6 +1750,7 @@ export class PlanAdapter {
     private nextIsRecovery = false;
     private probeToken = 0;
     private activeProbe = 0;
+    private probeCancel: (() => void) | null = null;
     // Live production R4 flight (immediate commit, native plus bounded
     // delayed arrival). While non-null the shared single-flight stays held
     // and every other PlanAdapter operation refuses busy; completion or
@@ -1861,6 +1867,7 @@ export class PlanAdapter {
         this.knownOwner = null;
         this.nextIsRecovery = false;
         this.activeProbe = 0;
+        this.clearProbeTimer();
         this.r4WriteDepth = 0;
         this.clearRepeat();
         return true;
@@ -1900,6 +1907,7 @@ export class PlanAdapter {
         this.knownOwner = null;
         this.nextIsRecovery = false;
         this.activeProbe = 0;
+        this.clearProbeTimer();
         this.r4WriteDepth = 0;
         this.clearRepeat();
         this.clearTimer();
@@ -2516,6 +2524,13 @@ export class PlanAdapter {
             void error;
         }
         this.logToken(`${LOG_PREFIX}:maximize-toggle window=${target.id} resource_class=${resourceClass} target=${wanted ? "maximized" : "restored"} outcome=${outcome}`);
+        if (outcome !== "invoked") {
+            // A missing/throwing native write never retries automatically and
+            // never holds the one-shot attempt fence: clear it so a later
+            // deliberate identical press can retry.
+            this.maximizeToggleAttempts.delete(target.ref);
+            this.logToken(`${LOG_PREFIX}:maximize-retry-armed window=${target.id} resource_class=${resourceClass} target=${wanted ? "maximized" : "restored"} cause=native-write-${outcome} recovery=retry-on-next-press`);
+        }
         if (this.maximizeToggleEcho !== null) {
             this.maximizeToggleEcho = null;
             this.logToken(`${LOG_PREFIX}:maximize-toggle-echo-cleared-no-signal`);
@@ -4570,6 +4585,7 @@ export class PlanAdapter {
         // A new lifecycle command supersedes an unanswered terminal probe. Its
         // callback must not make a later recovery decision for an older flight.
         this.activeProbe = 0;
+        this.clearProbeTimer();
         if (
             intent.op === "reconcile" &&
             intent.background !== true &&
@@ -4586,9 +4602,22 @@ export class PlanAdapter {
             }
         }
         if (this.seq < 0 || this.seq > PLAN_MAX_SEQ) {
-            return;
+            const nextEpoch = this.seqEpoch + 1;
+            if (!Number.isSafeInteger(nextEpoch)) {
+                return;
+            }
+            const candidate = `${this.generation}-p${String(nextEpoch)}r0`;
+            if (!isCorrelationId(candidate)) {
+                return;
+            }
+            this.seqEpoch = nextEpoch;
+            this.seq = 0;
+            this.logToken(`${LOG_PREFIX}:sequence-rotated correlation=${candidate} cause=sequence-exhausted recovery=rotated`);
         }
-        const correlation = `${this.generation}-p${String(this.seq)}`;
+        const correlation =
+            this.seqEpoch === 0
+                ? `${this.generation}-p${String(this.seq)}`
+                : `${this.generation}-p${String(this.seqEpoch)}r${String(this.seq)}`;
         this.seq += 1;
         if (!isCorrelationId(correlation)) {
             return;
@@ -5054,12 +5083,24 @@ export class PlanAdapter {
         // terminal. Timeout, malformed, service fault, missing callback, and
         // correlation mismatch alone never recover; only a probe result
         // proving absence (strict false) or a changed unique owner triggers
-        // recovery. No retry, polling, or systemd behavior.
+        // recovery. One bounded deadline covers both probe callbacks: silence
+        // clears only the probe and resumes the pump without recovery or
+        // topology reset. No retry, polling, or systemd behavior.
+        this.clearProbeTimer();
         this.probeToken += 1;
         const probe = this.probeToken;
         this.activeProbe = probe;
         const session = this.plannerSession;
         const expectedOwner = this.knownOwner;
+        const correlation = lost.correlation;
+        try {
+            this.probeCancel = this.env.scheduleOnce(PLAN_TIMEOUT_MS, () => this.onProbeTimeout(probe, session, correlation));
+        } catch (error) {
+            void error;
+            this.probeCancel = null;
+            this.activeProbe = 0;
+            return;
+        }
         try {
             this.env.callDbus(
                 PLAN_DBUS_SERVICE,
@@ -5071,8 +5112,28 @@ export class PlanAdapter {
             );
         } catch (error) {
             void error;
+            this.clearProbeTimer();
             this.activeProbe = 0;
         }
+    }
+
+    private onProbeTimeout(probe: number, session: number, correlation: string): void {
+        if (probe !== this.activeProbe || session !== this.plannerSession) {
+            return;
+        }
+        if (this.inFlight) {
+            this.clearProbeTimer();
+            this.activeProbe = 0;
+            this.finishFlight();
+            return;
+        }
+        // Silence is not confirmed loss: retain Planner/Engine topology and
+        // resume deferred/hidden/marker pumping. Late callbacks stay fenced
+        // by the cleared probe token below.
+        this.clearProbeTimer();
+        this.activeProbe = 0;
+        this.logToken(`${LOG_PREFIX}:probe-timeout correlation=${correlation} cause=probe-silence outcome=pump-resumed`);
+        this.finishFlight();
     }
 
     private onProbePresence(reply: unknown, probe: number, session: number, expectedOwner: string | null): void {
@@ -5080,6 +5141,7 @@ export class PlanAdapter {
             return;
         }
         if (this.inFlight) {
+            this.clearProbeTimer();
             this.activeProbe = 0;
             this.finishFlight();
             return;
@@ -5089,6 +5151,7 @@ export class PlanAdapter {
             return;
         }
         if (reply !== true) {
+            this.clearProbeTimer();
             this.activeProbe = 0;
             this.finishFlight();
             return;
@@ -5104,6 +5167,7 @@ export class PlanAdapter {
             );
         } catch (error) {
             void error;
+            this.clearProbeTimer();
             this.activeProbe = 0;
             this.finishFlight();
         }
@@ -5114,16 +5178,19 @@ export class PlanAdapter {
             return;
         }
         if (this.inFlight) {
+            this.clearProbeTimer();
             this.activeProbe = 0;
             this.finishFlight();
             return;
         }
         if (!isUniqueOwner(reply)) {
+            this.clearProbeTimer();
             this.activeProbe = 0;
             this.finishFlight();
             return;
         }
         if (expectedOwner === null) {
+            this.clearProbeTimer();
             this.activeProbe = 0;
             this.finishFlight();
             return;
@@ -5132,6 +5199,7 @@ export class PlanAdapter {
             this.triggerRecovery("changed");
             return;
         }
+        this.clearProbeTimer();
         this.activeProbe = 0;
         this.finishFlight();
     }
@@ -5155,6 +5223,7 @@ export class PlanAdapter {
         this.pending = null;
         this.knownOwner = null;
         this.activeProbe = 0;
+        this.clearProbeTimer();
         this.appliedById.clear();
         this.appliedScopeByDomain.clear();
         this.reconcileAttempts = 0;
@@ -7602,6 +7671,18 @@ export class PlanAdapter {
     private clearTimer(): void {
         const cancel = this.cancelTimer;
         this.cancelTimer = null;
+        if (cancel !== null) {
+            try {
+                cancel();
+            } catch (error) {
+                void error;
+            }
+        }
+    }
+
+    private clearProbeTimer(): void {
+        const cancel = this.probeCancel;
+        this.probeCancel = null;
         if (cancel !== null) {
             try {
                 cancel();

@@ -941,4 +941,33 @@ describe("cosmic send-to-workspace settlement domains", () => {
         assert.equal(mocks.timers.length, timerAt + 2);
         assertRedacted(mocks);
     });
+
+    it("rotates the correlation namespace after 1M sends without permanent refusal", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        (adapter as unknown as { seq: number }).seq = 1000000;
+        const first = dispatch(mocks, adapter);
+        assert.equal(first, "gen-1-w1000000");
+        mocks.callbacks[1]?.(rejectedReply(first, "stale-revision"));
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.isEnabled, true);
+        mocks.world.activeRef = refs.b;
+        const ownerAt = mocks.dbusCalls.length;
+        assert.equal(adapter.requestSend("ws-2"), true);
+        assert.equal(mocks.dbusCalls[ownerAt]?.method, WORKSPACE_SEND_GET_OWNER_METHOD);
+        mocks.callbacks[ownerAt]?.(":1.7");
+        const second = parsePayload(mocks.dbusCalls[ownerAt + 1]?.payload ?? "{}")["correlation_id"] as string;
+        assert.equal(second, "gen-1-w1r0");
+        assert.notEqual(second, first);
+        assert.ok(second.length > 0 && second.length <= 128);
+        mocks.callbacks[1]?.(rejectedReply(first, "stale-revision"));
+        assert.equal(adapter.isInFlight, true, "a delayed old-epoch reply cannot settle the new flight");
+        assert.ok(
+            mocks.logs.some((l) => l.includes("event=sequence-exhausted") && l.includes(`correlation=${second}`) && l.includes("outcome=correlation-rotated")),
+            mocks.logs.join("\n"),
+        );
+        assertRedacted(mocks);
+    });
 });
