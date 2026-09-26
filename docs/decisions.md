@@ -27,12 +27,11 @@ the corresponding item ships; each such entry names its replacement.
   foreground and hidden tiling now send complete observations through
   `reconcile`; the applied membership baseline and public admit/remove wire
   commands are retired. Fresh observations keep deterministic fitting and
-  admission placement. Orchestrator rules: a fresh domain waits while any
-  send/R4 pair is pending, and a unique same-workspace source relocates only
+  admission placement. Orchestrator step-2 rule: a unique same-workspace source relocates only
   when the new observation shares a retained tiled or floating-exception id;
   disjoint and ambiguous sources seed fresh. Exact overlapping relocation
-  retains its skew/rollback fence. The existing send/R4 settlement and
-  verification remain unchanged pending step 3, under Simplicity and Resilience.
+  retains its skew/rollback fence. Step 3 retired the former pending-pair
+  fresh-domain delay and send/R4 verification protocol.
 - Target shape (review section 6): a portable `tiler-core` Engine with
   world/domain state behind a `LayoutPolicy` seam; `tiler-protocol` as a thin
   codec; a Linux service crate; the KWin script as observer and actuator; the
@@ -53,18 +52,22 @@ the corresponding item ships; each such entry names its replacement.
 - Size hints (AR12, shipped offline): observed min/max hints guide minimum-aware
   projection and evidence-backed clamp acceptance without drift/park. Per the
   Orchestrator's option (1) decision applying the user-approved AR12 text,
-  overconstrained members are not reasserted; R4 verifies their client-held
-  geometry while keeping identity, membership, and other geometry exact.
+  overconstrained members are not reasserted; R4 exempts their client-held
+  geometry from native writes while fencing identity and membership.
 - Size caps (AR16, shipped offline): the 64-window and 16-domain count caps are
   retired. The codec rejects requests above 1 MiB; the KWin adapter mirrors
   this bound before dispatch. Separate reply, native/FFI, and field bounds remain.
-- Workspace send (shipped offline, user 2026-09-25 option B): exact verify
-  still commits; one correlated abandon may retire ANY existing workspace-send
-  pending, including an orphan from another generation/correlation. A bounded
-  unanswered abandon also releases KWin's local Plan block as *unconfirmed*
-  and hands off to ordinary Plan without a KWin commit or Engine retirement
-  claim. Engine sessions survive; no receipts, topology reset, setter replay,
-  or permanent disabling on transient failure. Live acceptance remains pending.
+- Workspace send (step 3, user decision 2026-09-25, shipped offline): Engine
+  immediately commits planned topology after complete source/target observation;
+  KWin writes native geometry then membership, follows on fresh exact arrival,
+  and forces complete source/target reconciliation on every terminal flight.
+  Per the Orchestrator's portable-flag scope, both send observations retain
+  flagged source/target survivors; only `floating` and `fit_excluded` cross the
+  wire, while fullscreen/maximized remain local retained-tile overlays. A
+  flag-only change in either domain stales the reply before native writes.
+  No pending transaction, native verified-success claim, Plan block or setter
+  replay. The earlier option-B abandon path is superseded. Live acceptance
+  remains pending.
 - Settings (AR15, shipped offline): tiling settings (`workspaceMode`, gaps)
   are configured from the KWin script's own Configure page, backed by a small
   host-built native script KCM. Saving changed gaps requests KWin reconfigure
@@ -520,7 +523,7 @@ the corresponding item ships; each such entry names its replacement.
    post-convergence ID-set checks for ordinary retained reconcile and
    update-gaps are gone; relocated but previously unconverged sources still
    require exact membership and atomic rollback. Other operation and reply
-   fences remain where needed for pending, changed scope, or uncertain state.
+    fences remain where needed for changed scope or uncertain state.
 - USER-APPROVED recoverability, 2026-09-21: "log and continue rather than hard
   fail." A failed native geometry operation or client geometry discrepancy is
   an operation failure, not a permanently disabled window or domain. Later
@@ -530,41 +533,35 @@ the corresponding item ships; each such entry names its replacement.
   later explicit command, retries indefinitely, fabricates acknowledgement,
   applies stale geometry, or recovers uncertain cross-output transfers.
   Authorization, malformed-input, owner, correlation, and stale-scope fences
-  remain fail-closed. Workspace-send uncertainty now uses the 2026-09-25
-  abandon decision below; directional R4 uncertainty remains pending. Future
+  remain fail-closed. Send/R4 uncertainty now uses the 2026-09-25
+  step-3 observation convergence below. Future
   recovery must preserve later valid commands without fabricating success,
   replaying setters, resetting topology, or weakening those fences.
-- USER-APPROVED incremental direction, 2026-09-25, replacing the 2026-09-23
-  entry below: full AR11 and AR4 are parked. Section A of the
-  [change note](changes/incremental-send-recovery-and-admission-batching.md)
-  shipped offline as the single-operation abandon path, extended by the user's
-  2026-09-25 option B to orphan retirement and bounded unconfirmed handoff
-  under the Simplicity and Resilience principles. Batching simultaneous admissions into
-  one plan remains proposed; directional R4 pending is unchanged.
-- SUPERSEDED 2026-09-25 (parked, retained for reference) - USER-APPROVED
-  transaction-model direction, 2026-09-23: adopt architecture
-  review 7.8, prototyped on workspace send first. Host observations own window
-  existence, domain and flags; the engine owns layout within those facts.
-  Prefer bounded convergence to observed truth over never reporting success
-  before verification. Observations must be complete for their declared scope:
-  a window elsewhere changed domain, absence from the entire observed world
-  means closed, and an unexpired expectation protects a window in transit.
-  Fence plans and replies to a monotonic observation sequence, retain the
-  existing same-UID, owner, generation and correlation fences, and never replay
-  commands, blindly reset topology, loop indefinitely or permanently disable
-  a window/domain. Expiry uses the existing deadline and a specified outcome;
-  a failed send re-admits to source with `diag: expectation-expired`. Keep
-  prompt one-shot switch/focus on fresh native proof of the mover's exact
-  arrival without waiting for unrelated layout settling, preserve unrelated
-  focus and in-flight workspace retention, and distinguish dispatch,
-  acceptance, completion and uncertainty in correlated logs. This is an
-  approved direction, **not shipped behavior**: the existing send/R4 pending
-  status, cancellation and verified-success entries below still describe the
-  current code until replaced. The 2026-09-25 incremental abandon decision
-  above now supersedes their send-specific uncertainty clauses; directional
-  R4 recovery remains deferred.
-- USER-APPROVED pending-transaction status, 2026-09-22: the existing
-  same-UID-authorized `DescribePlan` route exposes only
+- USER-APPROVED observation-convergence step 3, decided 2026-09-25:
+  complete per-domain observations are authoritative for membership and portable
+  flags, retaining survivor topology. The user authorized retiring send/R4
+  transactions. Rust converges complete source and target observations, then
+  synchronously commits the planned send or exhausted horizontal R4 topology
+  into canonical per-domain sessions, returning both-domain geometry and the
+  native assignment. No pair survives the call and no send/R4 pending
+  ack/verify/status/cancel/abandon remains. KWin keeps a short flight-local
+  source/target pin, including a newly allocated trailing target, and separate
+  unanswered-request and arrival deadlines. Owner/generation/correlation/flight/
+  snapshot fences discard stale replies before any setter. Send writes geometry
+  then desktop membership; R4 writes output, desktop membership and geometry,
+  exempting overconstrained members. R4's mid-transfer fence also checks
+  non-mover flags before later setters and follow. Follow once on fresh exact target arrival,
+  switching before focus without waiting for unrelated geometry; no retry or
+  setter replay on failure. Every terminal flight forces complete both-domain
+  Plan reconciliation even when applied evidence matches, quarantines unreadable
+  domains and never uses `blocksPlan`. No wire ack or native verified-success is
+  emitted for send/R4. Current Rust+KWin behavior is offline-verified only; no
+  live verification claimed. See `changes/archive/observation-convergence.md`.
+- SUPERSEDED 2026-09-25, historical only - USER-APPROVED incremental direction, 2026-09-25: full AR11 and AR4 were parked and Section A of the incremental-send-recovery note shipped offline as the single-operation abandon path with option-B orphan retirement. Retired by the step-3 decision above; abandon/orphan/unconfirmed details below are not current.
+- SUPERSEDED 2026-09-25, historical only - USER-APPROVED
+  transaction-model direction, 2026-09-23: AR 7.8 observation-authority direction prototyped on workspace send first. Retired by the step-3 decision above; its pending/verified-success framing is not current.
+- SUPERSEDED 2026-09-25, historical only - pending-transaction status, 2026-09-22: the retired
+  same-UID-authorized `DescribePlan` route exposed only
   `send-to-workspace-status` and `directional-move-status` for an exact pending
   transaction. With the normal owner, generation, correlation, revision,
   domain, bounds, and complete-observation fences, the read-only replies are
@@ -576,8 +573,8 @@ the corresponding item ships; each such entry names its replacement.
   acknowledge, verify, clear, rebind, advance, write native state, release adapter blocks, retain
   pre-observation, keep receipts, cancel, settle, retry, discard, reseed, or
   recover. Exact pre-state and lost-commit classification remain unselected.
-- USER-APPROVED pre-actuation cancellation, 2026-09-22: one automatic bounded
-  cancellation attempt may withdraw a workspace-send or directional R4 pending
+- SUPERSEDED 2026-09-25, historical only - pre-actuation cancellation, 2026-09-22: one automatic bounded
+  cancellation attempt could withdraw a workspace-send or directional R4 pending
   transaction only before its KWin flight has bound a plan or dispatched a
   geometry, membership, or follow setter. The same-UID KWin caller attests
   zero dispatch for its exact generation, flight, and correlation; Rust treats
@@ -596,7 +593,7 @@ the corresponding item ships; each such entry names its replacement.
   settles acked, post-actuation, unresolved, stale, diverged, absent, or
   lost-commit cases and introduces no receipt, replay, rollback write,
   reset, reseed, polling, or retry loop.
-- Approved correlated pending observability, 2026-09-22: authorized Planner
+- SUPERSEDED 2026-09-25, historical only - correlated pending observability, 2026-09-22: authorized Planner
   `DescribePlan` status/cancel requests and replies emit bounded normal-level
   `plasma-auto-tiler:plan-summary` records on Planner stderr; opt-in trace adds
   only a bounded structural request/reply shape. Workspace send uses the
@@ -611,7 +608,7 @@ the corresponding item ships; each such entry names its replacement.
   foreign error text. Logging is best-effort. The R4 direct-`diverged` skip is
   a correction enforcing the already selected no-divergence cancellation fence;
   no new recovery or retry behavior is selected. This slice does not claim
-  observability for other routes.
+  observability for other routes. Retired by step 3; no send/R4 pending, ack, verify, status, cancel, or abandon path remains.
 - Permissive admission, authorized 2026-09-14: an observed normal window's
   incoming frame rectangle never decides whether it may join a tiled domain.
   Admission assigns a new complete geometry for every member and may reflow
@@ -635,7 +632,7 @@ the corresponding item ships; each such entry names its replacement.
    shared domain, keeps at least two logical workspaces. Unmapped desktops remain
    outside management.
   Occupied (including floating, fullscreen, and maximized), visible,
-  transaction-pinned, displaced, and unmapped desktops remain protected; sticky
+  flight-pinned, displaced, and unmapped desktops remain protected; sticky
   all-desktops windows do not occupy every backing desktop. Mapping and output
   identity are session-local. The initial disconnected-output policy preserves its displaced
   layout in separate workspace(s), rather than merging it into a new top-level
@@ -670,58 +667,14 @@ the corresponding item ships; each such entry names its replacement.
 - `Meta+1..9` select an existing 1-based logical workspace without creation.
   `Meta+Shift+1..9` send only the focused tiled window to an existing
   same-output workspace through the Rust `MoveToWorkspace` route. `0` reuses or
-  creates the trailing empty target. A confirmed native mover transfer is a
-  user-visible partial success: after the mover desktop setter returns, one
-  fresh stable-id observation must prove the original flight's mover is absent
-  from its pinned source and present in its exact target, with source/target
-  output, domains, bounds, target availability, owner, generation, and flight
-  still valid. That one proof switches to the target and focuses the mover
-  promptly, without waiting for unrelated source or target geometry echoes,
-  Rust acknowledgement, verification, or commit. Setter returns and signal
-  delivery alone are not proof. Stale, ambiguous, missing, no-op, wrong-target,
-  owner, scope, and hook failures do not follow; switch or focus refusal is
-  reported without retry or fabricated rollback. The complete geometry and
-  membership observation remains the sole ack/verify/commit gate. A later exact
-  commit never follows twice; if no earlier fresh membership proof exists, its
-  exact observation may make the one follow. Native map/focus confirmation does
-  not claim rendered visibility. A post-plan uncertain result blocks Plan
-  during one bounded abandon wait. An `abandoned`, `orphan-abandoned`, or
-  `no-pending-unknown` reply releases the block; an unanswered wait releases
-  it locally as *unconfirmed*. Ordinary Plan then resyncs from native
-  observation; KWin never claims commit on abandon or unconfirmed release.
-  Exact committed sends also request normal Plan resync. KWin geometry and
+  creates the trailing empty target. Step 3 (current, USER decision 2026-09-25, offline only, no live verification claimed): Rust commits the planned send topology immediately into the canonical per-domain sessions after complete source-plus-target convergence and returns source/target geometry plus the mover desktop assignment; there is no send pending, ack, verify, status, cancel, or abandon. KWin holds a short flight-local source/target pin (including a newly allocated trailing target until dispatch/follow observation finishes) with separate unanswered-request and arrival deadlines, plus owner/generation/correlation/flight/snapshot fences that discard a stale reply before any setter. Native writes are source/target geometry then the mover desktop setter. One fresh exact mover-absent-from-source/present-in-target proof switches to the target and focuses the mover promptly, without waiting for unrelated geometry; switch before focus, no retry, replay, or fabricated rollback. Setter returns and signal delivery alone are not proof. Stale, ambiguous, missing, no-op, wrong-target, owner, scope, and hook failures do not follow. Every terminal flight forces complete source AND target Plan reconcile even when applied evidence matches, quarantines unreadable domains, uses no `blocksPlan`, and never claims native-verified success. KWin geometry and
   membership are non-atomic and asynchronous: waiting for whole-layout
   settlement before this confirmed native follow can strand the user after the
   move, so unrelated layout settling must not gate it. The standard US shifted aliases `Meta+!`
   through `Meta+)` are registered alongside the digit sends; registration
   preserves foreign shortcut records and does not establish physical delivery.
 - USER VISUAL/MANUAL acceptance: "The issue appears to be fixed, I spam moved a window between many workspaces and it never failed. ... reinforces ... graceful handling ... actually feel really good even when spamming." This accepts move/follow usability and repeated same-session use across many workspaces. The supplied `/run/user/1000/plasma-auto-tiler-dev.E2E0QJ.log` is NOT ANALYZED and supplies no machine protocol, rendered-visibility, latency, recovery, or native-cause claim. The durable product preference is graceful, unsurprising handling of confirmed partial successes and responsiveness during rapid use; it does not authorize ignored errors, retries, queue resets, or an architecture or uncertain-recovery change.
-- A planned send that reaches its original pre-ack deadline may settle only from
-  one fresh complete exact post-observation, then uses its original ack/verify
-  transaction and one normal bounded deadline. It never rewrites, replays,
-  polls, or creates a new plan. Late events cannot duplicate completion. A
-  provably pre-dispatch failure or a well-formed request rejection other than
-  `pending-exists` stays available because Rust has no retained pending.
-  User-approved 2026-09-25 under Simplicity and Resilience: unverifiable
-  sends (including lost planned or committed-verify replies, non-exact
-  post-state, missing/escaped mover and ack/verify timeout) use one fenced
-  `send-to-workspace-abandon` request. The original request revision matches
-  a lost planned reply; a known plan uses its base revision. User option B,
-  2026-09-25: this operation also retires ANY existing workspace-send pending,
-  including one from another generation/correlation/owner, regardless of
-  ack/divergence state, preserving Engine sessions. Exact retirement replies
-  `abandoned`, orphan retirement replies
-  distinct `orphan-abandoned`, and absence replies `no-pending-unknown` under
-  the requesting correlation; none claims commit. The displaced owner sees
-  no pending and can recover through its own abandon. KWin stays enabled and
-  releases Plan to ordinary complete-observation reconciliation after a definitive
-  reply. Unreadable observations retry within one bounded wait; on unanswered
-  abandon or unreachable pinned owner KWin releases its local flight as
-  *unconfirmed*, unblocks and resyncs ordinary Plan, without claiming Rust
-  retirement. A later send activates the current Planner owner and can retire
-  a surviving orphan. No setter replays or new retained state. Abandon/orphan/
-  unconfirmed/handoff logs are structured, bounded, correlated, and redacted.
-  Directional R4 uncertainty is out of scope; live acceptance is pending.
+- SUPERSEDED 2026-09-25, historical only - planned-send ack/verify/abandon path, 2026-09-25: a planned send that reached its pre-ack deadline settled from a fresh complete post-observation through the retired ack/verify transaction, with fenced `send-to-workspace-abandon`, option-B orphan retirement, bounded unconfirmed handoff, and a Plan block during the wait. Retired by the USER step-3 decision above; no send pending, ack, verify, abandon, orphan, unconfirmed, or Plan block remains. Directional R4 uncertainty was out of scope there; R4 is covered by the current step-3 entry below. No live acceptance is claimed.
 
 ## Shortcuts
 
@@ -819,8 +772,9 @@ the corresponding item ships; each such entry names its replacement.
   is distinct from `H[1 H[2 3]]`; tabs, stacked/shared groups, and compositor
   group behavior are excluded.
 - Lifecycle foundation, authorized 2026-09-09: portable `cosmic_v1` lifecycle
-  plans carry policy version 1 and use the same single-pending acknowledgement
-  and post-observation reconciliation boundary as movement. Logical domains are
+  plans carry policy version 1. Step 3 replaced send/R4 pending acknowledgement
+  with immediate planned-topology commit and complete observation convergence;
+  other lifecycle operation contracts remain independent. Logical domains are
   keyed by the opaque `(output, workspace)` pair, so one logical output may
   retain independent workspace trees without inventing native workspace
   semantics. Corrected source-evidenced `cosmic_v1` semantics, authorized
@@ -874,29 +828,23 @@ the corresponding item ships; each such entry names its replacement.
   collapses its source tree, and focuses it in the target. A validated
   per-domain last-active leaf supplies COSMIC target admission; its absence
   uses target `map_to_tree` root/output-geometry fallback. Empty targets are a
-  lone root. Approved 2026-09-20: exhausted default-Vertical
+  lone root. Approved 2026-09-20, updated by USER step-3 decision 2026-09-25 (current, offline only, no live verification claimed): exhausted default-Vertical
   `Meta+Left`/`Meta+Right` R4 movement is the selected product behavior across
   a horizontally adjacent output into that output's currently selected logical
   workspace. Local R1/R2/R3 wins first; Up/Down, wrapping, and workspace
-  cycling remain excluded. Rust models target remembered-leaf/root insertion
-  and retains the existing owner, generation, revision, correlation,
-  single-pending, acknowledgement, verification, visibility, exception, and
-  fail-closed target fences. The active `DescribePlan` route delivers the
+  cycling remain excluded. Rust converges complete source plus target observations, then synchronously commits the planned R4 topology into the canonical per-domain sessions and returns both-domain geometry plus the native assignment; no pair survives the call. Rust retains target remembered-leaf/root insertion and the existing owner, generation, revision, correlation,
+  single-flight, visibility, exception, and
+  fail-closed target fences, with no acknowledgement, verification, pending, status, cancel, or abandon. The active `DescribePlan` route delivers the
   corresponding exhausted horizontal focus transfer with no layout or
   membership writes. R4 uses KWin 6.7.5 public
   `workspace.sendClientToScreen(window, output)` and exact desktop assignment,
-  but native writes initiate only: output, membership, geometry, and focus
-  readback fence the accepted acknowledgement and verified commit. The
-  transient pair is retained only through that transaction and then split back
-  into canonical per-domain sessions. Timeout, stale scope, wrong output,
-  failed write, identity loss, or partial proof terminate without replay or
-  commit. No live KWin output-switch acceptance is claimed.
+  with native write order output, then desktop membership, then source/target geometry (respecting overconstrained members). KWin keeps a short flight-local source/target pin with separate unanswered-request and arrival deadlines, stale-reply discard before any setter, prompt follow once on fresh exact mover-on-target proof, forced complete both-domain reconcile even on equal applied evidence with unreadable quarantine, and no `blocksPlan`. Timeout, stale scope, wrong output,
+  failed write, identity loss, or partial proof converge on the next complete observations without replay, phantom, or verified-success claim. No live KWin output-switch acceptance is claimed.
 - The portable world Engine owns independent per-domain Sessions, outer gaps,
-  seeding, relocation, and the existing workspace/R4 pending pair state behind
+  seeding, and relocation behind
   typed events and replies. Do not merge per-domain revisions, fingerprints,
-  divergence, pending scope, or node identities into one permanent Session.
-  Keep transient pair assembly/split until AR11 selects a transaction model;
-  this architecture change does not select new transaction semantics.
+  divergence, or node identities into one permanent Session.
+  Send/R4 assemble a transient canonical pair only for the synchronous planned-topology commit; no workspace/R4 pending pair state remains. USER step-3 decision 2026-09-25 retired the pending-pair and transaction semantics; the prior pending-pair/AR11 wording is historical.
 - A KWin fork or patch is rejected. The project must operate within existing
   KDE/Plasma/KWin. The Rust-engine/direct-geometry direction above is the
   selected replacement architecture; the bounded adapter remains active only

@@ -1,9 +1,11 @@
 # Incremental send recovery and admission batching
 
-Status: section A shipped offline (2026-09-25); section B remains a proposal
-open to refinement. Replaces full AR11
-([note](architecture-review-ar11-expectations.md)) and full AR4
-([note](architecture-review-ar4-observation-sync.md)), which are parked.
+Status: section A shipped offline 2026-09-25, superseded by
+[observation-convergence step 3](archive/observation-convergence.md) on
+2026-09-26. Its pending ack/verify/abandon and Plan-block paths are retired.
+Section B's former previous-snapshot removal premise was retired by complete
+observation reconcile in steps 1-2; any further batching remains a proposal.
+Full AR11 and full AR4 are obsolete historical designs (see their notes).
 
 ## Why
 
@@ -31,7 +33,7 @@ targets the same user-visible value with far smaller changes.
 5. Paper design review passed while implementations failed. Derive fixture
    rows from the design before writing production code.
 
-## A: bounded workspace-send abandon (shipped offline)
+## A: bounded workspace-send abandon (superseded historical implementation)
 
 User decision, 2026-09-25, replacing the three-outcome proposal above under
 the Simplicity and Resilience principles: exact ack/verify commit and prompt
@@ -85,14 +87,15 @@ owner and older-generation pending, lost replies/unconfirmed handoff, and
 follow responsiveness in a bounded live session before claiming runtime
 behavior.
 
-## B: batched admissions (second, or when intermediate jank is noticed)
+## B: batched admissions (historical candidate)
 
-When several windows appear together, admit them in one request and one plan
-in stable first-seen order, from one complete observation. Removals stay on
-the existing previous-snapshot route, avoiding the pre-removal evidence
-problem. Drift/park policy migration and a single `sync` stay parked.
+Step 2 replaced the previous-snapshot removal route with complete-observation
+`reconcile`; one observation now converges simultaneous newcomers in stable
+first-seen order and departures before projecting its plan. The separate AR4
+`sync` and drift/park policy migration remain parked, not shipped by section B.
 
 ## Parked
 
-Full AR11 expectation model and full AR4 `sync`. Their notes, the fixture and
-ten skipped AR11 rows remain for reference.
+Full AR11 expectation model and full AR4 `sync` remain historical proposals.
+The ten skipped AR11 rows were removed in step 3; the real-Engine fixture now
+tests immediate send and observation convergence.

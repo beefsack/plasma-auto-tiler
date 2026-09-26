@@ -11,7 +11,6 @@ pub mod directional;
 pub mod engine;
 pub mod geometry;
 pub mod ids;
-pub mod pending;
 pub mod policy;
 pub mod reconcile;
 pub mod seed;

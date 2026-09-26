@@ -58,6 +58,7 @@ import {
     WorkspaceSendAdapter,
     WorkspaceFollowNativeDiagnostic,
     WorkspaceSendObserved,
+    WorkspaceSendSettled,
     workspaceFingerprint as workspaceSendFingerprint,
 } from "./workspace-send-adapter";
 
@@ -740,8 +741,18 @@ export function observeSendTarget(
         if (windows === null) {
             return null;
         }
-        const sourceWindows: Array<{ id: string; ref: object; rect: { x: number; y: number; w: number; h: number } }> = [];
-        const targetWindows: Array<{ id: string; ref: object; rect: { x: number; y: number; w: number; h: number } }> = [];
+        type SendWindow = {
+            id: string;
+            ref: object;
+            rect: { x: number; y: number; w: number; h: number };
+            fullscreen: boolean;
+            maximized: boolean;
+            floating: boolean;
+            sticky: boolean;
+            fitExcluded: boolean;
+        };
+        const sourceWindows: SendWindow[] = [];
+        const targetWindows: SendWindow[] = [];
         const seen = new Set<string>();
         for (const item of windows) {
             if (typeof item !== "object" || item === null) {
@@ -758,15 +769,7 @@ export function observeSendTarget(
             if (readProp(ref, "minimized") === true) {
                 continue;
             }
-            if (readProp(ref, "fullScreen") !== false) {
-                continue;
-            }
-            if (readProp(ref, "maximizeMode") !== 0) {
-                continue;
-            }
-            if (readProp(ref, "onAllDesktops") !== false) {
-                continue;
-            }
+            // Exceptions/overlays stay observed with flags; mover stays gated below.
             const output = readProp(ref, "output");
             if (typeof output !== "object" || output === null) {
                 continue;
@@ -785,9 +788,6 @@ export function observeSendTarget(
                 return null;
             }
             const id = internNativeId(cache, native);
-            if (floatingIds.has(id)) {
-                continue;
-            }
             const membership = decodeList(readProp(ref, "desktops"), MAX_DESKTOPS);
             if (membership === null) {
                 return null;
@@ -820,10 +820,23 @@ export function observeSendTarget(
             if (typeof frame === "string") {
                 return null;
             }
+            // Local flags only; the adapter normalizes fitExcluded to wire fit_excluded.
+            const sticky = readProp(ref, "onAllDesktops") === true;
+            const fullscreen = readProp(ref, "fullScreen") !== false;
+            const maximized = readProp(ref, "maximizeMode") !== 0;
+            const floating = floatingIds.has(id) || sticky;
+            const fitExcluded = floating || sticky || fullscreen || maximized;
+            const flags = {
+                fullscreen,
+                maximized,
+                floating,
+                sticky,
+                fitExcluded,
+            };
             if (onSource) {
-                sourceWindows.push({ id, ref, rect: { x: frame.x, y: frame.y, w: frame.w, h: frame.h } });
+                sourceWindows.push({ id, ref, rect: { x: frame.x, y: frame.y, w: frame.w, h: frame.h }, ...flags });
             } else {
-                targetWindows.push({ id, ref, rect: { x: frame.x, y: frame.y, w: frame.w, h: frame.h } });
+                targetWindows.push({ id, ref, rect: { x: frame.x, y: frame.y, w: frame.w, h: frame.h }, ...flags });
             }
         }
         let focusedId = "";
@@ -840,6 +853,10 @@ export function observeSendTarget(
                 const activeId = internNativeId(cache, activeNative);
                 for (const entry of sourceWindows) {
                     if (entry.id === activeId) {
+                        // Tiled-only mover; exceptions keep "" / null and refuse downstream.
+                        if (entry.fullscreen || entry.maximized || entry.floating || entry.sticky || entry.fitExcluded) {
+                            break;
+                        }
                         focusedId = entry.id;
                         moverRef = entry.ref;
                         break;
@@ -872,6 +889,13 @@ export function observeSendTarget(
                         id: entry.id,
                         ref: entry.ref,
                         rect: Object.freeze({ x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h }),
+                        fullscreen: entry.fullscreen,
+                        maximized: entry.maximized,
+                        floating: entry.floating,
+                        sticky: entry.sticky,
+                        fitExcluded: entry.fitExcluded,
+                        // Derived wire alias; internal working type holds fitExcluded only.
+                        fit_excluded: entry.fitExcluded,
                     }),
                 ),
             ),
@@ -881,6 +905,13 @@ export function observeSendTarget(
                         id: entry.id,
                         ref: entry.ref,
                         rect: Object.freeze({ x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h }),
+                        fullscreen: entry.fullscreen,
+                        maximized: entry.maximized,
+                        floating: entry.floating,
+                        sticky: entry.sticky,
+                        fitExcluded: entry.fitExcluded,
+                        // Derived wire alias; internal working type holds fitExcluded only.
+                        fit_excluded: entry.fitExcluded,
                     }),
                 ),
             ),
@@ -2565,16 +2596,14 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // Entry-owned highlight refresh edge: set once the highlight bridge
     // starts, invoked exactly once per successful geometry-plan boundary.
     let highlightRefresh: (() => void) | null = null;
-    // Entry-owned cross-flight guard: the send adapter is created below, so
-    // the Plan guard reads through this mutable slot. While a send flight is
-    // active, Plan dispatches are blocked and auto intents are dropped; a
-    // single normal resync after send commit converges.
-    let workspaceSendRef: import("./workspace-send-adapter").WorkspaceSendAdapter | null = null;
+    // Send flights never block Plan. Terminal send settlement arrives
+    // through the send adapter's single `onSettled` edge below, which
+    // forces a one-shot complete source AND target reconcile through
+    // Plan's existing single-flight foreground+hidden chain.
     const adapter = new PlanAdapter({
         callDbus,
         scheduleOnce,
         log,
-        isSendActive: () => workspaceSendRef !== null && workspaceSendRef.blocksPlan,
         isInteractiveResizeActive: () => interactiveResizeRefs.size > 0 || interactiveMoveRefs.size > 0,
         onPlannedApplied: () => {
             try {
@@ -3078,9 +3107,11 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // Production dynamic workspace route: the native adapter owns the
     // project-owned backing-desktop mapping and lifecycle observation; the
     // existing send adapter owns the sole structural same-output tiled move
-    // through Rust, then follows to the Rust-planned target desktop after its
-    // own fresh native mover-membership confirmation; Rust commit remains
-    // separately exact and may complete later.
+    // through Rust, which commits its planned topology synchronously in the
+    // same call, then follows to the Rust-planned target desktop after its
+    // own fresh native mover-membership confirmation. Every terminal flight
+    // settles through `onSettled` into one forced Plan source+target
+    // refresh; Plan is never blocked.
     const workspaceNative = new WorkspaceNativeAdapter({
         getWorkspace: () => liveWorkspace,
         readWorkspaceMode: () => readWorkspaceModeValue(overrides.readWorkspaceModeFn),
@@ -3137,27 +3168,24 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         log,
         observe: (targetWorkspace, pinnedSourceWorkspace?) =>
             observeSendTarget(liveWorkspace, sendNativeIds, targetWorkspace, floatingIds, pinnedSourceWorkspace),
-        onCommitted: () => {
+        // Single terminal-send edge: every settled flight (arrival, failed
+        // native write, stale/rejected reply, missing callback, deadline,
+        // closed mover, disable with a live flight) forces one complete
+        // source AND target reconcile through Plan's single-flight
+        // foreground+hidden chain, bypassing the equal-applied-evidence
+        // quiet path once per involved domain. Unreadable domains quarantine
+        // and retry on the next complete observation; nothing is invented
+        // and the Plan baseline is never reset here. The send adapter
+        // releases source/target retention before this callback, so
+        // lifecycle cleanup may now prune under the normal rules.
+        onSettled: (settled: WorkspaceSendSettled) => {
             try {
-                adapter.requestResync();
+                adapter.notifySendSettled(settled);
             } catch (error) {
                 void error;
             }
-            // The send adapter releases source/target retention before this
-            // committed-only callback, so lifecycle cleanup may now prune it.
             try {
                 workspaceNative.handleTopologySignal();
-            } catch (error) {
-                void error;
-            }
-        },
-        // Abandon settlement hands Plan one ordinary native-observation
-        // resync: the Rust pending is retired without a commit, so Plan must
-        // converge from what KWin actually shows. Never resets the Plan
-        // baseline; send stays enabled and the next valid send may proceed.
-        onAbandoned: () => {
-            try {
-                adapter.requestResync();
             } catch (error) {
                 void error;
             }
@@ -3186,14 +3214,6 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         subscribeMoverDesktops: (moverRef, handler) => {
             try {
                 return connectSignal(readSignal(moverRef, "desktopsChanged"), handler);
-            } catch (error) {
-                void error;
-                return null;
-            }
-        },
-        subscribeWindowGeometry: (windowRef, handler) => {
-            try {
-                return connectSignal(readSignal(windowRef, "frameGeometryChanged"), handler);
             } catch (error) {
                 void error;
                 return null;
@@ -3353,12 +3373,11 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // Thereafter a terminal disable (pending mismatch, owner loss, refusal,
     // or reset correlation sequence) stays fail-closed. No normal workspace
     // shortcut may restore it.
-    workspaceSendRef = workspaceSend;
-    // Bounded transaction-lifetime ordering: while the send holds a bound
-    // plan awaiting ack/verify, the native cleanup must not prune its exact
-    // pending source/target ids even when empty and non-visible after follow.
-    // Provider-read per cleanup, so settle (commit/terminal clears pending)
-    // restores normal pruning with no extra state.
+    // Bounded flight-lifetime ordering: while the send flight is live, the
+    // native cleanup must not prune its exact pending source/target ids even
+    // when empty and non-visible after follow. Provider-read per cleanup, so
+    // settlement (which clears the pin before `onSettled`) restores normal
+    // pruning with no extra state.
     try {
         workspaceNative.setRetentionProvider(() => workspaceSend.pendingWorkspaces);
     } catch (error) {

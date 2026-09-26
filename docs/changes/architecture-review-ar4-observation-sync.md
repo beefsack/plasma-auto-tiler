@@ -1,7 +1,10 @@
 # AR4: Single observation sync
 
-Parked 2026-09-25 by user direction; its visible benefit moves to
-[batched admissions](incremental-send-recovery-and-admission-batching.md).
+Obsolete historical design: parked 2026-09-25 by user direction. Complete
+observation convergence and automatic reconcile shipped through
+[observation convergence](archive/observation-convergence.md); the former
+previous-snapshot batching proposal is reconciled with step 2 in the
+[incremental note](incremental-send-recovery-and-admission-batching.md).
 Retained for reference.
 
 ## Goal and scope

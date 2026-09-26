@@ -689,7 +689,10 @@ impl Session {
     /// domains must be single, valid, non-adjacent, usable
     /// (no divergence/pending/drag, valid topology) with matching
     /// owner/generation. `pair_domains` must be exactly two valid domains with
-    /// reciprocal adjacency naming each other. Trees/shares, `WindowLink`
+    /// distinct keys: cross-output pairs keep the reciprocal-adjacency fence
+    /// (each side names the other output), while same-output
+    /// distinct-workspace pairs carry no cross-output adjacency requirement.
+    /// Trees/shares, `WindowLink`
     /// membership, focus stacks, last-active, exceptions (including
     /// `floating_geometry`), retained float geometry, owner/generation, and
     /// the unified accepted revision/fingerprint are transplanted verbatim; no
@@ -714,16 +717,21 @@ impl Session {
         if pair_domains.len() != 2
             || !pair_domains.iter().all(|d| d.validate())
             || pair_domains[0].key() == pair_domains[1].key()
-            || pair_domains[0].id == pair_domains[1].id
             || !validate_adjacency(&pair_domains)
-            || !pair_domains[0]
+        {
+            return Err(CanonicalPairError::DomainMismatch);
+        }
+        // Cross-output pairs keep the reciprocal-adjacency fence; same-output
+        // distinct-workspace pairs need no cross-output adjacency.
+        if pair_domains[0].id != pair_domains[1].id
+            && (!pair_domains[0]
                 .adjacent
                 .values()
                 .any(|v| v == &pair_domains[1].id)
-            || !pair_domains[1]
-                .adjacent
-                .values()
-                .any(|v| v == &pair_domains[0].id)
+                || !pair_domains[1]
+                    .adjacent
+                    .values()
+                    .any(|v| v == &pair_domains[0].id))
         {
             return Err(CanonicalPairError::DomainMismatch);
         }
@@ -5423,6 +5431,75 @@ mod tests {
             committed_target.accepted_revision(),
             committed.accepted_revision()
         );
+    }
+
+    #[test]
+    fn canonical_pair_same_output_round_trip() {
+        let pair_domains = vec![canon_domain("out-1", "ws-1"), canon_domain("out-1", "ws-2")];
+        let source_key = DomainKey {
+            output: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+        };
+        let target_key = DomainKey {
+            output: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-2".to_owned()),
+        };
+        let mut source = Session::new(
+            owner(),
+            generation(),
+            0,
+            7,
+            vec![canon_domain("out-1", "ws-1")],
+        )
+        .expect("source new");
+        admit_in(&mut source, "s-win-1", "out-1", "ws-1", true);
+        admit_in(&mut source, "s-win-2", "out-1", "ws-1", false);
+        let mut target = Session::new(
+            owner(),
+            generation(),
+            0,
+            7,
+            vec![canon_domain("out-1", "ws-2")],
+        )
+        .expect("target new");
+        admit_in(&mut target, "t-win-1", "out-1", "ws-2", true);
+        // Occupied target round-trips topology, membership, and focus.
+        let pair = Session::paired_from_canonical(&source, Some(&target), pair_domains.clone())
+            .expect("same-output pair");
+        assert_eq!(pair.domains().len(), 2);
+        let (split_source, split_target) = pair.split_canonical_pair().expect("split");
+        let split_target = split_target.expect("occupied target present");
+        assert_eq!(
+            tree_for(&split_source, &source_key),
+            tree_for(&source, &source_key)
+        );
+        assert_eq!(
+            tree_for(&split_target, &target_key),
+            tree_for(&target, &target_key)
+        );
+        assert_eq!(
+            windows_for(&split_source, &source_key),
+            windows_for(&source, &source_key)
+        );
+        assert_eq!(
+            windows_for(&split_target, &target_key),
+            windows_for(&target, &target_key)
+        );
+        assert_eq!(split_source.focus(), source.focus());
+        assert_eq!(split_target.focus(), target.focus());
+        assert!(split_source.domains()[0].adjacent.is_empty());
+        assert!(split_target.domains()[0].adjacent.is_empty());
+        // Explicit empty target splits to None with source preserved.
+        let empty_pair =
+            Session::paired_from_canonical(&source, None, pair_domains).expect("empty pair");
+        assert!(tree_for(&empty_pair, &target_key).is_none());
+        let (empty_source, empty_target) = empty_pair.split_canonical_pair().expect("split");
+        assert!(empty_target.is_none());
+        assert_eq!(
+            tree_for(&empty_source, &source_key),
+            tree_for(&source, &source_key)
+        );
+        assert_eq!(empty_source.focus(), source.focus());
     }
 
     #[test]

@@ -16,15 +16,6 @@ decisions of 2026-09-24 are recorded under
   Meta+left move snap-back, Esc/zero-move, size-increment client, and the
   unexplained `p13` 36 px bottom-edge shortfall in
   `/run/user/1000/plasma-auto-tiler-dev.LVkQv5.log`. AR8 remains separate.
-- P2 | Floating-membership skew blocks plans | Parked by user (2026-09-24)
-  until it recurs. `/run/user/1000/plasma-auto-tiler-dev.EIV6Rm.log` drag-4
-  (Kate Meta+right corner shrink): press, thirds classification and Rust
-  `planned` reply were correct, but the adapter rejected the four-window plan
-  as `precondition-mismatch` (lines 1464-1468) because a non-dragged member was
-  observed floating while core retained it tiled; the restore reconcile failed
-  the same way and a later reconcile was refused as `partial-observation`, so
-  no reflow or restore occurred. User recalls no float/unfloat. Member
-  identity and flag provenance are not logged. No AR10 involvement found.
 - P2 | Drag-and-drop reorganisation | User-approved as a later item
   (2026-09-24). Wire move drops to the existing core placement policy
   (`crates/tiler-core/src/session/ops/drag.rs`: split edges, group interiors,
@@ -51,20 +42,6 @@ decisions of 2026-09-24 are recorded under
   effect mouse interception blocks all clicks; plausible first prototype is
   project-owned layer-shell surfaces confined to positive-width gaps, with a
   native KWin input filter as fallback. Needs a Rust split-boundary request.
-- P1 | Abandon-send recovery | User-accepted (2026-09-25), replacing the
-  three-outcome send resolution under the new Simplicity and Resilience
-  principles. Any send that cannot verify cleanly is abandoned through one
-  fenced, acknowledged Planner operation that retires the pending send without
-  claiming commit, keeps retained domain sessions and Plan baselines, and
-  unblocks Plan so ordinary routes handle observed facts. Exact verify stays
-  the success path. Unreadable observation waits with tiling enabled.
-  Option A (user): a no-pending reply is sufficient to resume. Option B
-  (user): abandon also retires orphan pending from other flights; an
-  unanswered abandon ends in a bounded unconfirmed local release. Shipped
-  offline 2026-09-25. Pending live acceptance: orphaned older-generation
-  sends, displaced-owner late replies, inaccessible Planner owner,
-  unconfirmed handoff, ordinary Plan convergence.
-  [proposal](changes/incremental-send-recovery-and-admission-batching.md)
 - P1 | Observed-membership convergence (step 1) | User decision (2026-09-25)
   from the Simplicity review: a complete per-domain observation is
   authoritative for membership and flags; the Engine converges retained state
@@ -78,34 +55,38 @@ decisions of 2026-09-24 are recorded under
   individually confirmed: close/reopen focus, transient unreadable frames,
   minimize/fullscreen/maximize restoration, rapid commands.
   [change](changes/archive/observation-convergence.md)
-- P1 | Observed-membership convergence (steps 2-3) | User go-ahead
-  (2026-09-25) to remove the old paths. Step 2 shipped offline: automatic
-  foreground and hidden tiling send complete observations via `reconcile`;
-  applied baseline, public admit/remove codec and handlers, and step-1
-  transitional guards removed (production net -162 vs `718a58e`). Pending
-  live re-test: startup fit, multi-window open/close (foreground and
-  hidden), float/sticky/maximize/fullscreen restore, gap reload, displaced
-  workspace return, hidden admission after send commit/abandon. Active:
-  step 3 (replace send and R4 pending transactions with commit plus
-  convergence; removes pending rule B). Goal remains net deletion.
-  Batched admissions fall out of complete-observation reconcile.
-- P1 | Resilience audit | After convergence step 1. New principle (user, 2026-09-25): no permanent
-  give-up short of hard failure; tolerate subtle host/client deviations;
-  window self-changes are normal. Audit terminal, disable and blocked states
-  (e.g. `planBlocked`, send disable, directional cross-output pending) and
-  exact-match refusals (e.g. `precondition-mismatch`, `partial-observation`)
-  for conflicts, and list fixes. Related: floating-membership skew entry.
-  [principles](principles.md#resilience)
-- P2 | Batched simultaneous admissions | User-accepted direction (2026-09-25)
-  replacing AR4's visible benefit: admit windows appearing together in one
-  plan; removals stay on the existing route. After send resolution, or sooner
-  if intermediate-layout jank is noticed.
-  [proposal](changes/incremental-send-recovery-and-admission-batching.md)
-- P3 | AR11/AR4 full models (parked) | Parked 2026-09-25 in favour of the two
-  incremental items above. Notes, the real-observer/real-Engine fixture and ten
-  skipped AR11 rows are retained for reference.
-  [AR11](changes/architecture-review-ar11-expectations.md)
-  [AR4](changes/architecture-review-ar4-observation-sync.md)
+- P1 | Observed-membership convergence (steps 2-3) live re-test | User
+  go-ahead (2026-09-25) to remove the old paths. Both shipped offline. Step 2:
+  automatic foreground and hidden tiling send complete observations via
+  `reconcile`; applied baselines and public admit/remove removed. Step 3
+  (2026-09-26): send and R4 commit topology immediately and converge on
+  observation; send/R4 pending transactions, ack/verify/status/cancel/abandon
+  and pending rule B removed; abandon-send recovery and pre-actuation
+  cancellation are superseded. Combined step-3 production net about -4,800
+  lines vs `3e35961`. Batched simultaneous admissions fall out of
+  complete-observation reconcile. User live re-test, steps 2 and 3 together:
+  startup fit; multi-window open/close (foreground and hidden);
+  float/sticky/maximize/fullscreen restore; gap reload; displaced workspace
+  return; hidden admission after a send; send to occupied and new trailing
+  workspaces; rapid sends across several workspaces (known transient: a
+  stale second send refuses and drops the mover until the forced source and
+  target refresh re-admits it - confirm no command is lost indefinitely;
+  graceful, responsive spam-sending was user-accepted before step 3 and must
+  not regress);
+  native refusal and mid-send close; R4 to occupied and empty outputs and a
+  failed/wrong-output transfer; follow exactly once only on arrival; revisit
+  both domains for phantoms; inspect correlated dispatch/arrival/follow/
+  refusal/release logs. Watch for recurrence of the floating-membership skew
+  (`EIV6Rm.log` drag-4), whose refusal class steps 1-3 removed.
+  [change](changes/archive/observation-convergence.md)
+- P1 | Resilience audit | Next after the step 2-3 live re-test. Principle
+  (user, 2026-09-25): no permanent give-up short of hard failure; tolerate
+  subtle host/client deviations; window self-changes are normal. Step 3
+  removed send/R4 pending and transaction-lifetime Plan blocking. Audit what
+  remains for conflicts and list fixes: drag restore markers, reconcile
+  parking, remaining `precondition-mismatch` and `partial-observation`
+  refusals, residual send `blocksPlan` (native-write exclusion), and any
+  other terminal or disable states. [principles](principles.md#resilience)
 - P3 | AR6 Logical workspace model in core | 7.10. Deferred 2026-09-24 until a
   non-KWin host needs it. The current KWin implementation is the "native
   workspaces" mode of a future native/custom choice.
@@ -309,23 +290,6 @@ Existing work:
   [application observability](changes/archive/plan-apply-verify-observability.md)
   [tray observability](changes/archive/tray-publication-observability.md)
   [coverage assessment](changes/observability-coverage-assessment.md)
-- P1 | Recoverable window handling | User requires logged problems and continued
-  window handling, never a permanently disabled window/domain after a tiling
-  failure. Delivered read-only pending-status queries and user-approved bounded
-  automatic pre-actuation cancellation for workspace-send and directional R4.
-  One attempt requires exact retained pre-image/request revision, transaction
-  fences, and same-UID adapter zero-dispatch attestation; the old flight is made
-  inert before observation. Confirmed cancellation preserves canonical topology,
-  focus, shares, exceptions, revision, and unrelated domains, allowing later
-  commands with new correlations. Any setter dispatch, including a throwing
-  setter, excludes recovery. Rust format/check/full tests, KWin typecheck/full
-  tests/build, final focused regressions, and independent review pass; no live
-  acceptance is claimed. Remaining design: post-actuation uncertainty, lost
-  committed replies, and diverged state. These remain fenced; no settlement,
-  receipts, replay, reset, or reseed is selected. Existing explicit moves can
-  bypass ordinary reconcile parking and clear it on success.
-  [status protocol](changes/archive/pending-transaction-status.md)
-  [pre-actuation recovery](changes/archive/pending-transaction-pre-actuation-cancellation.md)
 - P1 | Cross-output directional focus and movement live gate | Implemented
   Meta+Left/Right focus and Meta+Shift+Left/Right movement across horizontally
   adjacent outputs after local operations are exhausted. Targets use the other
@@ -354,6 +318,9 @@ Existing work:
   size-hint evidence. Next: fresh trace repeats right-to-left and records final
   exact geometry/commit or timeout before testing subsequent local/return moves.
   Up/Down local behavior and directional workspace cycling are unchanged.
+  Convergence step 3 (2026-09-26) replaced the R4 ack/verify, echo and
+  deadline machinery described above with immediate commit plus observation
+  convergence; R4 live re-test is tracked under convergence steps 2-3.
   [record](changes/cross-output-directional-focus-movement.md)
 - P1 | Native dev setup and lifecycle live gate | Explicit `just dev-native-setup`
   and `just dev-native-remove` now manage only the exact checkout-owned Plasma
@@ -397,20 +364,6 @@ Existing work:
   multi-output domains, unchanged native focus/desktop, and the absence of any
   rendered-state claim. Graceful move-follow has separate user manual
   acceptance. [record](changes/background-tiling.md)
-- P1 | Remaining workspace-send uncertainty recovery | Graceful move-follow is
-  implemented and manually accepted after rapid sends across many workspaces.
-  USER VISUAL/MANUAL: "The issue appears to be fixed, I spam moved a window between many workspaces and it never failed. ... reinforces ... graceful handling ... actually feel really good even when spamming." The supplied
-  `/run/user/1000/plasma-auto-tiler-dev.E2E0QJ.log` is NOT ANALYZED; this is not
-  machine protocol, rendered-visibility, latency, recovery, or native-cause
-  evidence. Graceful, unsurprising confirmed partial success and responsiveness
-  during rapid use are the durable product preference, not permission to ignore
-  errors, retry, reset a queue, or change architecture.
-  Separately authorized pre-actuation cancellation is now implemented: a lost
-  planned reply may recover through one fenced zero-dispatch cancellation,
-  as tracked under Recoverable window handling. Owner loss, partial native
-  mutation, ack/verify uncertainty, lost commit replies, and divergence remain
-  unresolved. Their recovery semantics require a separate decision; no blind
-  reset, replay, or topology reconstruction is selected.
 - P2 | Active-group highlight redesign | User observation (2026-09-24): the
   group border now renders, but statically during KDE's workspace slide
   transition, while the active border now slides with its window (previously

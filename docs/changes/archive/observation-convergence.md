@@ -51,4 +51,88 @@ Retired public Rust admit/remove codec handlers, typed commands and Engine lifec
 
 Offline rows cover fresh fit/fallback, out-of-bounds fresh admission vs retained refusal, exception-only and empty domains, changed gaps plus membership, unique overlapping/disjoint and ambiguous relocation, pending-B refusal followed by real Engine commit, hidden once-per-chain/park/no-focus behavior, overlay/maximize/drag evidence, stale/flag fences and redacted convergence summaries. A production-entry KWin send-commit row adds a fresh hidden domain during a held send, then proves the committed callback automatically dispatches and applies its reconcile without a test-triggered resync or new native signal; its send and plan replies are fixture echoes. Rust's real Engine pending-then-commit row independently proves the pending-B refusal and subsequent admission. These two seams do not constitute one real-Engine KWin send integration run. Independent final diff review found no blocking migration defect and flagged that evidence limit and the since-fixed changed-domain topology loss; no live testing was performed.
 
-Final offline checks: `cargo test --workspace --offline`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `just check-portable`, plus `kwin/` `npm run typecheck`, `npm test` (862 passed, 10 skipped), `npm run build`, and `git diff --check`. Measured against `718a58e` (excluding the Orchestrator's `docs/backlog.md` and documentation): production +1277/-1439 = net -162; tests +2798/-1364 = net +1434, down 957 net test lines from the step-2 handover's +2391. Live acceptance remains pending: manually verify startup fit, multi-window open/close on foreground and hidden workspaces, float/sticky/maximize/fullscreen overlays and restore, gap reload, repeated client drift recovery, displaced workspace return, send commit/abandon followed by fresh hidden admission without extra input, and correlated bounded summaries. Step 3 may be scoped after this offline step-2 closure; send/R4 transaction replacement remains a separate decision/change and requires its own review and live gate.
+Final offline checks: `cargo test --workspace --offline`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `just check-portable`, plus `kwin/` `npm run typecheck`, `npm test` (862 passed, 10 skipped), `npm run build`, and `git diff --check`. Measured against `718a58e` (excluding the Orchestrator's `docs/backlog.md` and documentation): production +1277/-1439 = net -162; tests +2798/-1364 = net +1434, down 957 net test lines from the step-2 handover's +2391. Live acceptance remains pending: manually verify startup fit, multi-window open/close on foreground and hidden workspaces, float/sticky/maximize/fullscreen overlays and restore, gap reload, repeated client drift recovery, displaced workspace return, send commit/abandon followed by fresh hidden admission without extra input, and correlated bounded summaries. Step 3 later replaced the send/R4 transaction model below.
+
+## Step 3 - immediate send/R4 commit and observation convergence (2026-09-26)
+
+User decision (2026-09-25): complete per-domain observations govern membership
+and portable flags before operations, preserving survivor topology; replace
+send and directional cross-output (R4) pending transactions with immediate
+planned-topology commit and subsequent observation convergence. Orchestrator
+scope: `floating` (including sticky) and `fit_excluded` are the portable flag
+fields; fullscreen/maximized remain retained-tile overlays. Offline only; no
+live KWin test or session mutation.
+
+The Engine assembles a temporary canonical source/target pair from retained
+per-domain sessions, permitting distinct workspaces on one output and an empty
+target. It converges BOTH complete observations once, preserving occupied
+source/target trees and remembered focus, then synchronously commits the
+planned move/R4 topology atomically into canonical per-domain sessions. A fresh
+source seeds normally; a rejected proposal keeps only valid observation
+convergence. The Planner returns both-domain geometry and a native assignment,
+without a wire acknowledgement or claim of native-verified success. The Rust
+send/R4 pending slots, conflict guards and ack/verify/status/cancel/abandon
+codec and handlers are retired. The retained `adapter-must-verify-postconditions`
+precondition is an exact wire binding, not a native-success claim.
+
+KWin fences reply correlation, owner/generation, flight token and dispatch-
+frozen source/target snapshot (including gaps, bounds, membership, rects and
+flags) before native setters. Both send observers carry flagged survivors from
+source AND target. The production observer knows project intentional floats and
+sticky exceptions; the standalone dev observer knows sticky exceptions but has
+no project floating-ID registry. Both retain fullscreen/maximized overlays;
+only `floating`/`fit_excluded` travel on the send wire.
+Send writes source/target geometry then mover desktop membership. R4 writes
+output then desktop membership then geometry, skipping overconstrained members;
+its mid-transfer/follow fences check non-mover flags as well as scope. One fresh
+exact target-arrival proof permits one follow, switch before focus, independent
+of unrelated geometry settlement. Short flight-local source/target pins protect
+even a new trailing target; separate unanswered-request and arrival deadlines
+release on every terminal path. Failed writes, wrong/late/refused/stale replies,
+closed movers and wrong-domain arrivals do not replay setters. Every terminal
+send/R4 flight forces one complete source AND target Plan refresh through the
+existing single-flight chain, bypassing equal-applied-evidence silence and
+quarantining unreadable domains. No transaction-lifetime Plan block survives.
+
+Regression evidence: the real standalone send observer and real Planner/Engine
+fixture reproduced a fullscreen source survivor being omitted, then proved its
+portable fit flag and retained Engine tile after the fix. Flag-only send reply
+drift is fenced before setters; R4 non-mover flag drift after the first setter
+stops remaining setters and follow. The production-wiring send fixture proves
+both-domain refresh on arrival, delayed arrival, native failure, stale reply,
+and unanswered request with late reply ignored; the R4 fixture covers release
+and forced refresh on failure/deadline. The real-Engine floating-survivor row
+exercises sticky-as-floating in the standalone observer; production
+`floatingIds` flag observation has a production-observer fixture, but not a
+real-Engine send row in that standalone fixture. Rapid sends with a complete target
+observation commit immediately; a second send against a stale observation can
+refuse and transiently remove the mover from Engine state until the next
+complete observation re-admits it. The terminal both-domain refresh bounds
+this risk; it does not fabricate a retry or native-success result.
+
+An independent full-diff review found no blocking issue, but subsequent
+test-first real-Engine rows exposed two missed send actuation gaps: a fullscreen
+survivor's retained-tile geometry was written over its native overlay, and a
+floating survivor omitted from tiled reply geometry caused a false
+`precondition-mismatch` refusal. The send reply now requires exact tiled-member
+geometry (never a floating-exception entry); overlay geometry remains covered
+but is not written natively. The real-Engine floating correction is exercised
+through sticky-as-floating in the standalone dev observer; the production
+observer also carries project intentional floats. Flag-only mid-write drift stops remaining setters
+without treating legitimately changed rects as stale. The real-Engine overlay
+and sticky-floating rows pass; an adapter flag-flip row covers mid-write
+refusal. Independent full-diff re-review found only the corrected dev-observer
+evidence description above; a fresh review confirmed that correction clean.
+
+Latest offline checks after these fixes: Rust `cargo test --workspace --offline`
+(594 passed), `cargo fmt --all -- --check`, `cargo clippy --workspace
+--all-targets --offline -- -D warnings`, `just check-portable`; KWin
+`npm run typecheck`, `npm test` (733 passed, 0 skipped), `npm run build`, and
+`git diff --check` all pass. Against `3e35961`, diff arithmetic including
+untracked tests and Rust inline `cfg(test)` regions: Rust production +466/-2872
+(net -2406), tests +906/-5330 (net -4424); KWin production +1565/-3986
+(net -2421), tests +2187/-8844 (net -6657). Combined production net -4827.
+No live acceptance
+claimed. Manual live follow-up remains send to occupied/new trailing desktop,
+rapid sends, native refusal/close, R4 occupied/empty/wrong-output, exact
+follow/focus, both-domain phantom/re-admission and bounded correlated logs.

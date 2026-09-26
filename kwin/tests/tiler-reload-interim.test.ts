@@ -684,8 +684,9 @@ describe("deliberate reload forwards gaps to subsequent workspace sends", () => 
         const timers: Array<{ delayMs: number; callback: () => void; cancelled: boolean }> = [];
         const logs: string[] = [];
         const echo: { handles?: { fireDesktops: (id: string) => void; fireGeometry: (id: string) => void } } = {};
+        const workspace = twoDesktopWorkspace(echo);
         const handle = startPlanAdapterEntry({
-            workspace: twoDesktopWorkspace(echo),
+            workspace,
             options: { configChanged: optionsChanged.signal },
             callDbus: (_service, _path, _iface, method, payload, callback): void => {
                 if (method === "NameHasOwner") {
@@ -747,6 +748,11 @@ describe("deliberate reload forwards gaps to subsequent workspace sends", () => 
         const sendPayload = JSON.parse(dbusCalls[sendIndex]?.payload as string) as Record<string, unknown>;
         const correlation = sendPayload["correlation_id"] as string;
         assert.ok(typeof correlation === "string" && correlation.length > 0);
+        // Reload behavior: the queued pair is frozen into the next send.
+        assert.equal((sendPayload["domain"] as Record<string, unknown>)["gap"], 12);
+        assert.equal((sendPayload["domain"] as Record<string, unknown>)["outer_gap"], 14);
+        assert.equal((sendPayload["target_domain"] as Record<string, unknown>)["gap"], 12);
+        assert.equal((sendPayload["target_domain"] as Record<string, unknown>)["outer_gap"], 14);
         const geometry = (sendPayload["windows"] as Array<Record<string, unknown>>).concat(
             sendPayload["target_windows"] as Array<Record<string, unknown>>,
         );
@@ -778,53 +784,66 @@ describe("deliberate reload forwards gaps to subsequent workspace sends", () => 
                 },
             }),
         );
-        // Fire native echoes so the fenced ack/verify path can proceed.
-        echo.handles?.fireDesktops("win-a");
-        echo.handles?.fireGeometry("win-a");
-        echo.handles?.fireGeometry("win-b");
-        echo.handles?.fireGeometry("win-t");
-        const ackIndex = dbusCalls.findIndex((call, index) => {
-            if (index <= sendIndex) {
-                return false;
-            }
+        // Immediate-commit truth: one planned reply actuates synchronously.
+        // There is no ack/verify wire protocol on DescribePlan.
+        const opsAfterSend = dbusCalls.slice(sendIndex + 1).map((call) => {
             try {
-                return ((JSON.parse(call.payload) as Record<string, unknown>)["command"] as Record<string, unknown>)?.["op"] === "send-to-workspace-ack";
+                return ((JSON.parse(call.payload) as Record<string, unknown>)["command"] as Record<string, unknown>)?.["op"] as string;
             } catch {
-                return false;
+                return "?";
             }
         });
-        assert.ok(ackIndex >= 0, `ack expected, got ${dbusCalls.map((call) => call.method).join(",")}`);
-        callbacks[ackIndex]?.(
-            JSON.stringify({
-                v: 1,
-                correlation_id: correlation,
-                outcome: "acknowledged",
-                kind: "send-to-workspace",
-                base_revision: 0,
-            }),
+        assert.ok(!opsAfterSend.includes("send-to-workspace-ack"), `no ack protocol, got ${opsAfterSend.join(",")}`);
+        assert.ok(!opsAfterSend.includes("send-to-workspace-verify"), `no verify protocol, got ${opsAfterSend.join(",")}`);
+        assert.ok(
+            logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=plan") && line.includes("outcome=planned")),
+            logs.join("\n"),
         );
-        echo.handles?.fireDesktops("win-a");
-        echo.handles?.fireGeometry("win-a");
-        const verifyIndex = dbusCalls.findIndex((call, index) => {
-            if (index <= ackIndex) {
-                return false;
+        assert.ok(
+            logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=write") && line.includes("outcome=applied")),
+            logs.join("\n"),
+        );
+        // The planned topology commits to native membership synchronously.
+        const wins = (workspace["windowList"] as () => Array<Record<string, unknown>>)();
+        const mover = wins.find((entry) => entry["internalId"] === "win-a");
+        assert.ok(mover !== undefined);
+        assert.ok(
+            ((mover["desktops"] as Array<Record<string, unknown>>).some((entry) => entry["id"] === "ws-2")),
+            JSON.stringify((mover["desktops"] as Array<Record<string, unknown>>).map((entry) => entry["id"])),
+        );
+        // Settlement forces a complete source AND target refresh through the
+        // single-flight Plan chain. Drive the debounce; owner activation is
+        // synchronous in this harness.
+        const planBefore = dbusCalls.length;
+        for (let round = 0; round < 4; round += 1) {
+            const pending = [...timers];
+            timers.length = 0;
+            for (const timer of pending) {
+                if (timer.cancelled) {
+                    continue;
+                }
+                if (timer.delayMs === 120) {
+                    timer.callback();
+                } else {
+                    timers.push(timer);
+                }
             }
+            if (dbusCalls.length > planBefore) {
+                break;
+            }
+        }
+        const refreshOps = dbusCalls.slice(planBefore).map((call) => {
             try {
-                return ((JSON.parse(call.payload) as Record<string, unknown>)["command"] as Record<string, unknown>)?.["op"] === "send-to-workspace-verify";
+                return ((JSON.parse(call.payload) as Record<string, unknown>)["command"] as Record<string, unknown>)?.["op"] as string;
             } catch {
-                return false;
+                return "?";
             }
         });
-        assert.ok(verifyIndex >= 0, `verify expected, got ${dbusCalls.map((call) => call.method).join(",")}`);
-        callbacks[verifyIndex]?.(
-            JSON.stringify({
-                v: 1,
-                correlation_id: correlation,
-                outcome: "committed",
-                kind: "send-to-workspace",
-                base_revision: 1,
-            }),
+        assert.ok(
+            refreshOps.some((op) => op === "admit" || op === "reconcile"),
+            `forced reconcile DescribePlan expected, got ${refreshOps.join(",")}`,
         );
+        void echo;
         // Provenance: the send committed with the queued pair, but the
         // update-gaps plan flight runs the separate planner channel, so no
         // applied claim may follow. The queued line stays applied-unconfirmed.

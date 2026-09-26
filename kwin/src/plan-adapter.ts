@@ -584,10 +584,12 @@ export interface PlanAdapterEnv {
     readonly subscribeWindowGeometry?: (ref: object, handler: () => void) => (() => void) | null;
     readonly subscribe: (kind: PlanSignal, handler: (target?: object) => void) => () => void;
     readonly noteRemoved?: (id: string) => void;
-    // Entry-owned coordination: true while a workspace-send flight is active.
-    // While blocked, lifecycle auto intents are dropped (a single normal
-    // resync after send completes converges) and foreground commands refuse
-    // with the existing busy-refused diagnostic. No queues or coalescing.
+    // Retired workspace-send coordination hook, ignored. Send flights never
+    // block Plan: terminal send settlement arrives via `notifySendSettled`,
+    // which forces a one-shot complete source AND target reconcile through
+    // the existing single-flight chain. Retained as optional only so
+    // obsolete harnesses still typecheck; production entries must not pass
+    // it and the adapter never reads it.
     readonly isSendActive?: () => boolean;
     // Entry-owned native interaction guard. Ordinary retained reconciliation
     // must not compete with an active interactive edge resize.
@@ -853,37 +855,7 @@ function sanitizeKind(value: unknown): string {
     return value;
 }
 
-// Allowlisted Rust cancellation/divergence kinds for the cancel refusal
-// record: every kind the R4 cancel evaluator can emit (same set as the
-// workspace-send route). Known kinds pass through verbatim; anything else
-// (transport mangling, never genuine Rust output on this route) maps to
-// `unknown` with no echo of the received bytes. Syntax-only sanitization
-// alone would admit well-formed but foreign kinds.
-const CANCEL_REFUSAL_KINDS: readonly string[] = Object.freeze([
-    "stale",
-    "cancel-refused",
-    "cancel-mismatch",
-    "no-pending",
-    "cancel-op-invalid",
-    "stale-revision",
-    "owner-mismatch",
-    "generation-mismatch",
-    "correlation-mismatch",
-    "capability-refused",
-    "partial-application",
-    "adapter-lost",
-    "postcondition-unverified",
-    "postcondition-mismatch",
-    "revision-exhausted",
-]);
-
-function cancelRefusalKind(value: unknown): string {
-    if (typeof value !== "string") {
-        return "unknown";
-    }
-    return CANCEL_REFUSAL_KINDS.indexOf(value) >= 0 ? value : "unknown";
-}
-
+// Exact Engine gap-mismatch messages for the correlated update-gaps retry.
 function sanitizeDetail(value: unknown): string | null {
     if (typeof value !== "string" || value.length === 0 || value.length > 64) {
         return null;
@@ -1560,11 +1532,11 @@ interface PendingFlight {
     readonly isRecovery: boolean;
 }
 
-// Production R4 cross-output move flight: retained after the first R4
-// `planned` reply (which stages but never commits) across native transfer,
-// accepted ack, and verified verify. Exactly one flight serializes through
-// the shared single-flight; while live every other PlanAdapter operation
-// refuses busy and no replay ever occurs.
+// Production R4 cross-output move flight (immediate commit, no wire
+// ack/verify/cancel/status). Retained after the R4 `planned` reply across
+// native transfer plus bounded delayed arrival. Exactly one flight
+// serializes through the shared single-flight; while live every other
+// PlanAdapter operation refuses busy and no replay ever occurs.
 interface R4Flight {
     readonly flight: number;
     readonly session: number;
@@ -1582,24 +1554,9 @@ interface R4Flight {
     readonly targetDesktopRef: object;
     readonly byRef: ReadonlyMap<string, object>;
     readonly direction: PlanDirection;
-    acked: boolean;
     followed: boolean;
-    outputSeen: boolean;
-    desktopsSeen: boolean;
-    geoPending: Set<string>;
     detaches: Array<() => void>;
     settled: boolean;
-    // Bounded duplicate-callback fences: the original `planned` reply stays
-    // bound to the shared `callbackSeen`, while R4 ack and verify each bind
-    // to their own exact flight/session/phase flag. A stale callback with a
-    // mismatched flight/session returns before touching the live flags, and
-    // a duplicate with matching flight/session is dropped by the consumed
-    // flag without restarting native transfer, resetting the timer, or
-    // issuing a second verify/settle. Verify additionally requires an issued
-    // verify request so an out-of-order verify can never consume the guard.
-    ackReplySeen: boolean;
-    verifyRequested: boolean;
-    verifyReplySeen: boolean;
 }
 
 interface AutoIntent {
@@ -1726,6 +1683,16 @@ export class PlanAdapter {
     private appliedScopeByDomain = new Map<string, { bounds: PlanRect; gap: number; outerGap: number }>();
     private reconcileAttempts = 0;
     private parked = false;
+    // One-shot forced complete reconciliation for send-settled domains,
+    // keyed by domain output/workspace. A terminal send flight carries its
+    // exact source+target keys via `notifySendSettled`; the next foreground
+    // or hidden refresh then dispatches a complete reconcile for each
+    // forced domain even when the equal-applied-evidence optimization would
+    // otherwise stay quiet. Each key is consumed once when its reconcile
+    // dispatches. Unreadable or omitted domains are never consumed and never
+    // synthesized: absence stays unknown and the next complete observation
+    // retries. No transaction, no Plan block, no queue.
+    private sendForcedDomains = new Set<string>();
     // Per-domain background reconcile accounting, keyed by domain
     // output/workspace. Foreground counters above are never touched by
     // hidden-domain flights so background drift can never park foreground.
@@ -1778,27 +1745,22 @@ export class PlanAdapter {
     private nextIsRecovery = false;
     private probeToken = 0;
     private activeProbe = 0;
-    // Live production R4 flight (planned staged, native/ack/verify pending).
-    // While non-null the shared single-flight stays held and every other
-    // PlanAdapter operation refuses busy; completion or terminal failure
-    // always clears it exactly once with no replay.
+    // Live production R4 flight (immediate commit, native plus bounded
+    // delayed arrival). While non-null the shared single-flight stays held
+    // and every other PlanAdapter operation refuses busy; completion or
+    // terminal failure always clears it exactly once with no replay.
     private r4Flight: R4Flight | null = null;
-    // Per-flight native-dispatch count: incremented immediately before every
-    // geometry, membership, and transfer setter invocation, even when the
-    // call throws. Zero proves this flight never dispatched a native write,
-    // which is the adapter half of cancellation eligibility. Reset on every
-    // dispatch.
-    private r4Dispatches = 0;
-    // Cancellation fence for a pre-staging R4 move flight: while armed, the
-    // original late replies, timers, transfer staging, and new commands
-    // cannot write or recover. Armed before the fresh cancel observation and
-    // cleared on cancel settlement (success or fallthrough) or flight clear.
-    private cancelArmed = false;
-    private cancelReplySeen = false;
-    // Fallthrough terminal outcome preserved across the cancel attempt so a
-    // failed cancellation runs the exact terminal path the original failure
-    // would have run.
-    private cancelOutcome = "";
+    // Bounded reentrancy guard for the synchronous R4 native-write stack:
+    // KWin signals delivered synchronously from a setter must not follow or
+    // settle mid-stack; the immediate post-write observation covers sync
+    // arrival. Delayed arrival stays observable through the armed one-shot
+    // mover signals. Never a transaction-lifetime Plan block.
+    private r4WriteDepth = 0;
+    // Bounded arrival deadline for delayed R4 arrival. Armed alongside the
+    // one-shot mover signals after native writes; cleared on every R4
+    // terminal. The unanswered-request deadline stays the existing dispatch
+    // `cancelTimer`; stale timers are fenced by flight/session.
+    private r4ArrivalTimer: (() => void) | null = null;
     // Coalesced per-domain restore markers for rejected drops. Each rejected
     // drop (adapter-validation refusal, Planner rejection, terminal failure
     // of its pointer flight, or a superseded deferred pointer that never
@@ -1879,6 +1841,7 @@ export class PlanAdapter {
         this.settleDragRestoreUnavailable();
         this.reconcileAttempts = 0;
         this.parked = false;
+        this.sendForcedDomains.clear();
         this.backgroundAttempts.clear();
         this.backgroundParked.clear();
         this.pointerEcho = null;
@@ -1898,10 +1861,7 @@ export class PlanAdapter {
         this.knownOwner = null;
         this.nextIsRecovery = false;
         this.activeProbe = 0;
-        this.r4Dispatches = 0;
-        this.cancelArmed = false;
-        this.cancelReplySeen = false;
-        this.cancelOutcome = "";
+        this.r4WriteDepth = 0;
         this.clearRepeat();
         return true;
     }
@@ -1921,6 +1881,7 @@ export class PlanAdapter {
         this.settleDragRestoreUnavailable();
         this.reconcileAttempts = 0;
         this.parked = false;
+        this.sendForcedDomains.clear();
         this.backgroundAttempts.clear();
         this.backgroundParked.clear();
         this.pointerEcho = null;
@@ -1939,12 +1900,10 @@ export class PlanAdapter {
         this.knownOwner = null;
         this.nextIsRecovery = false;
         this.activeProbe = 0;
-        this.r4Dispatches = 0;
-        this.cancelArmed = false;
-        this.cancelReplySeen = false;
-        this.cancelOutcome = "";
+        this.r4WriteDepth = 0;
         this.clearRepeat();
         this.clearTimer();
+        this.clearR4ArrivalTimer();
         this.clearDebounce();
         for (const detach of this.detaches) {
             try {
@@ -2019,10 +1978,6 @@ export class PlanAdapter {
         }
         if (!isDirection(direction)) {
             this.logToken(`${LOG_PREFIX}:focus-refused-invalid-direction`);
-            return;
-        }
-        if (this.blockedBySend()) {
-            this.logToken(`${LOG_PREFIX}:busy-refused kind=focus`);
             return;
         }
         if (this.r4Flight !== null) {
@@ -2310,10 +2265,6 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:move-refused-invalid-direction`);
             return;
         }
-        if (this.blockedBySend()) {
-            this.logToken(`${LOG_PREFIX}:busy-refused kind=move`);
-            return;
-        }
         if (this.r4Flight !== null) {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=move`);
             return;
@@ -2394,10 +2345,6 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:resize-refused-invalid-mode`);
             return;
         }
-        if (this.blockedBySend()) {
-            this.logToken(`${LOG_PREFIX}:busy-refused kind=resize`);
-            return;
-        }
         if (this.r4Flight !== null) {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=resize`);
             return;
@@ -2448,10 +2395,6 @@ export class PlanAdapter {
     requestFloat(): void {
         if (!this.enabled) {
             this.logToken(`${LOG_PREFIX}:float-refused-disabled`);
-            return;
-        }
-        if (this.blockedBySend()) {
-            this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-float`);
             return;
         }
         if (this.r4Flight !== null) {
@@ -2534,10 +2477,6 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:maximize-refused-disabled`);
             return;
         }
-        if (this.blockedBySend()) {
-            this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-maximize`);
-            return;
-        }
         if (this.r4Flight !== null) {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-maximize`);
             return;
@@ -2588,10 +2527,6 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:fullscreen-refused-disabled`);
             return;
         }
-        if (this.blockedBySend()) {
-            this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-fullscreen`);
-            return;
-        }
         if (this.r4Flight !== null) {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-fullscreen`);
             return;
@@ -2629,10 +2564,6 @@ export class PlanAdapter {
     requestSticky(): void {
         if (!this.enabled) {
             this.logToken(`${LOG_PREFIX}:sticky-refused-disabled`);
-            return;
-        }
-        if (this.blockedBySend()) {
-            this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-sticky`);
             return;
         }
         if (this.r4Flight !== null) {
@@ -3018,10 +2949,6 @@ export class PlanAdapter {
                 return refuseDrag("direction");
             }
         }
-        if (this.blockedBySend()) {
-            this.logToken(`${LOG_PREFIX}:busy-refused kind=pointer-resize`);
-            return refuseDrag("busy");
-        }
         if (this.r4Flight !== null) {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=pointer-resize`);
             return refuseDrag("busy");
@@ -3086,8 +3013,8 @@ export class PlanAdapter {
             flight.pointerSource === (windowId as string) &&
             (drag === null ? flight.dragSource == null : this.dragSourceOf(flight) === drag);
         if (!ours) {
-            // Dispatch never installed our pointer flight (send-blocked, R4
-            // race, interactive guard, or synchronous transport failure): the
+            // Dispatch never installed our pointer flight (R4 race,
+            // interactive guard, or synchronous transport failure): the
             // dispatch failure paths already fed the marker when they ran
             // (deduped below), so just report refusal. A synchronous failure
             // that already dispatched the marker must not report accepted.
@@ -3299,7 +3226,6 @@ export class PlanAdapter {
             if (
                 this.inFlight ||
                 this.r4Flight !== null ||
-                this.blockedBySend() ||
                 this.interactiveResizeActive() ||
                 this.deferredAuto !== null
             ) {
@@ -3582,6 +3508,97 @@ export class PlanAdapter {
         this.onSignal();
     }
 
+    // Terminal send-settlement edge (entry-owned): force one complete
+    // source AND target reconcile through the existing single-flight
+    // foreground+hidden chain, bypassing the equal-applied-evidence quiet
+    // path once per involved domain. Invalid keys are ignored (a generic
+    // resync still runs); unreadable domains stay forced until the next
+    // complete observation. Never synthesizes empty evidence and never
+    // blocks normal signals or intents.
+    notifySendSettled(settled: {
+        readonly sourceOutput: string;
+        readonly sourceWorkspace: string;
+        readonly targetOutput: string;
+        readonly targetWorkspace: string;
+    }): void {
+        if (!this.enabled) {
+            return;
+        }
+        try {
+            if (isOpaqueId(settled.sourceOutput) && isOpaqueId(settled.sourceWorkspace)) {
+                this.sendForcedDomains.add(this.domainKey({
+                    domainOutput: settled.sourceOutput,
+                    domainWorkspace: settled.sourceWorkspace,
+                }));
+            }
+            if (isOpaqueId(settled.targetOutput) && isOpaqueId(settled.targetWorkspace)) {
+                this.sendForcedDomains.add(this.domainKey({
+                    domainOutput: settled.targetOutput,
+                    domainWorkspace: settled.targetWorkspace,
+                }));
+            }
+        } catch (error) {
+            void error;
+        }
+        this.requestResync();
+    }
+
+    // Peek without consuming: true when a send settlement forced this
+    // domain's next complete refresh to reconcile even on equal applied
+    // evidence. Consumed only when its reconcile actually dispatches, so
+    // unreadable domains and suppressed (interactive/in-flight) rounds keep
+    // the force for the next complete observation.
+    private hasSendForced(key: string): boolean {
+        try {
+            return this.sendForcedDomains.has(key);
+        } catch (error) {
+            void error;
+            return false;
+        }
+    }
+
+    private consumeSendForced(key: string): void {
+        try {
+            this.sendForcedDomains.delete(key);
+        } catch (error) {
+            void error;
+        }
+    }
+
+    // Lean R4 terminal helper: an R4-shape pending flight (move, Left/Right,
+    // two-domain snapshot) forces one complete source AND target reconcile
+    // through the existing `notifySendSettled` chain, including equal
+    // evidence. No-op for ordinary flights. Called on every R4 terminal
+    // (stale/rejected/timeout before staging plus lean arrival terminals)
+    // so both domains converge from native observation with no phantom.
+    private forceR4SettleFromPending(flightState: PendingFlight | null): void {
+        if (flightState === null) {
+            return;
+        }
+        if (flightState.op !== "move" || flightState.background === true) {
+            return;
+        }
+        if (flightState.direction !== "left" && flightState.direction !== "right") {
+            return;
+        }
+        const domains = flightState.snapshot.domains;
+        if (domains === undefined || domains.length !== 2) {
+            return;
+        }
+        const source = domains[0] as PlanDomain;
+        const target = domains[1] as PlanDomain;
+        try {
+            this.notifySendSettled({
+                sourceOutput: source.output,
+                sourceWorkspace: source.workspace,
+                targetOutput: target.output,
+                targetWorkspace: target.workspace,
+            });
+        } catch (error) {
+            void error;
+        }
+    }
+
     setInteractiveResizeActive(active: boolean): void {
         if (active) {
             this.clearDebounce();
@@ -3632,19 +3649,6 @@ export class PlanAdapter {
             return null;
         }
         return observed as PlanObserved;
-    }
-
-    private blockedBySend(): boolean {
-        try {
-            const fn = this.env.isSendActive;
-            if (typeof fn !== "function") {
-                return false;
-            }
-            return fn() === true;
-        } catch (error) {
-            void error;
-            return true;
-        }
     }
 
     private interactiveResizeActive(): boolean {
@@ -3702,12 +3706,12 @@ export class PlanAdapter {
         if (!this.enabled) {
             return;
         }
-        // While an R4 flight holds the single-flight across native transfer
-        // plus ack/verify, lifecycle signals (including echoes of our own
-        // native writes) must not advance epoch or queue auto intents. The
-        // R4 fence consumes its own echoes; one resync after R4 settles
-        // converges everything else.
-        if (this.r4Flight !== null) {
+        // Bounded native-write exclusion only: signals delivered
+        // synchronously from our own R4 setters must not advance epoch or
+        // queue auto intents mid-stack; the immediate post-write observation
+        // covers sync arrival. Delayed arrival stays observable through the
+        // armed one-shot mover signals. No transaction-lifetime Plan block.
+        if (this.r4WriteDepth > 0) {
             return;
         }
         if (kind === "maximize" && this.maximizeAdmissionEcho !== null) {
@@ -3779,9 +3783,6 @@ export class PlanAdapter {
     // background scan for this round, and the finishFlight chain converges
     // remaining hidden domains afterwards.
     private refreshNow(): void {
-        if (this.r4Flight !== null) {
-            return;
-        }
         if (!this.chainingHidden) {
             this.hiddenVisited.clear();
         }
@@ -3793,9 +3794,6 @@ export class PlanAdapter {
         try {
             this.refreshForegroundNow();
             if (!this.enabled || this.inFlight || this.deferredAuto !== null) {
-                return;
-            }
-            if (this.blockedBySend()) {
                 return;
             }
             this.refreshHiddenNow();
@@ -3810,10 +3808,7 @@ export class PlanAdapter {
             if (!this.enabled || this.inFlight || this.deferredAuto !== null) {
                 return;
             }
-            if (this.r4Flight !== null || this.activeProbe !== 0) {
-                return;
-            }
-            if (this.blockedBySend()) {
+            if (this.activeProbe !== 0) {
                 return;
             }
             this.maybeDispatchDragRestore();
@@ -3833,15 +3828,6 @@ export class PlanAdapter {
     // never park, even when a previous drift parked.
     private refreshForegroundNow(): void {
         if (!this.enabled) {
-            return;
-        }
-        if (this.blockedBySend()) {
-            // Send blockage never discards restore markers: the marker map
-            // owns convergence, so the slot clear below only touches the
-            // ordinary deferred intent after folding any deferred drag
-            // pointer into its marker.
-            this.absorbDeferredDragIntent(this.deferredAuto, true);
-            this.deferredAuto = null;
             return;
         }
         let fresh = this.freshObserved();
@@ -3957,6 +3943,7 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:work-area-reprojection selected=retained`);
             this.pointerEcho = null;
             this.resetReconcileState();
+            this.consumeSendForced(this.domainKey(freshSnapshot));
             this.absorbDeferredDragIntent(this.deferredAuto, false);
             this.deferredAuto = {
                 op: "reconcile",
@@ -3977,10 +3964,16 @@ export class PlanAdapter {
             return;
         }
         const restoreKey = this.domainKey(freshSnapshot);
+        // One-shot send-settlement force: a forced domain reconciles even
+        // when the equal-applied-evidence optimization would stay quiet.
+        // The force is consumed only when its reconcile dispatches below,
+        // so unreadable or suppressed rounds keep it for the next complete
+        // observation.
+        const sendForced = this.hasSendForced(restoreKey);
         const restoreMarker = this.dragRestore.get(restoreKey);
         const hasPendingMarker =
             restoreMarker !== undefined && !restoreMarker.dispatched && restoreMarker.drags.length > 0;
-        if (pureDrift && converged && scopeEqual && !hasPendingMarker && freshSnapshot.windows.length > 0 && !rawRetainedOutOfBounds) {
+        if (pureDrift && converged && scopeEqual && !hasPendingMarker && freshSnapshot.windows.length > 0 && !rawRetainedOutOfBounds && !sendForced) {
             if (this.pointerEcho !== null) {
                 this.logToken(`${LOG_PREFIX}:echo-fence-cleared-equality`);
             }
@@ -4004,9 +3997,10 @@ export class PlanAdapter {
         // Pointer echo consume: a matching neighbour echo means the planned
         // geometry already landed, so consume the one-shot fence with no
         // second write and no baseline mutation. A mismatch falls through to
-        // one ordinary reconcile below.
+        // one ordinary reconcile below. A send-forced domain skips the fence
+        // so its forced reconcile below still dispatches.
         const echo = this.pointerEcho;
-        if (echo !== null) {
+        if (echo !== null && !sendForced) {
             this.pointerEcho = null;
             if (this.echoMatches(freshSnapshot, echo)) {
                 this.logToken(`${LOG_PREFIX}:echo-fence-consumed`);
@@ -4044,8 +4038,9 @@ export class PlanAdapter {
         // transitional scope. Any fresh newcomer, departure, flag change, or
         // gap/bounds change resets the counters and always dispatches, even
         // when a previous drift parked. Raw retained out-of-bounds drift
-        // bypasses the park like a scope change: it always converges.
-        if (!pureDrift || converged || rawRetainedOutOfBounds) {
+        // bypasses the park like a scope change: it always converges. A
+        // send-forced domain likewise bypasses the park and always converges.
+        if (!pureDrift || converged || rawRetainedOutOfBounds || sendForced) {
             this.reconcileAttempts = 0;
             this.parked = false;
         } else if ((this.parked || this.reconcileAttempts >= MAX_RECONCILE_ATTEMPTS) && scopeEqual) {
@@ -4056,6 +4051,9 @@ export class PlanAdapter {
         // its domain marker (the fresh reconcile below satisfies it on
         // apply); the slot itself carries no drag binding.
         this.absorbDeferredDragIntent(this.deferredAuto, false);
+        if (sendForced) {
+            this.consumeSendForced(restoreKey);
+        }
         this.deferredAuto = {
             op: "reconcile",
             snapshot: freshSnapshot,
@@ -4075,9 +4073,6 @@ export class PlanAdapter {
 
     private refreshHiddenNow(): void {
         if (!this.enabled || this.inFlight || this.deferredAuto !== null) {
-            return;
-        }
-        if (this.blockedBySend()) {
             return;
         }
         let hidden: ReadonlyArray<PlanObserved> = [];
@@ -4325,6 +4320,14 @@ export class PlanAdapter {
                 }
             }
         }
+        // One-shot send-settlement force: a forced domain reconciles even
+        // when the equal-applied-evidence optimization would stay quiet.
+        // Consumed only when an intent below dispatches, so unreadable
+        // domains and empty domains without applied evidence keep the force
+        // for the next complete observation. Never synthesizes empty
+        // evidence: absence stays unknown.
+        const hiddenKey = this.domainKey(freshSnapshot);
+        const hiddenForced = this.hasSendForced(hiddenKey);
         // Explicit empty with retained applied members retires through one
         // reconcile (Engine retires the slot after its fences), even when
         // several members vanished together. Membership/exception-only
@@ -4332,6 +4335,7 @@ export class PlanAdapter {
         // versus applied evidence converges through one reconcile carrying
         // the complete observation.
         if (freshSnapshot.windows.length === 0 || !pureDrift) {
+            this.consumeSendForced(hiddenKey);
             return {
                 op: "reconcile",
                 snapshot: freshSnapshot,
@@ -4344,7 +4348,7 @@ export class PlanAdapter {
         // Quiet unchanged hidden domains: fully converged with equal applied
         // scope. Writes no baseline; clears drift accounting so the
         // once-per-chain bound cannot self-chain.
-        if (converged && scopeEqual && !rawRetainedOutOfBounds) {
+        if (converged && scopeEqual && !rawRetainedOutOfBounds && !hiddenForced) {
             this.clearBackgroundReconcile(freshSnapshot);
             return null;
         }
@@ -4367,6 +4371,7 @@ export class PlanAdapter {
             );
             this.logToken(`${LOG_PREFIX}:work-area-reprojection selected=retained`);
             this.clearBackgroundReconcile(freshSnapshot);
+            this.consumeSendForced(hiddenKey);
             return {
                 op: "reconcile",
                 snapshot: this.reprojectionSnapshot(prepared.observed),
@@ -4384,6 +4389,7 @@ export class PlanAdapter {
                 appliedScope.outerGap !== freshSnapshot.domainOuterGap)
         ) {
             this.logToken(`${LOG_PREFIX}:gap-reprojection selected=retained`);
+            this.consumeSendForced(hiddenKey);
             return {
                 op: "update-gaps",
                 snapshot: freshSnapshot,
@@ -4393,14 +4399,19 @@ export class PlanAdapter {
             };
         }
         // Bounded parking applies only to pure geometry drift below:
-        // membership/flag changes already returned above and never park.
+        // membership/flag changes already returned above and never park. A
+        // send-forced domain bypasses the park and always converges.
         const key = this.domainKey(observed);
-        if (this.backgroundParked.has(key) || (this.backgroundAttempts.get(key) ?? 0) >= MAX_RECONCILE_ATTEMPTS) {
+        if (!hiddenForced && (this.backgroundParked.has(key) || (this.backgroundAttempts.get(key) ?? 0) >= MAX_RECONCILE_ATTEMPTS)) {
             if (!this.backgroundParked.has(key)) {
                 this.backgroundParked.add(key);
                 this.logToken(`${LOG_PREFIX}:reconcile-parked`);
             }
             return null;
+        }
+        if (hiddenForced) {
+            this.clearBackgroundReconcile(freshSnapshot);
+            this.consumeSendForced(hiddenKey);
         }
         return {
             op: "reconcile",
@@ -4553,15 +4564,12 @@ export class PlanAdapter {
     }
 
     private dispatch(intent: AutoIntent): void {
-        if (!this.enabled || this.inFlight || this.r4Flight !== null) {
+        if (!this.enabled || this.inFlight) {
             return;
         }
         // A new lifecycle command supersedes an unanswered terminal probe. Its
         // callback must not make a later recovery decision for an older flight.
         this.activeProbe = 0;
-        if (this.blockedBySend()) {
-            return;
-        }
         if (
             intent.op === "reconcile" &&
             intent.background !== true &&
@@ -4716,10 +4724,7 @@ export class PlanAdapter {
             requestRevision: 0,
             isRecovery,
         };
-        this.r4Dispatches = 0;
-        this.cancelArmed = false;
-        this.cancelReplySeen = false;
-        this.cancelOutcome = "";
+        this.r4WriteDepth = 0;
         this.lifecycleDiag(this.pending as PendingFlight, "request", "dispatch", "started", "-");
         this.callbackSeen = false;
         this.token += 1;
@@ -5042,9 +5047,6 @@ export class PlanAdapter {
         if (this.inFlight) {
             return;
         }
-        if (this.blockedBySend()) {
-            return;
-        }
         if (this.knownOwner === null) {
             return;
         }
@@ -5077,7 +5079,7 @@ export class PlanAdapter {
         if (probe !== this.activeProbe || session !== this.plannerSession) {
             return;
         }
-        if (this.inFlight || this.blockedBySend()) {
+        if (this.inFlight) {
             this.activeProbe = 0;
             this.finishFlight();
             return;
@@ -5111,7 +5113,7 @@ export class PlanAdapter {
         if (probe !== this.activeProbe || session !== this.plannerSession) {
             return;
         }
-        if (this.inFlight || this.blockedBySend()) {
+        if (this.inFlight) {
             this.activeProbe = 0;
             this.finishFlight();
             return;
@@ -5135,10 +5137,7 @@ export class PlanAdapter {
     }
 
     private triggerRecovery(reason: string): void {
-        if (!this.enabled || this.inFlight || this.r4Flight !== null) {
-            return;
-        }
-        if (this.blockedBySend()) {
+        if (!this.enabled || this.inFlight) {
             return;
         }
         // Old flight is already terminal here; late old-generation callbacks
@@ -5190,30 +5189,10 @@ export class PlanAdapter {
         if (!this.inFlight || flight !== this.activeToken || session !== this.plannerSession) {
             return;
         }
-        // Cancel wait timeout: the single bounded cancel round trip never
-        // answered. Attribute the wait, then disarm and run the preserved
-        // fallthrough terminal path exactly once (terminate, never re-arm:
-        // no retry).
-        if (this.cancelArmed) {
-            const lost = this.pending;
-            const outcome = this.cancelOutcome;
-            if (lost !== null) {
-                this.lifecycleDiag(lost, "cancel", "timeout", "cancel-timed-out", outcome);
-            }
-            this.cancelArmed = false;
-            this.cancelReplySeen = false;
-            this.cancelOutcome = "";
-            if (lost !== null) {
-                this.terminateFlight(lost, outcome);
-            } else {
-                this.finishFlight();
-            }
-            return;
-        }
-        // The dispatch-phase timer is always cleared before R4 arming; a late
-        // fire while R4 holds the flight belongs to the R4 deadline.
+        // A late arrival-timer fire while a lean R4 arrival wait holds the
+        // flight belongs to the arrival deadline, not the request deadline.
         if (this.r4Flight !== null) {
-            this.onR4Timeout(flight, session);
+            this.onR4ArrivalTimeout(flight, session);
             return;
         }
         const lost = this.pending;
@@ -5228,12 +5207,10 @@ export class PlanAdapter {
                         : "start-resolve";
             this.activateDiag(lost, "timeout", "timeout", phase);
         }
-        // Pre-staging R4-shape flights get one cancel attempt before the
-        // terminal teardown below; everything else keeps the established path
-        // unchanged (including the probe and flight chaining that follow).
-        if (lost !== null && this.tryStartR4Cancel(lost, flight, session, "timeout")) {
-            return;
-        }
+        // Unanswered-request deadline: no planner reply arrived. There is no
+        // ack/verify/cancel/status protocol and no retry; a late reply is
+        // ignored by flight/session fencing. R4-shape flights force both
+        // domains through the existing settlement chain below.
         // Ordinary reply-wait timeout only: the Planner send completed
         // (activationStep 5) and the reply never arrived. Activation-phase
         // timeouts (steps 1-4, 0) stay exclusively with the existing activate
@@ -5246,9 +5223,6 @@ export class PlanAdapter {
         this.pending = null;
         this.pinnedOwner = null;
         this.activationStep = 0;
-        this.cancelArmed = false;
-        this.cancelReplySeen = false;
-        this.cancelOutcome = "";
         if (lost !== null) {
             this.diag(lost.op, lost.correlation, lost.windowCount, "timeout");
             if (lost.background === true) {
@@ -5265,6 +5239,7 @@ export class PlanAdapter {
                 this.failDragRestore(lost, "timeout");
             }
             this.maybeProbeAfterTerminal(lost);
+            this.forceR4SettleFromPending(lost);
             this.finishFlight();
             return;
         }
@@ -5275,16 +5250,9 @@ export class PlanAdapter {
         if (!this.inFlight || flight !== this.activeToken || session !== this.plannerSession || this.callbackSeen) {
             return;
         }
-        // A live R4 flight owns the single-flight across native/ack/verify.
-        // A duplicate `planned` must never restart native transfer, overwrite
-        // `r4Flight`, or reset the whole-flight timer.
+        // A live lean R4 arrival wait owns the single-flight. A duplicate
+        // `planned` must never restart native transfer or reset timers.
         if (this.r4Flight !== null) {
-            return;
-        }
-        // Cancel-armed fence: a late original reply arriving while the
-        // withdrawal awaits must never stage transfer or actuate. The cancel
-        // outcome alone settles the flight.
-        if (this.cancelArmed) {
             return;
         }
         const flightState = this.pending;
@@ -5333,7 +5301,7 @@ export class PlanAdapter {
             const kind = sanitizeKind(parsed["kind"]);
             this.lifecycleDiag(flightState, "reply", "validate", "rejected", kind);
             this.ordinaryTerminal(flightState, null, "rejected", "validate");
-            this.failFlight(flightState, sanitizeKind(parsed["kind"]), false);
+            this.failFlight(flightState, sanitizeKind(parsed["kind"]));
             return;
         }
         if (outcome === "rejected") {
@@ -5370,6 +5338,8 @@ export class PlanAdapter {
             } else {
                 this.failDragRestore(flightState, "rejected");
             }
+            // R4-shape rejections force both domains even on equal evidence.
+            this.forceR4SettleFromPending(flightState);
             // Correlated gap-mismatch retry: an automatic reconcile refused
             // solely for inner/outer gaps re-observes the same domain fresh
             // (foreground observation, or same hidden-domain observation for
@@ -5444,6 +5414,8 @@ export class PlanAdapter {
             } else {
                 this.failDragRestore(flightState, "stale-dropped");
             }
+            // R4-shape stale replies force both domains even on equal evidence.
+            this.forceR4SettleFromPending(flightState);
             this.finishFlight();
             return;
         }
@@ -6157,39 +6129,32 @@ export class PlanAdapter {
         return true;
     }
 
-    // R4 native transfer plus ack/verify. Called once per staged R4 plan with
-    // the shared single-flight held: the dispatch timer is already cleared
-    // and a fresh whole-flight timer is armed below. Order is fixed:
-    // sendClientToScreen with the exact target Output object, mover desktops
-    // write with the exact target VirtualDesktop refs, planned geometries in
-    // canonical order, then active focus only after all output/membership/
-    // geometry readback proves, then accepted ack, then verified verify only
-    // after full desired observed proof. Any timeout, stale output/scope,
-    // owner loss, wrong output, write failure, or focus failure is terminal:
-    // one best-effort adapter-lost ack (when ack is still unbound) or no
-    // verify at all, never a replay.
-    // Cancellation fence helper: incremented immediately before every
-    // native dispatch (transfer, membership, geometry), even when the call
-    // throws. Cancellation eligibility reads the counter, never an inferred
-    // phase.
-    private markR4Dispatch(): void {
-        this.r4Dispatches += 1;
-    }
-
+    // R4 immediate commit, no wire ack/verify/cancel/status. Called once per
+    // R4 `planned` reply with the shared single-flight held: the dispatch
+    // timer is already cleared. Order is fixed: sendClientToScreen with the
+    // exact target Output object, mover desktops write with the exact target
+    // VirtualDesktop refs, then planned geometries in canonical order
+    // (overconstrained members skipped). Fences pinned owner, correlation,
+    // flight/session token, and exact source/target scope before any native
+    // write and before every setter; a stale snapshot discards before writes.
+    // Structural scope rechecks tolerate the intended mover relocation
+    // (source, half, or target placement) while rejecting unrelated stale
+    // changes. After writes, one immediate fresh exact mover-on-target proof
+    // follows once (a single setActive); delayed arrival waits on one-shot
+    // output/desktops signals until a bounded arrival deadline. Every
+    // terminal forces complete source AND target reconciliation through
+    // `notifySendSettled`, including equal evidence. No geometry echo, no
+    // settlement protocol, no queue, no replay. Logs are correlated and
+    // redacted (no payloads or native ids).
     private beginR4Transfer(
         planned: PlannedReply,
         flightState: PendingFlight,
         current: PlanObserved,
     ): void {
-        // Cancel-armed fence: staging transfer while a withdrawal awaits
-        // would void the zero-dispatch attestation. Unreachable (the reply
-        // path is fenced), guarded explicitly.
-        if (this.cancelArmed) {
-            return;
-        }
         const operation = planned.operation as PlanMoveOperation;
         const domains = flightState.snapshot.domains as ReadonlyArray<PlanDomain>;
         const target = domains[1] as PlanDomain;
+        const source = domains[0] as PlanDomain;
         const correlation = flightState.correlation;
         const windowCount = flightState.windowCount;
         if (!crossOutputTransferSupported(this.env)) {
@@ -6200,10 +6165,19 @@ export class PlanAdapter {
             this.failFlight(flightState, "precondition-mismatch");
             return;
         }
+        if (!isUniqueOwner(this.pinnedOwner)) {
+            this.failFlight(flightState, "owner-loss");
+            return;
+        }
+        if (flightState.correlation !== planned.correlationId) {
+            this.failFlight(flightState, "correlation-mismatch");
+            return;
+        }
+        if (!this.inFlight || this.pending !== flightState || flightState.plannerSession !== this.plannerSession) {
+            this.failFlight(flightState, "stale-scope");
+            return;
+        }
         const baseRevision = planned.baseRevision;
-        // Resolve every native target from the fresh observation only. The
-        // mover must still be homed on the source; exceptional movers never
-        // transfer.
         const byRef = new Map<string, object>();
         for (const entry of current.windows) {
             byRef.set(entry.id, entry.ref);
@@ -6219,6 +6193,8 @@ export class PlanAdapter {
             moverEntry === undefined ||
             moverEntry.output !== operation.sourceOutput ||
             moverEntry.workspace !== operation.sourceWorkspace ||
+            moverEntry.output !== source.output ||
+            moverEntry.workspace !== source.workspace ||
             moverEntry.fullscreen ||
             moverEntry.maximized ||
             moverEntry.floating === true ||
@@ -6246,17 +6222,8 @@ export class PlanAdapter {
             this.failFlight(flightState, "stale-scope");
             return;
         }
-        // Whole-flight timer spans native transfer plus ack/verify.
         const flight = this.activeToken;
         const session = this.plannerSession;
-        try {
-            const cancel = this.env.scheduleOnce(PLAN_TIMEOUT_MS, () => this.onR4Timeout(flight, session));
-            this.cancelTimer = cancel;
-        } catch (error) {
-            void error;
-            this.failFlight(flightState, "timer-failed");
-            return;
-        }
         const r4: R4Flight = {
             flight,
             session,
@@ -6274,134 +6241,127 @@ export class PlanAdapter {
             targetDesktopRef,
             byRef,
             direction: flightState.direction as PlanDirection,
-            acked: false,
             followed: false,
-            outputSeen: false,
-            desktopsSeen: false,
-            geoPending: new Set<string>(),
             detaches: [],
             settled: false,
-            ackReplySeen: false,
-            verifyRequested: false,
-            verifyReplySeen: false,
         };
         this.r4Flight = r4;
         this.diag(flightState.op, correlation, windowCount, "r4-transfer-started");
-        // Bounded one-shot fences armed before any native write: mover
-        // outputChanged (old value re-read), mover desktopsChanged, and one
-        // frameGeometryChanged per window whose rect must change. Unchanged
-        // geometry never waits for a signal.
-        const changedIds = this.r4ChangedGeometryIds(planned, current);
-        let fenceOk = true;
-        try {
-            const detachOutput = this.env.subscribeMoverOutput?.(moverRef, (old) => this.onR4OutputEcho(old, flight, session));
-            if (detachOutput === null || detachOutput === undefined || typeof detachOutput !== "function") {
-                fenceOk = false;
-            } else {
-                r4.detaches.push(detachOutput);
-            }
-        } catch (error) {
-            void error;
-            fenceOk = false;
-        }
-        try {
-            const detachDesktops = this.env.subscribeMoverDesktops?.(moverRef, () => this.onR4DesktopsEcho(flight, session));
-            if (detachDesktops === null || detachDesktops === undefined || typeof detachDesktops !== "function") {
-                fenceOk = false;
-            } else {
-                r4.detaches.push(detachDesktops);
-            }
-        } catch (error) {
-            void error;
-            fenceOk = false;
-        }
-        if (changedIds.length > 0) {
-            for (const id of changedIds) {
-                const ref = byRef.get(id);
-                if (ref === undefined) {
-                    fenceOk = false;
-                    break;
-                }
-                const windowId = id;
-                try {
-                    const detachGeo = this.env.subscribeWindowGeometry?.(ref, () => this.onR4GeometryEcho(windowId, flight, session));
-                    if (detachGeo === null || detachGeo === undefined || typeof detachGeo !== "function") {
-                        fenceOk = false;
-                        break;
-                    }
-                    r4.detaches.push(detachGeo);
-                    r4.geoPending.add(windowId);
-                } catch (error) {
-                    void error;
-                    fenceOk = false;
-                    break;
-                }
-            }
-        }
-        if (!fenceOk) {
-            this.failR4Terminal("write-failed", true);
+        if (!this.armR4ArrivalSignals(r4, flight, session)) {
+            this.r4SettleTerminal(r4, "write-failed");
             return;
         }
-        // Native actuation in plan order: output transfer, desktop
-        // membership, then geometries. Any failure is terminal before ack.
-        let transferred = false;
         try {
-            this.markR4Dispatch();
-            transferred = this.env.sendClientToScreen?.(moverRef, targetOutputRef) === true;
+            const cancel = this.env.scheduleOnce(PLAN_TIMEOUT_MS, () => this.onR4ArrivalTimeout(flight, session));
+            this.r4ArrivalTimer = cancel;
         } catch (error) {
             void error;
-            transferred = false;
-        }
-        if (!transferred) {
-            this.failR4Terminal("write-failed", true);
+            this.r4SettleTerminal(r4, "timer-failed");
             return;
         }
-        let membershipWritten = false;
+        this.r4WriteDepth += 1;
         try {
-            this.markR4Dispatch();
-            membershipWritten = this.env.setDesktops?.(moverRef, [targetDesktopRef]) === true;
-        } catch (error) {
-            void error;
-            membershipWritten = false;
-        }
-        if (!membershipWritten) {
-            this.failR4Terminal("write-failed", true);
-            return;
-        }
-        const oldById = new Map<string, PlanRect>();
-        for (const entry of current.windows) {
-            oldById.set(entry.id, { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h });
-        }
-        const ordered = orderGeometryWrites(oldById, planned.geometry.filter((entry) => !entry.overconstrained));
-        for (const entry of ordered) {
-            const ref = byRef.get(entry.window);
-            if (ref === undefined) {
-                this.failR4Terminal("write-failed", true);
+            if (!this.r4FlightFencesHold(flightState, flight, session, r4)) {
+                const fenced = !isUniqueOwner(this.pinnedOwner) || !isGeneration(this.generation) ? "owner-loss" : "stale-scope";
+                this.r4SettleTerminal(r4, fenced);
                 return;
             }
-            let written = false;
+            if (!this.r4FreshScopeAllowsMover(flightState, operation.window, source, target, false)) {
+                this.r4SettleTerminal(r4, "stale-scope");
+                return;
+            }
+            let transferred = false;
             try {
-                this.markR4Dispatch();
-                written = this.env.setGeometry(ref, entry.rect) === true;
+                transferred = this.env.sendClientToScreen?.(moverRef, targetOutputRef) === true;
             } catch (error) {
                 void error;
-                written = false;
+                transferred = false;
             }
-            const resourceClass = this.r4ResourceClass(current, entry.window);
-            if (!written) {
-                this.writeDiag(entry.window, resourceClass, "write-failed", entry.rect);
-                this.failR4Terminal("write-failed", true);
+            if (!transferred) {
+                this.r4SettleTerminal(r4, "write-failed");
                 return;
             }
-            this.writeDiag(entry.window, resourceClass, "written", entry.rect);
+            if (!this.r4FlightFencesHold(flightState, flight, session, r4)) {
+                const fenced = !isUniqueOwner(this.pinnedOwner) || !isGeneration(this.generation) ? "owner-loss" : "stale-scope";
+                this.r4SettleTerminal(r4, fenced);
+                return;
+            }
+            if (!this.r4FreshScopeAllowsMover(flightState, operation.window, source, target, false)) {
+                this.r4SettleTerminal(r4, "stale-scope");
+                return;
+            }
+            let membershipWritten = false;
+            try {
+                membershipWritten = this.env.setDesktops?.(moverRef, [targetDesktopRef]) === true;
+            } catch (error) {
+                void error;
+                membershipWritten = false;
+            }
+            if (!membershipWritten) {
+                this.r4SettleTerminal(r4, "write-failed");
+                return;
+            }
+            const oldById = new Map<string, PlanRect>();
+            for (const entry of current.windows) {
+                oldById.set(entry.id, { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h });
+            }
+            const ordered = orderGeometryWrites(oldById, planned.geometry.filter((entry) => !entry.overconstrained));
+            for (const entry of ordered) {
+                if (!this.r4FlightFencesHold(flightState, flight, session, r4)) {
+                    const fenced = !isUniqueOwner(this.pinnedOwner) || !isGeneration(this.generation) ? "owner-loss" : "stale-scope";
+                    this.r4SettleTerminal(r4, fenced);
+                    return;
+                }
+                if (!this.r4FreshScopeAllowsMover(flightState, operation.window, source, target, false)) {
+                    this.r4SettleTerminal(r4, "stale-scope");
+                    return;
+                }
+                const ref = byRef.get(entry.window);
+                if (ref === undefined) {
+                    this.r4SettleTerminal(r4, "write-failed");
+                    return;
+                }
+                let written = false;
+                try {
+                    written = this.env.setGeometry(ref, entry.rect) === true;
+                } catch (error) {
+                    void error;
+                    written = false;
+                }
+                const resourceClass = this.r4ResourceClass(current, entry.window);
+                if (!written) {
+                    this.writeDiag(entry.window, resourceClass, "write-failed", entry.rect);
+                    this.r4SettleTerminal(r4, "write-failed");
+                    return;
+                }
+                this.writeDiag(entry.window, resourceClass, "written", entry.rect);
+            }
+            for (const entry of planned.geometry) {
+                if (entry.overconstrained) {
+                    const resourceClass = this.r4ResourceClass(current, entry.window);
+                    this.writeDiag(entry.window, resourceClass, "skip-overconstrained", entry.rect);
+                }
+            }
+            if (planned.geometry.some((entry) => entry.overconstrained)) {
+                this.logToken(`${LOG_PREFIX}:overconstrained-skipped correlation=${correlation} op=${flightState.op}`);
+            }
+        } finally {
+            this.r4WriteDepth = Math.max(0, this.r4WriteDepth - 1);
         }
         this.diag(flightState.op, correlation, windowCount, "r4-native-written");
-        // Synchronous fence callbacks may have consumed every echo while the
-        // writes ran. Resume only when all three proofs have initiated.
-        this.tryR4MaybeAck(flight, session);
-        if (this.r4Flight === r4 && !r4.settled) {
-            this.diag(flightState.op, correlation, windowCount, "r4-echo-waiting");
+        if (this.checkR4Arrived(r4)) {
+            this.followR4Once(r4);
+            if (this.r4Current() === r4 && !r4.settled) {
+                this.diag(flightState.op, correlation, windowCount, "r4-arrival-waiting");
+            }
+            return;
         }
+        const placement = this.r4PlacementDetail(r4);
+        if (placement === "wrong-target" || placement === "unreadable") {
+            this.r4SettleTerminal(r4, placement === "wrong-target" ? "wrong-output" : "stale-scope");
+            return;
+        }
+        this.diag(flightState.op, correlation, windowCount, "r4-arrival-waiting");
     }
 
     private writeGeometries(
@@ -6415,11 +6375,11 @@ export class PlanAdapter {
             this.applyCrossFocus(planned, flightState, current);
             return;
         }
-        // Production R4 cross-output move: the first `planned` reply stages
-        // but never commits. Native transfer plus accepted ack plus verified
-        // verify complete it asynchronously; the shared single-flight stays
-        // held throughout with no replay. Ordinary lifecycle stays silent here:
-        // R4 owns its transfer/ack/verify diagnostics.
+        // Production R4 cross-output move: immediate commit on the `planned`
+        // reply. Native transfer, membership, and geometry complete it
+        // synchronously; the shared single-flight stays held throughout with
+        // no replay. Ordinary lifecycle stays silent here: R4 owns its
+        // transfer diagnostics.
         if (flightState.op === "move" && this.isCrossMove(planned, flightState)) {
             this.beginR4Transfer(planned, flightState, current);
             return;
@@ -6583,7 +6543,6 @@ export class PlanAdapter {
                 }
                 let written = false;
                 try {
-                    this.markR4Dispatch();
                     written = this.env.setGeometry(target, entry.rect) === true;
                 } catch (error) {
                     void error;
@@ -6635,7 +6594,6 @@ export class PlanAdapter {
                 }
                 let written = false;
                 try {
-                    this.markR4Dispatch();
                     written = this.env.setGeometry(target, floatGeometry.rect) === true;
                 } catch (error) {
                     void error;
@@ -7002,28 +6960,10 @@ export class PlanAdapter {
         this.finishFlight();
     }
 
-    // R4 helpers: bounded echo fence, native proof, ack/verify, terminal.
-    private r4ChangedGeometryIds(planned: PlannedReply, current: PlanObserved): string[] {
-        const freshById = new Map<string, PlanRect>();
-        for (const entry of current.windows) {
-            freshById.set(entry.id, entry.rect);
-        }
-        const changed: string[] = [];
-        for (const entry of planned.geometry) {
-            if (entry.overconstrained) {
-                continue;
-            }
-            const fresh = freshById.get(entry.window);
-            if (fresh === undefined) {
-                continue;
-            }
-            if (fresh.x !== entry.rect.x || fresh.y !== entry.rect.y || fresh.w !== entry.rect.w || fresh.h !== entry.rect.h) {
-                changed.push(entry.window);
-            }
-        }
-        return changed;
-    }
-
+    // Lean R4 helpers: one-shot arrival signals, fresh exact mover proof,
+    // single follow, and forced source+target settlement. No geometry echo,
+    // no ack/verify/cancel/status wire protocol, no settlement timers beyond
+    // the bounded arrival deadline.
     private r4ResourceClass(current: PlanObserved, windowId: string): string {
         for (const entry of current.windows) {
             if (entry.id === windowId) {
@@ -7041,225 +6981,263 @@ export class PlanAdapter {
         return r4;
     }
 
-    // Mover outputChanged echo: the signal carries the old output; the
-    // current value is always re-read for proof. A wrong-output read fails
-    // terminal without ack.
-    private onR4OutputEcho(old: unknown, flight: number, session: number): void {
-        void old;
-        const r4 = this.r4Current();
-        if (r4 === null || flight !== r4.flight || session !== r4.session || r4.acked) {
-            return;
-        }
-        let current: string | null = null;
-        try {
-            current = this.env.readOutputName?.(r4.moverRef) ?? null;
-        } catch (error) {
-            void error;
-            current = null;
-        }
-        if (current === null) {
-            this.failR4Terminal("stale-scope", true);
-            return;
-        }
-        if (current !== r4.targetOutput) {
-            this.failR4Terminal("wrong-output", true);
-            return;
-        }
-        r4.outputSeen = true;
-        this.diag(r4.op, r4.correlation, r4.planned.geometry.length, "r4-output-echo");
-        this.tryR4MaybeAck(flight, session);
-    }
-
-    private onR4DesktopsEcho(flight: number, session: number): void {
-        const r4 = this.r4Current();
-        if (r4 === null || flight !== r4.flight || session !== r4.session || r4.acked) {
-            return;
-        }
-        let ids: ReadonlyArray<string> | null = null;
-        try {
-            ids = this.env.readDesktopIds?.(r4.moverRef) ?? null;
-        } catch (error) {
-            void error;
-            ids = null;
-        }
-        if (ids === null) {
-            this.failR4Terminal("stale-scope", true);
-            return;
-        }
-        if (ids.length !== 1 || ids[0] !== r4.targetWorkspace) {
-            this.failR4Terminal("wrong-output", true);
-            return;
-        }
-        r4.desktopsSeen = true;
-        this.diag(r4.op, r4.correlation, r4.planned.geometry.length, "r4-desktops-echo");
-        this.tryR4MaybeAck(flight, session);
-    }
-
-    private onR4GeometryEcho(windowId: string, flight: number, session: number): void {
-        const r4 = this.r4Current();
-        if (r4 === null || flight !== r4.flight || session !== r4.session || r4.acked) {
-            return;
-        }
-        if (!r4.geoPending.has(windowId)) {
-            return;
-        }
-        const expected = r4.planned.geometry.find((entry) => entry.window === windowId);
-        if (expected === undefined) {
-            this.failR4Terminal("precondition-mismatch", true);
-            return;
-        }
-        const ref = r4.byRef.get(windowId);
-        if (ref === undefined) {
-            this.failR4Terminal("precondition-mismatch", true);
-            return;
-        }
-        let rect: PlanRect | null = null;
-        try {
-            rect = this.env.readGeometry?.(ref) ?? null;
-        } catch (error) {
-            void error;
-        }
-        // sendClientToScreen can emit an intermediate mover geometry before
-        // its queued Wayland resize commits. Keep this per-window fence armed
-        // until an echo reads back the exact planned rectangle.
-        if (rect === null || rect.x !== expected.rect.x || rect.y !== expected.rect.y || rect.w !== expected.rect.w || rect.h !== expected.rect.h) {
-            return;
-        }
-        r4.geoPending.delete(windowId);
-        this.diag(r4.op, r4.correlation, r4.planned.geometry.length, "r4-geometry-echo");
-        this.tryR4MaybeAck(flight, session);
-    }
-
-    // Follow is a confirmed partial native success: it needs output and exact
-    // desktop membership proof, but must not wait for an unrelated sibling's
-    // geometry. Ack/verify still require the complete desired geometry below.
-    private tryR4Follow(r4: R4Flight): boolean {
-        if (r4.followed) {
-            return true;
-        }
-        if (!r4.outputSeen || !r4.desktopsSeen) {
-            return true;
-        }
-        if (r4.epoch !== this.epoch || !this.r4MoverPlacementMatches(r4)) {
-            this.failR4Terminal("stale-scope", true);
+    // Per-setter flight fences: pinned owner/generation plus flight/session/
+    // epoch/correlation identity. Called before every native setter because a
+    // synchronous setter effect or an intervening signal may have released or
+    // superseded the flight mid-stack.
+    private r4FlightFencesHold(flightState: PendingFlight, flight: number, session: number, r4: R4Flight): boolean {
+        if (!isUniqueOwner(this.pinnedOwner)) {
             return false;
         }
-        let currentActive: object | null = null;
-        try {
-            currentActive = this.env.active();
-        } catch (error) {
-            void error;
+        if (!isGeneration(this.generation)) {
+            return false;
         }
-        if (currentActive !== r4.moverRef) {
-            let focused = false;
-            try {
-                focused = this.env.setActive(r4.moverRef) === true;
-            } catch (error) {
-                void error;
-            }
-            try {
-                currentActive = this.env.active();
-            } catch (error) {
-                void error;
-                currentActive = null;
-            }
-            if (!focused || currentActive !== r4.moverRef) {
-                this.failR4Terminal("focus-unconfirmed", true);
-                return false;
-            }
+        if (!this.inFlight || this.pending !== flightState) {
+            return false;
         }
-        r4.followed = true;
+        if (flight !== this.activeToken || session !== this.plannerSession) {
+            return false;
+        }
+        if (flightState.plannerSession !== this.plannerSession) {
+            return false;
+        }
+        if (flightState.epoch !== this.epoch) {
+            return false;
+        }
+        if (flightState.correlation !== r4.correlation) {
+            return false;
+        }
+        if (this.r4Current() !== r4 || r4.settled) {
+            return false;
+        }
         return true;
     }
 
-    // Ack only after every fence echo plus full native readback proof. Follow
-    // may already have completed from confirmed mover placement above.
-    private tryR4MaybeAck(flight: number, session: number): void {
-        const r4 = this.r4Current();
-        if (r4 === null || flight !== r4.flight || session !== r4.session || r4.acked || r4.settled) {
-            return;
-        }
-        // KWin does not notify an unchanged desktop assignment. Readback keeps
-        // same-workspace cross-output transfers from waiting for that absent echo.
-        const membershipWasUnchanged = r4.snapshot.windows.some(
-            (window) => window.id === r4.moverId && window.workspace === r4.targetWorkspace,
-        );
-        if (!r4.desktopsSeen && membershipWasUnchanged) {
-            let ids: ReadonlyArray<string> | null = null;
-            try {
-                ids = this.env.readDesktopIds?.(r4.moverRef) ?? null;
-            } catch (error) {
-                void error;
-            }
-            if (ids !== null && ids.length === 1 && ids[0] === r4.targetWorkspace) {
-                r4.desktopsSeen = true;
-                this.diag(r4.op, r4.correlation, r4.planned.geometry.length, "r4-desktops-readback");
-            }
-        }
-        if (!r4.outputSeen || !r4.desktopsSeen) {
-            return;
-        }
-        if (!this.tryR4Follow(r4) || r4.geoPending.size > 0) {
-            return;
-        }
-        if (r4.epoch !== this.epoch) {
-            this.failR4Terminal("stale-scope", true);
-            return;
-        }
-        const post = this.r4ObservedPost(r4);
-        if (post === null) {
-            this.failR4Terminal("post-observation-mismatch", true);
-            return;
-        }
-        r4.acked = true;
-        const payload = this.buildR4AckPayload(r4, post);
-        if (payload === null) {
-            this.failR4Terminal("precondition-mismatch", false);
-            return;
-        }
-        if (payload.length > PLAN_MAX_REQUEST_BYTES) {
-            this.logToken(`${LOG_PREFIX}:request-refused correlation=${r4.correlation} reason=request-over-cap`);
-            this.failR4Terminal("precondition-mismatch", false);
-            return;
-        }
-        this.diag(r4.op, r4.correlation, r4.planned.geometry.length, "r4-ack");
-        this.sendR4Request(payload, (reply) => this.onR4AckReply(reply, flight, session));
-    }
-
-    // Native proof and post-image are captured together: all identities and
-    // memberships must match the plan. Only plan-flagged overconstrained
-    // members carry the actual client-held rectangle instead of a target.
-    private r4ObservedPost(r4: R4Flight): Array<{ window: string; output: string; workspace: string; rect: PlanRect }> | null {
-        if (!this.r4MoverPlacementMatches(r4)) {
+    // Raw directional re-observation for R4 mid-write/follow fences: bypasses
+    // dispatch-time validation (focused-in-source, homing, fingerprint,
+    // revalidate) because the intended mover relocation itself breaks those
+    // gates (half placement is unhomed, target placement moves focus). Only
+    // structural identity is enforced by callers.
+    private r4RawFresh(direction: PlanDirection): PlanObserved | null {
+        const hook = this.env.observeDirectional;
+        if (typeof hook !== "function") {
             return null;
         }
-        const post: Array<{ window: string; output: string; workspace: string; rect: PlanRect }> = [];
-        for (const entry of r4.planned.geometry) {
-            const ref = r4.byRef.get(entry.window);
-            if (ref === undefined) {
-                return null;
-            }
-            let rect: PlanRect | null = null;
-            let output: string | null = null;
-            let desktops: ReadonlyArray<string> | null = null;
-            try {
-                rect = this.env.readGeometry?.(ref) ?? null;
-                output = this.env.readOutputName?.(ref) ?? null;
-                desktops = this.env.readDesktopIds?.(ref) ?? null;
-            } catch (error) {
-                void error;
-                return null;
-            }
-            if (
-                !isTargetRect(rect) || output !== entry.output ||
-                desktops === null || desktops.length !== 1 || desktops[0] !== entry.workspace ||
-                (!entry.overconstrained && (rect.x !== entry.rect.x || rect.y !== entry.rect.y || rect.w !== entry.rect.w || rect.h !== entry.rect.h))
-            ) {
-                return null;
-            }
-            post.push({ window: entry.window, output: entry.output, workspace: entry.workspace, rect });
+        let raw: DirectionalObservation | PlanObserved | null = null;
+        try {
+            raw = hook(direction);
+        } catch (error) {
+            void error;
+            return null;
         }
-        return post;
+        if (raw === null || raw === undefined) {
+            return null;
+        }
+        if (typeof raw === "object" && "status" in raw) {
+            const outcome = raw as DirectionalObservation;
+            if (outcome.status !== "ready" || outcome.observed === null || outcome.observed === undefined) {
+                return null;
+            }
+            return outcome.observed;
+        }
+        const candidate = raw as PlanObserved;
+        if (candidate.windows === undefined || candidate.domains === undefined) {
+            return null;
+        }
+        return candidate;
+    }
+
+    // Structural scope fence for R4 writes: exact domain/scope identity plus
+    // window-set identity, ignoring rects, fingerprint, and focus. Tolerates
+    // the intended mover relocation while rejecting unrelated stale changes:
+    // - writes (`requireTarget` false): mover output/workspace may each be
+    //   source or target (source, half, or target placement).
+    // - follow (`requireTarget` true): mover must sit exactly on the target.
+    // Non-mover windows must retain exact output/workspace plus observed
+    // native flags (fullscreen/maximized/floating/sticky) against the dispatch
+    // snapshot. Missing mover, extra/missing ids, changed domains, changed
+    // non-mover flags, or an exceptional mover all fail.
+    private r4FreshScopeAllowsMover(
+        flightState: PendingFlight,
+        moverId: string,
+        source: PlanDomain,
+        target: PlanDomain,
+        requireTarget: boolean,
+    ): boolean {
+        const direction = flightState.direction;
+        if (direction !== "left" && direction !== "right") {
+            return false;
+        }
+        const fresh = this.r4RawFresh(direction);
+        if (fresh === null) {
+            return false;
+        }
+        const flightSnapshot = flightState.snapshot;
+        if (!domainsEqual(fresh.domains, flightSnapshot.domains)) {
+            return false;
+        }
+        if (
+            fresh.domainOutput !== flightSnapshot.domainOutput ||
+            fresh.domainWorkspace !== flightSnapshot.domainWorkspace ||
+            fresh.domainBounds.x !== flightSnapshot.domainBounds.x ||
+            fresh.domainBounds.y !== flightSnapshot.domainBounds.y ||
+            fresh.domainBounds.w !== flightSnapshot.domainBounds.w ||
+            fresh.domainBounds.h !== flightSnapshot.domainBounds.h ||
+            fresh.domainGap !== flightSnapshot.domainGap ||
+            fresh.domainOuterGap !== flightSnapshot.domainOuterGap
+        ) {
+            return false;
+        }
+        if (fresh.windows.length !== flightSnapshot.windows.length) {
+            return false;
+        }
+        const flightById = new Map<string, PlanSnapshotWindow>();
+        for (const entry of flightSnapshot.windows) {
+            flightById.set(entry.id, entry);
+        }
+        let moverFound = false;
+        for (const entry of fresh.windows) {
+            const expected = flightById.get(entry.id);
+            if (expected === undefined) {
+                return false;
+            }
+            if (entry.id === moverId) {
+                moverFound = true;
+                if (entry.fullscreen || entry.maximized || entry.floating === true || entry.sticky === true) {
+                    return false;
+                }
+                if (requireTarget) {
+                    if (entry.output !== target.output || entry.workspace !== target.workspace) {
+                        return false;
+                    }
+                } else {
+                    const outputInScope = entry.output === source.output || entry.output === target.output;
+                    const workspaceInScope = entry.workspace === source.workspace || entry.workspace === target.workspace;
+                    if (!outputInScope || !workspaceInScope) {
+                        return false;
+                    }
+                }
+            } else {
+                if (entry.output !== expected.output || entry.workspace !== expected.workspace) {
+                    return false;
+                }
+                if (
+                    entry.fullscreen !== expected.fullscreen ||
+                    entry.maximized !== expected.maximized ||
+                    (entry.floating === true) !== (expected.floating === true) ||
+                    (entry.sticky === true) !== (expected.sticky === true)
+                ) {
+                    return false;
+                }
+            }
+        }
+        return moverFound;
+    }
+
+    // Fresh observed mover proof for follow: exact scope identity plus mover
+    // absent from source and present on target in a fresh directional
+    // observation, with matching ref identity and fresh native placement on
+    // the freshly resolved ref. Never trusts the retained moverRef alone.
+    // Uses raw re-observation (not dispatch validation) so the intended
+    // target arrival passes despite moved focus. Returns false while arrival
+    // is still pending so delayed arrival stays waiting; callers must not
+    // treat false as terminal.
+    private r4ObservedMoverOnTarget(r4: R4Flight): boolean {
+        if (r4.direction !== "left" && r4.direction !== "right") {
+            return false;
+        }
+        const fresh = this.r4RawFresh(r4.direction);
+        if (fresh === null) {
+            return false;
+        }
+        const flightSnapshot = r4.snapshot;
+        const domains = flightSnapshot.domains;
+        if (domains === undefined || domains.length !== 2) {
+            return false;
+        }
+        const source = domains[0] as PlanDomain;
+        const target = domains[1] as PlanDomain;
+        if (target.output !== r4.targetOutput || target.workspace !== r4.targetWorkspace) {
+            return false;
+        }
+        if (!domainsEqual(fresh.domains, flightSnapshot.domains)) {
+            return false;
+        }
+        if (
+            fresh.domainOutput !== flightSnapshot.domainOutput ||
+            fresh.domainWorkspace !== flightSnapshot.domainWorkspace ||
+            fresh.domainBounds.x !== flightSnapshot.domainBounds.x ||
+            fresh.domainBounds.y !== flightSnapshot.domainBounds.y ||
+            fresh.domainBounds.w !== flightSnapshot.domainBounds.w ||
+            fresh.domainBounds.h !== flightSnapshot.domainBounds.h ||
+            fresh.domainGap !== flightSnapshot.domainGap ||
+            fresh.domainOuterGap !== flightSnapshot.domainOuterGap
+        ) {
+            return false;
+        }
+        if (fresh.windows.length !== flightSnapshot.windows.length) {
+            return false;
+        }
+        const flightById = new Map<string, PlanSnapshotWindow>();
+        for (const entry of flightSnapshot.windows) {
+            flightById.set(entry.id, entry);
+        }
+        let moverRef: object | null = null;
+        for (const entry of fresh.windows) {
+            const expected = flightById.get(entry.id);
+            if (expected === undefined) {
+                return false;
+            }
+            if (entry.id === r4.moverId) {
+                if (entry.output !== target.output || entry.workspace !== target.workspace) {
+                    return false;
+                }
+                if (entry.fullscreen || entry.maximized || entry.floating === true || entry.sticky === true) {
+                    return false;
+                }
+                moverRef = entry.ref;
+            } else {
+                if (entry.output !== expected.output || entry.workspace !== expected.workspace) {
+                    return false;
+                }
+                if (
+                    entry.fullscreen !== expected.fullscreen ||
+                    entry.maximized !== expected.maximized ||
+                    (entry.floating === true) !== (expected.floating === true) ||
+                    (entry.sticky === true) !== (expected.sticky === true)
+                ) {
+                    return false;
+                }
+            }
+        }
+        if (moverRef === null || moverRef !== r4.moverRef) {
+            return false;
+        }
+        let output: string | null = null;
+        try {
+            output = this.env.readOutputName?.(moverRef) ?? null;
+        } catch (error) {
+            void error;
+            return false;
+        }
+        if (output !== r4.targetOutput) {
+            return false;
+        }
+        let ids: ReadonlyArray<string> | null = null;
+        try {
+            ids = this.env.readDesktopIds?.(moverRef) ?? null;
+        } catch (error) {
+            void error;
+            return false;
+        }
+        if (ids === null || ids.length !== 1 || ids[0] !== r4.targetWorkspace) {
+            return false;
+        }
+        // Mover absent from source is implied by the single exact target
+        // entry above plus unchanged non-mover placements; explicitly guard
+        // the source domain identity already pinned in domainsEqual.
+        void source;
+        return true;
     }
 
     private r4MoverPlacementMatches(r4: R4Flight): boolean {
@@ -7286,656 +7264,229 @@ export class PlanAdapter {
         return true;
     }
 
-    // Planned post-image is used only for the terminal adapter-lost ack.
-    private r4PostWindows(r4: R4Flight): Array<{ window: string; output: string; workspace: string; rect: PlanRect }> {
-        return r4.planned.geometry.map((entry) => ({
-            window: entry.window,
-            output: entry.output,
-            workspace: entry.workspace,
-            rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
-        }));
+    private checkR4Arrived(r4: R4Flight): boolean {
+        return this.r4MoverPlacementMatches(r4);
     }
 
-    private r4DomainsPayload(r4: R4Flight): Array<Record<string, unknown>> {
-        const domains = r4.snapshot.domains as ReadonlyArray<PlanDomain>;
-        return domains.map((entry) => ({
-            output: entry.output,
-            workspace: entry.workspace,
-            bounds: { x: entry.bounds.x, y: entry.bounds.y, w: entry.bounds.w, h: entry.bounds.h },
-            gap: entry.gap,
-            outer_gap: entry.outerGap,
-            adjacent: { ...(entry.adjacent as Record<string, string>) },
-        }));
-    }
-
-    private r4PostFingerprint(r4: R4Flight, post: ReadonlyArray<{ window: string; output: string; workspace: string; rect: PlanRect }>): number {
-        const domains = r4.snapshot.domains as ReadonlyArray<PlanDomain>;
-        return planDirectionalFingerprint(
-            domains,
-            "",
-            post.map((entry) => ({
-                window: entry.window,
-                output: entry.output,
-                workspace: entry.workspace,
-                rect: entry.rect,
-                floating: false,
-                fitExcluded: false,
-            })),
-        );
-    }
-
-    private buildR4AckPayload(r4: R4Flight, post: Array<{ window: string; output: string; workspace: string; rect: PlanRect }>): string | null {
-        const snapshot = r4.snapshot;
-        let payload = "";
+    private r4PlacementDetail(r4: R4Flight): "arrived" | "source" | "half" | "wrong-target" | "unreadable" {
+        let output: string | null = null;
+        let ids: ReadonlyArray<string> | null = null;
         try {
-            payload = JSON.stringify({
-                v: PLAN_CONTRACT_VERSION,
-                correlation_id: r4.correlation,
-                owner: this.owner,
-                generation: this.generation,
-                revision: r4.baseRevision,
-                fingerprint: this.r4PostFingerprint(r4, post),
-                domain: {
-                    output: snapshot.domainOutput,
-                    workspace: snapshot.domainWorkspace,
-                    bounds: {
-                        x: snapshot.domainBounds.x,
-                        y: snapshot.domainBounds.y,
-                        w: snapshot.domainBounds.w,
-                        h: snapshot.domainBounds.h,
-                    },
-                    gap: snapshot.domainGap,
-                    outer_gap: snapshot.domainOuterGap,
-                },
-                domains: this.r4DomainsPayload(r4),
-                focused_window: "",
-                windows: post,
-                command: { op: "directional-move-ack", ack_outcome: "accepted" },
-            });
+            output = this.env.readOutputName?.(r4.moverRef) ?? null;
+            ids = this.env.readDesktopIds?.(r4.moverRef) ?? null;
         } catch (error) {
             void error;
-            return null;
+            return "unreadable";
         }
-        return payload;
+        if (output === null || ids === null) {
+            return "unreadable";
+        }
+        const domains = r4.snapshot.domains as ReadonlyArray<PlanDomain> | undefined;
+        const source = domains !== undefined && domains.length === 2 ? (domains[0] as PlanDomain) : null;
+        const outputIsTarget = output === r4.targetOutput;
+        const desktopsIsTarget = ids.length === 1 && ids[0] === r4.targetWorkspace;
+        if (outputIsTarget && desktopsIsTarget) {
+            return "arrived";
+        }
+        const outputIsSource = source !== null && output === source.output;
+        const desktopsIsSource = source !== null && ids.length === 1 && ids[0] === source.workspace;
+        if (outputIsSource && desktopsIsSource) {
+            return "source";
+        }
+        if ((outputIsTarget || outputIsSource) && (desktopsIsTarget || desktopsIsSource)) {
+            return "half";
+        }
+        return "wrong-target";
     }
 
-    private buildR4VerifyPayload(r4: R4Flight, post: Array<{ window: string; output: string; workspace: string; rect: PlanRect }>): string | null {
-        const snapshot = r4.snapshot;
-        let payload = "";
+    private armR4ArrivalSignals(r4: R4Flight, flight: number, session: number): boolean {
         try {
-            payload = JSON.stringify({
-                v: PLAN_CONTRACT_VERSION,
-                correlation_id: r4.correlation,
-                owner: this.owner,
-                generation: this.generation,
-                revision: r4.baseRevision,
-                fingerprint: this.r4PostFingerprint(r4, post),
-                domain: {
-                    output: snapshot.domainOutput,
-                    workspace: snapshot.domainWorkspace,
-                    bounds: {
-                        x: snapshot.domainBounds.x,
-                        y: snapshot.domainBounds.y,
-                        w: snapshot.domainBounds.w,
-                        h: snapshot.domainBounds.h,
-                    },
-                    gap: snapshot.domainGap,
-                    outer_gap: snapshot.domainOuterGap,
-                },
-                domains: this.r4DomainsPayload(r4),
-                focused_window: "",
-                windows: post,
-                command: {
-                    op: "directional-move-verify",
-                    verified: true,
-                    preconditions: r4.planned.rawPreconditions,
-                    operation: r4.planned.rawOperation,
-                },
-            });
+            const detachOutput = this.env.subscribeMoverOutput?.(r4.moverRef, () => this.onR4ArrivalSignal(flight, session));
+            if (detachOutput === null || detachOutput === undefined || typeof detachOutput !== "function") {
+                return false;
+            }
+            r4.detaches.push(detachOutput);
         } catch (error) {
             void error;
-            return null;
-        }
-        return payload;
-    }
-
-    // Best-effort terminal adapter-lost ack to the still pinned owner before
-    // local teardown. Never the well-known name, never a retry, and a failed
-    // report never changes the failure behavior. Sent only while ack is still
-    // unbound; after ack the pending is Rust-bound and local teardown without
-    // verify is the only safe path.
-    private sendR4LostAck(r4: R4Flight): void {
-        if (r4.acked || !isUniqueOwner(this.pinnedOwner)) {
-            return;
-        }
-        const snapshot = r4.snapshot;
-        let payload = "";
-        try {
-            payload = JSON.stringify({
-                v: PLAN_CONTRACT_VERSION,
-                correlation_id: r4.correlation,
-                owner: this.owner,
-                generation: this.generation,
-                revision: r4.baseRevision,
-                fingerprint: this.r4PostFingerprint(r4, this.r4PostWindows(r4)),
-                domain: {
-                    output: snapshot.domainOutput,
-                    workspace: snapshot.domainWorkspace,
-                    bounds: {
-                        x: snapshot.domainBounds.x,
-                        y: snapshot.domainBounds.y,
-                        w: snapshot.domainBounds.w,
-                        h: snapshot.domainBounds.h,
-                    },
-                    gap: snapshot.domainGap,
-                    outer_gap: snapshot.domainOuterGap,
-                },
-                domains: this.r4DomainsPayload(r4),
-                focused_window: "",
-                windows: this.r4PostWindows(r4),
-                command: { op: "directional-move-ack", ack_outcome: "adapter-lost" },
-            });
-        } catch (error) {
-            void error;
-            return;
-        }
-        if (payload.length > PLAN_MAX_REQUEST_BYTES) {
-            this.logToken(`${LOG_PREFIX}:request-refused correlation=${r4.correlation} reason=request-over-cap`);
-            return;
-        }
-        try {
-            const target = this.pinnedOwner as string;
-            this.env.callDbus(target, PLAN_OBJECT, PLAN_INTERFACE, PLAN_METHOD, payload, () => {});
-        } catch (error) {
-            void error;
-        }
-    }
-
-    private sendR4Request(payload: string, callback: (reply: unknown) => void): void {
-        const r4 = this.r4Current();
-        if (r4 === null || !isUniqueOwner(this.pinnedOwner)) {
-            this.failR4Terminal("owner-loss", false);
-            return;
-        }
-        // The original `planned` guard (`callbackSeen`) stays consumed across
-        // the whole R4 flight so a duplicate planned reply can never restart
-        // native transfer. Ack/verify bind to their own `r4` flags below.
-        try {
-            const target = this.pinnedOwner as string;
-            this.env.callDbus(target, PLAN_OBJECT, PLAN_INTERFACE, PLAN_METHOD, payload, callback);
-        } catch (error) {
-            void error;
-            this.failR4Terminal("owner-loss", false);
-        }
-    }
-
-    // One automatic pre-staging recovery attempt for an R4-shape move flight
-    // (op move, Left/Right direction, two-domain snapshot) that never staged
-    // transfer and never dispatched a native write: Rust may hold a clean
-    // unacknowledged pair pending worth withdrawing before terminal teardown.
-    // Returns true when the attempt started (caller must return immediately
-    // with the flight retained); false when the caller must run its terminal
-    // path unchanged. Ordinary ops, background flights, staged R4 flights,
-    // and any flight that dispatched fall through untouched.
-    private tryStartR4Cancel(
-        flightState: PendingFlight,
-        flight: number,
-        session: number,
-        fallthroughOutcome: string,
-    ): boolean {
-        if (
-            !this.inFlight ||
-            flight !== this.activeToken ||
-            session !== this.plannerSession ||
-            this.cancelArmed ||
-            this.pending !== flightState ||
-            flightState.plannerSession !== session
-        ) {
             return false;
         }
-        // Non-R4-shape flights (ordinary ops, recovery replays, background
-        // work, single-domain moves) never stage pair pendings: silently
-        // left to their existing terminal paths.
-        if (
-            flightState.op !== "move" ||
-            flightState.isRecovery ||
-            (flightState.direction !== "left" && flightState.direction !== "right") ||
-            flightState.snapshot.domains === undefined ||
-            flightState.snapshot.domains.length !== 2
-        ) {
-            return false;
-        }
-        // Bounded ineligibility reason for the normal-level cancel line, so a
-        // skipped attempt stays attributable without touching terminal
-        // behavior. A dispatched setter wins over a merely bound transfer:
-        // any native dispatch (including a throw) proves actuation started,
-        // while staging alone does not.
-        const ineligible =
-            this.r4Dispatches !== 0
-                ? "dispatched"
-                : this.r4Flight !== null
-                  ? "bound"
-                  : this.activationStep !== 5
-                    ? "phase"
-                    : !isUniqueOwner(this.pinnedOwner)
-                      ? "owner"
-                      : null;
-        if (ineligible !== null) {
-            this.lifecycleDiag(
-                flightState,
-                "cancel",
-                "eligibility",
-                `cancel-ineligible-${ineligible}`,
-                fallthroughOutcome,
-            );
-            return false;
-        }
-        // Arm before the fresh observation so a late original reply arriving
-        // between observation and send cannot stage transfer.
-        this.cancelArmed = true;
-        this.cancelReplySeen = false;
-        this.cancelOutcome = fallthroughOutcome;
-        const observed = this.freshDirectionalForFlight(flightState);
-        if (observed === null) {
-            return this.abortR4CancelStart(flightState);
-        }
-        const payload = this.buildR4CancelPayload(flightState, observed);
-        if (payload === null) {
-            return this.abortR4CancelStart(flightState);
-        }
-        if (payload.length > PLAN_MAX_REQUEST_BYTES) {
-            this.logToken(`${LOG_PREFIX}:request-refused correlation=${flightState.correlation} reason=request-over-cap`);
-            return this.abortR4CancelStart(flightState);
-        }
-        // Retire the firing/armed dispatch-phase deadline and arm the single
-        // bounded cancel round trip; the existing onTimeout cancel branch
-        // settles the wait. A stale epoch can never touch it.
-        this.clearTimer();
         try {
-            const cancel = this.env.scheduleOnce(PLAN_TIMEOUT_MS, () => this.onTimeout(flight, session));
-            this.cancelTimer = cancel;
+            const detachDesktops = this.env.subscribeMoverDesktops?.(r4.moverRef, () => this.onR4ArrivalSignal(flight, session));
+            if (detachDesktops === null || detachDesktops === undefined || typeof detachDesktops !== "function") {
+                return false;
+            }
+            r4.detaches.push(detachDesktops);
         } catch (error) {
             void error;
-            return this.abortR4CancelStart(flightState);
+            return false;
         }
-        try {
-            const target = this.pinnedOwner as string;
-            this.env.callDbus(
-                target,
-                PLAN_OBJECT,
-                PLAN_INTERFACE,
-                PLAN_METHOD,
-                payload,
-                (reply) => this.onCancelR4Reply(reply, flight, session),
-            );
-        } catch (error) {
-            void error;
-            this.clearTimer();
-            return this.abortR4CancelStart(flightState);
-        }
-        this.lifecycleDiag(flightState, "cancel", "attempt", "cancel-requested", fallthroughOutcome);
         return true;
     }
 
-    // Abort a just-armed attempt before any send: disarm, emit the bounded
-    // unavailable outcome, and report failure so the caller runs its terminal
-    // path unchanged. Covers unreadable scope, unbuildable/oversize payloads,
-    // timer arming faults, and D-Bus send throws.
-    private abortR4CancelStart(flightState: PendingFlight): false {
-        const cause = this.cancelOutcome;
-        this.cancelArmed = false;
-        this.cancelReplySeen = false;
-        this.cancelOutcome = "";
-        this.lifecycleDiag(flightState, "cancel", "send", "cancel-unavailable", cause);
-        return false;
-    }
-
-    // Cancel payload: the exact current two-domain pre-observation with the
-    // original request revision (never a base learned from a stale probe)
-    // plus the zero-dispatch attestation. Mirrors the dispatch wire mapping
-    // (domains, windows with carried flags, rebound directional fingerprint);
-    // the command carries only the cancel op and attestation. The attempt
-    // itself performs zero native writes: one synchronous observation and one
-    // D-Bus send only.
-    private buildR4CancelPayload(flightState: PendingFlight, observed: PlanObserved): string | null {
-        const snapshot = snapshotOf(observed);
-        if (snapshot.domains === undefined || snapshot.domains.length !== 2) {
-            return null;
-        }
-        // Wire mapping mirrors dispatch exactly (including the carried
-        // floating/fit-excluded flags and freshly read AR12 hints), so the
-        // Rust pre-image comparison sees the same normalized observation
-        // shape.
-        const hinted = this.attachHintSizes(snapshot, observed);
-        const windows = hinted.windows.map((entry) => ({
-            window: entry.id,
-            output: entry.output,
-            workspace: entry.workspace,
-            rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
-            ...(entry.floating === true ? { floating: true } : {}),
-            ...(entry.floating === true || entry.sticky === true || entry.fullscreen || entry.maximized
-                ? { fit_excluded: true }
-                : {}),
-            ...(entry.minSize === undefined ? {} : { min_size: { w: entry.minSize.w, h: entry.minSize.h } }),
-            ...(entry.maxSize === undefined ? {} : { max_size: { w: entry.maxSize.w, h: entry.maxSize.h } }),
-        }));
-        const domains = (snapshot.domains as ReadonlyArray<PlanDomain>).map((entry) => ({
-            output: entry.output,
-            workspace: entry.workspace,
-            bounds: { x: entry.bounds.x, y: entry.bounds.y, w: entry.bounds.w, h: entry.bounds.h },
-            gap: entry.gap,
-            outer_gap: entry.outerGap,
-            adjacent: { ...(entry.adjacent as Record<string, string>) },
-        }));
-        const fingerprint = planDirectionalFingerprint(
-            snapshot.domains as ReadonlyArray<PlanDomain>,
-            snapshot.focusedId,
-            windows.map((entry) => ({
-                window: entry.window as string,
-                output: entry.output as string,
-                workspace: entry.workspace as string,
-                rect: entry.rect as PlanRect,
-                floating: (entry as Record<string, unknown>)["floating"] === true,
-                fitExcluded: (entry as Record<string, unknown>)["fit_excluded"] === true,
-            })),
-        );
-        let payload = "";
-        try {
-            payload = JSON.stringify({
-                v: PLAN_CONTRACT_VERSION,
-                correlation_id: flightState.correlation,
-                owner: this.owner,
-                generation: this.generation,
-                revision: flightState.requestRevision,
-                fingerprint,
-                domain: {
-                    output: snapshot.domainOutput,
-                    workspace: snapshot.domainWorkspace,
-                    bounds: {
-                        x: snapshot.domainBounds.x,
-                        y: snapshot.domainBounds.y,
-                        w: snapshot.domainBounds.w,
-                        h: snapshot.domainBounds.h,
-                    },
-                    gap: snapshot.domainGap,
-                    outer_gap: snapshot.domainOuterGap,
-                },
-                domains,
-                focused_window: snapshot.focusedId,
-                windows,
-                command: { op: "directional-move-cancel", zero_dispatch: true },
-            });
-        } catch (error) {
-            void error;
-            return null;
-        }
-        return payload;
-    }
-
-    private onCancelR4Reply(reply: unknown, flight: number, session: number): void {
-        if (
-            !this.inFlight ||
-            flight !== this.activeToken ||
-            session !== this.plannerSession ||
-            !this.cancelArmed ||
-            this.cancelReplySeen ||
-            this.r4Flight !== null
-        ) {
+    private onR4ArrivalSignal(flight: number, session: number): void {
+        if (this.r4WriteDepth > 0) {
             return;
         }
-        const flightState = this.pending;
-        // The flight context is retained through the cancel wait (only
-        // explicit disable clears it, which also disarms); a missing flight
-        // here means teardown already owns the outcome, so there is nothing
-        // to fall through to.
-        if (flightState === null || flightState.plannerSession !== session) {
-            return;
-        }
-        this.cancelReplySeen = true;
-        this.clearTimer();
-        // Success binds the exact correlation, the cancelled outcome for this
-        // route, and a well-formed Rust base revision (the un-advanced pair
-        // base, which the adapter never knew pre-staging). A well-formed
-        // refusal is attributed with its allowlisted kind before the preserved
-        // fallthrough; anything else, including a lost or malformed reply,
-        // falls through without further attribution.
-        let cancelled = false;
-        let refusal: string | null = null;
-        let releaseRevision = flightState.requestRevision;
-        if (typeof reply === "string" && reply.length <= PLAN_MAX_REPLY_BYTES) {
-            try {
-                const parsed: unknown = JSON.parse(reply);
-                cancelled =
-                    isRecord(parsed) &&
-                    parsed["v"] === PLAN_CONTRACT_VERSION &&
-                    parsed["correlation_id"] === flightState.correlation &&
-                    parsed["outcome"] === "cancelled" &&
-                    parsed["kind"] === "directional-move" &&
-                    parseBaseRevision(parsed) !== null;
-                if (cancelled && isRecord(parsed)) {
-                    releaseRevision = parseBaseRevision(parsed) as number;
-                }
-                if (
-                    !cancelled &&
-                    isRecord(parsed) &&
-                    parsed["v"] === PLAN_CONTRACT_VERSION &&
-                    parsed["correlation_id"] === flightState.correlation &&
-                    (parsed["outcome"] === "rejected" || parsed["outcome"] === "diverged")
-                ) {
-                    refusal = cancelRefusalKind(parsed["kind"]);
-                }
-            } catch (error) {
-                void error;
-                cancelled = false;
-                refusal = null;
-            }
-        }
-        if (refusal !== null) {
-            this.lifecycleDiag(
-                flightState,
-                "cancel",
-                "reply",
-                `cancel-refused-${refusal}`,
-                this.cancelOutcome,
-            );
-        } else if (!cancelled) {
-            this.lifecycleDiag(flightState, "cancel", "reply", "cancel-reply-malformed", this.cancelOutcome);
-        }
-        if (!cancelled) {
-            const outcome = this.cancelOutcome;
-            this.cancelArmed = false;
-            this.cancelReplySeen = false;
-            this.cancelOutcome = "";
-            this.terminateFlight(flightState, outcome);
-            return;
-        }
-        const cause = this.cancelOutcome;
-        this.lifecycleDiag(flightState, "cancel", "reply", "accepted", cause, releaseRevision);
-        // Withdrawn: the matching unacknowledged Rust pair pending is gone
-        // with its staged desired state, nothing committed, nothing written,
-        // canonical sessions untouched. Clear the flight without terminal
-        // accounting and stay convergent so later commands may proceed under
-        // new correlations.
-        this.clearTimer();
-        this.inFlight = false;
-        this.pending = null;
-        this.pinnedOwner = null;
-        this.activationStep = 0;
-        this.cancelArmed = false;
-        this.cancelReplySeen = false;
-        this.cancelOutcome = "";
-        this.r4Dispatches = 0;
-        this.lifecycleDiag(flightState, "release", "local-release", "cancelled", cause, releaseRevision);
-        this.finishFlight();
-        try {
-            this.requestResync();
-        } catch (error) {
-            void error;
-        }
-    }
-
-    private onR4AckReply(reply: unknown, flight: number, session: number): void {
         const r4 = this.r4Current();
-        if (r4 === null || flight !== r4.flight || session !== r4.session || !r4.acked || r4.settled) {
+        if (r4 === null || flight !== r4.flight || session !== r4.session || r4.settled) {
             return;
         }
-        if (r4.ackReplySeen) {
+        if (this.checkR4Arrived(r4)) {
+            this.followR4Once(r4);
             return;
         }
-        r4.ackReplySeen = true;
-        if (typeof reply !== "string" || reply.length > PLAN_MAX_REPLY_BYTES) {
-            this.failR4Terminal("service-fault", false);
+        const placement = this.r4PlacementDetail(r4);
+        if (placement === "wrong-target" || placement === "unreadable") {
+            this.r4SettleTerminal(r4, placement === "wrong-target" ? "wrong-output" : "stale-scope");
+        }
+    }
+
+    private followR4Once(r4: R4Flight): void {
+        if (r4.followed || r4.settled) {
             return;
         }
-        let parsed: unknown = null;
+        if (!this.checkR4Arrived(r4)) {
+            return;
+        }
+        if (!this.r4ObservedMoverOnTarget(r4)) {
+            return;
+        }
+        let currentActive: object | null = null;
         try {
-            parsed = JSON.parse(reply);
+            currentActive = this.env.active();
         } catch (error) {
             void error;
-            this.failR4Terminal("service-fault", false);
-            return;
+            currentActive = null;
         }
-        if (!isRecord(parsed) || parsed["v"] !== PLAN_CONTRACT_VERSION || parsed["correlation_id"] !== r4.correlation) {
-            this.failR4Terminal("service-fault", false);
-            return;
-        }
-        const outcome = parsed["outcome"];
-        if (outcome !== "acknowledged") {
-            this.failR4Terminal(outcome === "diverged" ? sanitizeKind(parsed["kind"]) : "service-fault", false);
-            return;
-        }
-        this.diag(r4.op, r4.correlation, r4.planned.geometry.length, "r4-acknowledged");
-        // Scope may have changed between ack and verify: rerun the full
-        // desired observed proof so stale data never reaches verify.
-        const post = r4.epoch === this.epoch ? this.r4ObservedPost(r4) : null;
-        if (post === null) {
-            this.failR4Terminal("stale-scope", false);
-            return;
-        }
-        const payload = this.buildR4VerifyPayload(r4, post);
-        if (payload === null) {
-            this.failR4Terminal("precondition-mismatch", false);
-            return;
-        }
-        if (payload.length > PLAN_MAX_REQUEST_BYTES) {
-            this.logToken(`${LOG_PREFIX}:request-refused correlation=${r4.correlation} reason=request-over-cap`);
-            this.failR4Terminal("precondition-mismatch", false);
-            return;
-        }
-        this.diag(r4.op, r4.correlation, r4.planned.geometry.length, "r4-verify");
-        for (const entry of r4.planned.geometry) {
-            if (entry.overconstrained) {
-                this.logToken(`${LOG_PREFIX}:r4-verify correlation=${r4.correlation} window=${entry.window} overconstrained=true`);
+        if (currentActive === r4.moverRef) {
+            if (!this.checkR4Arrived(r4) || !this.r4ObservedMoverOnTarget(r4)) {
+                return;
             }
+            r4.followed = true;
+            this.diag(r4.op, r4.correlation, r4.planned.geometry.length, "r4-followed");
+            this.r4SettleTerminal(r4, "arrived");
+            return;
         }
-        r4.verifyRequested = true;
-        r4.verifyReplySeen = false;
-        this.sendR4Request(payload, (verifyReply) => this.onR4VerifyReply(verifyReply, flight, session));
+        if (!this.checkR4Arrived(r4)) {
+            return;
+        }
+        if (!this.r4ObservedMoverOnTarget(r4)) {
+            return;
+        }
+        if (!isUniqueOwner(this.pinnedOwner) || !isGeneration(this.generation)) {
+            return;
+        }
+        if (this.r4Current() !== r4 || r4.flight !== this.activeToken || r4.session !== this.plannerSession || r4.epoch !== this.epoch) {
+            return;
+        }
+        let focused = false;
+        this.r4WriteDepth += 1;
+        try {
+            focused = this.env.setActive(r4.moverRef) === true;
+        } catch (error) {
+            void error;
+            focused = false;
+        } finally {
+            this.r4WriteDepth = Math.max(0, this.r4WriteDepth - 1);
+        }
+        let after: object | null = null;
+        try {
+            after = this.env.active();
+        } catch (error) {
+            void error;
+            after = null;
+        }
+        r4.followed = true;
+        if (!focused || after !== r4.moverRef) {
+            this.logToken(`${LOG_PREFIX}:r4-follow correlation=${r4.correlation} outcome=focus-unconfirmed`);
+            this.r4SettleTerminal(r4, "focus-unconfirmed");
+            return;
+        }
+        this.diag(r4.op, r4.correlation, r4.planned.geometry.length, "r4-followed");
+        this.r4SettleTerminal(r4, "arrived");
     }
 
-    private onR4VerifyReply(reply: unknown, flight: number, session: number): void {
-        const r4 = this.r4Current();
-        if (r4 === null || flight !== r4.flight || session !== r4.session || !r4.acked || !r4.verifyRequested || r4.settled) {
-            return;
-        }
-        if (r4.verifyReplySeen) {
-            return;
-        }
-        r4.verifyReplySeen = true;
-        this.clearTimer();
-        if (typeof reply !== "string" || reply.length > PLAN_MAX_REPLY_BYTES) {
-            this.failR4Terminal("service-fault", false);
-            return;
-        }
-        let parsed: unknown = null;
-        try {
-            parsed = JSON.parse(reply);
-        } catch (error) {
-            void error;
-            this.failR4Terminal("service-fault", false);
-            return;
-        }
-        if (!isRecord(parsed) || parsed["v"] !== PLAN_CONTRACT_VERSION || parsed["correlation_id"] !== r4.correlation) {
-            this.failR4Terminal("service-fault", false);
-            return;
-        }
-        if (parsed["outcome"] !== "committed") {
-            this.failR4Terminal(parsed["outcome"] === "diverged" ? sanitizeKind(parsed["kind"]) : "service-fault", false);
-            return;
-        }
-        const settled = r4;
-        settled.settled = true;
-        this.clearR4Flight();
-        if (isUniqueOwner(this.pinnedOwner)) {
-            this.knownOwner = this.pinnedOwner;
-        }
-        this.inFlight = false;
-        this.pending = null;
-        this.pinnedOwner = null;
-        this.activationStep = 0;
-        this.cancelArmed = false;
-        this.cancelReplySeen = false;
-        this.cancelOutcome = "";
-        this.diag(settled.op, settled.correlation, settled.planned.geometry.length, "planned-applied");
-        // Exactly one observational active-group refresh after the committed
-        // R4 boundary, mirroring the local geometry-plan edge.
-        try {
-            this.env.onPlannedApplied?.(settled.op);
-        } catch (error) {
-            void error;
-        }
-        this.finishFlight();
-        try {
-            this.requestResync();
-        } catch (error) {
-            void error;
-        }
-    }
-
-    private onR4Timeout(flight: number, session: number): void {
+    private onR4ArrivalTimeout(flight: number, session: number): void {
         const r4 = this.r4Flight;
         if (r4 === null || r4.settled || flight !== r4.flight || session !== r4.session || !this.inFlight) {
             return;
         }
-        this.failR4Terminal("timeout", true);
+        if (this.checkR4Arrived(r4)) {
+            this.followR4Once(r4);
+            return;
+        }
+        this.r4SettleTerminal(r4, "arrival-timeout");
     }
 
-    // Terminal R4 failure: exactly one best-effort adapter-lost ack while ack
-    // is still unbound, otherwise no verify at all. Never replays the
-    // command. Local teardown releases the single-flight; one resync after
-    // converges from fresh observation.
-    private failR4Terminal(outcome: string, sendLostAck: boolean): void {
-        const r4 = this.r4Flight;
-        if (r4 === null || r4.settled) {
+    private r4SettleTerminal(r4: R4Flight, outcome: string): void {
+        if (r4.settled) {
             return;
         }
         r4.settled = true;
-        if (sendLostAck && !r4.acked) {
-            try {
-                this.sendR4LostAck(r4);
-            } catch (error) {
-                void error;
-            }
-        }
         const op = r4.op;
         const correlation = r4.correlation;
         const count = r4.planned.geometry.length;
+        const sourceTarget = (() => {
+            try {
+                const domains = r4.snapshot.domains as ReadonlyArray<PlanDomain> | undefined;
+                if (domains === undefined || domains.length !== 2) {
+                    return null;
+                }
+                const source = domains[0] as PlanDomain;
+                const target = domains[1] as PlanDomain;
+                return { source, target };
+            } catch (error) {
+                void error;
+                return null;
+            }
+        })();
         this.clearR4Flight();
+        this.clearR4ArrivalTimer();
         this.clearTimer();
         this.inFlight = false;
         this.pending = null;
         this.pinnedOwner = null;
         this.activationStep = 0;
-        this.cancelArmed = false;
-        this.cancelReplySeen = false;
-        this.cancelOutcome = "";
+        this.r4WriteDepth = 0;
         this.diag(op, correlation, count, outcome);
-        this.noteReconcileTerminal(op);
-        this.finishFlight();
-        try {
-            this.requestResync();
-        } catch (error) {
-            void error;
+        if (outcome === "arrived") {
+            try {
+                this.env.onPlannedApplied?.(op);
+            } catch (error) {
+                void error;
+            }
+        } else {
+            this.noteReconcileTerminal(op);
+        }
+        if (sourceTarget !== null) {
+            try {
+                this.notifySendSettled({
+                    sourceOutput: sourceTarget.source.output,
+                    sourceWorkspace: sourceTarget.source.workspace,
+                    targetOutput: sourceTarget.target.output,
+                    targetWorkspace: sourceTarget.target.workspace,
+                });
+            } catch (error) {
+                void error;
+            }
+        } else {
+            try {
+                this.requestResync();
+            } catch (error) {
+                void error;
+            }
+        }
+    }
+
+    private clearR4ArrivalTimer(): void {
+        const cancel = this.r4ArrivalTimer;
+        this.r4ArrivalTimer = null;
+        if (cancel !== null) {
+            try {
+                cancel();
+            } catch (error) {
+                void error;
+            }
         }
     }
 
@@ -7951,39 +7502,29 @@ export class PlanAdapter {
                 }
             }
             r4.detaches.length = 0;
-            r4.geoPending.clear();
         }
     }
 
-    private failFlight(flightState: PendingFlight, outcome: string, allowCancel = true): void {
+    private failFlight(flightState: PendingFlight, outcome: string): void {
         if (flightState.plannerSession !== this.plannerSession) {
-            return;
-        }
-        // One automatic pre-staging recovery attempt for R4-shape flights;
-        // every other flight (and any ineligible R4 flight) runs the terminal
-        // core unchanged.
-        if (allowCancel && this.tryStartR4Cancel(flightState, this.activeToken, this.plannerSession, outcome)) {
             return;
         }
         this.terminateFlight(flightState, outcome);
     }
 
-    // Shared terminal core: exactly the historical failFlight teardown. The
-    // cancel fence is cleared here so a failed attempt can never re-arm from
-    // its own fallthrough.
+    // Shared terminal core: exactly the historical failFlight teardown. R4-shape
+    // flights additionally force both domains through the settlement chain.
     private terminateFlight(flightState: PendingFlight, outcome: string): void {
         if (flightState.plannerSession !== this.plannerSession) {
             return;
         }
         this.clearR4Flight();
         this.clearTimer();
+        this.clearR4ArrivalTimer();
         this.inFlight = false;
         this.pending = null;
         this.pinnedOwner = null;
         this.activationStep = 0;
-        this.cancelArmed = false;
-        this.cancelReplySeen = false;
-        this.cancelOutcome = "";
         this.diag(flightState.op, flightState.correlation, flightState.windowCount, outcome);
         if (flightState.background === true) {
             this.noteBackgroundTerminal(flightState.snapshot);
@@ -8005,6 +7546,9 @@ export class PlanAdapter {
         // scope, write failure, owner loss) may lead to one bounded identity
         // probe. Only absence or changed owner recovers; same owner retains.
         this.maybeProbeAfterTerminal(flightState);
+        // R4-shape terminals force complete source AND target reconciliation
+        // through the existing single-flight chain, including equal evidence.
+        this.forceR4SettleFromPending(flightState);
         this.finishFlight();
     }
 
@@ -8014,11 +7558,6 @@ export class PlanAdapter {
     // converge across successive flights without polling or new timers.
     private finishFlight(): void {
         if (!this.enabled) {
-            return;
-        }
-        // An R4 flight holds the single-flight across native/ack/verify: no
-        // deferred or hidden-domain command may interleave until it settles.
-        if (this.r4Flight !== null) {
             return;
         }
         // Do not let a deferred foreground or hidden-domain command race the

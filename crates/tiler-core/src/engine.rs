@@ -3,50 +3,40 @@
 //! Adapter-normalized integer geometry only; no transport, JSON, platform, or
 //! process imports. Each logical `(OutputId, WorkspaceId)` domain keeps its
 //! own independent [`Session`] (independent revisions, fingerprints,
-//! divergence isolation, pending slot, node identity, and outer-gap handling).
+//! divergence isolation, node identity, and outer-gap handling).
 //! The engine keeps domains independent while owning seeding, relocation,
-//! pending pair state, and typed request/transaction outcomes. Protocol keeps
-//! envelope validation, ordered ingress fences, nested verify echo parsing,
+//! and typed request outcomes. Protocol keeps
+//! envelope validation, ordered ingress fences,
 //! and wire serialization.
 
 use std::collections::BTreeMap;
 
 use crate::boundary::{
     ActiveGroupResolution, CoreCommand, CoreEvent, CoreReply, NoGroupReason, ProjectionKind,
-    ProjectionPlan, TransactionKind, TransactionStatus, project_retained_tiled_geometry,
-    resolve_active_group,
+    ProjectionPlan, project_retained_tiled_geometry, resolve_active_group,
 };
 use crate::bounds::{is_gap, is_opaque_id};
 use crate::contract::{
     AckOutcome, AdapterAck, DivergenceKind, FocusCapabilities, FocusPostObservation,
-    LIFECYCLE_POLICY_VERSION, LifecycleCapabilities, LifecycleOperation, LifecyclePostObservation,
-    LifecyclePrecondition, Observation, PostObservation, ResizeCapabilities, ResizeMode,
-    ResizePostObservation,
+    LIFECYCLE_POLICY_VERSION, LifecycleCapabilities, LifecyclePostObservation, Observation,
+    PostObservation, ResizeCapabilities, ResizeMode, ResizePostObservation,
 };
-use crate::directional::{
-    Capabilities, Direction, MoveOperation, OutputId, Precondition, WindowId, WorkspaceId,
-};
+use crate::directional::{Capabilities, Direction, MoveOperation, OutputId, WindowId, WorkspaceId};
 use crate::geometry::Rect;
 use crate::ids::{CorrelationId, GenerationId, OwnerId};
-use crate::pending::{DirectionalMovePending, WorkspacePending};
 use crate::policy::{LayoutPolicy, default_policy};
-use crate::reconcile::{AckError, CancelUnackedError, StateKind, VerifyError};
 use crate::seed::EngineWindow;
 use crate::session::{
     CanonicalPairError, DomainKey, ExceptionFlags, OutputDomain, ProposeError, RefusalKind,
     Session, SessionCommand, SessionObservation,
 };
 
-/// Wire `kind`/`message` for the generic pending conflict fence.
+/// Wire `kind`/`message` for the Session internal pending fence.
 ///
 /// Mirrors the protocol `pending-exists` rejection exactly; single source for
-/// the Engine-owned conflict outcome so serialization stays byte identical.
+/// the Session-owned conflict outcome so serialization stays byte identical.
 const PENDING_EXISTS_KIND: &str = "pending-exists";
 const PENDING_EXISTS_MESSAGE: &str = "complete the pending plan before proposing";
-/// Wire `message` for the workspace second-send guard.
-///
-/// Distinct from the generic conflict message; preserved exactly.
-const WORKSPACE_PENDING_MESSAGE: &str = "complete the pending workspace plan before proposing";
 /// Wire `kind`/`message` for ambiguous seed order (mirrors `MSG_AMBIGUOUS`).
 const AMBIGUOUS_KIND: &str = "ambiguous-placement";
 const AMBIGUOUS_MESSAGE: &str = "window placement is ambiguous";
@@ -58,21 +48,18 @@ const OPAQUE_ID_MESSAGE: &str = "opaque id is invalid";
 const DIRECTION_KIND: &str = "direction-invalid";
 const DIRECTION_MESSAGE: &str = "direction is invalid";
 
-/// Portable world engine: per-domain sessions plus binding state and the two
-/// per-route pending pair transactions.
+/// Portable world engine: per-domain sessions plus binding state.
 #[derive(Debug, Clone)]
 pub struct Engine {
     /// Selected layout policy carried into every retained session. Stateless
     /// transactionally: cloning, backups, relocation, and canonical
     /// pair/split work carry it without touching revision, divergence,
-    /// pending, or gap state. COSMIC v1 is the only implementation.
+    /// or gap state. COSMIC v1 is the only implementation.
     policy: std::sync::Arc<dyn LayoutPolicy>,
     sessions: BTreeMap<DomainKey, Session>,
     outer_gaps: BTreeMap<DomainKey, i32>,
     owner: Option<OwnerId>,
     generation: Option<GenerationId>,
-    workspace_pending: Option<WorkspacePending>,
-    directional_pending: Option<DirectionalMovePending>,
     /// Last single-domain observation-convergence report for protocol logging.
     ///
     /// Set only when [`Engine::handle`] converged with nonzero counts; cleared
@@ -148,8 +135,6 @@ impl Default for Engine {
             outer_gaps: BTreeMap::new(),
             owner: None,
             generation: None,
-            workspace_pending: None,
-            directional_pending: None,
             last_convergence: None,
             converged_this_op: false,
         }
@@ -197,11 +182,7 @@ impl Engine {
     }
 
     /// Binding sync: on owner/generation change (adapter restart) discard the
-    /// world map and gap map, then rebind. Ordering matches the protocol
-    /// boundary exactly; ack/verify/status/cancel dispatch before this call
-    /// so a pending transaction is never discarded or rebound mid-flight.
-    /// Pending pair state is intentionally preserved here: only the
-    /// ack/verify divergence fences and the cancel withdraw clear it.
+    /// world map and gap map, then rebind.
     pub fn sync_binding(&mut self, owner: &OwnerId, generation: &GenerationId) {
         let owner_changed = self
             .owner
@@ -289,10 +270,7 @@ impl Engine {
     /// as carried; no new native flags) and the carried focus. Preserves
     /// survivor topology, exact-match revision semantics (no bump on zeros),
     /// and first-time fit/seed ([`ConvergeOutcome::NoSession`] runs the
-    /// existing seed route). Scoped Engine pending prevalidation
-    /// ([`Engine::pending_conflict`]) applies first so unrelated domains stay
-    /// usable while a send/R4 transaction is live elsewhere; send/R4 behavior
-    /// itself is untouched. Owner/generation mismatches return terminal
+    /// existing seed route). Owner/generation mismatches return terminal
     /// divergence without mutating (never diverging the retained session).
     /// Any other primitive error returns its typed rejection and the caller
     /// must not run the operation or reseed.
@@ -301,16 +279,6 @@ impl Engine {
         event: &CoreEvent,
         op: &'static str,
     ) -> ConvergeOutcome {
-        if let Some(reply) = self.pending_conflict(
-            op,
-            &event.owner,
-            &event.generation,
-            &event.domain_key,
-            None,
-            None,
-        ) {
-            return ConvergeOutcome::Rejected(Box::new(reply));
-        }
         let Some(session) = self.sessions.get(&event.domain_key) else {
             return ConvergeOutcome::NoSession;
         };
@@ -626,224 +594,9 @@ impl Engine {
         true
     }
 
-    /// Borrow the retained workspace-send pending, if any.
-    #[must_use]
-    pub fn workspace_pending(&self) -> Option<&WorkspacePending> {
-        self.workspace_pending.as_ref()
-    }
-
-    /// Mutably borrow the retained workspace-send pending, if any.
-    #[must_use]
-    pub fn workspace_pending_mut(&mut self) -> Option<&mut WorkspacePending> {
-        self.workspace_pending.as_mut()
-    }
-
-    /// Borrow the retained directional R4 pending, if any.
-    #[must_use]
-    pub fn directional_pending(&self) -> Option<&DirectionalMovePending> {
-        self.directional_pending.as_ref()
-    }
-
-    /// Mutably borrow the retained directional R4 pending, if any.
-    #[must_use]
-    pub fn directional_pending_mut(&mut self) -> Option<&mut DirectionalMovePending> {
-        self.directional_pending.as_mut()
-    }
-
-    /// Stage a workspace-send pending (exactly one live transaction per route).
-    pub fn set_workspace_pending(&mut self, pending: WorkspacePending) {
-        self.workspace_pending = Some(pending);
-    }
-
-    /// Take the workspace-send pending, restoring it on fence failure.
-    pub fn take_workspace_pending(&mut self) -> Option<WorkspacePending> {
-        self.workspace_pending.take()
-    }
-
-    /// Restore a taken workspace-send pending after a fence failure.
-    pub fn restore_workspace_pending(&mut self, pending: WorkspacePending) {
-        self.workspace_pending = Some(pending);
-    }
-
-    /// Withdraw a settled workspace-send pending.
-    pub fn clear_workspace_pending(&mut self) {
-        self.workspace_pending = None;
-    }
-
-    /// Stage a directional R4 pending (exactly one live transaction per route).
-    pub fn set_directional_pending(&mut self, pending: DirectionalMovePending) {
-        self.directional_pending = Some(pending);
-    }
-
-    /// Take the directional R4 pending, restoring it on fence failure.
-    pub fn take_directional_pending(&mut self) -> Option<DirectionalMovePending> {
-        self.directional_pending.take()
-    }
-
-    /// Restore a taken directional R4 pending after a fence failure.
-    pub fn restore_directional_pending(&mut self, pending: DirectionalMovePending) {
-        self.directional_pending = Some(pending);
-    }
-
-    /// Withdraw a settled directional R4 pending.
-    pub fn clear_directional_pending(&mut self) {
-        self.directional_pending = None;
-    }
-
-    /// Whether any pending pair transaction is live (workspace or directional).
-    #[must_use]
-    pub fn has_any_pending(&self) -> bool {
-        self.workspace_pending.is_some() || self.directional_pending.is_some()
-    }
-
-    /// Engine-owned pending conflict boundary for every non-ack/verify plan
-    /// operation.
-    ///
-    /// Serde-free and portable: `op` is the already-validated wire op token
-    /// (empty when missing/non-string, exactly like the protocol envelope),
-    /// `directional_keys` the validated directional keys when present, and
-    /// `raw_target` the carried `(output, workspace)` target scope when the
-    /// request carries one. No validation, no parsing, no scope shaping here;
-    /// protocol keeps envelope validation and wire serialization.
-    ///
-    /// Fence order and wire strings match the legacy protocol handler exactly:
-    /// directional pending first (diverged on pending divergence or
-    /// owner/generation loss, else `pending-exists` for the workspace route or
-    /// for ordinary plans affecting either pair key; unrelated domains stay
-    /// usable), then workspace pending (only two-domain directional moves
-    /// enter the conflict zone, diverged on divergence/identity loss, else
-    /// `pending-exists`). The second-send guard stays in
-    /// [`Engine::workspace_request_guard`]; ack/verify/status/cancel never
-    /// reach here.
-    #[must_use]
-    pub fn pending_conflict(
-        &self,
-        op: &str,
-        owner: &OwnerId,
-        generation: &GenerationId,
-        domain_key: &DomainKey,
-        directional_keys: Option<&[DomainKey]>,
-        raw_target: Option<(&str, &str)>,
-    ) -> Option<CoreReply> {
-        if let Some(pending) = self.directional_pending.as_ref() {
-            if let Some(reason) = pending.session().divergence() {
-                return Some(CoreReply::Diverged(reason));
-            }
-            if pending.owner() != owner || pending.generation() != generation {
-                return Some(CoreReply::Diverged(DivergenceKind::OwnerMismatch));
-            }
-            if op == "send-to-workspace" {
-                return Some(CoreReply::Rejected {
-                    kind: PENDING_EXISTS_KIND,
-                    message: PENDING_EXISTS_MESSAGE,
-                });
-            }
-            if op != "active-group" && pending.affects(domain_key, directional_keys, raw_target) {
-                return Some(CoreReply::Rejected {
-                    kind: PENDING_EXISTS_KIND,
-                    message: PENDING_EXISTS_MESSAGE,
-                });
-            }
-            return None;
-        }
-        if let Some(pending) = self.workspace_pending.as_ref() {
-            let has_pair = directional_keys.is_some_and(|keys| keys.len() == 2);
-            if op != "move" || !has_pair {
-                return None;
-            }
-            if let Some(reason) = pending.session().divergence() {
-                return Some(CoreReply::Diverged(reason));
-            }
-            if pending.owner() != owner || pending.generation() != generation {
-                return Some(CoreReply::Diverged(DivergenceKind::OwnerMismatch));
-            }
-            return Some(CoreReply::Rejected {
-                kind: PENDING_EXISTS_KIND,
-                message: PENDING_EXISTS_MESSAGE,
-            });
-        }
-        None
-    }
-
-    /// Engine-owned workspace second-send guard.
-    ///
-    /// Runs before target-scope validation in protocol (preserving the legacy
-    /// error order): diverged on pending divergence or owner/generation loss,
-    /// else the workspace-specific `pending-exists` rejection. `None` when no
-    /// workspace pending is live.
-    #[must_use]
-    pub fn workspace_request_guard(
-        &self,
-        owner: &OwnerId,
-        generation: &GenerationId,
-    ) -> Option<CoreReply> {
-        let pending = self.workspace_pending.as_ref()?;
-        if let Some(reason) = pending.session().divergence() {
-            return Some(CoreReply::Diverged(reason));
-        }
-        if pending.owner() != owner || pending.generation() != generation {
-            return Some(CoreReply::Diverged(DivergenceKind::OwnerMismatch));
-        }
-        Some(CoreReply::Rejected {
-            kind: PENDING_EXISTS_KIND,
-            message: WORKSPACE_PENDING_MESSAGE,
-        })
-    }
-
-    /// Typed world-level entry points for the status/cancellation/ack/verify phases.
-    ///
-    /// Protocol keeps envelope validation, tagged command decoding, target and
-    /// pair scope shape validation, nested verify echo parsing
-    /// (`verified=false` divergence before parse, malformed echoes as
-    /// `verify-invalid`), correlation echoes, and wire serialization: by the
-    /// time an event reaches here the command decoded, the workspace target
-    /// (or the directional pair) shape-checked, the verify echoes fully
-    /// validated into typed fields, and `!zero_dispatch` already refused on
-    /// the protocol side so scope errors keep their original precedence. Core
-    /// owns every outcome below and the one-shot state transition: pending
-    /// absence, divergence, owner/generation/correlation/revision identity,
-    /// ack outcome, drag capture, acknowledged state, retained scope binding,
-    /// pre/post-image matching, operation/echo binding, Session verify, and
-    /// the commit/split/store or cancelling withdraw itself.
-    ///
-    /// [`Engine::inspect`] serves the read-only status phases through `&self`,
-    /// so callers cannot mutate, acknowledge, verify, clear, rebind, or
-    /// advance anything. [`Engine::handle`] serves the mutating ack,
-    /// cancellation, and verification phases: ack acknowledges exactly the
-    /// matching pending in place (pending retained for verify); cancel arms
-    /// withdraw exactly the matching unacknowledged pending plus its staged
-    /// reconciler slot, preserving everything committed; verify commits
-    /// exactly the matching acknowledged pending on exact post-observation
-    /// proof then splits/stores (directional) or advances (workspace);
-    /// every other state fails closed with no mutation and no divergence
-    /// recorded beyond the typed reply.
-    pub fn inspect(&self, event: &CoreEvent) -> CoreReply {
-        match &event.command {
-            CoreCommand::SendStatus => self.workspace_status(event),
-            CoreCommand::DirectionalStatus => self.directional_status(event),
-            _ => CoreReply::Rejected {
-                kind: "unknown-value",
-                message: "request contains an unknown value",
-            },
-        }
-    }
-
-    /// Typed world-level entry point for the mutating ack/cancellation/verify
-    /// phases plus the workspace-send, reconcile, update-gaps, and
-    /// active-group request phases. Ack, cancellation, verification,
-    /// workspace-request, reconcile, update-gaps, and active-group commands
-    /// transition through `&mut self`; status commands route to
-    /// [`Engine::inspect`] and never mutate.
-    ///
-    /// The workspace request arm owns the pending outcome and the one-shot
-    /// staging: directional block first (generic `pending-exists`), then the
-    /// workspace second-send guard (workspace-specific `pending-exists`), then
-    /// the seed/propose/stage plan. Protocol keeps envelope validation,
-    /// target-scope shape validation, tagged command decoding, mover binding,
-    /// and wire serialization; by the time an event reaches here the target
-    /// scope is shape-checked and the command decoded, and protocol calls the
-    /// guard before scope validation so error order is preserved (the internal
-    /// re-check below is defensive and byte-identical).
+    /// Typed world-level entry point for the workspace-send, reconcile,
+    /// update-gaps, and active-group request phases. Direct send/R4 request
+    /// commits immediately with native assignment plus geometry.
     pub fn handle(&mut self, event: &CoreEvent) -> CoreReply {
         // Single-domain observation convergence before the ordinary operation:
         // one primitive with the complete current observation and focus keeps
@@ -852,13 +605,11 @@ impl Engine {
         // reseed; absent sessions run the existing seed route. Pair
         // (two-domain) moves/focuses converge once on the assembled
         // BOTH-domain world inside their request arms (same primitive, never
-        // two per-domain calls); workspace-send and ack/verify/status/cancel
-        // never converge here. `run_retained` never converges again, so no
+        // two per-domain calls). `run_retained` never converges again, so no
         // double converge.
         self.last_convergence = None;
         self.converged_this_op = false;
         match &event.command {
-            CoreCommand::SendStatus | CoreCommand::DirectionalStatus => self.inspect(event),
             CoreCommand::Reconcile => match self.converge_for_single_domain(event, "reconcile") {
                 ConvergeOutcome::Rejected(reply) => *reply,
                 _ => self.reconcile_request(event),
@@ -911,37 +662,6 @@ impl Engine {
                     _ => self.pointer_resize_request(event),
                 }
             }
-            CoreCommand::SendAck { ack_outcome } => self.workspace_ack(event, ack_outcome),
-            CoreCommand::DirectionalAck { ack_outcome } => self.directional_ack(event, ack_outcome),
-            CoreCommand::SendCancel { zero_dispatch } => {
-                self.workspace_cancel(event, *zero_dispatch)
-            }
-            CoreCommand::DirectionalCancel { zero_dispatch } => {
-                self.directional_cancel(event, *zero_dispatch)
-            }
-            CoreCommand::SendVerify {
-                verified,
-                preconditions,
-                operation,
-            } => self.workspace_verify(event, *verified, preconditions, operation),
-            CoreCommand::DirectionalVerify {
-                verified,
-                preconditions,
-                operation,
-                echo_source_output,
-                echo_source_workspace,
-                echo_target_output,
-                echo_target_workspace,
-            } => self.directional_verify(
-                event,
-                *verified,
-                preconditions,
-                operation,
-                echo_source_output,
-                echo_source_workspace,
-                echo_target_output,
-                echo_target_workspace,
-            ),
         }
     }
 
@@ -1200,24 +920,14 @@ impl Engine {
     /// single convergence primitive, then project no geometry. Truly empty
     /// observations retain nothing and project no geometry at revision 0.
     /// No lifecycle observation is fabricated: every path consumes the
-    /// validated carried window set. Send/R4 state is untouched.
+    /// validated carried window set.
     ///
-    /// Fail-closed send/R4 preservation: while any Engine pair transaction
-    /// is pending, an absent domain refuses `unknown-domain` exactly like
-    /// before (no target is created and pending stays untouched), same as
-    /// the admit path. Ambiguous same-workspace sources do NOT refuse: with
-    /// no pending, the fresh domain seeds without relocating (again like a
-    /// fresh admit), leaving every candidate source untouched. Only a
-    /// genuinely absent domain with no pending seeds here; a unique safe
-    /// source relocates in [`Engine::reconcile_request`] before this arm
-    /// runs.
+    /// Ambiguous same-workspace sources do NOT refuse: the fresh domain
+    /// seeds without relocating (like a fresh admit), leaving every
+    /// candidate source untouched. Only a genuinely absent domain seeds
+    /// here; a unique safe source relocates in
+    /// [`Engine::reconcile_request`] before this arm runs.
     fn fresh_reconcile_request(&mut self, event: &CoreEvent) -> CoreReply {
-        if self.has_any_pending() {
-            return CoreReply::Rejected {
-                kind: RefusalKind::UnknownDomain.as_str(),
-                message: RefusalKind::UnknownDomain.message(),
-            };
-        }
         if event.windows.is_empty() {
             return CoreReply::Projection(ProjectionPlan {
                 base_revision: 0,
@@ -1303,9 +1013,7 @@ impl Engine {
     /// workspace relocation and work-area reprojection.
     ///
     /// Fence order matches the legacy protocol handler exactly: unknown
-    /// session (fresh domains seed below instead of refusing, except while
-    /// any pair transaction is pending, which keeps the exact
-    /// `unknown-domain` refusal), divergence
+    /// session (fresh domains seed instead of refusing), divergence
     /// (as rejection, never terminal), pending/drag (`pending-exists`),
     /// retained domain binding (`unknown-domain`), inner-gap and outer-gap
     /// binding (`domain-mismatch` with the exact message), membership on the
@@ -1707,146 +1415,27 @@ impl Engine {
         }
     }
 
-    /// Read-only workspace-send status classification over the retained
-    /// [`WorkspacePending`]. Never mutates, acknowledges, verifies, clears,
-    /// rebinds, or advances anything.
-    fn workspace_status(&self, event: &CoreEvent) -> CoreReply {
-        let Some(pending) = self.workspace_pending.as_ref() else {
-            return CoreReply::Status {
-                base_revision: None,
-                status: TransactionStatus::NoPendingUnknown,
-            };
-        };
-        if let Some(reason) = pending.session().divergence() {
-            return CoreReply::Diverged(reason);
-        }
-        if pending.owner() != &event.owner
-            || pending.generation() != &event.generation
-            || pending.correlation() != &event.correlation
-            || event.revision != pending.base_revision()
-        {
-            return CoreReply::Status {
-                base_revision: Some(pending.base_revision()),
-                status: TransactionStatus::Stale,
-            };
-        }
-        let unresolved = |pending: &WorkspacePending| CoreReply::Status {
-            base_revision: Some(pending.base_revision()),
-            status: TransactionStatus::Unresolved,
-        };
-        let Some((target_domain, _)) = event.target_domain.as_ref() else {
-            return unresolved(pending);
-        };
-        let retained = pending.session().domains();
-        if retained.len() != 2 || retained[0] != event.domain || retained[1] != *target_domain {
-            return unresolved(pending);
-        }
-        if !pending.post_matches(&event.windows, &event.target_windows) {
-            return unresolved(pending);
-        }
-        match pending.session().status().state {
-            StateKind::PendingAcked => CoreReply::Status {
-                base_revision: Some(pending.base_revision()),
-                status: TransactionStatus::PostAcked,
-            },
-            StateKind::PendingUnacked => CoreReply::Status {
-                base_revision: Some(pending.base_revision()),
-                status: TransactionStatus::PostUnacked,
-            },
-            _ => unresolved(pending),
-        }
-    }
-
-    /// Read-only directional R4 status classification over the retained
-    /// [`DirectionalMovePending`]. Same read-only contract as
-    /// [`Engine::workspace_status`].
-    fn directional_status(&self, event: &CoreEvent) -> CoreReply {
-        let Some(pending) = self.directional_pending.as_ref() else {
-            return CoreReply::Status {
-                base_revision: None,
-                status: TransactionStatus::NoPendingUnknown,
-            };
-        };
-        if let Some(reason) = pending.session().divergence() {
-            return CoreReply::Diverged(reason);
-        }
-        if pending.owner() != &event.owner
-            || pending.generation() != &event.generation
-            || pending.correlation() != &event.correlation
-            || event.revision != pending.base_revision()
-        {
-            return CoreReply::Status {
-                base_revision: Some(pending.base_revision()),
-                status: TransactionStatus::Stale,
-            };
-        }
-        let unresolved = |pending: &DirectionalMovePending| CoreReply::Status {
-            base_revision: Some(pending.base_revision()),
-            status: TransactionStatus::Unresolved,
-        };
-        let Some(pair) = event.directional.as_ref().filter(|pair| pair.len() == 2) else {
-            return unresolved(pending);
-        };
-        let (source_domain, source_key) = &pair[0];
-        let (target_domain, target_key) = &pair[1];
-        if source_key != pending.source_key() || target_key != pending.target_key() {
-            return unresolved(pending);
-        }
-        let retained = pending.session().domains();
-        if retained.len() != 2 || retained[0] != *source_domain || retained[1] != *target_domain {
-            return unresolved(pending);
-        }
-        if !pending.post_matches(&event.windows) {
-            return unresolved(pending);
-        }
-        match pending.session().status().state {
-            StateKind::PendingAcked => CoreReply::Status {
-                base_revision: Some(pending.base_revision()),
-                status: TransactionStatus::PostAcked,
-            },
-            StateKind::PendingUnacked => CoreReply::Status {
-                base_revision: Some(pending.base_revision()),
-                status: TransactionStatus::PostUnacked,
-            },
-            _ => unresolved(pending),
-        }
-    }
-
-    /// Workspace-send request phase: rebuild the two-domain session from the
-    /// observation, propose the same-output distinct-workspace move, and retain
-    /// exactly one pending session. Never auto-acknowledges.
+    /// Workspace-send request phase: canonical-pair immediate commit.
     ///
-    /// Fence order matches the legacy protocol handler exactly: directional
-    /// block (diverged on divergence/identity loss, else generic
-    /// `pending-exists`), then the workspace second-send guard (diverged on
-    /// divergence/identity loss, else the workspace-specific `pending-exists`),
-    /// then seed order (`ambiguous-placement`), workspace seed (`seed-failed`),
-    /// focus sync (`focus-mismatch`), propose (mapped to `Rejected` with the
-    /// exact kind/message, including divergences as rejections like the legacy
-    /// `propose_failure`), and the `MoveTiled` shape gate
-    /// (`move-op-invalid`). On success stages exactly one [`WorkspacePending`]
-    /// with the dispatch-time pre-image and returns the typed
-    /// `SendWorkspace` plan. Protocol keeps target-scope shape validation,
-    /// tagged command decoding, mover binding, and wire serialization; the
-    /// mover binding (focused non-empty, window == focused, command target ==
-    /// scope) is already checked there, so this trusts the carried
-    /// `target_domain` and command fields beyond presence/shape.
+    /// Assembles the temporary canonical source/target pair from the retained
+    /// per-domain sessions (same-output distinct-workspace accepted by
+    /// `Session::paired_from_canonical`), preserving both survivor trees. A
+    /// previously absent source seeds once from its complete observation; a
+    /// retained source is never reseeded. An empty target uses `None`.
+    /// Converges once over BOTH domains with the combined
+    /// `workspace_observation_for` (never `event.windows` alone), split/stored
+    /// before the command so a refused proposal keeps the converged
+    /// observation. Then proposes `MoveToWorkspace` and synchronously commits
+    /// its planned topology via `commit_lifecycle`, split/storing both
+    /// canonical sessions (source `event.outer_gap`, retained-or-zero target
+    /// gap) and returning `SendWorkspace`. No pair survives the call. A
+    /// failed commit stores nothing further, so no half pair persists.
+    ///
+    /// Fence order: target presence/shape, focus binding, canonical assembly
+    /// (`canonical-*`), fresh-source seed (`seed-failed`), one combined
+    /// convergence, focus sync (`focus-mismatch`), propose (mapped to
+    /// `Rejected`), and the `MoveTiled` shape gate (`move-op-invalid`).
     fn workspace_request(&mut self, event: &CoreEvent) -> CoreReply {
-        if let Some(pending) = self.directional_pending.as_ref() {
-            if let Some(reason) = pending.session().divergence() {
-                return CoreReply::Diverged(reason);
-            }
-            if pending.owner() != &event.owner || pending.generation() != &event.generation {
-                return CoreReply::Diverged(DivergenceKind::OwnerMismatch);
-            }
-            return CoreReply::Rejected {
-                kind: PENDING_EXISTS_KIND,
-                message: PENDING_EXISTS_MESSAGE,
-            };
-        }
-        if let Some(reply) = self.workspace_request_guard(&event.owner, &event.generation) {
-            return reply;
-        }
         let CoreCommand::SendToWorkspace {
             window,
             target_output,
@@ -1882,53 +1471,127 @@ impl Engine {
                 message: "the moved window is not the focused window",
             };
         }
-        let Some(source_order) = crate::seed::order_spatial_with_focus_last(
-            event.windows.clone(),
-            &event.focused_window,
-            false,
-        ) else {
-            return CoreReply::Rejected {
-                kind: AMBIGUOUS_KIND,
-                message: AMBIGUOUS_MESSAGE,
+        let source_key = event.domain_key.clone();
+        let target_key = target_key.clone();
+        // First-time source seed from the complete observation when absent.
+        // Never reseeds a retained source: presence (even unusable/empty)
+        // falls through to canonical assembly below, which fails closed.
+        if !self.contains(&source_key) {
+            let canonical_source = Self::canonical_component_domain(&event.domain);
+            let mut seeded = match Session::new(
+                event.owner.clone(),
+                event.generation.clone(),
+                0,
+                event.fingerprint,
+                vec![canonical_source],
+            ) {
+                Ok(session) => session,
+                Err(_) => {
+                    return CoreReply::SnapshotInvalid {
+                        message: OBSERVATION_MESSAGE,
+                        detail: "seed-failed",
+                    };
+                }
             };
-        };
-        let empty_focus = WindowId(String::new());
-        let Some(target_order) = crate::seed::order_spatial_with_focus_last(
-            event.target_windows.clone(),
-            &empty_focus,
-            false,
-        ) else {
-            return CoreReply::Rejected {
-                kind: AMBIGUOUS_KIND,
-                message: AMBIGUOUS_MESSAGE,
+            seeded.set_policy(self.policy.clone());
+            let seed_observation = crate::seed::session_observation_for(
+                &event.owner,
+                &event.generation,
+                seeded.accepted_revision(),
+                event.fingerprint,
+                &event.windows,
+            );
+            let seed_focus = if event.focused_window.0.is_empty() {
+                None
+            } else {
+                Some(&event.focused_window)
             };
-        };
-        let Some(mut session) = crate::seed::seed_workspace_session(
-            &event.owner,
-            &event.generation,
-            event.fingerprint,
-            &event.domain,
-            target_domain,
-            &source_order,
-            &target_order,
-        ) else {
-            return CoreReply::SnapshotInvalid {
-                message: OBSERVATION_MESSAGE,
-                detail: "seed-failed",
-            };
-        };
-        // Fresh seeds propose through the selected policy from the start;
-        // storing stamps it again, so retention always carries it.
-        session.set_policy(self.policy.clone());
-        if !session.sync_focus_from_window(&event.domain_key, &event.focused_window) {
-            let kind = RefusalKind::FocusMismatch;
-            return CoreReply::Rejected {
-                kind: kind.as_str(),
-                message: kind.message(),
-            };
+            match seeded.converge_observation(&seed_observation, seed_focus) {
+                Ok(_) => {
+                    self.store_committed(source_key.clone(), seeded, event.outer_gap);
+                }
+                Err(ProposeError::PendingExists) => {
+                    return CoreReply::Rejected {
+                        kind: PENDING_EXISTS_KIND,
+                        message: PENDING_EXISTS_MESSAGE,
+                    };
+                }
+                Err(ProposeError::Diverged(reason)) => {
+                    return CoreReply::Diverged(reason);
+                }
+                Err(_) => {
+                    return CoreReply::SnapshotInvalid {
+                        message: OBSERVATION_MESSAGE,
+                        detail: "seed-failed",
+                    };
+                }
+            }
         }
+        // Canonical pair assembly preserving both survivor trees. Empty
+        // target observation uses `None`; a retained unusable target fails
+        // closed rather than inventing.
+        let source_component = Self::canonical_component_domain(&event.domain);
+        let target_component = Self::canonical_component_domain(target_domain);
+        let source = match self.sessions.get(&source_key).filter(|session| {
+            session_usable(session)
+                && !committed_session_is_empty(session)
+                && session_domain_matches(session, &source_component)
+        }) {
+            Some(session) => session.clone(),
+            None => {
+                return CoreReply::SnapshotInvalid {
+                    message: OBSERVATION_MESSAGE,
+                    detail: if self.contains(&source_key) {
+                        "canonical-pair-unusable"
+                    } else {
+                        "canonical-source-unavailable"
+                    },
+                };
+            }
+        };
+        let target = if event.target_windows.is_empty() {
+            None
+        } else {
+            match self.sessions.get(&target_key) {
+                None => None,
+                Some(session)
+                    if session_usable(session)
+                        && !committed_session_is_empty(session)
+                        && session_domain_matches(session, &target_component) =>
+                {
+                    Some(session.clone())
+                }
+                Some(_) => {
+                    return CoreReply::SnapshotInvalid {
+                        message: OBSERVATION_MESSAGE,
+                        detail: "canonical-pair-unusable",
+                    };
+                }
+            }
+        };
+        let mut session = match Session::paired_from_canonical(
+            &source,
+            target.as_ref(),
+            vec![event.domain.clone(), target_domain.clone()],
+        ) {
+            Ok(session) => session,
+            Err(error) => {
+                return CoreReply::SnapshotInvalid {
+                    message: OBSERVATION_MESSAGE,
+                    detail: match error {
+                        CanonicalPairError::MismatchedIdentity => {
+                            "canonical-pair-identity-mismatch"
+                        }
+                        CanonicalPairError::UnusableInput => "canonical-pair-unusable",
+                        CanonicalPairError::DomainMismatch => "canonical-pair-domain-mismatch",
+                        CanonicalPairError::DuplicateState => "canonical-pair-duplicate-state",
+                    },
+                };
+            }
+        };
+        // One convergence over BOTH domains with the combined observation.
         let base = session.accepted_revision();
-        let observation = crate::seed::workspace_observation_for(
+        let combined = crate::seed::workspace_observation_for(
             &event.owner,
             &event.generation,
             base,
@@ -1936,6 +1599,66 @@ impl Engine {
             &event.windows,
             &event.target_windows,
         );
+        let focus = if event.focused_window.0.is_empty() {
+            None
+        } else {
+            Some(&event.focused_window)
+        };
+        let (base, observation) = match session.converge_observation(&combined, focus) {
+            Ok(counts) => {
+                self.converged_this_op = true;
+                if counts.removed + counts.admitted + counts.flags_adopted > 0 {
+                    self.last_convergence = Some(EngineConvergenceReport {
+                        correlation: event.correlation.clone(),
+                        op: "send-to-workspace",
+                        removed: counts.removed,
+                        admitted: counts.admitted,
+                        flags_adopted: counts.flags_adopted,
+                    });
+                }
+                if !self.store_canonical_pair(
+                    source_key.clone(),
+                    target_key.clone(),
+                    session.clone(),
+                    event.outer_gap,
+                ) {
+                    return CoreReply::SnapshotInvalid {
+                        message: OBSERVATION_MESSAGE,
+                        detail: "commit-rejected",
+                    };
+                }
+                let base = session.accepted_revision();
+                let observation = crate::seed::workspace_observation_for(
+                    &event.owner,
+                    &event.generation,
+                    base,
+                    event.fingerprint,
+                    &event.windows,
+                    &event.target_windows,
+                );
+                (base, observation)
+            }
+            Err(ProposeError::PendingExists) => {
+                return CoreReply::Rejected {
+                    kind: PENDING_EXISTS_KIND,
+                    message: PENDING_EXISTS_MESSAGE,
+                };
+            }
+            Err(ProposeError::Diverged(reason)) => return CoreReply::Diverged(reason),
+            Err(error) => {
+                return CoreReply::Rejected {
+                    kind: error.kind(),
+                    message: error.message(),
+                };
+            }
+        };
+        if !session.sync_focus_from_window(&source_key, &event.focused_window) {
+            let kind = RefusalKind::FocusMismatch;
+            return CoreReply::Rejected {
+                kind: kind.as_str(),
+                message: kind.message(),
+            };
+        }
         let session_command = SessionCommand::MoveToWorkspace {
             window: crate::directional::WindowId(window.clone()),
             target_output: target_key.output.clone(),
@@ -1954,20 +1677,15 @@ impl Engine {
                         detail: "move-op-invalid",
                     };
                 };
-                let geometry = plan.desired_geometry.clone();
-                self.workspace_pending = Some(WorkspacePending::new(
-                    event.owner.clone(),
-                    event.generation.clone(),
-                    event.correlation.clone(),
-                    base,
-                    event.revision,
-                    session,
-                    geometry,
-                    event.focused_window.clone(),
-                    event.windows.clone(),
-                    event.target_windows.clone(),
-                ));
-                CoreReply::SendWorkspace(typed)
+                if Self::commit_lifecycle(&mut session, &plan, event, base)
+                    && self.store_canonical_pair(source_key, target_key, session, event.outer_gap)
+                {
+                    return CoreReply::SendWorkspace(typed);
+                }
+                CoreReply::SnapshotInvalid {
+                    message: OBSERVATION_MESSAGE,
+                    detail: "commit-rejected",
+                }
             }
             Err(error) => CoreReply::Rejected {
                 kind: error.kind(),
@@ -2333,12 +2051,11 @@ impl Engine {
     /// pair domain, canonical assembly (`canonical-*`), one convergence
     /// primitive on the assembled world (split/stored before the command),
     /// propose (mapped to `Rejected` with the exact kind/message, including
-    /// divergences as rejections like the legacy `propose_failure`), R4
-    /// pending guards (diverged on divergence/identity loss, else
-    /// `pending-exists`), then staging or the R1-R3 sync commit
-    /// (`commit-rejected` on failure).
+    /// divergences as rejections like the legacy `propose_failure`), then
+    /// the R4 immediate commit or the R1-R3 sync commit (`commit-rejected`
+    /// on failure).
     fn directional_move_request(&mut self, event: &CoreEvent) -> CoreReply {
-        use crate::boundary::{MoveCrossView, MovePlanReply};
+        use crate::boundary::MovePlanReply;
         let CoreCommand::Move {
             window,
             direction,
@@ -2378,19 +2095,6 @@ impl Engine {
         let (source_domain, source_key) = &pair[0];
         let (target_domain, target_key) = &pair[1];
         let window = WindowId(window.clone());
-        // Scoped pending pre-fence across either pair domain (workspace and
-        // directional pendings); send/R4 ack/verify/cancel arms are untouched.
-        let pair_keys = [source_key.clone(), target_key.clone()];
-        if let Some(reply) = self.pending_conflict(
-            "move",
-            &event.owner,
-            &event.generation,
-            &event.domain_key,
-            Some(&pair_keys),
-            None,
-        ) {
-            return reply;
-        }
         let mut session = match self.assemble_directional_pair(
             source_domain,
             source_key,
@@ -2427,24 +2131,6 @@ impl Engine {
         ) {
             Ok(plan) => {
                 if matches!(plan.dispatch.operation, MoveOperation::CrossOutput { .. }) {
-                    if let Some(pending) = self.directional_pending.as_ref() {
-                        if let Some(reason) = pending.session().divergence() {
-                            return CoreReply::Diverged(reason);
-                        }
-                        return CoreReply::Rejected {
-                            kind: PENDING_EXISTS_KIND,
-                            message: PENDING_EXISTS_MESSAGE,
-                        };
-                    }
-                    if let Some(pending) = self.workspace_pending.as_ref() {
-                        if let Some(reason) = pending.session().divergence() {
-                            return CoreReply::Diverged(reason);
-                        }
-                        return CoreReply::Rejected {
-                            kind: PENDING_EXISTS_KIND,
-                            message: PENDING_EXISTS_MESSAGE,
-                        };
-                    }
                     let target_outer_gap = event
                         .directional_target_outer_gap
                         .filter(|gap| is_gap(*gap))
@@ -2457,26 +2143,26 @@ impl Engine {
                             detail: "domain-invalid",
                         };
                     };
-                    let cross: &MoveCrossView = typed.cross.as_ref().expect("cross builds");
-                    let _ = cross;
-                    self.directional_pending = Some(DirectionalMovePending::new(
-                        event.owner.clone(),
-                        event.generation.clone(),
-                        event.correlation.clone(),
-                        base,
-                        event.revision,
-                        session,
-                        source_key.clone(),
-                        target_key.clone(),
-                        event.outer_gap,
-                        target_outer_gap,
-                        plan.desired_geometry.clone(),
-                        plan.dispatch.operation.clone(),
-                        plan.dispatch.preconditions.clone(),
-                        event.focused_window.clone(),
-                        event.windows.clone(),
-                    ));
-                    CoreReply::MoveDirectional(typed)
+                    if Self::commit_directional_move(&mut session, event, &plan, base) {
+                        let Ok((source, target)) = session.split_canonical_pair() else {
+                            return CoreReply::SnapshotInvalid {
+                                message: OBSERVATION_MESSAGE,
+                                detail: "commit-rejected",
+                            };
+                        };
+                        self.store_committed(source_key.clone(), source, event.outer_gap);
+                        if let Some(target) = target {
+                            self.store_committed(target_key.clone(), target, target_outer_gap);
+                        } else {
+                            self.sessions.remove(target_key);
+                            self.outer_gaps.remove(target_key);
+                        }
+                        return CoreReply::MoveDirectional(typed);
+                    }
+                    CoreReply::SnapshotInvalid {
+                        message: OBSERVATION_MESSAGE,
+                        detail: "commit-rejected",
+                    }
                 } else {
                     let typed = MovePlanReply::from_local(direction, &plan);
                     if Self::commit_directional_move(&mut session, event, &plan, base) {
@@ -2551,11 +2237,10 @@ impl Engine {
     ///
     /// Fence order matches the legacy protocol handler exactly: window opaque
     /// (`focus-window-invalid`), parsed direction (`direction-invalid`), pair
-    /// presence (`domain-invalid`), scoped pending pre-fence across either
-    /// pair domain, canonical assembly (`canonical-*`), one convergence
-    /// primitive on the assembled world (split/stored before the command),
-    /// propose (mapped like `propose_failure`), then the sync commit
-    /// (`commit-rejected` on failure).
+    /// presence (`domain-invalid`), canonical assembly (`canonical-*`), one
+    /// convergence primitive on the assembled world (split/stored before the
+    /// command), propose (mapped like `propose_failure`), then the sync
+    /// commit (`commit-rejected` on failure).
     fn directional_focus_request(&mut self, event: &CoreEvent) -> CoreReply {
         use crate::boundary::FocusPlanReply;
         let CoreCommand::Focus {
@@ -2595,19 +2280,6 @@ impl Engine {
         let (source_domain, source_key) = &pair[0];
         let (target_domain, target_key) = &pair[1];
         let window = WindowId(window.clone());
-        // Scoped pending pre-fence across either pair domain (workspace and
-        // directional pendings); send/R4 ack/verify/cancel arms are untouched.
-        let pair_keys = [source_key.clone(), target_key.clone()];
-        if let Some(reply) = self.pending_conflict(
-            "focus",
-            &event.owner,
-            &event.generation,
-            &event.domain_key,
-            Some(&pair_keys),
-            None,
-        ) {
-            return reply;
-        }
         let mut session = match self.assemble_directional_pair(
             source_domain,
             source_key,
@@ -3095,552 +2767,18 @@ impl Engine {
         session.verify_resize(&post).is_ok()
     }
 
-    /// Workspace-send acknowledgement: exact accepted acknowledgement
-    /// against the retained pending session. Fence order matches the legacy
-    /// protocol handler: ack outcome, pending absence, divergence,
-    /// owner/generation, correlation, revision, then the in-place acknowledge.
-    /// Refused ack outcome is a rejection; identity loss is terminal
-    /// divergence. On success the pending is retained for verify.
-    fn workspace_ack(&mut self, event: &CoreEvent, ack_outcome: &str) -> CoreReply {
-        use crate::contract::DivergenceKind;
-        let outcome = match ack_outcome {
-            "accepted" => AckOutcome::Accepted,
-            "refused-capability" => AckOutcome::RefusedCapability,
-            "partial-application" => AckOutcome::PartialApplication,
-            "adapter-lost" => AckOutcome::AdapterLost,
-            _ => {
-                return CoreReply::Rejected {
-                    kind: "ack-refused",
-                    message: "acknowledgement outcome is invalid",
-                };
-            }
-        };
-        let Some(pending) = self.workspace_pending.as_mut() else {
-            return CoreReply::Rejected {
-                kind: "no-pending",
-                message: "no workspace plan is pending",
-            };
-        };
-        if let Some(reason) = pending.session().divergence() {
-            return CoreReply::Diverged(reason);
-        }
-        if pending.owner() != &event.owner || pending.generation() != &event.generation {
-            return CoreReply::Diverged(DivergenceKind::OwnerMismatch);
-        }
-        if pending.correlation() != &event.correlation {
-            return CoreReply::Diverged(DivergenceKind::CorrelationMismatch);
-        }
-        if event.revision != pending.base_revision() {
-            return CoreReply::Diverged(DivergenceKind::StaleRevision);
-        }
-        let base = pending.base_revision();
-        let ack = AdapterAck::new(
-            event.correlation.clone(),
-            event.owner.clone(),
-            event.generation.clone(),
-            base,
-            outcome,
-        );
-        match pending.session_mut().acknowledge(&ack) {
-            Ok(_) => CoreReply::Acknowledged {
-                base_revision: base,
-                kind: TransactionKind::SendToWorkspace,
-            },
-            Err(AckError::Diverged(reason)) => CoreReply::Diverged(reason),
-            Err(AckError::NoPending) => CoreReply::Rejected {
-                kind: "no-pending",
-                message: "no workspace plan is pending",
-            },
-        }
-    }
-
-    /// Directional R4 acknowledgement: same contract as
-    /// [`Engine::workspace_ack`] against the retained pair session. No new
-    /// topology seeding; the pending is retained for verify.
-    fn directional_ack(&mut self, event: &CoreEvent, ack_outcome: &str) -> CoreReply {
-        use crate::contract::DivergenceKind;
-        let outcome = match ack_outcome {
-            "accepted" => AckOutcome::Accepted,
-            "refused-capability" => AckOutcome::RefusedCapability,
-            "partial-application" => AckOutcome::PartialApplication,
-            "adapter-lost" => AckOutcome::AdapterLost,
-            _ => {
-                return CoreReply::Rejected {
-                    kind: "ack-refused",
-                    message: "acknowledgement outcome is invalid",
-                };
-            }
-        };
-        let Some(pending) = self.directional_pending.as_mut() else {
-            return CoreReply::Rejected {
-                kind: "no-pending",
-                message: "no directional move is pending",
-            };
-        };
-        if let Some(reason) = pending.session().divergence() {
-            return CoreReply::Diverged(reason);
-        }
-        if pending.owner() != &event.owner || pending.generation() != &event.generation {
-            return CoreReply::Diverged(DivergenceKind::OwnerMismatch);
-        }
-        if pending.correlation() != &event.correlation {
-            return CoreReply::Diverged(DivergenceKind::CorrelationMismatch);
-        }
-        if event.revision != pending.base_revision() {
-            return CoreReply::Diverged(DivergenceKind::StaleRevision);
-        }
-        let base = pending.base_revision();
-        let ack = AdapterAck::new(
-            event.correlation.clone(),
-            event.owner.clone(),
-            event.generation.clone(),
-            base,
-            outcome,
-        );
-        match pending.session_mut().acknowledge(&ack) {
-            Ok(_) => CoreReply::Acknowledged {
-                base_revision: base,
-                kind: TransactionKind::DirectionalMove,
-            },
-            Err(AckError::Diverged(reason)) => CoreReply::Diverged(reason),
-            Err(AckError::NoPending) => CoreReply::Rejected {
-                kind: "no-pending",
-                message: "no directional move is pending",
-            },
-        }
-    }
-
-    /// Workspace-send cancellation: withdraw the exact retained
-    /// [`WorkspacePending`] only on exact identity, unacked state,
-    /// zero-dispatch attestation, retained scope binding, and byte-exact
-    /// pre-image proof. Fence order matches the legacy protocol handler:
-    /// zero-dispatch, divergence, identity, drag, acknowledged state, scope
-    /// binding, pre-image, then the one-shot withdraw.
-    fn workspace_cancel(&mut self, event: &CoreEvent, zero_dispatch: bool) -> CoreReply {
-        if !zero_dispatch {
-            return CoreReply::Rejected {
-                kind: "cancel-refused",
-                message: "adapter attests a native dispatch",
-            };
-        }
-        let Some(pending) = self.workspace_pending.as_ref() else {
-            return CoreReply::Rejected {
-                kind: "no-pending",
-                message: "no workspace plan is pending",
-            };
-        };
-        if let Some(reason) = pending.session().divergence() {
-            return CoreReply::Diverged(reason);
-        }
-        if pending.owner() != &event.owner
-            || pending.generation() != &event.generation
-            || pending.correlation() != &event.correlation
-            || event.revision != pending.request_revision()
-        {
-            return CoreReply::Rejected {
-                kind: "stale",
-                message: "cancel identity does not match the pending transaction",
-            };
-        }
-        if pending.session().has_drag() {
-            return CoreReply::Rejected {
-                kind: "cancel-refused",
-                message: "pending plan holds a drag capture",
-            };
-        }
-        if !matches!(pending.session().status().state, StateKind::PendingUnacked) {
-            return CoreReply::Rejected {
-                kind: "cancel-refused",
-                message: "pending plan was already acknowledged",
-            };
-        }
-        let Some((target_domain, _)) = event.target_domain.as_ref() else {
-            return CoreReply::Rejected {
-                kind: "cancel-mismatch",
-                message: "current scope does not match the pending transaction",
-            };
-        };
-        let retained = pending.session().domains();
-        if retained.len() != 2 || retained[0] != event.domain || retained[1] != *target_domain {
-            return CoreReply::Rejected {
-                kind: "cancel-mismatch",
-                message: "current scope does not match the pending transaction",
-            };
-        }
-        if !pending.pre_image_matches(&event.focused_window, &event.windows, &event.target_windows)
-        {
-            return CoreReply::Rejected {
-                kind: "cancel-mismatch",
-                message: "current observation does not match the dispatch-time pre-image",
-            };
-        }
-        let base = pending.base_revision();
-        let correlation = event.correlation.clone();
-        let Some(pending_mut) = self.workspace_pending.as_mut() else {
-            return CoreReply::Rejected {
-                kind: "no-pending",
-                message: "no workspace plan is pending",
-            };
-        };
-        match pending_mut
-            .session_mut()
-            .cancel_unacked_pending(&correlation, base)
-        {
-            Ok(()) => {
-                self.workspace_pending = None;
-                CoreReply::Cancelled {
-                    base_revision: base,
-                    kind: TransactionKind::SendToWorkspace,
-                }
-            }
-            Err(CancelUnackedError::Diverged(reason)) => CoreReply::Diverged(reason),
-            Err(CancelUnackedError::NoPending) => CoreReply::Rejected {
-                kind: "no-pending",
-                message: "no workspace plan is pending",
-            },
-            Err(CancelUnackedError::AlreadyAcknowledged) => CoreReply::Rejected {
-                kind: "cancel-refused",
-                message: "pending plan was already acknowledged",
-            },
-            Err(CancelUnackedError::DragActive) => CoreReply::Rejected {
-                kind: "cancel-refused",
-                message: "pending plan holds a drag capture",
-            },
-            Err(CancelUnackedError::BindingMismatch) => CoreReply::Rejected {
-                kind: "stale",
-                message: "cancel identity does not match the pending transaction",
-            },
-        }
-    }
-
-    /// Directional R4 cancellation: withdraw the exact retained
-    /// [`DirectionalMovePending`] under the same contract as
-    /// [`Engine::workspace_cancel`], with the carried pair keys and projected
-    /// domains bound to the retained pair plus pre-image equality over the
-    /// combined two-domain window set. On success the pair pending clears
-    /// without splitting or storing: canonical sessions are exactly preserved.
-    fn directional_cancel(&mut self, event: &CoreEvent, zero_dispatch: bool) -> CoreReply {
-        if !zero_dispatch {
-            return CoreReply::Rejected {
-                kind: "cancel-refused",
-                message: "adapter attests a native dispatch",
-            };
-        }
-        let Some(pending) = self.directional_pending.as_ref() else {
-            return CoreReply::Rejected {
-                kind: "no-pending",
-                message: "no directional move is pending",
-            };
-        };
-        if let Some(reason) = pending.session().divergence() {
-            return CoreReply::Diverged(reason);
-        }
-        if pending.owner() != &event.owner
-            || pending.generation() != &event.generation
-            || pending.correlation() != &event.correlation
-            || event.revision != pending.request_revision()
-        {
-            return CoreReply::Rejected {
-                kind: "stale",
-                message: "cancel identity does not match the pending transaction",
-            };
-        }
-        if pending.session().has_drag() {
-            return CoreReply::Rejected {
-                kind: "cancel-refused",
-                message: "pending plan holds a drag capture",
-            };
-        }
-        if !matches!(pending.session().status().state, StateKind::PendingUnacked) {
-            return CoreReply::Rejected {
-                kind: "cancel-refused",
-                message: "pending plan was already acknowledged",
-            };
-        }
-        let Some(pair) = event.directional.as_ref().filter(|pair| pair.len() == 2) else {
-            return CoreReply::Rejected {
-                kind: "cancel-mismatch",
-                message: "current scope does not match the pending transaction",
-            };
-        };
-        let (source_domain, source_key) = &pair[0];
-        let (target_domain, target_key) = &pair[1];
-        if source_key != pending.source_key() || target_key != pending.target_key() {
-            return CoreReply::Rejected {
-                kind: "cancel-mismatch",
-                message: "current scope does not match the pending transaction",
-            };
-        }
-        let retained = pending.session().domains();
-        if retained.len() != 2 || retained[0] != *source_domain || retained[1] != *target_domain {
-            return CoreReply::Rejected {
-                kind: "cancel-mismatch",
-                message: "current scope does not match the pending transaction",
-            };
-        }
-        if !pending.pre_image_matches(&event.focused_window, &event.windows) {
-            return CoreReply::Rejected {
-                kind: "cancel-mismatch",
-                message: "current observation does not match the dispatch-time pre-image",
-            };
-        }
-        let base = pending.base_revision();
-        let correlation = event.correlation.clone();
-        let Some(pending_mut) = self.directional_pending.as_mut() else {
-            return CoreReply::Rejected {
-                kind: "no-pending",
-                message: "no directional move is pending",
-            };
-        };
-        match pending_mut
-            .session_mut()
-            .cancel_unacked_pending(&correlation, base)
-        {
-            Ok(()) => {
-                self.directional_pending = None;
-                CoreReply::Cancelled {
-                    base_revision: base,
-                    kind: TransactionKind::DirectionalMove,
-                }
-            }
-            Err(CancelUnackedError::Diverged(reason)) => CoreReply::Diverged(reason),
-            Err(CancelUnackedError::NoPending) => CoreReply::Rejected {
-                kind: "no-pending",
-                message: "no directional move is pending",
-            },
-            Err(CancelUnackedError::AlreadyAcknowledged) => CoreReply::Rejected {
-                kind: "cancel-refused",
-                message: "pending plan was already acknowledged",
-            },
-            Err(CancelUnackedError::DragActive) => CoreReply::Rejected {
-                kind: "cancel-refused",
-                message: "pending plan holds a drag capture",
-            },
-            Err(CancelUnackedError::BindingMismatch) => CoreReply::Rejected {
-                kind: "stale",
-                message: "cancel identity does not match the pending transaction",
-            },
-        }
-    }
-
-    /// Workspace-send verification: exact post-observation (typed preconditions
-    /// and operation already validated in protocol after the `verified` gate)
-    /// plus a matching fresh observation commits the pending session and
-    /// advances the revision by exactly one. Pending mismatch or failed
-    /// verification is terminal divergence. Fence order matches the legacy
-    /// protocol handler: verified gate, pending existence, divergence,
-    /// owner/generation, correlation, revision, post-observation geometry,
-    /// then the lifecycle commit.
-    fn workspace_verify(
-        &mut self,
-        event: &CoreEvent,
-        verified: bool,
-        preconditions: &[LifecyclePrecondition],
-        operation: &LifecycleOperation,
-    ) -> CoreReply {
-        use crate::contract::DivergenceKind;
-        if !verified {
-            return CoreReply::Diverged(DivergenceKind::PostconditionUnverified);
-        }
-        let Some(mut pending) = self.take_workspace_pending() else {
-            return CoreReply::Rejected {
-                kind: "no-pending",
-                message: "no workspace plan is pending",
-            };
-        };
-        if let Some(reason) = pending.session().divergence() {
-            self.restore_workspace_pending(pending);
-            return CoreReply::Diverged(reason);
-        }
-        if pending.owner() != &event.owner || pending.generation() != &event.generation {
-            self.restore_workspace_pending(pending);
-            return CoreReply::Diverged(DivergenceKind::OwnerMismatch);
-        }
-        if pending.correlation() != &event.correlation {
-            self.restore_workspace_pending(pending);
-            return CoreReply::Diverged(DivergenceKind::CorrelationMismatch);
-        }
-        if event.revision != pending.base_revision() {
-            self.restore_workspace_pending(pending);
-            return CoreReply::Diverged(DivergenceKind::StaleRevision);
-        }
-        if !pending.post_matches(&event.windows, &event.target_windows) {
-            let reason = pending.session_mut().note_postcondition_mismatch();
-            self.restore_workspace_pending(pending);
-            return CoreReply::Diverged(reason);
-        }
-        let post = LifecyclePostObservation::new(
-            Observation::new(
-                event.owner.clone(),
-                event.generation.clone(),
-                pending.base_revision(),
-                event.fingerprint,
-            ),
-            event.correlation.clone(),
-            true,
-            preconditions.to_vec(),
-            operation.clone(),
-        );
-        match pending.session_mut().verify_lifecycle(&post) {
-            Ok(commit) => {
-                self.clear_workspace_pending();
-                CoreReply::Committed {
-                    revision: commit.revision,
-                    kind: TransactionKind::SendToWorkspace,
-                }
-            }
-            Err(VerifyError::Diverged(reason)) => {
-                self.restore_workspace_pending(pending);
-                CoreReply::Diverged(reason)
-            }
-            Err(_) => {
-                self.restore_workspace_pending(pending);
-                CoreReply::Rejected {
-                    kind: "verify-rejected",
-                    message: "workspace verification failed",
-                }
-            }
-        }
-    }
-
-    /// Directional R4 verification: exact post-observation (typed operation
-    /// and preconditions already validated in protocol after the `verified`
-    /// gate) plus a complete matching source+target observation commits via
-    /// `Session::verify_move`, then splits/stores the canonical sessions once
-    /// and replies `committed`. Fence order matches the legacy protocol
-    /// handler: verified gate, pending existence, divergence,
-    /// owner/generation, correlation, revision, operation/preconditions
-    /// binding, post-observation geometry, fenced echo source/target binding,
-    /// then the move commit plus canonical split/store.
-    #[allow(clippy::too_many_arguments)]
-    fn directional_verify(
-        &mut self,
-        event: &CoreEvent,
-        verified: bool,
-        preconditions: &[Precondition],
-        operation: &MoveOperation,
-        echo_source_output: &OutputId,
-        echo_source_workspace: &WorkspaceId,
-        echo_target_output: &OutputId,
-        echo_target_workspace: &WorkspaceId,
-    ) -> CoreReply {
-        use crate::contract::DivergenceKind;
-        if !verified {
-            return CoreReply::Diverged(DivergenceKind::PostconditionUnverified);
-        }
-        let Some(mut pending) = self.take_directional_pending() else {
-            return CoreReply::Rejected {
-                kind: "no-pending",
-                message: "no directional move is pending",
-            };
-        };
-        if let Some(reason) = pending.session().divergence() {
-            self.restore_directional_pending(pending);
-            return CoreReply::Diverged(reason);
-        }
-        if pending.owner() != &event.owner || pending.generation() != &event.generation {
-            self.restore_directional_pending(pending);
-            return CoreReply::Diverged(DivergenceKind::OwnerMismatch);
-        }
-        if pending.correlation() != &event.correlation {
-            self.restore_directional_pending(pending);
-            return CoreReply::Diverged(DivergenceKind::CorrelationMismatch);
-        }
-        if event.revision != pending.base_revision() {
-            self.restore_directional_pending(pending);
-            return CoreReply::Diverged(DivergenceKind::StaleRevision);
-        }
-        if *operation != *pending.operation() || *preconditions != *pending.preconditions() {
-            let reason = pending.session_mut().note_postcondition_mismatch();
-            self.restore_directional_pending(pending);
-            return CoreReply::Diverged(reason);
-        }
-        if !pending.post_matches(&event.windows) {
-            let reason = pending.session_mut().note_postcondition_mismatch();
-            self.restore_directional_pending(pending);
-            return CoreReply::Diverged(reason);
-        }
-        if let MoveOperation::CrossOutput {
-            target_output,
-            target_workspace,
-            ..
-        } = pending.operation()
-            && (echo_target_output.0 != target_output.0
-                || echo_target_workspace.0 != target_workspace.0
-                || echo_target_output.0 != pending.target_key().output.0
-                || echo_target_workspace.0 != pending.target_key().workspace.0
-                || echo_source_output.0 != pending.source_key().output.0
-                || echo_source_workspace.0 != pending.source_key().workspace.0)
-        {
-            let reason = pending.session_mut().note_postcondition_mismatch();
-            self.restore_directional_pending(pending);
-            return CoreReply::Diverged(reason);
-        }
-        let post = PostObservation::new(
-            Observation::new(
-                event.owner.clone(),
-                event.generation.clone(),
-                pending.base_revision(),
-                event.fingerprint,
-            ),
-            event.correlation.clone(),
-            true,
-            preconditions.to_vec(),
-            operation.clone(),
-        );
-        match pending.session_mut().verify_move(&post) {
-            Ok(commit) => {
-                let source_key = pending.source_key().clone();
-                let target_key = pending.target_key().clone();
-                let source_outer_gap = pending.source_outer_gap();
-                let target_outer_gap = pending.target_outer_gap();
-                let Ok((source, target)) = pending.session().split_canonical_pair() else {
-                    self.restore_directional_pending(pending);
-                    return CoreReply::Diverged(DivergenceKind::PostconditionMismatch);
-                };
-                self.clear_directional_pending();
-                self.store_committed(source_key, source, source_outer_gap);
-                if let Some(target) = target {
-                    self.store_committed(target_key, target, target_outer_gap);
-                } else {
-                    self.sessions.remove(&target_key);
-                    self.outer_gaps.remove(&target_key);
-                }
-                CoreReply::Committed {
-                    revision: commit.revision,
-                    kind: TransactionKind::DirectionalMove,
-                }
-            }
-            Err(VerifyError::Diverged(reason)) => {
-                self.restore_directional_pending(pending);
-                CoreReply::Diverged(reason)
-            }
-            Err(_) => {
-                self.restore_directional_pending(pending);
-                CoreReply::Rejected {
-                    kind: "verify-rejected",
-                    message: "directional verification failed",
-                }
-            }
-        }
-    }
-
     /// Portable output relocation: when no usable session exists for the
     /// target key, move a usable retained session with the same workspace id
     /// from a different output to the target, preserving topology, shares,
-    /// focus, exceptions, and revision. Fails closed with no mutation while
-    /// either pending pair transaction is live (the caller-owned pending scope
-    /// now lives here, so no flag crosses). Target collision, unique source, capacity
-    /// rollback, and empty-session rules match the legacy behavior exactly.
+    /// focus, exceptions, and revision. Target collision, unique source,
+    /// capacity rollback, and empty-session rules match the legacy behavior
+    /// exactly.
     pub fn try_relocate_for_target(
         &mut self,
         target_key: &DomainKey,
         target_domain: &OutputDomain,
         request_outer_gap: i32,
     ) -> bool {
-        if self.has_any_pending() {
-            return false;
-        }
         if !is_gap(request_outer_gap) {
             return false;
         }
@@ -4081,57 +3219,6 @@ mod tests {
         );
         assert_eq!(engine.find_unique_source_for_target(&target_key), None);
         assert!(!engine.try_relocate_for_target(&target_key, &target, 0));
-    }
-
-    #[test]
-    fn relocate_refuses_while_either_pending_is_live() {
-        use crate::directional::{OutputId, WindowId, WorkspaceId};
-        use crate::ids::CorrelationId;
-        use crate::pending::WorkspacePending;
-        use crate::seed::EngineWindow;
-        let mut engine = Engine::new();
-        let owner = OwnerId::parse("owner-a").expect("valid");
-        let gen_id = GenerationId::parse("gen-1").expect("valid");
-        engine.sync_binding(&owner, &gen_id);
-        let source_domain = domain("out", "ws");
-        let source_key = source_domain.key();
-        let order = vec![EngineWindow {
-            window: WindowId("win-1".to_owned()),
-            output: OutputId("out".to_owned()),
-            workspace: WorkspaceId("ws".to_owned()),
-            rect: Rect {
-                x: 0,
-                y: 0,
-                w: 10,
-                h: 10,
-            },
-            floating: false,
-            fit_excluded: false,
-            hints: crate::size_hints::WindowSizeHints::none(),
-        }];
-        let seeded =
-            crate::seed::seed_session(&owner, &gen_id, 7, &source_domain, &order).expect("seeds");
-        engine.insert_raw(source_key.clone(), seeded.clone(), 3);
-        let target = domain("out-2", "ws");
-        let target_key = target.key();
-        engine.set_workspace_pending(WorkspacePending::new(
-            owner.clone(),
-            gen_id.clone(),
-            CorrelationId::parse("corr-1").expect("valid"),
-            0,
-            0,
-            seeded,
-            Vec::new(),
-            WindowId("win-1".to_owned()),
-            order.clone(),
-            Vec::new(),
-        ));
-        assert!(engine.has_any_pending());
-        assert!(!engine.try_relocate_for_target(&target_key, &target, 0));
-        assert!(!engine.contains(&target_key));
-        assert!(engine.contains(&source_key));
-        engine.clear_workspace_pending();
-        assert!(engine.try_relocate_for_target(&target_key, &target, 0));
     }
 
     #[test]
@@ -4735,79 +3822,6 @@ mod tests {
     }
 
     #[test]
-    fn fresh_reconcile_rejects_while_pair_transaction_pending() {
-        use crate::boundary::{CoreCommand, CoreEvent, CoreReply};
-        use crate::ids::CorrelationId;
-        use crate::pending::WorkspacePending;
-        // Any live Engine pair transaction blocks fresh seeding exactly like
-        // relocation: the absent domain refuses `unknown-domain`, no target
-        // is created, and the pending stays live.
-        let owner = OwnerId::parse("owner-a").expect("valid");
-        let gen_id = GenerationId::parse("gen-1").expect("valid");
-        let mut engine = Engine::new();
-        engine.sync_binding(&owner, &gen_id);
-        let pair_session = Session::new(
-            owner.clone(),
-            gen_id.clone(),
-            0,
-            7,
-            vec![domain("out", "ws"), domain("out", "ws-2")],
-        )
-        .expect("pair session");
-        engine.set_workspace_pending(WorkspacePending::new(
-            owner.clone(),
-            gen_id.clone(),
-            CorrelationId::parse("corr-pend-1").expect("valid"),
-            0,
-            0,
-            pair_session,
-            Vec::new(),
-            WindowId("win-1".to_owned()),
-            Vec::new(),
-            Vec::new(),
-        ));
-        assert!(engine.has_any_pending());
-        let target = domain("out-fresh", "ws-fresh");
-        let target_key = target.key();
-        let event = CoreEvent {
-            owner: owner.clone(),
-            generation: gen_id.clone(),
-            correlation: CorrelationId::parse("corr-rec-pend").expect("valid"),
-            revision: 0,
-            fingerprint: 7,
-            domain: target,
-            domain_key: target_key.clone(),
-            outer_gap: 0,
-            focused_window: WindowId("win-n".to_owned()),
-            windows: vec![EngineWindow {
-                window: WindowId("win-n".to_owned()),
-                output: OutputId("out-fresh".to_owned()),
-                workspace: WorkspaceId("ws-fresh".to_owned()),
-                rect: Rect {
-                    x: 0,
-                    y: 0,
-                    w: 10,
-                    h: 10,
-                },
-                floating: false,
-                fit_excluded: false,
-                hints: crate::size_hints::WindowSizeHints::none(),
-            }],
-            directional: None,
-            directional_target_outer_gap: None,
-            target_domain: None,
-            target_windows: vec![],
-            command: CoreCommand::Reconcile,
-        };
-        match engine.handle(&event) {
-            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "unknown-domain"),
-            other => panic!("pending fresh reconcile must refuse, got {other:?}"),
-        }
-        assert!(!engine.contains(&target_key), "no target created");
-        assert!(engine.has_any_pending(), "pending untouched");
-    }
-
-    #[test]
     fn fresh_reconcile_seeds_despite_ambiguous_candidates() {
         use crate::boundary::{CoreCommand, CoreEvent, CoreReply};
         use crate::ids::CorrelationId;
@@ -4921,748 +3935,5 @@ mod tests {
             next
         );
         assert!(!engine.reproject_retained(&domain("missing", "ws").key(), next));
-    }
-
-    mod handle_tests {
-        use super::*;
-        use crate::boundary::{
-            CoreCommand, CoreEvent, CoreReply, TransactionKind, TransactionStatus,
-        };
-        use crate::directional::{OutputId, WindowId, WorkspaceId};
-        use crate::ids::CorrelationId;
-
-        fn pair_domains() -> (OutputDomain, OutputDomain) {
-            (domain("out", "ws"), domain("out", "ws-2"))
-        }
-
-        fn staged_workspace_engine() -> (Engine, OutputDomain, OutputDomain) {
-            let mut engine = Engine::new();
-            let owner = OwnerId::parse("owner-a").expect("valid");
-            let gen_id = GenerationId::parse("gen-1").expect("valid");
-            let correlation = CorrelationId::parse("corr-1").expect("valid");
-            let (source, target) = pair_domains();
-            let session = Session::new(
-                owner.clone(),
-                gen_id.clone(),
-                0,
-                7,
-                vec![source.clone(), target.clone()],
-            )
-            .expect("session");
-            engine.set_workspace_pending(WorkspacePending::new(
-                owner,
-                gen_id,
-                correlation,
-                0,
-                0,
-                session,
-                Vec::new(),
-                WindowId("focus".to_owned()),
-                Vec::new(),
-                Vec::new(),
-            ));
-            (engine, source, target)
-        }
-
-        fn workspace_event(
-            source: &OutputDomain,
-            target: &OutputDomain,
-            command: CoreCommand,
-        ) -> CoreEvent {
-            let (source_key, target_key) = (source.key(), target.key());
-            CoreEvent {
-                owner: OwnerId::parse("owner-a").expect("valid"),
-                generation: GenerationId::parse("gen-1").expect("valid"),
-                correlation: CorrelationId::parse("corr-1").expect("valid"),
-                revision: 0,
-                fingerprint: 7,
-                domain: source.clone(),
-                domain_key: source_key,
-                outer_gap: 0,
-                focused_window: WindowId("focus".to_owned()),
-                windows: Vec::new(),
-                directional: None,
-                directional_target_outer_gap: None,
-                target_domain: Some((target.clone(), target_key)),
-                target_windows: Vec::new(),
-                command,
-            }
-        }
-
-        #[test]
-        fn workspace_status_without_pending_is_unknown() {
-            let engine = Engine::new();
-            let (source, target) = pair_domains();
-            let event = workspace_event(&source, &target, CoreCommand::SendStatus);
-            assert_eq!(
-                engine.inspect(&event),
-                CoreReply::Status {
-                    base_revision: None,
-                    status: TransactionStatus::NoPendingUnknown,
-                }
-            );
-        }
-
-        #[test]
-        fn workspace_cancel_without_pending_is_no_pending() {
-            let mut engine = Engine::new();
-            let (source, target) = pair_domains();
-            let event = workspace_event(
-                &source,
-                &target,
-                CoreCommand::SendCancel {
-                    zero_dispatch: true,
-                },
-            );
-            assert_eq!(
-                engine.handle(&event),
-                CoreReply::Rejected {
-                    kind: "no-pending",
-                    message: "no workspace plan is pending",
-                }
-            );
-        }
-
-        #[test]
-        fn workspace_status_is_read_only_and_repeated() {
-            let (engine, source, target) = staged_workspace_engine();
-            let event = workspace_event(&source, &target, CoreCommand::SendStatus);
-            // Fresh two-domain session is Verified (never PendingAcked), so a
-            // fully matching empty observation classifies `unresolved`; the
-            // point here is the repeat is identical and the pending survives.
-            // `inspect` takes `&self`, so this test cannot mutate by construction.
-            let first = engine.inspect(&event);
-            let second = engine.inspect(&event);
-            assert_eq!(first, second);
-            assert_eq!(
-                first,
-                CoreReply::Status {
-                    base_revision: Some(0),
-                    status: TransactionStatus::Unresolved,
-                }
-            );
-            assert!(engine.workspace_pending().is_some());
-        }
-
-        #[test]
-        fn workspace_status_scope_mismatch_is_unresolved() {
-            let (engine, source, _) = staged_workspace_engine();
-            let other_target = domain("out", "ws-3");
-            let event = workspace_event(&source, &other_target, CoreCommand::SendStatus);
-            assert_eq!(
-                engine.inspect(&event),
-                CoreReply::Status {
-                    base_revision: Some(0),
-                    status: TransactionStatus::Unresolved,
-                }
-            );
-            assert!(engine.workspace_pending().is_some());
-        }
-
-        #[test]
-        fn workspace_status_stale_identity_leaves_pending() {
-            let (engine, source, target) = staged_workspace_engine();
-            let mut event = workspace_event(&source, &target, CoreCommand::SendStatus);
-            event.correlation = CorrelationId::parse("corr-2").expect("valid");
-            assert_eq!(
-                engine.inspect(&event),
-                CoreReply::Status {
-                    base_revision: Some(0),
-                    status: TransactionStatus::Stale,
-                }
-            );
-            assert!(engine.workspace_pending().is_some());
-        }
-
-        #[test]
-        fn workspace_cancel_refuses_native_dispatch_without_mutation() {
-            let (mut engine, source, target) = staged_workspace_engine();
-            let event = workspace_event(
-                &source,
-                &target,
-                CoreCommand::SendCancel {
-                    zero_dispatch: false,
-                },
-            );
-            assert_eq!(
-                engine.handle(&event),
-                CoreReply::Rejected {
-                    kind: "cancel-refused",
-                    message: "adapter attests a native dispatch",
-                }
-            );
-            assert!(engine.workspace_pending().is_some());
-        }
-
-        #[test]
-        fn workspace_cancel_stale_identity_leaves_pending() {
-            let (mut engine, source, target) = staged_workspace_engine();
-            let mut event = workspace_event(
-                &source,
-                &target,
-                CoreCommand::SendCancel {
-                    zero_dispatch: true,
-                },
-            );
-            event.revision = 9;
-            assert_eq!(
-                engine.handle(&event),
-                CoreReply::Rejected {
-                    kind: "stale",
-                    message: "cancel identity does not match the pending transaction",
-                }
-            );
-            assert!(engine.workspace_pending().is_some());
-        }
-
-        #[test]
-        fn workspace_cancel_acknowledged_state_precedes_scope_binding() {
-            // Fence order mirrors the legacy handler: the acknowledged-state
-            // refusal fires before scope binding, so a never-proposed session
-            // reports cancel-refused even when the carried scope also differs.
-            // True scope-mismatch with a live unacked pending is covered by
-            // the protocol wire goldens.
-            let (mut engine, source, _) = staged_workspace_engine();
-            let other_target = domain("out", "ws-3");
-            let event = workspace_event(
-                &source,
-                &other_target,
-                CoreCommand::SendCancel {
-                    zero_dispatch: true,
-                },
-            );
-            assert_eq!(
-                engine.handle(&event),
-                CoreReply::Rejected {
-                    kind: "cancel-refused",
-                    message: "pending plan was already acknowledged",
-                }
-            );
-            assert!(engine.workspace_pending().is_some());
-        }
-
-        #[test]
-        fn workspace_cancel_refuses_verified_session_without_mutation() {
-            // The staged session never proposed, so its reconciler holds no
-            // unacked pending: the withdraw refuses as already-acknowledged
-            // and the live transaction stays exactly intact.
-            let (mut engine, source, target) = staged_workspace_engine();
-            let event = workspace_event(
-                &source,
-                &target,
-                CoreCommand::SendCancel {
-                    zero_dispatch: true,
-                },
-            );
-            assert_eq!(
-                engine.handle(&event),
-                CoreReply::Rejected {
-                    kind: "cancel-refused",
-                    message: "pending plan was already acknowledged",
-                }
-            );
-            assert!(engine.workspace_pending().is_some());
-        }
-
-        fn staged_directional_engine() -> (Engine, OutputDomain, DomainKey, OutputDomain, DomainKey)
-        {
-            use crate::directional::MoveOperation;
-            let mut engine = Engine::new();
-            let owner = OwnerId::parse("owner-a").expect("valid");
-            let gen_id = GenerationId::parse("gen-1").expect("valid");
-            let correlation = CorrelationId::parse("corr-1").expect("valid");
-            let source = domain("out", "ws");
-            let target = domain("out-2", "ws");
-            let (source_key, target_key) = (source.key(), target.key());
-            let session = Session::new(
-                owner.clone(),
-                gen_id.clone(),
-                0,
-                7,
-                vec![source.clone(), target.clone()],
-            )
-            .expect("session");
-            engine.set_directional_pending(DirectionalMovePending::new(
-                owner,
-                gen_id,
-                correlation,
-                0,
-                0,
-                session,
-                source_key.clone(),
-                target_key.clone(),
-                0,
-                0,
-                Vec::new(),
-                MoveOperation::SwapNeighbor {
-                    rule: crate::directional::Rule::R2a,
-                    container: crate::directional::NodeId::from("root"),
-                    neighbor: crate::directional::NodeId::from("n"),
-                },
-                Vec::new(),
-                WindowId("focus".to_owned()),
-                Vec::new(),
-            ));
-            (engine, source, source_key, target, target_key)
-        }
-
-        fn directional_event(
-            source: &OutputDomain,
-            source_key: &DomainKey,
-            target: &OutputDomain,
-            target_key: &DomainKey,
-            command: CoreCommand,
-        ) -> CoreEvent {
-            CoreEvent {
-                owner: OwnerId::parse("owner-a").expect("valid"),
-                generation: GenerationId::parse("gen-1").expect("valid"),
-                correlation: CorrelationId::parse("corr-1").expect("valid"),
-                revision: 0,
-                fingerprint: 7,
-                domain: source.clone(),
-                domain_key: source_key.clone(),
-                outer_gap: 0,
-                focused_window: WindowId("focus".to_owned()),
-                windows: Vec::new(),
-                directional: Some(vec![
-                    (source.clone(), source_key.clone()),
-                    (target.clone(), target_key.clone()),
-                ]),
-                directional_target_outer_gap: Some(0),
-                target_domain: None,
-                target_windows: Vec::new(),
-                command,
-            }
-        }
-
-        #[test]
-        fn directional_status_without_pending_is_unknown() {
-            let engine = Engine::new();
-            let source = domain("out", "ws");
-            let target = domain("out-2", "ws");
-            let (source_key, target_key) = (source.key(), target.key());
-            let event = directional_event(
-                &source,
-                &source_key,
-                &target,
-                &target_key,
-                CoreCommand::DirectionalStatus,
-            );
-            assert_eq!(
-                engine.inspect(&event),
-                CoreReply::Status {
-                    base_revision: None,
-                    status: TransactionStatus::NoPendingUnknown,
-                }
-            );
-        }
-
-        #[test]
-        fn directional_cancel_without_pending_is_no_pending() {
-            let mut engine = Engine::new();
-            let source = domain("out", "ws");
-            let target = domain("out-2", "ws");
-            let (source_key, target_key) = (source.key(), target.key());
-            let event = directional_event(
-                &source,
-                &source_key,
-                &target,
-                &target_key,
-                CoreCommand::DirectionalCancel {
-                    zero_dispatch: true,
-                },
-            );
-            assert_eq!(
-                engine.handle(&event),
-                CoreReply::Rejected {
-                    kind: "no-pending",
-                    message: "no directional move is pending",
-                }
-            );
-        }
-
-        #[test]
-        fn directional_status_key_mismatch_is_unresolved_and_read_only() {
-            let (engine, source, _, target, target_key) = staged_directional_engine();
-            let wrong_source_key = domain("out-9", "ws").key();
-            let event = directional_event(
-                &source,
-                &wrong_source_key,
-                &target,
-                &target_key,
-                CoreCommand::DirectionalStatus,
-            );
-            let first = engine.inspect(&event);
-            assert_eq!(
-                first,
-                CoreReply::Status {
-                    base_revision: Some(0),
-                    status: TransactionStatus::Unresolved,
-                }
-            );
-            assert_eq!(engine.inspect(&event), first);
-            assert!(engine.directional_pending().is_some());
-        }
-
-        #[test]
-        fn directional_cancel_refuses_native_dispatch_and_stale_without_mutation() {
-            let (mut engine, source, source_key, target, target_key) = staged_directional_engine();
-            let refused = directional_event(
-                &source,
-                &source_key,
-                &target,
-                &target_key,
-                CoreCommand::DirectionalCancel {
-                    zero_dispatch: false,
-                },
-            );
-            assert_eq!(
-                engine.handle(&refused),
-                CoreReply::Rejected {
-                    kind: "cancel-refused",
-                    message: "adapter attests a native dispatch",
-                }
-            );
-            let mut stale = directional_event(
-                &source,
-                &source_key,
-                &target,
-                &target_key,
-                CoreCommand::DirectionalCancel {
-                    zero_dispatch: true,
-                },
-            );
-            stale.owner = OwnerId::parse("owner-b").expect("valid");
-            assert_eq!(
-                engine.handle(&stale),
-                CoreReply::Rejected {
-                    kind: "stale",
-                    message: "cancel identity does not match the pending transaction",
-                }
-            );
-            assert!(engine.directional_pending().is_some());
-        }
-
-        #[test]
-        fn directional_cancel_acknowledged_state_precedes_key_binding() {
-            // Same fence order as the workspace route: acknowledged-state
-            // refusal fires before key/scope binding. True key-mismatch with
-            // a live unacked pending is covered by the protocol wire goldens.
-            let (mut engine, source, _, target, target_key) = staged_directional_engine();
-            let wrong_source_key = domain("out-9", "ws").key();
-            let event = directional_event(
-                &source,
-                &wrong_source_key,
-                &target,
-                &target_key,
-                CoreCommand::DirectionalCancel {
-                    zero_dispatch: true,
-                },
-            );
-            assert_eq!(
-                engine.handle(&event),
-                CoreReply::Rejected {
-                    kind: "cancel-refused",
-                    message: "pending plan was already acknowledged",
-                }
-            );
-            assert!(engine.directional_pending().is_some());
-        }
-
-        #[test]
-        fn cancelled_reply_kinds_classify_routes() {
-            assert_eq!(
-                TransactionKind::SendToWorkspace.kind_str(),
-                "send-to-workspace"
-            );
-            assert_eq!(
-                TransactionKind::DirectionalMove.kind_str(),
-                "directional-move"
-            );
-            let _ = (OutputId("o".to_owned()), WorkspaceId("w".to_owned()));
-        }
-
-        #[test]
-        fn workspace_ack_invalid_outcome_precedes_no_pending() {
-            let mut engine = Engine::new();
-            let (source, target) = pair_domains();
-            let event = workspace_event(
-                &source,
-                &target,
-                CoreCommand::SendAck {
-                    ack_outcome: "bogus".to_owned(),
-                },
-            );
-            assert_eq!(
-                engine.handle(&event),
-                CoreReply::Rejected {
-                    kind: "ack-refused",
-                    message: "acknowledgement outcome is invalid",
-                }
-            );
-            assert!(engine.workspace_pending().is_none());
-        }
-
-        #[test]
-        fn workspace_ack_without_pending_is_no_pending() {
-            let mut engine = Engine::new();
-            let (source, target) = pair_domains();
-            let event = workspace_event(
-                &source,
-                &target,
-                CoreCommand::SendAck {
-                    ack_outcome: "accepted".to_owned(),
-                },
-            );
-            assert_eq!(
-                engine.handle(&event),
-                CoreReply::Rejected {
-                    kind: "no-pending",
-                    message: "no workspace plan is pending",
-                }
-            );
-        }
-
-        #[test]
-        fn workspace_ack_stale_identity_diverges_without_mutation() {
-            use crate::contract::DivergenceKind;
-            let (mut engine, source, target) = staged_workspace_engine();
-            let mut event = workspace_event(
-                &source,
-                &target,
-                CoreCommand::SendAck {
-                    ack_outcome: "accepted".to_owned(),
-                },
-            );
-            event.correlation = CorrelationId::parse("corr-2").expect("valid");
-            assert_eq!(
-                engine.handle(&event),
-                CoreReply::Diverged(DivergenceKind::CorrelationMismatch)
-            );
-            assert!(engine.workspace_pending().is_some());
-        }
-
-        #[test]
-        fn directional_ack_invalid_outcome_precedes_no_pending() {
-            let mut engine = Engine::new();
-            let source = domain("out", "ws");
-            let target = domain("out-2", "ws");
-            let (source_key, target_key) = (source.key(), target.key());
-            let event = directional_event(
-                &source,
-                &source_key,
-                &target,
-                &target_key,
-                CoreCommand::DirectionalAck {
-                    ack_outcome: "bogus".to_owned(),
-                },
-            );
-            assert_eq!(
-                engine.handle(&event),
-                CoreReply::Rejected {
-                    kind: "ack-refused",
-                    message: "acknowledgement outcome is invalid",
-                }
-            );
-            assert!(engine.directional_pending().is_none());
-        }
-
-        #[test]
-        fn directional_ack_without_pending_is_no_pending() {
-            let mut engine = Engine::new();
-            let source = domain("out", "ws");
-            let target = domain("out-2", "ws");
-            let (source_key, target_key) = (source.key(), target.key());
-            let event = directional_event(
-                &source,
-                &source_key,
-                &target,
-                &target_key,
-                CoreCommand::DirectionalAck {
-                    ack_outcome: "accepted".to_owned(),
-                },
-            );
-            assert_eq!(
-                engine.handle(&event),
-                CoreReply::Rejected {
-                    kind: "no-pending",
-                    message: "no directional move is pending",
-                }
-            );
-        }
-
-        #[test]
-        fn directional_ack_stale_identity_diverges_without_mutation() {
-            use crate::contract::DivergenceKind;
-            let (mut engine, source, source_key, target, target_key) = staged_directional_engine();
-            let mut event = directional_event(
-                &source,
-                &source_key,
-                &target,
-                &target_key,
-                CoreCommand::DirectionalAck {
-                    ack_outcome: "accepted".to_owned(),
-                },
-            );
-            event.revision = 9;
-            assert_eq!(
-                engine.handle(&event),
-                CoreReply::Diverged(DivergenceKind::StaleRevision)
-            );
-            assert!(engine.directional_pending().is_some());
-        }
-
-        #[test]
-        fn pending_conflict_without_pending_is_none() {
-            let engine = Engine::new();
-            let key = domain("out", "ws").key();
-            let owner = OwnerId::parse("owner-a").expect("valid");
-            let gen_id = GenerationId::parse("gen-1").expect("valid");
-            assert!(
-                engine
-                    .pending_conflict("reconcile", &owner, &gen_id, &key, None, None)
-                    .is_none()
-            );
-            assert!(
-                engine
-                    .pending_conflict("send-to-workspace", &owner, &gen_id, &key, None, None)
-                    .is_none()
-            );
-            assert!(engine.workspace_request_guard(&owner, &gen_id).is_none());
-        }
-
-        #[test]
-        fn pending_conflict_directional_blocks_send_unconditionally() {
-            let (engine, source, source_key, _, _) = staged_directional_engine();
-            let owner = OwnerId::parse("owner-a").expect("valid");
-            let gen_id = GenerationId::parse("gen-1").expect("valid");
-            assert_eq!(
-                engine.pending_conflict(
-                    "send-to-workspace",
-                    &owner,
-                    &gen_id,
-                    &source_key,
-                    None,
-                    Some(("out", "ws-2")),
-                ),
-                Some(CoreReply::Rejected {
-                    kind: "pending-exists",
-                    message: "complete the pending plan before proposing",
-                })
-            );
-            assert!(
-                engine
-                    .pending_conflict("active-group", &owner, &gen_id, &source_key, None, None)
-                    .is_none(),
-                "active-group never conflicts"
-            );
-            assert_eq!(
-                engine.pending_conflict("reconcile", &owner, &gen_id, &source_key, None, None,),
-                Some(CoreReply::Rejected {
-                    kind: "pending-exists",
-                    message: "complete the pending plan before proposing",
-                }),
-                "request domain touching the pair blocks"
-            );
-            let _ = source;
-        }
-
-        #[test]
-        fn pending_conflict_workspace_blocks_only_paired_move() {
-            let (engine, _, _) = staged_workspace_engine();
-            let key = domain("out", "ws").key();
-            let pair = [domain("out", "ws").key(), domain("out-2", "ws").key()];
-            let owner = OwnerId::parse("owner-a").expect("valid");
-            let gen_id = GenerationId::parse("gen-1").expect("valid");
-            assert!(
-                engine
-                    .pending_conflict("reconcile", &owner, &gen_id, &key, None, None)
-                    .is_none(),
-                "ordinary plans keep existing behavior under workspace pending"
-            );
-            assert!(
-                engine
-                    .pending_conflict("move", &owner, &gen_id, &key, None, None)
-                    .is_none(),
-                "single-domain move keeps existing behavior"
-            );
-            assert_eq!(
-                engine.pending_conflict("move", &owner, &gen_id, &key, Some(&pair), None),
-                Some(CoreReply::Rejected {
-                    kind: "pending-exists",
-                    message: "complete the pending plan before proposing",
-                })
-            );
-        }
-
-        #[test]
-        fn workspace_request_guard_uses_workspace_specific_message() {
-            let (engine, _, _) = staged_workspace_engine();
-            let owner = OwnerId::parse("owner-a").expect("valid");
-            let gen_id = GenerationId::parse("gen-1").expect("valid");
-            assert_eq!(
-                engine.workspace_request_guard(&owner, &gen_id),
-                Some(CoreReply::Rejected {
-                    kind: "pending-exists",
-                    message: "complete the pending workspace plan before proposing",
-                })
-            );
-        }
-
-        #[test]
-        fn workspace_request_handle_blocks_directional_before_workspace_guard() {
-            let (mut engine, source, target) = staged_workspace_engine();
-            let owner = OwnerId::parse("owner-a").expect("valid");
-            let gen_id = GenerationId::parse("gen-1").expect("valid");
-            let correlation = CorrelationId::parse("corr-9").expect("valid");
-            let session = Session::new(
-                owner.clone(),
-                gen_id.clone(),
-                0,
-                7,
-                vec![domain("out-2", "ws"), domain("out-3", "ws")],
-            )
-            .expect("session");
-            engine.set_directional_pending(DirectionalMovePending::new(
-                owner,
-                gen_id,
-                correlation,
-                0,
-                0,
-                session,
-                domain("out-2", "ws").key(),
-                domain("out-3", "ws").key(),
-                0,
-                0,
-                Vec::new(),
-                crate::directional::MoveOperation::SwapNeighbor {
-                    rule: crate::directional::Rule::R2a,
-                    container: crate::directional::NodeId::from("root"),
-                    neighbor: crate::directional::NodeId::from("n"),
-                },
-                Vec::new(),
-                WindowId("focus".to_owned()),
-                Vec::new(),
-            ));
-            let event = workspace_event(
-                &source,
-                &target,
-                CoreCommand::SendToWorkspace {
-                    window: "focus".to_owned(),
-                    target_output: "out".to_owned(),
-                    target_workspace: "ws-2".to_owned(),
-                },
-            );
-            assert_eq!(
-                engine.handle(&event),
-                CoreReply::Rejected {
-                    kind: "pending-exists",
-                    message: "complete the pending plan before proposing",
-                },
-                "directional block precedes the workspace guard with the generic message"
-            );
-            assert!(engine.workspace_pending().is_some());
-            assert!(engine.directional_pending().is_some());
-        }
     }
 }

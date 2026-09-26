@@ -891,10 +891,6 @@ fn engine_paired_focus_with_source_skew_converges() {
             .any(|l| l.window.0 == "win-t"),
         "target topology persists"
     );
-    assert!(
-        engine.directional_pending().is_none() && engine.workspace_pending().is_none(),
-        "local pair focus stages no pair pending"
-    );
 }
 
 #[test]

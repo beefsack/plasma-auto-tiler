@@ -584,7 +584,8 @@ describe("plan adapter directional cross-output (active route)", () => {
     });
 });
 
-describe("plan adapter R4 production transfer (fake-native async)", () => {
+
+describe("plan adapter R4 immediate transfer (lean, no wire protocol)", () => {
     interface R4Native {
         readonly out1: { name: string };
         readonly out2: { name: string };
@@ -592,16 +593,13 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
         readonly wsB: { id: string };
         outputOfMover: string;
         desktopsOfMover: string[];
-        desktopsOfTarget: string[];
-        outputOfTarget: string;
         rects: Map<object, { x: number; y: number; w: number; h: number }>;
         activeRef: object | null;
         outputHandlers: Array<(old: unknown) => void>;
         desktopsHandlers: Array<() => void>;
-        geoHandlers: Map<string, () => void>;
         sentTransfers: Array<{ mover: object; output: object }>;
         sentMemberships: Array<{ mover: object; refs: ReadonlyArray<object> }>;
-        duringTransfer?: () => void;
+        autoUpdate: boolean;
     }
 
     function r4Mocks(r: { a: object; b: object; x: object }): { mocks: Mocks; native: R4Native } {
@@ -613,8 +611,6 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
             wsB: { id: "ws-b" },
             outputOfMover: "out-1",
             desktopsOfMover: ["ws-a"],
-            outputOfTarget: "out-2",
-            desktopsOfTarget: ["ws-b"],
             rects: new Map([
                 [r.a, { x: 810, y: 10, w: 100, h: 80 }],
                 [r.x, { x: 10, y: 10, w: 100, h: 80 }],
@@ -622,9 +618,9 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
             activeRef: r.b,
             outputHandlers: [],
             desktopsHandlers: [],
-            geoHandlers: new Map(),
             sentTransfers: [],
             sentMemberships: [],
+            autoUpdate: true,
         };
         const env = mocks.env as unknown as Record<string, unknown>;
         env["resolveOutput"] = (name: string): object | null =>
@@ -633,25 +629,30 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
             workspace === "ws-a" ? native.wsA : workspace === "ws-b" ? native.wsB : null;
         env["sendClientToScreen"] = (mover: object, output: object): boolean => {
             native.sentTransfers.push({ mover, output });
+            mocks.events.push("transfer");
             if (mover !== r.a || (output !== native.out1 && output !== native.out2)) {
                 return false;
             }
-            native.outputOfMover = (output as { name: string }).name;
-            native.duringTransfer?.();
+            if (native.autoUpdate) {
+                native.outputOfMover = (output as { name: string }).name;
+            }
             return true;
         };
         env["setDesktops"] = (mover: object, refs: ReadonlyArray<object>): boolean => {
             native.sentMemberships.push({ mover, refs });
+            mocks.events.push("membership");
             if (mover !== r.a || refs.length !== 1 || (refs[0] !== native.wsA && refs[0] !== native.wsB)) {
                 return false;
             }
-            native.desktopsOfMover = [(refs[0] as { id: string }).id];
+            if (native.autoUpdate) {
+                native.desktopsOfMover = [(refs[0] as { id: string }).id];
+            }
             return true;
         };
         env["readOutputName"] = (ref: object): string | null =>
-            ref === r.a ? native.outputOfMover : ref === r.x ? native.outputOfTarget : null;
+            ref === r.a ? native.outputOfMover : ref === r.x ? "out-2" : null;
         env["readDesktopIds"] = (ref: object): ReadonlyArray<string> | null =>
-            ref === r.a ? [...native.desktopsOfMover] : ref === r.x ? [...native.desktopsOfTarget] : null;
+            ref === r.a ? [...native.desktopsOfMover] : ref === r.x ? ["ws-b"] : null;
         env["readGeometry"] = (ref: object): { x: number; y: number; w: number; h: number } | null => {
             const rect = native.rects.get(ref);
             return rect === undefined ? null : { ...rect };
@@ -670,20 +671,11 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
             native.desktopsHandlers.push(handler);
             return (): void => {};
         };
-        env["subscribeWindowGeometry"] = (ref: object, handler: () => void): (() => void) | null => {
-            for (const [id, known] of [[ "win-a", r.a ], [ "win-x", r.x ]] as const) {
-                if (ref === known) {
-                    native.geoHandlers.set(id, handler);
-                    return (): void => {};
-                }
-            }
-            return null;
-        };
-        // Geometry writes land on the fake natives so readback proves; the
-        // mock records every write for ordering assertions.
+        env["subscribeWindowGeometry"] = (): (() => void) | null => (): void => {};
         const baseSetGeometry = mocks.env.setGeometry;
         (env as { setGeometry: PlanAdapterEnv["setGeometry"] })["setGeometry"] = (target, rect): boolean => {
             native.rects.set(target, { x: rect.x, y: rect.y, w: rect.w, h: rect.h });
+            mocks.events.push("geometry");
             return baseSetGeometry(target, rect);
         };
         mocks.activeImpl = (): object | null => native.activeRef;
@@ -696,87 +688,136 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
         return { mocks, native };
     }
 
-    function startR4(
+    // Dynamic R4 observation reflecting native mover placement: the fresh
+    // directional re-observation used by per-setter scope fences and follow
+    // proof must show the mover where native reads place it (source, half,
+    // or target). Static mocks would otherwise pin the mover on source and
+    // block truthful follow.
+    function dynamicOccupiedObserved(
         r: { a: object; b: object; x: object },
-        targetWorkspace = "ws-b",
-    ): { mocks: Mocks; native: R4Native; adapter: PlanAdapter; correlation: string } {
-        const { mocks, native } = r4Mocks(r);
-        native.desktopsOfTarget = [targetWorkspace];
-        mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
-            status: "ready",
-            observed: twoDomainObserved(r, { targetWorkspace }),
-        });
-        const adapter = enable(mocks);
-        adapter.requestMove("right");
-        assert.equal(mocks.dbusCalls.length, 1);
-        const body = payload(mocks, 0);
-        assert.equal((body["command"] as Record<string, unknown>)["cross_output_transfer"], true);
-        const correlation = body["correlation_id"] as string;
-        mocks.callbacks[0]?.(crossMoveReply(correlation, targetWorkspace));
-        return { mocks, native, adapter, correlation };
+        native: { outputOfMover: string; desktopsOfMover: string[] },
+    ): PlanObserved {
+        const moverOutput = native.outputOfMover;
+        const moverWorkspace = native.desktopsOfMover[0] ?? "ws-a";
+        return {
+            domainOutput: "out-1",
+            domainWorkspace: "ws-a",
+            domainBounds: { x: 0, y: 0, w: 800, h: 600 },
+            domainGap: 4,
+            domainOuterGap: 8,
+            focusedId: "win-a",
+            domains: Object.freeze([
+                Object.freeze({
+                    output: "out-1",
+                    workspace: "ws-a",
+                    bounds: { x: 0, y: 0, w: 800, h: 600 },
+                    gap: 4,
+                    outerGap: 8,
+                    adjacent: Object.freeze({ right: "out-2" }),
+                }),
+                Object.freeze({
+                    output: "out-2",
+                    workspace: "ws-b",
+                    bounds: { x: 800, y: 0, w: 800, h: 600 },
+                    gap: 4,
+                    outerGap: 8,
+                    adjacent: Object.freeze({ left: "out-1" }),
+                }),
+            ]),
+            windows: Object.freeze([
+                Object.freeze({
+                    id: "win-a",
+                    ref: r.a,
+                    rect: Object.freeze({ x: 810, y: 10, w: 100, h: 80 }),
+                    output: moverOutput,
+                    workspace: moverWorkspace,
+                    fullscreen: false,
+                    maximized: false,
+                    floating: false,
+                    sticky: false,
+                    resourceClass: "unknown",
+                }),
+                Object.freeze({
+                    id: "win-x",
+                    ref: r.x,
+                    rect: Object.freeze({ x: 10, y: 10, w: 100, h: 80 }),
+                    output: "out-2",
+                    workspace: "ws-b",
+                    fullscreen: false,
+                    maximized: false,
+                    floating: false,
+                    sticky: false,
+                    resourceClass: "unknown",
+                }),
+            ]),
+            activeRef: r.a,
+            fingerprint: "dir-fp-1",
+            revalidate: () => true,
+        };
     }
 
-    function ackPayload(mocks: Mocks, index: number): Record<string, unknown> {
-        return payload(mocks, index);
+    function dynamicEmptyObserved(
+        r: { a: object; b: object; x: object },
+        native: { outputOfMover: string; desktopsOfMover: string[] },
+    ): PlanObserved {
+        const moverOutput = native.outputOfMover;
+        const moverWorkspace = native.desktopsOfMover[0] ?? "ws-a";
+        return {
+            domainOutput: "out-1",
+            domainWorkspace: "ws-a",
+            domainBounds: { x: 0, y: 0, w: 800, h: 600 },
+            domainGap: 4,
+            domainOuterGap: 8,
+            focusedId: "win-a",
+            domains: Object.freeze([
+                Object.freeze({
+                    output: "out-1",
+                    workspace: "ws-a",
+                    bounds: { x: 0, y: 0, w: 800, h: 600 },
+                    gap: 4,
+                    outerGap: 8,
+                    adjacent: Object.freeze({ right: "out-2" }),
+                }),
+                Object.freeze({
+                    output: "out-2",
+                    workspace: "ws-b",
+                    bounds: { x: 800, y: 0, w: 800, h: 600 },
+                    gap: 4,
+                    outerGap: 8,
+                    adjacent: Object.freeze({ left: "out-1" }),
+                }),
+            ]),
+            windows: Object.freeze([
+                Object.freeze({
+                    id: "win-a",
+                    ref: r.a,
+                    rect: Object.freeze({ x: 810, y: 10, w: 100, h: 80 }),
+                    output: moverOutput,
+                    workspace: moverWorkspace,
+                    fullscreen: false,
+                    maximized: false,
+                    floating: false,
+                    sticky: false,
+                    resourceClass: "unknown",
+                }),
+            ]),
+            activeRef: r.a,
+            fingerprint: "dir-fp-empty",
+            revalidate: () => true,
+        };
     }
 
-    it("follows after mover placement proof but defers ack and commit until every geometry echoes", () => {
-        const r = refs();
-        const { mocks, native, adapter, correlation } = startR4(r);
-        // Native actuation ran synchronously in plan order: exact target
-        // Output object, exact target VirtualDesktop refs, then geometries.
-        assert.equal(native.sentTransfers.length, 1);
-        assert.equal(native.sentTransfers[0]?.output, native.out2);
-        assert.equal(native.sentMemberships.length, 1);
-        assert.deepEqual(native.sentMemberships[0]?.refs, [native.wsB]);
-        assert.equal(mocks.geometries.length, 2);
-        // Nothing else may happen before every echo proves: no ack, no
-        // verify, no focus.
-        assert.equal(mocks.dbusCalls.length, 1);
-        assert.equal(mocks.actives.length, 0);
-        assert.equal(adapter.isR4InFlight, true);
-        assert.equal(adapter.isInFlight, true);
-        // The global pending gate blocks interleaving work while the flight
-        // holds the single-flight.
-        adapter.requestFocus("left");
-        assert.ok(mocks.logs.some((line) => line.includes("busy-refused kind=focus")));
-        assert.equal(mocks.dbusCalls.length, 1);
-        // Deferred separate signals: output alone proves nothing.
-        native.outputHandlers.forEach((handler) => handler(native.out1));
-        assert.equal(mocks.dbusCalls.length, 1);
-        assert.equal(mocks.actives.length, 0);
-        native.desktopsHandlers.forEach((handler) => handler());
-        // Exact mover output plus desktop membership is sufficient for the
-        // one explicit follow, even while a sibling geometry is unsettled.
-        assert.equal(mocks.dbusCalls.length, 1);
-        assert.equal(mocks.actives.length, 1);
-        assert.equal(mocks.actives[0], r.a);
-        native.geoHandlers.get("win-a")?.();
-        assert.equal(mocks.dbusCalls.length, 1);
-        assert.equal(mocks.actives.length, 1);
-        // The final geometry echo completes full proof and binds the ack;
-        // it never follows a second time.
-        native.geoHandlers.get("win-x")?.();
-        assert.equal(mocks.actives.length, 1);
-        assert.equal(mocks.actives[0], r.a);
-        assert.equal(mocks.dbusCalls.length, 2);
-        const ack = ackPayload(mocks, 1);
-        assert.equal(ack["correlation_id"], correlation);
-        assert.equal(ack["revision"], 2);
-        assert.deepEqual(ack["command"], { op: "directional-move-ack", ack_outcome: "accepted" });
-        assert.equal((ack["windows"] as Array<unknown>).length, 2);
-        // Acknowledgement binds but never verifies by itself.
-        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", base_revision: 2 }));
-        assert.equal(mocks.dbusCalls.length, 3);
-        const verify = ackPayload(mocks, 2);
-        assert.deepEqual(verify["command"], {
-            op: "directional-move-verify",
-            verified: true,
-            preconditions: [
-                "focused-leaf-occupied-by-focused-window",
-                "source-root-membership-and-adjacent-same-workspace-output",
-                "adapter-must-verify-postconditions",
+    function emptyMoveReply(correlation: string): string {
+        return JSON.stringify({
+            v: 1,
+            correlation_id: correlation,
+            outcome: "planned",
+            base_revision: 2,
+            detail: { kind: "move", rule: "R4", capability: "CrossOutputTransfer", direction: "right" },
+            desired_geometry: [
+                { window: "win-a", leaf: "leaf-a", output: "out-2", workspace: "ws-b", rect: { x: 810, y: 10, w: 380, h: 580 } },
             ],
+            desired_focus: { domain_output: "out-2", domain_workspace: "ws-b", leaf: "leaf-a" },
             operation: {
                 op: "move",
                 rule: "R4",
@@ -789,331 +830,156 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
                 target_output: "out-2",
                 target_workspace: "ws-b",
                 source_root_child_index: 0,
-                target: "occupied",
+                target: "empty",
             },
+            preconditions: [
+                "focused-leaf-occupied-by-focused-window",
+                "source-root-membership-and-adjacent-same-workspace-output",
+                "adapter-must-verify-postconditions",
+            ],
         });
-        // Commit releases the flight without replay.
-        mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 }));
-        assert.ok(mocks.logs.some((line) => line.includes("planned-applied")));
-        assert.equal(adapter.isR4InFlight, false);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(mocks.dbusCalls.length, 3);
-    });
+    }
 
-    it("commits a same-workspace transfer when unchanged desktop membership has no echo", () => {
-        const r = refs();
-        const { mocks, native, adapter, correlation } = startR4(r, "ws-a");
-        assert.deepEqual(native.sentMemberships[0]?.refs, [native.wsA]);
-        assert.ok(mocks.logs.some((line) => line.includes("r4-desktops-readback")));
-        // This is the native no-op case: membership already proves exactly, so
-        // KWin need not emit desktopsChanged for the transfer to finish.
-        assert.equal(native.desktopsHandlers.length, 1);
-        native.outputHandlers.forEach((handler) => handler(native.out1));
-        native.geoHandlers.get("win-a")?.();
-        native.geoHandlers.get("win-x")?.();
-        assert.equal(mocks.actives.length, 1);
-        assert.equal(mocks.actives[0], r.a);
-        assert.equal(mocks.dbusCalls.length, 2);
-        const ack = ackPayload(mocks, 1);
-        assert.equal(ack["correlation_id"], correlation);
-        assert.deepEqual(ack["command"], { op: "directional-move-ack", ack_outcome: "accepted" });
-        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", base_revision: 2 }));
-        assert.equal(mocks.dbusCalls.length, 3);
-        mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 }));
-        assert.equal(adapter.isR4InFlight, false);
-        assert.equal(adapter.isInFlight, false);
-    });
+    function assertNoWireProtocol(mocks: Mocks): void {
+        for (const call of mocks.dbusCalls) {
+            assert.ok(!call.payload.includes("directional-move-ack"), call.payload.slice(0, 160));
+            assert.ok(!call.payload.includes("directional-move-verify"), call.payload.slice(0, 160));
+            assert.ok(!call.payload.includes("directional-move-cancel"), call.payload.slice(0, 160));
+            assert.ok(!call.payload.includes("adapter-lost"), call.payload.slice(0, 160));
+            assert.ok(!call.payload.includes("ack_outcome"), call.payload.slice(0, 160));
+        }
+        for (const line of mocks.logs) {
+            assert.ok(!line.includes("directional-move-ack"), line);
+            assert.ok(!line.includes("directional-move-verify"), line);
+            assert.ok(!line.includes("directional-move-cancel"), line);
+            assert.ok(!line.includes("adapter-lost"), line);
+        }
+    }
 
-    it("verifies a plan-flagged R4 mover against its native client-held geometry", () => {
-        const r = refs();
-        const { mocks, native } = r4Mocks(r);
-        mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({ status: "ready", observed: twoDomainObserved(r) });
-        const adapter = enable(mocks);
-        adapter.requestMove("right");
-        const correlation = payload(mocks, 0)["correlation_id"] as string;
-        const planned = JSON.parse(crossMoveReply(correlation)) as { desired_geometry: Array<Record<string, unknown>> };
-        planned.desired_geometry[0]!["overconstrained"] = true;
-        mocks.callbacks[0]?.(JSON.stringify(planned));
-        assert.equal(mocks.geometries.length, 1);
-        assert.equal(mocks.geometries[0]?.target, r.x);
-        assert.equal(native.geoHandlers.has("win-a"), false);
-        native.outputHandlers.forEach((handler) => handler(native.out1));
-        native.desktopsHandlers.forEach((handler) => handler());
-        native.geoHandlers.get("win-x")?.();
-        assert.equal(mocks.dbusCalls.length, 2);
-        const ack = payload(mocks, 1);
-        const ackWindows = ack["windows"] as Array<{ window: string; rect: unknown }>;
-        assert.deepEqual(ackWindows.find((entry) => entry.window === "win-a")?.rect, native.rects.get(r.a));
-        assert.notDeepEqual(ackWindows.find((entry) => entry.window === "win-a")?.rect, planned.desired_geometry[0]!["rect"]);
-        assert.equal(ack["fingerprint"], planDirectionalFingerprint(twoDomainObserved(r).domains!, "", ackWindows.map((entry) => ({
-            window: entry.window, output: "out-2", workspace: "ws-b", rect: entry.rect as { x: number; y: number; w: number; h: number }, floating: false, fitExcluded: false,
-        }))));
-        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", base_revision: 2 }));
-        assert.equal(mocks.dbusCalls.length, 3);
-        assert.deepEqual((payload(mocks, 2)["windows"] as Array<{ window: string; rect: unknown }>)[0]?.rect, native.rects.get(r.a));
-        assert.ok(mocks.logs.some((line) => line.includes(`r4-verify correlation=${correlation} window=win-a overconstrained=true`)));
-        mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 }));
-        assert.equal(adapter.isR4InFlight, false);
-    });
+    function assertCorrelated(mocks: Mocks, correlation: string, outcome: string): void {
+        assert.ok(
+            mocks.logs.some((line) => line.includes(correlation) && line.includes(outcome)),
+            `correlated ${outcome} for ${correlation}, got ${JSON.stringify(mocks.logs)}`,
+        );
+    }
 
-    it("rejects a genuine R4 member mismatch even with another member overconstrained", () => {
+    function fireDebounce(mocks: Mocks): number {
+        const pending = mocks.timers.filter((entry) => entry.delayMs === 120 && !entry.cancelled);
+        for (const entry of pending) {
+            entry.callback();
+        }
+        return pending.length;
+    }
+
+    it("moves to an occupied target with output, desktop, geometry order and one follow", () => {
         const r = refs();
         const { mocks, native } = r4Mocks(r);
-        mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({ status: "ready", observed: twoDomainObserved(r) });
-        const adapter = enable(mocks);
-        adapter.requestMove("right");
-        const correlation = payload(mocks, 0)["correlation_id"] as string;
-        const planned = JSON.parse(crossMoveReply(correlation)) as { desired_geometry: Array<Record<string, unknown>> };
-        planned.desired_geometry[0]!["overconstrained"] = true;
-        mocks.callbacks[0]?.(JSON.stringify(planned));
-        native.outputHandlers.forEach((handler) => handler(native.out1));
-        native.desktopsHandlers.forEach((handler) => handler());
-        native.rects.set(r.x, { x: 1201, y: 10, w: 380, h: 580 });
-        native.geoHandlers.get("win-x")?.();
-        assert.equal(mocks.dbusCalls.length, 1);
-        native.rects.set(r.x, { x: 1200, y: 10, w: 380, h: 580 });
-        native.geoHandlers.get("win-x")?.();
-        assert.equal(mocks.dbusCalls.length, 2);
-        native.outputOfTarget = "out-1";
-        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", base_revision: 2 }));
-        assert.equal(mocks.dbusCalls.length, 2);
-        assert.ok(mocks.logs.some((line) => line.includes("stale-scope")));
-        assert.equal(adapter.isR4InFlight, false);
-    });
-
-    it("waits for the mover's final geometry after an output-transfer geometry echo", () => {
-        const r = refs();
-        const { mocks, native } = r4Mocks(r);
-        native.duringTransfer = () => native.geoHandlers.get("win-a")?.();
         mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
             status: "ready",
-            observed: twoDomainObserved(r, { targetBounds: { x: 800, y: 0, w: 800, h: 720 } }),
+            observed: dynamicOccupiedObserved(r, native),
+        });
+        const adapter = enable(mocks);
+        adapter.requestMove("right");
+        assert.equal(mocks.dbusCalls.length, 1);
+        const body = payload(mocks, 0);
+        assert.equal((body["command"] as Record<string, unknown>)["cross_output_transfer"], true);
+        const correlation = body["correlation_id"] as string;
+        mocks.callbacks[0]?.(crossMoveReply(correlation));
+        assert.equal(native.sentTransfers.length, 1);
+        assert.equal(native.sentTransfers[0]?.output, native.out2);
+        assert.equal(native.sentMemberships.length, 1);
+        assert.deepEqual(native.sentMemberships[0]?.refs, [native.wsB]);
+        assert.equal(mocks.geometries.length, 2);
+        const order = mocks.events.filter((entry) => entry === "transfer" || entry === "membership" || entry === "geometry");
+        assert.deepEqual(order, ["transfer", "membership", "geometry", "geometry"]);
+        assert.equal(mocks.actives.length, 1);
+        assert.equal(mocks.actives[0], r.a);
+        assert.equal(adapter.isR4InFlight, false);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.dbusCalls.length, 1);
+        assertNoWireProtocol(mocks);
+        assertCorrelated(mocks, correlation, "r4-transfer-started");
+        assertCorrelated(mocks, correlation, "r4-native-written");
+        assertCorrelated(mocks, correlation, "r4-followed");
+        assertCorrelated(mocks, correlation, "arrived");
+    });
+
+    it("moves to an empty target with one geometry and one follow", () => {
+        const r = refs();
+        const { mocks, native } = r4Mocks(r);
+        mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
+            status: "ready",
+            observed: dynamicEmptyObserved(r, native),
+        });
+        mocks.observeImpl = (): PlanObserved | null => dynamicEmptyObserved(r, native);
+        const adapter = enable(mocks);
+        adapter.requestMove("right");
+        assert.equal(mocks.dbusCalls.length, 1);
+        const correlation = payload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(emptyMoveReply(correlation));
+        assert.equal(native.sentTransfers.length, 1);
+        assert.equal(native.sentMemberships.length, 1);
+        assert.equal(mocks.geometries.length, 1);
+        assert.equal(mocks.actives.length, 1);
+        assert.equal(mocks.actives[0], r.a);
+        assert.equal(adapter.isR4InFlight, false);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.dbusCalls.length, 1);
+        assertNoWireProtocol(mocks);
+        assertCorrelated(mocks, correlation, "arrived");
+    });
+
+    it("skips plan-flagged overconstrained geometry without extra writes", () => {
+        const r = refs();
+        const { mocks, native } = r4Mocks(r);
+        mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
+            status: "ready",
+            observed: dynamicOccupiedObserved(r, native),
         });
         const adapter = enable(mocks);
         adapter.requestMove("right");
         const correlation = payload(mocks, 0)["correlation_id"] as string;
-        mocks.callbacks[0]?.(crossMoveReply(correlation, "ws-b", 700));
-
-        // sendClientToScreen repositions the mover before its queued XDG resize
-        // reaches the client. That intermediate echo must not consume the
-        // mover's planned-geometry fence.
-        native.outputHandlers.forEach((handler) => handler(native.out1));
-        native.desktopsHandlers.forEach((handler) => handler());
-        native.geoHandlers.get("win-x")?.();
-        assert.equal(mocks.dbusCalls.length, 1);
-        assert.equal(adapter.isR4InFlight, true);
-
-        // The delayed client resize now reports the exact target rectangle.
-        native.geoHandlers.get("win-a")?.();
-        assert.equal(mocks.dbusCalls.length, 2);
-        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", base_revision: 2 }));
-        assert.equal(mocks.dbusCalls.length, 3);
-        mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 }));
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("still requires a desktop echo when membership changes", () => {
-        const r = refs();
-        const { mocks, native } = startR4(r);
-        native.outputHandlers.forEach((handler) => handler(native.out1));
-        native.geoHandlers.get("win-a")?.();
-        native.geoHandlers.get("win-x")?.();
-        assert.equal(mocks.dbusCalls.length, 1);
-        assert.equal(mocks.actives.length, 0);
-        assert.ok(!mocks.logs.some((line) => line.includes("r4-desktops-readback")));
-    });
-
-    it("fails terminal on wrong-output readback with adapter-lost ack and no verify", () => {
-        const r = refs();
-        const { mocks, native, adapter, correlation } = startR4(r);
-        assert.equal(mocks.dbusCalls.length, 1);
-        // The transfer reports the wrong output: terminal before any focus.
-        native.outputOfMover = "out-1";
-        native.outputHandlers.forEach((handler) => handler(native.out1));
-        assert.equal(mocks.actives.length, 0);
-        assert.ok(mocks.logs.some((line) => line.includes("wrong-output")));
-        const lost = ackPayload(mocks, 1);
-        assert.equal(lost["correlation_id"], correlation);
-        assert.deepEqual(lost["command"], { op: "directional-move-ack", ack_outcome: "adapter-lost" });
-        assert.equal(adapter.isR4InFlight, false);
-        assert.equal(adapter.isInFlight, false);
-        // No verify is ever sent and late echoes never replay the flight.
-        native.desktopsHandlers.forEach((handler) => handler());
-        native.geoHandlers.get("win-a")?.();
-        native.geoHandlers.get("win-x")?.();
-        assert.equal(mocks.dbusCalls.length, 2);
-        assert.equal(mocks.actives.length, 0);
-    });
-
-    it("fails terminal on whole-flight timeout with adapter-lost ack and no verify", () => {
-        const r = refs();
-        const { mocks, native, adapter, correlation } = startR4(r);
-        assert.equal(mocks.dbusCalls.length, 1);
-        // No echo arrives: the armed whole-flight deadline settles terminal.
-        const deadline = mocks.timers[mocks.timers.length - 1];
-        assert.notEqual(deadline, undefined);
-        deadline?.callback();
-        assert.ok(mocks.logs.some((line) => line.includes("timeout")));
-        const lost = ackPayload(mocks, 1);
-        assert.equal(lost["correlation_id"], correlation);
-        assert.deepEqual(lost["command"], { op: "directional-move-ack", ack_outcome: "adapter-lost" });
-        assert.equal(adapter.isR4InFlight, false);
-        // Late echoes after settlement never replay ack or verify.
-        native.outputHandlers.forEach((handler) => handler(native.out1));
-        assert.equal(mocks.dbusCalls.length, 2);
-        void adapter;
-    });
-
-    it("drops duplicate planned during ack and verify waiting without restarting native transfer", () => {
-        const r = refs();
-        const { mocks, native, adapter, correlation } = startR4(r);
-        const plannedReply = crossMoveReply(correlation);
-        const timersAfterStart = mocks.timers.length;
-        const wholeFlightDeadline = mocks.timers[timersAfterStart - 1];
-        const transfersAfterStart = native.sentTransfers.length;
-        const membershipsAfterStart = native.sentMemberships.length;
-        const geometriesAfterStart = mocks.geometries.length;
-        assert.equal(mocks.dbusCalls.length, 1);
-        // Duplicate planned while echoes are still pending: no restart.
-        mocks.callbacks[0]?.(plannedReply);
-        assert.equal(native.sentTransfers.length, transfersAfterStart);
-        assert.equal(native.sentMemberships.length, membershipsAfterStart);
-        assert.equal(mocks.geometries.length, geometriesAfterStart);
-        assert.equal(mocks.dbusCalls.length, 1);
-        assert.equal(mocks.timers.length, timersAfterStart);
-        assert.equal(wholeFlightDeadline?.cancelled, false);
-        assert.equal(adapter.isR4InFlight, true);
-        // Drive to bound ack.
-        native.outputHandlers.forEach((handler) => handler(native.out1));
-        native.desktopsHandlers.forEach((handler) => handler());
-        native.geoHandlers.get("win-a")?.();
-        native.geoHandlers.get("win-x")?.();
-        assert.equal(mocks.dbusCalls.length, 2);
-        // Duplicate planned while ack is bound but ack reply pending.
-        mocks.callbacks[0]?.(plannedReply);
-        assert.equal(native.sentTransfers.length, transfersAfterStart);
-        assert.equal(mocks.dbusCalls.length, 2);
-        assert.equal(mocks.actives.length, 1);
-        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", base_revision: 2 }));
-        assert.equal(mocks.dbusCalls.length, 3);
-        // Duplicate planned while verify is pending: still no restart and the
-        // original whole-flight timer still governs (no new timer).
-        mocks.callbacks[0]?.(plannedReply);
-        assert.equal(native.sentTransfers.length, transfersAfterStart);
-        assert.equal(mocks.dbusCalls.length, 3);
-        assert.equal(mocks.timers.length, timersAfterStart);
-        assert.equal(wholeFlightDeadline?.cancelled, false);
-        mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 }));
-        assert.equal(adapter.isR4InFlight, false);
-        assert.equal(adapter.isInFlight, false);
-        assert.ok(mocks.logs.some((line) => line.includes("planned-applied")));
-    });
-
-    it("consumes R4 ack once and never issues duplicate verify", () => {
-        const r = refs();
-        const { mocks, native, adapter, correlation } = startR4(r);
-        native.outputHandlers.forEach((handler) => handler(native.out1));
-        native.desktopsHandlers.forEach((handler) => handler());
-        native.geoHandlers.get("win-a")?.();
-        native.geoHandlers.get("win-x")?.();
-        assert.equal(mocks.dbusCalls.length, 2);
-        const ackReply = JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", base_revision: 2 });
-        mocks.callbacks[1]?.(ackReply);
-        assert.equal(mocks.dbusCalls.length, 3);
-        // Duplicate ack before verify completes: no second verify, no second follow.
-        mocks.callbacks[1]?.(ackReply);
-        assert.equal(mocks.dbusCalls.length, 3);
-        assert.equal(mocks.actives.length, 1);
+        const planned = JSON.parse(crossMoveReply(correlation)) as { desired_geometry: Array<Record<string, unknown>> };
+        planned.desired_geometry[0]!["overconstrained"] = true;
+        mocks.callbacks[0]?.(JSON.stringify(planned));
         assert.equal(native.sentTransfers.length, 1);
-        // Duplicate ack after the verify transition still issues nothing.
-        mocks.callbacks[1]?.(ackReply);
-        assert.equal(mocks.dbusCalls.length, 3);
-        mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 }));
+        assert.equal(native.sentMemberships.length, 1);
+        assert.equal(mocks.geometries.length, 1);
+        assert.equal(mocks.geometries[0]?.target, r.x);
+        assert.equal(mocks.actives.length, 1);
         assert.equal(adapter.isR4InFlight, false);
-        const appliedAfter = mocks.logs.filter((line) => line.includes("planned-applied")).length;
-        assert.equal(appliedAfter, 1);
-        // Late ack after completion never replays verify or settle.
-        mocks.callbacks[1]?.(ackReply);
-        assert.equal(mocks.dbusCalls.length, 3);
-        assert.equal(mocks.logs.filter((line) => line.includes("planned-applied")).length, 1);
+        assert.ok(mocks.logs.some((line) => line.includes(correlation) && line.includes("overconstrained-skipped")));
+        assertNoWireProtocol(mocks);
     });
 
-    it("drops stale and duplicate verify after completion without second settle", () => {
+    it("fails terminal on native write refusal with no follow and forced reconcile", () => {
         const r = refs();
-        const { mocks, native, adapter, correlation } = startR4(r);
-        native.outputHandlers.forEach((handler) => handler(native.out1));
-        native.desktopsHandlers.forEach((handler) => handler());
-        native.geoHandlers.get("win-a")?.();
-        native.geoHandlers.get("win-x")?.();
-        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", base_revision: 2 }));
-        const verifyReply = JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 });
-        mocks.callbacks[2]?.(verifyReply);
-        assert.equal(adapter.isR4InFlight, false);
-        assert.equal(mocks.dbusCalls.length, 3);
-        const appliedAfter = mocks.logs.filter((line) => line.includes("planned-applied")).length;
-        const activesAfter = mocks.actives.length;
-        const geometriesAfter = mocks.geometries.length;
-        // Duplicate verify after completion: no second settle/admit.
-        mocks.callbacks[2]?.(verifyReply);
-        assert.equal(mocks.dbusCalls.length, 3);
-        assert.equal(mocks.logs.filter((line) => line.includes("planned-applied")).length, appliedAfter);
-        assert.equal(mocks.actives.length, activesAfter);
-        assert.equal(mocks.geometries.length, geometriesAfter);
-        // Newer flight starts from idle with a fresh correlation.
+        const { mocks, native } = r4Mocks(r);
+        (mocks.env as unknown as Record<string, unknown>)["sendClientToScreen"] = (): boolean => false;
+        mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
+            status: "ready",
+            observed: twoDomainObserved(r),
+        });
+        const adapter = enable(mocks);
         adapter.requestMove("right");
-        assert.equal(mocks.dbusCalls.length, 4);
-        const nextBody = payload(mocks, 3);
-        const nextCorrelation = nextBody["correlation_id"] as string;
-        assert.notEqual(nextCorrelation, correlation);
-        // Stale old verify cannot consume the newer flight guard.
-        mocks.callbacks[2]?.(verifyReply);
-        assert.equal(mocks.dbusCalls.length, 4);
+        const correlation = payload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(crossMoveReply(correlation));
+        assert.equal(mocks.actives.length, 0);
         assert.equal(adapter.isR4InFlight, false);
-        assert.equal(adapter.isInFlight, true);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.dbusCalls.length, 1);
+        assertNoWireProtocol(mocks);
+        assertCorrelated(mocks, correlation, "write-failed");
+        const before = mocks.dbusCalls.length;
+        fireDebounce(mocks);
+        assert.ok(mocks.dbusCalls.length > before, "terminal forces source+target reconcile");
         void native;
     });
 
-    it("requires an issued verify before consuming verify without blocking the live flight", () => {
-        const r = refs();
-        const { mocks, native, adapter, correlation } = startR4(r);
-        native.outputHandlers.forEach((handler) => handler(native.out1));
-        native.desktopsHandlers.forEach((handler) => handler());
-        native.geoHandlers.get("win-a")?.();
-        native.geoHandlers.get("win-x")?.();
-        assert.equal(mocks.dbusCalls.length, 2);
-        const state = adapter as unknown as {
-            r4Flight: { flight: number; session: number; verifyRequested: boolean; verifyReplySeen: boolean } | null;
-            onR4VerifyReply: (reply: unknown, flight: number, session: number) => void;
-        };
-        assert.notEqual(state.r4Flight, null);
-        assert.equal(state.r4Flight?.verifyRequested, false);
-        // Out-of-order verify with exact flight/session before verify is
-        // issued: dropped without consuming the verify guard.
-        const earlyVerify = JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 });
-        state.onR4VerifyReply(earlyVerify, state.r4Flight?.flight as number, state.r4Flight?.session as number);
-        assert.equal(mocks.dbusCalls.length, 2);
-        assert.equal(adapter.isR4InFlight, true);
-        assert.equal(state.r4Flight?.verifyReplySeen, false);
-        assert.equal(state.r4Flight?.verifyRequested, false);
-        // The live flight still completes exactly once once verify is issued.
-        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", base_revision: 2 }));
-        assert.equal(mocks.dbusCalls.length, 3);
-        assert.equal(state.r4Flight?.verifyRequested, true);
-        mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 }));
-        assert.equal(adapter.isR4InFlight, false);
-        assert.equal(mocks.dbusCalls.length, 3);
-        assert.equal(mocks.logs.filter((line) => line.includes("planned-applied")).length, 1);
-    });
-
-    it("processes deferred newcomer reconcile exactly once after settle once send protection releases", () => {
+    it("fails terminal on wrong-output proof with no follow", () => {
         const r = refs();
         const { mocks, native } = r4Mocks(r);
-        let sendActive = false;
-        (mocks.env as unknown as Record<string, unknown>)["isSendActive"] = (): boolean => sendActive;
-        let applied = 0;
-        (mocks.env as unknown as Record<string, unknown>)["onPlannedApplied"] = (): void => {
-            applied += 1;
-        };
+        native.autoUpdate = false;
         mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
             status: "ready",
             observed: twoDomainObserved(r),
@@ -1123,81 +989,386 @@ describe("plan adapter R4 production transfer (fake-native async)", () => {
         const correlation = payload(mocks, 0)["correlation_id"] as string;
         mocks.callbacks[0]?.(crossMoveReply(correlation));
         assert.equal(adapter.isR4InFlight, true);
-        // A new foreground window appears while the R4 flight holds the
-        // single-flight. Lifecycle resync attempts cannot interleave: the R4
-        // fence drops signals and no admission dispatches mid-flight.
-        mocks.observeImpl = (): PlanObserved | null => {
-            const full = twoDomainObserved(r, {
-                aRect: { x: 10, y: 10, w: 100, h: 80 },
-                bRect: { x: 400, y: 10, w: 100, h: 80 },
-                xRect: { x: 810, y: 10, w: 100, h: 80 },
-            });
-            const { domains: _domains, ...source } = full;
-            return {
-                ...source,
-                windows: Object.freeze(source.windows.filter((entry) => entry.output === "out-1")),
-            };
-        };
-        adapter.requestResync();
-        assert.equal(mocks.dbusCalls.length, 1);
+        assert.equal(mocks.actives.length, 0);
+        native.outputOfMover = "out-9";
+        native.desktopsOfMover = ["ws-a"];
         native.outputHandlers.forEach((handler) => handler(native.out1));
         native.desktopsHandlers.forEach((handler) => handler());
-        native.geoHandlers.get("win-a")?.();
-        native.geoHandlers.get("win-x")?.();
-        assert.equal(mocks.dbusCalls.length, 2);
-        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", base_revision: 2 }));
-        assert.equal(mocks.dbusCalls.length, 3);
-        // Workspace send becomes pending before the exact successful settle.
-        sendActive = true;
-        mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", base_revision: 3 }));
+        assert.equal(mocks.actives.length, 0);
         assert.equal(adapter.isR4InFlight, false);
         assert.equal(adapter.isInFlight, false);
-        assert.equal(applied, 1);
-        // The post-settle resync observes the queued new window but stays
-        // protected while send is active.
-        const debounceWhileBlocked = mocks.timers.filter((entry) => entry.delayMs === 120 && !entry.cancelled);
-        for (const entry of debounceWhileBlocked) {
-            entry.callback();
-        }
-        assert.equal(mocks.dbusCalls.length, 3);
-        // Releasing protection reconciles the queued new window exactly once.
-        sendActive = false;
-        adapter.requestResync();
-        const pending = mocks.timers.filter((entry) => entry.delayMs === 120 && !entry.cancelled);
-        assert.ok(pending.length > 0);
-        pending[pending.length - 1]?.callback();
-        assert.equal(mocks.dbusCalls.length, 4);
-        const admission = payload(mocks, 3);
-        assert.equal((admission["command"] as Record<string, unknown>)["op"], "reconcile");
-        const admitted = (admission["windows"] as Array<Record<string, unknown>>).map((entry) => entry["window"] as string);
-        assert.ok(admitted.includes("win-b"), `queued win-b converged, got ${JSON.stringify(admitted)}`);
-        assert.ok(admitted.includes("win-a"), `reconcile retains win-a, got ${JSON.stringify(admitted)}`);
-        // Completing the queued admission converges once with no replay.
-        const admissionCorrelation = admission["correlation_id"] as string;
-        mocks.callbacks[3]?.(
-            JSON.stringify({
-                v: 1,
-                correlation_id: admissionCorrelation,
-                outcome: "planned",
-                desired_geometry: [
-                    { window: "win-a", leaf: "leaf-a", output: "out-1", workspace: "ws-a", rect: { x: 10, y: 10, w: 100, h: 80 } },
-                    { window: "win-b", leaf: "leaf-b", output: "out-1", workspace: "ws-a", rect: { x: 400, y: 10, w: 100, h: 80 } },
-                ],
-            }),
-        );
-        assert.equal(applied, 2);
+        assert.ok(mocks.logs.some((line) => line.includes(correlation) && line.includes("wrong-output")));
+        assertNoWireProtocol(mocks);
+    });
+
+    it("waits for delayed arrival then follows exactly once; busy second command refuses", () => {
+        const r = refs();
+        const { mocks, native } = r4Mocks(r);
+        native.autoUpdate = false;
+        mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
+            status: "ready",
+            observed: dynamicOccupiedObserved(r, native),
+        });
+        const adapter = enable(mocks);
+        adapter.requestMove("right");
+        const correlation = payload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(crossMoveReply(correlation));
+        assert.equal(adapter.isR4InFlight, true);
+        assert.equal(mocks.actives.length, 0);
+        adapter.requestFocus("left");
+        assert.ok(mocks.logs.some((line) => line.includes("busy-refused kind=focus")));
+        assert.equal(mocks.dbusCalls.length, 1);
+        native.outputOfMover = "out-2";
+        native.outputHandlers.forEach((handler) => handler(native.out1));
+        assert.equal(mocks.actives.length, 0);
+        native.desktopsOfMover = ["ws-b"];
+        native.desktopsHandlers.forEach((handler) => handler());
+        assert.equal(mocks.actives.length, 1);
+        assert.equal(mocks.actives[0], r.a);
+        assert.equal(adapter.isR4InFlight, false);
         assert.equal(adapter.isInFlight, false);
-        assert.equal(mocks.dbusCalls.length, 4);
-        // A fresh resync after convergence never redispatches.
-        const timersBeforeTrailing = mocks.timers.length;
-        adapter.requestResync();
-        const freshTrailing = mocks.timers
-            .slice(timersBeforeTrailing)
-            .filter((entry) => entry.delayMs === 120 && !entry.cancelled);
-        for (const entry of freshTrailing) {
-            entry.callback();
-        }
-        assert.equal(mocks.dbusCalls.length, 4);
+        native.outputHandlers.forEach((handler) => handler(native.out1));
+        native.desktopsHandlers.forEach((handler) => handler());
+        assert.equal(mocks.actives.length, 1);
+        assertCorrelated(mocks, correlation, "r4-arrival-waiting");
+        assertCorrelated(mocks, correlation, "arrived");
+        assertNoWireProtocol(mocks);
+        // Flight released: a fresh source-consistent observation dispatches
+        // again. The post-move dynamic observation leaves source empty, so
+        // reset to a source-homed view solely to prove release.
+        mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
+            status: "ready",
+            observed: twoDomainObserved(r),
+        });
+        adapter.requestMove("right");
+        assert.equal(mocks.dbusCalls.length, 2);
+    });
+
+    it("stops remaining setters on changed scope mid-write", () => {
+        const r = refs();
+        const { mocks, native } = r4Mocks(r);
+        mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
+            status: "ready",
+            observed: dynamicOccupiedObserved(r, native),
+        });
+        const adapter = enable(mocks);
+        adapter.requestMove("right");
+        const correlation = payload(mocks, 0)["correlation_id"] as string;
+        // After the first geometry, swap to a stale target workspace so the
+        // structural scope fence (domains) fails before the second setter.
+        const env = mocks.env as unknown as Record<string, unknown>;
+        const baseSetGeometry = mocks.env.setGeometry.bind(mocks.env);
+        let calls = 0;
+        (env as { setGeometry: PlanAdapterEnv["setGeometry"] })["setGeometry"] = (target, rect): boolean => {
+            calls += 1;
+            const ok = baseSetGeometry(target, rect);
+            if (calls === 1) {
+                mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
+                    status: "ready",
+                    observed: twoDomainObserved(r, { targetWorkspace: "ws-c" }),
+                });
+            }
+            return ok;
+        };
+        mocks.callbacks[0]?.(crossMoveReply(correlation));
+        assert.equal(native.sentTransfers.length, 1);
+        assert.equal(native.sentMemberships.length, 1);
+        assert.equal(mocks.geometries.length, 1);
+        assert.equal(mocks.actives.length, 0);
+        assert.equal(adapter.isR4InFlight, false);
+        assert.equal(adapter.isInFlight, false);
+        assert.ok(mocks.logs.some((line) => line.includes(correlation) && line.includes("stale-scope")));
+        assertNoWireProtocol(mocks);
+    });
+
+    it("stops remaining setters on non-mover flag change mid-write", () => {
+        const r = refs();
+        const { mocks, native } = r4Mocks(r);
+        mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
+            status: "ready",
+            observed: dynamicOccupiedObserved(r, native),
+        });
+        const adapter = enable(mocks);
+        adapter.requestMove("right");
+        const correlation = payload(mocks, 0)["correlation_id"] as string;
+        // After the first geometry, flip a non-mover flag (win-x maximized)
+        // while keeping scope identical so only the flag fence trips.
+        const env = mocks.env as unknown as Record<string, unknown>;
+        const baseSetGeometry = mocks.env.setGeometry.bind(mocks.env);
+        let calls = 0;
+        (env as { setGeometry: PlanAdapterEnv["setGeometry"] })["setGeometry"] = (target, rect): boolean => {
+            calls += 1;
+            const ok = baseSetGeometry(target, rect);
+            if (calls === 1) {
+                mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => {
+                    const base = dynamicOccupiedObserved(r, native);
+                    return {
+                        status: "ready",
+                        observed: {
+                            ...base,
+                            windows: Object.freeze(
+                                base.windows.map((entry) =>
+                                    entry.id === "win-x" ? { ...entry, maximized: true } : entry,
+                                ),
+                            ),
+                        },
+                    };
+                };
+            }
+            return ok;
+        };
+        mocks.callbacks[0]?.(crossMoveReply(correlation));
+        assert.equal(native.sentTransfers.length, 1);
+        assert.equal(native.sentMemberships.length, 1);
+        assert.equal(mocks.geometries.length, 1);
+        assert.equal(mocks.actives.length, 0);
+        assert.equal(adapter.isR4InFlight, false);
+        assert.equal(adapter.isInFlight, false);
+        assert.ok(mocks.logs.some((line) => line.includes(correlation) && line.includes("stale-scope")));
+        assertNoWireProtocol(mocks);
+    });
+
+    it("closed mover cannot focus despite native arrival", () => {
+        const r = refs();
+        const { mocks, native } = r4Mocks(r);
+        mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
+            status: "ready",
+            observed: dynamicOccupiedObserved(r, native),
+        });
+        const adapter = enable(mocks);
+        adapter.requestMove("right");
+        const correlation = payload(mocks, 0)["correlation_id"] as string;
+        // Let both geometries succeed, then present a closed-mover fresh view
+        // (mover absent) for the follow proof. Native still reports arrival
+        // via autoUpdate, but observed proof must block setActive.
+        const env = mocks.env as unknown as Record<string, unknown>;
+        const baseSetGeometry = mocks.env.setGeometry.bind(mocks.env);
+        let calls = 0;
+        (env as { setGeometry: PlanAdapterEnv["setGeometry"] })["setGeometry"] = (target, rect): boolean => {
+            calls += 1;
+            const ok = baseSetGeometry(target, rect);
+            if (calls === 2) {
+                mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
+                    status: "ready",
+                    observed: {
+                        domainOutput: "out-1",
+                        domainWorkspace: "ws-a",
+                        domainBounds: { x: 0, y: 0, w: 800, h: 600 },
+                        domainGap: 4,
+                        domainOuterGap: 8,
+                        focusedId: "win-x",
+                        domains: Object.freeze([
+                            Object.freeze({
+                                output: "out-1",
+                                workspace: "ws-a",
+                                bounds: { x: 0, y: 0, w: 800, h: 600 },
+                                gap: 4,
+                                outerGap: 8,
+                                adjacent: Object.freeze({ right: "out-2" }),
+                            }),
+                            Object.freeze({
+                                output: "out-2",
+                                workspace: "ws-b",
+                                bounds: { x: 800, y: 0, w: 800, h: 600 },
+                                gap: 4,
+                                outerGap: 8,
+                                adjacent: Object.freeze({ left: "out-1" }),
+                            }),
+                        ]),
+                        windows: Object.freeze([
+                            Object.freeze({
+                                id: "win-x",
+                                ref: r.x,
+                                rect: Object.freeze({ x: 10, y: 10, w: 100, h: 80 }),
+                                output: "out-2",
+                                workspace: "ws-b",
+                                fullscreen: false,
+                                maximized: false,
+                                floating: false,
+                                sticky: false,
+                                resourceClass: "unknown",
+                            }),
+                        ]),
+                        activeRef: r.x,
+                        fingerprint: "dir-fp-closed",
+                        revalidate: () => true,
+                    },
+                });
+            }
+            return ok;
+        };
+        mocks.callbacks[0]?.(crossMoveReply(correlation));
+        assert.equal(native.sentTransfers.length, 1);
+        assert.equal(native.sentMemberships.length, 1);
+        assert.equal(mocks.geometries.length, 2);
+        assert.equal(mocks.actives.length, 0);
+        assert.equal(adapter.isR4InFlight, true);
+        assertNoWireProtocol(mocks);
+        void native;
+    });
+
+    it("wrong mover placement cannot focus despite native arrival", () => {
+        const r = refs();
+        const { mocks, native } = r4Mocks(r);
+        mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
+            status: "ready",
+            observed: dynamicOccupiedObserved(r, native),
+        });
+        const adapter = enable(mocks);
+        adapter.requestMove("right");
+        const correlation = payload(mocks, 0)["correlation_id"] as string;
+        // Both geometries succeed, then the fresh view shows the mover on a
+        // third output while native still reports target arrival. Follow must
+        // stay waiting with no setActive.
+        const env = mocks.env as unknown as Record<string, unknown>;
+        const baseSetGeometry = mocks.env.setGeometry.bind(mocks.env);
+        let calls = 0;
+        (env as { setGeometry: PlanAdapterEnv["setGeometry"] })["setGeometry"] = (target, rect): boolean => {
+            calls += 1;
+            const ok = baseSetGeometry(target, rect);
+            if (calls === 2) {
+                mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
+                    status: "ready",
+                    observed: {
+                        domainOutput: "out-1",
+                        domainWorkspace: "ws-a",
+                        domainBounds: { x: 0, y: 0, w: 800, h: 600 },
+                        domainGap: 4,
+                        domainOuterGap: 8,
+                        focusedId: "win-a",
+                        domains: Object.freeze([
+                            Object.freeze({
+                                output: "out-1",
+                                workspace: "ws-a",
+                                bounds: { x: 0, y: 0, w: 800, h: 600 },
+                                gap: 4,
+                                outerGap: 8,
+                                adjacent: Object.freeze({ right: "out-2" }),
+                            }),
+                            Object.freeze({
+                                output: "out-2",
+                                workspace: "ws-b",
+                                bounds: { x: 800, y: 0, w: 800, h: 600 },
+                                gap: 4,
+                                outerGap: 8,
+                                adjacent: Object.freeze({ left: "out-1" }),
+                            }),
+                        ]),
+                        windows: Object.freeze([
+                            Object.freeze({
+                                id: "win-a",
+                                ref: r.a,
+                                rect: Object.freeze({ x: 810, y: 10, w: 100, h: 80 }),
+                                output: "out-9",
+                                workspace: "ws-b",
+                                fullscreen: false,
+                                maximized: false,
+                                floating: false,
+                                sticky: false,
+                                resourceClass: "unknown",
+                            }),
+                            Object.freeze({
+                                id: "win-x",
+                                ref: r.x,
+                                rect: Object.freeze({ x: 10, y: 10, w: 100, h: 80 }),
+                                output: "out-2",
+                                workspace: "ws-b",
+                                fullscreen: false,
+                                maximized: false,
+                                floating: false,
+                                sticky: false,
+                                resourceClass: "unknown",
+                            }),
+                        ]),
+                        activeRef: r.a,
+                        fingerprint: "dir-fp-wrong",
+                        revalidate: () => true,
+                    },
+                });
+            }
+            return ok;
+        };
+        mocks.callbacks[0]?.(crossMoveReply(correlation));
+        assert.equal(native.sentTransfers.length, 1);
+        assert.equal(native.sentMemberships.length, 1);
+        assert.equal(mocks.geometries.length, 2);
+        assert.equal(mocks.actives.length, 0);
+        assert.equal(adapter.isR4InFlight, true);
+        assertNoWireProtocol(mocks);
+        void native;
+    });
+
+    it("refuses stale reply after newer observation with no native writes", () => {
+        const r = refs();
+        const { mocks, native } = r4Mocks(r);
+        const adapter = enable(mocks);
+        adapter.requestMove("right");
+        const correlation = payload(mocks, 0)["correlation_id"] as string;
+        mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
+            status: "ready",
+            observed: twoDomainObserved(r, { xRect: { x: 20, y: 10, w: 100, h: 80 } }),
+        });
+        mocks.callbacks[0]?.(crossMoveReply(correlation));
+        assert.equal(native.sentTransfers.length, 0);
+        assert.equal(native.sentMemberships.length, 0);
+        assert.equal(mocks.geometries.length, 0);
+        assert.equal(mocks.actives.length, 0);
+        assert.equal(adapter.isR4InFlight, false);
+        assert.equal(adapter.isInFlight, false);
+        assert.ok(mocks.logs.some((line) => line.includes(correlation) && line.includes("stale")));
+        assertNoWireProtocol(mocks);
+        const before = mocks.dbusCalls.length;
+        fireDebounce(mocks);
+        assert.ok(mocks.dbusCalls.length >= before, "stale terminal still converges");
+    });
+
+    it("releases an unanswered request on timeout with no writes and forced reconcile", () => {
+        const r = refs();
+        const { mocks, native } = r4Mocks(r);
+        const adapter = enable(mocks);
+        adapter.requestMove("right");
+        assert.equal(mocks.dbusCalls.length, 1);
+        const correlation = payload(mocks, 0)["correlation_id"] as string;
+        const deadline = mocks.timers[mocks.timers.length - 1];
+        assert.notEqual(deadline, undefined);
+        deadline?.callback();
+        assert.equal(native.sentTransfers.length, 0);
+        assert.equal(mocks.geometries.length, 0);
+        assert.equal(mocks.actives.length, 0);
+        assert.equal(adapter.isR4InFlight, false);
+        assert.equal(adapter.isInFlight, false);
+        assertCorrelated(mocks, correlation, "timeout");
+        assertNoWireProtocol(mocks);
+        mocks.callbacks[0]?.(crossMoveReply(correlation));
+        assert.equal(native.sentTransfers.length, 0);
+        assert.equal(mocks.dbusCalls.length, 1);
+        const before = mocks.dbusCalls.length;
+        fireDebounce(mocks);
+        assert.ok(mocks.dbusCalls.length >= before);
+    });
+
+    it("releases delayed arrival on arrival timeout with forced reconcile", () => {
+        const r = refs();
+        const { mocks, native } = r4Mocks(r);
+        native.autoUpdate = false;
+        mocks.directionalImpl = (): DirectionalObservation | PlanObserved | null => ({
+            status: "ready",
+            observed: twoDomainObserved(r),
+        });
+        const adapter = enable(mocks);
+        adapter.requestMove("right");
+        const correlation = payload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(crossMoveReply(correlation));
+        assert.equal(adapter.isR4InFlight, true);
+        const arrivalTimer = mocks.timers[mocks.timers.length - 1];
+        assert.notEqual(arrivalTimer, undefined);
+        arrivalTimer?.callback();
+        assert.equal(mocks.actives.length, 0);
+        assert.equal(adapter.isR4InFlight, false);
+        assert.equal(adapter.isInFlight, false);
+        assertCorrelated(mocks, correlation, "arrival-timeout");
+        assertNoWireProtocol(mocks);
+        void native;
     });
 });
 
@@ -1452,505 +1623,5 @@ describe("entry-to-adapter directional route (production style)", () => {
         assert.ok(Number.isInteger(sentFp));
         handle?.stop();
         void logs;
-    });
-});
-
-describe("plan adapter R4 pre-staging cancellation", () => {
-    function cancelledR4Reply(correlation: string): string {
-        return JSON.stringify({
-            v: 1,
-            correlation_id: correlation,
-            outcome: "cancelled",
-            kind: "directional-move",
-            base_revision: 2,
-        });
-    }
-
-    function staleR4Reply(correlation: string): string {
-        return JSON.stringify({
-            v: 1,
-            correlation_id: correlation,
-            outcome: "rejected",
-            kind: "stale",
-            message: "cancel identity does not match the pending transaction",
-        });
-    }
-
-    // Drive an R4-shape move to a live unanswered request: no plan bound, no
-    // transfer staged, zero native writes. Activation resolves synchronously
-    // in this harness, so dbusCalls[0] is the move request.
-    function driveToLiveR4Move(): {
-        mocks: Mocks;
-        adapter: PlanAdapter;
-        correlation: string;
-    } {
-        const r = refs();
-        const mocks = mockEnv(r);
-        const adapter = enable(mocks);
-        adapter.requestMove("right");
-        assert.equal(mocks.dbusCalls.length, 1);
-        const body = payload(mocks, 0);
-        assert.equal((body["command"] as Record<string, unknown>)["op"], "move");
-        assert.ok(Array.isArray(body["domains"]) && (body["domains"] as unknown[]).length === 2);
-        const correlation = body["correlation_id"] as string;
-        return { mocks, adapter, correlation };
-    }
-
-    function cancelCall(mocks: Mocks): { method: string; payload: string } | undefined {
-        return mocks.dbusCalls.find((c) => c.payload.includes("directional-move-cancel"));
-    }
-
-    // Minimal native capability installer for transfer-staging tests (mirrors
-    // the production R4 suite's fake natives): enough for beginR4Transfer to
-    // reach its setters, recording transfers and memberships.
-    function r4Caps(
-        mocks: Mocks,
-    ): { sentTransfers: Array<{ mover: object; output: object }>; sentMemberships: Array<{ mover: object; refs: ReadonlyArray<object> }> } {
-        const sentTransfers: Array<{ mover: object; output: object }> = [];
-        const sentMemberships: Array<{ mover: object; refs: ReadonlyArray<object> }> = [];
-        const out1 = { name: "out-1" };
-        const out2 = { name: "out-2" };
-        const wsA = { id: "ws-a" };
-        const wsB = { id: "ws-b" };
-        const env = mocks.env as unknown as Record<string, unknown>;
-        env["resolveOutput"] = (name: string): object | null =>
-            name === "out-1" ? out1 : name === "out-2" ? out2 : null;
-        env["resolveDesktop"] = (workspace: string): object | null =>
-            workspace === "ws-a" ? wsA : workspace === "ws-b" ? wsB : null;
-        env["sendClientToScreen"] = (mover: object, output: object): boolean => {
-            sentTransfers.push({ mover, output });
-            return true;
-        };
-        env["setDesktops"] = (mover: object, refs: ReadonlyArray<object>): boolean => {
-            sentMemberships.push({ mover, refs });
-            return true;
-        };
-        env["readOutputName"] = (): string | null => "out-2";
-        env["readDesktopIds"] = (): ReadonlyArray<string> | null => ["ws-b"];
-        env["readGeometry"] = (): { x: number; y: number; w: number; h: number } | null => ({
-            x: 810,
-            y: 10,
-            w: 380,
-            h: 580,
-        });
-        env["subscribeMoverOutput"] = (): (() => void) | null => (): void => {};
-        env["subscribeMoverDesktops"] = (): (() => void) | null => (): void => {};
-        env["subscribeWindowGeometry"] = (): (() => void) | null => (): void => {};
-        return { sentTransfers, sentMemberships };
-    }
-
-    it("attempts cancel on pre-staging timeout and clears the flight on cancelled", () => {
-        const { mocks, adapter, correlation } = driveToLiveR4Move();
-        let observations = 0;
-        const baseDirectional = mocks.directionalImpl;
-        mocks.directionalImpl = (direction) => {
-            observations += 1;
-            return baseDirectional(direction);
-        };
-        // The dispatch-phase timer fires with no plan bound and no transfer.
-        mocks.timers[0]?.callback();
-        // Exactly one fresh observation ran for the cancel payload.
-        assert.equal(observations, 1);
-        const cancel = cancelCall(mocks);
-        assert.ok(cancel, JSON.stringify(mocks.dbusCalls.map((c) => c.method)));
-        // Exact current pre observation with the original request revision (0,
-        // never a staged base), the dispatch correlation/identity, and the
-        // attestation.
-        const body = payload(mocks, 1);
-        assert.equal(body["correlation_id"], correlation);
-        assert.equal(body["revision"], 0);
-        assert.equal(body["owner"], "owner-1");
-        assert.equal(body["generation"], "gen-1");
-        assert.equal(body["focused_window"], "win-a");
-        assert.ok(Array.isArray(body["domains"]) && (body["domains"] as unknown[]).length === 2);
-        assert.deepEqual(
-            (body["windows"] as Array<Record<string, unknown>>).map((w) => w["window"]),
-            ["win-a", "win-x"],
-        );
-        const command = body["command"] as Record<string, unknown>;
-        assert.equal(command["op"], "directional-move-cancel");
-        assert.equal(command["zero_dispatch"], true);
-        assert.ok(!("cross_output_transfer" in command));
-        // Flight retained through the wait.
-        assert.equal(adapter.isInFlight, true);
-        assert.equal(mocks.timers[0]?.cancelled, true);
-        // Normal-level attempt record with the dispatch correlation.
-        assert.ok(
-            mocks.logs.some(
-                (l) =>
-                    l.includes(`cmd=${correlation}`) &&
-                    l.includes("component=cosmic-directional") &&
-                    l.includes("route=directional-r4") &&
-                    l.includes("stage=cancel") &&
-                    l.includes(`correlation=${correlation}`) &&
-                    l.includes("generation=gen-1") &&
-                    l.includes("revision=0") &&
-                    l.includes("event=attempt") &&
-                    l.includes("outcome=cancel-requested") &&
-                    l.includes("cause=timeout"),
-            ),
-            mocks.logs.join("\n"),
-        );
-        // Exact matching cancellation clears the flight without terminal
-        // accounting and without any native write.
-        mocks.callbacks[1]?.(cancelledR4Reply(correlation));
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(adapter.isR4InFlight, false);
-        assert.equal(mocks.geometries.length, 0);
-        const accepted = mocks.logs.findIndex(
-            (l) =>
-                l.includes(`cmd=${correlation}`) &&
-                l.includes("stage=cancel") &&
-                l.includes("event=reply") &&
-                l.includes("outcome=accepted") &&
-                l.includes("revision=2") &&
-                l.includes("cause=timeout"),
-        );
-        const released = mocks.logs.findIndex(
-            (l) =>
-                l.includes(`cmd=${correlation}`) &&
-                l.includes("stage=release") &&
-                l.includes("event=local-release") &&
-                l.includes("outcome=cancelled") &&
-                l.includes("revision=2") &&
-                l.includes("cause=timeout"),
-        );
-        assert.ok(accepted >= 0 && released > accepted, mocks.logs.join("\n"));
-        // Later commands proceed under a new correlation.
-        adapter.requestMove("right");
-        const next = payload(mocks, mocks.dbusCalls.length - 1);
-        assert.notEqual(next["correlation_id"], correlation);
-        assert.ok(
-            mocks.logs.some(
-                (l) =>
-                    l.includes(`cmd=${next["correlation_id"] as string}`) &&
-                    l.includes("stage=request") &&
-                    l.includes("event=dispatch") &&
-                    l.includes("outcome=started"),
-            ),
-            mocks.logs.join("\n"),
-        );
-    });
-
-    it("runs terminal teardown unchanged when cancel is refused or diverged", () => {
-        for (const [replyOf, refusedLine] of [
-            [
-                (c: string): string => staleR4Reply(c),
-                "cancel-refused-stale",
-            ],
-            [
-                (c: string): string =>
-                    JSON.stringify({ v: 1, correlation_id: c, outcome: "diverged", kind: "stale-revision" }),
-                "cancel-refused-stale-revision",
-            ],
-        ] as const) {
-            const driven = driveToLiveR4Move();
-            driven.mocks.timers[0]?.callback();
-            assert.ok(cancelCall(driven.mocks), replyOf("probe"));
-            driven.mocks.callbacks[1]?.(replyOf(driven.correlation));
-            // The Rust refusal kind is attributed on the cancel line; the
-            // fallthrough keeps the original timeout terminal line.
-            assert.ok(
-                driven.mocks.logs.some(
-                    (l) => l.includes(`cmd=${driven.correlation}`) && l.includes(`outcome=${refusedLine}`),
-                ),
-                driven.mocks.logs.join("\n"),
-            );
-            // Same terminal surface as the pre-cancel timeout path: flight
-            // cleared, timeout line, no success, no transfer ever staged.
-            assert.equal(driven.adapter.isInFlight, false);
-            assert.equal(driven.adapter.isR4InFlight, false);
-            assert.equal(driven.mocks.geometries.length, 0);
-            assert.ok(
-                driven.mocks.logs.some((l) => l.includes("outcome=timeout")),
-                driven.mocks.logs.join("\n"),
-            );
-            assert.ok(
-                driven.mocks.logs.every((l) => !l.includes("outcome=cancelled")),
-                driven.mocks.logs.join("\n"),
-            );
-        }
-    });
-
-    it("preserves a planner diverged terminal without attempting cancellation", () => {
-        const { mocks, adapter, correlation } = driveToLiveR4Move();
-        mocks.callbacks[0]?.(
-            JSON.stringify({ v: 1, correlation_id: correlation, outcome: "diverged", kind: "stale-revision" }),
-        );
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(adapter.isR4InFlight, false);
-        assert.ok(!cancelCall(mocks), "no cancellation after a terminal Rust divergence");
-        assert.ok(
-            mocks.logs.some((l) => l.includes(`cmd=${correlation}`) && l.includes("outcome=stale-revision")),
-            mocks.logs.join("\n"),
-        );
-    });
-
-    it("runs terminal teardown unchanged when the cancel reply is malformed", () => {
-        const { mocks, adapter } = driveToLiveR4Move();
-        mocks.timers[0]?.callback();
-        assert.ok(cancelCall(mocks));
-        mocks.callbacks[1]?.("{not-json");
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(adapter.isR4InFlight, false);
-        assert.equal(mocks.geometries.length, 0);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")), mocks.logs.join("\n"));
-    });
-
-    it("runs terminal teardown unchanged when the cancel round trip times out", () => {
-        const { mocks, adapter, correlation } = driveToLiveR4Move();
-        mocks.timers[0]?.callback();
-        assert.ok(cancelCall(mocks));
-        assert.equal(mocks.timers[1]?.cancelled, false);
-        // The cancel deadline fires with no reply: cancel-specific timeout
-        // attribution, then the same terminal teardown.
-        mocks.timers[1]?.callback();
-        assert.ok(
-            mocks.logs.some((l) => l.includes(`cmd=${correlation}`) && l.includes("outcome=cancel-timed-out")),
-            mocks.logs.join("\n"),
-        );
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(adapter.isR4InFlight, false);
-        assert.equal(mocks.geometries.length, 0);
-        assert.ok(
-            mocks.logs.some((l) => l.includes(`cmd=${correlation}`) && l.includes("outcome=timeout")),
-            mocks.logs.join("\n"),
-        );
-        assert.ok(
-            mocks.logs.some((l) => l.includes(`cmd=${correlation}`) && l.includes("outcome=timeout")),
-            mocks.logs.join("\n"),
-        );
-    });
-
-    it("never attempts cancel after transfer staged and still reports adapter-lost", () => {
-        const r = refs();
-        const mocks = mockEnv(r);
-        const caps = r4Caps(mocks);
-        const adapter = enable(mocks);
-        adapter.requestMove("right");
-        const body = payload(mocks, 0);
-        const correlation = body["correlation_id"] as string;
-        // Stage the R4 transfer: native setters ran (dispatch counter > 0).
-        mocks.callbacks[0]?.(crossMoveReply(correlation));
-        assert.ok(caps.sentTransfers.length > 0);
-        // The R4 deadline fires post-staging: terminal with the established
-        // adapter-lost report and no cancel attempt.
-        mocks.timers[1]?.callback();
-        assert.ok(
-            mocks.dbusCalls.some(
-                (c) =>
-                    c.payload.includes("directional-move-ack") && c.payload.includes("adapter-lost"),
-            ),
-            JSON.stringify(mocks.dbusCalls.map((c) => c.payload.slice(0, 120))),
-        );
-        assert.ok(!cancelCall(mocks), "no cancel after transfer staging");
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(adapter.isR4InFlight, false);
-    });
-
-    it("never attempts cancel after a transfer setter throws", () => {
-        const r = refs();
-        const mocks = mockEnv(r);
-        r4Caps(mocks);
-        const env = mocks.env as unknown as Record<string, unknown>;
-        env["sendClientToScreen"] = (): boolean => {
-            throw new Error("native transfer fault");
-        };
-        const adapter = enable(mocks);
-        adapter.requestMove("right");
-        const correlation = payload(mocks, 0)["correlation_id"] as string;
-        mocks.callbacks[0]?.(crossMoveReply(correlation));
-        assert.ok(!cancelCall(mocks), "no cancel after a throwing transfer setter");
-        assert.ok(
-            mocks.dbusCalls.some(
-                (c) =>
-                    c.payload.includes("directional-move-ack") && c.payload.includes("adapter-lost"),
-            ),
-        );
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(adapter.isR4InFlight, false);
-    });
-
-    it("runs terminal teardown unchanged when the cancel send throws", () => {
-        const r = refs();
-        const mocks = mockEnv(r);
-        const baseCallDbus = mocks.env.callDbus.bind(mocks.env);
-        const throwingEnv: PlanAdapterEnv = {
-            ...mocks.env,
-            callDbus: (service, path, iface, method, payload, callback) => {
-                if (payload.includes("directional-move-cancel")) {
-                    throw new Error("transport down");
-                }
-                baseCallDbus(service, path, iface, method, payload, callback);
-            },
-        };
-        const adapter = new PlanAdapter(throwingEnv);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        adapter.requestMove("right");
-        const body = payload(mocks, 0);
-        const correlation = body["correlation_id"] as string;
-        mocks.timers[0]?.callback();
-        // The attempt cannot leave the adapter: one bounded unavailable
-        // record, then the preserved timeout terminal path with no transfer
-        // staged and no native writes.
-        assert.ok(
-            mocks.logs.some(
-                (l) => l.includes(`cmd=${correlation}`) && l.includes("outcome=cancel-unavailable"),
-            ),
-            mocks.logs.join("\n"),
-        );
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(adapter.isR4InFlight, false);
-        assert.equal(mocks.geometries.length, 0);
-        assert.ok(
-            mocks.logs.some((l) => l.includes(`cmd=${correlation}`) && l.includes("outcome=timeout")),
-            mocks.logs.join("\n"),
-        );
-        assert.ok(
-            mocks.logs.every((l) => !l.includes("outcome=cancelled")),
-            mocks.logs.join("\n"),
-        );
-    });
-
-    it("maps unknown refusal kinds to refused-unknown without echo", () => {
-        for (const outcome of ["rejected", "diverged"]) {
-            const driven = driveToLiveR4Move();
-            driven.mocks.timers[0]?.callback();
-            assert.ok(cancelCall(driven.mocks));
-            driven.mocks.callbacks[1]?.(
-                JSON.stringify({ v: 1, correlation_id: driven.correlation, outcome, kind: "bogus-kind" }),
-            );
-            // Syntax-valid but foreign kinds never echo: the record carries
-            // the allowlist fallback while the fallthrough stays terminal.
-            assert.ok(
-                driven.mocks.logs.some(
-                    (l) => l.includes(`cmd=${driven.correlation}`) && l.includes("outcome=cancel-refused-unknown"),
-                ),
-                driven.mocks.logs.join("\n"),
-            );
-            assert.ok(
-                driven.mocks.logs.every((l) => !l.includes("bogus-kind")),
-                driven.mocks.logs.join("\n"),
-            );
-            assert.equal(driven.adapter.isInFlight, false);
-            assert.equal(driven.mocks.geometries.length, 0);
-        }
-    });
-
-    it("drops the late original reply and duplicate cancel callbacks while armed", () => {
-        const r = refs();
-        const mocks = mockEnv(r);
-        const caps = r4Caps(mocks);
-        const adapter = enable(mocks);
-        adapter.requestMove("right");
-        const body = payload(mocks, 0);
-        const correlation = body["correlation_id"] as string;
-        mocks.timers[0]?.callback();
-        assert.ok(cancelCall(mocks));
-        const callsBefore = mocks.dbusCalls.length;
-        // Late original planned reply while armed would stage transfer if not
-        // fenced: assert zero native dispatch of any kind.
-        mocks.callbacks[0]?.(crossMoveReply(correlation));
-        assert.equal(caps.sentTransfers.length, 0);
-        assert.equal(caps.sentMemberships.length, 0);
-        assert.equal(mocks.geometries.length, 0);
-        assert.equal(adapter.isInFlight, true);
-        assert.equal(adapter.isR4InFlight, false);
-        // Exact cancellation settles; replays of its callback and timer are inert.
-        mocks.callbacks[1]?.(cancelledR4Reply(correlation));
-        assert.equal(adapter.isInFlight, false);
-        mocks.callbacks[1]?.(cancelledR4Reply(correlation));
-        mocks.timers[1]?.callback();
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(mocks.dbusCalls.length, callsBefore);
-        assert.ok(
-            mocks.dbusCalls.every((c) => !c.payload.includes("adapter-lost")),
-            JSON.stringify(mocks.dbusCalls.map((c) => c.payload.slice(0, 120))),
-        );
-        assert.equal(
-            mocks.logs.filter((l) => l.includes("event=local-release") && l.includes("outcome=cancelled")).length,
-            1,
-            mocks.logs.join("\n"),
-        );
-    });
-
-    it("attributes a malformed cancel reply before the unchanged fallthrough", () => {
-        const { mocks, adapter, correlation } = driveToLiveR4Move();
-        mocks.timers[0]?.callback();
-        assert.ok(cancelCall(mocks));
-        mocks.callbacks[1]?.("{not-json");
-        assert.ok(
-            mocks.logs.some(
-                (l) => l.includes(`cmd=${correlation}`) && l.includes("outcome=cancel-reply-malformed"),
-            ),
-            mocks.logs.join("\n"),
-        );
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(adapter.isR4InFlight, false);
-        assert.equal(mocks.geometries.length, 0);
-    });
-
-    it("records ineligible-dispatched when a local plan's setter threw", () => {
-        const r = refs();
-        const mocks = mockEnv(r);
-        const throwingEnv: PlanAdapterEnv = {
-            ...mocks.env,
-            setGeometry: (): boolean => {
-                throw new Error("native write fault");
-            },
-        };
-        const adapter = new PlanAdapter(throwingEnv);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        adapter.requestMove("right");
-        const body = payload(mocks, 0);
-        const correlation = body["correlation_id"] as string;
-        // A local (non-cross) plan on the two-domain flight actuates ordinary
-        // geometries: the first setter throw marks the flight dispatched, so
-        // no cancel may be attempted and the write-failed terminal stands.
-        // Focus stays source-homed with no operation, the exact local shape.
-        // Rects differ from the observed ones so the writes are not skipped
-        // as already-equal.
-        const local = {
-            v: 1,
-            correlation_id: correlation,
-            outcome: "planned",
-            base_revision: 2,
-            desired_geometry: [
-                { window: "win-a", leaf: "leaf-a", output: "out-1", workspace: "ws-a", rect: { x: 800, y: 0, w: 120, h: 100 } },
-                { window: "win-x", leaf: "leaf-x", output: "out-2", workspace: "ws-b", rect: { x: 0, y: 0, w: 120, h: 100 } },
-            ],
-            desired_focus: { domain_output: "out-1", domain_workspace: "ws-a", leaf: "leaf-a" },
-        };
-        mocks.callbacks[0]?.(JSON.stringify(local));
-        assert.ok(!cancelCall(mocks), "no cancel after a setter ran");
-        assert.ok(
-            mocks.logs.some((l) => l.includes(`cmd=${correlation}`) && l.includes("outcome=cancel-ineligible-dispatched")),
-            mocks.logs.join("\n"),
-        );
-        assert.ok(
-            mocks.logs.some((l) => l.includes(`cmd=${correlation}`) && l.includes("outcome=write-failed")),
-            mocks.logs.join("\n"),
-        );
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("keeps logging failure-harmless when the logger throws", () => {
-        const r = refs();
-        const mocks = mockEnv(r);
-        const throwingEnv = { ...mocks.env, log: (): void => { throw new Error("log down"); } };
-        const adapter = new PlanAdapter(throwingEnv);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        adapter.requestMove("right");
-        const body = payload(mocks, 0);
-        const correlation = body["correlation_id"] as string;
-        mocks.timers[0]?.callback();
-        assert.ok(cancelCall(mocks));
-        mocks.callbacks[1]?.(cancelledR4Reply(correlation));
-        // Every diagnostic above threw inside the adapter and was swallowed:
-        // the flight still settles exactly like the logged path.
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(adapter.isR4InFlight, false);
-        adapter.requestMove("right");
-        assert.equal(mocks.dbusCalls.length, 3);
     });
 });

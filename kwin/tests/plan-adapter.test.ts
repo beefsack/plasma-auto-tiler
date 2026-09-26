@@ -6011,24 +6011,25 @@ describe("plan adapter observational highlight refresh edge", () => {
 });
 
 describe("plan entry workspace-send echo wiring", () => {
-    it("binds both send entries to native membership and frame geometry signals via signal-capability helpers", () => {
+    it("binds the send entry to the mover desktopsChanged delayed-arrival signal via signal-capability helpers", () => {
         const srcDir = kwinSrcDir();
-        for (const name of ["plan-adapter-entry.ts", "workspace-send-adapter-entry.ts"]) {
-            const body = readFileSync(join(srcDir, name), "utf8");
-            assert.ok(body.includes("subscribeMoverDesktops"), name);
-            assert.ok(body.includes("desktopsChanged"), name);
-            assert.ok(body.includes("subscribeWindowGeometry"), name);
-            assert.ok(body.includes("frameGeometryChanged"), name);
-            assert.ok(body.includes("connectSignal"), name);
-            assert.ok(body.includes("readSignal"), name);
-        }
+        const sendEntry = readFileSync(join(srcDir, "workspace-send-adapter-entry.ts"), "utf8");
+        assert.ok(sendEntry.includes("subscribeMoverDesktops"), "mover desktop-change seam");
+        assert.ok(sendEntry.includes("desktopsChanged"), "delayed-arrival membership signal");
+        assert.ok(sendEntry.includes("connectSignal"), "signal-capability connect");
+        assert.ok(sendEntry.includes("readSignal"), "signal-capability read");
+        assert.ok(!sendEntry.includes("subscribeWindowGeometry"), "no per-window geometry echo in the send path");
+        assert.ok(!sendEntry.includes("frameGeometryChanged"), "no per-window geometry signal in the send path");
+        assert.ok(!sendEntry.includes("onGeometryEcho"), "no geometry echo handler in the send path");
         const adapterSrc = readFileSync(join(srcDir, "workspace-send-adapter.ts"), "utf8");
         assert.ok(adapterSrc.includes("subscribeMoverDesktops"), "adapter seam");
-        assert.ok(adapterSrc.includes("subscribeWindowGeometry"), "geometry seam");
-        assert.ok(adapterSrc.includes("plan-echo"), "waiting/disposition diagnostic");
-        assert.ok(adapterSrc.includes("plan-geometry"), "geometry readiness diagnostic");
-        assert.ok(adapterSrc.includes("onMoverEcho"), "one-shot echo handler");
-        assert.ok(adapterSrc.includes("onGeometryEcho"), "one-shot geometry handler");
+        assert.ok(adapterSrc.includes("desktopsChanged"), "delayed-arrival signal reference");
+        assert.ok(adapterSrc.includes("armArrivalSignal"), "one-shot arrival arming");
+        assert.ok(adapterSrc.includes("onArrivalSignal"), "one-shot arrival handler");
+        assert.ok(adapterSrc.includes('"arrival"') && adapterSrc.includes('"waiting"'), "arrival-waiting diagnostic");
+        assert.ok(!adapterSrc.includes("subscribeWindowGeometry"), "adapter has no geometry-echo seam");
+        assert.ok(!adapterSrc.includes("onGeometryEcho") && !adapterSrc.includes("onMoverEcho"), "no echo handlers");
+        assert.ok(!adapterSrc.includes("plan-echo") && !adapterSrc.includes("plan-geometry"), "no echo diagnostics");
     });
 
     it("exposes a real move-workspace shortcut chord feeding the send transport", () => {
@@ -6363,7 +6364,7 @@ describe("plan ordinary lifecycle diagnostics", () => {
         assert.equal(adapter.isInFlight, false);
     });
 
-    it("keeps R4 pre-staging cancel boundaries outside ordinary records", () => {
+    it("settles an R4-shape move without transfer capabilities via ordinary timeout, with no cancel records", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const bounds = { x: 0, y: 0, w: 1200, h: 800 };
@@ -6393,11 +6394,12 @@ describe("plan ordinary lifecycle diagnostics", () => {
         adapter.requestMove("right");
         const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
         runTimers(mocks);
-        assert.ok(mocks.logs.some((l) => l.includes(`cmd=${correlation}`) && l.includes("stage=cancel") && l.includes("event=attempt") && l.includes("outcome=cancel-requested")), mocks.logs.join("\n"));
-        assert.ok(!lifecycle(mocks).some((l) => l.includes("stage=terminal")), `cancel wait owns the flight, no ordinary terminal: ${mocks.logs.join("\n")}`);
+        assert.ok(!mocks.logs.some((l) => l.includes("stage=cancel")), `wire cancel removed, no cancel records: ${mocks.logs.join("\n")}`);
+        assert.ok(!mocks.logs.some((l) => l.includes("cancel-requested")), `no cancel attempts: ${mocks.logs.join("\n")}`);
         assert.ok(!lifecycle(mocks).some((l) => l.includes("stage=reply")), "no ordinary reply record without a reply");
-        assert.equal(mocks.geometries.length, 0, "no native writes before staging");
-        assert.equal(adapter.isInFlight, true, "cancel wait retains the flight");
+        assert.ok(lifecycle(mocks).some((l) => l.includes(`cmd=${correlation}`) && l.includes("stage=terminal") && l.includes("outcome=timeout")), `ordinary timeout owns the flight: ${mocks.logs.join("\n")}`);
+        assert.equal(mocks.geometries.length, 0, "no native writes without transfer capabilities");
+        assert.equal(adapter.isInFlight, false, "unanswered R4-shape flight releases");
         adapter.disable();
     });
 

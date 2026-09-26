@@ -17,30 +17,12 @@
 //! execution stays outside: replies carry full target geometries plus
 //! retained focus for the adapter to actuate.
 //!
-//! Workspace send route (standalone, dev-only): the `send-to-workspace`
+//! Workspace send route (synchronous): the `send-to-workspace`
 //! operation carries a same-output distinct-workspace target as an optional
 //! `target_domain` plus `target_windows` alongside the source `domain`/
-//! `windows`. It proposes once and retains one pending two-domain Session
-//! (owner/generation/correlation/base-revision bound) until an exact accepted
-//! `send-to-workspace-ack` and a matching verified `send-to-workspace-verify`
-//! post-observation commit it. No owner rebind during pending; pending
-//! mismatch, loss, refused ack, or failed verification is terminal
-//! `diverged` with no Legacy fallback. Legacy requests are unchanged. A
-//! read-only `send-to-workspace-status` query classifies the retained
-//! transaction against a fresh complete observation without mutating,
-//! acknowledging, verifying, rebinding, or advancing anything. A fenced
-//! `send-to-workspace-abandon` operation retires ANY existing
-//! workspace-send pending (exact or orphan: older generation, other
-//! correlation, other same-UID caller, other revision or scope), regardless
-//! of acked/unacked/diverged state, with no commit claim and no new retained
-//! state, preserving all per-domain Engine sessions. An exact retained
-//! match (owner/generation/correlation/retained-revision/scope) replies
-//! `abandoned`; a mismatched retired live pending replies distinct
-//! `orphan-abandoned` (v, requester correlation, kind `send-to-workspace`,
-//! no base/geometry/operation/preconditions). Absent pending replies
-//! `no-pending-unknown` with the exact correlation and kind. Malformed or
-//! unauthorized requests still fail closed before any retirement, and a
-//! directional R4 pending is out of scope (never retired by this op).
+//! `windows`. It proposes once through the Engine and commits immediately
+//! with native assignment plus both-domain geometry. Legacy requests are
+//! unchanged.
 
 use serde::{Deserialize, Serialize};
 
@@ -457,8 +439,8 @@ fn summary_request_field<'a>(
 }
 
 /// Normal-level ingress summary: requested op, validated correlation, bounded
-/// revision. Emitted for every authorized `DescribePlan` call, covering
-/// normal ops plus the status and cancel routes with truthful op tokens.
+/// revision. Emitted for every authorized `DescribePlan` call with truthful
+/// op tokens.
 #[must_use]
 pub fn summarize_plan_ingress(request_json: &str) -> String {
     let request: serde_json::Value = serde_json::from_str(request_json).unwrap_or_default();
@@ -506,11 +488,7 @@ pub fn summarize_plan_shape(request_json: &str) -> String {
 
 /// Normal-level terminal summary: op re-parsed from the request (so the pair
 /// stays attributable even when the reply carries no context), plus
-/// correlation/outcome/kind/base/detail from the reply echo. Status result
-/// codes pass through truthfully (`status`/`post-unacked`/…,
-/// `cancelled`/`send-to-workspace`/…); `no-pending-unknown` stays exactly
-/// that and never implies a commit. Abandon outcomes (`abandoned`,
-/// `orphan-abandoned`) pass through with the same redaction posture.
+/// correlation/outcome/kind/base/detail from the reply echo.
 #[must_use]
 pub fn summarize_plan_egress(request_json: &str, reply_json: &str) -> String {
     let request: serde_json::Value = serde_json::from_str(request_json).unwrap_or_default();
@@ -1040,18 +1018,10 @@ fn validate_request_with_engine(
         });
     // Production directional payload: only focus/move may carry `domains`;
     // every other op (including the standalone workspace-send route) keeps
-    // legacy single-domain behavior and refuses it fail-closed. The
-    // directional R4 async ack/verify/status/cancel phases carry the same
-    // two-domain post-observation, so they admit `domains` with no new
-    // topology seeding.
+    // legacy single-domain behavior and refuses it fail-closed.
     let directional = match (&request.domains, op_str) {
         (None, _) => None,
-        (Some(_), "focus")
-        | (Some(_), "move")
-        | (Some(_), "directional-move-ack")
-        | (Some(_), "directional-move-verify")
-        | (Some(_), "directional-move-status")
-        | (Some(_), "directional-move-cancel") => request.domains.clone(),
+        (Some(_), "focus") | (Some(_), "move") => request.domains.clone(),
         (Some(_), _) => {
             return Err(snapshot_invalid(
                 request.correlation_id.clone(),
@@ -1219,30 +1189,7 @@ fn validate_request_with_engine(
             }
         }
     }
-    // Ack/verify/status/cancel phases carry the complete source+target
-    // post-observation where focus is not a planning input: after the mover
-    // leaves the source desktop the observed focus may be empty or a
-    // remaining source window, so the focus-membership gate is relaxed for
-    // those ops only (workspace and directional R4 async routes). Cancellation
-    // additionally binds focus exactly against the retained pre-image below,
-    // so the relaxed gate loses nothing.
-    let focus_skipped_for_ack_verify = matches!(
-        request
-            .command
-            .get("op")
-            .and_then(serde_json::Value::as_str),
-        Some("send-to-workspace-ack")
-            | Some("send-to-workspace-verify")
-            | Some("send-to-workspace-status")
-            | Some("send-to-workspace-cancel")
-            | Some("send-to-workspace-abandon")
-            | Some("directional-move-ack")
-            | Some("directional-move-verify")
-            | Some("directional-move-status")
-            | Some("directional-move-cancel")
-    );
     if !request.windows.is_empty()
-        && !focus_skipped_for_ack_verify
         && !request
             .windows
             .iter()
@@ -1258,7 +1205,6 @@ fn validate_request_with_engine(
     // domain (cross targets are never the planning input). Binds the request
     // to the source so a stale target substitution cannot redirect planning.
     if directional_parsed.is_some()
-        && !focus_skipped_for_ack_verify
         && !request.windows.iter().any(|w| {
             w.window == request.focused_window
                 && w.output == request.domain.output
@@ -1609,6 +1555,9 @@ fn serialize_move_reply(
             tiler_core::directional::CrossOutputTarget::Occupied => "occupied",
         },
     });
+    // The legacy adapter-must-verify-postconditions token binds the planned
+    // operation shape. Immediate R4 commits do not await native verification;
+    // KWin fences setters and follows only on fresh observed mover arrival.
     let preconditions: Vec<&'static str> = cross
         .preconditions
         .iter()
@@ -1779,6 +1728,9 @@ fn serialize_send_workspace_reply(
         "target_output": target_output.0,
         "target_workspace": target_workspace.0,
     });
+    // Keep the legacy wire token for exact reply binding, not as a native
+    // verification or committed-native-success assertion. KWin reconciles
+    // both domains after the immediate planned-topology commit.
     let preconditions: Vec<&'static str> = plan
         .preconditions
         .iter()
@@ -1830,110 +1782,7 @@ fn serialize_core_reply(ctx: &Validated, reply: &tiler_core::boundary::CoreReply
         CoreReply::Rejected { kind, message } => rejected(cid, kind, message),
         CoreReply::SnapshotInvalid { message, detail } => snapshot_invalid(cid, message, detail),
         CoreReply::Diverged(reason) => diverged_reply(&cid, *reason),
-        CoreReply::Status {
-            base_revision,
-            status,
-        } => status_reply(&cid, *base_revision, status.as_str()),
-        CoreReply::Acknowledged {
-            base_revision,
-            kind,
-        } => serialize_bounded(&PlanReply {
-            v: PLAN_CONTRACT_VERSION,
-            correlation_id: cid,
-            outcome: "acknowledged",
-            kind: Some(kind.kind_str().to_owned()),
-            message: None,
-            base_revision: Some(*base_revision),
-            detail: None,
-            desired_geometry: None,
-            desired_focus: None,
-            float_geometry: None,
-            preconditions: None,
-            operation: None,
-        }),
-        CoreReply::Committed { revision, kind } => serialize_bounded(&PlanReply {
-            v: PLAN_CONTRACT_VERSION,
-            correlation_id: cid,
-            outcome: "committed",
-            kind: Some(kind.kind_str().to_owned()),
-            message: None,
-            base_revision: Some(*revision),
-            detail: None,
-            desired_geometry: None,
-            desired_focus: None,
-            float_geometry: None,
-            preconditions: None,
-            operation: None,
-        }),
-        CoreReply::Cancelled {
-            base_revision,
-            kind,
-        } => cancelled_reply(&cid, kind.kind_str(), *base_revision),
     }
-}
-
-/// Planned workspace-send reply: carries the full affected geometry plus the
-/// exact operation/preconditions the adapter must echo back in the verify
-/// post-observation. Legacy byte oracle for the typed
-/// [`serialize_send_workspace_reply`] funnel; production routes through
-/// [`serialize_core_reply`].
-#[cfg(test)]
-fn workspace_planned_reply(
-    correlation_id: &str,
-    plan: &tiler_core::session::SessionPlan,
-) -> String {
-    let operation = match &plan.dispatch.operation {
-        LifecycleOperation::MoveTiled {
-            window,
-            leaf,
-            source_output,
-            source_workspace,
-            target_output,
-            target_workspace,
-        } => serde_json::json!({
-            "op": "move-tiled",
-            "window": window.0,
-            "leaf": leaf.0,
-            "source_output": source_output.0,
-            "source_workspace": source_workspace.0,
-            "target_output": target_output.0,
-            "target_workspace": target_workspace.0,
-        }),
-        _ => {
-            return snapshot_invalid(
-                correlation_id.to_owned(),
-                MSG_OBSERVATION,
-                "move-op-invalid",
-            );
-        }
-    };
-    let preconditions: Vec<&'static str> = plan
-        .dispatch
-        .preconditions
-        .iter()
-        .map(|p| lifecycle_precondition_str(*p))
-        .collect();
-    serialize_bounded(&PlanReply {
-        v: PLAN_CONTRACT_VERSION,
-        correlation_id: correlation_id.to_owned(),
-        outcome: "planned",
-        kind: Some("send-to-workspace".to_owned()),
-        message: None,
-        base_revision: Some(plan.dispatch.base_revision),
-        detail: Some(serde_json::json!({
-            "kind": "send-to-workspace",
-            "policy_version": plan.dispatch.policy_version,
-            "capability": "move-tiled",
-        })),
-        desired_geometry: Some(plan.desired_geometry.iter().map(geometry_reply).collect()),
-        desired_focus: match (&plan.desired_focus_domain, &plan.desired_focus_leaf) {
-            (Some(d), Some(l)) => Some(focus_reply(d, l)),
-            _ => None,
-        },
-        float_geometry: None,
-        preconditions: Some(preconditions),
-        operation: Some(operation),
-    })
 }
 
 /// Convert carried wire windows to the portable near-strip fitter.
@@ -1982,21 +1831,7 @@ fn lifecycle_precondition_str(value: LifecyclePrecondition) -> &'static str {
     }
 }
 
-/// Parse a lifecycle precondition token (fail-closed on unknown tokens).
-#[must_use]
-fn parse_lifecycle_precondition(value: &str) -> Option<LifecyclePrecondition> {
-    match value {
-        "window-observed" => Some(LifecyclePrecondition::WindowObserved),
-        "desired-topology-valid" => Some(LifecyclePrecondition::DesiredTopologyValid),
-        "adapter-must-verify-postconditions" => {
-            Some(LifecyclePrecondition::AdapterMustVerifyPostconditions)
-        }
-        _ => None,
-    }
-}
-
-/// Terminal divergence reply for the standalone workspace route: outcome
-/// `diverged`, exact bounded kind, no Legacy fallback.
+/// Terminal divergence reply: outcome `diverged`, exact bounded kind.
 fn diverged_reply(correlation_id: &str, reason: tiler_core::contract::DivergenceKind) -> String {
     serialize_bounded(&PlanReply {
         v: PLAN_CONTRACT_VERSION,
@@ -2014,323 +1849,6 @@ fn diverged_reply(correlation_id: &str, reason: tiler_core::contract::Divergence
     })
 }
 
-/// Read-only pending-transaction status reply: outcome `status` with the
-/// truthful classification as `kind` (`post-unacked`, `post-acked`,
-/// `unresolved`, `stale`, or `no-pending-unknown`). Carries no geometry,
-/// focus, operation, or preconditions and never implies a commit:
-/// `no-pending-unknown` in particular cannot be read as committed.
-fn status_reply(correlation_id: &str, base_revision: Option<u64>, status: &'static str) -> String {
-    serialize_bounded(&PlanReply {
-        v: PLAN_CONTRACT_VERSION,
-        correlation_id: correlation_id.to_owned(),
-        outcome: "status",
-        kind: Some(status.to_owned()),
-        message: None,
-        base_revision,
-        detail: None,
-        desired_geometry: None,
-        desired_focus: None,
-        float_geometry: None,
-        preconditions: None,
-        operation: None,
-    })
-}
-
-/// Cancellation success reply: outcome `cancelled` with the route kind and
-/// the un-advanced base revision. Carries no geometry, focus, operation, or
-/// preconditions and must never be read as a commit: nothing advanced, the
-/// matching unacknowledged pending was withdrawn and its staged desired state
-/// discarded.
-fn cancelled_reply(correlation_id: &str, kind: &'static str, base_revision: u64) -> String {
-    serialize_bounded(&PlanReply {
-        v: PLAN_CONTRACT_VERSION,
-        correlation_id: correlation_id.to_owned(),
-        outcome: "cancelled",
-        kind: Some(kind.to_owned()),
-        message: None,
-        base_revision: Some(base_revision),
-        detail: None,
-        desired_geometry: None,
-        desired_focus: None,
-        float_geometry: None,
-        preconditions: None,
-        operation: None,
-    })
-}
-
-/// Abandon success reply: outcome `abandoned` with the retired route kind and
-/// the exact request correlation. Carries no base revision, geometry, focus,
-/// operation, or preconditions and must never be read as a commit: the exact
-/// pending was retired and its staged desired state discarded, with Engine
-/// sessions and baselines untouched.
-fn abandoned_reply(correlation_id: &str, kind: &'static str) -> String {
-    serialize_bounded(&PlanReply {
-        v: PLAN_CONTRACT_VERSION,
-        correlation_id: correlation_id.to_owned(),
-        outcome: "abandoned",
-        kind: Some(kind.to_owned()),
-        message: None,
-        base_revision: None,
-        detail: None,
-        desired_geometry: None,
-        desired_focus: None,
-        float_geometry: None,
-        preconditions: None,
-        operation: None,
-    })
-}
-
-/// Orphan abandon reply: outcome `orphan-abandoned` with the retired route
-/// kind and the requester correlation. Same shape contract as
-/// [`abandoned_reply`]: no base revision, geometry, focus, operation, or
-/// preconditions, never a commit. Emitted when a fenced abandon retires a
-/// live workspace-send pending whose retained identity (owner, generation,
-/// correlation), revision, or scope does not exactly match the requester
-/// (older generation, other correlation, other same-UID caller). The
-/// distinct outcome lets the caller distinguish orphan retirement from an
-/// exact retire while both clear the same pending slot.
-fn orphan_abandoned_reply(correlation_id: &str, kind: &'static str) -> String {
-    serialize_bounded(&PlanReply {
-        v: PLAN_CONTRACT_VERSION,
-        correlation_id: correlation_id.to_owned(),
-        outcome: "orphan-abandoned",
-        kind: Some(kind.to_owned()),
-        message: None,
-        base_revision: None,
-        detail: None,
-        desired_geometry: None,
-        desired_focus: None,
-        float_geometry: None,
-        preconditions: None,
-        operation: None,
-    })
-}
-
-/// Abandon retry reply: outcome `no-pending-unknown` with the route kind and
-/// the exact request correlation. Emitted for the same fenced abandon request
-/// when no matching pending exists (already retired, already committed, or
-/// never staged). Carries nothing else and never implies a commit.
-fn abandon_unknown_reply(correlation_id: &str, kind: &'static str) -> String {
-    serialize_bounded(&PlanReply {
-        v: PLAN_CONTRACT_VERSION,
-        correlation_id: correlation_id.to_owned(),
-        outcome: "no-pending-unknown",
-        kind: Some(kind.to_owned()),
-        message: None,
-        base_revision: None,
-        detail: None,
-        desired_geometry: None,
-        desired_focus: None,
-        float_geometry: None,
-        preconditions: None,
-        operation: None,
-    })
-}
-
-/// Deferred raw echo of a verify command's nested `preconditions`/`operation`.
-///
-/// Captures the nested JSON bytes opaquely at the tagged [`SyncCommand`]
-/// decode boundary, so the outer parse always succeeds on well-formed JSON
-/// and conversion to portable core types runs only after the `verified` gate
-/// at its exact legacy position. Handlers see only this opaque string plus
-/// the converted core types, never an untyped JSON tree: every shape failure
-/// still maps to `verify-invalid`, never to a top-level parse error.
-/// Re-serialization is outcome-preserving here because inner validation only
-/// reads strings/bools/u64 through the strict echo DTOs below, which accept
-/// exactly the shapes the previous untyped parse accepted.
-#[derive(Debug, Clone)]
-struct RawEcho(String);
-
-impl<'de> Deserialize<'de> for RawEcho {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        serde_json::to_string(&value)
-            .map(RawEcho)
-            .map_err(serde::de::Error::custom)
-    }
-}
-
-/// Typed wire echo of a MoveTiled operation carried in a verify command.
-/// No `deny_unknown_fields`: extra fencing fields stay lenient exactly like
-/// the previous untyped parse (typed operation equality plus the
-/// post-observation geometry check enforce exactness at verify time).
-/// Decoded only from the deferred [`RawEcho`] after the `verified` gate, so
-/// every shape failure still maps to `verify-invalid`.
-#[derive(Debug, Clone, Deserialize)]
-struct MoveTiledEchoDto {
-    op: String,
-    window: String,
-    leaf: String,
-    source_output: String,
-    source_workspace: String,
-    target_output: String,
-    target_workspace: String,
-}
-
-/// Typed wire echo of an R4 cross-output move operation carried in a verify
-/// command. Same leniency contract as [`MoveTiledEchoDto`]: extra fencing
-/// fields are ignored here while the typed operation equality, the fenced
-/// source/target binding, and the post-observation geometry check enforce
-/// exactness at verify time. The exact wire syntax (window/leaf/direction/
-/// source ids/capability) cannot be represented by the portable
-/// [`tiler_core::directional::MoveOperation::CrossOutput`] shape, which
-/// carries only rule/target/output/workspace/child-index/target-occupancy, so
-/// decoding stays strictly in protocol and only the portable operation is
-/// passed to the next layer (see recommendation in the work report).
-#[derive(Debug, Clone, Deserialize)]
-struct DirectionalMoveEchoDto {
-    op: String,
-    rule: String,
-    capability: String,
-    direction: String,
-    window: String,
-    leaf: String,
-    source_output: String,
-    source_workspace: String,
-    target_output: String,
-    target_workspace: String,
-    source_root_child_index: u64,
-    target: String,
-}
-
-/// Parse a MoveTiled operation echo back to its typed lifecycle form.
-/// The echo arrives as deferred [`RawEcho`] (see [`SyncCommand`]) so the
-/// outer tagged decode always succeeds on well-formed JSON and this runs only
-/// after the `verified` gate at its exact legacy position; any shape failure
-/// maps to `verify-invalid`.
-fn parse_move_tiled_operation(value: &RawEcho) -> Option<LifecycleOperation> {
-    let echo: MoveTiledEchoDto = serde_json::from_str(&value.0).ok()?;
-    if echo.op != "move-tiled" {
-        return None;
-    }
-    if !is_opaque_id(&echo.window)
-        || !is_opaque_id(&echo.leaf)
-        || !is_opaque_id(&echo.source_output)
-        || !is_opaque_id(&echo.source_workspace)
-        || !is_opaque_id(&echo.target_output)
-        || !is_opaque_id(&echo.target_workspace)
-    {
-        return None;
-    }
-    Some(LifecycleOperation::MoveTiled {
-        window: WindowId(echo.window),
-        leaf: NodeId(echo.leaf),
-        source_output: OutputId(echo.source_output),
-        source_workspace: WorkspaceId(echo.source_workspace),
-        target_output: OutputId(echo.target_output),
-        target_workspace: WorkspaceId(echo.target_workspace),
-    })
-}
-
-/// Parse the exact lifecycle precondition vector from the verify echo.
-/// Deferred [`RawEcho`] input preserves the legacy precedence: non-array,
-/// empty, overlong, non-string, and unknown-token echoes all map to
-/// `verify-invalid` after the `verified` gate, never to a top-level parse
-/// error.
-fn parse_lifecycle_preconditions(value: &RawEcho) -> Option<Vec<LifecyclePrecondition>> {
-    let values: Vec<String> = serde_json::from_str(&value.0).ok()?;
-    if values.is_empty() || values.len() > tiler_core::contract::MAX_PRECONDITIONS {
-        return None;
-    }
-    let mut out = Vec::with_capacity(values.len());
-    for entry in &values {
-        out.push(parse_lifecycle_precondition(entry)?);
-    }
-    Some(out)
-}
-
-/// Parse one directional move precondition token (fail-closed on unknown).
-fn parse_directional_precondition(value: &str) -> Option<tiler_core::directional::Precondition> {
-    use tiler_core::directional::Precondition as P;
-    match value {
-        "focused-leaf-occupied-by-focused-window" => Some(P::FocusedLeafOccupiedByFocusedWindow),
-        "neighbor-leaf-occupied" => Some(P::NeighborLeafOccupied),
-        "container-is-direct-parent" => Some(P::ContainerIsDirectParent),
-        "target-group-membership" => Some(P::TargetGroupMembership),
-        "parent-group-membership" => Some(P::ParentGroupMembership),
-        "source-root-membership-and-adjacent-same-workspace-output" => {
-            Some(P::SourceRootMembershipAndAdjacentSameWorkspaceOutput)
-        }
-        "adapter-must-verify-postconditions" => Some(P::AdapterMustVerifyPostconditions),
-        _ => None,
-    }
-}
-
-/// Parse the exact directional precondition vector from the verify echo.
-/// Deferred [`RawEcho`] input preserves the legacy precedence exactly like
-/// [`parse_lifecycle_preconditions`].
-fn parse_directional_preconditions(
-    value: &RawEcho,
-) -> Option<Vec<tiler_core::directional::Precondition>> {
-    let values: Vec<String> = serde_json::from_str(&value.0).ok()?;
-    if values.is_empty() || values.len() > tiler_core::contract::MAX_PRECONDITIONS {
-        return None;
-    }
-    let mut out = Vec::with_capacity(values.len());
-    for entry in &values {
-        out.push(parse_directional_precondition(entry)?);
-    }
-    Some(out)
-}
-
-/// Parse an R4 cross-output move echo back to its typed directional form
-/// plus the fenced wire DTO. Strict bounded parsing of the exact fenced wire
-/// shape emitted in the planned reply (`op`/`rule`/`capability`/ left-right
-/// `direction`, opaque window/leaf/source/target ids, bounded child index,
-/// empty/occupied target); extra fencing fields stay lenient while the typed
-/// operation equality, the fenced source/target binding, and the
-/// post-observation geometry check enforce exactness at verify time.
-/// Deferred [`RawEcho`] input keeps every shape failure on the
-/// `verify-invalid` path after the `verified` gate.
-fn parse_directional_move_operation(
-    value: &RawEcho,
-) -> Option<(
-    tiler_core::directional::MoveOperation,
-    DirectionalMoveEchoDto,
-)> {
-    let echo: DirectionalMoveEchoDto = serde_json::from_str(&value.0).ok()?;
-    if echo.op != "move" {
-        return None;
-    }
-    if echo.rule != "R4" {
-        return None;
-    }
-    if echo.capability != "CrossOutputTransfer" {
-        return None;
-    }
-    if echo.direction != "left" && echo.direction != "right" {
-        return None;
-    }
-    if !is_opaque_id(&echo.window)
-        || !is_opaque_id(&echo.leaf)
-        || !is_opaque_id(&echo.source_output)
-        || !is_opaque_id(&echo.source_workspace)
-        || !is_opaque_id(&echo.target_output)
-        || !is_opaque_id(&echo.target_workspace)
-    {
-        return None;
-    }
-    let Ok(index) = usize::try_from(echo.source_root_child_index) else {
-        return None;
-    };
-    let target = match echo.target.as_str() {
-        "empty" => tiler_core::directional::CrossOutputTarget::Empty,
-        "occupied" => tiler_core::directional::CrossOutputTarget::Occupied,
-        _ => return None,
-    };
-    let operation = tiler_core::directional::MoveOperation::CrossOutput {
-        rule: tiler_core::directional::Rule::R4,
-        target_output: OutputId(echo.target_output.clone()),
-        target_workspace: WorkspaceId(echo.target_workspace.clone()),
-        source_root_child_index: index,
-        target,
-    };
-    Some((operation, echo))
-}
-
 /// Authoritative live-tree planner.
 ///
 /// Retains one committed [`Session`] per logical domain across `DescribePlan`
@@ -2343,32 +1861,15 @@ fn parse_directional_move_operation(
 /// (`Diverged`/`partial-observation`) discard that domain's retained state and
 /// rebuild once via the [`tiler_core::seed::seed_session`] path. If the rebuild cannot safely
 /// infer topology (`ambiguous-placement`), reject rather than wedge. Each
-/// successful plan is acknowledged then verified in the same call, so no
-/// pending crosses calls and no stale data crosses domains/owner/generation.
+/// successful plan commits synchronously in the same call, so no pending
+/// crosses calls and no stale data crosses domains/owner/generation.
 ///
-/// Standalone workspace-send route: `send-to-workspace`/`-ack`/`-verify` keep
-/// one pending two-domain Session in [`WorkspacePending`], never crossing
-/// routes. No owner rebind during pending; pending mismatch/loss/refused
-/// ack/failed verification is terminal `diverged`. `send-to-workspace-status`
-/// is read-only classification of that pending against a fresh observation
-/// and never mutates, acknowledges, verifies, rebinds, or advances anything.
-/// `send-to-workspace-cancel` withdraws the pending only on exact identity,
-/// scope, unacked state, zero-dispatch attestation, and pre-image proof,
-/// preserving everything committed. `send-to-workspace-abandon` retires ANY
-/// existing workspace-send pending regardless of acked/unacked/diverged state
-/// with no commit claim and no session/baseline reset: an exact retained
-/// match replies `abandoned`, a mismatched retired live pending replies
-/// distinct `orphan-abandoned`, and absence replies `no-pending-unknown`.
-/// A directional R4 pending is out of scope and never retired by this op.
+/// Standalone workspace-send route: `send-to-workspace` commits synchronously
+/// through the Engine with native assignment plus both-domain geometry.
 ///
 /// Directional R4 route: `move` with a two-domain payload proposes an R4
-/// cross-output transfer once and retains it in [`DirectionalMovePending`]
-/// until `directional-move-ack`/`directional-move-verify` commit it. R1-R3
-/// stay synchronous with no pending. While either pending exists, all other
-/// plan operations block as `pending-exists` (diverged on identity loss) so
-/// workspace and directional routes never interleave. `directional-move-status`
-/// is the read-only counterpart of the workspace status query, and
-/// `directional-move-cancel` the counterpart of the workspace cancellation.
+/// cross-output transfer synchronously through the Engine. R1-R3 stay
+/// synchronous.
 #[derive(Debug, Default)]
 pub struct Planner {
     engine: Engine,
@@ -2406,62 +1907,23 @@ impl Planner {
     /// Stateful evaluation across calls. Retained reconcile accepts work-area
     /// bounds changes only when the domain key and complete window set remain
     /// unchanged, projecting the existing tree without replacing shares or
-    /// topology. The standalone workspace-send and directional-move routes
-    /// dispatch their ack/verify phases before the legacy owner/generation
-    /// binding sync so a pending Session is never discarded or rebound
-    /// mid-flight; legacy requests are unchanged except that any pending
-    /// (workspace or directional) blocks all other plan operations. The
-    /// read-only status phases dispatch alongside ack/verify (before the
-    /// binding sync and the pending conflict boundary) through the
-    /// Engine-owned read-only typed entry point (`inspect` takes `&self`, so
-    /// status cannot mutate, acknowledge, verify, clear, rebind, or advance
-    /// any retained state or topology). The cancellation phases dispatch at
-    /// the same boundary through the mutating entry point (`handle` takes
-    /// `&mut self`): on exact pre-image
-    /// proof they withdraw only the matching unacknowledged pending and its
-    /// staged desired state, preserving everything committed. The abandon
-    /// phase dispatches at the same boundary through existing Engine
-    /// accessors only: any live send pending retires (exact or orphan, any
-    /// ack state, diverged or not) with no commit claim and no
-    /// session/baseline mutation; exact identity/scope/revision proof replies
-    /// `abandoned`, a mismatched retired live pending replies distinct
-    /// `orphan-abandoned`, and absent pending replies `no-pending-unknown`
-    /// without mutation. A directional R4 pending is out of scope.
+    /// topology.
     pub fn evaluate(&mut self, request_json: &str) -> String {
         let ctx = match validate_request_with_engine(request_json, Some(&self.engine)) {
             Ok(ctx) => ctx,
             Err(reply) => return reply,
         };
-        match validated_op(&ctx).as_str() {
-            "send-to-workspace-ack" => return self.evaluate_workspace_ack(&ctx),
-            "send-to-workspace-verify" => return self.evaluate_workspace_verify(&ctx),
-            "send-to-workspace-status" => return self.evaluate_workspace_status(&ctx),
-            "send-to-workspace-cancel" => return self.evaluate_workspace_cancel(&ctx),
-            "send-to-workspace-abandon" => return self.evaluate_workspace_abandon(&ctx),
-            "directional-move-ack" => return self.evaluate_directional_ack(&ctx),
-            "directional-move-verify" => return self.evaluate_directional_verify(&ctx),
-            "directional-move-status" => return self.evaluate_directional_status(&ctx),
-            "directional-move-cancel" => return self.evaluate_directional_cancel(&ctx),
-            _ => {}
-        }
-        // Full global pending conflict boundary: while either pending exists,
-        // every other plan operation blocks (diverged on identity/divergence
-        // loss, else `pending-exists`). Ack/verify/status/cancel/abandon above
-        // never reach here.
-        if let Some(reply) = self.pending_conflict_reply(&ctx) {
-            return reply;
-        }
         if validated_op(&ctx).as_str() == "send-to-workspace" {
             return self.evaluate_workspace_request(&ctx);
         }
         self.sync_binding(&ctx.owner, &ctx.generation);
         // Typed codec: reconcile/update-gaps/active-group
-        // parse once via `SyncCommand` after all boundaries (validation, async
-        // dispatch, pending conflict, send dispatch, binding sync) and call the
+        // parse once via `SyncCommand` after all boundaries (validation,
+        // send dispatch, binding sync) and call the
         // inner bodies directly, eliminating the second `from_value` + op-string
         // check on this production path. The string guard preserves exact
         // unknown/missing/non-string `unknown-value` behavior without a typed
-        // parse; malformed known ops during pending never reach here.
+        // parse.
         // Move/focus/resize/pointer-resize/toggle-float parse `SyncCommand`
         // once in place inside their handlers (see `SyncCommand` docs for the
         // exact probe/ordering reasons), so these arms dispatch by op string.
@@ -2502,33 +1964,6 @@ impl Planner {
                 MSG_UNKNOWN_VALUE,
             ),
         }
-    }
-
-    /// Pending conflict boundary for every non-ack/verify plan operation.
-    ///
-    /// Codec/envelope stays here (validated op token, directional keys, raw
-    /// target scope); the outcome itself is the Engine-owned
-    /// [`tiler_core::engine::Engine::pending_conflict`] typed entry point,
-    /// serialized here so wire bytes stay identical. See the Engine docs for
-    /// the exact fence order.
-    fn pending_conflict_reply(&self, ctx: &Validated) -> Option<String> {
-        let op = validated_op(ctx);
-        let directional_keys = ctx.directional_keys.as_deref();
-        let raw_target = ctx
-            .request
-            .target_domain
-            .as_ref()
-            .map(|target| (target.output.as_str(), target.workspace.as_str()));
-        self.engine
-            .pending_conflict(
-                op.as_str(),
-                &ctx.owner,
-                &ctx.generation,
-                &ctx.domain_key,
-                directional_keys,
-                raw_target,
-            )
-            .map(|reply| serialize_core_reply(ctx, &reply))
     }
 
     /// Engine-handle choke point: runs the owned [`Engine::handle`] entry
@@ -3304,25 +2739,15 @@ impl Planner {
         })
     }
 
-    /// Workspace-send request phase: rebuild the two-domain session from the
-    /// observation, propose the same-output distinct-workspace move, and retain
-    /// exactly one pending Session. Never auto-acknowledges: the adapter must
-    /// send an exact accepted ack and then a matching verified post-observation.
+    /// Workspace-send request phase: propose the same-output
+    /// distinct-workspace move synchronously through the Engine with native
+    /// assignment plus both-domain geometry.
     ///
     /// Codec/scope stays here (shared target scope, tagged command decode,
-    /// mover binding in [`Planner::validate_workspace_input`]); the pending
-    /// outcome and the seed/propose/stage plan itself are the Engine-owned
-    /// [`tiler_core::engine::Engine::handle`] typed entry point over the
-    /// validated target scope. The workspace second-send guard runs before
-    /// scope validation so error order is preserved (the Engine re-checks
-    /// defensively inside `handle` with byte-identical replies).
+    /// mover binding in [`Planner::validate_workspace_input`]); the outcome
+    /// itself is the Engine-owned [`tiler_core::engine::Engine::handle`]
+    /// typed entry point over the validated target scope.
     fn evaluate_workspace_request(&mut self, ctx: &Validated) -> String {
-        if let Some(reply) = self
-            .engine
-            .workspace_request_guard(&ctx.owner, &ctx.generation)
-        {
-            return serialize_core_reply(ctx, &reply);
-        }
         let input = match self.validate_workspace_input(ctx) {
             Ok(input) => input,
             Err(reply) => return reply,
@@ -3334,405 +2759,6 @@ impl Planner {
         };
         let mut event = core_event(ctx, &core_command);
         event.target_domain = Some((input.target_domain, input.target_key));
-        self.handle_and_serialize(ctx, &event)
-    }
-
-    /// Workspace-send acknowledgement phase: exact accepted acknowledgement
-    /// against the retained pending Session. Refused ack or binding mismatch is
-    /// terminal divergence.
-    ///
-    /// Codec stays here (tagged decode with the original `ack-op-invalid` /
-    /// parse-error fences); the outcome and the fenced acknowledge itself are
-    /// the Engine-owned [`Engine::handle`] typed entry point, which retains
-    /// the pending for verify.
-    fn evaluate_workspace_ack(&mut self, ctx: &Validated) -> String {
-        let cid = ctx.request.correlation_id.clone();
-        // Strict tagged decode first (see `SyncCommand`); the outcome,
-        // pending, and binding transition below is Engine-owned.
-        let command = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
-            Ok(command @ SyncCommand::SendToWorkspaceAck { .. }) => command,
-            Ok(_) => {
-                return snapshot_invalid(cid, MSG_OPAQUE_ID, "ack-op-invalid");
-            }
-            Err(error) => {
-                if is_unknown_variant(&error) {
-                    return snapshot_invalid(cid, MSG_OPAQUE_ID, "ack-op-invalid");
-                }
-                let (kind, message) = classify_parse_error(&error);
-                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-            }
-        };
-        let core_command = core_command_from_sync(&command).expect("non-verify sync op converts");
-        let event = core_event(ctx, &core_command);
-        self.handle_and_serialize(ctx, &event)
-    }
-
-    /// Workspace-send verification phase: exact post-observation (preconditions
-    /// and operation echoed from the plan) plus a matching fresh observation
-    /// commits the pending Session and advances the revision by exactly one.
-    /// Pending mismatch or failed verification is terminal divergence.
-    ///
-    /// Codec and echo parsing stay here (tagged decode with the original
-    /// `verify-op-invalid` / parse-error fences, `verified=false` divergence
-    /// before nested parse, malformed echoes as `verify-invalid`); the fenced
-    /// commit itself is the Engine-owned [`Engine::handle`] typed entry point
-    /// over fully validated serde-free typed echoes.
-    fn evaluate_workspace_verify(&mut self, ctx: &Validated) -> String {
-        let cid = ctx.request.correlation_id.clone();
-        // Strict tagged decode first (see `SyncCommand`); the verified flag
-        // and precondition/operation echo parsing below keep their exact
-        // legacy positions before any pending handling.
-        let (verified, preconditions_raw, operation_raw) =
-            match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
-                Ok(SyncCommand::SendToWorkspaceVerify {
-                    verified,
-                    preconditions,
-                    operation,
-                }) => (verified, preconditions, operation),
-                Ok(_) => {
-                    return snapshot_invalid(cid, MSG_OPAQUE_ID, "verify-op-invalid");
-                }
-                Err(error) => {
-                    if is_unknown_variant(&error) {
-                        return snapshot_invalid(cid, MSG_OPAQUE_ID, "verify-op-invalid");
-                    }
-                    let (kind, message) = classify_parse_error(&error);
-                    return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-                }
-            };
-        if !verified {
-            return diverged_reply(
-                &cid,
-                tiler_core::contract::DivergenceKind::PostconditionUnverified,
-            );
-        }
-        let Some(preconditions) = parse_lifecycle_preconditions(&preconditions_raw) else {
-            return rejected(cid, "verify-invalid", "preconditions are invalid");
-        };
-        let Some(operation) = parse_move_tiled_operation(&operation_raw) else {
-            return rejected(cid, "verify-invalid", "operation is invalid");
-        };
-        let core_command = tiler_core::boundary::CoreCommand::SendVerify {
-            verified,
-            preconditions,
-            operation,
-        };
-        let event = core_event(ctx, &core_command);
-        self.handle_and_serialize(ctx, &event)
-    }
-
-    /// Directional R4 acknowledgement phase: exact accepted acknowledgement
-    /// against the retained pending pair Session. Refused ack or
-    /// identity/correlation/revision mismatch is terminal divergence with no
-    /// commit and no canonical split. Strict bounded parsing, no new topology
-    /// seeding.
-    /// Directional R4 acknowledgement phase: exact accepted acknowledgement
-    /// against the retained pending pair Session. Refused ack or
-    /// identity/correlation/revision mismatch is terminal divergence with no
-    /// commit and no canonical split. Strict bounded parsing, no new topology
-    /// seeding.
-    ///
-    /// Codec stays here (tagged decode with the original `ack-op-invalid` /
-    /// parse-error fences); the outcome and the fenced acknowledge itself are
-    /// the Engine-owned [`Engine::handle`] typed entry point.
-    fn evaluate_directional_ack(&mut self, ctx: &Validated) -> String {
-        let cid = ctx.request.correlation_id.clone();
-        // Strict tagged decode first (see `SyncCommand`); the outcome,
-        // pending, and binding transition below is Engine-owned.
-        let command = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
-            Ok(command @ SyncCommand::DirectionalMoveAck { .. }) => command,
-            Ok(_) => {
-                return snapshot_invalid(cid, MSG_OPAQUE_ID, "ack-op-invalid");
-            }
-            Err(error) => {
-                if is_unknown_variant(&error) {
-                    return snapshot_invalid(cid, MSG_OPAQUE_ID, "ack-op-invalid");
-                }
-                let (kind, message) = classify_parse_error(&error);
-                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-            }
-        };
-        let core_command = core_command_from_sync(&command).expect("non-verify sync op converts");
-        let event = core_event(ctx, &core_command);
-        self.handle_and_serialize(ctx, &event)
-    }
-
-    /// Directional R4 verification phase: exact post-observation (operation
-    /// and preconditions echoed from the plan) plus a complete matching
-    /// source+target observation commits via `Session::verify_move`, then
-    /// splits/stores the canonical sessions once and replies `committed`.
-    /// Mismatch, refused ack residue, failed verification, or
-    /// identity/correlation/revision loss is terminal `diverged` with no
-    /// commit. A bare `verified: true` never commits.
-    ///
-    /// Codec and echo parsing stay here (tagged decode with the original
-    /// `verify-op-invalid` / parse-error fences, `verified=false` divergence
-    /// before nested parse, malformed echoes as `verify-invalid`); the fenced
-    /// commit plus canonical split/store is the Engine-owned [`Engine::handle`]
-    /// typed entry point over fully validated serde-free typed echoes.
-    fn evaluate_directional_verify(&mut self, ctx: &Validated) -> String {
-        let cid = ctx.request.correlation_id.clone();
-        // Strict tagged decode first (see `SyncCommand`); the verified flag
-        // and echo parsing below keep their exact legacy positions before any
-        // pending handling.
-        let (verified, preconditions_raw, operation_raw) =
-            match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
-                Ok(SyncCommand::DirectionalMoveVerify {
-                    verified,
-                    preconditions,
-                    operation,
-                }) => (verified, preconditions, operation),
-                Ok(_) => {
-                    return snapshot_invalid(cid, MSG_OPAQUE_ID, "verify-op-invalid");
-                }
-                Err(error) => {
-                    if is_unknown_variant(&error) {
-                        return snapshot_invalid(cid, MSG_OPAQUE_ID, "verify-op-invalid");
-                    }
-                    let (kind, message) = classify_parse_error(&error);
-                    return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-                }
-            };
-        if !verified {
-            return diverged_reply(
-                &cid,
-                tiler_core::contract::DivergenceKind::PostconditionUnverified,
-            );
-        }
-        let Some(preconditions) = parse_directional_preconditions(&preconditions_raw) else {
-            return rejected(cid, "verify-invalid", "preconditions are invalid");
-        };
-        let Some((operation, echo)) = parse_directional_move_operation(&operation_raw) else {
-            return rejected(cid, "verify-invalid", "operation is invalid");
-        };
-        let core_command = tiler_core::boundary::CoreCommand::DirectionalVerify {
-            verified,
-            preconditions,
-            operation,
-            echo_source_output: tiler_core::directional::OutputId(echo.source_output),
-            echo_source_workspace: tiler_core::directional::WorkspaceId(echo.source_workspace),
-            echo_target_output: tiler_core::directional::OutputId(echo.target_output),
-            echo_target_workspace: tiler_core::directional::WorkspaceId(echo.target_workspace),
-        };
-        let event = core_event(ctx, &core_command);
-        self.handle_and_serialize(ctx, &event)
-    }
-
-    /// Read-only workspace-send status query: classify the exact retained
-    /// [`WorkspacePending`] transaction against a fresh complete observation.
-    ///
-    /// Codec and scope-shape validation stay here (tagged decode, shared
-    /// [`Planner::workspace_target_scope`]); the classification outcome itself
-    /// is the Engine-owned [`Engine::inspect`] typed entry point, which takes
-    /// `&self` so classification cannot mutate, acknowledge, verify, clear,
-    /// rebind, or advance anything. Identity mismatch reports `stale` without
-    /// recording divergence; a nonmatching observation reports `unresolved`
-    /// (never `mixed`); absent pending reports `no-pending-unknown`, which
-    /// cannot imply a commit.
-    fn evaluate_workspace_status(&self, ctx: &Validated) -> String {
-        let cid = ctx.request.correlation_id.clone();
-        // Strict tagged decode first (see `SyncCommand`); the read-only
-        // contract below is untouched.
-        let command = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
-            Ok(command @ SyncCommand::SendToWorkspaceStatus {}) => command,
-            Ok(_) => {
-                return rejected(cid, "status-op-invalid", "status operation is invalid");
-            }
-            Err(error) => {
-                if is_unknown_variant(&error) {
-                    return rejected(cid, "status-op-invalid", "status operation is invalid");
-                }
-                let (kind, message) = classify_parse_error(&error);
-                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-            }
-        };
-        // A `domains` payload on this route is already refused fail-closed by
-        // `validate_request` (`domain-invalid`); only the target scope below
-        // remains to bind.
-        let (target_domain, target_key) = match self.workspace_target_scope(ctx) {
-            Ok(scope) => scope,
-            Err(reply) => return reply,
-        };
-        let core_command = core_command_from_sync(&command).expect("non-verify sync op converts");
-        let mut event = core_event(ctx, &core_command);
-        event.target_domain = Some((target_domain, target_key));
-        let reply = self.engine.inspect(&event);
-        serialize_core_reply(ctx, &reply)
-    }
-
-    /// Read-only directional R4 status query: classify the exact retained
-    /// [`DirectionalMovePending`] transaction against a fresh complete
-    /// observation. Codec and pair-shape validation stay here; the outcome is
-    /// the Engine-owned [`Engine::inspect`] typed entry point with the same
-    /// read-only contract as [`Planner::evaluate_workspace_status`].
-    fn evaluate_directional_status(&self, ctx: &Validated) -> String {
-        let cid = ctx.request.correlation_id.clone();
-        // Strict tagged decode first (see `SyncCommand`); the read-only
-        // contract below is untouched.
-        let command = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
-            Ok(command @ SyncCommand::DirectionalMoveStatus {}) => command,
-            Ok(_) => {
-                return rejected(cid, "status-op-invalid", "status operation is invalid");
-            }
-            Err(error) => {
-                if is_unknown_variant(&error) {
-                    return rejected(cid, "status-op-invalid", "status operation is invalid");
-                }
-                let (kind, message) = classify_parse_error(&error);
-                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-            }
-        };
-        if directional_pair(ctx).is_none() {
-            return snapshot_invalid(cid, MSG_OBSERVATION, "domain-invalid");
-        }
-        let core_command = core_command_from_sync(&command).expect("non-verify sync op converts");
-        let event = core_event(ctx, &core_command);
-        let reply = self.engine.inspect(&event);
-        serialize_core_reply(ctx, &reply)
-    }
-
-    /// Workspace-send cancellation: withdraw the exact retained
-    /// [`WorkspacePending`] transaction when the adapter proves, over the
-    /// same-UID transport, that its flight dispatched no native write and its
-    /// current complete observation still equals the dispatch-time pre-image.
-    ///
-    /// Codec and scope-shape validation stay here (tagged decode, the
-    /// `zero_dispatch` attestation precedence, shared target scope); the fenced
-    /// withdraw itself is the Engine-owned [`Engine::handle`] typed entry
-    /// point, which clears only the matching pending on exact pre-image proof
-    /// and preserves everything committed. Every other state fails closed with
-    /// no mutation and no divergence recorded.
-    fn evaluate_workspace_cancel(&mut self, ctx: &Validated) -> String {
-        let cid = ctx.request.correlation_id.clone();
-        // Strict tagged decode first (see `SyncCommand`); attestation, scope,
-        // identity, and withdraw effects below are untouched.
-        let command = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
-            Ok(command @ SyncCommand::SendToWorkspaceCancel { .. }) => command,
-            Ok(_) => {
-                return rejected(cid, "cancel-op-invalid", "cancel operation is invalid");
-            }
-            Err(error) => {
-                if is_unknown_variant(&error) {
-                    return rejected(cid, "cancel-op-invalid", "cancel operation is invalid");
-                }
-                let (kind, message) = classify_parse_error(&error);
-                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-            }
-        };
-        let SyncCommand::SendToWorkspaceCancel { zero_dispatch } = &command else {
-            return rejected(cid, "cancel-op-invalid", "cancel operation is invalid");
-        };
-        if !zero_dispatch {
-            return rejected(cid, "cancel-refused", "adapter attests a native dispatch");
-        }
-        // A `domains` payload on this route is already refused fail-closed by
-        // `validate_request` (`domain-invalid`); only the target scope below
-        // remains to bind.
-        let (target_domain, target_key) = match self.workspace_target_scope(ctx) {
-            Ok(scope) => scope,
-            Err(reply) => return reply,
-        };
-        let core_command = core_command_from_sync(&command).expect("non-verify sync op converts");
-        let mut event = core_event(ctx, &core_command);
-        event.target_domain = Some((target_domain, target_key));
-        self.handle_and_serialize(ctx, &event)
-    }
-
-    /// Workspace-send abandon: retire ANY existing workspace-send pending.
-    ///
-    /// Fenced control op for the accepted 2026-09-25 abandon path (option B).
-    /// Codec and scope-shape validation stay here (tagged decode, shared
-    /// target scope) and fail closed before any retirement: malformed or
-    /// unauthorized requests never retire anything, and a directional R4
-    /// pending is out of scope (only the workspace-send slot is read and
-    /// cleared via the existing Engine accessors, so no new typed command,
-    /// receipts, or retained state cross). Any live workspace-send pending
-    /// retires regardless of acked/unacked/diverged state, even on older
-    /// generation, other correlation, other same-UID caller, other revision,
-    /// or other scope, with no commit claim and without touching Engine
-    /// sessions, baselines, or outer gaps. Exact binding (owner, generation,
-    /// correlation, retained base or original request revision for a lost
-    /// planned reply, and the retained source/target scope) replies
-    /// `abandoned`; a mismatched retired live pending replies distinct
-    /// `orphan-abandoned` with the requester correlation. Absent pending
-    /// replies `no-pending-unknown` with the exact correlation and kind.
-    /// A `domains` payload is already refused fail-closed by
-    /// `validate_request`.
-    fn evaluate_workspace_abandon(&mut self, ctx: &Validated) -> String {
-        const ABANDON_KIND: &str = "send-to-workspace";
-        let cid = ctx.request.correlation_id.clone();
-        match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
-            Ok(SyncCommand::SendToWorkspaceAbandon {}) => {}
-            Ok(_) => {
-                return rejected(cid, "abandon-op-invalid", "abandon operation is invalid");
-            }
-            Err(error) => {
-                if is_unknown_variant(&error) {
-                    return rejected(cid, "abandon-op-invalid", "abandon operation is invalid");
-                }
-                let (kind, message) = classify_parse_error(&error);
-                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-            }
-        }
-        let (target_domain, _) = match self.workspace_target_scope(ctx) {
-            Ok(scope) => scope,
-            Err(reply) => return reply,
-        };
-        let Some(pending) = self.engine.workspace_pending() else {
-            return abandon_unknown_reply(&cid, ABANDON_KIND);
-        };
-        let exact = pending.owner() == &ctx.owner
-            && pending.generation() == &ctx.generation
-            && pending.correlation() == &ctx.correlation
-            && (ctx.request.revision == pending.base_revision()
-                || ctx.request.revision == pending.request_revision())
-            && {
-                let retained = pending.session().domains();
-                retained.len() == 2 && retained[0] == ctx.domain && retained[1] == target_domain
-            };
-        self.engine.clear_workspace_pending();
-        if exact {
-            abandoned_reply(&cid, ABANDON_KIND)
-        } else {
-            orphan_abandoned_reply(&cid, ABANDON_KIND)
-        }
-    }
-
-    /// Directional R4 cancellation: withdraw the exact retained
-    /// [`DirectionalMovePending`] transaction under the same contract as
-    /// [`Planner::evaluate_workspace_cancel`]. Codec and pair-shape validation
-    /// stay here; the fenced withdraw itself is the Engine-owned
-    /// [`Engine::handle`] typed entry point. On success the pair
-    /// pending clears without splitting or storing: canonical sessions are
-    /// exactly preserved.
-    fn evaluate_directional_cancel(&mut self, ctx: &Validated) -> String {
-        let cid = ctx.request.correlation_id.clone();
-        // Strict tagged decode first (see `SyncCommand`); attestation, pair
-        // binding, identity, and withdraw effects below are untouched.
-        let command = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
-            Ok(command @ SyncCommand::DirectionalMoveCancel { .. }) => command,
-            Ok(_) => {
-                return rejected(cid, "cancel-op-invalid", "cancel operation is invalid");
-            }
-            Err(error) => {
-                if is_unknown_variant(&error) {
-                    return rejected(cid, "cancel-op-invalid", "cancel operation is invalid");
-                }
-                let (kind, message) = classify_parse_error(&error);
-                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-            }
-        };
-        let SyncCommand::DirectionalMoveCancel { zero_dispatch } = &command else {
-            return rejected(cid, "cancel-op-invalid", "cancel operation is invalid");
-        };
-        if !zero_dispatch {
-            return rejected(cid, "cancel-refused", "adapter attests a native dispatch");
-        }
-        if directional_pair(ctx).is_none() {
-            return snapshot_invalid(cid, MSG_OBSERVATION, "domain-invalid");
-        }
-        let core_command = core_command_from_sync(&command).expect("non-verify sync op converts");
-        let event = core_event(ctx, &core_command);
         self.handle_and_serialize(ctx, &event)
     }
 }
@@ -3843,23 +2869,14 @@ struct ActiveGroupCommand {
 
 /// Typed synchronous command codec (narrow).
 ///
-/// Internally tagged on `op` with `deny_unknown_fields` for all eighteen
-/// command ops: the eight synchronous ops plus `send-to-workspace`, the eight
-/// R4 ack/verify/status/cancel phases, and `send-to-workspace-abandon`. Sync
-/// handlers parse
+/// Internally tagged on `op` with `deny_unknown_fields` for all nine
+/// synchronous command ops: reconcile, update-gaps, active-group, move,
+/// focus, resize, pointer-resize, toggle-float, and `send-to-workspace`.
+/// Sync handlers parse
 /// [`SyncCommand`] once in place after the existing dispatch boundaries
-/// (validation, ack/verify/status/cancel/abandon dispatch, pending conflict,
-/// send dispatch, binding sync): the production `evaluate` string-guards on
-/// the known op before dispatch, so missing/non-string/unknown ops keep the
-/// exact `unknown-value` path without a typed parse, and malformed known ops
-/// during pending keep `pending-exists` by never reaching here.
-/// Transaction handlers parse [`SyncCommand`] once in place at their exact
-/// legacy position: `send-to-workspace` keeps target-scope-before-parse in
-/// `validate_workspace_input`, ack/verify/status/cancel/abandon keep
-/// parse-first at the pre-binding dispatch boundary, status handlers stay
-/// read-only (`&self`), cancel/abandon handlers keep their `&mut self`
-/// withdraw effects (abandon clears any live workspace-send pending via existing
-/// Engine accessors, with no CoreCommand crossing).
+/// (validation, send dispatch, binding sync): the production `evaluate`
+/// string-guards on the known op before dispatch, so missing/non-string/
+/// unknown ops keep the exact `unknown-value` path without a typed parse.
 /// A present-but-wrong op string surfaces as an
 /// `unknown variant` decode error, which each handler maps back to the exact
 /// legacy `*-op-invalid` snapshot the old `from_value` + op-check produced;
@@ -3925,45 +2942,6 @@ enum SyncCommand {
         target_output: String,
         target_workspace: String,
     },
-    #[serde(rename = "send-to-workspace-ack")]
-    SendToWorkspaceAck { ack_outcome: String },
-    #[serde(rename = "send-to-workspace-verify")]
-    SendToWorkspaceVerify {
-        verified: bool,
-        /// Deferred raw echo: any well-formed JSON decodes here so the
-        /// `verified` gate and `verify-invalid` precedence below stay exact;
-        /// conversion to [`LifecyclePrecondition`] runs only afterwards via
-        /// [`parse_lifecycle_preconditions`].
-        preconditions: RawEcho,
-        /// Deferred raw echo; conversion to [`LifecycleOperation`] runs only
-        /// after the `verified` gate via [`parse_move_tiled_operation`].
-        operation: RawEcho,
-    },
-    #[serde(rename = "send-to-workspace-status")]
-    SendToWorkspaceStatus {},
-    #[serde(rename = "send-to-workspace-cancel")]
-    SendToWorkspaceCancel { zero_dispatch: bool },
-    #[serde(rename = "send-to-workspace-abandon")]
-    SendToWorkspaceAbandon {},
-    #[serde(rename = "directional-move-ack")]
-    DirectionalMoveAck { ack_outcome: String },
-    #[serde(rename = "directional-move-verify")]
-    DirectionalMoveVerify {
-        verified: bool,
-        /// Deferred raw echo; conversion to the portable directional
-        /// preconditions runs only after the `verified` gate via
-        /// [`parse_directional_preconditions`].
-        preconditions: RawEcho,
-        /// Deferred raw echo; conversion to
-        /// [`tiler_core::directional::MoveOperation`] plus the fenced wire
-        /// DTO runs only after the `verified` gate via
-        /// [`parse_directional_move_operation`].
-        operation: RawEcho,
-    },
-    #[serde(rename = "directional-move-status")]
-    DirectionalMoveStatus {},
-    #[serde(rename = "directional-move-cancel")]
-    DirectionalMoveCancel { zero_dispatch: bool },
 }
 
 /// Legacy op-mismatch mapping for converted handlers (see [`SyncCommand`]):
@@ -3975,23 +2953,17 @@ fn is_unknown_variant(error: &serde_json::Error) -> bool {
     error.to_string().contains("unknown variant")
 }
 
-/// Typed core boundary conversion (deferred for verify).
+/// Typed core boundary conversion.
 ///
 /// Maps the already-decoded [`SyncCommand`] into
-/// [`tiler_core::boundary::CoreCommand`] after the existing validation, async
-/// dispatch, pending-conflict, send-dispatch, and binding-sync boundaries.
-/// Total for the synchronous plus ack/status/cancel routes: clones
-/// already-validated values, never validates, never re-parses. Fallible wire
-/// vocabularies (direction/mode/ack outcome) cross opaquely so handler-local
-/// precedence (`not-tiled`, `ack-refused`, `*-op-invalid`) is untouched.
-/// Verify routes are deferred: this returns `None` for both verify variants
-/// because their [`RawEcho`] echoes must parse after the `verified` gate into
-/// fully validated typed fields (malformed as `verify-invalid`) with the typed
-/// verify command constructed directly in the verify evaluators before
-/// [`Engine::handle`]. No fabricated placeholder values exist here or in
-/// tests. Pending, binding, and transaction state never cross. Directional
-/// pair state comes from the validated `directional_domains`/`directional_keys`;
-/// the workspace-send target stays route-local (validated `WorkspaceInput`).
+/// [`tiler_core::boundary::CoreCommand`] after the existing validation,
+/// send-dispatch, and binding-sync boundaries. Total for the synchronous
+/// routes: clones already-validated values, never validates, never re-parses.
+/// Fallible wire vocabularies (direction/mode) cross opaquely so
+/// handler-local precedence (`not-tiled`, `*-op-invalid`) is untouched.
+/// Directional pair state comes from the validated
+/// `directional_domains`/`directional_keys`; the workspace-send target stays
+/// route-local (validated `WorkspaceInput`).
 fn core_command_from_sync(command: &SyncCommand) -> Option<tiler_core::boundary::CoreCommand> {
     use tiler_core::boundary::CoreCommand;
     match command {
@@ -4058,28 +3030,6 @@ fn core_command_from_sync(command: &SyncCommand) -> Option<tiler_core::boundary:
             target_output: target_output.clone(),
             target_workspace: target_workspace.clone(),
         }),
-        SyncCommand::SendToWorkspaceAck { ack_outcome } => Some(CoreCommand::SendAck {
-            ack_outcome: ack_outcome.clone(),
-        }),
-        SyncCommand::SendToWorkspaceVerify { .. } => None,
-        SyncCommand::SendToWorkspaceStatus {} => Some(CoreCommand::SendStatus),
-        SyncCommand::SendToWorkspaceCancel { zero_dispatch } => Some(CoreCommand::SendCancel {
-            zero_dispatch: *zero_dispatch,
-        }),
-        // Abandon never crosses the typed boundary: the Planner retires the
-        // exact pending via Engine accessors without a CoreCommand, so no
-        // new retained state, receipts, or Engine mutation beyond the clear.
-        SyncCommand::SendToWorkspaceAbandon {} => None,
-        SyncCommand::DirectionalMoveAck { ack_outcome } => Some(CoreCommand::DirectionalAck {
-            ack_outcome: ack_outcome.clone(),
-        }),
-        SyncCommand::DirectionalMoveVerify { .. } => None,
-        SyncCommand::DirectionalMoveStatus {} => Some(CoreCommand::DirectionalStatus),
-        SyncCommand::DirectionalMoveCancel { zero_dispatch } => {
-            Some(CoreCommand::DirectionalCancel {
-                zero_dispatch: *zero_dispatch,
-            })
-        }
     }
 }
 
@@ -5727,16 +4677,12 @@ mod tests {
         );
     }
     #[test]
-    fn typed_boundary_conversion_covers_all_seventeen_ops_total() {
-        // Fence proof for the boundary conversion: the 15 non-verify wire ops
-        // decode once via `SyncCommand`, then convert into `CoreCommand` with
-        // the identical `op` token. Fallible vocabularies (direction/mode/ack)
-        // cross opaquely. Both verify echoes arrive as deferred `RawEcho`
-        // opaquely at outer decode, defer here (`None`), then parse into fully
-        // validated typed fields after the `verified` gate in the verify
-        // evaluators before `Engine::handle`; production typed verify
-        // construction below uses only real validated echoes, never fabricated
-        // placeholders.
+    fn typed_sync_codec_covers_all_nine_ops_total() {
+        // Fence proof for the boundary conversion: all nine synchronous wire
+        // ops decode once via `SyncCommand`, then convert into `CoreCommand`
+        // with the identical `op` token. Fallible vocabularies
+        // (direction/mode) cross opaquely. The eight retired wire ops
+        // (ack/verify/status/cancel on both routes) no longer decode.
         let commands = [
             serde_json::json!({"op": "reconcile"}),
             serde_json::json!({"op": "update-gaps"}),
@@ -5747,101 +4693,44 @@ mod tests {
             serde_json::json!({"op": "pointer-resize", "window": "win-1", "direction": "left", "boundary": 10}),
             serde_json::json!({"op": "toggle-float", "window": "win-1"}),
             serde_json::json!({"op": "send-to-workspace", "window": "win-1", "target_output": "out-1", "target_workspace": "ws-2"}),
-            serde_json::json!({"op": "send-to-workspace-ack", "ack_outcome": "accepted"}),
-            serde_json::json!({"op": "send-to-workspace-status"}),
-            serde_json::json!({"op": "send-to-workspace-cancel", "zero_dispatch": false}),
-            serde_json::json!({"op": "directional-move-ack", "ack_outcome": "accepted"}),
-            serde_json::json!({"op": "directional-move-status"}),
-            serde_json::json!({"op": "directional-move-cancel", "zero_dispatch": false}),
         ];
-        assert_eq!(commands.len(), 15);
+        assert_eq!(commands.len(), 9);
         let mut ops = std::collections::HashSet::new();
         for command in &commands {
             let decoded: SyncCommand =
                 serde_json::from_value(command.clone()).expect("wire op decodes");
-            let converted = core_command_from_sync(&decoded).expect("non-verify op converts");
+            let converted = core_command_from_sync(&decoded).expect("sync op converts");
             let expected = command.get("op").and_then(|op| op.as_str()).expect("op");
             assert_eq!(converted.op(), expected);
             ops.insert(converted.op());
         }
-        assert_eq!(ops.len(), 15);
-        // Verify wire tokens decode; conversion defers (`None`).
-        let ws_verify = serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": ["window-observed", "desired-topology-valid", "adapter-must-verify-postconditions"], "operation": {"op": "move-tiled", "window": "win-1", "leaf": "leaf-1", "source_output": "out-1", "source_workspace": "ws-1", "target_output": "out-1", "target_workspace": "ws-2"}});
-        let decoded: SyncCommand =
-            serde_json::from_value(ws_verify.clone()).expect("verify op decodes");
-        assert!(matches!(decoded, SyncCommand::SendToWorkspaceVerify { .. }));
-        assert!(core_command_from_sync(&decoded).is_none());
-        // Production typed construction from the real validated echoes above.
-        if let SyncCommand::SendToWorkspaceVerify {
-            verified,
-            preconditions,
-            operation,
-        } = decoded
-        {
-            let typed_pre = parse_lifecycle_preconditions(&preconditions)
-                .expect("real workspace echoes validate");
-            let typed_op =
-                parse_move_tiled_operation(&operation).expect("real workspace op validates");
-            let typed = tiler_core::boundary::CoreCommand::SendVerify {
-                verified,
-                preconditions: typed_pre,
-                operation: typed_op,
-            };
-            assert_eq!(typed.op(), "send-to-workspace-verify");
-        } else {
-            panic!("expected SendToWorkspaceVerify");
-        }
-        let dir_verify = serde_json::json!({"op": "directional-move-verify", "verified": true, "preconditions": ["focused-leaf-occupied-by-focused-window", "adapter-must-verify-postconditions"], "operation": {"op": "move", "rule": "R4", "capability": "CrossOutputTransfer", "direction": "right", "window": "win-1", "leaf": "leaf-1", "source_output": "out-1", "source_workspace": "ws-1", "target_output": "out-2", "target_workspace": "ws-1", "source_root_child_index": 0, "target": "empty"}});
-        let decoded: SyncCommand =
-            serde_json::from_value(dir_verify.clone()).expect("verify op decodes");
-        assert!(matches!(decoded, SyncCommand::DirectionalMoveVerify { .. }));
-        assert!(core_command_from_sync(&decoded).is_none());
-        if let SyncCommand::DirectionalMoveVerify {
-            verified,
-            preconditions,
-            operation,
-        } = decoded
-        {
-            let typed_pre = parse_directional_preconditions(&preconditions)
-                .expect("real directional echoes validate");
-            let (typed_op, echo) = parse_directional_move_operation(&operation)
-                .expect("real directional op validates");
-            let typed = tiler_core::boundary::CoreCommand::DirectionalVerify {
-                verified,
-                preconditions: typed_pre,
-                operation: typed_op,
-                echo_source_output: tiler_core::directional::OutputId(echo.source_output),
-                echo_source_workspace: tiler_core::directional::WorkspaceId(echo.source_workspace),
-                echo_target_output: tiler_core::directional::OutputId(echo.target_output),
-                echo_target_workspace: tiler_core::directional::WorkspaceId(echo.target_workspace),
-            };
-            assert_eq!(typed.op(), "directional-move-verify");
-        } else {
-            panic!("expected DirectionalMoveVerify");
-        }
-        assert_eq!(ops.len() + 2, 17);
-        // Opaque crossings: unknown direction/mode/ack strings convert without
-        // validation; handlers own precedence. Bogus verify echoes decode
-        // opaquely at the outer `SyncCommand` boundary (deferred `RawEcho`)
-        // yet still defer here; the verify evaluators gate `verified=false`
-        // before nested parsing and map malformed echoes to `verify-invalid`
-        // before any `Engine::handle` transition.
+        assert_eq!(ops.len(), 9);
+        // Opaque crossing: an unknown direction string converts without
+        // validation; handlers own precedence.
         let decoded: SyncCommand = serde_json::from_value(
             serde_json::json!({"op": "move", "window": "win-1", "direction": "sideways"}),
         )
         .expect("decodes");
         assert!(matches!(
-            core_command_from_sync(&decoded).expect("non-verify converts"),
+            core_command_from_sync(&decoded).expect("sync op converts"),
             tiler_core::boundary::CoreCommand::Move { direction, .. } if direction == "sideways"
         ));
-        let decoded: SyncCommand = serde_json::from_value(serde_json::json!({
-            "op": "send-to-workspace-verify",
-            "verified": false,
-            "preconditions": "bogus",
-            "operation": "bogus",
-        }))
-        .expect("deferred echo decodes opaquely");
-        assert!(core_command_from_sync(&decoded).is_none());
+        // Retired wire ops no longer decode as sync commands.
+        for retired in [
+            serde_json::json!({"op": "send-to-workspace-ack", "ack_outcome": "accepted"}),
+            serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": [], "operation": {}}),
+            serde_json::json!({"op": "send-to-workspace-status"}),
+            serde_json::json!({"op": "send-to-workspace-cancel", "zero_dispatch": false}),
+            serde_json::json!({"op": "directional-move-ack", "ack_outcome": "accepted"}),
+            serde_json::json!({"op": "directional-move-verify", "verified": true, "preconditions": [], "operation": {}}),
+            serde_json::json!({"op": "directional-move-status"}),
+            serde_json::json!({"op": "directional-move-cancel", "zero_dispatch": false}),
+        ] {
+            assert!(
+                serde_json::from_value::<SyncCommand>(retired).is_err(),
+                "retired op must not decode"
+            );
+        }
     }
 
     #[test]
@@ -5850,6 +4739,14 @@ mod tests {
         for command in [
             serde_json::json!({"op": "admit", "window": "win-1", "output": "out-1", "workspace": "ws-1"}),
             serde_json::json!({"op": "remove", "window": "win-1"}),
+            serde_json::json!({"op": "send-to-workspace-ack", "ack_outcome": "accepted"}),
+            serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": [], "operation": {}}),
+            serde_json::json!({"op": "send-to-workspace-status"}),
+            serde_json::json!({"op": "send-to-workspace-cancel", "zero_dispatch": false}),
+            serde_json::json!({"op": "directional-move-ack", "ack_outcome": "accepted"}),
+            serde_json::json!({"op": "directional-move-verify", "verified": true, "preconditions": [], "operation": {}}),
+            serde_json::json!({"op": "directional-move-status"}),
+            serde_json::json!({"op": "directional-move-cancel", "zero_dispatch": false}),
         ] {
             let reply = parse_reply(&planner.evaluate(&retained_request(
                 "retired-wire-1",
@@ -5867,15 +4764,14 @@ mod tests {
 
     #[test]
     fn core_reply_choke_point_matches_legacy_constructors_byte_exact() {
-        // Proof that `serialize_core_reply` is a byte-exact funnel for every
-        // `CoreReply` shape: each arm must equal its legacy constructor.
-        // Production-real arms (Projection, fresh Tiled admission,
-        // ActiveGroup/NoGroup) are additionally covered by wire goldens
-        // through `evaluate`; the remaining arms pin bytes here until their
-        // routes migrate.
+        // Proof that `serialize_core_reply` is a byte-exact funnel for the
+        // surviving `CoreReply` shapes: each arm must equal its legacy
+        // constructor. Production-real arms (Projection, fresh Tiled
+        // admission, ActiveGroup/NoGroup) are additionally covered by wire
+        // goldens through `evaluate`; the remaining arms pin bytes here
+        // until their routes migrate.
         use tiler_core::boundary::{
             CoreReply, NoGroupReason, ProjectionKind, ProjectionPlan, TiledKind, TiledPlan,
-            TransactionKind, TransactionStatus,
         };
         use tiler_core::contract::DivergenceKind;
         let request = retained_request(
@@ -5918,56 +4814,6 @@ mod tests {
         assert_eq!(
             serialize_core_reply(&ctx, &CoreReply::Diverged(DivergenceKind::OwnerMismatch)),
             diverged_reply("core-reply-1", DivergenceKind::OwnerMismatch),
-        );
-        assert_eq!(
-            serialize_core_reply(
-                &ctx,
-                &CoreReply::Status {
-                    base_revision: Some(3),
-                    status: TransactionStatus::PostUnacked,
-                }
-            ),
-            status_reply("core-reply-1", Some(3), "post-unacked"),
-        );
-        assert_eq!(
-            serialize_core_reply(
-                &ctx,
-                &CoreReply::Status {
-                    base_revision: None,
-                    status: TransactionStatus::NoPendingUnknown,
-                }
-            ),
-            status_reply("core-reply-1", None, "no-pending-unknown"),
-        );
-        assert_eq!(
-            serialize_core_reply(
-                &ctx,
-                &CoreReply::Acknowledged {
-                    base_revision: 3,
-                    kind: TransactionKind::SendToWorkspace,
-                }
-            ),
-            "{\"v\":1,\"correlation_id\":\"core-reply-1\",\"outcome\":\"acknowledged\",\"kind\":\"send-to-workspace\",\"base_revision\":3}",
-        );
-        assert_eq!(
-            serialize_core_reply(
-                &ctx,
-                &CoreReply::Committed {
-                    revision: 4,
-                    kind: TransactionKind::DirectionalMove,
-                }
-            ),
-            "{\"v\":1,\"correlation_id\":\"core-reply-1\",\"outcome\":\"committed\",\"kind\":\"directional-move\",\"base_revision\":4}",
-        );
-        assert_eq!(
-            serialize_core_reply(
-                &ctx,
-                &CoreReply::Cancelled {
-                    base_revision: 3,
-                    kind: TransactionKind::SendToWorkspace,
-                }
-            ),
-            cancelled_reply("core-reply-1", "send-to-workspace", 3),
         );
         let projection = ProjectionPlan {
             base_revision: 2,
@@ -6177,131 +5023,6 @@ mod tests {
             serialize_core_reply(&ctx, &CoreReply::Tiled(float_tiled)),
             "{\"v\":1,\"correlation_id\":\"core-sync-1\",\"outcome\":\"planned\",\"base_revision\":2,\"detail\":{\"capability\":\"intentional-float\",\"kind\":\"toggle-float\",\"policy_version\":1},\"desired_geometry\":[],\"float_geometry\":{\"window\":\"win-1\",\"rect\":{\"x\":240,\"y\":160,\"w\":720,\"h\":480}}}",
         );
-    }
-    #[test]
-    fn transaction_choke_point_matches_legacy_shapes_byte_exact() {
-        // Byte pins for the migrated transaction family: workspace-send
-        // planned (typed `SendWorkspacePlan` vs the legacy constructor) plus
-        // the ack/commit/cancel/status outcomes for both transaction kinds
-        // that the sync-family test does not cover. The existing workspace
-        // and directional R4 wire goldens prove the same bytes flow end to
-        // end through `evaluate`.
-        use tiler_core::boundary::{
-            CoreReply, SendWorkspacePlan, TransactionKind, TransactionStatus,
-        };
-        use tiler_core::contract::{
-            LifecycleCapability, LifecycleIntent, LifecycleOperation, LifecyclePrecondition,
-        };
-        let request = retained_request(
-            "core-txn-1",
-            "owner-1",
-            "gen-1",
-            "win-1",
-            &[("win-1", 0, 0, 100, 80)],
-            serde_json::json!({"op": "reconcile"}),
-        );
-        let ctx = validate_request(&request).expect("fixture validates");
-        let plan = tiler_core::session::SessionPlan {
-            dispatch: tiler_core::contract::LifecycleDispatch {
-                correlation_id: ctx.correlation.clone(),
-                owner: ctx.owner.clone(),
-                generation: ctx.generation.clone(),
-                base_revision: 2,
-                required_capability: LifecycleCapability::MoveTiled,
-                preconditions: vec![
-                    LifecyclePrecondition::WindowObserved,
-                    LifecyclePrecondition::DesiredTopologyValid,
-                    LifecyclePrecondition::AdapterMustVerifyPostconditions,
-                ],
-                intent: LifecycleIntent::MoveToWorkspace {
-                    window: WindowId::from("win-1"),
-                    target_output: OutputId::from("out-1"),
-                    target_workspace: WorkspaceId::from("ws-2"),
-                },
-                operation: LifecycleOperation::MoveTiled {
-                    window: WindowId::from("win-1"),
-                    leaf: NodeId::from("leaf-1"),
-                    source_output: OutputId::from("out-1"),
-                    source_workspace: WorkspaceId::from("ws-1"),
-                    target_output: OutputId::from("out-1"),
-                    target_workspace: WorkspaceId::from("ws-2"),
-                },
-                policy_version: 1,
-            },
-            desired_snapshot: tiler_core::session::SessionSnapshot {
-                domains: Vec::new(),
-                windows: Vec::new(),
-            },
-            desired_focus_domain: Some(ctx.domain_key.clone()),
-            desired_focus_leaf: Some(NodeId::from("leaf-1")),
-            desired_geometry: Vec::new(),
-        };
-        let typed = SendWorkspacePlan::from_session(&plan).expect("move-tiled builds");
-        assert_eq!(
-            serialize_core_reply(&ctx, &CoreReply::SendWorkspace(typed.clone())),
-            workspace_planned_reply("core-txn-1", &plan),
-        );
-        assert_eq!(
-            serialize_send_workspace_reply("core-txn-1", &typed),
-            workspace_planned_reply("core-txn-1", &plan),
-        );
-        // The non-`MoveTiled` fallback stays a `move-op-invalid` fence.
-        let mut admit = plan.clone();
-        admit.dispatch.operation = LifecycleOperation::Remove {
-            window: WindowId::from("win-1"),
-            leaf: NodeId::from("leaf-1"),
-            output: OutputId::from("out-1"),
-            workspace: WorkspaceId::from("ws-1"),
-        };
-        assert!(SendWorkspacePlan::from_session(&admit).is_none());
-        assert_eq!(
-            serialize_core_reply(
-                &ctx,
-                &CoreReply::Acknowledged {
-                    base_revision: 3,
-                    kind: TransactionKind::DirectionalMove,
-                }
-            ),
-            "{\"v\":1,\"correlation_id\":\"core-txn-1\",\"outcome\":\"acknowledged\",\"kind\":\"directional-move\",\"base_revision\":3}",
-        );
-        assert_eq!(
-            serialize_core_reply(
-                &ctx,
-                &CoreReply::Committed {
-                    revision: 4,
-                    kind: TransactionKind::SendToWorkspace,
-                }
-            ),
-            "{\"v\":1,\"correlation_id\":\"core-txn-1\",\"outcome\":\"committed\",\"kind\":\"send-to-workspace\",\"base_revision\":4}",
-        );
-        assert_eq!(
-            serialize_core_reply(
-                &ctx,
-                &CoreReply::Cancelled {
-                    base_revision: 3,
-                    kind: TransactionKind::DirectionalMove,
-                }
-            ),
-            cancelled_reply("core-txn-1", "directional-move", 3),
-        );
-        for (status, token) in [
-            (TransactionStatus::PostUnacked, "post-unacked"),
-            (TransactionStatus::PostAcked, "post-acked"),
-            (TransactionStatus::Unresolved, "unresolved"),
-            (TransactionStatus::Stale, "stale"),
-        ] {
-            assert_eq!(
-                serialize_core_reply(
-                    &ctx,
-                    &CoreReply::Status {
-                        base_revision: Some(3),
-                        status,
-                    }
-                ),
-                status_reply("core-txn-1", Some(3), token),
-                "{token} funnels byte-exact",
-            );
-        }
     }
     #[test]
     fn typed_sync_codec_move_focus_resize_float_wire_golden() {
@@ -6543,355 +5264,6 @@ mod tests {
             assert_eq!(geometry[0]["window"], "win-1", "{reply}");
             assert_eq!(geometry[0]["workspace"], "ws-1", "{reply}");
         }
-    }
-    #[test]
-    fn typed_transaction_codec_workspace_wire_golden() {
-        // Wire golden for the tagged `SyncCommand` conversion of the
-        // workspace-send route: full request/ack/verify lifecycle plus
-        // read-only status and cancel, byte-exact through the in-place typed
-        // parse. Malformed commands reject byte-exact with unchanged kinds;
-        // scope-before-parse order is unchanged (`send-to-workspace` still
-        // validates the target scope first). Literals recorded from the
-        // production `evaluate` path before the switch (offline).
-        let source = vec![
-            workspace_entry("win-1", "ws-1", 0),
-            workspace_entry("win-2", "ws-1", 100),
-        ];
-        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
-        let mut planner = Planner::new();
-        let planned_str = planner.evaluate(&workspace_request(
-            "gold-ws-1",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source.clone(),
-            target.clone(),
-            workspace_send_body(),
-        ));
-        assert_eq!(
-            planned_str,
-            "{\"v\":1,\"correlation_id\":\"gold-ws-1\",\"outcome\":\"planned\",\"kind\":\"send-to-workspace\",\"base_revision\":3,\"detail\":{\"capability\":\"move-tiled\",\"kind\":\"send-to-workspace\",\"policy_version\":1},\"desired_geometry\":[{\"window\":\"win-2\",\"leaf\":\"leaf-win-2\",\"output\":\"out-1\",\"workspace\":\"ws-1\",\"rect\":{\"x\":0,\"y\":0,\"w\":1200,\"h\":800}},{\"window\":\"win-1\",\"leaf\":\"leaf-win-1\",\"output\":\"out-1\",\"workspace\":\"ws-2\",\"rect\":{\"x\":600,\"y\":0,\"w\":600,\"h\":800}},{\"window\":\"win-t1\",\"leaf\":\"leaf-win-t1\",\"output\":\"out-1\",\"workspace\":\"ws-2\",\"rect\":{\"x\":0,\"y\":0,\"w\":600,\"h\":800}}],\"desired_focus\":{\"domain_output\":\"out-1\",\"domain_workspace\":\"ws-2\",\"leaf\":\"leaf-win-1\"},\"preconditions\":[\"window-observed\",\"desired-topology-valid\",\"adapter-must-verify-postconditions\"],\"operation\":{\"leaf\":\"leaf-win-1\",\"op\":\"move-tiled\",\"source_output\":\"out-1\",\"source_workspace\":\"ws-1\",\"target_output\":\"out-1\",\"target_workspace\":\"ws-2\",\"window\":\"win-1\"}}",
-        );
-        let planned = parse_reply(&planned_str);
-        let base = planned["base_revision"].as_u64().expect("base");
-        let (post_source, post_target) = observation_from_geometry(&planned["desired_geometry"]);
-        let post = |command: serde_json::Value| {
-            workspace_request(
-                "gold-ws-1",
-                "owner-1",
-                "gen-1",
-                base,
-                "",
-                post_source.clone(),
-                post_target.clone(),
-                command,
-            )
-        };
-        assert_eq!(
-            planner.evaluate(&post(serde_json::json!({"op": "send-to-workspace-status"}))),
-            "{\"v\":1,\"correlation_id\":\"gold-ws-1\",\"outcome\":\"status\",\"kind\":\"post-unacked\",\"base_revision\":3}",
-        );
-        assert_eq!(
-            planner.evaluate(&post(workspace_ack_body())),
-            "{\"v\":1,\"correlation_id\":\"gold-ws-1\",\"outcome\":\"acknowledged\",\"kind\":\"send-to-workspace\",\"base_revision\":3}",
-        );
-        assert_eq!(
-            planner.evaluate(&post(serde_json::json!({"op": "send-to-workspace-status"}))),
-            "{\"v\":1,\"correlation_id\":\"gold-ws-1\",\"outcome\":\"status\",\"kind\":\"post-acked\",\"base_revision\":3}",
-        );
-        assert_eq!(
-            planner.evaluate(&post(workspace_verify_body(
-                planned["preconditions"].clone(),
-                planned["operation"].clone()
-            ))),
-            "{\"v\":1,\"correlation_id\":\"gold-ws-1\",\"outcome\":\"committed\",\"kind\":\"send-to-workspace\",\"base_revision\":4}",
-        );
-        // Malformed commands reject before any scope/pending handling, with
-        // unchanged kinds.
-        let mut fresh = Planner::new();
-        let malformed = [
-            (
-                "gold-ws-2",
-                serde_json::json!({"op": "send-to-workspace", "window": "win-1", "target_output": "out-1", "target_workspace": "ws-2", "bogus": 1}),
-                "{\"v\":1,\"correlation_id\":\"gold-ws-2\",\"outcome\":\"rejected\",\"kind\":\"unknown-field\",\"message\":\"request contains an unknown field\"}",
-            ),
-            (
-                "gold-ws-3",
-                serde_json::json!({"op": "send-to-workspace-ack", "ack_outcome": "accepted", "bogus": 1}),
-                "{\"v\":1,\"correlation_id\":\"gold-ws-3\",\"outcome\":\"rejected\",\"kind\":\"unknown-field\",\"message\":\"request contains an unknown field\"}",
-            ),
-            (
-                "gold-ws-4",
-                serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": []}),
-                "{\"v\":1,\"correlation_id\":\"gold-ws-4\",\"outcome\":\"rejected\",\"kind\":\"request-malformed\",\"message\":\"request is malformed\"}",
-            ),
-            (
-                "gold-ws-5",
-                serde_json::json!({"op": "send-to-workspace-status", "bogus": 1}),
-                "{\"v\":1,\"correlation_id\":\"gold-ws-5\",\"outcome\":\"rejected\",\"kind\":\"unknown-field\",\"message\":\"request contains an unknown field\"}",
-            ),
-            (
-                "gold-ws-6",
-                serde_json::json!({"op": "send-to-workspace-cancel"}),
-                "{\"v\":1,\"correlation_id\":\"gold-ws-6\",\"outcome\":\"rejected\",\"kind\":\"request-malformed\",\"message\":\"request is malformed\"}",
-            ),
-        ];
-        for (cid, command, expected) in malformed {
-            let reply = fresh.evaluate(&workspace_request(
-                cid,
-                "owner-1",
-                "gen-1",
-                0,
-                if cid == "gold-ws-2" { "win-1" } else { "" },
-                source.clone(),
-                target.clone(),
-                command,
-            ));
-            assert_eq!(reply, expected, "{cid}");
-        }
-        // Read-only status with no retained transaction.
-        assert_eq!(
-            fresh.evaluate(&workspace_request(
-                "gold-ws-7",
-                "owner-1",
-                "gen-1",
-                0,
-                "",
-                source.clone(),
-                target.clone(),
-                serde_json::json!({"op": "send-to-workspace-status"}),
-            )),
-            "{\"v\":1,\"correlation_id\":\"gold-ws-7\",\"outcome\":\"status\",\"kind\":\"no-pending-unknown\"}",
-        );
-        // Cancel withdraws the staged pending on exact pre-image proof.
-        let mut canceller = Planner::new();
-        let staged = canceller.evaluate(&workspace_request(
-            "gold-ws-8",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source.clone(),
-            target.clone(),
-            workspace_send_body(),
-        ));
-        assert_eq!(parse_reply(&staged)["outcome"], "planned", "{staged}");
-        assert_eq!(
-            canceller.evaluate(&workspace_request(
-                "gold-ws-8",
-                "owner-1",
-                "gen-1",
-                0,
-                "win-1",
-                source,
-                target,
-                serde_json::json!({"op": "send-to-workspace-cancel", "zero_dispatch": true}),
-            )),
-            "{\"v\":1,\"correlation_id\":\"gold-ws-8\",\"outcome\":\"cancelled\",\"kind\":\"send-to-workspace\",\"base_revision\":3}",
-        );
-        // Directional phases reject malformed commands before any pair
-        // binding or pending handling, with unchanged kinds.
-        let directional_malformed = [
-            (
-                "gold-dir-1",
-                serde_json::json!({"op": "directional-move-ack", "ack_outcome": "accepted", "bogus": 1}),
-                "{\"v\":1,\"correlation_id\":\"gold-dir-1\",\"outcome\":\"rejected\",\"kind\":\"unknown-field\",\"message\":\"request contains an unknown field\"}",
-            ),
-            (
-                "gold-dir-2",
-                serde_json::json!({"op": "directional-move-verify", "verified": true, "preconditions": []}),
-                "{\"v\":1,\"correlation_id\":\"gold-dir-2\",\"outcome\":\"rejected\",\"kind\":\"request-malformed\",\"message\":\"request is malformed\"}",
-            ),
-            (
-                "gold-dir-3",
-                serde_json::json!({"op": "directional-move-status", "bogus": 1}),
-                "{\"v\":1,\"correlation_id\":\"gold-dir-3\",\"outcome\":\"rejected\",\"kind\":\"unknown-field\",\"message\":\"request contains an unknown field\"}",
-            ),
-            (
-                "gold-dir-4",
-                serde_json::json!({"op": "directional-move-cancel"}),
-                "{\"v\":1,\"correlation_id\":\"gold-dir-4\",\"outcome\":\"rejected\",\"kind\":\"request-malformed\",\"message\":\"request is malformed\"}",
-            ),
-        ];
-        for (cid, command, expected) in directional_malformed {
-            let reply = fresh.evaluate(&plan_request(cid, "win-1", &["win-1"], command));
-            assert_eq!(reply, expected, "{cid}");
-        }
-    }
-    #[test]
-    fn verify_echo_typed_boundary_wire_golden() {
-        // Byte-level golden for the verify echo boundary (workspace-send
-        // route): malformed nested preconditions/operation reject as
-        // `verify-invalid` before any pending handling, `verified: false`
-        // diverges before echo parsing, and the exact echo still commits.
-        // Literals recorded from the production `evaluate` path (offline, no
-        // host mutation); the typed `SyncCommand` conversion must reproduce
-        // them byte-exact.
-        let source = vec![
-            workspace_entry("win-1", "ws-1", 0),
-            workspace_entry("win-2", "ws-1", 100),
-        ];
-        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
-        let mut planner = Planner::new();
-        let planned = parse_reply(&planner.evaluate(&workspace_request(
-            "gold-verify-1",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source.clone(),
-            target.clone(),
-            workspace_send_body(),
-        )));
-        assert_eq!(planned["outcome"], "planned", "{planned}");
-        let base = planned["base_revision"].as_u64().expect("base");
-        let (post_source, post_target) = observation_from_geometry(&planned["desired_geometry"]);
-        let post = |cid: &str, command: serde_json::Value| {
-            workspace_request(
-                cid,
-                "owner-1",
-                "gen-1",
-                base,
-                "",
-                post_source.clone(),
-                post_target.clone(),
-                command,
-            )
-        };
-        assert_eq!(
-            planner.evaluate(&post("gold-verify-1", workspace_ack_body())),
-            format!(
-                "{{\"v\":1,\"correlation_id\":\"gold-verify-1\",\"outcome\":\"acknowledged\",\"kind\":\"send-to-workspace\",\"base_revision\":{base}}}"
-            ),
-        );
-        let good_pre = planned["preconditions"].clone();
-        let good_op = planned["operation"].clone();
-        // Malformed nested echoes reject as `verify-invalid` before any
-        // pending handling, so the staged pending survives every probe below
-        // and the exact echo still commits afterwards.
-        let malformed = [
-            (
-                "gold-verify-2",
-                serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": "window-observed", "operation": good_op}),
-                "{\"v\":1,\"correlation_id\":\"gold-verify-2\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"preconditions are invalid\"}",
-            ),
-            (
-                "gold-verify-3",
-                serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": ["window-observed", 7], "operation": good_op}),
-                "{\"v\":1,\"correlation_id\":\"gold-verify-3\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"preconditions are invalid\"}",
-            ),
-            (
-                "gold-verify-4",
-                serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": ["bogus-token"], "operation": good_op}),
-                "{\"v\":1,\"correlation_id\":\"gold-verify-4\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"preconditions are invalid\"}",
-            ),
-            (
-                "gold-verify-5",
-                serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": [], "operation": good_op}),
-                "{\"v\":1,\"correlation_id\":\"gold-verify-5\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"preconditions are invalid\"}",
-            ),
-            (
-                "gold-verify-6",
-                serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": good_pre, "operation": []}),
-                "{\"v\":1,\"correlation_id\":\"gold-verify-6\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"operation is invalid\"}",
-            ),
-            (
-                "gold-verify-7",
-                serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": good_pre, "operation": {"op": "move-tiled", "leaf": "leaf-win-1", "source_output": "out-1", "source_workspace": "ws-1", "target_output": "out-1", "target_workspace": "ws-2"}}),
-                "{\"v\":1,\"correlation_id\":\"gold-verify-7\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"operation is invalid\"}",
-            ),
-            (
-                "gold-verify-8",
-                serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": good_pre, "operation": {"op": "move-tiled", "leaf": "leaf-win-1", "source_output": "out-1", "source_workspace": "ws-1", "target_output": "out-1", "target_workspace": "ws-2", "window": ""}}),
-                "{\"v\":1,\"correlation_id\":\"gold-verify-8\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"operation is invalid\"}",
-            ),
-            (
-                "gold-verify-9",
-                serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": good_pre, "operation": {"op": "move", "leaf": "leaf-win-1", "source_output": "out-1", "source_workspace": "ws-1", "target_output": "out-1", "target_workspace": "ws-2", "window": "win-1"}}),
-                "{\"v\":1,\"correlation_id\":\"gold-verify-9\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"operation is invalid\"}",
-            ),
-        ];
-        for (cid, command, expected) in malformed {
-            assert_eq!(planner.evaluate(&post(cid, command)), expected, "{cid}");
-        }
-        // The `verified` flag gates before echo parsing: an unverified report
-        // with garbage echoes diverges as postcondition-unverified, never
-        // `verify-invalid`.
-        assert_eq!(
-            planner.evaluate(&post(
-                "gold-verify-10",
-                serde_json::json!({"op": "send-to-workspace-verify", "verified": false, "preconditions": [7], "operation": []}),
-            )),
-            "{\"v\":1,\"correlation_id\":\"gold-verify-10\",\"outcome\":\"diverged\",\"kind\":\"postcondition-unverified\",\"message\":\"adapter did not verify postconditions\"}",
-        );
-        // The exact echo still commits after every probe above: echo parsing
-        // never consumed the pending.
-        assert_eq!(
-            planner.evaluate(&post(
-                "gold-verify-1",
-                workspace_verify_body(good_pre.clone(), good_op.clone()),
-            )),
-            format!(
-                "{{\"v\":1,\"correlation_id\":\"gold-verify-1\",\"outcome\":\"committed\",\"kind\":\"send-to-workspace\",\"base_revision\":{}}}",
-                base + 1
-            ),
-        );
-        // Echo parsing precedes pending checks: malformed echoes on a planner
-        // with no pending report `verify-invalid`, never `no-pending`.
-        let mut fresh = Planner::new();
-        assert_eq!(
-            fresh.evaluate(&post(
-                "gold-verify-11",
-                serde_json::json!({"op": "send-to-workspace-verify", "verified": true, "preconditions": [7], "operation": good_op}),
-            )),
-            "{\"v\":1,\"correlation_id\":\"gold-verify-11\",\"outcome\":\"rejected\",\"kind\":\"verify-invalid\",\"message\":\"preconditions are invalid\"}",
-        );
-        // Extra fencing fields stay lenient: the exact echo plus one unknown
-        // nested field still commits on a freshly staged lifecycle.
-        let mut lenient = Planner::new();
-        let staged = parse_reply(&lenient.evaluate(&workspace_request(
-            "gold-verify-12",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source,
-            target,
-            workspace_send_body(),
-        )));
-        assert_eq!(staged["outcome"], "planned", "{staged}");
-        let staged_base = staged["base_revision"].as_u64().expect("base");
-        let (lenient_source, lenient_target) =
-            observation_from_geometry(&staged["desired_geometry"]);
-        let lenient_post = |cid: &str, command: serde_json::Value| {
-            workspace_request(
-                cid,
-                "owner-1",
-                "gen-1",
-                staged_base,
-                "",
-                lenient_source.clone(),
-                lenient_target.clone(),
-                command,
-            )
-        };
-        assert_eq!(
-            parse_reply(&lenient.evaluate(&lenient_post("gold-verify-12", workspace_ack_body())))["outcome"],
-            "acknowledged",
-        );
-        let mut extra_op = staged["operation"].clone();
-        extra_op["bogus"] = serde_json::json!(1);
-        assert_eq!(
-            lenient.evaluate(&lenient_post(
-                "gold-verify-12",
-                workspace_verify_body(staged["preconditions"].clone(), extra_op),
-            )),
-            format!(
-                "{{\"v\":1,\"correlation_id\":\"gold-verify-12\",\"outcome\":\"committed\",\"kind\":\"send-to-workspace\",\"base_revision\":{}}}",
-                staged_base + 1
-            ),
-        );
     }
     #[test]
     fn planner_snapshot_detail_registry_is_unique() {
@@ -8379,186 +6751,6 @@ mod tests {
         })
     }
 
-    fn workspace_ack_body() -> serde_json::Value {
-        serde_json::json!({"op": "send-to-workspace-ack", "ack_outcome": "accepted"})
-    }
-
-    fn workspace_verify_body(
-        preconditions: serde_json::Value,
-        operation: serde_json::Value,
-    ) -> serde_json::Value {
-        serde_json::json!({
-            "op": "send-to-workspace-verify",
-            "verified": true,
-            "preconditions": preconditions,
-            "operation": operation,
-        })
-    }
-
-    /// Split a planned `desired_geometry` into the exact source and target
-    /// post-observation the adapter must report back after applying the plan.
-    fn observation_from_geometry(
-        geometry: &serde_json::Value,
-    ) -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
-        let mut source = Vec::new();
-        let mut target = Vec::new();
-        for entry in geometry.as_array().expect("desired geometry array") {
-            let workspace = entry["workspace"].as_str().expect("workspace");
-            let rect = &entry["rect"];
-            let observed = serde_json::json!({
-                "window": entry["window"].as_str().expect("window"),
-                "output": entry["output"].as_str().expect("output"),
-                "workspace": workspace,
-                "rect": {
-                    "x": rect["x"], "y": rect["y"], "w": rect["w"], "h": rect["h"],
-                },
-            });
-            if workspace == "ws-1" {
-                source.push(observed);
-            } else {
-                target.push(observed);
-            }
-        }
-        (source, target)
-    }
-
-    /// Drive a full successful lifecycle: request, ack, verify. Returns the
-    /// verify reply plus the echoed operation/preconditions from the request
-    /// reply so mismatch tests can mutate them.
-    fn run_workspace_lifecycle(
-        planner: &mut Planner,
-    ) -> (serde_json::Value, serde_json::Value, serde_json::Value) {
-        let source = vec![
-            workspace_entry("win-1", "ws-1", 0),
-            workspace_entry("win-2", "ws-1", 100),
-        ];
-        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
-        let request = workspace_request(
-            "ws-ok-1",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source,
-            target,
-            workspace_send_body(),
-        );
-        let planned = parse_reply(&planner.evaluate(&request));
-        assert_eq!(planned["outcome"], "planned", "{planned}");
-        assert_eq!(planned["kind"], "send-to-workspace", "{planned}");
-        // The seeded two-domain session advances one revision per admitted
-        // window, so the proposal base is the seeded window count (3).
-        assert_eq!(planned["base_revision"], 3, "{planned}");
-        let preconditions = planned["preconditions"].clone();
-        let operation = planned["operation"].clone();
-        assert!(
-            planned["desired_geometry"]
-                .as_array()
-                .is_some_and(|g| g.len() == 3),
-            "{planned}"
-        );
-        assert!(
-            planned["desired_focus"]["leaf"].as_str().is_some(),
-            "{planned}"
-        );
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        let desired_geometry = planned["desired_geometry"].clone();
-        let (ack_source, ack_target) = observation_from_geometry(&desired_geometry);
-        // Ack phase carries the same complete post-observation.
-        let ack_request = workspace_request(
-            "ws-ok-1",
-            "owner-1",
-            "gen-1",
-            base,
-            "",
-            ack_source,
-            ack_target,
-            workspace_ack_body(),
-        );
-        let acked = parse_reply(&planner.evaluate(&ack_request));
-        assert_eq!(acked["outcome"], "acknowledged", "{acked}");
-        assert_eq!(acked["kind"], "send-to-workspace", "{acked}");
-        assert_eq!(acked["base_revision"], base, "{acked}");
-        // Verify phase with the exact same post-observation.
-        let (verify_source, verify_target) = observation_from_geometry(&desired_geometry);
-        let verify_request = workspace_request(
-            "ws-ok-1",
-            "owner-1",
-            "gen-1",
-            base,
-            "",
-            verify_source,
-            verify_target,
-            workspace_verify_body(preconditions.clone(), operation.clone()),
-        );
-        let committed = parse_reply(&planner.evaluate(&verify_request));
-        assert_eq!(committed["outcome"], "committed", "{committed}");
-        assert_eq!(committed["kind"], "send-to-workspace", "{committed}");
-        assert_eq!(committed["base_revision"], base + 1, "{committed}");
-        (committed, preconditions, operation)
-    }
-
-    #[test]
-    fn workspace_send_lifecycle_commits_only_after_ack_and_verify() {
-        let mut planner = Planner::new();
-        let (committed, _, _) = run_workspace_lifecycle(&mut planner);
-        assert_eq!(committed["outcome"], "committed", "{committed}");
-        // Pending released after commit: a fresh request plans again.
-        let source = vec![workspace_entry("win-1", "ws-1", 0)];
-        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
-        let second = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-ok-2",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source,
-            target,
-            workspace_send_body(),
-        )));
-        assert_eq!(second["outcome"], "planned", "{second}");
-    }
-
-    #[test]
-    fn workspace_send_verify_after_pending_is_rejected_without_ack() {
-        let mut planner = Planner::new();
-        let source = vec![
-            workspace_entry("win-1", "ws-1", 0),
-            workspace_entry("win-2", "ws-1", 100),
-        ];
-        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
-        let request = workspace_request(
-            "ws-noack-1",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source.clone(),
-            target.clone(),
-            workspace_send_body(),
-        );
-        let planned = parse_reply(&planner.evaluate(&request));
-        assert_eq!(planned["outcome"], "planned", "{planned}");
-        let preconditions = planned["preconditions"].clone();
-        let operation = planned["operation"].clone();
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        let desired_geometry = planned["desired_geometry"].clone();
-        // Verify before ack: the session is not yet acknowledged.
-        let (verify_source, verify_target) = observation_from_geometry(&desired_geometry);
-        let verify = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-noack-1",
-            "owner-1",
-            "gen-1",
-            base,
-            "",
-            verify_source,
-            verify_target,
-            workspace_verify_body(preconditions, operation),
-        )));
-        assert_eq!(verify["outcome"], "rejected", "{verify}");
-        assert_eq!(verify["kind"], "verify-rejected", "{verify}");
-    }
-
     #[test]
     fn workspace_send_refuses_cross_output() {
         let mut planner = Planner::new();
@@ -8645,114 +6837,15 @@ mod tests {
     }
 
     #[test]
-    fn workspace_send_second_request_while_pending_is_rejected() {
+    fn workspace_send_commits_immediately_with_native_assignment_and_converges() {
+        // Compact Planner/Engine codec row: a real send-to-workspace commits
+        // immediately with the native membership action (`move-tiled`
+        // operation plus preconditions) and both-domain geometry. A failed
+        // native assignment then converges on the next complete observations
+        // with no retained phantom.
         let mut planner = Planner::new();
-        let source = vec![
-            workspace_entry("win-1", "ws-1", 0),
-            workspace_entry("win-2", "ws-1", 100),
-        ];
-        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
-        let request = workspace_request(
-            "ws-pend-1",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source.clone(),
-            target.clone(),
-            workspace_send_body(),
-        );
-        assert_eq!(
-            parse_reply(&planner.evaluate(&request))["outcome"],
-            "planned"
-        );
         let reply = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-pend-2",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source,
-            target,
-            workspace_send_body(),
-        )));
-        assert_eq!(reply["outcome"], "rejected", "{reply}");
-        assert_eq!(reply["kind"], "pending-exists", "{reply}");
-    }
-
-    #[test]
-    fn workspace_send_owner_rebind_during_pending_is_terminal() {
-        let mut planner = Planner::new();
-        let source = vec![
-            workspace_entry("win-1", "ws-1", 0),
-            workspace_entry("win-2", "ws-1", 100),
-        ];
-        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
-        let request = workspace_request(
-            "ws-owner-1",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source.clone(),
-            target.clone(),
-            workspace_send_body(),
-        );
-        assert_eq!(
-            parse_reply(&planner.evaluate(&request))["outcome"],
-            "planned"
-        );
-        let reply = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-owner-2",
-            "owner-2",
-            "gen-1",
-            0,
-            "win-1",
-            source,
-            target,
-            workspace_send_body(),
-        )));
-        assert_eq!(reply["outcome"], "diverged", "{reply}");
-        assert_eq!(reply["kind"], "owner-mismatch", "{reply}");
-    }
-
-    #[test]
-    fn workspace_send_refused_ack_is_terminal() {
-        let mut planner = Planner::new();
-        let source = vec![
-            workspace_entry("win-1", "ws-1", 0),
-            workspace_entry("win-2", "ws-1", 100),
-        ];
-        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
-        let request = workspace_request(
-            "ws-refack-1",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source,
-            target,
-            workspace_send_body(),
-        );
-        let planned = parse_reply(&planner.evaluate(&request));
-        assert_eq!(planned["outcome"], "planned", "{planned}");
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        let (ack_source, ack_target) = observation_from_geometry(&planned["desired_geometry"]);
-        let refused = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-refack-1",
-            "owner-1",
-            "gen-1",
-            base,
-            "",
-            ack_source,
-            ack_target,
-            serde_json::json!({"op": "send-to-workspace-ack", "ack_outcome": "partial-application"}),
-        )));
-        assert_eq!(refused["outcome"], "diverged", "{refused}");
-        assert_eq!(refused["kind"], "partial-application", "{refused}");
-        // The wedged pending stays terminal: no recovery on the next request.
-        let again = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-refack-2",
+            "ws-codec-1",
             "owner-1",
             "gen-1",
             0,
@@ -8761,1876 +6854,75 @@ mod tests {
             vec![workspace_entry("win-t1", "ws-2", 0)],
             workspace_send_body(),
         )));
-        assert_eq!(again["outcome"], "diverged", "{again}");
-    }
-
-    #[test]
-    fn workspace_send_ack_with_wrong_correlation_is_terminal() {
-        let mut planner = Planner::new();
-        let source = vec![
-            workspace_entry("win-1", "ws-1", 0),
-            workspace_entry("win-2", "ws-1", 100),
-        ];
-        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
-        let request = workspace_request(
-            "ws-corr-1",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source.clone(),
-            target.clone(),
-            workspace_send_body(),
-        );
-        assert_eq!(
-            parse_reply(&planner.evaluate(&request))["outcome"],
-            "planned"
-        );
-        let reply = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-corr-2",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source,
-            target,
-            workspace_ack_body(),
-        )));
-        assert_eq!(reply["outcome"], "diverged", "{reply}");
-        assert_eq!(reply["kind"], "correlation-mismatch", "{reply}");
-    }
-
-    #[test]
-    fn workspace_send_verify_mismatch_is_terminal() {
-        let mut planner = Planner::new();
-        let source = vec![
-            workspace_entry("win-1", "ws-1", 0),
-            workspace_entry("win-2", "ws-1", 100),
-        ];
-        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
-        let request = workspace_request(
-            "ws-badop-1",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source.clone(),
-            target.clone(),
-            workspace_send_body(),
-        );
-        let planned = parse_reply(&planner.evaluate(&request));
-        assert_eq!(planned["outcome"], "planned", "{planned}");
-        let preconditions = planned["preconditions"].clone();
-        let mut operation = planned["operation"].clone();
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        let desired_geometry = planned["desired_geometry"].clone();
-        let (ack_source, ack_target) = observation_from_geometry(&desired_geometry);
-        // Ack the real pending with the complete post-observation.
-        let acked = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-badop-1",
-            "owner-1",
-            "gen-1",
-            base,
-            "",
-            ack_source,
-            ack_target,
-            workspace_ack_body(),
-        )));
-        assert_eq!(acked["outcome"], "acknowledged", "{acked}");
-        if let serde_json::Value::Object(ref mut op) = operation {
-            op.insert("target_workspace".to_owned(), serde_json::json!("ws-9"));
-        } else {
-            panic!("operation must be an object");
-        }
-        let (verify_source, verify_target) = observation_from_geometry(&desired_geometry);
-        let verify = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-badop-1",
-            "owner-1",
-            "gen-1",
-            base,
-            "",
-            verify_source,
-            verify_target,
-            workspace_verify_body(preconditions, operation),
-        )));
-        assert_eq!(verify["outcome"], "diverged", "{verify}");
-        assert_eq!(verify["kind"], "postcondition-mismatch", "{verify}");
-    }
-
-    #[test]
-    fn workspace_send_stale_revision_is_terminal() {
-        let mut planner = Planner::new();
-        let source = vec![
-            workspace_entry("win-1", "ws-1", 0),
-            workspace_entry("win-2", "ws-1", 100),
-        ];
-        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
-        let request = workspace_request(
-            "ws-stale-1",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source.clone(),
-            target.clone(),
-            workspace_send_body(),
-        );
-        let planned = parse_reply(&planner.evaluate(&request));
-        let preconditions = planned["preconditions"].clone();
-        let operation = planned["operation"].clone();
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        let desired_geometry = planned["desired_geometry"].clone();
-        let (ack_source, ack_target) = observation_from_geometry(&desired_geometry);
-        let acked = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-stale-1",
-            "owner-1",
-            "gen-1",
-            base,
-            "",
-            ack_source.clone(),
-            ack_target.clone(),
-            workspace_ack_body(),
-        )));
-        assert_eq!(acked["outcome"], "acknowledged", "{acked}");
-        // A verify request carrying a bumped revision is stale.
-        let mut stale_request: serde_json::Value = serde_json::from_str(&workspace_request(
-            "ws-stale-1",
-            "owner-1",
-            "gen-1",
-            base,
-            "",
-            ack_source,
-            ack_target,
-            workspace_verify_body(preconditions, operation),
-        ))
-        .expect("json");
-        stale_request["revision"] = serde_json::json!(7);
-        let reply = parse_reply(&planner.evaluate(&stale_request.to_string()));
-        assert_eq!(reply["outcome"], "diverged", "{reply}");
-        assert_eq!(reply["kind"], "stale-revision", "{reply}");
-    }
-
-    #[test]
-    fn workspace_send_ack_with_wrong_revision_is_terminal() {
-        let mut planner = Planner::new();
-        let source = vec![
-            workspace_entry("win-1", "ws-1", 0),
-            workspace_entry("win-2", "ws-1", 100),
-        ];
-        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
-        let request = workspace_request(
-            "ws-ackrev-1",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source,
-            target,
-            workspace_send_body(),
-        );
-        let planned = parse_reply(&planner.evaluate(&request));
-        assert_eq!(planned["outcome"], "planned", "{planned}");
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        let (ack_source, ack_target) = observation_from_geometry(&planned["desired_geometry"]);
-        // Ack carries a bumped base revision: terminal stale-revision.
-        let ack = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-ackrev-1",
-            "owner-1",
-            "gen-1",
-            base + 1,
-            "",
-            ack_source,
-            ack_target,
-            workspace_ack_body(),
-        )));
-        assert_eq!(ack["outcome"], "diverged", "{ack}");
-        assert_eq!(ack["kind"], "stale-revision", "{ack}");
-    }
-
-    #[test]
-    fn workspace_send_verify_bad_geometry_is_terminal() {
-        let mut planner = Planner::new();
-        let source = vec![
-            workspace_entry("win-1", "ws-1", 0),
-            workspace_entry("win-2", "ws-1", 100),
-        ];
-        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
-        let request = workspace_request(
-            "ws-geom-1",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source,
-            target,
-            workspace_send_body(),
-        );
-        let planned = parse_reply(&planner.evaluate(&request));
-        assert_eq!(planned["outcome"], "planned", "{planned}");
-        let preconditions = planned["preconditions"].clone();
-        let operation = planned["operation"].clone();
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        let desired_geometry = planned["desired_geometry"].clone();
-        let (ack_source, ack_target) = observation_from_geometry(&desired_geometry);
-        assert_eq!(
-            parse_reply(&planner.evaluate(&workspace_request(
-                "ws-geom-1",
-                "owner-1",
-                "gen-1",
-                base,
-                "",
-                ack_source,
-                ack_target,
-                workspace_ack_body(),
-            )))["outcome"],
-            "acknowledged"
-        );
-        // One observed rectangle diverges from the retained desired geometry.
-        let (mut verify_source, verify_target) = observation_from_geometry(&desired_geometry);
-        verify_source[0]["rect"]["w"] = serde_json::json!(1);
-        let verify = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-geom-1",
-            "owner-1",
-            "gen-1",
-            base,
-            "",
-            verify_source,
-            verify_target,
-            workspace_verify_body(preconditions, operation),
-        )));
-        assert_eq!(verify["outcome"], "diverged", "{verify}");
-        assert_eq!(verify["kind"], "postcondition-mismatch", "{verify}");
-        // Wedged pending stays terminal on a subsequent request.
-        let again = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-geom-2",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            vec![workspace_entry("win-1", "ws-1", 0)],
-            vec![workspace_entry("win-t1", "ws-2", 0)],
-            workspace_send_body(),
-        )));
-        assert_eq!(again["outcome"], "diverged", "{again}");
-        assert_eq!(again["kind"], "postcondition-mismatch", "{again}");
-    }
-
-    #[test]
-    fn workspace_send_verify_bad_membership_is_terminal() {
-        let mut planner = Planner::new();
-        let source = vec![
-            workspace_entry("win-1", "ws-1", 0),
-            workspace_entry("win-2", "ws-1", 100),
-        ];
-        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
-        let request = workspace_request(
-            "ws-memb-1",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source,
-            target,
-            workspace_send_body(),
-        );
-        let planned = parse_reply(&planner.evaluate(&request));
-        assert_eq!(planned["outcome"], "planned", "{planned}");
-        let preconditions = planned["preconditions"].clone();
-        let operation = planned["operation"].clone();
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        let desired_geometry = planned["desired_geometry"].clone();
-        let (ack_source, ack_target) = observation_from_geometry(&desired_geometry);
-        assert_eq!(
-            parse_reply(&planner.evaluate(&workspace_request(
-                "ws-memb-1",
-                "owner-1",
-                "gen-1",
-                base,
-                "",
-                ack_source,
-                ack_target,
-                workspace_ack_body(),
-            )))["outcome"],
-            "acknowledged"
-        );
-        // The mover is reported in the source workspace instead of the target.
-        let (verify_source, verify_target) = observation_from_geometry(&desired_geometry);
-        let mut bad_source = verify_source;
-        let mut bad_target = verify_target;
-        bad_source.push(workspace_entry("win-1", "ws-1", 600));
-        if let Some(index) = bad_target
-            .iter()
-            .position(|entry| entry["window"] == "win-1")
-        {
-            bad_target.remove(index);
-        }
-        let verify = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-memb-1",
-            "owner-1",
-            "gen-1",
-            base,
-            "",
-            bad_source,
-            bad_target,
-            workspace_verify_body(preconditions, operation),
-        )));
-        assert_eq!(verify["outcome"], "diverged", "{verify}");
-        assert_eq!(verify["kind"], "postcondition-mismatch", "{verify}");
-    }
-
-    fn workspace_status_body() -> serde_json::Value {
-        serde_json::json!({"op": "send-to-workspace-status"})
-    }
-
-    fn workspace_cancel_body() -> serde_json::Value {
-        serde_json::json!({"op": "send-to-workspace-cancel", "zero_dispatch": true})
-    }
-
-    /// Stage one workspace send and split its planned desired geometry into
-    /// the exact source/target post-observation the adapter must report back.
-    fn stage_workspace_send(
-        planner: &mut Planner,
-        correlation: &str,
-    ) -> (
-        serde_json::Value,
-        Vec<serde_json::Value>,
-        Vec<serde_json::Value>,
-    ) {
-        let source = vec![
-            workspace_entry("win-1", "ws-1", 0),
-            workspace_entry("win-2", "ws-1", 100),
-        ];
-        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
-        let planned = parse_reply(&planner.evaluate(&workspace_request(
-            correlation,
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source,
-            target,
-            workspace_send_body(),
-        )));
-        assert_eq!(planned["outcome"], "planned", "{planned}");
-        let (post_source, post_target) = observation_from_geometry(&planned["desired_geometry"]);
-        (planned, post_source, post_target)
-    }
-
-    fn workspace_status_request(
-        correlation: &str,
-        owner: &str,
-        generation: &str,
-        revision: u64,
-        source: Vec<serde_json::Value>,
-        target: Vec<serde_json::Value>,
-        command: serde_json::Value,
-    ) -> String {
-        workspace_request(
-            correlation,
-            owner,
-            generation,
-            revision,
-            "",
-            source,
-            target,
-            command,
-        )
-    }
-
-    #[test]
-    fn workspace_status_reports_post_unacked_then_post_acked_without_blocking_commit() {
-        let mut planner = Planner::new();
-        let (planned, post_source, post_target) = stage_workspace_send(&mut planner, "ws-status-1");
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        // Exact planned post before any ack: unacknowledged, never committed.
-        let unacked = parse_reply(&planner.evaluate(&workspace_status_request(
-            "ws-status-1",
-            "owner-1",
-            "gen-1",
-            base,
-            post_source.clone(),
-            post_target.clone(),
-            workspace_status_body(),
-        )));
-        assert_eq!(unacked["outcome"], "status", "{unacked}");
-        assert_eq!(unacked["kind"], "post-unacked", "{unacked}");
-        assert_eq!(unacked["base_revision"], base, "{unacked}");
-        assert!(unacked.get("desired_geometry").is_none(), "{unacked}");
-        // Read-only: the normal ack still applies afterwards.
-        let acked_reply = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-status-1",
-            "owner-1",
-            "gen-1",
-            base,
-            "",
-            post_source.clone(),
-            post_target.clone(),
-            workspace_ack_body(),
-        )));
-        assert_eq!(acked_reply["outcome"], "acknowledged", "{acked_reply}");
-        // Exact planned post after the accepted ack: acknowledged.
-        let acked = parse_reply(&planner.evaluate(&workspace_status_request(
-            "ws-status-1",
-            "owner-1",
-            "gen-1",
-            base,
-            post_source.clone(),
-            post_target.clone(),
-            workspace_status_body(),
-        )));
-        assert_eq!(acked["outcome"], "status", "{acked}");
-        assert_eq!(acked["kind"], "post-acked", "{acked}");
-        assert_eq!(acked["base_revision"], base, "{acked}");
-        // Read-only again: the normal verify still commits afterwards.
-        let committed = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-status-1",
-            "owner-1",
-            "gen-1",
-            base,
-            "",
-            post_source,
-            post_target,
-            workspace_verify_body(
-                planned["preconditions"].clone(),
-                planned["operation"].clone(),
-            ),
-        )));
-        assert_eq!(committed["outcome"], "committed", "{committed}");
-        assert_eq!(committed["base_revision"], base + 1, "{committed}");
-    }
-
-    #[test]
-    fn workspace_status_reports_unresolved_without_consuming_pending() {
-        let mut planner = Planner::new();
-        let (planned, post_source, post_target) = stage_workspace_send(&mut planner, "ws-status-2");
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        // One observed rectangle diverges from the retained desired geometry.
-        let (mut bad_source, bad_target) = observation_from_geometry(&planned["desired_geometry"]);
-        bad_source[0]["rect"]["w"] = serde_json::json!(1);
-        let unresolved = parse_reply(&planner.evaluate(&workspace_status_request(
-            "ws-status-2",
-            "owner-1",
-            "gen-1",
-            base,
-            bad_source,
-            bad_target,
-            workspace_status_body(),
-        )));
-        assert_eq!(unresolved["outcome"], "status", "{unresolved}");
-        assert_eq!(unresolved["kind"], "unresolved", "{unresolved}");
-        assert_eq!(unresolved["base_revision"], base, "{unresolved}");
-        // The pending survives the probe: exact ack plus verify still commit.
-        assert_eq!(
-            parse_reply(&planner.evaluate(&workspace_request(
-                "ws-status-2",
-                "owner-1",
-                "gen-1",
-                base,
-                "",
-                post_source.clone(),
-                post_target.clone(),
-                workspace_ack_body(),
-            )))["outcome"],
-            "acknowledged"
-        );
-        let committed = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-status-2",
-            "owner-1",
-            "gen-1",
-            base,
-            "",
-            post_source,
-            post_target,
-            workspace_verify_body(
-                planned["preconditions"].clone(),
-                planned["operation"].clone(),
-            ),
-        )));
-        assert_eq!(committed["outcome"], "committed", "{committed}");
-    }
-
-    #[test]
-    fn workspace_status_reports_stale_without_recording_divergence() {
-        let mut planner = Planner::new();
-        let (planned, post_source, post_target) = stage_workspace_send(&mut planner, "ws-status-3");
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        // Wrong correlation, revision, owner, and generation each report stale
-        // against the exact post-observation.
-        for (correlation, owner, generation, revision) in [
-            ("ws-status-other", "owner-1", "gen-1", base),
-            ("ws-status-3", "owner-1", "gen-1", base + 1),
-            ("ws-status-3", "owner-9", "gen-1", base),
-            ("ws-status-3", "owner-1", "gen-9", base),
-        ] {
-            let stale = parse_reply(&planner.evaluate(&workspace_status_request(
-                correlation,
-                owner,
-                generation,
-                revision,
-                post_source.clone(),
-                post_target.clone(),
-                workspace_status_body(),
-            )));
-            assert_eq!(stale["outcome"], "status", "{stale}");
-            assert_eq!(stale["kind"], "stale", "{stale}");
-            assert_eq!(stale["base_revision"], base, "{stale}");
-        }
-        // Stale probes record nothing: the exact query still sees the live
-        // unacknowledged post, and the lifecycle still commits.
-        let live = parse_reply(&planner.evaluate(&workspace_status_request(
-            "ws-status-3",
-            "owner-1",
-            "gen-1",
-            base,
-            post_source.clone(),
-            post_target.clone(),
-            workspace_status_body(),
-        )));
-        assert_eq!(live["kind"], "post-unacked", "{live}");
-        assert_eq!(
-            parse_reply(&planner.evaluate(&workspace_request(
-                "ws-status-3",
-                "owner-1",
-                "gen-1",
-                base,
-                "",
-                post_source.clone(),
-                post_target.clone(),
-                workspace_ack_body(),
-            )))["outcome"],
-            "acknowledged"
-        );
-        assert_eq!(
-            parse_reply(&planner.evaluate(&workspace_request(
-                "ws-status-3",
-                "owner-1",
-                "gen-1",
-                base,
-                "",
-                post_source,
-                post_target,
-                workspace_verify_body(
-                    planned["preconditions"].clone(),
-                    planned["operation"].clone(),
-                ),
-            )))["outcome"],
-            "committed"
-        );
-    }
-
-    #[test]
-    fn workspace_status_reports_diverged_after_terminal_ack() {
-        let mut planner = Planner::new();
-        let (planned, post_source, post_target) = stage_workspace_send(&mut planner, "ws-status-4");
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        let refused = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-status-4",
-            "owner-1",
-            "gen-1",
-            base,
-            "",
-            post_source.clone(),
-            post_target.clone(),
-            serde_json::json!({"op": "send-to-workspace-ack", "ack_outcome": "partial-application"}),
-        )));
-        assert_eq!(refused["outcome"], "diverged", "{refused}");
-        let diverged = parse_reply(&planner.evaluate(&workspace_status_request(
-            "ws-status-4",
-            "owner-1",
-            "gen-1",
-            base,
-            post_source,
-            post_target,
-            workspace_status_body(),
-        )));
-        assert_eq!(diverged["outcome"], "diverged", "{diverged}");
-        assert_eq!(diverged["kind"], "partial-application", "{diverged}");
-    }
-
-    #[test]
-    fn workspace_status_no_pending_unknown_carries_no_commit_implication() {
-        let planner = &mut Planner::new();
-        // A valid scope with no retained transaction: unknown, with no base
-        // revision and no geometry that could be mistaken for a commit.
-        let reply = parse_reply(&planner.evaluate(&workspace_status_request(
-            "ws-status-5",
-            "owner-1",
-            "gen-1",
-            0,
-            vec![workspace_entry("win-1", "ws-1", 0)],
-            vec![workspace_entry("win-t1", "ws-2", 0)],
-            workspace_status_body(),
-        )));
-        assert_eq!(reply["outcome"], "status", "{reply}");
-        assert_eq!(reply["kind"], "no-pending-unknown", "{reply}");
-        assert!(reply.get("base_revision").is_none(), "{reply}");
-        assert!(reply.get("desired_geometry").is_none(), "{reply}");
-        assert!(reply.get("kind").and_then(|kind| kind.as_str()) != Some("send-to-workspace"));
-        // Read-only against an empty planner: no binding sync, no sessions.
-        assert!(planner.owner().is_none());
-        assert_eq!(planner.retained_domains(), 0);
-    }
-
-    #[test]
-    fn workspace_status_rejects_malformed_and_scope_violations() {
-        let mut planner = Planner::new();
-        let source = vec![workspace_entry("win-1", "ws-1", 0)];
-        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
-        // Unknown command fields fail closed like any other route.
-        let unknown = parse_reply(&planner.evaluate(&workspace_status_request(
-            "ws-status-6",
-            "owner-1",
-            "gen-1",
-            0,
-            source.clone(),
-            target.clone(),
-            serde_json::json!({"op": "send-to-workspace-status", "extra": 1}),
-        )));
-        assert_eq!(unknown["outcome"], "rejected", "{unknown}");
-        assert_eq!(unknown["kind"], "unknown-field", "{unknown}");
-        // Missing target domain fails closed with the request scope kind.
-        let mut missing: serde_json::Value = serde_json::from_str(&workspace_status_request(
-            "ws-status-6",
-            "owner-1",
-            "gen-1",
-            0,
-            source.clone(),
-            target.clone(),
-            workspace_status_body(),
-        ))
-        .expect("json");
-        missing
-            .as_object_mut()
-            .expect("object")
-            .remove("target_domain");
-        let missing_reply = parse_reply(&planner.evaluate(&missing.to_string()));
-        assert_eq!(missing_reply["outcome"], "rejected", "{missing_reply}");
-        assert_eq!(
-            missing_reply["kind"], "workspace-target-invalid",
-            "{missing_reply}"
-        );
-        // Cross-output target fails closed with the request scope kind.
-        let mut cross: serde_json::Value = serde_json::from_str(&workspace_status_request(
-            "ws-status-6",
-            "owner-1",
-            "gen-1",
-            0,
-            source.clone(),
-            target.clone(),
-            workspace_status_body(),
-        ))
-        .expect("json");
-        cross["target_domain"]["output"] = serde_json::json!("out-9");
-        let cross_reply = parse_reply(&planner.evaluate(&cross.to_string()));
-        assert_eq!(cross_reply["outcome"], "rejected", "{cross_reply}");
-        assert_eq!(cross_reply["kind"], "cross-output", "{cross_reply}");
-        // Same-workspace target fails closed with the request scope kind.
-        let mut same: serde_json::Value = serde_json::from_str(&workspace_status_request(
-            "ws-status-6",
-            "owner-1",
-            "gen-1",
-            0,
-            source,
-            target,
-            workspace_status_body(),
-        ))
-        .expect("json");
-        same["target_domain"]["workspace"] = serde_json::json!("ws-1");
-        let same_reply = parse_reply(&planner.evaluate(&same.to_string()));
-        assert_eq!(same_reply["outcome"], "rejected", "{same_reply}");
-        assert_eq!(same_reply["kind"], "unchanged-workspace", "{same_reply}");
-    }
-
-    /// Cancel request carrying the exact dispatch-time pre-observation:
-    /// revision 0 is the original request revision (never the seeded base),
-    /// focus names the dispatch-time focused window, and source/target carry
-    /// the dispatch-time window sets.
-    #[allow(clippy::too_many_arguments)]
-    fn workspace_cancel_request(
-        correlation: &str,
-        owner: &str,
-        generation: &str,
-        revision: u64,
-        focused: &str,
-        source: Vec<serde_json::Value>,
-        target: Vec<serde_json::Value>,
-        command: serde_json::Value,
-    ) -> String {
-        workspace_request(
-            correlation,
-            owner,
-            generation,
-            revision,
-            focused,
-            source,
-            target,
-            command,
-        )
-    }
-
-    #[test]
-    fn workspace_cancel_withdraws_unacked_pre_and_leaves_new_correlation_usable() {
-        let mut planner = Planner::new();
-        let source = vec![
-            workspace_entry("win-1", "ws-1", 0),
-            workspace_entry("win-2", "ws-1", 100),
-        ];
-        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
-        let planned = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-cancel-1",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source.clone(),
-            target.clone(),
-            workspace_send_body(),
-        )));
-        assert_eq!(planned["outcome"], "planned", "{planned}");
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        // Exact dispatch-time pre-image with the original request revision:
-        // withdrawn, never committed.
-        let cancelled = parse_reply(&planner.evaluate(&workspace_cancel_request(
-            "ws-cancel-1",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source,
-            target,
-            workspace_cancel_body(),
-        )));
-        assert_eq!(cancelled["outcome"], "cancelled", "{cancelled}");
-        assert_eq!(cancelled["kind"], "send-to-workspace", "{cancelled}");
-        assert_eq!(cancelled["base_revision"], base, "{cancelled}");
-        assert!(cancelled.get("desired_geometry").is_none(), "{cancelled}");
-        // The slot is released without a wedge: status cannot imply a commit,
-        // a duplicate cancel finds no pending, and a fresh correlation plans.
-        // Nothing committed, so no canonical domain was retained either.
-        let unknown = parse_reply(&planner.evaluate(&workspace_status_request(
-            "ws-cancel-1",
-            "owner-1",
-            "gen-1",
-            0,
-            vec![workspace_entry("win-1", "ws-1", 0)],
-            vec![workspace_entry("win-t1", "ws-2", 0)],
-            workspace_status_body(),
-        )));
-        assert_eq!(unknown["kind"], "no-pending-unknown", "{unknown}");
-        let duplicate = parse_reply(&planner.evaluate(&workspace_cancel_request(
-            "ws-cancel-1",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            vec![workspace_entry("win-1", "ws-1", 0)],
-            vec![workspace_entry("win-t1", "ws-2", 0)],
-            workspace_cancel_body(),
-        )));
-        assert_eq!(duplicate["outcome"], "rejected", "{duplicate}");
-        assert_eq!(duplicate["kind"], "no-pending", "{duplicate}");
-        assert_eq!(planner.retained_domains(), 0);
-        let second = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-cancel-2",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            vec![workspace_entry("win-1", "ws-1", 0)],
-            vec![workspace_entry("win-t1", "ws-2", 0)],
-            workspace_send_body(),
-        )));
-        assert_eq!(second["outcome"], "planned", "{second}");
-    }
-
-    #[test]
-    fn workspace_cancel_refuses_acked_plan_without_mutation() {
-        let mut planner = Planner::new();
-        let (planned, post_source, post_target) = stage_workspace_send(&mut planner, "ws-cancel-3");
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        assert_eq!(
-            parse_reply(&planner.evaluate(&workspace_request(
-                "ws-cancel-3",
-                "owner-1",
-                "gen-1",
-                base,
-                "",
-                post_source.clone(),
-                post_target.clone(),
-                workspace_ack_body(),
-            )))["outcome"],
-            "acknowledged"
-        );
-        // The plan is acked: cancellation refuses even with the exact
-        // pre-image, since the ack may already have committed elsewhere.
-        let refused = parse_reply(&planner.evaluate(&workspace_cancel_request(
-            "ws-cancel-3",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            vec![
-                workspace_entry("win-1", "ws-1", 0),
-                workspace_entry("win-2", "ws-1", 100),
-            ],
-            vec![workspace_entry("win-t1", "ws-2", 0)],
-            workspace_cancel_body(),
-        )));
-        assert_eq!(refused["outcome"], "rejected", "{refused}");
-        assert_eq!(refused["kind"], "cancel-refused", "{refused}");
-        // Refusal mutated nothing: the ack stands and verify still commits.
-        let status = parse_reply(&planner.evaluate(&workspace_status_request(
-            "ws-cancel-3",
-            "owner-1",
-            "gen-1",
-            base,
-            post_source.clone(),
-            post_target.clone(),
-            workspace_status_body(),
-        )));
-        assert_eq!(status["kind"], "post-acked", "{status}");
-        let committed = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-cancel-3",
-            "owner-1",
-            "gen-1",
-            base,
-            "",
-            post_source,
-            post_target,
-            workspace_verify_body(
-                planned["preconditions"].clone(),
-                planned["operation"].clone(),
-            ),
-        )));
-        assert_eq!(committed["outcome"], "committed", "{committed}");
-    }
-
-    #[test]
-    fn workspace_cancel_refuses_mismatch_without_mutation() {
-        let mut planner = Planner::new();
-        let (planned, post_source, post_target) = stage_workspace_send(&mut planner, "ws-cancel-4");
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        // One carried rectangle differs from the dispatch-time pre-image:
-        // mismatch refuses while the pending stays live and committable.
-        let mut bad_source = vec![
-            workspace_entry("win-1", "ws-1", 0),
-            workspace_entry("win-2", "ws-1", 100),
-        ];
-        bad_source[0]["rect"]["w"] = serde_json::json!(1);
-        let mismatch = parse_reply(&planner.evaluate(&workspace_cancel_request(
-            "ws-cancel-4",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            bad_source,
-            vec![workspace_entry("win-t1", "ws-2", 0)],
-            workspace_cancel_body(),
-        )));
-        assert_eq!(mismatch["outcome"], "rejected", "{mismatch}");
-        assert_eq!(mismatch["kind"], "cancel-mismatch", "{mismatch}");
-        // A started write surfaces the same way: the post-observation is not
-        // the pre-image, so cancellation refuses and the lifecycle proceeds.
-        let started = parse_reply(&planner.evaluate(&workspace_cancel_request(
-            "ws-cancel-4",
-            "owner-1",
-            "gen-1",
-            0,
-            "",
-            post_source.clone(),
-            post_target.clone(),
-            workspace_cancel_body(),
-        )));
-        assert_eq!(started["outcome"], "rejected", "{started}");
-        assert_eq!(started["kind"], "cancel-mismatch", "{started}");
-        assert_eq!(
-            parse_reply(&planner.evaluate(&workspace_request(
-                "ws-cancel-4",
-                "owner-1",
-                "gen-1",
-                base,
-                "",
-                post_source.clone(),
-                post_target.clone(),
-                workspace_ack_body(),
-            )))["outcome"],
-            "acknowledged"
-        );
-        assert_eq!(
-            parse_reply(&planner.evaluate(&workspace_request(
-                "ws-cancel-4",
-                "owner-1",
-                "gen-1",
-                base,
-                "",
-                post_source,
-                post_target,
-                workspace_verify_body(
-                    planned["preconditions"].clone(),
-                    planned["operation"].clone(),
-                ),
-            )))["outcome"],
-            "committed"
-        );
-    }
-
-    #[test]
-    fn workspace_cancel_refuses_stale_diverged_absent_malformed() {
-        let mut planner = Planner::new();
-        let (planned, post_source, post_target) = stage_workspace_send(&mut planner, "ws-cancel-5");
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        let pre_source = vec![
-            workspace_entry("win-1", "ws-1", 0),
-            workspace_entry("win-2", "ws-1", 100),
-        ];
-        let pre_target = vec![workspace_entry("win-t1", "ws-2", 0)];
-        // Wrong correlation, the seeded base instead of the original request
-        // revision, wrong owner, and wrong generation each report stale
-        // without recording anything.
-        for (correlation, owner, generation, revision) in [
-            ("ws-cancel-other", "owner-1", "gen-1", 0),
-            ("ws-cancel-5", "owner-1", "gen-1", base),
-            ("ws-cancel-5", "owner-9", "gen-1", 0),
-            ("ws-cancel-5", "owner-1", "gen-9", 0),
-        ] {
-            let stale = parse_reply(&planner.evaluate(&workspace_cancel_request(
-                correlation,
-                owner,
-                generation,
-                revision,
-                "win-1",
-                pre_source.clone(),
-                pre_target.clone(),
-                workspace_cancel_body(),
-            )));
-            assert_eq!(stale["outcome"], "rejected", "{stale}");
-            assert_eq!(stale["kind"], "stale", "{stale}");
-        }
-        // A false attestation (a dispatch did occur) refuses outright.
-        let attested = parse_reply(&planner.evaluate(&workspace_cancel_request(
-            "ws-cancel-5",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            pre_source.clone(),
-            pre_target.clone(),
-            serde_json::json!({"op": "send-to-workspace-cancel", "zero_dispatch": false}),
-        )));
-        assert_eq!(attested["outcome"], "rejected", "{attested}");
-        assert_eq!(attested["kind"], "cancel-refused", "{attested}");
-        // Stale and refused probes recorded nothing: exact cancellation still
-        // succeeds and the lifecycle is fully released.
-        let cancelled = parse_reply(&planner.evaluate(&workspace_cancel_request(
-            "ws-cancel-5",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            pre_source,
-            pre_target,
-            workspace_cancel_body(),
-        )));
-        assert_eq!(cancelled["outcome"], "cancelled", "{cancelled}");
-        // A terminally diverged transaction reports divergence, never cancel.
-        let (diverged_plan, div_source, div_target) =
-            stage_workspace_send(&mut planner, "ws-cancel-6");
-        let div_base = diverged_plan["base_revision"].as_u64().expect("base");
-        assert_eq!(
-            parse_reply(&planner.evaluate(&workspace_request(
-                "ws-cancel-6",
-                "owner-1",
-                "gen-1",
-                div_base,
-                "",
-                div_source,
-                div_target,
-                serde_json::json!({"op": "send-to-workspace-ack", "ack_outcome": "partial-application"}),
-            )))["outcome"],
-            "diverged"
-        );
-        let diverged = parse_reply(&planner.evaluate(&workspace_cancel_request(
-            "ws-cancel-6",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            vec![
-                workspace_entry("win-1", "ws-1", 0),
-                workspace_entry("win-2", "ws-1", 100),
-            ],
-            vec![workspace_entry("win-t1", "ws-2", 0)],
-            workspace_cancel_body(),
-        )));
-        assert_eq!(diverged["outcome"], "diverged", "{diverged}");
-        assert_eq!(diverged["kind"], "partial-application", "{diverged}");
-        // Absent pending and malformed shapes fail closed with no mutation.
-        let absent = parse_reply(&Planner::new().evaluate(&workspace_cancel_request(
-            "ws-cancel-7",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            vec![workspace_entry("win-1", "ws-1", 0)],
-            vec![workspace_entry("win-t1", "ws-2", 0)],
-            workspace_cancel_body(),
-        )));
-        assert_eq!(absent["outcome"], "rejected", "{absent}");
-        assert_eq!(absent["kind"], "no-pending", "{absent}");
-        let unknown = parse_reply(&planner.evaluate(&workspace_cancel_request(
-            "ws-cancel-6",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            vec![workspace_entry("win-1", "ws-1", 0)],
-            vec![workspace_entry("win-t1", "ws-2", 0)],
-            serde_json::json!({"op": "send-to-workspace-cancel", "zero_dispatch": true, "extra": 1}),
-        )));
-        assert_eq!(unknown["outcome"], "rejected", "{unknown}");
-        assert_eq!(unknown["kind"], "unknown-field", "{unknown}");
-        let _ = (post_source, post_target);
-    }
-
-    fn workspace_abandon_body() -> serde_json::Value {
-        serde_json::json!({"op": "send-to-workspace-abandon"})
-    }
-
-    fn workspace_abandon_request(
-        correlation: &str,
-        owner: &str,
-        generation: &str,
-        revision: u64,
-        source: Vec<serde_json::Value>,
-        target: Vec<serde_json::Value>,
-        command: serde_json::Value,
-    ) -> String {
-        workspace_request(
-            correlation,
-            owner,
-            generation,
-            revision,
-            "",
-            source,
-            target,
-            command,
-        )
-    }
-
-    #[test]
-    fn workspace_abandon_retires_exact_pending_regardless_state_without_commit() {
-        // Exact abandon retires the pending whether unacked, acked, or
-        // diverged, with no commit claim, geometry, operation, or setter
-        // replay. The fenced retry with no pending is correlated
-        // `no-pending-unknown`.
-        for (id, setup) in [("unacked", 0u8), ("acked", 1u8), ("diverged", 2u8)] {
-            let mut planner = Planner::new();
-            let correlation = format!("ws-abandon-{id}");
-            let (planned, post_source, post_target) =
-                stage_workspace_send(&mut planner, &correlation);
-            let base = planned["base_revision"].as_u64().expect("base revision");
-            if setup == 1 {
-                assert_eq!(
-                    parse_reply(&planner.evaluate(&workspace_request(
-                        &correlation,
-                        "owner-1",
-                        "gen-1",
-                        base,
-                        "",
-                        post_source.clone(),
-                        post_target.clone(),
-                        workspace_ack_body(),
-                    )))["outcome"],
-                    "acknowledged"
-                );
-            }
-            if setup == 2 {
-                assert_eq!(
-                    parse_reply(&planner.evaluate(&workspace_request(
-                        &correlation,
-                        "owner-1",
-                        "gen-1",
-                        base,
-                        "",
-                        post_source.clone(),
-                        post_target.clone(),
-                        serde_json::json!({"op": "send-to-workspace-ack", "ack_outcome": "partial-application"}),
-                    )))["outcome"],
-                    "diverged"
-                );
-            }
-            let abandoned = parse_reply(&planner.evaluate(&workspace_abandon_request(
-                &correlation,
-                "owner-1",
-                "gen-1",
-                base,
-                post_source.clone(),
-                post_target.clone(),
-                workspace_abandon_body(),
-            )));
-            assert_eq!(abandoned["correlation_id"], correlation, "{abandoned}");
-            assert_eq!(abandoned["outcome"], "abandoned", "{abandoned}");
-            assert_eq!(abandoned["kind"], "send-to-workspace", "{abandoned}");
-            assert!(abandoned.get("base_revision").is_none(), "{abandoned}");
-            assert!(abandoned.get("desired_geometry").is_none(), "{abandoned}");
-            assert!(abandoned.get("operation").is_none(), "{abandoned}");
-            assert!(abandoned.get("preconditions").is_none(), "{abandoned}");
-            assert_ne!(abandoned["outcome"], "committed", "{abandoned}");
-            // No new retained state: pure workspace flow binds nothing and
-            // retains no domains.
-            assert!(planner.owner().is_none());
-            assert_eq!(planner.retained_domains(), 0);
-            // Exact same fenced retry finds no pending: correlated
-            // `no-pending-unknown`, never a commit.
-            let retry = parse_reply(&planner.evaluate(&workspace_abandon_request(
-                &correlation,
-                "owner-1",
-                "gen-1",
-                base,
-                post_source.clone(),
-                post_target.clone(),
-                workspace_abandon_body(),
-            )));
-            assert_eq!(retry["correlation_id"], correlation, "{retry}");
-            assert_eq!(retry["outcome"], "no-pending-unknown", "{retry}");
-            assert_eq!(retry["kind"], "send-to-workspace", "{retry}");
-            assert_ne!(retry["outcome"], "committed", "{retry}");
-            // Slot released: a fresh correlation plans and status cannot imply
-            // a commit.
-            let second = parse_reply(&planner.evaluate(&workspace_request(
-                "ws-abandon-next",
-                "owner-1",
-                "gen-1",
-                0,
-                "win-1",
-                vec![
-                    workspace_entry("win-1", "ws-1", 0),
-                    workspace_entry("win-2", "ws-1", 100),
-                ],
-                vec![workspace_entry("win-t1", "ws-2", 0)],
-                workspace_send_body(),
-            )));
-            assert_eq!(second["outcome"], "planned", "{second}");
-        }
-    }
-
-    #[test]
-    fn workspace_abandon_lost_planned_reply_matches_original_request_revision() {
-        let mut planner = Planner::new();
-        let (planned, source, target) = stage_workspace_send(&mut planner, "ws-abandon-lost-plan");
-        assert_ne!(
-            planned["base_revision"], 0,
-            "seeded base differs from the request revision"
-        );
-        let abandoned = parse_reply(&planner.evaluate(&workspace_abandon_request(
-            "ws-abandon-lost-plan",
-            "owner-1",
-            "gen-1",
-            0,
-            source,
-            target,
-            workspace_abandon_body(),
-        )));
-        assert_eq!(abandoned["outcome"], "abandoned", "{abandoned}");
-        assert!(planner.engine.workspace_pending().is_none());
-    }
-
-    #[test]
-    fn workspace_abandon_mismatch_preserves_pending_without_mutation() {
-        // 2026-09-25 option B: the same fenced abandon retires ANY live
-        // workspace-send pending. A mismatched live pending retires with the
-        // distinct `orphan-abandoned` outcome (never a commit, no retained
-        // state), and the retired slot then reports `no-pending-unknown`.
-        // Each probe uses a fresh staged pending because the first retire
-        // clears the slot. Each probe differs in exactly one fencing
-        // dimension: correlation, owner, generation, then revision.
-        let probes = [
-            ("ws-abandon-other", "owner-1", "gen-1", false),
-            ("ws-abandon-mismatch", "owner-9", "gen-1", false),
-            ("ws-abandon-mismatch", "owner-1", "gen-9", false),
-            ("ws-abandon-mismatch", "owner-1", "gen-1", true),
-        ];
-        for (correlation, owner, generation, bump_revision) in probes {
-            let mut planner = Planner::new();
-            let (planned, post_source, post_target) =
-                stage_workspace_send(&mut planner, "ws-abandon-mismatch");
-            let base = planned["base_revision"].as_u64().expect("base revision");
-            let revision = if bump_revision { base + 1 } else { base };
-            let orphan = parse_reply(&planner.evaluate(&workspace_abandon_request(
-                correlation,
-                owner,
-                generation,
-                revision,
-                post_source.clone(),
-                post_target.clone(),
-                workspace_abandon_body(),
-            )));
-            assert_eq!(orphan["v"], 1, "{orphan}");
-            assert_eq!(orphan["correlation_id"], correlation, "{orphan}");
-            assert_eq!(orphan["outcome"], "orphan-abandoned", "{orphan}");
-            assert_eq!(orphan["kind"], "send-to-workspace", "{orphan}");
-            assert!(orphan.get("base_revision").is_none(), "{orphan}");
-            assert!(orphan.get("desired_geometry").is_none(), "{orphan}");
-            assert!(orphan.get("desired_focus").is_none(), "{orphan}");
-            assert!(orphan.get("float_geometry").is_none(), "{orphan}");
-            assert!(orphan.get("operation").is_none(), "{orphan}");
-            assert!(orphan.get("preconditions").is_none(), "{orphan}");
-            assert_ne!(orphan["outcome"], "committed", "{orphan}");
-            assert!(planner.engine.workspace_pending().is_none());
-            // No new retained state: pure workspace flow binds nothing and
-            // retains no domains.
-            assert!(planner.owner().is_none());
-            assert_eq!(planner.retained_domains(), 0);
-            // Post-retire the same fenced request finds no pending.
-            let retry = parse_reply(&planner.evaluate(&workspace_abandon_request(
-                correlation,
-                owner,
-                generation,
-                revision,
-                post_source.clone(),
-                post_target.clone(),
-                workspace_abandon_body(),
-            )));
-            assert_eq!(retry["correlation_id"], correlation, "{retry}");
-            assert_eq!(retry["outcome"], "no-pending-unknown", "{retry}");
-            assert_eq!(retry["kind"], "send-to-workspace", "{retry}");
-            assert_ne!(retry["outcome"], "committed", "{retry}");
-        }
-        // Wrong scope (valid but non-retained target domain) retires the same
-        // way: option B retires ANY live pending on a well-formed abandon.
-        // Observation window sets never gate abandon, only the request shape.
-        let mut planner = Planner::new();
-        let (planned, post_source, _) = stage_workspace_send(&mut planner, "ws-abandon-mismatch");
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        let mut scoped: serde_json::Value = serde_json::from_str(&workspace_abandon_request(
-            "ws-abandon-mismatch",
-            "owner-1",
-            "gen-1",
-            base,
-            post_source.clone(),
-            vec![workspace_entry("win-t1", "ws-3", 0)],
-            workspace_abandon_body(),
-        ))
-        .expect("json");
-        scoped["target_domain"]["workspace"] = serde_json::json!("ws-3");
-        let scope_orphan = parse_reply(&planner.evaluate(&scoped.to_string()));
-        assert_eq!(
-            scope_orphan["correlation_id"], "ws-abandon-mismatch",
-            "{scope_orphan}"
-        );
-        assert_eq!(
-            scope_orphan["outcome"], "orphan-abandoned",
-            "{scope_orphan}"
-        );
-        assert_eq!(scope_orphan["kind"], "send-to-workspace", "{scope_orphan}");
-        assert!(
-            scope_orphan.get("base_revision").is_none(),
-            "{scope_orphan}"
-        );
-        assert_ne!(scope_orphan["outcome"], "committed", "{scope_orphan}");
-        assert!(planner.engine.workspace_pending().is_none());
-    }
-
-    #[test]
-    fn workspace_abandon_orphan_cross_generation_correlation() {
-        // Option B cross-generation recovery: a gen-1 flight orphans when its
-        // owner restarts at gen-2; the new generation's fenced abandon (new
-        // correlation, new generation, same owner and scope) retires it as
-        // `orphan-abandoned` with the requester correlation, never a commit.
-        let mut planner = Planner::new();
-        let (planned, post_source, post_target) =
-            stage_workspace_send(&mut planner, "ws-orphan-old");
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        let orphan = parse_reply(&planner.evaluate(&workspace_abandon_request(
-            "ws-orphan-new",
-            "owner-1",
-            "gen-2",
-            base,
-            post_source.clone(),
-            post_target.clone(),
-            workspace_abandon_body(),
-        )));
-        assert_eq!(orphan["v"], 1, "{orphan}");
-        assert_eq!(orphan["correlation_id"], "ws-orphan-new", "{orphan}");
-        assert_eq!(orphan["outcome"], "orphan-abandoned", "{orphan}");
-        assert_eq!(orphan["kind"], "send-to-workspace", "{orphan}");
-        assert!(orphan.get("base_revision").is_none(), "{orphan}");
-        assert!(orphan.get("desired_geometry").is_none(), "{orphan}");
-        assert!(orphan.get("operation").is_none(), "{orphan}");
-        assert!(orphan.get("preconditions").is_none(), "{orphan}");
-        assert_ne!(orphan["outcome"], "committed", "{orphan}");
-        assert!(planner.engine.workspace_pending().is_none());
-        // Post-retire the slot reports absence, and a fresh flight plans.
-        let retry = parse_reply(&planner.evaluate(&workspace_abandon_request(
-            "ws-orphan-new",
-            "owner-1",
-            "gen-2",
-            base,
-            post_source,
-            post_target,
-            workspace_abandon_body(),
-        )));
-        assert_eq!(retry["outcome"], "no-pending-unknown", "{retry}");
-        assert_eq!(retry["kind"], "send-to-workspace", "{retry}");
-        let second = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-orphan-next",
-            "owner-1",
-            "gen-2",
-            0,
-            "win-1",
-            vec![
-                workspace_entry("win-1", "ws-1", 0),
-                workspace_entry("win-2", "ws-1", 100),
-            ],
-            vec![workspace_entry("win-t1", "ws-2", 0)],
-            workspace_send_body(),
-        )));
-        assert_eq!(second["outcome"], "planned", "{second}");
-    }
-
-    #[test]
-    fn workspace_abandon_orphan_different_owner_preserves_sessions() {
-        // A different same-format owner (other same-UID caller) retires the
-        // orphan as `orphan-abandoned` while every canonical per-domain
-        // Engine session survives and stays reusable.
-        let mut planner = Planner::new();
-        let seed = retained_request_for_domain(
-            "ws-orphan-owner-1",
-            "owner-1",
-            "gen-1",
-            "out-9",
-            "ws-9",
-            "win-keep",
-            &[("win-keep", 0, 0, 100, 80)],
-            serde_json::json!({"op": "reconcile"}),
-        );
-        assert_eq!(parse_reply(&planner.evaluate(&seed))["outcome"], "planned");
-        assert_eq!(planner.retained_domains(), 1);
-        let (planned, post_source, post_target) =
-            stage_workspace_send(&mut planner, "ws-orphan-owner-2");
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        let orphan = parse_reply(&planner.evaluate(&workspace_abandon_request(
-            "ws-orphan-owner-2",
-            "owner-9",
-            "gen-1",
-            base,
-            post_source,
-            post_target,
-            workspace_abandon_body(),
-        )));
-        assert_eq!(orphan["outcome"], "orphan-abandoned", "{orphan}");
-        assert_eq!(orphan["kind"], "send-to-workspace", "{orphan}");
-        assert_ne!(orphan["outcome"], "committed", "{orphan}");
-        assert!(planner.engine.workspace_pending().is_none());
-        assert_eq!(planner.retained_domains(), 1, "canonical session preserved");
-        let regroup = parse_reply(&planner.evaluate(&retained_request_for_domain(
-            "ws-orphan-owner-3",
-            "owner-1",
-            "gen-1",
-            "out-9",
-            "ws-9",
-            "win-keep",
-            &[("win-keep", 0, 0, 100, 80)],
-            serde_json::json!({"op": "reconcile"}),
-        )));
-        assert_eq!(regroup["outcome"], "planned", "{regroup}");
-    }
-
-    #[test]
-    fn workspace_abandon_orphan_displaced_late_phases_recover_without_commit() {
-        // Displaced original owner after an orphan retire: its late ack and
-        // verify find no pending and never commit, and its own late abandon
-        // reports `no-pending-unknown` (option A recovery shape).
-        let mut planner = Planner::new();
-        let (planned, post_source, post_target) =
-            stage_workspace_send(&mut planner, "ws-orphan-late");
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        let orphan = parse_reply(&planner.evaluate(&workspace_abandon_request(
-            "ws-orphan-late-new",
-            "owner-1",
-            "gen-2",
-            base,
-            post_source.clone(),
-            post_target.clone(),
-            workspace_abandon_body(),
-        )));
-        assert_eq!(orphan["outcome"], "orphan-abandoned", "{orphan}");
-        let late_ack = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-orphan-late",
-            "owner-1",
-            "gen-1",
-            base,
-            "",
-            post_source.clone(),
-            post_target.clone(),
-            workspace_ack_body(),
-        )));
-        assert_eq!(late_ack["correlation_id"], "ws-orphan-late", "{late_ack}");
-        assert_eq!(late_ack["outcome"], "rejected", "{late_ack}");
-        assert_eq!(late_ack["kind"], "no-pending", "{late_ack}");
-        assert_ne!(late_ack["outcome"], "committed", "{late_ack}");
-        let late_verify = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-orphan-late",
-            "owner-1",
-            "gen-1",
-            base,
-            "",
-            post_source.clone(),
-            post_target.clone(),
-            workspace_verify_body(
-                planned["preconditions"].clone(),
-                planned["operation"].clone(),
-            ),
-        )));
-        assert_eq!(late_verify["outcome"], "rejected", "{late_verify}");
-        assert_eq!(late_verify["kind"], "no-pending", "{late_verify}");
-        assert_ne!(late_verify["outcome"], "committed", "{late_verify}");
-        let late_abandon = parse_reply(&planner.evaluate(&workspace_abandon_request(
-            "ws-orphan-late",
-            "owner-1",
-            "gen-1",
-            base,
-            post_source,
-            post_target,
-            workspace_abandon_body(),
-        )));
-        assert_eq!(
-            late_abandon["correlation_id"], "ws-orphan-late",
-            "{late_abandon}"
-        );
-        assert_eq!(
-            late_abandon["outcome"], "no-pending-unknown",
-            "{late_abandon}"
-        );
-        assert_eq!(late_abandon["kind"], "send-to-workspace", "{late_abandon}");
-        assert_ne!(late_abandon["outcome"], "committed", "{late_abandon}");
-    }
-
-    #[test]
-    fn workspace_abandon_malformed_preserves_live_pending() {
-        // Malformed or unauthorized abandon requests fail closed before any
-        // retirement: the live pending survives and the exact abandon still
-        // retires it afterwards.
-        let mut planner = Planner::new();
-        let (planned, post_source, post_target) =
-            stage_workspace_send(&mut planner, "ws-abandon-malformed");
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        let unknown_field = parse_reply(&planner.evaluate(&workspace_abandon_request(
-            "ws-abandon-malformed",
-            "owner-1",
-            "gen-1",
-            base,
-            post_source.clone(),
-            post_target.clone(),
-            serde_json::json!({"op": "send-to-workspace-abandon", "extra": 1}),
-        )));
-        assert_eq!(unknown_field["outcome"], "rejected", "{unknown_field}");
-        assert_eq!(unknown_field["kind"], "unknown-field", "{unknown_field}");
-        let mut missing: serde_json::Value = serde_json::from_str(&workspace_abandon_request(
-            "ws-abandon-malformed",
-            "owner-1",
-            "gen-1",
-            base,
-            post_source.clone(),
-            post_target.clone(),
-            workspace_abandon_body(),
-        ))
-        .expect("json");
-        missing
-            .as_object_mut()
-            .expect("object")
-            .remove("target_domain");
-        let missing_reply = parse_reply(&planner.evaluate(&missing.to_string()));
-        assert_eq!(missing_reply["outcome"], "rejected", "{missing_reply}");
-        assert_eq!(
-            missing_reply["kind"], "workspace-target-invalid",
-            "{missing_reply}"
-        );
-        // Unauthorized owner shape fails closed at request validation.
-        let bad_owner = parse_reply(&planner.evaluate(&workspace_abandon_request(
-            "ws-abandon-malformed",
-            "not an owner!!",
-            "gen-1",
-            base,
-            post_source.clone(),
-            post_target.clone(),
-            workspace_abandon_body(),
-        )));
-        assert_eq!(bad_owner["outcome"], "rejected", "{bad_owner}");
-        assert_eq!(bad_owner["kind"], "owner-invalid", "{bad_owner}");
-        // The live pending survived every malformed probe.
-        assert!(planner.engine.workspace_pending().is_some());
-        let abandoned = parse_reply(&planner.evaluate(&workspace_abandon_request(
-            "ws-abandon-malformed",
-            "owner-1",
-            "gen-1",
-            base,
-            post_source,
-            post_target,
-            workspace_abandon_body(),
-        )));
-        assert_eq!(abandoned["outcome"], "abandoned", "{abandoned}");
-        assert_eq!(abandoned["kind"], "send-to-workspace", "{abandoned}");
-    }
-
-    #[test]
-    fn workspace_abandon_leaves_directional_pending_untouched() {
-        // Directional R4 pending is out of scope: a fenced workspace abandon
-        // with no workspace pending reports `no-pending-unknown` and never
-        // clears, rebinds, or otherwise touches the directional transaction.
-        use tiler_core::directional::{
-            CrossOutputTarget, MoveOperation, OutputId, Rule, WindowId, WorkspaceId,
-        };
-        use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
-        use tiler_core::pending::DirectionalMovePending;
-        use tiler_core::session::Session;
-        let mut planner = Planner::new();
-        let domain = OutputDomain {
-            id: OutputId("out-9".to_owned()),
-            workspace: WorkspaceId("ws-9".to_owned()),
-            bounds: Rect {
-                x: 0,
-                y: 0,
-                w: 1200,
-                h: 800,
-            },
-            gap: 0,
-            adjacent: std::collections::BTreeMap::new(),
-        };
-        let session = Session::new(
-            OwnerId::parse("owner-1").expect("owner"),
-            GenerationId::parse("gen-1").expect("generation"),
-            0,
-            7,
-            vec![domain],
-        )
-        .expect("session");
-        let source_key = DomainKey {
-            output: OutputId("out-9".to_owned()),
-            workspace: WorkspaceId("ws-9".to_owned()),
-        };
-        let target_key = DomainKey {
-            output: OutputId("out-8".to_owned()),
-            workspace: WorkspaceId("ws-9".to_owned()),
-        };
-        planner
-            .engine
-            .set_directional_pending(DirectionalMovePending::new(
-                OwnerId::parse("owner-1").expect("owner"),
-                GenerationId::parse("gen-1").expect("generation"),
-                CorrelationId::parse("ws-r4-live").expect("correlation"),
-                0,
-                0,
-                session,
-                source_key,
-                target_key,
-                0,
-                0,
-                vec![],
-                MoveOperation::CrossOutput {
-                    rule: Rule::R4,
-                    target_output: OutputId("out-8".to_owned()),
-                    target_workspace: WorkspaceId("ws-9".to_owned()),
-                    source_root_child_index: 0,
-                    target: CrossOutputTarget::Empty,
-                },
-                vec![],
-                WindowId("win-keep".to_owned()),
-                vec![],
-            ));
-        let reply = parse_reply(&planner.evaluate(&workspace_abandon_request(
-            "ws-abandon-r4",
-            "owner-1",
-            "gen-1",
-            0,
-            vec![workspace_entry("win-1", "ws-1", 0)],
-            vec![workspace_entry("win-t1", "ws-2", 0)],
-            workspace_abandon_body(),
-        )));
-        assert_eq!(reply["correlation_id"], "ws-abandon-r4", "{reply}");
-        assert_eq!(reply["outcome"], "no-pending-unknown", "{reply}");
+        assert_eq!(reply["outcome"], "planned", "{reply}");
         assert_eq!(reply["kind"], "send-to-workspace", "{reply}");
-        assert_ne!(reply["outcome"], "committed", "{reply}");
+        assert_eq!(reply["operation"]["op"], "move-tiled", "{reply}");
+        assert_eq!(reply["operation"]["window"], "win-1", "{reply}");
+        assert_eq!(reply["operation"]["source_workspace"], "ws-1", "{reply}");
+        assert_eq!(reply["operation"]["target_workspace"], "ws-2", "{reply}");
         assert!(
-            planner.engine.directional_pending().is_some(),
-            "directional pending untouched"
+            reply["preconditions"]
+                .as_array()
+                .is_some_and(|p| !p.is_empty()),
+            "{reply}"
         );
-        assert!(planner.engine.workspace_pending().is_none());
-    }
-
-    #[test]
-    fn workspace_abandon_orphan_summaries_redacted() {
-        // The distinct orphan outcome flows through the existing bounded
-        // redacted summaries: truthful outcome/kind tokens, validated
-        // correlation only, no ids, rects, owner, or payload bytes. Logging
-        // stays pure and never mutates planner state.
-        let request = workspace_abandon_request(
-            "ws-abandon-orphan-sum-1",
-            "owner-9",
-            "gen-9",
-            3,
-            vec![workspace_entry("win-1", "ws-1", 0)],
-            vec![workspace_entry("win-t1", "ws-2", 0)],
-            workspace_abandon_body(),
-        );
+        // Both-domain geometry: the mover lands on the target, the target
+        // member survives, and the emptied source carries no entry.
+        let geometry = reply["desired_geometry"].as_array().expect("geometry");
+        let mut members: Vec<(String, String)> = geometry
+            .iter()
+            .map(|g| {
+                (
+                    g["window"].as_str().expect("window").to_owned(),
+                    g["workspace"].as_str().expect("workspace").to_owned(),
+                )
+            })
+            .collect();
+        members.sort();
         assert_eq!(
-            summarize_plan_ingress(&request),
-            "plasma-auto-tiler:plan-summary direction=ingress op=send-to-workspace-abandon correlation=ws-abandon-orphan-sum-1 revision=3"
+            members,
+            vec![
+                ("win-1".to_owned(), "ws-2".to_owned()),
+                ("win-t1".to_owned(), "ws-2".to_owned()),
+            ],
+            "{reply}"
         );
-        let shape = summarize_plan_shape(&request);
-        assert!(shape.contains("op=send-to-workspace-abandon"), "{shape}");
-        assert!(!shape.contains("win-1"), "{shape}");
-        assert!(!shape.contains("owner-9"), "{shape}");
-        let orphaned = summarize_plan_egress(
-            &request,
-            r#"{"v":1,"correlation_id":"ws-abandon-orphan-sum-1","outcome":"orphan-abandoned","kind":"send-to-workspace"}"#,
-        );
-        assert!(orphaned.contains("outcome=orphan-abandoned"), "{orphaned}");
-        assert!(orphaned.contains("kind=send-to-workspace"), "{orphaned}");
-        assert!(!orphaned.contains("committed"), "{orphaned}");
-        assert!(!orphaned.contains("win-1"), "{orphaned}");
-        assert!(!orphaned.contains("owner-9"), "{orphaned}");
-        // Summaries are pure: a staged flight still retires exactly once
-        // afterwards (exact here, proving the summaries changed nothing).
-        let mut planner = Planner::new();
-        let (planned, post_source, post_target) =
-            stage_workspace_send(&mut planner, "ws-abandon-orphan-sum-2");
-        let base = planned["base_revision"].as_u64().expect("base");
-        let _ = summarize_plan_ingress(&request);
-        let _ = summarize_plan_shape(&request);
-        let _ = summarize_plan_egress(&request, &planned.to_string());
-        let abandoned = parse_reply(&planner.evaluate(&workspace_abandon_request(
-            "ws-abandon-orphan-sum-2",
+        // Native refused: the next complete observations still show the mover
+        // on the source and the target without it; both converge with no
+        // retained phantom.
+        let source = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "ws-codec-2",
             "owner-1",
             "gen-1",
-            base,
-            post_source,
-            post_target,
-            workspace_abandon_body(),
-        )));
-        assert_eq!(abandoned["outcome"], "abandoned", "{abandoned}");
-    }
-
-    #[test]
-    fn workspace_abandon_after_commit_reports_no_pending_without_commit_claim() {
-        // Committed-before-lost-reply: the Engine committed on verify, so the
-        // pending is gone and abandon must report correlated no-pending
-        // without ever claiming commit.
-        let mut planner = Planner::new();
-        let (planned, post_source, post_target) =
-            stage_workspace_send(&mut planner, "ws-abandon-committed");
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        assert_eq!(
-            parse_reply(&planner.evaluate(&workspace_request(
-                "ws-abandon-committed",
-                "owner-1",
-                "gen-1",
-                base,
-                "",
-                post_source.clone(),
-                post_target.clone(),
-                workspace_ack_body(),
-            )))["outcome"],
-            "acknowledged"
-        );
-        let committed = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-abandon-committed",
-            "owner-1",
-            "gen-1",
-            base,
-            "",
-            post_source.clone(),
-            post_target.clone(),
-            workspace_verify_body(
-                planned["preconditions"].clone(),
-                planned["operation"].clone(),
-            ),
-        )));
-        assert_eq!(committed["outcome"], "committed", "{committed}");
-        let retry = parse_reply(&planner.evaluate(&workspace_abandon_request(
-            "ws-abandon-committed",
-            "owner-1",
-            "gen-1",
-            base,
-            post_source,
-            post_target,
-            workspace_abandon_body(),
-        )));
-        assert_eq!(retry["correlation_id"], "ws-abandon-committed", "{retry}");
-        assert_eq!(retry["outcome"], "no-pending-unknown", "{retry}");
-        assert_eq!(retry["kind"], "send-to-workspace", "{retry}");
-        assert_ne!(retry["outcome"], "committed", "{retry}");
-        assert!(retry.get("desired_geometry").is_none(), "{retry}");
-        assert!(retry.get("operation").is_none(), "{retry}");
-    }
-
-    #[test]
-    fn workspace_abandon_preserves_canonical_sessions_and_rejects_malformed() {
-        // Canonical domain sessions survive abandon: seed an unrelated
-        // canonical domain, stage and abandon a workspace flight, then prove
-        // the slot is intact and reusable.
-        let mut planner = Planner::new();
-        let seed = retained_request_for_domain(
-            "ws-abandon-keep-1",
-            "owner-1",
-            "gen-1",
-            "out-9",
-            "ws-9",
-            "win-keep",
-            &[("win-keep", 0, 0, 100, 80)],
-            serde_json::json!({"op": "reconcile"}),
-        );
-        assert_eq!(parse_reply(&planner.evaluate(&seed))["outcome"], "planned");
-        assert_eq!(planner.retained_domains(), 1);
-        let (planned, post_source, post_target) =
-            stage_workspace_send(&mut planner, "ws-abandon-keep-2");
-        let base = planned["base_revision"].as_u64().expect("base revision");
-        let abandoned = parse_reply(&planner.evaluate(&workspace_abandon_request(
-            "ws-abandon-keep-2",
-            "owner-1",
-            "gen-1",
-            base,
-            post_source,
-            post_target,
-            workspace_abandon_body(),
-        )));
-        assert_eq!(abandoned["outcome"], "abandoned", "{abandoned}");
-        assert_eq!(planner.retained_domains(), 1, "canonical session preserved");
-        let regroup = parse_reply(&planner.evaluate(&retained_request_for_domain(
-            "ws-abandon-keep-3",
-            "owner-1",
-            "gen-1",
-            "out-9",
-            "ws-9",
-            "win-keep",
-            &[("win-keep", 0, 0, 100, 80)],
-            serde_json::json!({"op": "reconcile"}),
-        )));
-        assert_eq!(regroup["outcome"], "planned", "{regroup}");
-        // Malformed abandon shapes fail closed without mutation.
-        let unknown = parse_reply(&planner.evaluate(&workspace_abandon_request(
-            "ws-abandon-keep-4",
-            "owner-1",
-            "gen-1",
-            0,
-            vec![workspace_entry("win-1", "ws-1", 0)],
-            vec![workspace_entry("win-t1", "ws-2", 0)],
-            serde_json::json!({"op": "send-to-workspace-abandon", "extra": 1}),
-        )));
-        assert_eq!(unknown["outcome"], "rejected", "{unknown}");
-        assert_eq!(unknown["kind"], "unknown-field", "{unknown}");
-        let mut missing: serde_json::Value = serde_json::from_str(&workspace_abandon_request(
-            "ws-abandon-keep-4",
-            "owner-1",
-            "gen-1",
-            0,
-            vec![workspace_entry("win-1", "ws-1", 0)],
-            vec![workspace_entry("win-t1", "ws-2", 0)],
-            workspace_abandon_body(),
-        ))
-        .expect("json");
-        missing
-            .as_object_mut()
-            .expect("object")
-            .remove("target_domain");
-        let missing_reply = parse_reply(&planner.evaluate(&missing.to_string()));
-        assert_eq!(missing_reply["outcome"], "rejected", "{missing_reply}");
-        assert_eq!(
-            missing_reply["kind"], "workspace-target-invalid",
-            "{missing_reply}"
-        );
-        // Unknown ops stay on the exact unknown-value path and never reach
-        // abandon.
-        let unknown_op = parse_reply(&planner.evaluate(&workspace_request(
-            "ws-abandon-keep-4",
-            "owner-1",
-            "gen-1",
-            0,
+            "out-1",
+            "ws-1",
             "win-1",
-            vec![workspace_entry("win-1", "ws-1", 0)],
-            vec![workspace_entry("win-t1", "ws-2", 0)],
-            serde_json::json!({"op": "send-to-workspace-bogus"}),
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
         )));
-        assert_eq!(unknown_op["outcome"], "rejected", "{unknown_op}");
-        assert_eq!(unknown_op["kind"], "unknown-value", "{unknown_op}");
-    }
-
-    #[test]
-    fn workspace_abandon_summaries_are_bounded_and_redacted() {
-        // Requested/replied/retry semantics flow through the existing bounded
-        // redacted summaries with no ids, rects, owner, or payload bytes.
-        // Logging is pure: summaries never mutate planner state and failures
-        // degrade to placeholders without changing behavior.
-        let request = workspace_abandon_request(
-            "ws-abandon-sum-1",
+        assert_eq!(source["outcome"], "planned", "{source}");
+        let target = parse_reply(&planner.evaluate(&retained_request_for_domain(
+            "ws-codec-3",
             "owner-1",
             "gen-1",
-            3,
-            vec![workspace_entry("win-1", "ws-1", 0)],
-            vec![workspace_entry("win-t1", "ws-2", 0)],
-            workspace_abandon_body(),
+            "out-1",
+            "ws-2",
+            "win-t1",
+            &[("win-t1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(target["outcome"], "planned", "{target}");
+        let source_geometry = source["desired_geometry"].as_array().expect("geometry");
+        assert!(
+            source_geometry
+                .iter()
+                .any(|g| g["window"] == "win-1" && g["workspace"] == "ws-1"),
+            "{source}"
         );
-        assert_eq!(
-            summarize_plan_ingress(&request),
-            "plasma-auto-tiler:plan-summary direction=ingress op=send-to-workspace-abandon correlation=ws-abandon-sum-1 revision=3"
-        );
-        let shape = summarize_plan_shape(&request);
-        assert!(shape.contains("op=send-to-workspace-abandon"), "{shape}");
-        assert!(!shape.contains("win-1"), "{shape}");
-        assert!(!shape.contains("owner-1"), "{shape}");
-        let replied = summarize_plan_egress(
-            &request,
-            r#"{"v":1,"correlation_id":"ws-abandon-sum-1","outcome":"abandoned","kind":"send-to-workspace"}"#,
-        );
-        assert!(replied.contains("outcome=abandoned"), "{replied}");
-        assert!(replied.contains("kind=send-to-workspace"), "{replied}");
-        assert!(!replied.contains("committed"), "{replied}");
-        let retried = summarize_plan_egress(
-            &request,
-            r#"{"v":1,"correlation_id":"ws-abandon-sum-1","outcome":"no-pending-unknown","kind":"send-to-workspace"}"#,
-        );
-        assert!(retried.contains("outcome=no-pending-unknown"), "{retried}");
-        assert!(retried.contains("kind=send-to-workspace"), "{retried}");
-        let garbage = summarize_plan_egress(&request, "{not-json!!");
-        assert!(garbage.contains("outcome=unknown"), "{garbage}");
-        assert!(!garbage.contains("not-json"), "{garbage}");
-        // Summaries are pure: the lifecycle they describe still commits
-        // exactly once afterwards.
-        let mut planner = Planner::new();
-        let (planned, post_source, post_target) =
-            stage_workspace_send(&mut planner, "ws-abandon-sum-2");
-        let base = planned["base_revision"].as_u64().expect("base");
-        let _ = summarize_plan_ingress(&request);
-        let _ = summarize_plan_shape(&request);
-        let _ = summarize_plan_egress(&request, &planned.to_string());
-        assert_eq!(
-            parse_reply(&planner.evaluate(&workspace_request(
-                "ws-abandon-sum-2",
-                "owner-1",
-                "gen-1",
-                base,
-                "",
-                post_source.clone(),
-                post_target.clone(),
-                workspace_ack_body(),
-            )))["outcome"],
-            "acknowledged"
-        );
-        assert_eq!(
-            parse_reply(&planner.evaluate(&workspace_request(
-                "ws-abandon-sum-2",
-                "owner-1",
-                "gen-1",
-                base,
-                "",
-                post_source,
-                post_target,
-                workspace_verify_body(
-                    planned["preconditions"].clone(),
-                    planned["operation"].clone(),
-                ),
-            )))["outcome"],
-            "committed"
+        let target_geometry = target["desired_geometry"].as_array().expect("geometry");
+        assert!(
+            target_geometry.iter().all(|g| g["window"] != "win-1"),
+            "{target}"
         );
     }
 
@@ -10673,10 +6965,10 @@ mod tests {
     }
 
     #[test]
-    fn plan_summary_egress_reports_status_and_cancel_truthfully() {
-        // Status result codes pass through exactly, including the
-        // never-commit `no-pending-unknown`.
-        let status_request = workspace_request(
+    fn plan_summary_egress_reports_planned_send_truthfully() {
+        // Planned send result codes pass through exactly: the native
+        // membership action carries the route kind and the committed base.
+        let send_request = workspace_request(
             "ws-sum-2",
             "owner-1",
             "gen-1",
@@ -10684,41 +6976,22 @@ mod tests {
             "win-1",
             vec![workspace_entry("win-1", "ws-1", 0)],
             vec![workspace_entry("win-t1", "ws-2", 0)],
-            workspace_status_body(),
+            workspace_send_body(),
         );
-        let status_reply =
-            r#"{"v":1,"correlation_id":"ws-sum-2","outcome":"status","kind":"no-pending-unknown"}"#;
+        let send_reply = r#"{"v":1,"correlation_id":"ws-sum-2","outcome":"planned","kind":"send-to-workspace","base_revision":3}"#;
         assert_eq!(
-            summarize_plan_egress(&status_request, status_reply),
-            "plasma-auto-tiler:plan-summary direction=egress op=send-to-workspace-status correlation=ws-sum-2 outcome=status kind=no-pending-unknown base_revision=- detail=-"
+            summarize_plan_egress(&send_request, send_reply),
+            "plasma-auto-tiler:plan-summary direction=egress op=send-to-workspace correlation=ws-sum-2 outcome=planned kind=send-to-workspace base_revision=3 detail=-"
         );
-        // Cancellation success carries the route kind and the un-advanced
-        // base, never commit language.
-        let cancel_request = workspace_cancel_request(
-            "ws-sum-3",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            vec![workspace_entry("win-1", "ws-1", 0)],
-            vec![workspace_entry("win-t1", "ws-2", 0)],
-            workspace_cancel_body(),
-        );
-        let cancel_reply = r#"{"v":1,"correlation_id":"ws-sum-3","outcome":"cancelled","kind":"send-to-workspace","base_revision":3}"#;
-        let cancelled = summarize_plan_egress(&cancel_request, cancel_reply);
-        assert!(cancelled.contains("outcome=cancelled"), "{cancelled}");
-        assert!(cancelled.contains("kind=send-to-workspace"), "{cancelled}");
-        assert!(cancelled.contains("base_revision=3"), "{cancelled}");
-        assert!(!cancelled.contains("committed"), "{cancelled}");
         // A garbage reply degrades without echoing it.
-        let garbage = summarize_plan_egress(&cancel_request, "{not-json!!");
+        let garbage = summarize_plan_egress(&send_request, "{not-json!!");
         assert!(garbage.contains("outcome=unknown"), "{garbage}");
         assert!(garbage.contains("correlation=-"), "{garbage}");
         assert!(!garbage.contains("not-json"), "{garbage}");
         // Snapshot-invalid detail tokens pass through bounded.
         let invalid = summarize_plan_egress(
-            &cancel_request,
-            r#"{"v":1,"correlation_id":"ws-sum-3","outcome":"rejected","kind":"snapshot-invalid","detail":"domain-invalid"}"#,
+            &send_request,
+            r#"{"v":1,"correlation_id":"ws-sum-2","outcome":"rejected","kind":"snapshot-invalid","detail":"domain-invalid"}"#,
         );
         assert!(invalid.contains("detail=domain-invalid"), "{invalid}");
     }
@@ -10744,11 +7017,7 @@ mod tests {
         assert!(!shape.contains("win-1"), "{shape}");
         assert!(!shape.contains("owner-1"), "{shape}");
         assert!(!shape.contains("\"x\""), "{shape}");
-        // Summaries are pure: running them changes no planner state and the
-        // lifecycle they describe still commits exactly once afterwards.
-        let mut planner = Planner::new();
-        let (planned, post_source, post_target) = stage_workspace_send(&mut planner, "ws-sum-5");
-        let base = planned["base_revision"].as_u64().expect("base");
+        // Summaries are pure: running them changes no planner state.
         let pre = workspace_request(
             "ws-sum-5",
             "owner-1",
@@ -10764,36 +7033,7 @@ mod tests {
         );
         let _ = summarize_plan_ingress(&pre);
         let _ = summarize_plan_shape(&pre);
-        let _ = summarize_plan_egress(&pre, &planned.to_string());
-        assert_eq!(
-            parse_reply(&planner.evaluate(&workspace_request(
-                "ws-sum-5",
-                "owner-1",
-                "gen-1",
-                base,
-                "",
-                post_source.clone(),
-                post_target.clone(),
-                workspace_ack_body(),
-            )))["outcome"],
-            "acknowledged"
-        );
-        assert_eq!(
-            parse_reply(&planner.evaluate(&workspace_request(
-                "ws-sum-5",
-                "owner-1",
-                "gen-1",
-                base,
-                "",
-                post_source,
-                post_target,
-                workspace_verify_body(
-                    planned["preconditions"].clone(),
-                    planned["operation"].clone(),
-                ),
-            )))["outcome"],
-            "committed"
-        );
+        let _ = summarize_plan_egress(&pre, &pre);
     }
 
     fn active_group_request(
@@ -12149,176 +8389,6 @@ mod tests {
             assert_eq!(source["outcome"], "planned", "{source}");
             assert_geometry_covers(&source, &[window]);
         }
-    }
-
-    #[test]
-    fn output_relocation_blocked_while_workspace_send_pending() {
-        // A pending standalone workspace-send blocks normal relocation fail
-        // closed: the displaced target is not created and the source stays.
-        // The workspace-send route itself is unchanged (still pending).
-        let mut planner = Planner::new();
-        let seed = parse_reply(&planner.evaluate(&retained_request_for_domain(
-            "reloc-pend-1",
-            "owner-1",
-            "gen-1",
-            "out-gone",
-            "ws-9",
-            "win-a",
-            &[("win-a", 0, 0, 100, 80)],
-            serde_json::json!({"op": "reconcile"}),
-        )));
-        assert_eq!(seed["outcome"], "planned", "{seed}");
-        // Open a standalone workspace-send pending session (out-1/ws-1 ->
-        // out-1/ws-2); it stays pending across calls until ack/verify.
-        let source = vec![
-            workspace_entry("win-1", "ws-1", 0),
-            workspace_entry("win-2", "ws-1", 100),
-        ];
-        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
-        let send = parse_reply(&planner.evaluate(&workspace_request(
-            "reloc-pend-send-1",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source,
-            target,
-            workspace_send_body(),
-        )));
-        assert_eq!(send["outcome"], "planned", "{send}");
-        assert_eq!(send["kind"], "send-to-workspace", "{send}");
-        // Displaced reconcile while the send is pending fails closed.
-        let blocked = parse_reply(&planner.evaluate(&retained_request_for_domain(
-            "reloc-pend-2",
-            "owner-1",
-            "gen-1",
-            "out-survivor",
-            "ws-9",
-            "win-a",
-            &[("win-a", 0, 0, 100, 80)],
-            serde_json::json!({"op": "reconcile"}),
-        )));
-        assert_eq!(blocked["outcome"], "rejected", "{blocked}");
-        assert_eq!(planner.retained_domains(), 1, "{blocked}");
-        // Source is untouched and still reconciles; the send is still pending
-        // (a second send is rejected rather than silently replaced).
-        let source_again = parse_reply(&planner.evaluate(&retained_request_for_domain(
-            "reloc-pend-3",
-            "owner-1",
-            "gen-1",
-            "out-gone",
-            "ws-9",
-            "win-a",
-            &[("win-a", 0, 0, 100, 80)],
-            serde_json::json!({"op": "reconcile"}),
-        )));
-        assert_eq!(source_again["outcome"], "planned", "{source_again}");
-        let second = parse_reply(&planner.evaluate(&workspace_request(
-            "reloc-pend-send-2",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            vec![workspace_entry("win-1", "ws-1", 0)],
-            vec![workspace_entry("win-t1", "ws-2", 0)],
-            workspace_send_body(),
-        )));
-        assert_eq!(second["outcome"], "rejected", "{second}");
-    }
-
-    #[test]
-    fn fresh_reconcile_refused_while_send_pending_then_lands_after_commit() {
-        // Strict pending B: a fresh reconcile on a genuinely absent domain
-        // refuses while the workspace send is pending (no target created),
-        // then seeds via complete-observation reconcile once ack/verify
-        // commits and releases the transaction. No transaction behavior
-        // changes. The pre-existing domain also seeds via reconcile.
-        let mut planner = Planner::new();
-        let seed = parse_reply(&planner.evaluate(&retained_request_for_domain(
-            "fresh-pend-seed-1",
-            "owner-1",
-            "gen-1",
-            "out-gone",
-            "ws-9",
-            "win-a",
-            &[("win-a", 0, 0, 100, 80)],
-            serde_json::json!({"op": "reconcile"}),
-        )));
-        assert_eq!(seed["outcome"], "planned", "{seed}");
-        let source = vec![
-            workspace_entry("win-1", "ws-1", 0),
-            workspace_entry("win-2", "ws-1", 100),
-        ];
-        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
-        let send = parse_reply(&planner.evaluate(&workspace_request(
-            "fresh-pend-send-1",
-            "owner-1",
-            "gen-1",
-            0,
-            "win-1",
-            source,
-            target,
-            workspace_send_body(),
-        )));
-        assert_eq!(send["outcome"], "planned", "{send}");
-        // Genuinely absent domain (no relocation candidates): refused while
-        // pending, nothing retained for it.
-        let refused = parse_reply(&planner.evaluate(&retained_request_for_domain(
-            "fresh-pend-rec-1",
-            "owner-1",
-            "gen-1",
-            "out-9",
-            "ws-fresh",
-            "win-n",
-            &[("win-n", 0, 0, 100, 80)],
-            serde_json::json!({"op": "reconcile"}),
-        )));
-        assert_eq!(refused["outcome"], "rejected", "{refused}");
-        assert_eq!(refused["kind"], "unknown-domain", "{refused}");
-        assert_eq!(planner.retained_domains(), 1, "{refused}");
-        // Commit the send through the realistic ack/verify fixture shape.
-        let base = send["base_revision"].as_u64().expect("base revision");
-        let preconditions = send["preconditions"].clone();
-        let operation = send["operation"].clone();
-        let (ack_source, ack_target) = observation_from_geometry(&send["desired_geometry"]);
-        let acked = parse_reply(&planner.evaluate(&workspace_request(
-            "fresh-pend-send-1",
-            "owner-1",
-            "gen-1",
-            base,
-            "",
-            ack_source,
-            ack_target,
-            workspace_ack_body(),
-        )));
-        assert_eq!(acked["outcome"], "acknowledged", "{acked}");
-        let (verify_source, verify_target) = observation_from_geometry(&send["desired_geometry"]);
-        let committed = parse_reply(&planner.evaluate(&workspace_request(
-            "fresh-pend-send-1",
-            "owner-1",
-            "gen-1",
-            base,
-            "",
-            verify_source,
-            verify_target,
-            workspace_verify_body(preconditions, operation),
-        )));
-        assert_eq!(committed["outcome"], "committed", "{committed}");
-        // Pending released: the same fresh reconcile now seeds.
-        let before = planner.retained_domains();
-        let landed = parse_reply(&planner.evaluate(&retained_request_for_domain(
-            "fresh-pend-rec-2",
-            "owner-1",
-            "gen-1",
-            "out-9",
-            "ws-fresh",
-            "win-n",
-            &[("win-n", 0, 0, 100, 80)],
-            serde_json::json!({"op": "reconcile"}),
-        )));
-        assert_eq!(landed["outcome"], "planned", "{landed}");
-        assert_geometry_covers(&landed, &["win-n"]);
-        assert_eq!(planner.retained_domains(), before + 1, "{landed}");
     }
 
     #[test]

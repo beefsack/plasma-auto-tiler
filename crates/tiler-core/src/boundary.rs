@@ -3,18 +3,14 @@
 //! Portable carriers over adapter-normalized integer geometry only: no
 //! transport, JSON, platform, or process imports. The protocol layer keeps
 //! `RequestDto.command`, `Validated.raw`, wire serialization, summary helpers,
-//! nested verify echo parsing, correlation echoes, and the ordered ingress
+//! correlation echoes, and the ordered ingress
 //! fences. It converts already-decoded commands and validated observations
 //! into [`CoreEvent`] after the applicable dispatch boundaries. Conversion
-//! never re-parses except for verify echoes, which arrive fully validated:
-//! direction/mode/ack strings cross as opaque carriers so handler-local
-//! precedence (`not-tiled`, `ack-refused`, `*-op-invalid`) stays exactly where
-//! it is, while verify `verified` gating and nested `verify-invalid` parsing
-//! stay in protocol before the typed verify command is built.
-//! This module owns no retained state. The status/cancellation/ack/verify phases run through
-//! [`crate::engine::Engine::inspect`] (read-only status) and
-//! [`crate::engine::Engine::handle`] (ack acknowledge, cancellation withdraw,
-//! verify commit), which own the pending outcome and one-shot transition.
+//! never re-parses:
+//! direction/mode strings cross as opaque carriers so handler-local
+//! precedence (`not-tiled`, `*-op-invalid`) stays exactly where
+//! it is.
+//! This module owns no retained state.
 //! All synchronous command orchestration runs through [`crate::engine::Engine::handle`].
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -36,15 +32,11 @@ use crate::session::{
     SessionPlan, SessionResizePlan,
 };
 
-/// Typed command for all 17 wire ops: the 10 synchronous ops plus
-/// `send-to-workspace` and the 8 R4 ack/verify/status/cancel phases.
+/// Typed command for all 9 wire ops: reconcile, update-gaps, active-group,
+/// move, focus, resize, pointer-resize, toggle-float, and `send-to-workspace`.
 /// Payloads are already-decoded clones; fallible wire vocabularies
-/// (direction/mode/ack outcome) cross opaquely so this conversion stays total
-/// and handler precedence is untouched. Verify echoes cross as fully validated
-/// serde-free typed fields: protocol keeps the outer envelope, tagged decode,
-/// `verified=false` divergence gate, nested echo parsing (`verify-invalid`),
-/// and correlation echo, then constructs these typed commands for the
-/// Engine-owned verify transition.
+/// (direction/mode) cross opaquely so this conversion stays total
+/// and handler precedence is untouched.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CoreCommand {
     Reconcile,
@@ -86,34 +78,6 @@ pub enum CoreCommand {
         target_output: String,
         target_workspace: String,
     },
-    SendAck {
-        ack_outcome: String,
-    },
-    SendVerify {
-        verified: bool,
-        preconditions: Vec<LifecyclePrecondition>,
-        operation: LifecycleOperation,
-    },
-    SendStatus,
-    SendCancel {
-        zero_dispatch: bool,
-    },
-    DirectionalAck {
-        ack_outcome: String,
-    },
-    DirectionalVerify {
-        verified: bool,
-        preconditions: Vec<Precondition>,
-        operation: MoveOperation,
-        echo_source_output: OutputId,
-        echo_source_workspace: WorkspaceId,
-        echo_target_output: OutputId,
-        echo_target_workspace: WorkspaceId,
-    },
-    DirectionalStatus,
-    DirectionalCancel {
-        zero_dispatch: bool,
-    },
 }
 
 impl CoreCommand {
@@ -130,14 +94,6 @@ impl CoreCommand {
             Self::PointerResize { .. } => "pointer-resize",
             Self::ToggleFloat { .. } => "toggle-float",
             Self::SendToWorkspace { .. } => "send-to-workspace",
-            Self::SendAck { .. } => "send-to-workspace-ack",
-            Self::SendVerify { .. } => "send-to-workspace-verify",
-            Self::SendStatus => "send-to-workspace-status",
-            Self::SendCancel { .. } => "send-to-workspace-cancel",
-            Self::DirectionalAck { .. } => "directional-move-ack",
-            Self::DirectionalVerify { .. } => "directional-move-verify",
-            Self::DirectionalStatus => "directional-move-status",
-            Self::DirectionalCancel { .. } => "directional-move-cancel",
         }
     }
 }
@@ -273,8 +229,8 @@ impl TiledPlan {
 
 /// Typed workspace-send success plan: base revision, policy version, full
 /// desired geometry, retained focus, and the exact `MoveTiled` operation plus
-/// lifecycle preconditions the adapter must echo back in the verify
-/// post-observation. Construction is fallible (`None` unless the operation
+/// lifecycle preconditions for native assignment. Construction is fallible
+/// (`None` unless the operation
 /// is actually `MoveTiled`); the caller maps that to its existing
 /// `move-op-invalid` rejection at the exact legacy position. Never validates.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -586,54 +542,11 @@ pub enum ActiveGroupResolution {
     },
 }
 
-/// Pending-transaction route classifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TransactionKind {
-    SendToWorkspace,
-    DirectionalMove,
-}
-
-impl TransactionKind {
-    /// Wire `kind` token for ack/commit/cancel replies.
-    #[must_use]
-    pub const fn kind_str(self) -> &'static str {
-        match self {
-            Self::SendToWorkspace => "send-to-workspace",
-            Self::DirectionalMove => "directional-move",
-        }
-    }
-}
-
-/// Read-only pending-transaction status classifier (wire `kind` tokens).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TransactionStatus {
-    PostUnacked,
-    PostAcked,
-    Unresolved,
-    Stale,
-    NoPendingUnknown,
-}
-
-impl TransactionStatus {
-    /// Wire `kind` token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::PostUnacked => "post-unacked",
-            Self::PostAcked => "post-acked",
-            Self::Unresolved => "unresolved",
-            Self::Stale => "stale",
-            Self::NoPendingUnknown => "no-pending-unknown",
-        }
-    }
-}
-
-/// Typed reply across all 19 ops plus every rejection shape. Success and
-/// read-only variants carry core plans; rejection variants carry the closed
+/// Typed reply across all 9 ops plus every rejection shape. Success variants
+/// carry core plans; rejection variants carry the closed
 /// `&'static str` kind/message/detail vocabulary (single sources live in
 /// [`crate::session`]/[`crate::contract`] and the protocol `MSG_*`
-/// constants). Serialization stays entirely in protocol; transaction
-/// orchestration never crosses.
+/// constants). Serialization stays entirely in protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CoreReply {
     Projection(ProjectionPlan),
@@ -656,22 +569,6 @@ pub enum CoreReply {
         detail: &'static str,
     },
     Diverged(DivergenceKind),
-    Status {
-        base_revision: Option<u64>,
-        status: TransactionStatus,
-    },
-    Acknowledged {
-        base_revision: u64,
-        kind: TransactionKind,
-    },
-    Committed {
-        revision: u64,
-        kind: TransactionKind,
-    },
-    Cancelled {
-        base_revision: u64,
-        kind: TransactionKind,
-    },
 }
 
 /// Pure-projection plan kind for the reconcile/update-gaps family: both are
@@ -991,7 +888,7 @@ mod tests {
     }
 
     #[test]
-    fn all_seventeen_ops_have_distinct_wire_tokens() {
+    fn all_nine_ops_have_distinct_wire_tokens() {
         use std::collections::HashSet;
         let commands = vec![
             CoreCommand::Reconcile,
@@ -1029,60 +926,12 @@ mod tests {
                 target_output: "o".to_owned(),
                 target_workspace: "s".to_owned(),
             },
-            CoreCommand::SendAck {
-                ack_outcome: "accepted".to_owned(),
-            },
-            CoreCommand::SendVerify {
-                verified: true,
-                preconditions: vec![
-                    LifecyclePrecondition::WindowObserved,
-                    LifecyclePrecondition::DesiredTopologyValid,
-                    LifecyclePrecondition::AdapterMustVerifyPostconditions,
-                ],
-                operation: LifecycleOperation::MoveTiled {
-                    window: WindowId("w".to_owned()),
-                    leaf: NodeId::from("leaf"),
-                    source_output: OutputId("o".to_owned()),
-                    source_workspace: WorkspaceId("s".to_owned()),
-                    target_output: OutputId("o".to_owned()),
-                    target_workspace: WorkspaceId("s2".to_owned()),
-                },
-            },
-            CoreCommand::SendStatus,
-            CoreCommand::SendCancel {
-                zero_dispatch: false,
-            },
-            CoreCommand::DirectionalAck {
-                ack_outcome: "accepted".to_owned(),
-            },
-            CoreCommand::DirectionalVerify {
-                verified: true,
-                preconditions: vec![
-                    Precondition::FocusedLeafOccupiedByFocusedWindow,
-                    Precondition::AdapterMustVerifyPostconditions,
-                ],
-                operation: MoveOperation::CrossOutput {
-                    rule: Rule::R4,
-                    target_output: OutputId("o2".to_owned()),
-                    target_workspace: WorkspaceId("s".to_owned()),
-                    source_root_child_index: 0,
-                    target: CrossOutputTarget::Empty,
-                },
-                echo_source_output: OutputId("o".to_owned()),
-                echo_source_workspace: WorkspaceId("s".to_owned()),
-                echo_target_output: OutputId("o2".to_owned()),
-                echo_target_workspace: WorkspaceId("s".to_owned()),
-            },
-            CoreCommand::DirectionalStatus,
-            CoreCommand::DirectionalCancel {
-                zero_dispatch: false,
-            },
         ];
-        assert_eq!(commands.len(), 17);
+        assert_eq!(commands.len(), 9);
         let tokens: HashSet<&'static str> = commands.iter().map(|c| c.op()).collect();
-        assert_eq!(tokens.len(), 17);
+        assert_eq!(tokens.len(), 9);
         assert!(tokens.contains("reconcile"));
-        assert!(tokens.contains("directional-move-cancel"));
+        assert!(tokens.contains("send-to-workspace"));
     }
 
     #[test]
@@ -1096,14 +945,6 @@ mod tests {
             }
         );
         assert_eq!(NoGroupReason::NoSession.as_str(), "no-session");
-        assert_eq!(
-            TransactionStatus::NoPendingUnknown.as_str(),
-            "no-pending-unknown"
-        );
-        assert_eq!(
-            TransactionKind::SendToWorkspace.kind_str(),
-            "send-to-workspace"
-        );
         assert_eq!(TiledKind::Admit.kind_str(), "admit");
     }
 
@@ -1124,24 +965,6 @@ mod tests {
             }
             ActiveGroupResolution::Found(_) => panic!("empty session must not resolve"),
         }
-    }
-
-    #[test]
-    fn typed_verify_echoes_carry_validated_fields() {
-        let event = event_fixture(CoreCommand::SendVerify {
-            verified: false,
-            preconditions: vec![LifecyclePrecondition::WindowObserved],
-            operation: LifecycleOperation::MoveTiled {
-                window: WindowId("w".to_owned()),
-                leaf: NodeId::from("leaf"),
-                source_output: OutputId("o".to_owned()),
-                source_workspace: WorkspaceId("s".to_owned()),
-                target_output: OutputId("o".to_owned()),
-                target_workspace: WorkspaceId("s2".to_owned()),
-            },
-        });
-        assert!(matches!(event.command, CoreCommand::SendVerify { .. }));
-        assert_eq!(event.command.op(), "send-to-workspace-verify");
     }
 
     #[test]

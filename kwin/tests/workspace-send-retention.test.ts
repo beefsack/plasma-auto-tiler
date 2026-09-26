@@ -371,24 +371,17 @@ function plannedReply(correlation: string): string {
     });
 }
 
-function ackReply(correlation: string): string {
-    return JSON.stringify({
-        v: WORKSPACE_SEND_CONTRACT_VERSION,
-        correlation_id: correlation,
-        outcome: "acknowledged",
-        kind: "send-to-workspace",
-        base_revision: 0,
-    });
-}
-
-describe("planned send ack/verify after source pruning", () => {
-    it("native-confirmed follow abandons on stale-revision when the pinned source is gone and blocks plan", () => {
+describe("send flight pin and settlement (immediate commit)", () => {
+    it("pins source and target from dispatch until arrival, then releases with one settlement", () => {
         const refs = makeRefs();
         const world = defaultWorld(refs);
         const dbusCalls: DbusCall[] = [];
         const callbacks: Array<(reply: unknown) => void> = [];
+        const timers: Array<{ callback: () => void; cancelled: boolean }> = [];
         const logs: string[] = [];
-        let observeImpl: () => WorkspaceSendObserved | null = () => makeWorldObserved(world, refs);
+        const settled: Array<{ sourceWorkspace: string; targetWorkspace: string }> = [];
+        let switches = 0;
+        let focuses = 0;
         const env: WorkspaceSendAdapterEnv = {
             callDbus: (service, _path, _iface, method, payload, callback) => {
                 if (method === WORKSPACE_SEND_HAS_OWNER_METHOD) {
@@ -398,84 +391,20 @@ describe("planned send ack/verify after source pruning", () => {
                 dbusCalls.push({ service, payload });
                 callbacks.push(callback);
             },
-            scheduleOnce: () => () => {},
-            log: (message) => {
-                logs.push(message);
+            scheduleOnce: (_delayMs, callback) => {
+                const timer = { callback, cancelled: false };
+                timers.push(timer);
+                return () => {
+                    timer.cancelled = true;
+                };
             },
-            observe: () => observeImpl(),
-            setGeometry: (target, r) => {
-                for (const entry of world.windows) {
-                    if (entry.ref === target) {
-                        entry.rect = { x: r.x, y: r.y, w: r.w, h: r.h };
-                    }
-                }
-                return true;
-            },
-            setDesktops: (target, _refs) => {
-                for (const entry of world.windows) {
-                    if (entry.ref === target) {
-                        entry.workspace = "ws-2";
-                    }
-                }
-                return true;
-            },
-            switchToTarget: () => true,
-            focusWindow: () => true,
-        };
-        const adapter = new WorkspaceSendAdapter(env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        callbacks[0]?.(":1.7");
-        const correlation = (JSON.parse(dbusCalls[1]?.payload ?? "{}") as Record<string, unknown>)["correlation_id"] as string;
-        // Planned reply drives native writes plus native-confirmed follow.
-        callbacks[1]?.(plannedReply(correlation));
-        assert.ok(logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), `follow must natively confirm before ack:\n${logs.join("\n")}`);
-        // While the flight still awaits ack/verify, cleanup removes the pinned
-        // source desktop: the pinned observation goes null exactly as
-        // observeSendTarget does when the source id leaves `desktops`.
-        observeImpl = () => null;
-        callbacks[2]?.(ackReply(correlation));
-        // Exact mechanism: onAckReply re-observes before verify; null binds to
-        // stale-revision (workspace-send-adapter.ts onAckReply), never sends
-        // verify, and reaches abandon instead of disabling. The pruned scope
-        // is unreadable, so no abandon op is emitted yet: the flight stays
-        // retained and enabled for the next valid observation, still
-        // blocking Plan with its bound workspaces.
-        assert.ok(logs.some((l) => l.includes("cause=stale-revision")), logs.join("\n"));
-        assert.equal(dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
-        assert.equal(dbusCalls.filter((c) => c.payload.includes("adapter-lost")).length, 0);
-        assert.equal(dbusCalls.filter((c) => c.payload.includes("send-to-workspace-abandon")).length, 0);
-        assert.ok(
-            logs.some((l) => l.includes("event=abandon-requested") && l.includes("cause=stale-revision")),
-            logs.join("\n"),
-        );
-        assert.ok(
-            logs.some((l) => l.includes("event=abandon-retry") && l.includes(`correlation=${correlation}`)),
-            logs.join("\n"),
-        );
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.blocksPlan, true);
-        assert.deepEqual(adapter.pendingWorkspaces, ["ws-1", "ws-2"]);
-    });
-
-    it("exposes pending source/target only while a plan is bound", () => {
-        const refs = makeRefs();
-        const world = defaultWorld(refs);
-        const callbacks: Array<(reply: unknown) => void> = [];
-        const logs: string[] = [];
-        const env: WorkspaceSendAdapterEnv = {
-            callDbus: (_service, _path, _iface, method, _payload, callback) => {
-                if (method === WORKSPACE_SEND_HAS_OWNER_METHOD) {
-                    callback(true);
-                    return;
-                }
-                callbacks.push(callback);
-            },
-            scheduleOnce: () => () => {},
             log: (message) => {
                 logs.push(message);
             },
             observe: () => makeWorldObserved(world, refs),
+            onSettled: (info) => {
+                settled.push({ sourceWorkspace: info.sourceWorkspace, targetWorkspace: info.targetWorkspace });
+            },
             setGeometry: (target, r) => {
                 for (const entry of world.windows) {
                     if (entry.ref === target) {
@@ -492,20 +421,103 @@ describe("planned send ack/verify after source pruning", () => {
                 }
                 return true;
             },
-            switchToTarget: () => true,
-            focusWindow: () => true,
+            switchToTarget: () => {
+                switches += 1;
+                return true;
+            },
+            focusWindow: () => {
+                focuses += 1;
+                return true;
+            },
         };
-        void logs;
         const adapter = new WorkspaceSendAdapter(env);
         assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
         assert.deepEqual(adapter.pendingWorkspaces, []);
         assert.equal(adapter.requestSend("ws-2"), true);
-        assert.deepEqual(adapter.pendingWorkspaces, [], "request phase alone retains nothing");
+        assert.deepEqual(adapter.pendingWorkspaces, ["ws-1", "ws-2"], "pin held from dispatch");
         callbacks[0]?.(":1.7");
-        const correlation = "gen-1-w0";
+        const correlation = (JSON.parse(dbusCalls[1]?.payload ?? "{}") as Record<string, unknown>)["correlation_id"] as string;
+        assert.equal(correlation, "gen-1-w0");
         callbacks[1]?.(plannedReply(correlation));
-        assert.deepEqual(adapter.pendingWorkspaces, ["ws-1", "ws-2"]);
-        adapter.disable();
-        assert.deepEqual(adapter.pendingWorkspaces, []);
+        const mover = world.windows.find((entry) => entry.id === "win-a");
+        assert.equal(mover?.workspace, "ws-2", "mover membership written to target");
+        assert.equal(switches, 1, "exactly one follow switch");
+        assert.equal(focuses, 1, "exactly one mover focus");
+        assert.ok(logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), logs.join("\n"));
+        assert.ok(!logs.some((l) => l.includes("outcome=committed")), "never claims native commit");
+        assert.equal(adapter.isInFlight, false, "arrival releases the flight");
+        assert.deepEqual(adapter.pendingWorkspaces, [], "pin released after arrival");
+        assert.equal(settled.length, 1, "exactly one settlement hook");
+        assert.deepEqual(settled[0], { sourceWorkspace: "ws-1", targetWorkspace: "ws-2" });
+        for (const call of dbusCalls) {
+            assert.ok(!call.payload.includes("send-to-workspace-ack"), "no ack protocol");
+            assert.ok(!call.payload.includes("send-to-workspace-verify"), "no verify protocol");
+            assert.ok(!call.payload.includes("send-to-workspace-abandon"), "no abandon protocol");
+        }
+    });
+
+    it("new trailing target stays pinned while arrival pends, then releases on the deadline", () => {
+        const refs = makeRefs();
+        const world = defaultWorld(refs);
+        const dbusCalls: DbusCall[] = [];
+        const callbacks: Array<(reply: unknown) => void> = [];
+        const timers: Array<{ callback: () => void; cancelled: boolean }> = [];
+        const logs: string[] = [];
+        const settled: Array<{ sourceWorkspace: string; targetWorkspace: string }> = [];
+        let switches = 0;
+        const env: WorkspaceSendAdapterEnv = {
+            callDbus: (service, _path, _iface, method, payload, callback) => {
+                if (method === WORKSPACE_SEND_HAS_OWNER_METHOD) {
+                    callback(true);
+                    return;
+                }
+                dbusCalls.push({ service, payload });
+                callbacks.push(callback);
+            },
+            scheduleOnce: (_delayMs, callback) => {
+                const timer = { callback, cancelled: false };
+                timers.push(timer);
+                return () => {
+                    timer.cancelled = true;
+                };
+            },
+            log: (message) => {
+                logs.push(message);
+            },
+            observe: () => makeWorldObserved(world, refs),
+            onSettled: (info) => {
+                settled.push({ sourceWorkspace: info.sourceWorkspace, targetWorkspace: info.targetWorkspace });
+            },
+            setGeometry: () => true,
+            // Delayed native arrival: the membership write reports success
+            // but the mover stays source until the deadline.
+            setDesktops: () => true,
+            switchToTarget: () => {
+                switches += 1;
+                return true;
+            },
+            focusWindow: () => true,
+        };
+        const adapter = new WorkspaceSendAdapter(env);
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        assert.equal(adapter.requestSend("ws-2"), true);
+        assert.deepEqual(adapter.pendingWorkspaces, ["ws-1", "ws-2"], "trailing target pinned from dispatch");
+        callbacks[0]?.(":1.7");
+        const correlation = (JSON.parse(dbusCalls[1]?.payload ?? "{}") as Record<string, unknown>)["correlation_id"] as string;
+        callbacks[1]?.(plannedReply(correlation));
+        const mover = world.windows.find((entry) => entry.id === "win-a");
+        assert.equal(mover?.workspace, "ws-1", "mover not yet arrived");
+        assert.equal(switches, 0, "no follow before arrival proof");
+        assert.equal(adapter.isInFlight, true, "pin held while arrival pends");
+        assert.deepEqual(adapter.pendingWorkspaces, ["ws-1", "ws-2"], "trailing pin survives the wait");
+        const live = timers.filter((timer) => !timer.cancelled);
+        assert.ok(live.length >= 1, "arrival deadline armed");
+        live[live.length - 1]?.callback();
+        assert.equal(adapter.isInFlight, false, "deadline releases the trailing pin");
+        assert.deepEqual(adapter.pendingWorkspaces, [], "pin released after the wait");
+        assert.equal(settled.length, 1, "exactly one settlement hook");
+        assert.equal(switches, 0, "deadline adds no follow");
+        assert.ok(logs.some((line) => line.includes("stage=release")), logs.join("\n"));
+        assert.equal(adapter.isEnabled, true, "stays enabled after release");
     });
 });

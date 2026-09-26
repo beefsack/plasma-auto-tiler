@@ -734,28 +734,19 @@ describe("workspace production entry routing and handoff", () => {
         assert.ok(request !== undefined);
         const correlation = (JSON.parse(request.payload) as Record<string, unknown>)["correlation_id"] as string;
         mocks.callbacks[mocks.callbacks.length - 1]?.(plannedReply(correlation));
-        // Bounded fence: native writes applied, but the accepted ack waits
-        // for the mover desktopsChanged echo plus required geometry echoes.
+        // Immediate commit: the planned reply applies native writes, proves
+        // arrival from the immediate post-write observation (mover absent
+        // from source, present on target), and follows exactly once. No
+        // ack/verify wire exists.
         assert.equal(
-            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted")),
+            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack")),
             false,
+            "no ack protocol",
         );
-        fireMoverEcho(moverBefore as object);
         assert.equal(
-            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted")),
+            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-verify")),
             false,
-            "mover echo alone must not ack while geometry echoes are pending",
-        );
-        fireAllGeometry(world);
-        const ackCall = mocks.dbusCalls.find((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted"));
-        assert.ok(ackCall !== undefined);
-        mocks.callbacks[mocks.callbacks.length - 1]?.(
-            JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", kind: "send-to-workspace", base_revision: 0 }),
-        );
-        const verifyCall = mocks.dbusCalls.find((call) => call.payload.includes("send-to-workspace-verify"));
-        assert.ok(verifyCall !== undefined);
-        mocks.callbacks[mocks.callbacks.length - 1]?.(
-            JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", kind: "send-to-workspace", base_revision: 1 }),
+            "no verify protocol",
         );
         // Legacy follow: current desktop is the existing target and the moved
         // window is focused.
@@ -763,6 +754,24 @@ describe("workspace production entry routing and handoff", () => {
         assert.equal(world.workspace["activeWindow"], moverBefore);
         const mover = moverBefore as { desktops: unknown };
         assert.ok((mover.desktops as unknown[]).includes(targetDesktop));
+        assert.ok(
+            mocks.logs.some((l) => l.includes("event=arrival") && l.includes("outcome=arrived")),
+            mocks.logs.join("\n"),
+        );
+        assert.ok(
+            mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")),
+            mocks.logs.join("\n"),
+        );
+        // Follow-once: late echoes after settlement cause no second switch.
+        fireMoverEcho(moverBefore as object);
+        fireAllGeometry(world);
+        assert.equal(world.currentByOutput.get(world.outputs[0] as never), targetDesktop);
+        assert.equal(world.workspace["activeWindow"], moverBefore);
+        assert.equal(
+            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack")),
+            false,
+            "late echoes add no ack",
+        );
         handle?.stop();
     });
 
@@ -813,22 +822,31 @@ describe("workspace production entry routing and handoff", () => {
             },
         });
         mocks.callbacks[mocks.callbacks.length - 1]?.(emptyPlanned);
+        // Immediate commit with no ack/verify wire: arrival is proven from
+        // the immediate post-write observation and the follow lands once.
         assert.equal(
-            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted")),
+            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack")),
             false,
+            "no ack protocol",
         );
-        fireMoverEcho(moverBefore as object);
-        fireAllGeometry(world);
-        mocks.callbacks[mocks.callbacks.length - 1]?.(
-            JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", kind: "send-to-workspace", base_revision: 0 }),
-        );
-        const verifyCall = mocks.dbusCalls.find((call) => call.payload.includes("send-to-workspace-verify"));
-        assert.ok(verifyCall !== undefined);
-        mocks.callbacks[mocks.callbacks.length - 1]?.(
-            JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", kind: "send-to-workspace", base_revision: 1 }),
+        assert.equal(
+            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-verify")),
+            false,
+            "no verify protocol",
         );
         const trailingDesktop = world.desktops.find((entry) => entry.id === trailingTarget);
         assert.ok(trailingDesktop !== undefined);
+        assert.equal(world.currentByOutput.get(world.outputs[0] as never), trailingDesktop);
+        assert.equal(world.workspace["activeWindow"], moverBefore);
+        const trailingMover = moverBefore as { desktops: unknown };
+        assert.ok((trailingMover.desktops as unknown[]).includes(trailingDesktop), "mover membership in trailing target");
+        assert.ok(
+            mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")),
+            mocks.logs.join("\n"),
+        );
+        // Follow-once: late echoes after settlement cause no second switch.
+        fireMoverEcho(moverBefore as object);
+        fireAllGeometry(world);
         assert.equal(world.currentByOutput.get(world.outputs[0] as never), trailingDesktop);
         assert.equal(world.workspace["activeWindow"], moverBefore);
         handle?.stop();
@@ -916,14 +934,25 @@ describe("workspace production entry routing and handoff", () => {
         handle?.stop();
     });
 
-    it("excludes intentional floats from send observation", () => {
+    it("keeps intentional floats in send observation with flags", () => {
         const { world } = startRichEntry("per-output-local");
         const cache = new Map<string, string>();
         const floating = new Set<string>(["win-b"]);
         const observed = observeSendTarget(world.workspace, cache, "ws-2", floating);
         assert.ok(observed !== null);
-        assert.ok(!observed.sourceWindows.some((entry) => entry.id === "win-b"), "float excluded");
+        const floatEntry = observed.sourceWindows.find((entry) => entry.id === "win-b");
+        assert.ok(floatEntry !== undefined, "intentional float stays observed");
+        assert.equal(floatEntry.floating, true);
+        assert.equal(floatEntry.fit_excluded, true);
         assert.ok(observed.sourceWindows.some((entry) => entry.id === "win-a"));
+        const floatWin = world.wins.find((win) => win.internalId === "win-b");
+        assert.ok(floatWin !== undefined);
+        (world.workspace["activeWindow"] as unknown) = floatWin;
+        const focusedFloat = observeSendTarget(world.workspace, cache, "ws-2", floating);
+        assert.ok(focusedFloat !== null);
+        assert.ok(focusedFloat.sourceWindows.some((entry) => entry.id === "win-b"), "focused float stays observed");
+        assert.equal(focusedFloat.focusedId, "");
+        assert.equal(focusedFloat.moverRef, null);
     });
 
     it("observes live current-vs-target diagnostics while source is pinned", () => {
@@ -971,7 +1000,7 @@ describe("workspace production entry routing and handoff", () => {
         assert.equal(degraded.targetOrdinal, 1);
     });
 
-    it("treats unavailable or nonzero maximize as ineligible for send", () => {
+    it("keeps nonzero or unreadable maximize in send observation with flags", () => {
         const built = fakeWorld("per-output-local", ["out-1"], ["ws-1", "ws-2"]);
         const world = built.world;
         const ws1 = world.desktops[0];
@@ -985,11 +1014,23 @@ describe("workspace production entry routing and handoff", () => {
         const cache = new Map<string, string>();
         const observedMax = observeSendTarget(world.workspace, cache, "ws-2", new Set());
         assert.ok(observedMax !== null);
-        assert.ok(!observedMax.sourceWindows.some((entry) => entry.id === "win-b"), "nonzero maximize excluded");
+        const maxEntry = observedMax.sourceWindows.find((entry) => entry.id === "win-b");
+        assert.ok(maxEntry !== undefined, "nonzero maximize stays observed");
+        assert.equal(maxEntry.maximized, true);
+        assert.equal(maxEntry.fit_excluded, true);
         delete ((b as unknown) as Record<string, unknown>)["maximizeMode"];
         const observedMissing = observeSendTarget(world.workspace, new Map(), "ws-2", new Set());
         assert.ok(observedMissing !== null);
-        assert.ok(!observedMissing.sourceWindows.some((entry) => entry.id === "win-b"), "missing maximize excluded");
+        const missingEntry = observedMissing.sourceWindows.find((entry) => entry.id === "win-b");
+        assert.ok(missingEntry !== undefined, "unreadable maximize stays observed");
+        assert.equal(missingEntry.maximized, true);
+        assert.equal(missingEntry.fit_excluded, true);
+        (world.workspace["activeWindow"] as unknown) = b;
+        const focusedOverlay = observeSendTarget(world.workspace, new Map(), "ws-2", new Set());
+        assert.ok(focusedOverlay !== null);
+        assert.ok(focusedOverlay.sourceWindows.some((entry) => entry.id === "win-b"), "focused overlay stays observed");
+        assert.equal(focusedOverlay.focusedId, "");
+        assert.equal(focusedOverlay.moverRef, null);
     });
 
     it("matches desktop membership by validated id, not wrapper identity", () => {
@@ -1288,48 +1329,59 @@ describe("four-desktop terminal-run send with bounded fence", () => {
             },
         });
         request.callback(planned);
-        assert.ok(mocks.logs.some((l) => l.includes("event=plan-echo") && l.includes("outcome=waiting")), mocks.logs.join("\n"));
-        assert.ok(mocks.logs.some((l) => l.includes("event=plan-geometry") && l.includes("outcome=waiting")), mocks.logs.join("\n"));
+        assert.ok(mocks.logs.some((l) => l.includes("event=arrival") && l.includes("outcome=waiting")), mocks.logs.join("\n"));
         assert.equal(
-            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted")),
+            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack")),
             false,
+            "no ack protocol",
         );
+        assert.equal(
+            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-verify")),
+            false,
+            "no verify protocol",
+        );
+        // No follow before the exact arrival proof; the short flight pin
+        // retains the trailing target and the emptied source stays put.
+        assert.equal(world.currentByOutput.get(world.outputs[0] as never), ws3);
+        assert.ok(world.desktops.some((entry) => entry.id === "ws-4"), "trailing target retained while arrival pends");
+        assert.ok(world.desktops.some((entry) => entry.id === "ws-3"), "empty source retained while arrival pends");
         fireDesktopsWithPromote(winM as object);
-        assert.equal(
-            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted")),
-            false,
-            "desktopsChanged before geometry must not ack",
-        );
-        assert.ok(world.desktops.some((entry) => entry.id === "ws-4"), "no early retirement while ws-3 current");
-        assert.ok(world.desktops.some((entry) => entry.id === "ws-3"), "empty source retained while current");
-        fireGeometryWithPromote(winM as object);
-        const ackCall = mocks.dbusCalls.find((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted"));
-        assert.ok(ackCall !== undefined, "ack only after mover plus required geometry echo");
-        const ackPayload = JSON.parse(ackCall.payload) as Record<string, unknown>;
-        const ackWindows = ackPayload["windows"] as Array<Record<string, unknown>>;
-        const ackTargets = ackPayload["target_windows"] as Array<Record<string, unknown>>;
-        assert.deepEqual(ackWindows, [], "empty source accepted");
-        assert.equal(ackTargets.length, 2);
-        const byId = new Map(ackTargets.map((entry) => [entry["window"], entry["rect"]]));
-        assert.deepEqual(byId.get("win-m"), { x: 600, y: 0, w: 600, h: 800 });
-        assert.deepEqual(byId.get("win-t"), { x: 0, y: 0, w: 600, h: 800 });
-        mocks.callbacks[mocks.callbacks.length - 1]?.(
-            JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", kind: "send-to-workspace", base_revision: 0 }),
-        );
-        const verifyCall = mocks.dbusCalls.find((call) => call.payload.includes("send-to-workspace-verify"));
-        assert.ok(verifyCall !== undefined);
-        mocks.callbacks[mocks.callbacks.length - 1]?.(
-            JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", kind: "send-to-workspace", base_revision: 1 }),
-        );
+        // Delayed arrival: the one-shot mover desktopsChanged proof carries
+        // the follow at once; geometry echoes are never awaited.
         assert.equal(world.currentByOutput.get(world.outputs[0] as never), ws2);
         assert.equal(world.workspace["activeWindow"], winM);
         assert.ok((winM.desktops as unknown[]).includes(ws2), "mover membership in target");
-        assert.ok(world.desktops.some((entry) => entry.id === "ws-4"), "still no retirement before post-follow cleanup");
-        fireMoverEcho(winM as object);
+        assert.ok(
+            !world.wins.some((win) => (win.desktops as unknown[]).some((member) => (member as FakeDesktop).id === "ws-3")),
+            "empty source accepted",
+        );
+        assert.ok(
+            mocks.logs.some((l) => l.includes("event=arrival") && l.includes("outcome=arrived")),
+            mocks.logs.join("\n"),
+        );
+        assert.ok(
+            mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")),
+            mocks.logs.join("\n"),
+        );
+        fireGeometryWithPromote(winM as object);
+        assert.deepEqual(winM.frameGeometry, { x: 600, y: 0, width: 600, height: 800 });
+        assert.equal(world.currentByOutput.get(world.outputs[0] as never), ws2);
+        assert.equal(
+            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack")),
+            false,
+            "late geometry adds no ack",
+        );
+        // Settlement cleanup ran synchronously with arrival: only the
+        // preexisting terminal empty is retained, the emptied mapped source
+        // retires.
         assert.ok(world.desktops.some((entry) => entry.id === "ws-4"), "preexisting trailing empty 4 retained");
         assert.ok(!world.desktops.some((entry) => entry.id === "ws-3"), "empty mapped source 3 retires after settlement");
         assert.ok(world.desktops.some((entry) => entry.id === "ws-1"), "occupied ws-1 with fullscreen/maximized survives");
         assert.ok(world.desktops.some((entry) => entry.id === "ws-2"), "current target survives");
+        assert.equal(world.desktops.length, 3);
+        // Post-settlement echo is idempotent: no second follow, no collapse change.
+        fireMoverEcho(winM as object);
+        assert.equal(world.currentByOutput.get(world.outputs[0] as never), ws2);
         assert.equal(world.desktops.length, 3);
         handle.requestWorkspaceMove(3);
         const ownerCall2 = [...mocks.dbusCalls].reverse().find((call) => call.method === "GetNameOwner");
@@ -1363,16 +1415,25 @@ describe("four-desktop terminal-run send with bounded fence", () => {
         const request2Call = mocks.dbusCalls.find((call) => call.payload === request2.payload);
         assert.ok(request2Call !== undefined);
         request2Call.callback(planned2);
+        // Second flight waits on the exact arrival proof, then follows to
+        // ws-4 without any ack/verify round trip.
+        assert.equal(world.currentByOutput.get(world.outputs[0] as never), ws2);
         fireDesktopsWithPromote(winM as object);
+        assert.equal(world.currentByOutput.get(world.outputs[0] as never), ws4);
+        assert.equal(world.workspace["activeWindow"], winM);
+        assert.ok((winM.desktops as unknown[]).includes(ws4), "mover membership in ws-4");
         fireGeometryWithPromote(winM as object);
         fireGeometryWithPromote(winT as object);
-        const ack2 = mocks.dbusCalls.find((call) => call.payload.includes(correlation2) && call.payload.includes("accepted"));
-        assert.ok(ack2 !== undefined, "second send completes the fence");
-        mocks.callbacks[mocks.callbacks.length - 1]?.(
-            JSON.stringify({ v: 1, correlation_id: correlation2, outcome: "acknowledged", kind: "send-to-workspace", base_revision: 1 }),
+        assert.equal(world.currentByOutput.get(world.outputs[0] as never), ws4);
+        assert.equal(
+            mocks.dbusCalls.some((call) => call.payload.includes(correlation2) && call.payload.includes("accepted")),
+            false,
+            "no ack protocol on the second send",
         );
-        mocks.callbacks[mocks.callbacks.length - 1]?.(
-            JSON.stringify({ v: 1, correlation_id: correlation2, outcome: "committed", kind: "send-to-workspace", base_revision: 2 }),
+        assert.equal(
+            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-verify")),
+            false,
+            "no verify protocol on the second send",
         );
         assert.equal(world.currentByOutput.get(world.outputs[0] as never), ws4);
         assert.ok(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")).length >= 2);

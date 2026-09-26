@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
 import { describe, it } from "node:test";
 
 import {
@@ -8,50 +6,16 @@ import {
     WORKSPACE_SEND_DBUS_INTERFACE,
     WORKSPACE_SEND_DBUS_OBJECT,
     WORKSPACE_SEND_DBUS_SERVICE,
-    WORKSPACE_SEND_HAS_OWNER_METHOD,
     WORKSPACE_SEND_GET_OWNER_METHOD,
+    WORKSPACE_SEND_HAS_OWNER_METHOD,
     WORKSPACE_SEND_INTERFACE,
     WORKSPACE_SEND_METHOD,
     WORKSPACE_SEND_OBJECT,
-    WORKSPACE_SEND_SERVICE,
-    WORKSPACE_SEND_START_ALREADY,
-    WORKSPACE_SEND_START_METHOD,
-    WORKSPACE_SEND_START_PRIMARY,
     WorkspaceSendAdapter,
     WorkspaceSendAdapterEnv,
     WorkspaceSendObserved,
-    workspaceFingerprint,
+    WorkspaceSendSettled,
 } from "../src/workspace-send-adapter";
-import { startWorkspaceSendAdapterEntry, WorkspaceSendEntryHandle } from "../src/workspace-send-adapter-entry";
-import { DOMAIN_GAP, OUTER_DOMAIN_GAP } from "../src/domain-gap";
-
-function kwinSrcDir(): string {
-    const candidates: string[] = [];
-    try {
-        const here: unknown = typeof __dirname === "string" ? __dirname : process.cwd();
-        if (typeof here === "string") {
-            candidates.push(resolve(here, "..", "..", "src"));
-            candidates.push(resolve(here, "..", "src"));
-            candidates.push(resolve(here, "src"));
-        }
-    } catch (error) {
-        void error;
-    }
-    candidates.push(resolve(process.cwd(), "src"));
-    candidates.push(resolve(process.cwd(), "kwin", "src"));
-    for (const dir of candidates) {
-        try {
-            if (dir.indexOf("kwin") >= 0 && dir.endsWith("src")) {
-                // fallthrough
-            }
-        } catch (error) {
-            void error;
-        }
-    }
-    return resolve(process.cwd(), "src");
-}
-
-declare const __dirname: string | undefined;
 
 function makeRefs(): { a: object; b: object; t: object; desktop: object } {
     return { a: {}, b: {}, t: {}, desktop: {} };
@@ -61,62 +25,6 @@ function rect(x: number, y: number, w: number, h: number): { x: number; y: numbe
     return { x, y, w, h };
 }
 
-function makeObserved(
-    refs: { a: object; b: object; t: object; desktop: object },
-    opts: {
-        focused?: string;
-        activeRef?: object | null;
-        sourceOutput?: string;
-        targetOutput?: string;
-        sourceWorkspace?: string;
-        targetWorkspace?: string;
-        desktopCount?: number;
-        targetExists?: boolean;
-        sourceWindows?: ReadonlyArray<{ id: string; ref: object; rect: { x: number; y: number; w: number; h: number } }>;
-        targetWindows?: ReadonlyArray<{ id: string; ref: object; rect: { x: number; y: number; w: number; h: number } }>;
-    } = {},
-): WorkspaceSendObserved {
-    const focused = opts.focused ?? "win-a";
-    const sourceWindows =
-        opts.sourceWindows ??
-        Object.freeze([
-            Object.freeze({ id: "win-a", ref: refs.a, rect: Object.freeze(rect(0, 0, 100, 100)) }),
-            Object.freeze({ id: "win-b", ref: refs.b, rect: Object.freeze(rect(100, 0, 100, 100)) }),
-        ]);
-    const targetWindows =
-        opts.targetWindows ??
-        Object.freeze([Object.freeze({ id: "win-t", ref: refs.t, rect: Object.freeze(rect(0, 0, 100, 100)) })]);
-    return {
-        sourceOutput: opts.sourceOutput ?? "out-1",
-        sourceWorkspace: opts.sourceWorkspace ?? "ws-1",
-        sourceBounds: Object.freeze(rect(0, 0, 1200, 800)),
-        targetOutput: opts.targetOutput ?? "out-1",
-        targetWorkspace: opts.targetWorkspace ?? "ws-2",
-        targetBounds: Object.freeze(rect(0, 0, 1200, 800)),
-        focusedId: focused,
-        sourceWindows,
-        targetWindows,
-        activeRef: opts.activeRef === undefined ? refs.a : opts.activeRef,
-        moverRef: focused === "" ? null : refs.a,
-        targetDesktopRef: refs.desktop,
-        targetExists: opts.targetExists ?? true,
-        desktopCount: opts.desktopCount ?? 2,
-        sourceFingerprint: "sfp-1",
-        targetFingerprint: "tfp-1",
-    };
-}
-
-interface DbusCall {
-    readonly service: string;
-    readonly path: string;
-    readonly iface: string;
-    readonly method: string;
-    readonly payload: string;
-}
-
-// Mutable native world behind the mock observation: geometry and desktop
-// membership writes are observable by the next `observe()` call, exactly like
-// the real KWin surface.
 interface WorldWindow {
     readonly id: string;
     readonly ref: object;
@@ -126,8 +34,7 @@ interface WorldWindow {
 
 interface World {
     readonly windows: WorldWindow[];
-    readonly activeId: string;
-    readonly activeRef: object | null;
+    activeRef: object | null;
     desktopCount: number;
     targetExists: boolean;
 }
@@ -139,53 +46,30 @@ function defaultWorld(refs: { a: object; b: object; t: object; desktop: object }
             { id: "win-b", ref: refs.b, rect: rect(100, 0, 100, 100), workspace: "ws-1" },
             { id: "win-t", ref: refs.t, rect: rect(0, 0, 100, 100), workspace: "ws-2" },
         ],
-        activeId: "win-a",
         activeRef: refs.a,
         desktopCount: 2,
         targetExists: true,
     };
 }
 
-function makeWorldObserved(
-    world: World,
-    refs: { a: object; b: object; t: object; desktop: object },
-): WorkspaceSendObserved {
+function worldObserved(world: World, refs: { a: object; b: object; t: object; desktop: object }): WorkspaceSendObserved {
     const sourceWindows = Object.freeze(
         world.windows
             .filter((entry) => entry.workspace === "ws-1")
             .map((entry) =>
-                Object.freeze({
-                    id: entry.id,
-                    ref: entry.ref,
-                    rect: Object.freeze({
-                        x: entry.rect.x,
-                        y: entry.rect.y,
-                        w: entry.rect.w,
-                        h: entry.rect.h,
-                    }),
-                }),
+                Object.freeze({ id: entry.id, ref: entry.ref, rect: Object.freeze({ ...entry.rect }) }),
             ),
     );
     const targetWindows = Object.freeze(
         world.windows
             .filter((entry) => entry.workspace === "ws-2")
             .map((entry) =>
-                Object.freeze({
-                    id: entry.id,
-                    ref: entry.ref,
-                    rect: Object.freeze({
-                        x: entry.rect.x,
-                        y: entry.rect.y,
-                        w: entry.rect.w,
-                        h: entry.rect.h,
-                    }),
-                }),
+                Object.freeze({ id: entry.id, ref: entry.ref, rect: Object.freeze({ ...entry.rect }) }),
             ),
     );
-    // Mirror the entry's focus rule: the active window is only the focused id
-    // while it still belongs to the source desktop.
-    const focused = sourceWindows.some((entry) => entry.id === world.activeId) ? world.activeId : "";
-    const moverEntry = sourceWindows.find((entry) => entry.id === world.activeId);
+    const activeId = world.windows.find((entry) => entry.ref === world.activeRef)?.id ?? "";
+    const focused = sourceWindows.some((entry) => entry.id === activeId) ? activeId : "";
+    const moverEntry = sourceWindows.find((entry) => entry.id === activeId);
     return {
         sourceOutput: "out-1",
         sourceWorkspace: "ws-1",
@@ -206,6 +90,14 @@ function makeWorldObserved(
     };
 }
 
+interface DbusCall {
+    readonly service: string;
+    readonly path: string;
+    readonly iface: string;
+    readonly method: string;
+    readonly payload: string;
+}
+
 interface Mocks {
     readonly dbusCalls: DbusCall[];
     readonly callbacks: Array<(reply: unknown) => void>;
@@ -215,17 +107,22 @@ interface Mocks {
     readonly desktops: Array<{ target: object; refs: ReadonlyArray<object> }>;
     readonly switches: object[];
     readonly focuses: object[];
+    readonly order: string[];
     readonly world: World;
+    readonly arrivalHandlers: Array<() => void>;
+    settled: number;
+    readonly settledInfos: WorkspaceSendSettled[];
     observeImpl: () => WorkspaceSendObserved | null;
     geometryImpl: (target: object, r: { x: number; y: number; w: number; h: number }) => boolean;
     desktopsImpl: (target: object, refs: ReadonlyArray<object>) => boolean;
     switchImpl: (desktopRef: object) => boolean;
     focusImpl: (windowRef: object) => boolean;
+    holdArrival: boolean;
     env: WorkspaceSendAdapterEnv;
 }
 
 function mockEnv(refs: { a: object; b: object; t: object; desktop: object }): Mocks {
-    const state: Mocks = {
+    const state = {
         dbusCalls: [],
         callbacks: [],
         timers: [],
@@ -234,14 +131,20 @@ function mockEnv(refs: { a: object; b: object; t: object; desktop: object }): Mo
         desktops: [],
         switches: [],
         focuses: [],
+        order: [],
         world: defaultWorld(refs),
-        observeImpl: () => makeWorldObserved(state.world, refs),
+        arrivalHandlers: [],
+        settled: 0,
+        settledInfos: [],
+        observeImpl: null as unknown as Mocks["observeImpl"],
         geometryImpl: () => true,
         desktopsImpl: () => true,
         switchImpl: () => true,
         focusImpl: () => true,
+        holdArrival: false,
         env: null as unknown as WorkspaceSendAdapterEnv,
-    };
+    } as Mocks;
+    state.observeImpl = () => worldObserved(state.world, refs);
     state.env = {
         callDbus: (service, path, iface, method, payload, callback) => {
             if (method === WORKSPACE_SEND_HAS_OWNER_METHOD) {
@@ -262,6 +165,10 @@ function mockEnv(refs: { a: object; b: object; t: object; desktop: object }): Mo
             state.logs.push(message);
         },
         observe: () => state.observeImpl(),
+        onSettled: (settled) => {
+            state.settled += 1;
+            state.settledInfos.push(settled);
+        },
         setGeometry: (target, r) => {
             state.geometries.push({ target, rect: r });
             const ok = state.geometryImpl(target, r);
@@ -277,15 +184,15 @@ function mockEnv(refs: { a: object; b: object; t: object; desktop: object }): Mo
         readGeometry: (target) => {
             for (const entry of state.world.windows) {
                 if (entry.ref === target) {
-                    return { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h };
+                    return { ...entry.rect };
                 }
             }
             return null;
         },
-        setDesktops: (target, refs) => {
-            state.desktops.push({ target, refs });
-            const ok = state.desktopsImpl(target, refs);
-            if (ok && refs.length > 0) {
+        setDesktops: (target, refsArg) => {
+            state.desktops.push({ target, refs: refsArg });
+            const ok = state.desktopsImpl(target, refsArg);
+            if (ok && refsArg.length > 0 && !state.holdArrival) {
                 for (const entry of state.world.windows) {
                     if (entry.ref === target) {
                         entry.workspace = "ws-2";
@@ -295,79 +202,25 @@ function mockEnv(refs: { a: object; b: object; t: object; desktop: object }): Mo
             return ok;
         },
         switchToTarget: (desktopRef) => {
+            state.order.push("switch");
             state.switches.push(desktopRef);
             return state.switchImpl(desktopRef);
         },
         focusWindow: (windowRef) => {
+            state.order.push("focus");
             state.focuses.push(windowRef);
             return state.focusImpl(windowRef);
         },
+        subscribeMoverDesktops: (_moverRef: object, handler: () => void) => {
+            state.arrivalHandlers.push(handler);
+            let detached = false;
+            return () => {
+                detached = true;
+                void detached;
+            };
+        },
     };
     return state;
-}
-
-interface EchoSeam {
-    readonly handlers: Array<() => void>;
-    readonly targets: object[];
-    readonly geoHandlers: Map<object, Array<() => void>>;
-    detachCount: number;
-    geoDetachCount: number;
-    fire(): void;
-    fireGeometry(): void;
-}
-
-function addEchoSeam(mocks: Mocks): EchoSeam {
-    const handlers: Array<() => void> = [];
-    const targets: object[] = [];
-    const geoHandlers = new Map<object, Array<() => void>>();
-    const seam: EchoSeam = {
-        handlers,
-        targets,
-        geoHandlers,
-        detachCount: 0,
-        geoDetachCount: 0,
-        fire(): void {
-            const pending = [...handlers];
-            for (const handler of pending) {
-                handler();
-            }
-        },
-        fireGeometry(): void {
-            for (const list of geoHandlers.values()) {
-                for (const handler of [...list]) {
-                    handler();
-                }
-            }
-        },
-    };
-    const withEcho: WorkspaceSendAdapterEnv = {
-        ...mocks.env,
-        subscribeMoverDesktops: (moverRef: object, handler: () => void) => {
-            targets.push(moverRef);
-            handlers.push(handler);
-            let detached = false;
-            return () => {
-                if (!detached) {
-                    detached = true;
-                    seam.detachCount += 1;
-                }
-            };
-        },
-        subscribeWindowGeometry: (windowRef: object, handler: () => void) => {
-            const list = geoHandlers.get(windowRef) ?? [];
-            list.push(handler);
-            geoHandlers.set(windowRef, list);
-            let detached = false;
-            return () => {
-                if (!detached) {
-                    detached = true;
-                    seam.geoDetachCount += 1;
-                }
-            };
-        },
-    };
-    (mocks as { env: WorkspaceSendAdapterEnv }).env = withEcho;
-    return seam;
 }
 
 const KNOWN_PRECONDITIONS = [
@@ -403,723 +256,562 @@ function plannedReply(correlation: string): string {
     });
 }
 
-function ackReply(correlation: string): string {
+function rejectedReply(correlation: string, kind: string): string {
     return JSON.stringify({
         v: WORKSPACE_SEND_CONTRACT_VERSION,
         correlation_id: correlation,
-        outcome: "acknowledged",
-        kind: "send-to-workspace",
-        base_revision: 0,
+        outcome: "rejected",
+        kind,
     });
-}
-
-function committedReply(correlation: string): string {
-    return JSON.stringify({
-        v: WORKSPACE_SEND_CONTRACT_VERSION,
-        correlation_id: correlation,
-        outcome: "committed",
-        kind: "send-to-workspace",
-        base_revision: 1,
-    });
-}
-
-// Accepted 2026-09-25 abandon replies: exact version/correlation/kind with
-// outcome `abandoned` (retired) or `no-pending-unknown` (nothing to retire).
-// Either settles the flight without a commit claim.
-function abandonedReply(correlation: string): string {
-    return JSON.stringify({
-        v: WORKSPACE_SEND_CONTRACT_VERSION,
-        correlation_id: correlation,
-        outcome: "abandoned",
-        kind: "send-to-workspace",
-    });
-}
-
-function noPendingReply(correlation: string): string {
-    return JSON.stringify({
-        v: WORKSPACE_SEND_CONTRACT_VERSION,
-        correlation_id: correlation,
-        outcome: "no-pending-unknown",
-        kind: "send-to-workspace",
-    });
-}
-
-function tryParseBody(payload: string): Record<string, unknown> | null {
-    try {
-        const body: unknown = JSON.parse(payload);
-        return typeof body === "object" && body !== null ? (body as Record<string, unknown>) : null;
-    } catch (error) {
-        void error;
-        return null;
-    }
-}
-
-function abandonPayloadsOf(mocks: Mocks): Array<Record<string, unknown>> {
-    const out: Array<Record<string, unknown>> = [];
-    for (const call of mocks.dbusCalls) {
-        // Activation calls carry the bare service name, not JSON: skip them.
-        if (!call.payload.includes("send-to-workspace-abandon")) {
-            continue;
-        }
-        const body = tryParseBody(call.payload);
-        if (body !== null && (body["command"] as Record<string, unknown> | undefined)?.["op"] === "send-to-workspace-abandon") {
-            out.push(body);
-        }
-    }
-    return out;
-}
-
-// Settle the latest abandon attempt with an exact reply. Returns the settled
-// correlation. Callbacks and dbusCalls stay aligned in mockEnv (activation
-// presence answers inline without recording).
-function settleAbandon(mocks: Mocks, outcome: string): string {
-    const index = mocks.dbusCalls.length - 1;
-    const body = parsePayload(mocks.dbusCalls[index]?.payload ?? "{}");
-    assert.equal(
-        (body["command"] as Record<string, unknown> | undefined)?.["op"],
-        "send-to-workspace-abandon",
-        "latest call is the abandon attempt",
-    );
-    const correlation = body["correlation_id"] as string;
-    mocks.callbacks[index]?.(outcome === "no-pending-unknown" ? noPendingReply(correlation) : abandonedReply(correlation));
-    return correlation;
 }
 
 function parsePayload(payload: string): Record<string, unknown> {
     return JSON.parse(payload) as Record<string, unknown>;
 }
 
-// Entry-level harness: a realistic read-only KWin surface whose writeable
-// frameGeometry/desktops are visible to the next observation, plus the
-// standalone entry handle. Drives a real planned flight for stop assertions.
-// Each window exposes connectable desktopsChanged plus frameGeometryChanged
-// signals so the production fence seams can arm; fire helpers emit them.
-// A stale moveResizedChanged decoy is also exposed: per KWin source it only
-// mirrors interactive start/finish and must never settle the fence.
-interface EntryHarness {
-    readonly handle: WorkspaceSendEntryHandle | null;
-    readonly dbusCalls: DbusCall[];
-    readonly callbacks: Array<(reply: unknown) => void>;
-    readonly logs: string[];
-    readonly winA: Record<string, unknown>;
-    readonly winB: Record<string, unknown>;
-    readonly winT: Record<string, unknown>;
-    fireMoverEcho(): void;
-    fireGeometry(): void;
-    fireOldGeometry(): void;
-}
-
-function makeDesktopSignal(): { signal: object; fire(): void } {
-    const handlers: Array<() => void> = [];
-    const signal = {
-        connect: (handler: () => void): void => {
-            handlers.push(handler);
-        },
-        disconnect: (handler: () => void): void => {
-            const at = handlers.indexOf(handler);
-            if (at >= 0) {
-                handlers.splice(at, 1);
-            }
-        },
-    };
-    return {
-        signal,
-        fire(): void {
-            for (const handler of [...handlers]) {
-                handler();
-            }
-        },
-    };
-}
-
-function startEntryForPlannedFlight(): EntryHarness {
-    const outRef = { name: "out-1" };
-    const desktopRef = { id: "ws-1" };
-    const targetDesktopRef = { id: "ws-2" };
-    const echoA = makeDesktopSignal();
-    const echoB = makeDesktopSignal();
-    const echoT = makeDesktopSignal();
-    const geoA = makeDesktopSignal();
-    const geoB = makeDesktopSignal();
-    const geoT = makeDesktopSignal();
-    const oldA = makeDesktopSignal();
-    const oldB = makeDesktopSignal();
-    const oldT = makeDesktopSignal();
-    const winA: Record<string, unknown> = {};
-    const winB: Record<string, unknown> = {};
-    const winT: Record<string, unknown> = {};
-    const frameA = { x: 0, y: 0, width: 100, height: 100 };
-    const frameB = { x: 100, y: 0, width: 100, height: 100 };
-    const frameT = { x: 0, y: 0, width: 100, height: 100 };
-    Object.assign(winA, {
-        normalWindow: true,
-        managed: true,
-        minimized: false,
-        fullScreen: false,
-        maximizeMode: 0,
-        onAllDesktops: false,
-        internalId: "win-a",
-        output: outRef,
-        frameGeometry: frameA,
-        desktops: [desktopRef],
-        desktopsChanged: echoA.signal,
-        frameGeometryChanged: geoA.signal,
-        moveResizedChanged: oldA.signal,
-    });
-    Object.assign(winB, {
-        normalWindow: true,
-        managed: true,
-        minimized: false,
-        fullScreen: false,
-        maximizeMode: 0,
-        onAllDesktops: false,
-        internalId: "win-b",
-        output: outRef,
-        frameGeometry: frameB,
-        desktops: [desktopRef],
-        desktopsChanged: echoB.signal,
-        frameGeometryChanged: geoB.signal,
-        moveResizedChanged: oldB.signal,
-    });
-    Object.assign(winT, {
-        normalWindow: true,
-        managed: true,
-        minimized: false,
-        fullScreen: false,
-        maximizeMode: 0,
-        onAllDesktops: false,
-        internalId: "win-t",
-        output: outRef,
-        frameGeometry: frameT,
-        desktops: [targetDesktopRef],
-        desktopsChanged: echoT.signal,
-        frameGeometryChanged: geoT.signal,
-        moveResizedChanged: oldT.signal,
-    });
-    const surface: Record<string, unknown> = {
-        activeWindow: winA,
-        screens: [outRef],
-        currentDesktopForScreen: () => desktopRef,
-        currentDesktop: desktopRef,
-        setCurrentDesktopForScreen: (desktop: unknown) => {
-            surface["currentDesktop"] = desktop;
-        },
-        desktops: [desktopRef, targetDesktopRef],
-        clientArea: () => ({ x: 0, y: 0, width: 1200, height: 800 }),
-        windowList: () => [winA, winB, winT],
-    };
-    const dbusCalls: DbusCall[] = [];
-    const callbacks: Array<(reply: unknown) => void> = [];
-    const logs: string[] = [];
-    const handle = startWorkspaceSendAdapterEntry({
-        workspace: surface,
-        callDbus: (service, path, iface, method, payload, callback) => {
-            if (method === WORKSPACE_SEND_HAS_OWNER_METHOD) {
-                callback(true);
-                return;
-            }
-            dbusCalls.push({ service, path, iface, method, payload });
-            callbacks.push(callback);
-        },
-        scheduleOnce: () => () => {},
-        log: (message) => {
-            logs.push(message);
-        },
-        owner: "owner-1",
-        generation: "gen-1",
-    });
-    return {
-        handle,
-        dbusCalls,
-        callbacks,
-        logs,
-        winA,
-        winB,
-        winT,
-        fireMoverEcho: () => echoA.fire(),
-        fireGeometry: () => {
-            geoA.fire();
-            geoB.fire();
-            geoT.fire();
-        },
-        fireOldGeometry: () => {
-            oldA.fire();
-            oldB.fire();
-            oldT.fire();
-        },
-    };
-}
-
-// Drive the full request -> planned -> ack -> verify -> committed lifecycle
-// against the mocked planner. Returns the mock state for assertions.
-function runLifecycle(mocks: Mocks, adapter: WorkspaceSendAdapter, requestedOrdinal?: unknown): Mocks {
-    if (requestedOrdinal === undefined) {
-        assert.equal(adapter.requestSend("ws-2"), true);
-    } else {
-        assert.equal(adapter.requestSend("ws-2", requestedOrdinal), true);
-    }
-    // Activation: GetNameOwner pins the owner immediately.
+// Drive dispatch through owner pinning and return the request correlation.
+function dispatch(mocks: Mocks, adapter: WorkspaceSendAdapter): string {
+    assert.equal(adapter.requestSend("ws-2"), true);
+    assert.deepEqual(adapter.pendingWorkspaces, ["ws-1", "ws-2"]);
     const ownerCall = mocks.dbusCalls[0];
     assert.equal(ownerCall?.method, WORKSPACE_SEND_GET_OWNER_METHOD);
     assert.equal(ownerCall?.service, WORKSPACE_SEND_DBUS_SERVICE);
-    assert.equal(ownerCall?.payload, WORKSPACE_SEND_SERVICE);
+    assert.equal(ownerCall?.path, WORKSPACE_SEND_DBUS_OBJECT);
+    assert.equal(ownerCall?.iface, WORKSPACE_SEND_DBUS_INTERFACE);
     mocks.callbacks[0]?.(":1.7");
-    // Request phase: DescribePlan addressed to the pinned unique owner.
     const requestCall = mocks.dbusCalls[1];
     assert.equal(requestCall?.service, ":1.7");
     assert.equal(requestCall?.path, WORKSPACE_SEND_OBJECT);
     assert.equal(requestCall?.iface, WORKSPACE_SEND_INTERFACE);
     assert.equal(requestCall?.method, WORKSPACE_SEND_METHOD);
-    const requestPayload = parsePayload(requestCall?.payload ?? "{}");
-    assert.equal(requestPayload["op"] !== undefined, false);
-    const command = requestPayload["command"] as Record<string, unknown>;
+    const body = parsePayload(requestCall?.payload ?? "{}");
+    const command = body["command"] as Record<string, unknown>;
     assert.equal(command["op"], "send-to-workspace");
-    const correlation = requestPayload["correlation_id"] as string;
+    const correlation = body["correlation_id"] as string;
     assert.ok(correlation.length > 0);
-    // Planned reply: apply writes, then ack.
-    mocks.callbacks[1]?.(plannedReply(correlation));
-    const ackCall = mocks.dbusCalls[2];
-    assert.equal(ackCall?.service, ":1.7");
-    const ackPayload = parsePayload(ackCall?.payload ?? "{}");
-    const ackCommand = ackPayload["command"] as Record<string, unknown>;
-    assert.equal(ackCommand["op"], "send-to-workspace-ack");
-    assert.equal(ackCommand["ack_outcome"], "accepted");
-    mocks.callbacks[2]?.(ackReply(correlation));
-    // Verify phase: echoes the exact preconditions and operation.
-    const verifyCall = mocks.dbusCalls[3];
-    assert.equal(verifyCall?.service, ":1.7");
-    const verifyPayload = parsePayload(verifyCall?.payload ?? "{}");
-    const verifyCommand = verifyPayload["command"] as Record<string, unknown>;
-    assert.equal(verifyCommand["op"], "send-to-workspace-verify");
-    assert.equal(verifyCommand["verified"], true);
-    assert.deepEqual(verifyCommand["preconditions"], KNOWN_PRECONDITIONS);
-    const operation = verifyCommand["operation"] as Record<string, unknown>;
-    assert.equal(operation["op"], "move-tiled");
-    assert.equal(operation["window"], "win-a");
-    assert.equal(operation["target_workspace"], "ws-2");
-    mocks.callbacks[3]?.(committedReply(correlation));
-    return mocks;
+    return correlation;
 }
 
-describe("cosmic send-to-workspace adapter lifecycle", () => {
-    it("commits after exact accepted ack and verified post-observation", () => {
+function assertRedacted(mocks: Mocks): void {
+    for (const line of mocks.logs) {
+        assert.ok(line.startsWith("plasma-auto-tiler:route-diag component=cosmic-send "), line);
+        for (const raw of ["win-a", "win-b", "win-t", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
+            assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
+        }
+    }
+}
+
+describe("cosmic send-to-workspace immediate commit", () => {
+    it("sends, writes planned geometry then mover membership, follows once on immediate arrival", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = new WorkspaceSendAdapter(mocks.env);
         assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        runLifecycle(mocks, adapter);
-        // Geometry writes cover all three affected windows in canonical order.
+        const correlation = dispatch(mocks, adapter);
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        // Geometry writes cover all three windows; only the mover desktop write follows.
         assert.equal(mocks.geometries.length, 3);
-        assert.deepEqual(mocks.geometries.map((g) => g.rect.w), [1200, 600, 600]);
-        // Only the mover's desktop membership is written, to the target ref.
         assert.equal(mocks.desktops.length, 1);
         assert.equal(mocks.desktops[0]?.target, refs.a);
         assert.deepEqual(mocks.desktops[0]?.refs, [refs.desktop]);
-        assert.equal(mocks.timers[0]?.cancelled, true);
-        // Structured route diagnostics record pinned owner, accepted ack, and
-        // verified completion with fixed fields only.
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=owner-pinned")), mocks.logs.join("\n"));
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=acknowledged")), mocks.logs.join("\n"));
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-        assert.ok(!mocks.logs.some((l) => l.includes("follow=not-reached")), mocks.logs.join("\n"));
-        for (const line of mocks.logs) {
-            assert.ok(line.startsWith("plasma-auto-tiler:route-diag component=cosmic-send "), line);
-            assert.ok(line.includes(" stage=") && line.includes(" correlation=") && line.includes(" generation=gen-1"), line);
-            assert.ok(line.includes(" event=") && line.includes(" outcome="), line);
-            assert.ok(line.includes(" diag_seq="), line);
-            assert.ok(!line.includes("win-a"), line);
-            assert.ok(!line.includes(":1.7"), line);
-        }
-        const sequences = mocks.logs.map((line) => Number((/ diag_seq=([0-9]+)/.exec(line) ?? ["", "-1"])[1]));
-        assert.ok(sequences.every((sequence, index) => index === 0 || sequence > sequences[index - 1]!), sequences.join(","));
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("drives the request/ack/verify phases over the one DescribePlan route only", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        runLifecycle(mocks, adapter);
-        for (const call of mocks.dbusCalls.slice(1)) {
-            assert.equal(call.method, WORKSPACE_SEND_METHOD, "no other D-Bus method may be invoked");
-        }
-    });
-
-    it("follows to the Rust-planned target and focuses the moved window after commit", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        runLifecycle(mocks, adapter);
-        // Only frameGeometry writes plus the single desktops write occur
-        // before the follow.
-        assert.equal(mocks.geometries.length, 3);
-        assert.equal(mocks.desktops.length, 1);
-        for (const write of mocks.geometries) {
-            assert.deepEqual(Object.keys(write.rect).sort(), ["h", "w", "x", "y"]);
-        }
-        // Legacy follow: exactly one desktop switch to the planned target
-        // ref plus exactly one focus of the moved window ref.
+        // Immediate exact arrival proof: switch then focus, exactly once.
         assert.deepEqual(mocks.switches, [refs.desktop]);
         assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
-        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("keeps a committed send usable when immediate focus confirmation is refused", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        mocks.focusImpl = () => false;
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        runLifecycle(mocks, adapter);
-        assert.ok(mocks.logs.some((line) => line.includes("outcome=committed")), mocks.logs.join("\n"));
-        assert.ok(!mocks.logs.some((line) => line.includes("event=follow") && line.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
+        assert.deepEqual(mocks.order, ["switch", "focus"]);
+        assert.ok(mocks.logs.some((l) => l.includes("event=dispatch") && l.includes("outcome=started")), mocks.logs.join("\n"));
+        assert.ok(mocks.logs.some((l) => l.includes("event=arrival") && l.includes("outcome=arrived")), mocks.logs.join("\n"));
         assert.ok(
-            mocks.logs.some((line) => line.includes("stage=follow") && line.includes("event=follow") && line.includes("outcome=focus-unconfirmed")),
+            mocks.logs.some((l) => l.includes("stage=follow") && l.includes("event=follow") && l.includes("outcome=state-confirmed")),
             mocks.logs.join("\n"),
         );
-        assert.ok(!mocks.logs.some((line) => line.includes("follow=not-reached")), mocks.logs.join("\n"));
-        assert.equal(adapter.isEnabled, true);
+        assert.ok(mocks.logs.some((l) => l.includes("stage=release") && l.includes("outcome=arrived")), mocks.logs.join("\n"));
+        assertRedacted(mocks);
+        assert.equal(mocks.settled, 1);
+        assert.deepEqual(adapter.pendingWorkspaces, []);
         assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.isEnabled, true);
+        // No ack/verify/status/cancel/abandon round trips exist.
+        for (const call of mocks.dbusCalls.slice(1)) {
+            assert.equal(call.method, WORKSPACE_SEND_METHOD);
+            const body = parsePayload(call.payload);
+            assert.equal((body["command"] as Record<string, unknown>)["op"], "send-to-workspace");
+        }
+        assert.equal("blocksPlan" in adapter, false);
+    });
+
+    it("follows once on delayed arrival via the one-shot mover signal", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.holdArrival = true;
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        const correlation = dispatch(mocks, adapter);
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        assert.equal(mocks.geometries.length, 3);
+        assert.equal(mocks.desktops.length, 1);
+        // No arrival yet: no follow, flight still pinned.
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+        assert.equal(adapter.isInFlight, true);
+        assert.deepEqual(adapter.pendingWorkspaces, ["ws-1", "ws-2"]);
+        assert.equal(mocks.arrivalHandlers.length, 1);
+        assert.ok(mocks.logs.some((l) => l.includes("event=arrival") && l.includes("outcome=waiting")), mocks.logs.join("\n"));
+        // Delayed native arrival becomes visible; the signal follows once.
+        mocks.holdArrival = false;
         for (const entry of mocks.world.windows) {
             if (entry.id === "win-a") {
-                entry.workspace = "ws-1";
-                entry.rect = rect(0, 0, 100, 100);
-            } else if (entry.id === "win-b") {
-                entry.workspace = "ws-1";
-                entry.rect = rect(100, 0, 100, 100);
-            } else {
                 entry.workspace = "ws-2";
-                entry.rect = rect(0, 0, 100, 100);
             }
         }
-        assert.equal(adapter.requestSend("ws-2"), true, "a later send may begin after unconfirmed focus");
-        assert.equal(adapter.isEnabled, true, "unconfirmed follow never disables a committed adapter");
+        mocks.arrivalHandlers[0]?.();
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
+        assert.deepEqual(mocks.order, ["switch", "focus"]);
+        assert.equal(mocks.settled, 1);
+        assert.equal(adapter.isInFlight, false);
+        assertRedacted(mocks);
+    });
+
+    it("refuses a duplicate send while in flight and exposes no blocksPlan", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.holdArrival = true;
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        const correlation = dispatch(mocks, adapter);
+        assert.equal(adapter.requestSend("ws-2"), false);
+        assert.ok(
+            mocks.logs.some((l) => l.includes("event=refuse") && l.includes("outcome=in-flight") && l.includes(`correlation=${correlation}`)),
+            mocks.logs.join("\n"),
+        );
         assert.equal(adapter.isInFlight, true);
+        assert.equal(mocks.settled, 0);
+        assert.equal("blocksPlan" in adapter, false);
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        assert.equal(adapter.isInFlight, true, "still waiting for delayed arrival");
+        mocks.holdArrival = false;
+        for (const entry of mocks.world.windows) {
+            if (entry.id === "win-a") {
+                entry.workspace = "ws-2";
+            }
+        }
+        mocks.arrivalHandlers[0]?.();
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.settled, 1);
+    });
+
+    it("settles stale-revision with no writes when the scope drifts before the reply", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        const correlation = dispatch(mocks, adapter);
+        mocks.world.windows.push({ id: "win-c", ref: {}, rect: rect(200, 0, 100, 100), workspace: "ws-1" });
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        assert.equal(mocks.geometries.length, 0);
+        assert.equal(mocks.desktops.length, 0);
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=stale-revision")), mocks.logs.join("\n"));
+        assertRedacted(mocks);
+        assert.equal(mocks.settled, 1);
+        assert.deepEqual(adapter.pendingWorkspaces, []);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.requestSend("ws-2"), true, "send reusable after stale terminal");
         adapter.disable();
     });
 
-    it("carries the requested logical ordinal into follow diagnostics without gating", () => {
-        for (const ordinal of [2, 0]) {
-            const refs = makeRefs();
-            const mocks = mockEnv(refs);
-            mocks.observeImpl = () => ({
-                ...makeWorldObserved(mocks.world, refs),
-                targetOrdinal: 1,
-                targetNumber: 2,
-                outputOrdinal: 0,
-                currentOrdinal: 0,
-                currentNumber: 1,
-                currentIdEq: 0,
-                currentRefEq: 0,
-            });
-            const adapter = new WorkspaceSendAdapter(mocks.env);
-            adapter.enable({ owner: "owner-1", generation: "gen-1" });
-            runLifecycle(mocks, adapter, ordinal);
-            const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
-            const followLines = mocks.logs.filter(
-                (l) => l.includes("component=cosmic-send") && l.includes("stage=follow") && l.includes(`correlation=${correlation}`),
-            );
-            assert.ok(followLines.length >= 4, mocks.logs.join("\n"));
-            for (const line of followLines.filter((l) => l.includes("event=follow-"))) {
-                assert.ok(line.includes(`req_ord=${String(ordinal)}`), `req handoff missing in:\n${line}`);
-                for (const raw of ["win-a", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
-                    assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
-                }
-            }
-            assert.deepEqual(mocks.switches, [refs.desktop]);
-            assert.deepEqual(mocks.focuses, [refs.a]);
-        }
-        // Invalid ordinals sanitize to -1 and never refuse the send.
-        for (const bad of [99, -1, "bad"]) {
-            const refs = makeRefs();
-            const mocks = mockEnv(refs);
-            mocks.observeImpl = () => ({
-                ...makeWorldObserved(mocks.world, refs),
-                targetOrdinal: 1,
-                targetNumber: 2,
-                outputOrdinal: 0,
-                currentOrdinal: 0,
-                currentNumber: 1,
-                currentIdEq: 0,
-                currentRefEq: 0,
-            });
-            const adapter = new WorkspaceSendAdapter(mocks.env);
-            adapter.enable({ owner: "owner-1", generation: "gen-1" });
-            runLifecycle(mocks, adapter, bad);
-            const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
-            const pre = mocks.logs.find((l) => l.includes(`correlation=${correlation}`) && l.includes("event=follow-pre")) ?? "";
-            assert.ok(pre.includes("req_ord=-1"), `invalid ordinal must sanitize:\n${pre}`);
-            assert.deepEqual(mocks.switches, [refs.desktop]);
-        }
-    });
-
-    it("discriminates live current-desktop divergence from the target", () => {
+    it("settles stale-revision with no writes when only survivor flags drift before the reply", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
-        let calls = 0;
+        // Survivor win-b is a tiled fullscreen overlay at dispatch.
         mocks.observeImpl = () => {
-            calls += 1;
-            const live = makeWorldObserved(mocks.world, refs);
-            // Early native-move follow reaches its post-switch read on call 4.
-            if (calls >= 4) {
-                return {
-                    ...live,
-                    targetOrdinal: 1,
-                    targetNumber: 2,
-                    outputOrdinal: 0,
-                    currentOrdinal: 1,
-                    currentNumber: 2,
-                    currentIdEq: 1,
-                    currentRefEq: 1,
-                };
-            }
+            const live = worldObserved(mocks.world, refs);
             return {
                 ...live,
-                targetOrdinal: 1,
-                targetNumber: 2,
-                outputOrdinal: 0,
-                currentOrdinal: 0,
-                currentNumber: 1,
-                currentIdEq: 0,
-                currentRefEq: 0,
+                sourceWindows: Object.freeze(
+                    live.sourceWindows.map((entry) =>
+                        entry.id === "win-b"
+                            ? Object.freeze({
+                                  ...entry,
+                                  fitExcluded: true,
+                                  fit_excluded: true,
+                                  fullscreen: true,
+                              })
+                            : entry,
+                    ),
+                ),
             };
         };
         const adapter = new WorkspaceSendAdapter(mocks.env);
         adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        runLifecycle(mocks, adapter, 2);
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
-        const pre = mocks.logs.find((l) => l.includes(`correlation=${correlation}`) && l.includes("event=follow-pre")) ?? "";
-        assert.ok(pre.includes("req_ord=2"), pre);
-        assert.ok(pre.includes("tgt_ord=1") && pre.includes("tgt_num=2"), pre);
-        assert.ok(pre.includes("cur_ord=0") && pre.includes("cur_num=1"), pre);
-        assert.ok(pre.includes("cur_id_eq=0") && pre.includes("cur_ref_eq=0"), pre);
-        assert.ok(pre.includes("out_ord=0") && pre.includes("out_eq=1"), pre);
-        assert.ok(pre.includes("switched=-1") && pre.includes("focused=-1"), pre);
-        const switched = mocks.logs.find((l) => l.includes(`correlation=${correlation}`) && l.includes("event=follow-switched")) ?? "";
-        assert.ok(switched.includes("cur_ord=1") && switched.includes("cur_num=2"), switched);
-        assert.ok(switched.includes("cur_id_eq=1") && switched.includes("cur_ref_eq=1"), switched);
-        assert.ok(switched.includes("switched=1") && switched.includes("focused=-1"), switched);
-        const focused = mocks.logs.find((l) => l.includes(`correlation=${correlation}`) && l.includes("event=follow-focused")) ?? "";
-        assert.ok(focused.includes("cur_id_eq=1") && focused.includes("switched=1") && focused.includes("focused=1"), focused);
-        const settled = mocks.logs.find((l) => l.includes(`correlation=${correlation}`) && l.includes("event=follow-settled")) ?? "";
-        assert.ok(settled.includes("cur_ord=1") && settled.includes("mover_in_target=1"), settled);
-        for (const line of [pre, switched, focused, settled]) {
-            for (const raw of ["win-a", "win-b", "win-t", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
-                assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
-            }
-        }
-    });
-
-    it("reports post-focus reversal while follow still completes", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        let calls = 0;
-        mocks.observeImpl = () => {
-            calls += 1;
-            const live = makeWorldObserved(mocks.world, refs);
-            const base = {
-                ...live,
-                targetOrdinal: 1,
-                targetNumber: 2,
-                outputOrdinal: 0,
-            };
-            // Calls 1-4 cover request through the after-setter read with live
-            // current on the target and the mover active.
-            if (calls <= 4) {
-                const current = calls >= 4
-                    ? { currentOrdinal: 1, currentNumber: 2, currentIdEq: 1, currentRefEq: 1 }
-                    : { currentOrdinal: 0, currentNumber: 1, currentIdEq: 0, currentRefEq: 0 };
-                return { ...base, ...current };
-            }
-            // Post-focus and settled reads reverse: live current falls back to
-            // the source and the active window is no longer the mover.
-            return {
-                ...base,
-                sourceWindows: live.sourceWindows,
-                targetWindows: live.targetWindows,
-                activeRef: refs.b,
-                currentOrdinal: 0,
-                currentNumber: 1,
-                currentIdEq: 0,
-                currentRefEq: 0,
-            };
-        };
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        runLifecycle(mocks, adapter, 2);
-        // Diagnostics never gate behavior: the native hooks still ran and the
-        // truthful follow line still reports the focus result.
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
-        const switched = mocks.logs.find((l) => l.includes(`correlation=${correlation}`) && l.includes("event=follow-switched")) ?? "";
-        assert.ok(switched.includes("cur_id_eq=1") && switched.includes("active_is_mover=1"), switched);
-        const focused = mocks.logs.find((l) => l.includes(`correlation=${correlation}`) && l.includes("event=follow-focused")) ?? "";
-        assert.ok(focused.includes("cur_ord=0") && focused.includes("cur_id_eq=0"), `reversal missing:\n${focused}`);
-        assert.ok(focused.includes("active_is_mover=0"), `active reversal missing:\n${focused}`);
-        assert.ok(focused.includes("switched=1") && focused.includes("focused=1"), focused);
-        assert.ok(
-            mocks.logs.some((l) => l.includes(`correlation=${correlation}`) && l.includes("event=follow") && l.includes("outcome=state-confirmed")),
-            mocks.logs.join("\n"),
-        );
-    });
-
-    it("leaves follow behavior unchanged when follow observations return null", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        let calls = 0;
-        const liveObserve = mocks.observeImpl;
-        mocks.observeImpl = () => {
-            calls += 1;
-            // Early post-switch and post-focus re-reads fail; the later exact
-            // acknowledgement observation still succeeds.
-            if (calls === 4 || calls === 5) {
-                return null;
-            }
-            return liveObserve();
-        };
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        runLifecycle(mocks, adapter);
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
-        for (const event of ["event=follow-switched", "event=follow-focused"]) {
-            const line = mocks.logs.find((l) => l.includes(event)) ?? "";
-            assert.ok(line.includes("outcome=unknown"), `${event} must report unknown:\n${line}`);
-            assert.ok(line.includes("tgt_ord=-1") && line.includes("cur_ord=-1"), line);
-        }
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("leaves follow behavior unchanged when follow logging throws", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter({
-            ...mocks.env,
-            log: (message: string) => {
-                if (message.includes("stage=follow")) {
-                    throw new Error("log lost");
-                }
-                mocks.logs.push(message);
-            },
-        });
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        runLifecycle(mocks, adapter);
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("rejects a planned reply whose desired focus is not the Rust target mover", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
+        const correlation = dispatch(mocks, adapter);
         const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        const mismatch = JSON.parse(plannedReply(correlation)) as Record<string, unknown>;
-        mismatch["desired_focus"] = { domain_output: "out-1", domain_workspace: "ws-1", leaf: "leaf-win-b" };
-        mocks.callbacks[1]?.(JSON.stringify(mismatch));
-        // Pre-actuation zero-dispatch failure: one cancel round trip runs
-        // before the abandon below. The unanswered cancel reaches abandon
-        // instead of disabling.
-        assert.equal(adapter.isInFlight, true);
-        assert.ok(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-cancel")));
-        mocks.timers[1]?.callback();
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        assert.equal(abandonPayloadsOf(mocks).length, 1);
-        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(adapter.blocksPlan, false);
-        assert.ok(
-            mocks.logs.some((l) => l.includes("event=abandon-requested") && l.includes(`correlation=${correlation}`)),
-            mocks.logs.join("\n"),
-        );
-        assert.ok(
-            mocks.logs.some((l) => l.includes("event=abandon-replied") && l.includes("outcome=abandoned")),
-            mocks.logs.join("\n"),
-        );
-        assert.ok(mocks.logs.some((l) => l.includes("cause=precondition-mismatch")), mocks.logs.join("\n"));
-        assert.deepEqual(mocks.switches, []);
-        assert.deepEqual(mocks.focuses, []);
+        const body = parsePayload(requestCall?.payload ?? "{}");
+        const sourceEntries = body["windows"] as Array<Record<string, unknown>>;
+        const flagged = sourceEntries.find((entry) => entry["window"] === "win-b");
+        assert.equal(flagged?.["fit_excluded"], true, "observed fit opt-out traverses the send wire");
+        assert.ok(!("floating" in (flagged ?? {})), "overlay stays tiled on the wire");
+        assert.ok(!("fullscreen" in (flagged ?? {})), "native overlay flags never ride the wire");
+        // Only flags drift before the reply: same ids, same rects, same
+        // membership. Either-domain fence still stales before any setter.
+        mocks.observeImpl = () => worldObserved(mocks.world, refs);
+        mocks.callbacks[1]?.(plannedReply(correlation));
         assert.equal(mocks.geometries.length, 0);
         assert.equal(mocks.desktops.length, 0);
-        assert.equal(adapter.requestSend("ws-2"), true, "send reusable after abandon");
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=stale-revision")), mocks.logs.join("\n"));
+        assertRedacted(mocks);
+        assert.equal(mocks.settled, 1);
+        assert.deepEqual(adapter.pendingWorkspaces, []);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.requestSend("ws-2"), true, "send reusable after flag-stale terminal");
+        adapter.disable();
     });
 
-    it("does not follow twice when later commit observation drifts from the plan", () => {
+    it("settles stale-revision with no writes when gaps reload before the reply", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = new WorkspaceSendAdapter(mocks.env);
         adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
+        const correlation = dispatch(mocks, adapter);
+        // Deliberate configChanged reload changes the live pair while the
+        // flight keeps the dispatch-frozen (8, 8) primitives.
+        adapter.updateGaps({ innerGap: 12, outerGap: 8 });
         mocks.callbacks[1]?.(plannedReply(correlation));
-        mocks.callbacks[2]?.(ackReply(correlation));
-        // Drift between the verify request and the committed follow check:
-        // the mover reports back in the source with a stale rect.
-        mocks.observeImpl = () =>
-            makeObserved(refs, {
-                sourceWindows: Object.freeze([
-                    Object.freeze({ id: "win-a", ref: refs.a, rect: Object.freeze(rect(0, 0, 100, 100)) }),
-                    Object.freeze({ id: "win-b", ref: refs.b, rect: Object.freeze(rect(100, 0, 100, 100)) }),
-                ]),
-            });
-        mocks.callbacks[3]?.(committedReply(correlation));
-        assert.equal(adapter.isEnabled, true);
+        assert.equal(mocks.geometries.length, 0, "gap change never reaches a geometry setter");
+        assert.equal(mocks.desktops.length, 0, "gap change never reaches the mover write");
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=stale-revision")), mocks.logs.join("\n"));
+        assertRedacted(mocks);
+        assert.equal(mocks.settled, 1, "terminal stale carries the forced refresh hook");
+        assert.deepEqual(adapter.pendingWorkspaces, []);
         assert.equal(adapter.isInFlight, false);
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.equal(
-            mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")).length,
-            1,
+        assert.equal(adapter.requestSend("ws-2"), true, "send reusable after gap-stale terminal");
+        adapter.disable();
+    });
+
+    it("releases on the unanswered-request deadline and ignores the late reply", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        const correlation = dispatch(mocks, adapter);
+        assert.equal(mocks.timers.length, 2, "separate request and arrival deadlines");
+        const requestTimer = mocks.timers[0];
+        assert.ok(requestTimer && !requestTimer.cancelled);
+        requestTimer.callback();
+        assert.ok(mocks.logs.some((l) => l.includes("stage=release") && l.includes("outcome=timeout")), mocks.logs.join("\n"));
+        assert.equal(mocks.settled, 1);
+        assert.deepEqual(adapter.pendingWorkspaces, []);
+        assert.equal(adapter.isInFlight, false);
+        // The late planned reply is ignored: no writes, no follow, no second settle.
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        assert.equal(mocks.geometries.length, 0);
+        assert.equal(mocks.desktops.length, 0);
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+        assert.equal(mocks.settled, 1);
+        assert.ok(mocks.logs.some((l) => l.includes("event=late-reply") && l.includes("outcome=ignored")), mocks.logs.join("\n"));
+        assertRedacted(mocks);
+    });
+
+    it("releases on the arrival deadline when the mover never arrives", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.holdArrival = true;
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        const correlation = dispatch(mocks, adapter);
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        assert.ok(mocks.timers[0]?.cancelled, "answered request deadline is retired");
+        assert.ok(!mocks.timers[1]?.cancelled, "arrival deadline stays armed");
+        mocks.timers[1]?.callback();
+        assert.ok(
+            mocks.logs.some((l) => l.includes("stage=release") && l.includes("outcome=arrival-timeout") && l.includes(`correlation=${correlation}`)),
             mocks.logs.join("\n"),
         );
-        const settled = mocks.logs.filter(
-            (l) => l.includes("stage=follow") && l.includes("event=follow-settled") && l.includes(`correlation=${correlation}`),
-        );
-        assert.equal(settled.length, 1, mocks.logs.join("\n"));
-        assert.ok(settled[0]?.includes("outcome=observed"), settled.join("\n"));
-        assert.ok(settled[0]?.includes("mover_in_target=0"), settled.join("\n"));
+        assert.equal(mocks.settled, 1);
+        assert.deepEqual(adapter.pendingWorkspaces, []);
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+        assertRedacted(mocks);
     });
 
-    it("ignores a duplicate committed reply without a second follow", () => {
+    it("settles write-failed with no follow when the mover membership write fails", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.desktopsImpl = () => false;
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        const correlation = dispatch(mocks, adapter);
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=write-failed") && l.includes(`correlation=${correlation}`)), mocks.logs.join("\n"));
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+        assert.equal(mocks.settled, 1);
+        assert.deepEqual(adapter.pendingWorkspaces, []);
+        assert.equal(adapter.isInFlight, false);
+        assertRedacted(mocks);
+    });
+
+    it("settles a rejected reply with no writes and one settlement", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = new WorkspaceSendAdapter(mocks.env);
         adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        runLifecycle(mocks, adapter);
+        const correlation = dispatch(mocks, adapter);
+        mocks.callbacks[1]?.(rejectedReply(correlation, "target-mismatch"));
+        assert.equal(mocks.geometries.length, 0);
+        assert.equal(mocks.desktops.length, 0);
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=target-mismatch")), mocks.logs.join("\n"));
+        assert.equal(mocks.settled, 1);
+        assert.deepEqual(adapter.pendingWorkspaces, []);
+        assertRedacted(mocks);
+    });
+
+    it("settles mover-closed when the mover leaves both scopes after the writes", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        // The mover is closed exactly at the membership write: the write
+        // reports success but the next observation finds the mover in
+        // neither scope. The pre-write fence still sees the dispatch scope.
+        mocks.desktopsImpl = () => {
+            const at = mocks.world.windows.findIndex((entry) => entry.id === "win-a");
+            if (at >= 0) {
+                mocks.world.windows.splice(at, 1);
+            }
+            return true;
+        };
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        const correlation = dispatch(mocks, adapter);
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=mover-closed")), mocks.logs.join("\n"));
+        assert.equal(mocks.settled, 1);
+        assert.deepEqual(adapter.pendingWorkspaces, []);
+        assertRedacted(mocks);
+    });
+
+    it("does not switch when the switch fails and never focuses afterwards", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.switchImpl = () => false;
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        const correlation = dispatch(mocks, adapter);
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [], "a failed switch never focuses");
+        assert.ok(
+            mocks.logs.some((l) => l.includes("stage=follow") && l.includes("outcome=switch-unconfirmed") && l.includes(`correlation=${correlation}`)),
+            mocks.logs.join("\n"),
+        );
+        assert.equal(mocks.settled, 1, "arrival still settles so the entry refreshes");
+        assertRedacted(mocks);
+    });
+
+    it("aborts remaining geometry writes when scope goes stale mid-write", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let calls = 0;
+        const baseGeometry = mocks.geometryImpl;
+        void baseGeometry;
+        mocks.geometryImpl = (target, r) => {
+            calls += 1;
+            for (const entry of mocks.world.windows) {
+                if (entry.ref === target) {
+                    entry.rect = { x: r.x, y: r.y, w: r.w, h: r.h };
+                }
+            }
+            // Scope goes stale exactly at the first native setter: the next
+            // per-setter fence must abort before the mover membership write.
+            if (calls === 1) {
+                mocks.world.targetExists = false;
+            }
+            return true;
+        };
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        const correlation = dispatch(mocks, adapter);
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        assert.equal(mocks.geometries.length, 1, "second geometry setter never runs");
+        assert.equal(mocks.desktops.length, 0, "stale scope never reaches the mover write");
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=stale-revision") && l.includes(`correlation=${correlation}`)), mocks.logs.join("\n"));
+        assert.equal(mocks.settled, 1);
+        assert.deepEqual(adapter.pendingWorkspaces, []);
+        assert.equal(adapter.isInFlight, false);
+        assertRedacted(mocks);
+    });
+
+    it("aborts remaining geometry writes when survivor overlay flags flip mid-write", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let flipped = false;
+        mocks.observeImpl = () => {
+            const live = worldObserved(mocks.world, refs);
+            if (!flipped) {
+                return live;
+            }
+            return {
+                ...live,
+                sourceWindows: Object.freeze(
+                    live.sourceWindows.map((entry) =>
+                        entry.id === "win-b" ? Object.freeze({ ...entry, fullscreen: true }) : entry,
+                    ),
+                ),
+            };
+        };
+        let calls = 0;
+        mocks.geometryImpl = (target, r) => {
+            calls += 1;
+            for (const entry of mocks.world.windows) {
+                if (entry.ref === target) {
+                    entry.rect = { x: r.x, y: r.y, w: r.w, h: r.h };
+                }
+            }
+            // Flags flip exactly at the first native setter: the next
+            // per-setter flag fence must abort before the mover write,
+            // without comparing rects changed by the first setter.
+            if (calls === 1) {
+                flipped = true;
+            }
+            return true;
+        };
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        const correlation = dispatch(mocks, adapter);
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        assert.equal(mocks.geometries.length, 1, "second geometry setter never runs after the flag flip");
+        assert.equal(mocks.desktops.length, 0, "flag drift never reaches the mover write");
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=stale-revision") && l.includes(`correlation=${correlation}`)), mocks.logs.join("\n"));
+        assert.equal(mocks.settled, 1);
+        assert.deepEqual(adapter.pendingWorkspaces, []);
+        assert.equal(adapter.isInFlight, false);
+        assertRedacted(mocks);
+    });
+
+    it("refuses focus when the mover disappears between switch and focus", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.switchImpl = (desktopRef) => {
+            // The mover closes (or moves elsewhere) during the switch: the
+            // pre-focus proof must refuse focus without a setter.
+            const at = mocks.world.windows.findIndex((entry) => entry.id === "win-a");
+            if (at >= 0) {
+                mocks.world.windows.splice(at, 1);
+            }
+            void desktopRef;
+            return true;
+        };
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        const correlation = dispatch(mocks, adapter);
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [], "disappearing mover never focuses");
+        assert.ok(
+            mocks.logs.some((l) => l.includes("stage=follow") && l.includes("outcome=arrival-unconfirmed") && l.includes(`correlation=${correlation}`)),
+            mocks.logs.join("\n"),
+        );
+        assert.equal(mocks.settled, 1);
+        assert.deepEqual(adapter.pendingWorkspaces, []);
+        assert.equal(adapter.isInFlight, false);
+        assertRedacted(mocks);
+    });
+
+    it("keeps delayed arrival observable when the mover signals reentrantly during writes", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let handlersAtFirstGeometry = -1;
+        mocks.geometryImpl = (target, r) => {
+            if (handlersAtFirstGeometry < 0) {
+                handlersAtFirstGeometry = mocks.arrivalHandlers.length;
+            }
+            for (const entry of mocks.world.windows) {
+                if (entry.ref === target) {
+                    entry.rect = { x: r.x, y: r.y, w: r.w, h: r.h };
+                }
+            }
+            return true;
+        };
+        mocks.desktopsImpl = (target, refsArg) => {
+            for (const entry of mocks.world.windows) {
+                if (entry.ref === target) {
+                    entry.workspace = "ws-2";
+                }
+            }
+            void refsArg;
+            // Host signals reentrantly from inside the membership setter while
+            // the write stack is live. The one-shot must stay armed so the
+            // post-write observation still follows exactly once.
+            for (const handler of [...mocks.arrivalHandlers]) {
+                handler();
+            }
+            return true;
+        };
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        const correlation = dispatch(mocks, adapter);
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        assert.equal(handlersAtFirstGeometry, 1, "arrival signal armed before native writes");
         assert.deepEqual(mocks.switches, [refs.desktop]);
         assert.deepEqual(mocks.focuses, [refs.a]);
-        // A stale duplicate verify echo after the flight cleared is ignored.
-        mocks.callbacks[3]?.(committedReply("gen-1-w0"));
+        assert.deepEqual(mocks.order, ["switch", "focus"]);
+        assert.equal(mocks.settled, 1);
+        assert.equal(adapter.isInFlight, false);
+        // A duplicate delayed signal after settlement never follows again.
+        for (const handler of [...mocks.arrivalHandlers]) {
+            handler();
+        }
         assert.deepEqual(mocks.switches, [refs.desktop]);
         assert.deepEqual(mocks.focuses, [refs.a]);
+        assert.equal(mocks.settled, 1);
+        assert.ok(mocks.logs.some((l) => l.includes("event=arrival") && l.includes("outcome=arrived")), mocks.logs.join("\n"));
+        assertRedacted(mocks);
+        void correlation;
+    });
+
+    it("settles once on disable with a live flight and stays silent when idle", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.holdArrival = true;
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        const correlation = dispatch(mocks, adapter);
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        adapter.disable();
+        assert.ok(
+            mocks.logs.some((l) => l.includes("stage=release") && l.includes("outcome=disabled") && l.includes(`correlation=${correlation}`)),
+            mocks.logs.join("\n"),
+        );
+        assert.equal(mocks.settled, 1);
+        assert.deepEqual(adapter.pendingWorkspaces, []);
+        assert.equal(adapter.isEnabled, false);
+        adapter.disable();
+        assert.equal(mocks.settled, 1, "second disable is silent");
     });
 });
 
 describe("cosmic send-to-workspace refusal routes", () => {
-    function refusalOutcome(opts: Parameters<typeof makeObserved>[1]): string {
+    function refusalOutcome(world: World): string {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
-        mocks.observeImpl = () => makeObserved(refs, opts);
+        (mocks as { world: World }).world.windows.length = 0;
+        for (const entry of world.windows) {
+            (mocks as { world: World }).world.windows.push(entry);
+        }
+        mocks.world.activeRef = world.activeRef;
+        mocks.world.desktopCount = world.desktopCount;
+        mocks.world.targetExists = world.targetExists;
         const adapter = new WorkspaceSendAdapter(mocks.env);
         adapter.enable({ owner: "owner-1", generation: "gen-1" });
         assert.equal(adapter.requestSend("ws-2"), false);
@@ -1127,3958 +819,126 @@ describe("cosmic send-to-workspace refusal routes", () => {
         assert.equal(adapter.isInFlight, false);
         assert.equal(mocks.dbusCalls.length, 0, "pre-flight refusal must not touch D-Bus");
         assert.equal(mocks.timers.length, 0, "pre-flight refusal must not arm a timer");
-        assert.equal(mocks.geometries.length, 0);
-        assert.equal(mocks.desktops.length, 0);
-        assert.deepEqual(mocks.switches, []);
-        assert.deepEqual(mocks.focuses, []);
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")),
-            false,
-        );
+        assert.equal(mocks.settled, 0, "pre-flight refusal carries no settlement hook");
+        assert.deepEqual(adapter.pendingWorkspaces, []);
         const line = mocks.logs[mocks.logs.length - 1] ?? "";
         assert.ok(line.includes("event=refuse"), line);
-        assert.ok(line.includes("follow=not-reached gate=pre-commit phase=request"), line);
         return (line.split("outcome=")[1] ?? "").split(" ")[0] ?? "";
     }
 
     it("refuses last-desktop when no distinct target can exist", () => {
-        assert.equal(refusalOutcome({ desktopCount: 1 }), "last-desktop");
-    });
-
-    it("refuses a missing target workspace", () => {
-        assert.equal(refusalOutcome({ targetExists: false }), "target-workspace-missing");
-    });
-
-    it("refuses cross-output requests", () => {
-        assert.equal(refusalOutcome({ targetOutput: "out-2" }), "cross-output");
+        const refs = makeRefs();
+        const world = defaultWorld(refs);
+        world.desktopCount = 1;
+        assert.equal(refusalOutcome(world), "last-desktop");
     });
 
     it("refuses same-workspace sends", () => {
-        assert.equal(refusalOutcome({ targetWorkspace: "ws-1" }), "same-workspace");
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const live = worldObserved(mocks.world, refs);
+        mocks.observeImpl = () => ({ ...live, targetWorkspace: "ws-1", targetExists: true });
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        assert.equal(adapter.requestSend("ws-1"), false);
+        assert.equal(adapter.isEnabled, true, "pre-flight refusal must stay enabled");
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.settled, 0, "pre-flight refusal carries no settlement hook");
+        const line = mocks.logs[mocks.logs.length - 1] ?? "";
+        assert.ok(line.includes("event=refuse"), line);
+        assert.equal((line.split("outcome=")[1] ?? "").split(" ")[0] ?? "", "same-workspace");
     });
 
     it("refuses an absent focused window", () => {
-        assert.equal(refusalOutcome({ activeRef: null, focused: "" }), "absent-focus");
-    });
-
-    it("refuses a non-tiled focused window", () => {
-        assert.equal(refusalOutcome({ focused: "", activeRef: {} }), "non-tiled-focus");
+        const refs = makeRefs();
+        const world = defaultWorld(refs);
+        world.activeRef = null;
+        assert.equal(refusalOutcome(world), "absent-focus");
     });
 
     it("refuses desktop-cap when more than 25 desktops are observed", () => {
-        // KWin caps desktops at 25; 26 observed desktops must fail closed with
-        // desktop-cap. The desktop count is a desktop observation, never a
-        // window-count claim.
-        const outcome = refusalOutcome({ desktopCount: 26 });
-        assert.equal(outcome, "desktop-cap");
+        const refs = makeRefs();
+        const world = defaultWorld(refs);
+        world.desktopCount = 26;
+        assert.equal(refusalOutcome(world), "desktop-cap");
     });
+});
 
-    it("dispatches a request with more than sixty-four windows", () => {
+describe("cosmic send-to-workspace settlement domains", () => {
+    const EXPECTED_SETTLED = {
+        sourceOutput: "out-1",
+        sourceWorkspace: "ws-1",
+        targetOutput: "out-1",
+        targetWorkspace: "ws-2",
+    };
+
+    it("carries exact source/target keys on arrival", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
-        const sourceWindows: Array<{ id: string; ref: object; rect: { x: number; y: number; w: number; h: number } }> = [];
-        for (let index = 0; index < 70; index += 1) {
-            sourceWindows.push(
-                Object.freeze({ id: `win-${String(index)}`, ref: {}, rect: Object.freeze(rect((index * 13) % 1100, 0, 100, 100)) }),
-            );
-        }
-        mocks.observeImpl = () =>
-            makeObserved(refs, { focused: "win-0", sourceWindows: Object.freeze(sourceWindows) });
         const adapter = new WorkspaceSendAdapter(mocks.env);
         adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
+        const correlation = dispatch(mocks, adapter);
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        assert.equal(mocks.settled, 1);
+        assert.deepEqual(mocks.settledInfos, [EXPECTED_SETTLED]);
+        assertRedacted(mocks);
+    });
+
+    it("carries exact source/target keys on the missing-callback release", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        dispatch(mocks, adapter);
+        mocks.timers[0]?.callback();
+        assert.equal(mocks.settled, 1);
+        assert.deepEqual(mocks.settledInfos, [EXPECTED_SETTLED]);
+        assertRedacted(mocks);
+    });
+
+    it("carries exact source/target keys on disable with a live flight", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.holdArrival = true;
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        const correlation = dispatch(mocks, adapter);
+        mocks.callbacks[1]?.(plannedReply(correlation));
         assert.equal(adapter.isInFlight, true);
-        // Activation: GetNameOwner pins the owner immediately.
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
+        adapter.disable();
+        assert.equal(mocks.settled, 1);
+        assert.deepEqual(mocks.settledInfos, [EXPECTED_SETTLED]);
+        assertRedacted(mocks);
+    });
+
+    it("allows a rapid repeat send immediately after settlement", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        const first = dispatch(mocks, adapter);
+        mocks.callbacks[1]?.(plannedReply(first));
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.settled, 1);
+        // No queue or retained block: focus the surviving source member and
+        // a repeat send dispatches at once with a distinct correlation. The
+        // shared dispatch helper assumes fresh mocks, so drive the second
+        // flight from the current call offsets.
+        mocks.world.activeRef = refs.b;
+        const ownerAt = mocks.dbusCalls.length;
+        const timerAt = mocks.timers.length;
+        assert.equal(adapter.requestSend("ws-2"), true);
+        assert.deepEqual(adapter.pendingWorkspaces, ["ws-1", "ws-2"]);
+        assert.equal(mocks.dbusCalls[ownerAt]?.method, WORKSPACE_SEND_GET_OWNER_METHOD);
+        mocks.callbacks[ownerAt]?.(":1.7");
+        const requestCall = mocks.dbusCalls[ownerAt + 1];
         assert.equal(requestCall?.method, WORKSPACE_SEND_METHOD);
-        const requestPayload = parsePayload(requestCall?.payload ?? "{}");
-        assert.equal((requestPayload["windows"] as Array<unknown>).length, 70);
-        assert.ok(!mocks.logs.some((l) => l.includes("event=refuse")), mocks.logs.join("\n"));
-    });
-
-    it("refuses an over-cap request with a correlated refusal and no dispatch", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const sourceWindows: Array<{ id: string; ref: object; rect: { x: number; y: number; w: number; h: number } }> = [];
-        for (let index = 0; index < 14000; index += 1) {
-            sourceWindows.push(
-                Object.freeze({ id: `win-${String(index)}`, ref: {}, rect: Object.freeze(rect((index * 13) % 1100, 0, 100, 100)) }),
-            );
-        }
-        mocks.observeImpl = () =>
-            makeObserved(refs, { focused: "win-0", sourceWindows: Object.freeze(sourceWindows) });
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), false);
-        assert.equal(adapter.isEnabled, true, "pre-flight refusal must stay enabled");
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(mocks.dbusCalls.length, 0, "an over-cap request must not touch D-Bus");
-        const line = mocks.logs[mocks.logs.length - 1] ?? "";
-        assert.ok(line.includes("event=refuse"), line);
-        assert.ok(line.includes("outcome=request-over-cap"), line);
-        assert.ok(line.includes("correlation=gen-1-w0"), line);
-    });
-
-    it("refuses scope-invalid without disabling when observation is absent", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        mocks.observeImpl = () => null;
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), false);
-        assert.equal(adapter.isEnabled, true, "pre-flight refusal must stay enabled");
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(mocks.dbusCalls.length, 0);
-        assert.equal(mocks.timers.length, 0);
-        assert.equal(mocks.geometries.length, 0);
-        assert.equal(mocks.desktops.length, 0);
-        assert.deepEqual(mocks.switches, []);
-        assert.deepEqual(mocks.focuses, []);
-        assert.ok(mocks.logs.some((l) => l.includes("event=refuse") && l.includes("outcome=scope-invalid")), mocks.logs.join("\n"));
-    });
-
-    it("stays enabled across valid, same-workspace no-op, then valid sends", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        runLifecycle(mocks, adapter);
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")).length, 1);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 0);
-        const afterFirst = {
-            dbus: mocks.dbusCalls.length,
-            timers: mocks.timers.length,
-            geometries: mocks.geometries.length,
-            desktops: mocks.desktops.length,
-            switches: mocks.switches.length,
-            focuses: mocks.focuses.length,
-        };
-        assert.equal(afterFirst.dbus, 4);
-        assert.equal(afterFirst.timers, 1);
-        mocks.observeImpl = () => makeObserved(refs, { targetWorkspace: "ws-1" });
-        assert.equal(adapter.requestSend("ws-1"), false);
-        assert.equal(adapter.isEnabled, true, "same-workspace no-op must stay enabled");
-        assert.equal(adapter.isInFlight, false);
-        assert.ok(mocks.logs.some((l) => l.includes("event=refuse") && l.includes("outcome=same-workspace")), mocks.logs.join("\n"));
-        assert.equal(mocks.dbusCalls.length, afterFirst.dbus, "no-op must not touch D-Bus");
-        assert.equal(mocks.timers.length, afterFirst.timers, "no-op must not arm a timer");
-        assert.equal(mocks.geometries.length, afterFirst.geometries);
-        assert.equal(mocks.desktops.length, afterFirst.desktops);
-        assert.equal(mocks.switches.length, afterFirst.switches);
-        assert.equal(mocks.focuses.length, afterFirst.focuses);
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")).length, 1);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 0);
-        for (const entry of mocks.world.windows) {
-            if (entry.id === "win-a") {
-                entry.workspace = "ws-1";
-                entry.rect = rect(0, 0, 100, 100);
-            } else if (entry.id === "win-b") {
-                entry.workspace = "ws-1";
-                entry.rect = rect(100, 0, 100, 100);
-            } else if (entry.id === "win-t") {
-                entry.workspace = "ws-2";
-                entry.rect = rect(0, 0, 100, 100);
-            }
-        }
-        mocks.observeImpl = () => makeWorldObserved(mocks.world, refs);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        const base = afterFirst.dbus;
-        assert.equal(mocks.dbusCalls[base]?.method, WORKSPACE_SEND_GET_OWNER_METHOD);
-        mocks.callbacks[base]?.(":1.7");
-        const requestCall = mocks.dbusCalls[base + 1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[base + 1]?.(plannedReply(correlation));
-        mocks.callbacks[base + 2]?.(ackReply(correlation));
-        mocks.callbacks[base + 3]?.(committedReply(correlation));
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.deepEqual(mocks.switches, [refs.desktop, refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a, refs.a]);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")).length, 2);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 0);
-    });
-
-    it("retires post-request divergence via abandon and stays enabled", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(
-            JSON.stringify({
-                v: WORKSPACE_SEND_CONTRACT_VERSION,
-                correlation_id: correlation,
-                outcome: "diverged",
-                kind: "stale-revision",
-            }),
-        );
-        // A diverged reply skips cancel (it could never succeed) and reaches
-        // abandon directly; the adapter stays enabled and unblocks on reply.
-        assert.equal(adapter.isEnabled, true, "divergence abandons, never disables");
+        const second = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
+        assert.ok(second.length > 0);
+        assert.notEqual(second, first);
         assert.equal(adapter.isInFlight, true);
-        assert.equal(abandonPayloadsOf(mocks).length, 1);
-        assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(adapter.blocksPlan, false);
-        assert.equal(adapter.requestSend("ws-2"), true, "send reusable after abandon");
-    });
-
-    it("accepts exactly 25 desktops (the KWin cap is inclusive)", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        mocks.observeImpl = () => makeObserved(refs, { desktopCount: 25 });
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-    });
-
-    it("refuses no-planner when activation never produces an owner", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter({
-            ...mocks.env,
-            callDbus: (service, path, iface, method, payload, callback) => {
-                mocks.dbusCalls.push({ service, path, iface, method, payload });
-                mocks.callbacks.push(callback);
-            },
-        });
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        // NameHasOwner's normal false reply authorizes exactly one activation.
-        mocks.callbacks[0]?.(false);
-        const startCall = mocks.dbusCalls[1];
-        assert.equal(startCall?.method, WORKSPACE_SEND_START_METHOD);
-        assert.equal(startCall?.service, WORKSPACE_SEND_DBUS_SERVICE);
-        // Only 1/2 are accepted; anything else is a remote-clean no-planner:
-        // definitely before planner dispatch, so no adapter-lost and the
-        // adapter stays enabled with no flight.
-        mocks.callbacks[1]?.(WORKSPACE_SEND_START_PRIMARY + 7);
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=no-planner")), mocks.logs.join("\n"));
-        // No planner request is ever issued.
-        assert.equal(mocks.dbusCalls.filter((c) => c.method === WORKSPACE_SEND_METHOD).length, 0);
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        // Next distinct send works.
-        assert.equal(adapter.requestSend("ws-2"), true);
-        const base = mocks.dbusCalls.length - 1;
-        mocks.callbacks[base]?.(true);
-        mocks.callbacks[base + 1]?.(":1.7");
-        const requestCall = mocks.dbusCalls[base + 2];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[base + 2]?.(plannedReply(correlation));
-        mocks.callbacks[base + 3]?.(ackReply(correlation));
-        mocks.callbacks[base + 4]?.(committedReply(correlation));
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("refuses no-planner when the post-start owner is missing", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter({
-            ...mocks.env,
-            callDbus: (service, path, iface, method, payload, callback) => {
-                mocks.dbusCalls.push({ service, path, iface, method, payload });
-                mocks.callbacks.push(callback);
-            },
-        });
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(false);
-        assert.equal(mocks.dbusCalls[1]?.method, WORKSPACE_SEND_START_METHOD);
-        mocks.callbacks[1]?.(WORKSPACE_SEND_START_PRIMARY);
-        // Post-start GetNameOwner yields no unique owner: remote-clean,
-        // definitely before planner dispatch.
-        mocks.callbacks[2]?.("");
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=no-planner")), mocks.logs.join("\n"));
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        const base = mocks.dbusCalls.length - 1;
-        mocks.callbacks[base]?.(true);
-        mocks.callbacks[base + 1]?.(":1.7");
-        const requestCall = mocks.dbusCalls[base + 2];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[base + 2]?.(plannedReply(correlation));
-        mocks.callbacks[base + 3]?.(ackReply(correlation));
-        mocks.callbacks[base + 4]?.(committedReply(correlation));
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("abandons when a D-Bus call throws after pinning", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const throwing = {
-            ...mocks.env,
-            callDbus: (_service: string, _path: string, _iface: string, method: string, _payload: string, callback: (reply: unknown) => void) => {
-                if (method === WORKSPACE_SEND_METHOD) {
-                    throw new Error("transport lost");
-                }
-                mocks.callbacks.push(callback);
-            },
-        };
-        const adapter = new WorkspaceSendAdapter(throwing);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        // Presence then owner resolution pins before the request throws.
-        mocks.callbacks[0]?.(true);
-        mocks.callbacks[1]?.(":1.7");
-        // The request throw cannot prove Rust clean, so the flight reaches
-        // abandon; every send (request, cancel, abandon) throws on this
-        // transport, so the flight stays retained and enabled for retry.
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        assert.ok(mocks.logs.some((l) => l.includes("cause=owner-loss")), mocks.logs.join("\n"));
-        assert.ok(
-            mocks.logs.some((l) => l.includes("event=abandon-requested") && l.includes("cause=owner-loss")),
-            mocks.logs.join("\n"),
-        );
-        assert.ok(mocks.logs.some((l) => l.includes("event=abandon-retry")), mocks.logs.join("\n"));
-    });
-
-    it("refuses stale-revision when the re-observation no longer matches", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        // A window appears on the source desktop before the reply is handled:
-        // the exact re-observation no longer equals the flight snapshot.
-        const drifted = makeObserved(refs, {
-            sourceWindows: Object.freeze([
-                Object.freeze({ id: "win-a", ref: refs.a, rect: Object.freeze(rect(0, 0, 100, 100)) }),
-                Object.freeze({ id: "win-b", ref: refs.b, rect: Object.freeze(rect(100, 0, 100, 100)) }),
-                Object.freeze({ id: "win-c", ref: {}, rect: Object.freeze(rect(200, 0, 100, 100)) }),
-            ]),
-        });
-        mocks.observeImpl = () => drifted;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        // The drifted re-observation fails before any write; the cancel
-        // attempt runs first, then the unanswered cancel reaches abandon.
-        assert.equal(adapter.isInFlight, true);
-        assert.ok(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-cancel")));
-        mocks.timers[1]?.callback();
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(abandonPayloadsOf(mocks).length, 1);
-        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
-        assert.equal(adapter.isInFlight, false);
-        assert.ok(mocks.logs.some((l) => l.includes("cause=stale-revision")), mocks.logs.join("\n"));
-        // No native writes happened.
-        assert.equal(mocks.geometries.length, 0);
-        assert.equal(mocks.desktops.length, 0);
-    });
-
-    it("retires a diverged planner reply via abandon (e.g. stale-revision)", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(
-            JSON.stringify({
-                v: WORKSPACE_SEND_CONTRACT_VERSION,
-                correlation_id: correlation,
-                outcome: "diverged",
-                kind: "stale-revision",
-                message: "observation revision does not match verified state",
-            }),
-        );
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(abandonPayloadsOf(mocks).length, 1);
-        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
-        assert.equal(adapter.isInFlight, false);
-        assert.ok(mocks.logs.some((l) => l.includes("cause=stale-revision")), mocks.logs.join("\n"));
-        assert.equal(mocks.geometries.length, 0);
-    });
-
-    it("refuses post-observation mismatch without an accepted ack or verify", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        // The request and pre-write revalidation observe the captured scope;
-        // the post-write observation then reports the mover still in the source
-        // with the stale rectangle, so the strict post-observation binding fails.
-        let observeCalls = 0;
-        mocks.observeImpl = () => {
-            observeCalls += 1;
-            if (observeCalls <= 2) {
-                return makeObserved(refs);
-            }
-            return makeObserved(refs, {
-                sourceWindows: Object.freeze([
-                    Object.freeze({ id: "win-a", ref: refs.a, rect: Object.freeze(rect(0, 0, 100, 100)) }),
-                    Object.freeze({ id: "win-b", ref: refs.b, rect: Object.freeze(rect(100, 0, 100, 100)) }),
-                ]),
-            });
-        };
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        assert.equal(adapter.isEnabled, true);
-        assert.ok(
-            mocks.logs.some((l) => l.includes("cause=post-observation-mismatch")),
-            mocks.logs.join("\n"),
-        );
-        // No accepted ack and no verify are ever sent; the only post-request
-        // planner call is the single fenced abandon, never adapter-lost.
-        const verify = mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify"));
-        const acceptedAck = mocks.dbusCalls.some(
-            (c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted"),
-        );
-        assert.equal(verify, false, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(acceptedAck, false, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")),
-            false,
-            JSON.stringify(mocks.dbusCalls, null, 2),
-        );
-        const abandon = abandonPayloadsOf(mocks);
-        assert.equal(abandon.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(abandon[0]?.["correlation_id"], correlation);
-        assert.equal(abandon[0]?.["revision"], 0);
-        assert.equal((abandon[0]?.["command"] as Record<string, unknown>)?.["op"], "send-to-workspace-abandon");
-        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(adapter.blocksPlan, false);
-    });
-
-    it("abandons to the pinned owner on write failure without adapter-lost", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        // The mover's desktop membership write fails after a valid plan.
-        mocks.desktopsImpl = () => false;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        assert.equal(adapter.isEnabled, true);
-        assert.ok(mocks.logs.some((l) => l.includes("cause=write-failed")), mocks.logs.join("\n"));
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")),
-            false,
-            JSON.stringify(mocks.dbusCalls, null, 2),
-        );
-        const abandon = abandonPayloadsOf(mocks);
-        assert.equal(abandon.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        const abandonCall = mocks.dbusCalls.find((c) =>
-            c.payload.includes("send-to-workspace-abandon"),
-        );
-        assert.equal(abandonCall?.service, ":1.7", JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(abandon[0]?.["correlation_id"], correlation);
-        // Failure behavior is unchanged: no accepted ack and no verify.
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")),
-            false,
-        );
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
-            false,
-        );
-        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("never falls back to the well-known name for the abandon report", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.geometryImpl = () => false;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        assert.equal(adapter.isEnabled, true);
-        assert.ok(mocks.logs.some((l) => l.includes("cause=write-failed")), mocks.logs.join("\n"));
-        const abandon = mocks.dbusCalls.filter((c) => c.payload.includes("send-to-workspace-abandon"));
-        assert.equal(abandon.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        for (const call of abandon) {
-            assert.equal(call.service, ":1.7");
-            assert.notEqual(call.service, WORKSPACE_SEND_SERVICE);
-        }
-        assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
-        assert.equal(adapter.blocksPlan, false);
-    });
-
-    it("abandons a flight that never resolves instead of disabling", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        // Owner never resolves; the single timer fires. No valid planned reply
-        // exists and the planner request was never dispatched, so the flight
-        // releases clean with no D-Bus round trip and no adapter-lost.
-        const timer = mocks.timers[0];
-        assert.ok(timer);
-        timer.callback();
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")), mocks.logs.join("\n"));
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        assert.equal(abandonPayloadsOf(mocks).length, 0);
-        assert.equal(adapter.requestSend("ws-2"), true, "send reusable after clean timeout release");
-    });
-});
-
-describe("cosmic send-to-workspace disable and stop divergence", () => {
-    it("reports exactly one adapter-lost when disable() tears down a planned flight", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        // A valid planned reply bound the flight; explicit disable is terminal.
-        adapter.disable();
-        assert.equal(adapter.isEnabled, false);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(mocks.timers[0]?.cancelled, true);
-        const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
-        assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(lost[0]?.service, ":1.7");
-        assert.equal(lost[0]?.path, WORKSPACE_SEND_OBJECT);
-        assert.equal(lost[0]?.method, WORKSPACE_SEND_METHOD);
-        const lostPayload = parsePayload(lost[0]?.payload ?? "{}");
-        assert.equal(lostPayload["correlation_id"], correlation);
-        assert.equal(lostPayload["revision"], 0);
-        assert.equal(lostPayload["owner"], "owner-1");
-        const lostCommand = lostPayload["command"] as Record<string, unknown>;
-        assert.equal(lostCommand["op"], "send-to-workspace-ack");
-        assert.equal(lostCommand["ack_outcome"], "adapter-lost");
-        assert.ok(
-            mocks.logs.some((line) => line.includes(`correlation=${correlation}`) && line.includes("event=disable-terminal") && line.includes("follow=state-confirmed gate=native-move phase=disable reason=disable-teardown")),
-            mocks.logs.join("\n"),
-        );
-        // No verify was sent on the torn-down flight (the accepted ack was
-        // legitimately sent while applying the plan before the disable).
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")),
-            false,
-        );
-        // A second disable is a no-op: exactly one report stays.
-        adapter.disable();
-        assert.equal(mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost")).length, 1);
-    });
-
-    it("does not report adapter-lost when disable() runs before a valid plan", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        // Owner pinned but no planned reply yet: no valid plan, no report.
-        mocks.callbacks[0]?.(":1.7");
-        adapter.disable();
-        assert.equal(adapter.isEnabled, false);
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-    });
-
-    it("enables once at startup and stays fail-closed after terminal disable", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), false);
-        adapter.disable();
-        assert.equal(adapter.isEnabled, false);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), false, "no revival after terminal disable");
-        assert.equal(adapter.requestSend("ws-2"), false, "pending route stays fail-closed");
-    });
-
-    it("entry stop() during a planned flight reports exactly one adapter-lost to the pinned owner", () => {
-        const { handle, dbusCalls, callbacks, logs } = startEntryForPlannedFlight();
-        assert.ok(handle !== null);
-        assert.equal(handle.requestSend("ws-2"), true);
-        callbacks[0]?.(":1.7");
-        const requestCall = dbusCalls[1];
-        assert.equal(requestCall?.service, ":1.7");
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        callbacks[1]?.(plannedReply(correlation));
-        // Mover echo fence: native writes applied but the accepted ack waits
-        // for the mover desktopsChanged echo, so stop tears down a waiting
-        // flight with no accepted ack and no verify.
-        assert.ok(logs.some((l) => l.includes("event=plan-echo") && l.includes("outcome=waiting")), logs.join("\n"));
-        assert.equal(
-            dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
-            false,
-        );
-        handle.stop();
-        const lost = dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
-        assert.equal(lost.length, 1, JSON.stringify(dbusCalls, null, 2));
-        assert.equal(lost[0]?.service, ":1.7");
-        assert.equal(parsePayload(lost[0]?.payload ?? "{}")["correlation_id"], correlation);
-        // Stopped entry rejects further sends and stays silent on repeat stop.
-        assert.equal(handle.requestSend("ws-2"), false);
-        handle.stop();
-        assert.equal(dbusCalls.filter((c) => c.payload.includes("adapter-lost")).length, 1);
-        assert.equal(dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
-        assert.ok(logs.length > 0, logs.join("\n"));
-    });
-
-    it("abandons before verify when the scope changed after an accepted ack", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        // Request, pre-write revalidation, follow check, and post-write
-        // verified observations are stable; the fifth (just before verify)
-        // reports a drifted scope. The request observation predates the
-        // override, so the first three counted observations are pre-write,
-        // follow, and post-write; the fourth (pre-verify) drifts.
-        let observeCalls = 0;
-        mocks.observeImpl = () => {
-            observeCalls += 1;
-            if (observeCalls <= 3) {
-                return makeWorldObserved(mocks.world, refs);
-            }
-            return makeObserved(refs, { sourceOutput: "out-9" });
-        };
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        // Accepted ack arrives, then the pre-verify re-observation fails: the
-        // uncertain post-ack result abandons instead of disabling.
-        mocks.callbacks[2]?.(ackReply(correlation));
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        assert.ok(mocks.logs.some((l) => l.includes("cause=stale-revision")), mocks.logs.join("\n"));
-        // No verify was sent with the stale data; no adapter-lost, exactly
-        // one abandon carrying the retained scope.
-        const verify = mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify"));
-        assert.equal(verify, false, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")),
-            false,
-            JSON.stringify(mocks.dbusCalls, null, 2),
-        );
-        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(adapter.blocksPlan, false);
-    });
-
-    it("emits a redacted disable-terminal discriminator for a pre-ack fence-incomplete teardown", () => {
-        // Product-shaped w19 analogue: a valid planned 4-geometry/mover send
-        // with a partial geometry fence, a concurrent busy refusal that must
-        // not be marked causal, then the exact silent pre-ack `disable()`
-        // terminal branch. Fails pre-fix for the missing discriminator.
-        const refs = makeRefs();
-        const refU = {};
-        const fourWindowObserved = (): WorkspaceSendObserved =>
-            makeObserved(refs, {
-                sourceWindows: Object.freeze([
-                    Object.freeze({ id: "win-a", ref: refs.a, rect: Object.freeze(rect(0, 0, 100, 100)) }),
-                    Object.freeze({ id: "win-b", ref: refs.b, rect: Object.freeze(rect(100, 0, 100, 100)) }),
-                ]),
-                targetWindows: Object.freeze([
-                    Object.freeze({ id: "win-t", ref: refs.t, rect: Object.freeze(rect(0, 0, 100, 100)) }),
-                    Object.freeze({ id: "win-u", ref: refU, rect: Object.freeze(rect(200, 0, 100, 100)) }),
-                ]),
-            });
-        const plannedReply4 = (correlation: string): string =>
-            JSON.stringify({
-                v: WORKSPACE_SEND_CONTRACT_VERSION,
-                correlation_id: correlation,
-                outcome: "planned",
-                kind: "send-to-workspace",
-                base_revision: 0,
-                detail: { kind: "send-to-workspace", policy_version: 1, capability: "move-tiled" },
-                desired_geometry: [
-                    { window: "win-a", leaf: "leaf-win-a", output: "out-1", workspace: "ws-2", rect: { x: 0, y: 0, w: 600, h: 800 } },
-                    { window: "win-b", leaf: "leaf-win-b", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 1200, h: 800 } },
-                    { window: "win-t", leaf: "leaf-win-t", output: "out-1", workspace: "ws-2", rect: { x: 600, y: 0, w: 600, h: 800 } },
-                    { window: "win-u", leaf: "leaf-win-u", output: "out-1", workspace: "ws-2", rect: { x: 0, y: 0, w: 600, h: 800 } },
-                ],
-                desired_focus: { domain_output: "out-1", domain_workspace: "ws-2", leaf: "leaf-win-a" },
-                preconditions: KNOWN_PRECONDITIONS,
-                operation: {
-                    op: "move-tiled",
-                    window: "win-a",
-                    leaf: "leaf-win-a",
-                    source_output: "out-1",
-                    source_workspace: "ws-1",
-                    target_output: "out-1",
-                    target_workspace: "ws-2",
-                },
-            });
-        const mocks = mockEnv(refs);
-        mocks.observeImpl = fourWindowObserved;
-        const seam = addEchoSeam(mocks);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply4(correlation));
-        assert.equal(adapter.isInFlight, true);
-        assert.ok(mocks.logs.some((l) => l.includes("event=plan-echo") && l.includes("outcome=waiting")), mocks.logs.join("\n"));
-        // Concurrent second send is busy-refused while the fence is armed; it
-        // must not disturb the flight, mark causality, or emit a plan.
-        const callsBeforeBusy = mocks.dbusCalls.length;
-        assert.equal(adapter.requestSend("ws-2"), false, "in-flight fence refuses the concurrent send");
-        assert.equal(adapter.isInFlight, true);
-        assert.equal(mocks.dbusCalls.length, callsBeforeBusy, "busy refusal must not emit a new request");
-        // Partial fence progress: mover plus two geometries consumed, leaving
-        // the mover-seen flag set with two plan-relative indices still armed.
-        seam.fire();
-        for (const ref of [refs.b, refs.t]) {
-            for (const handler of [...(seam.geoHandlers.get(ref) ?? [])]) {
-                handler();
-            }
-        }
-        assert.equal(adapter.isInFlight, true);
-        assert.ok(mocks.logs.some((l) => l.includes("event=plan-echo") && l.includes("outcome=consumed")), mocks.logs.join("\n"));
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
-            false,
-            "partial fence must not ack",
-        );
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
-        // Exact terminal branch: direct lifecycle teardown before ack.
-        adapter.disable();
-        assert.equal(adapter.isEnabled, false);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(mocks.timers[0]?.cancelled, true);
-        const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
-        assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(lost[0]?.service, ":1.7");
-        assert.equal(parsePayload(lost[0]?.payload ?? "{}")["correlation_id"], correlation);
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
-        assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
-        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
-        assert.deepEqual(mocks.switches, []);
-        assert.deepEqual(mocks.focuses, []);
-        // The new discriminator: one redacted disable-terminal line carrying
-        // the incomplete fence, the mismatch verifier category, and proof the
-        // disable path ran (versus unknown log delivery).
-        const terminal = mocks.logs.filter((l) => l.includes("event=disable-terminal") && l.includes(`correlation=${correlation}`));
-        assert.equal(terminal.length, 1, `expected one disable-terminal:\n${mocks.logs.join("\n")}`);
-        const line = terminal[0] ?? "";
-        assert.ok(line.includes("outcome=disable-teardown"), line);
-        assert.ok(line.includes("fence_total=4"), line);
-        assert.ok(line.includes("fence_pending=2"), line);
-        assert.ok(line.includes("mover_seen=1"), line);
-        assert.ok(line.includes("fence_idx=0,3"), line);
-        assert.ok(line.includes("verify_reason=geometry-rect-mismatch"), line);
-        assert.ok(line.includes("verify_gates=incomplete"), line);
-        assert.ok(line.includes("verify_geo_idx=0"), line);
-        assert.ok(line.startsWith("plasma-auto-tiler:route-diag component=cosmic-send "), line);
-        assert.ok(line.includes(" stage=request ") && line.includes(" generation=gen-1"), line);
-        for (const raw of ["win-a", "win-b", "win-t", "win-u", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
-            assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
-        }
-        // Second disable stays silent: exactly one report and one terminal line.
-        adapter.disable();
-        assert.equal(mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost")).length, 1);
-        assert.equal(
-            mocks.logs.filter((l) => l.includes("event=disable-terminal") && l.includes(`correlation=${correlation}`)).length,
-            1,
-        );
-        // Direct disable is intentionally terminal and fail-closed: no later
-        // same-instance send may proceed, so no later-send-usable assertion
-        // applies here (unlike the ordinary clean `recoverClean` path, whose
-        // reusability stays covered by the existing no-pending suites).
-        assert.equal(adapter.requestSend("ws-2"), false, "disabled adapter stays fail-closed");
-    });
-
-    it("distinguishes stale scope in the disable-terminal discriminator without changing behavior", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const seam = addEchoSeam(mocks);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        assert.equal(adapter.isInFlight, true);
-        // Disable-time fresh observation drifts scope: the verifier branch is
-        // `stale-revision` (`scope-source-output`), distinct from the
-        // geometry-mismatch branch above.
-        mocks.observeImpl = () => makeObserved(refs, { sourceOutput: "out-9" });
-        adapter.disable();
-        assert.equal(adapter.isEnabled, false);
-        assert.equal(adapter.isInFlight, false);
-        const terminal = mocks.logs.filter((l) => l.includes("event=disable-terminal") && l.includes(`correlation=${correlation}`));
-        assert.equal(terminal.length, 1, mocks.logs.join("\n"));
-        const line = terminal[0] ?? "";
-        assert.ok(line.includes("verify_reason=scope-source-output"), line);
-        assert.ok(line.includes("verify_geo_idx=-1"), line);
-        assert.ok(line.includes("mover_seen=0"), line);
-        for (const raw of ["win-a", "out-9", ":1.7", "owner-1"]) {
-            assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
-        }
-        const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
-        assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        void seam;
-    });
-
-    it("keeps disable teardown exact when the disable-terminal diagnostic throws", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const seam = addEchoSeam(mocks);
-        const adapter = new WorkspaceSendAdapter({
-            ...mocks.env,
-            log: (message: string) => {
-                if (message.includes("event=disable-terminal")) {
-                    throw new Error("diagnostic lost");
-                }
-                mocks.logs.push(message);
-            },
-        });
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        adapter.disable();
-        assert.equal(adapter.isEnabled, false);
-        assert.equal(adapter.isInFlight, false);
-        const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
-        assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(parsePayload(lost[0]?.payload ?? "{}")["correlation_id"], correlation);
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
-        void seam;
-    });
-});
-
-describe("cosmic send-to-workspace wire contract", () => {
-    it("binds owner, generation, correlation, and base revision across phases", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        runLifecycle(mocks, adapter);
-        for (const call of mocks.dbusCalls.slice(1)) {
-            const payload = parsePayload(call.payload);
-            assert.equal(payload["v"], WORKSPACE_SEND_CONTRACT_VERSION);
-            assert.equal(payload["owner"], "owner-1");
-            assert.equal(payload["generation"], "gen-1");
-            assert.ok((payload["correlation_id"] as string).length > 0);
-        }
-    });
-
-    it("carries the established selected geometry gaps in every domain payload", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        runLifecycle(mocks, adapter);
-        const plannerPayloads = mocks.dbusCalls
-            .filter((call) => call.method === WORKSPACE_SEND_METHOD)
-            .map((call) => parsePayload(call.payload));
-        assert.ok(plannerPayloads.length >= 3, mocks.dbusCalls.join("\n"));
-        for (const payload of plannerPayloads) {
-            const domain = payload["domain"] as Record<string, unknown>;
-            const targetDomain = payload["target_domain"] as Record<string, unknown>;
-            assert.equal(domain["gap"], DOMAIN_GAP);
-            assert.equal(domain["outer_gap"], OUTER_DOMAIN_GAP);
-            assert.equal(targetDomain["gap"], DOMAIN_GAP);
-            assert.equal(targetDomain["outer_gap"], OUTER_DOMAIN_GAP);
-        }
-    });
-
-    it("carries the complete source and target post-observation in ack and verify", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        runLifecycle(mocks, adapter);
-        for (const call of mocks.dbusCalls.slice(2)) {
-            const payload = parsePayload(call.payload);
-            const windows = payload["windows"] as Array<Record<string, unknown>>;
-            const targetWindows = payload["target_windows"] as Array<Record<string, unknown>>;
-            const ids = [...windows.map((w) => w["window"]), ...targetWindows.map((w) => w["window"])].sort();
-            assert.deepEqual(ids, ["win-a", "win-b", "win-t"]);
-        }
-    });
-
-    it("emits a deterministic bounded scope fingerprint", () => {
-        const expected = workspaceFingerprint("out-1", "ws-1", ["win-a", "win-b"].sort());
-        const actual = workspaceFingerprint("out-1", "ws-1", ["win-a", "win-b"]);
-        assert.equal(actual, expected);
-        assert.ok(actual > 0);
-    });
-
-    it("refuses unknown command op replies as service-fault", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "bogus" }));
-        // Service-fault failures attempt one cancel round trip first; the
-        // unanswered cancel reaches abandon instead of disabling.
-        assert.equal(adapter.isInFlight, true);
-        mocks.timers[1]?.callback();
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(abandonPayloadsOf(mocks).length, 1);
-        assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
-        assert.equal(adapter.isInFlight, false);
-        assert.ok(mocks.logs.some((l) => l.includes("cause=service-fault")), mocks.logs.join("\n"));
-        assert.equal(mocks.geometries.length, 0);
-    });
-
-    it("validates the entry handle and disabled-by-default activation", () => {
-        const handle = startWorkspaceSendAdapterEntry({});
-        assert.equal(handle, null, "no production import path supplies a live workspace");
-        const handle2 = startWorkspaceSendAdapterEntry({
-            workspace: {},
-            callDbus: () => {},
-            scheduleOnce: () => () => {},
-            log: () => {},
-            owner: "owner-1",
-            generation: "gen-1",
-        });
-        assert.ok(handle2 !== null, "explicit entry with overrides starts");
-        assert.equal(handle2.requestSend("bad id!"), false);
-        handle2.stop();
-    });
-});
-
-describe("cosmic send-to-workspace source guards", () => {
-    const srcDir = kwinSrcDir();
-
-    it("keeps the adapter out of the single-engine entry", () => {
-        const entry = readFileSync(join(srcDir, "entry.ts"), "utf8");
-        assert.ok(!entry.includes("workspace-send"));
-        assert.ok(!entry.includes("WorkspaceSend"));
-        assert.ok(!entry.includes("startWorkspaceSendAdapterEntry"));
-    });
-
-    it("registers no shortcuts and performs no forbidden native access", () => {
-        for (const name of ["workspace-send-adapter.ts", "workspace-send-adapter-entry.ts"]) {
-            const body = readFileSync(join(srcDir, name), "utf8");
-            assert.ok(!body.includes("registerShortcut"), name);
-            assert.ok(!body.includes("registerSessionShortcut"), name);
-            assert.ok(!body.includes("readConfig"), name);
-            assert.ok(!body.includes("writeConfig"), name);
-            assert.ok(!body.includes("createDesktop"), name);
-            assert.ok(!body.includes("removeDesktop"), name);
-            assert.ok(!body.includes("setTimeout"), name);
-            assert.ok(!body.includes("setInterval"), name);
-            assert.ok(!body.includes("requestAnimationFrame"), name);
-            assert.ok(!body.includes("waitFor"), name);
-            assert.ok(!body.includes("fallback"), name);
-        }
-    });
-
-    it("uses only the one DescribePlan transport", () => {
-        const src = readFileSync(join(srcDir, "workspace-send-adapter.ts"), "utf8");
-        assert.ok(src.includes("DescribePlan"));
-        assert.ok(src.includes(WORKSPACE_SEND_METHOD));
-        assert.ok(!src.includes("DescribeMovement"));
-        assert.ok(!src.includes("DescribeFocus"));
-        assert.ok(!src.includes("DescribeResize"));
-        // Same-UID stays the Planner's single check; never duplicated here.
-        assert.ok(!src.includes("GetConnectionUnixUser"));
-    });
-
-it("drives activation exactly like the bounded owner-pin sequence", () => {
-        const src = readFileSync(join(srcDir, "workspace-send-adapter.ts"), "utf8");
-        assert.ok(src.includes(WORKSPACE_SEND_GET_OWNER_METHOD));
-        assert.ok(src.includes(WORKSPACE_SEND_START_METHOD));
-        assert.ok(src.includes(String(WORKSPACE_SEND_START_PRIMARY)));
-        assert.ok(src.includes(String(WORKSPACE_SEND_START_ALREADY)));
-        assert.ok(src.includes(WORKSPACE_SEND_DBUS_SERVICE));
-        assert.ok(src.includes(WORKSPACE_SEND_DBUS_OBJECT));
-        assert.ok(src.includes(WORKSPACE_SEND_DBUS_INTERFACE));
-        assert.ok(src.includes(":N.M"));
-    });
-});
-
-describe("cosmic send-to-workspace review follow-ups", () => {
-    it("refuses an internally consistent plan whose mover differs from the snapshot before writes", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        // Internally consistent: desired_focus names the operation leaf in the
-        // operation target domain, but the operation mover (win-b) differs
-        // from the captured snapshot mover (win-a).
-        const mismatched = JSON.parse(plannedReply(correlation)) as Record<string, unknown>;
-        const operation = mismatched["operation"] as Record<string, unknown>;
-        operation["window"] = "win-b";
-        operation["leaf"] = "leaf-win-b";
-        mismatched["desired_focus"] = { domain_output: "out-1", domain_workspace: "ws-2", leaf: "leaf-win-b" };
-        mocks.callbacks[1]?.(JSON.stringify(mismatched));
-        // Mismatched before any write: one cancel round trip runs before the
-        // unanswered cancel reaches abandon.
-        assert.equal(adapter.isInFlight, true);
-        assert.ok(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-cancel")));
-        mocks.timers[1]?.callback();
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(abandonPayloadsOf(mocks).length, 1);
-        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
-        assert.equal(adapter.isInFlight, false);
-        assert.ok(mocks.logs.some((l) => l.includes("cause=precondition-mismatch")), mocks.logs.join("\n"));
-        assert.equal(mocks.geometries.length, 0);
-        assert.equal(mocks.desktops.length, 0);
-        assert.deepEqual(mocks.switches, []);
-        assert.deepEqual(mocks.focuses, []);
-    });
-
-    it("clears the flight after a committed follow so the next request completes", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        runLifecycle(mocks, adapter);
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        const firstCorrelation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
-        // Restore the native world to the pre-flight layout so the next
-        // request observes the same scope with the same harness.
-        for (const entry of mocks.world.windows) {
-            if (entry.id === "win-a") {
-                entry.workspace = "ws-1";
-                entry.rect = rect(0, 0, 100, 100);
-            } else if (entry.id === "win-b") {
-                entry.workspace = "ws-1";
-                entry.rect = rect(100, 0, 100, 100);
-            } else if (entry.id === "win-t") {
-                entry.workspace = "ws-2";
-                entry.rect = rect(0, 0, 100, 100);
-            }
-        }
-        assert.equal(adapter.requestSend("ws-2"), true);
-        const base = 4;
-        assert.equal(mocks.dbusCalls[base]?.method, WORKSPACE_SEND_GET_OWNER_METHOD);
-        mocks.callbacks[base]?.(":1.7");
-        const requestCall = mocks.dbusCalls[base + 1];
-        assert.equal(requestCall?.method, WORKSPACE_SEND_METHOD);
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        assert.notEqual(correlation, firstCorrelation);
-        mocks.callbacks[base + 1]?.(plannedReply(correlation));
-        const ackCall = mocks.dbusCalls[base + 2];
-        assert.ok((parsePayload(ackCall?.payload ?? "{}")["command"] as Record<string, unknown>)["op"] === "send-to-workspace-ack");
-        mocks.callbacks[base + 2]?.(ackReply(correlation));
-        const verifyCall = mocks.dbusCalls[base + 3];
-        assert.ok((parsePayload(verifyCall?.payload ?? "{}")["command"] as Record<string, unknown>)["op"] === "send-to-workspace-verify");
-        mocks.callbacks[base + 3]?.(committedReply(correlation));
-        assert.deepEqual(mocks.switches, [refs.desktop, refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a, refs.a]);
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")).length, 2);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 0);
-    });
-
-    it("preserves one confirmed native follow when the ack reply is rejected", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        assert.equal(mocks.dbusCalls[2]?.method, WORKSPACE_SEND_METHOD);
-        mocks.callbacks[2]?.(
-            JSON.stringify({
-                v: WORKSPACE_SEND_CONTRACT_VERSION,
-                correlation_id: correlation,
-                outcome: "rejected",
-                kind: "policy-deny",
-            }),
-        );
-        // The rejected ack abandons the retained pending; the confirmed
-        // native follow is preserved and the adapter stays enabled.
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        assert.equal(abandonPayloadsOf(mocks).length, 1);
-        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
-        assert.equal(adapter.isInFlight, false);
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
-        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
-    });
-
-    it("preserves one confirmed native follow when the verify reply diverges", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        mocks.callbacks[2]?.(ackReply(correlation));
-        const verifyCall = mocks.dbusCalls[3];
-        assert.ok((parsePayload(verifyCall?.payload ?? "{}")["command"] as Record<string, unknown>)["op"] === "send-to-workspace-verify");
-        mocks.callbacks[3]?.(
-            JSON.stringify({
-                v: WORKSPACE_SEND_CONTRACT_VERSION,
-                correlation_id: correlation,
-                outcome: "diverged",
-                kind: "stale-revision",
-            }),
-        );
-        // The diverged verify abandons the retained pending; the confirmed
-        // native follow is preserved and the adapter stays enabled.
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        assert.equal(abandonPayloadsOf(mocks).length, 1);
-        assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
-        assert.equal(adapter.isInFlight, false);
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
-        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
-    });
-});
-
-describe("cosmic send-to-workspace mover echo fence", () => {
-    function startEchoFlight(refs: { a: object; b: object; t: object; desktop: object }): {
-        mocks: Mocks;
-        adapter: WorkspaceSendAdapter;
-        seam: EchoSeam;
-        correlation: string;
-    } {
-        const mocks = mockEnv(refs);
-        const seam = addEchoSeam(mocks);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        return { mocks, adapter, seam, correlation };
-    }
-
-    function finishEchoFlight(
-        mocks: Mocks,
-        seam: EchoSeam,
-        correlation: string,
-    ): void {
-        seam.fire();
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
-            false,
-            "mover echo alone must not ack while geometry echoes are pending",
-        );
-        seam.fireGeometry();
-        const ackCall = mocks.dbusCalls[2];
-        assert.equal(ackCall?.method, WORKSPACE_SEND_METHOD);
-        const ackPayload = parsePayload(ackCall?.payload ?? "{}");
-        assert.equal((ackPayload["command"] as Record<string, unknown>)["op"], "send-to-workspace-ack");
-        mocks.callbacks[2]?.(ackReply(correlation));
-        const verifyCall = mocks.dbusCalls[3];
-        assert.equal((parsePayload(verifyCall?.payload ?? "{}")["command"] as Record<string, unknown>)["op"], "send-to-workspace-verify");
-        mocks.callbacks[3]?.(committedReply(correlation));
-    }
-
-    function resetWorldToSource(mocks: Mocks): void {
-        for (const entry of mocks.world.windows) {
-            if (entry.id === "win-a") {
-                entry.workspace = "ws-1";
-                entry.rect = rect(0, 0, 100, 100);
-            } else if (entry.id === "win-b") {
-                entry.workspace = "ws-1";
-                entry.rect = rect(100, 0, 100, 100);
-            } else if (entry.id === "win-t") {
-                entry.workspace = "ws-2";
-                entry.rect = rect(0, 0, 100, 100);
-            }
-        }
-    }
-
-    it("sends no ack or verify before the mover echo", () => {
-        const refs = makeRefs();
-        const { mocks, adapter, seam, correlation } = startEchoFlight(refs);
-        void correlation;
-        assert.equal(mocks.geometries.length, 3);
-        assert.equal(mocks.desktops.length, 1);
-        assert.deepEqual(seam.targets, [refs.a]);
-        assert.equal(mocks.dbusCalls.length, 2);
-        assert.ok(mocks.logs.some((l) => l.includes("event=plan-echo") && l.includes("outcome=waiting")), mocks.logs.join("\n"));
-        assert.ok(mocks.logs.some((l) => l.includes("event=plan-geometry") && l.includes("outcome=waiting")), mocks.logs.join("\n"));
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
-            false,
-        );
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
-        seam.fire();
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
-            false,
-            "geometry fence must still hold the ack after the mover echo alone",
-        );
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-    });
-
-    it("verifies exact geometry plus membership on echo, then commits and follows", () => {
-        const refs = makeRefs();
-        const { mocks, adapter, seam, correlation } = startEchoFlight(refs);
-        finishEchoFlight(mocks, seam, correlation);
-        assert.equal(mocks.geometries.length, 3);
-        assert.deepEqual(mocks.geometries.map((g) => g.rect.w), [1200, 600, 600]);
-        assert.equal(mocks.desktops.length, 1);
-        assert.equal(mocks.desktops[0]?.target, refs.a);
-        assert.ok(mocks.logs.some((l) => l.includes("event=plan-echo") && l.includes("outcome=consumed")), mocks.logs.join("\n"));
-        assert.ok(mocks.logs.some((l) => l.includes("event=plan-geometry") && l.includes("outcome=consumed")), mocks.logs.join("\n"));
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=acknowledged")), mocks.logs.join("\n"));
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
-        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(seam.detachCount, 1);
-        assert.equal(seam.geoDetachCount, 3);
-    });
-
-    it("keeps the adapter enabled across a second and third completed move", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const seam = addEchoSeam(mocks);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        for (let move = 0; move < 3; move += 1) {
-            assert.equal(adapter.requestSend("ws-2"), true);
-            const base = move * 4;
-            assert.equal(mocks.dbusCalls[base]?.method, WORKSPACE_SEND_GET_OWNER_METHOD);
-            mocks.callbacks[base]?.(":1.7");
-            const requestCall = mocks.dbusCalls[base + 1];
-            const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-            mocks.callbacks[base + 1]?.(plannedReply(correlation));
-            assert.equal(mocks.dbusCalls.length, base + 2);
-            seam.fire();
-            seam.fireGeometry();
-            mocks.callbacks[base + 2]?.(ackReply(correlation));
-            mocks.callbacks[base + 3]?.(committedReply(correlation));
-            assert.equal(adapter.isEnabled, true);
-            assert.equal(adapter.isInFlight, false);
-            if (move < 2) {
-                resetWorldToSource(mocks);
-            }
-        }
-        assert.deepEqual(mocks.switches, [refs.desktop, refs.desktop, refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a, refs.a, refs.a]);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")).length, 3);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 0);
-        assert.equal(seam.detachCount, 3);
-        assert.equal(seam.geoDetachCount, 9);
-    });
-
-    it("ignores a duplicate echo without duplicate membership or ack", () => {
-        const refs = makeRefs();
-        const { mocks, adapter, seam, correlation } = startEchoFlight(refs);
-        finishEchoFlight(mocks, seam, correlation);
-        const calls = mocks.dbusCalls.length;
-        const memberships = mocks.desktops.length;
-        seam.fire();
-        seam.fireGeometry();
-        assert.equal(mocks.dbusCalls.length, calls);
-        assert.equal(mocks.desktops.length, memberships);
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("abandons an echo mismatch without adapter-lost", () => {
-        const refs = makeRefs();
-        const { mocks, adapter, seam, correlation } = startEchoFlight(refs);
-        // Mover reports back in the source with a stale rect: strict echo
-        // post-observation must fail terminal without an accepted ack.
-        mocks.observeImpl = () =>
-            makeObserved(refs, {
-                sourceWindows: Object.freeze([
-                    Object.freeze({ id: "win-a", ref: refs.a, rect: Object.freeze(rect(0, 0, 100, 100)) }),
-                    Object.freeze({ id: "win-b", ref: refs.b, rect: Object.freeze(rect(100, 0, 100, 100)) }),
-                ]),
-            });
-        seam.fire();
-        seam.fireGeometry();
-        // Strict echo post-observation fails without an accepted ack; the
-        // uncertain result abandons instead of disabling.
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        assert.ok(
-            mocks.logs.some((l) => l.includes("cause=post-observation-mismatch")),
-            mocks.logs.join("\n"),
-        );
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")),
-            false,
-        );
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
-            false,
-        );
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")),
-            false,
-            JSON.stringify(mocks.dbusCalls, null, 2),
-        );
-        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(seam.detachCount, 1);
-        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("completes a real entry shortcut-shaped flight only after the native echo", () => {
-        const harness = startEntryForPlannedFlight();
-        assert.ok(harness.handle !== null);
-        assert.equal(harness.handle.requestSend("ws-2"), true);
-        harness.callbacks[0]?.(":1.7");
-        const requestCall = harness.dbusCalls[1];
-        assert.equal(requestCall?.service, ":1.7");
-        const requestPayload = parsePayload(requestCall?.payload ?? "{}");
-        assert.equal((requestPayload["command"] as Record<string, unknown>)["op"], "send-to-workspace");
-        const correlation = requestPayload["correlation_id"] as string;
-        harness.callbacks[1]?.(plannedReply(correlation));
-        // Native writes applied, but Rust-shaped ack waits for both echoes.
-        assert.equal(
-            harness.dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
-            false,
-        );
-        harness.fireMoverEcho();
-        assert.equal(
-            harness.dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
-            false,
-            "mover echo alone must not ack while geometry echoes are pending",
-        );
-        harness.fireGeometry();
-        const ackCall = harness.dbusCalls[2];
-        assert.equal((parsePayload(ackCall?.payload ?? "{}")["command"] as Record<string, unknown>)["op"], "send-to-workspace-ack");
-        harness.callbacks[2]?.(ackReply(correlation));
-        const verifyCall = harness.dbusCalls[3];
-        const verifyPayload = parsePayload(verifyCall?.payload ?? "{}");
-        assert.equal((verifyPayload["command"] as Record<string, unknown>)["op"], "send-to-workspace-verify");
-        assert.deepEqual(
-            (verifyPayload["command"] as Record<string, unknown>)["preconditions"],
-            KNOWN_PRECONDITIONS,
-        );
-        harness.callbacks[3]?.(committedReply(correlation));
-        assert.ok(harness.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), harness.logs.join("\n"));
-        assert.ok(!harness.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), harness.logs.join("\n"));
-        harness.handle.stop();
-    });
-
-    it("needs no geometry echo when planned geometry is unchanged", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const seam = addEchoSeam(mocks);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        const unchanged = JSON.stringify({
-            v: WORKSPACE_SEND_CONTRACT_VERSION,
-            correlation_id: correlation,
-            outcome: "planned",
-            kind: "send-to-workspace",
-            base_revision: 0,
-            detail: { kind: "send-to-workspace", policy_version: 1, capability: "move-tiled" },
-            desired_geometry: [
-                { window: "win-a", leaf: "leaf-win-a", output: "out-1", workspace: "ws-2", rect: { x: 0, y: 0, w: 100, h: 100 } },
-                { window: "win-b", leaf: "leaf-win-b", output: "out-1", workspace: "ws-1", rect: { x: 100, y: 0, w: 100, h: 100 } },
-                { window: "win-t", leaf: "leaf-win-t", output: "out-1", workspace: "ws-2", rect: { x: 0, y: 0, w: 100, h: 100 } },
-            ],
-            desired_focus: { domain_output: "out-1", domain_workspace: "ws-2", leaf: "leaf-win-a" },
-            preconditions: KNOWN_PRECONDITIONS,
-            operation: {
-                op: "move-tiled",
-                window: "win-a",
-                leaf: "leaf-win-a",
-                source_output: "out-1",
-                source_workspace: "ws-1",
-                target_output: "out-1",
-                target_workspace: "ws-2",
-            },
-        });
-        mocks.callbacks[1]?.(unchanged);
-        assert.equal(seam.geoHandlers.size, 0, "unchanged geometry subscribes to no window");
-        assert.ok(mocks.logs.some((l) => l.includes("event=plan-echo") && l.includes("outcome=waiting")), mocks.logs.join("\n"));
-        assert.ok(!mocks.logs.some((l) => l.includes("event=plan-geometry")), mocks.logs.join("\n"));
-        seam.fire();
-        const ackCall = mocks.dbusCalls[2];
-        assert.equal(ackCall?.method, WORKSPACE_SEND_METHOD);
-        assert.equal((parsePayload(ackCall?.payload ?? "{}")["command"] as Record<string, unknown>)["op"], "send-to-workspace-ack");
-        mocks.callbacks[2]?.(ackReply(correlation));
-        mocks.callbacks[3]?.(committedReply(correlation));
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(seam.detachCount, 1);
-        assert.equal(seam.geoDetachCount, 0);
-    });
-
-    it("abandons and detaches every handler when a geometry subscription fails", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const handlers: Array<() => void> = [];
-        const targets: object[] = [];
-        const geoHandlers = new Map<object, Array<() => void>>();
-        let moverDetaches = 0;
-        let geoDetaches = 0;
-        let geoCalls = 0;
-        const failingEnv: WorkspaceSendAdapterEnv = {
-            ...mocks.env,
-            subscribeMoverDesktops: (moverRef: object, handler: () => void) => {
-                targets.push(moverRef);
-                handlers.push(handler);
-                let detached = false;
-                return () => {
-                    if (!detached) {
-                        detached = true;
-                        moverDetaches += 1;
-                    }
-                };
-            },
-            subscribeWindowGeometry: (windowRef: object, handler: () => void) => {
-                geoCalls += 1;
-                if (geoCalls === 1) {
-                    const list = geoHandlers.get(windowRef) ?? [];
-                    list.push(handler);
-                    geoHandlers.set(windowRef, list);
-                    let detached = false;
-                    return () => {
-                        if (!detached) {
-                            detached = true;
-                            geoDetaches += 1;
-                        }
-                    };
-                }
-                return null;
-            },
-        };
-        (mocks as { env: WorkspaceSendAdapterEnv }).env = failingEnv;
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        assert.equal(adapter.isEnabled, true, "geometry subscription failure abandons, never disables");
-        assert.equal(adapter.isInFlight, true);
-        assert.ok(mocks.logs.some((l) => l.includes("cause=write-failed")), mocks.logs.join("\n"));
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")),
-            false,
-            JSON.stringify(mocks.dbusCalls, null, 2),
-        );
-        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(moverDetaches, 1, "mover handler detached");
-        assert.equal(geoDetaches, 1, "prior geometry handler detached");
-        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
-            false,
-        );
-    });
-
-    it("detaches every handler on disable while waiting for geometry echoes", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const seam = addEchoSeam(mocks);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        assert.equal(adapter.isInFlight, true);
-        assert.equal(seam.geoHandlers.size, 3, "three changed windows subscribed");
-        adapter.disable();
-        assert.equal(adapter.isEnabled, false);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(seam.detachCount, 1, "mover detached");
-        assert.equal(seam.geoDetachCount, 3, "every geometry handler detached");
-        const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
-        assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(parsePayload(lost[0]?.payload ?? "{}")["correlation_id"], correlation);
-    });
-});
-
-describe("cosmic send-to-workspace frameGeometry fence P0", () => {
-    function plannedReplyTwo(correlation: string): string {
-        return JSON.stringify({
-            v: WORKSPACE_SEND_CONTRACT_VERSION,
-            correlation_id: correlation,
-            outcome: "planned",
-            kind: "send-to-workspace",
-            base_revision: 0,
-            detail: { kind: "send-to-workspace", policy_version: 1, capability: "move-tiled" },
-            desired_geometry: [
-                { window: "win-a", leaf: "leaf-win-a", output: "out-1", workspace: "ws-2", rect: { x: 0, y: 0, w: 600, h: 800 } },
-                { window: "win-t", leaf: "leaf-win-t", output: "out-1", workspace: "ws-2", rect: { x: 600, y: 0, w: 600, h: 800 } },
-            ],
-            desired_focus: { domain_output: "out-1", domain_workspace: "ws-2", leaf: "leaf-win-a" },
-            preconditions: KNOWN_PRECONDITIONS,
-            operation: {
-                op: "move-tiled",
-                window: "win-a",
-                leaf: "leaf-win-a",
-                source_output: "out-1",
-                source_workspace: "ws-1",
-                target_output: "out-1",
-                target_workspace: "ws-2",
-            },
-        });
-    }
-
-    function setWorldWindows(mocks: Mocks, refs: { a: object; b: object; t: object; desktop: object }, mode: 2 | 3): void {
-        if (mode === 2) {
-            mocks.world.windows.length = 0;
-            mocks.world.windows.push(
-                { id: "win-a", ref: refs.a, rect: rect(0, 0, 100, 100), workspace: "ws-1" },
-                { id: "win-t", ref: refs.t, rect: rect(0, 0, 100, 100), workspace: "ws-2" },
-            );
-        } else {
-            mocks.world.windows.length = 0;
-            mocks.world.windows.push(
-                { id: "win-a", ref: refs.a, rect: rect(0, 0, 100, 100), workspace: "ws-1" },
-                { id: "win-b", ref: refs.b, rect: rect(100, 0, 100, 100), workspace: "ws-1" },
-                { id: "win-t", ref: refs.t, rect: rect(0, 0, 100, 100), workspace: "ws-2" },
-            );
-        }
-        (mocks.world as { activeId: string }).activeId = "win-a";
-        (mocks.world as { activeRef: object | null }).activeRef = refs.a;
-    }
-
-    function driveOneFlight(mocks: Mocks, seam: EchoSeam, base: number, mode: 2 | 3): string {
-        assert.equal(mocks.dbusCalls[base]?.method, WORKSPACE_SEND_GET_OWNER_METHOD);
-        mocks.callbacks[base]?.(":1.7");
-        const requestCall = mocks.dbusCalls[base + 1];
-        assert.equal(requestCall?.method, WORKSPACE_SEND_METHOD);
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[base + 1]?.(mode === 2 ? plannedReplyTwo(correlation) : plannedReply(correlation));
-        assert.equal(mocks.dbusCalls.length, base + 2, "ack waits for mover plus frame echoes");
-        seam.fire();
-        assert.equal(
-            mocks.dbusCalls.some(
-                (c) => c.payload.includes(`"${correlation}"`) && c.payload.includes("accepted"),
-            ) ||
-                mocks.dbusCalls.slice(base + 2).some((c) => c.payload.includes("accepted")),
-            false,
-            "mover echo alone must not ack while frame echoes are pending",
-        );
-        seam.fireGeometry();
-        const ackCall = mocks.dbusCalls[base + 2];
-        assert.equal(ackCall?.method, WORKSPACE_SEND_METHOD);
-        assert.equal((parsePayload(ackCall?.payload ?? "{}")["command"] as Record<string, unknown>)["op"], "send-to-workspace-ack");
-        mocks.callbacks[base + 2]?.(ackReply(correlation));
-        const verifyCall = mocks.dbusCalls[base + 3];
-        assert.equal((parsePayload(verifyCall?.payload ?? "{}")["command"] as Record<string, unknown>)["op"], "send-to-workspace-verify");
-        mocks.callbacks[base + 3]?.(committedReply(correlation));
-        return correlation;
-    }
-
-    it("binds the workspace-send geometry fence to frameGeometryChanged only", () => {
-        const adapterSrc = readFileSync(join(kwinSrcDir(), "workspace-send-adapter.ts"), "utf8");
-        const entrySrc = readFileSync(join(kwinSrcDir(), "workspace-send-adapter-entry.ts"), "utf8");
-        const planEntrySrc = readFileSync(join(kwinSrcDir(), "plan-adapter-entry.ts"), "utf8");
-        const globals = readFileSync(join(kwinSrcDir(), "kwin-globals.d.ts"), "utf8");
-        assert.ok(entrySrc.includes('readSignal(windowRef, "frameGeometryChanged")'), "entry must bind frameGeometryChanged");
-        assert.ok(!entrySrc.includes('readSignal(windowRef, "moveResizedChanged")'), "entry must not bind moveResizedChanged");
-        assert.ok(planEntrySrc.includes('readSignal(windowRef, "frameGeometryChanged")'), "production entry must bind frameGeometryChanged");
-        assert.ok(!planEntrySrc.includes('readSignal(windowRef, "moveResizedChanged")'), "production entry must not bind moveResizedChanged");
-        assert.ok(adapterSrc.includes("Window.frameGeometryChanged"), "adapter seam doc must name frameGeometryChanged");
-        assert.ok(!adapterSrc.includes("Window.moveResizedChanged"), "adapter seam doc must not name moveResizedChanged");
-        assert.ok(globals.includes("frameGeometryChanged"), "globals must declare frameGeometryChanged");
-        assert.ok(globals.includes("Signal1<Rect>"), "frameGeometryChanged carries old geometry");
-        for (const name of ["workspace-send-adapter.ts", "workspace-send-adapter-entry.ts"]) {
-            const body = readFileSync(join(kwinSrcDir(), name), "utf8");
-            assert.ok(!body.includes("setTimeout"), name);
-            assert.ok(!body.includes("setInterval"), name);
-            assert.ok(!body.includes("waitFor"), name);
-            assert.ok(!body.includes("fallback"), name);
-            assert.ok(!body.includes("pollFor"), name);
-        }
-    });
-
-    it("old moveResizedChanged alone cannot settle a 2-window source; frame signal does", () => {
-        const harness = startEntryForPlannedFlight();
-        assert.ok(harness.handle !== null);
-        assert.equal(harness.handle.requestSend("ws-2"), true);
-        harness.callbacks[0]?.(":1.7");
-        const requestCall = harness.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        harness.callbacks[1]?.(plannedReply(correlation));
-        const hasAcceptedAck = (): boolean =>
-            harness.dbusCalls.some(
-                (c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted"),
-            );
-        assert.equal(hasAcceptedAck(), false);
-        // Old interactive-only signal fires repeatedly: fence must not settle.
-        harness.fireOldGeometry();
-        harness.fireOldGeometry();
-        assert.equal(hasAcceptedAck(), false, "moveResizedChanged must never settle programmatic writes");
-        // Mover membership echo alone still holds the ack while frame waits remain.
-        harness.fireMoverEcho();
-        assert.equal(hasAcceptedAck(), false, "mover echo alone must not ack while frame echoes pending");
-        // Native-shaped frame echoes settle the exact 2-window source plus target.
-        harness.fireGeometry();
-        assert.equal(hasAcceptedAck(), true, "frameGeometryChanged must settle the fence");
-        const ackCall = harness.dbusCalls[2];
-        assert.equal((parsePayload(ackCall?.payload ?? "{}")["command"] as Record<string, unknown>)["op"], "send-to-workspace-ack");
-        harness.callbacks[2]?.(ackReply(correlation));
-        harness.callbacks[3]?.(committedReply(correlation));
-        assert.ok(harness.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), harness.logs.join("\n"));
-        assert.ok(!harness.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), harness.logs.join("\n"));
-        harness.handle.stop();
-    });
-
-    it("same adapter completes 2->3->2->3 repeated flights with source survivor", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const seam = addEchoSeam(mocks);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        const modes: Array<2 | 3> = [2, 3, 2, 3];
-        const correlations: string[] = [];
-        for (let move = 0; move < modes.length; move += 1) {
-            const mode = modes[move] as 2 | 3;
-            setWorldWindows(mocks, refs, mode);
-            assert.equal(adapter.requestSend("ws-2"), true);
-            const correlation = driveOneFlight(mocks, seam, move * 4, mode);
-            correlations.push(correlation);
-            assert.equal(adapter.isEnabled, true);
-            assert.equal(adapter.isInFlight, false);
-            if (mode === 3) {
-                const observed = makeWorldObserved(mocks.world, refs);
-                assert.ok(observed.sourceWindows.some((w) => w.id === "win-b"), "win-b survives in source");
-                assert.ok(observed.targetWindows.some((w) => w.id === "win-a"), "mover lands in target");
-            } else {
-                const observed = makeWorldObserved(mocks.world, refs);
-                assert.equal(observed.sourceWindows.length, 0, "single-mover flight leaves source empty");
-                assert.ok(observed.targetWindows.some((w) => w.id === "win-a"), "mover lands in populated destination");
-                assert.ok(observed.targetWindows.some((w) => w.id === "win-t"), "destination survivor retained");
-            }
-        }
-        assert.equal(new Set(correlations).size, 4, "each flight binds a distinct correlation");
-        assert.deepEqual(mocks.switches, [refs.desktop, refs.desktop, refs.desktop, refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a, refs.a, refs.a, refs.a]);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")).length, 4);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 0);
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("completes an empty-source single-mover flight with populated destination", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const seam = addEchoSeam(mocks);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        setWorldWindows(mocks, refs, 2);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReplyTwo(correlation));
-        assert.equal(seam.geoHandlers.size, 2, "both changed windows subscribed");
-        seam.fire();
-        seam.fireGeometry();
-        mocks.callbacks[2]?.(ackReply(correlation));
-        mocks.callbacks[3]?.(committedReply(correlation));
-        const observed = makeWorldObserved(mocks.world, refs);
-        assert.equal(observed.sourceWindows.length, 0);
-        assert.deepEqual(
-            observed.targetWindows.map((w) => w.id).sort(),
-            ["win-a", "win-t"],
-        );
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("no duplicate ack or membership on extra frame signal after commit", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const seam = addEchoSeam(mocks);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        seam.fire();
-        seam.fireGeometry();
-        mocks.callbacks[2]?.(ackReply(correlation));
-        mocks.callbacks[3]?.(committedReply(correlation));
-        const calls = mocks.dbusCalls.length;
-        const memberships = mocks.desktops.length;
-        const detaches = seam.detachCount;
-        const geoDetaches = seam.geoDetachCount;
-        seam.fire();
-        seam.fireGeometry();
-        assert.equal(mocks.dbusCalls.length, calls, "extra frame echo must not re-ack");
-        assert.equal(mocks.desktops.length, memberships, "extra frame echo must not re-write membership");
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.equal(seam.detachCount, detaches);
-        assert.equal(seam.geoDetachCount, geoDetaches);
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("distinguishes a retained-target geometry mismatch without changing the timeout fence", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const seam = addEchoSeam(mocks);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        setWorldWindows(mocks, refs, 2);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReplyTwo(correlation));
-        const writes = mocks.logs.filter((line) => line.includes("event=geometry-write") && line.includes(`correlation=${correlation}`));
-        assert.equal(writes.length, 2, mocks.logs.join("\n"));
-        const targetWrite = writes.find((line) => line.includes("geo_idx=1"));
-        assert.ok(targetWrite !== undefined, mocks.logs.join("\n"));
-        assert.ok(targetWrite.includes("geo_role=target-retained"), targetWrite);
-        assert.ok(targetWrite.includes("write_return=1"), targetWrite);
-        assert.ok(targetWrite.includes("readback=exact dx=0 dy=0 dw=0 dh=0"), targetWrite);
-        seam.fire();
-        for (const handler of [...(seam.geoHandlers.get(refs.a) ?? [])]) {
-            handler();
-        }
-        const moverEcho = mocks.logs.find(
-            (line) => line.includes("event=plan-geometry") && line.includes(`correlation=${correlation}`) && line.includes("geo_idx=0"),
-        );
-        assert.ok(moverEcho !== undefined, mocks.logs.join("\n"));
-        assert.ok(moverEcho.includes("geo_role=mover") && moverEcho.includes("readback=exact"), moverEcho);
-        const target = mocks.world.windows.find((window) => window.id === "win-t");
-        assert.ok(target !== undefined);
-        target.rect = rect(602, 0, 600, 800);
-        mocks.timers[0]?.callback();
-        // Verify fails at the timeout, so the flight abandons instead of
-        // disabling; the timeout-settle discriminator is unchanged.
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        const timeout = mocks.logs.find((line) => line.includes("event=timeout-settle") && line.includes(`correlation=${correlation}`));
-        assert.ok(timeout !== undefined, mocks.logs.join("\n"));
-        assert.ok(timeout.includes("verify_reason=geometry-rect-mismatch"), timeout);
-        assert.ok(timeout.includes("verify_geo_idx=1 verify_role=target-retained"), timeout);
-        assert.ok(timeout.includes("verify_gates=incomplete"), timeout);
-        assert.ok(timeout.includes("verify_dx=2 verify_dy=0 verify_dw=0 verify_dh=0"), timeout);
-        assert.ok(timeout.includes("fence_pending=1") && timeout.includes("fence_idx=1"), timeout);
-        const geoSeq = mocks.logs
-            .filter((line) => line.includes(`correlation=${correlation}`) && line.includes(" geo_seq="))
-            .map((line) => Number((line.match(/ geo_seq=([0-9]+)/) ?? ["", "-1"])[1]));
-        assert.deepEqual(geoSeq, [...geoSeq].sort((a, b) => a - b));
-        assert.equal(
-            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted")),
-            false,
-        );
-        assert.equal(mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-verify")), false);
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.equal(adapter.requestSend("ws-2"), false, "abandon wait still blocks a concurrent send");
-        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(adapter.blocksPlan, false);
-        for (const line of [targetWrite, moverEcho, timeout]) {
-            for (const raw of ["win-a", "win-t", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
-                assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
-            }
-        }
-    });
-
-    it("propagates a JavaScript frameGeometry property rejection as write-failed", () => {
-        const harness = startEntryForPlannedFlight();
-        assert.ok(harness.handle !== null);
-        const handle = harness.handle;
-        Object.defineProperty(harness.winT, "frameGeometry", {
-            value: harness.winT["frameGeometry"],
-            writable: false,
-            configurable: true,
-            enumerable: true,
-        });
-        assert.equal(handle.requestSend("ws-2"), true);
-        harness.callbacks[0]?.(":1.7");
-        const correlation = parsePayload(harness.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
-        harness.callbacks[1]?.(plannedReply(correlation));
-        const writes = harness.logs.filter(
-            (line) => line.includes("event=geometry-write") && line.includes(`correlation=${correlation}`),
-        );
-        const targetWrite = writes.find((line) => line.includes("geo_role=target-retained"));
-        assert.ok(targetWrite !== undefined, harness.logs.join("\n"));
-        assert.ok(targetWrite.includes("write_return=0"), targetWrite);
-        assert.ok(harness.logs.some((line) => line.includes("cause=write-failed")), harness.logs.join("\n"));
-        assert.equal(
-            harness.dbusCalls.some((call) => call.payload.includes("adapter-lost")),
-            false,
-            JSON.stringify(harness.dbusCalls, null, 2),
-        );
-        const abandonCall = harness.dbusCalls[harness.dbusCalls.length - 1];
-        assert.ok((parsePayload(abandonCall?.payload ?? "{}")["command"] as Record<string, unknown>)?.["op"] === "send-to-workspace-abandon");
-        assert.equal(abandonCall?.service, ":1.7");
-        assert.equal(parsePayload(abandonCall?.payload ?? "{}")["correlation_id"], correlation);
-        harness.callbacks[harness.callbacks.length - 1]?.(
-            JSON.stringify({
-                v: WORKSPACE_SEND_CONTRACT_VERSION,
-                correlation_id: correlation,
-                outcome: "abandoned",
-                kind: "send-to-workspace",
-            }),
-        );
-        assert.equal(
-            harness.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted")),
-            false,
-        );
-        assert.equal(harness.dbusCalls.some((call) => call.payload.includes("send-to-workspace-verify")), false);
-        assert.equal(
-            harness.logs.some((line) => line.includes("event=follow") && line.includes("outcome=state-confirmed")),
-            false,
-        );
-        assert.equal(
-            harness.logs.some((line) => line.includes("event=follow-focused") || line.includes("event=follow-switched")),
-            false,
-        );
-        assert.equal(handle.requestSend("ws-2"), true, "entry reusable after abandon");
-        handle.stop();
-    });
-
-    it("ignores geometry diagnostic failure while retaining the normal send", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter({
-            ...mocks.env,
-            log: (line: string) => {
-                if (line.includes("event=geometry-write")) {
-                    throw new Error("diagnostic lost");
-                }
-                mocks.logs.push(line);
-            },
-        });
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        runLifecycle(mocks, adapter);
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-    });
-});
-
-describe("cosmic send-to-workspace w3 synchronous fence", () => {
-    it("w3 unchanged-target shape completes with geometry-before-desktop sync timing", () => {
-        const refs = { ...makeRefs(), u: {} };
-        const mocks = mockEnv(refs);
-        mocks.world.windows.push({ id: "win-u", ref: refs.u, rect: rect(100, 0, 100, 100), workspace: "ws-2" });
-        const seam = addEchoSeam(mocks);
-        const order: string[] = [];
-        const base = mocks.env;
-        const rawMover = base.subscribeMoverDesktops;
-        const rawGeo = base.subscribeWindowGeometry;
-        assert.ok(typeof rawMover === "function" && typeof rawGeo === "function");
-        const origSetGeometry = base.setGeometry;
-        const origSetDesktops = base.setDesktops;
-        const syncEnv: WorkspaceSendAdapterEnv = {
-            ...base,
-            subscribeMoverDesktops: (moverRef: object, handler: () => void) => {
-                order.push("subscribe-mover");
-                return (rawMover as (moverRef: object, handler: () => void) => (() => void) | null)(moverRef, () => {
-                    order.push("desktopsChanged");
-                    handler();
-                });
-            },
-            subscribeWindowGeometry: (windowRef: object, handler: () => void) => {
-                order.push("subscribe-geometry");
-                return (rawGeo as (windowRef: object, handler: () => void) => (() => void) | null)(windowRef, () => {
-                    order.push("frameGeometryChanged");
-                    handler();
-                });
-            },
-            setGeometry: (target: object, r: { x: number; y: number; w: number; h: number }) => {
-                order.push("write-geometry");
-                const ok = origSetGeometry(target, r);
-                if (ok) {
-                    for (const handler of [...(seam.geoHandlers.get(target) ?? [])]) {
-                        handler();
-                    }
-                }
-                return ok;
-            },
-            setDesktops: (target: object, refsArg: ReadonlyArray<object>) => {
-                order.push("write-desktops");
-                const ok = origSetDesktops(target, refsArg);
-                if (ok) {
-                    for (const handler of [...seam.handlers]) {
-                        handler();
-                    }
-                }
-                order.push("write-desktops-returned");
-                return ok;
-            },
-            switchToTarget: (desktopRef, diagnostic) => {
-                order.push("switch-target");
-                return base.switchToTarget?.(desktopRef, diagnostic) === true;
-            },
-            focusWindow: (windowRef, diagnostic) => {
-                order.push("focus-mover");
-                return base.focusWindow?.(windowRef, diagnostic) === true;
-            },
-        };
-        (mocks as { env: WorkspaceSendAdapterEnv }).env = syncEnv;
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        const plannedW3 = JSON.stringify({
-            v: WORKSPACE_SEND_CONTRACT_VERSION,
-            correlation_id: correlation,
-            outcome: "planned",
-            kind: "send-to-workspace",
-            base_revision: 0,
-            detail: { kind: "send-to-workspace", policy_version: 1, capability: "move-tiled" },
-            desired_geometry: [
-                { window: "win-a", leaf: "leaf-win-a", output: "out-1", workspace: "ws-2", rect: { x: 0, y: 0, w: 600, h: 800 } },
-                { window: "win-b", leaf: "leaf-win-b", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 1200, h: 800 } },
-                { window: "win-t", leaf: "leaf-win-t", output: "out-1", workspace: "ws-2", rect: { x: 0, y: 0, w: 100, h: 100 } },
-                { window: "win-u", leaf: "leaf-win-u", output: "out-1", workspace: "ws-2", rect: { x: 100, y: 0, w: 100, h: 100 } },
-            ],
-            desired_focus: { domain_output: "out-1", domain_workspace: "ws-2", leaf: "leaf-win-a" },
-            preconditions: KNOWN_PRECONDITIONS,
-            operation: {
-                op: "move-tiled",
-                window: "win-a",
-                leaf: "leaf-win-a",
-                source_output: "out-1",
-                source_workspace: "ws-1",
-                target_output: "out-1",
-                target_workspace: "ws-2",
-            },
-        });
-        mocks.callbacks[1]?.(plannedW3);
-        assert.deepEqual(seam.targets, [refs.a], "mover fence armed once");
-        assert.equal(seam.geoHandlers.size, 2, "only mover and source survivor subscribe");
-        assert.equal(mocks.geometries.length, 2, "only two changed geometry writes");
-        assert.equal(mocks.desktops.length, 1, "single mover membership write");
-        assert.equal(mocks.desktops[0]?.target, refs.a);
-        const lastSubscribe = Math.max(order.lastIndexOf("subscribe-mover"), order.lastIndexOf("subscribe-geometry"));
-        const firstWrite = order.indexOf("write-geometry");
-        assert.ok(lastSubscribe >= 0 && firstWrite >= 0 && lastSubscribe < firstWrite, `subscriptions armed before write: ${order.join(",")}`);
-        const lastFrame = order.lastIndexOf("frameGeometryChanged");
-        const desktopEcho = order.indexOf("desktopsChanged");
-        assert.ok(lastFrame >= 0 && desktopEcho >= 0 && lastFrame < desktopEcho, `geometry events before desktopsChanged: ${order.join(",")}`);
-        assert.ok(
-            order.indexOf("write-desktops-returned") < order.indexOf("switch-target"),
-            `follow must not reenter the membership setter: ${order.join(",")}`,
-        );
-        const ackCall = mocks.dbusCalls[2];
-        assert.equal(ackCall?.method, WORKSPACE_SEND_METHOD);
-        const ackPayload = parsePayload(ackCall?.payload ?? "{}");
-        assert.equal((ackPayload["command"] as Record<string, unknown>)["op"], "send-to-workspace-ack");
-        assert.equal((ackPayload["command"] as Record<string, unknown>)["ack_outcome"], "accepted");
-        mocks.callbacks[2]?.(ackReply(correlation));
-        const verifyCall = mocks.dbusCalls[3];
-        assert.equal(verifyCall?.method, WORKSPACE_SEND_METHOD);
-        const verifyPayload = parsePayload(verifyCall?.payload ?? "{}");
-        assert.equal((verifyPayload["command"] as Record<string, unknown>)["op"], "send-to-workspace-verify");
-        mocks.callbacks[3]?.(committedReply(correlation));
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=acknowledged")), mocks.logs.join("\n"));
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
-        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        assert.equal(seam.detachCount, 1, "mover detached");
-        assert.equal(seam.geoDetachCount, 2, "both geometry fences detached");
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-    });
-});
-
-describe("cosmic send-to-workspace pre-ack timeout settlement", () => {
-    function startWithheldFlight(refs: { a: object; b: object; t: object; desktop: object }): {
-        mocks: Mocks;
-        adapter: WorkspaceSendAdapter;
-        seam: EchoSeam;
-        correlation: string;
-    } {
-        const mocks = mockEnv(refs);
-        const seam = addEchoSeam(mocks);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        return { mocks, adapter, seam, correlation };
-    }
-
-    function resetWorldToSource(mocks: Mocks): void {
-        for (const entry of mocks.world.windows) {
-            if (entry.id === "win-a") {
-                entry.workspace = "ws-1";
-                entry.rect = rect(0, 0, 100, 100);
-            } else if (entry.id === "win-b") {
-                entry.workspace = "ws-1";
-                entry.rect = rect(100, 0, 100, 100);
-            } else if (entry.id === "win-t") {
-                entry.workspace = "ws-2";
-                entry.rect = rect(0, 0, 100, 100);
-            }
-        }
-    }
-
-    it("withheld echoes with converged properties settle via timeout then commit/follow and stay usable", () => {
-        const refs = makeRefs();
-        const { mocks, adapter, seam, correlation } = startWithheldFlight(refs);
-        assert.equal(mocks.geometries.length, 3);
-        assert.equal(mocks.desktops.length, 1);
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
-            false,
-            "ack waits for echoes",
-        );
-        assert.equal(adapter.isInFlight, true);
-        const geosBefore = mocks.geometries.length;
-        const desksBefore = mocks.desktops.length;
-        const timersBefore = mocks.timers.length;
-        assert.equal(timersBefore, 1);
-        mocks.timers[0]?.callback();
-        const ackCall = mocks.dbusCalls[2];
-        assert.equal(ackCall?.method, WORKSPACE_SEND_METHOD);
-        const ackPayload = parsePayload(ackCall?.payload ?? "{}");
-        assert.equal((ackPayload["command"] as Record<string, unknown>)["op"], "send-to-workspace-ack");
-        assert.equal((ackPayload["command"] as Record<string, unknown>)["ack_outcome"], "accepted");
-        assert.equal(ackPayload["correlation_id"], correlation);
-        assert.equal(ackPayload["owner"], "owner-1");
-        assert.equal(ackPayload["generation"], "gen-1");
-        assert.equal(mocks.geometries.length, geosBefore, "settlement must not rewrite geometry");
-        assert.equal(mocks.desktops.length, desksBefore, "settlement must not rewrite membership");
-        assert.equal(mocks.timers.length, timersBefore + 1, "one normal bounded deadline for ack/verify");
-        assert.equal(mocks.timers[0]?.cancelled, true, "original deadline retired");
-        assert.equal(mocks.timers[1]?.cancelled, false);
-        assert.equal(seam.detachCount, 1, "mover fence retired");
-        assert.equal(seam.geoDetachCount, 3, "every geometry fence retired");
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        mocks.callbacks[2]?.(ackReply(correlation));
-        const verifyCall = mocks.dbusCalls[3];
-        assert.equal((parsePayload(verifyCall?.payload ?? "{}")["command"] as Record<string, unknown>)["op"], "send-to-workspace-verify");
-        mocks.callbacks[3]?.(committedReply(correlation));
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
-        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        resetWorldToSource(mocks);
-        assert.equal(adapter.requestSend("ws-2"), true, "settled flight leaves next send usable");
-        const base = 4;
-        mocks.callbacks[base]?.(":1.7");
-        const request2 = mocks.dbusCalls[base + 1];
-        const correlation2 = parsePayload(request2?.payload ?? "{}")["correlation_id"] as string;
-        assert.notEqual(correlation2, correlation);
-        mocks.callbacks[base + 1]?.(plannedReply(correlation2));
-        seam.fire();
-        seam.fireGeometry();
-        mocks.callbacks[base + 2]?.(ackReply(correlation2));
-        mocks.callbacks[base + 3]?.(committedReply(correlation2));
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")).length, 2);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 0);
-    });
-
-    it("mismatched post-observation on timeout never commits", () => {
-        const refs = makeRefs();
-        const { mocks, adapter, seam, correlation } = startWithheldFlight(refs);
-        void correlation;
-        const geosBefore = mocks.geometries.length;
-        const desksBefore = mocks.desktops.length;
-        mocks.observeImpl = () =>
-            makeObserved(refs, {
-                sourceWindows: Object.freeze([
-                    Object.freeze({ id: "win-a", ref: refs.a, rect: Object.freeze(rect(0, 0, 100, 100)) }),
-                    Object.freeze({ id: "win-b", ref: refs.b, rect: Object.freeze(rect(100, 0, 100, 100)) }),
-                ]),
-            });
-        mocks.timers[0]?.callback();
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
-            false,
-            "mismatch must not ack",
-        );
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
-        assert.equal(mocks.geometries.length, geosBefore, "no new native write on mismatch");
-        assert.equal(mocks.desktops.length, desksBefore);
-        // The mismatch abandons instead of disabling: the timeout-settle
-        // discriminator is unchanged, then one fenced abandon carries the
-        // retained scope.
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        assert.ok(
-            mocks.logs.some(
-                (line) => line.includes(`correlation=${correlation}`) && line.includes("event=abandon-requested") && line.includes("cause=timeout"),
-            ),
-            mocks.logs.join("\n"),
-        );
-        assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
-        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")),
-            false,
-            JSON.stringify(mocks.dbusCalls, null, 2),
-        );
-        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
-        assert.equal(adapter.isInFlight, false);
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        void seam;
-    });
-
-    it("partial geometry on timeout never commits", () => {
-        const refs = makeRefs();
-        const { mocks, adapter, correlation } = startWithheldFlight(refs);
-        void correlation;
-        mocks.observeImpl = () => {
-            const full = makeWorldObserved(mocks.world, refs);
-            const sourceWindows = full.sourceWindows;
-            const targetWindows = Object.freeze(
-                full.targetWindows.map((entry) =>
-                    entry.id === "win-t"
-                        ? Object.freeze({ id: entry.id, ref: entry.ref, rect: Object.freeze(rect(0, 0, 100, 100)) })
-                        : entry,
-                ),
-            );
-            return { ...full, sourceWindows, targetWindows };
-        };
-        mocks.timers[0]?.callback();
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
-            false,
-        );
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
-        assert.equal(adapter.isInFlight, false);
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-    });
-
-    it("late duplicates after timeout settlement are harmless and never touch future flight", () => {
-        const refs = makeRefs();
-        const { mocks, adapter, seam, correlation } = startWithheldFlight(refs);
-        mocks.timers[0]?.callback();
-        mocks.callbacks[2]?.(ackReply(correlation));
-        mocks.callbacks[3]?.(committedReply(correlation));
-        assert.equal(adapter.isInFlight, false);
-        const calls = mocks.dbusCalls.length;
-        const geos = mocks.geometries.length;
-        const desks = mocks.desktops.length;
-        const detaches = seam.detachCount;
-        const geoDetaches = seam.geoDetachCount;
-        seam.fire();
-        seam.fireGeometry();
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        mocks.callbacks[2]?.(ackReply(correlation));
-        mocks.callbacks[3]?.(committedReply(correlation));
-        mocks.timers[0]?.callback();
-        mocks.timers[1]?.callback();
-        assert.equal(mocks.dbusCalls.length, calls, "late duplicates must not re-ack or follow");
-        assert.equal(mocks.geometries.length, geos);
-        assert.equal(mocks.desktops.length, desks);
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.equal(seam.detachCount, detaches);
-        assert.equal(seam.geoDetachCount, geoDetaches);
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        resetWorldToSource(mocks);
-        assert.equal(adapter.requestSend("ws-2"), true, "late duplicates must not poison future flight");
-        const base = 4;
-        mocks.callbacks[base]?.(":1.7");
-        const request2 = mocks.dbusCalls[base + 1];
-        const correlation2 = parsePayload(request2?.payload ?? "{}")["correlation_id"] as string;
-        assert.notEqual(correlation2, correlation);
-        mocks.callbacks[base + 1]?.(plannedReply(correlation2));
-        seam.fire();
-        seam.fireGeometry();
-        mocks.callbacks[base + 2]?.(ackReply(correlation2));
-        mocks.callbacks[base + 3]?.(committedReply(correlation2));
-        assert.deepEqual(mocks.switches, [refs.desktop, refs.desktop]);
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("ack timeout never replays and never interprets no-pending as success", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        assert.equal(mocks.dbusCalls.length, 3, "ack sent synchronously without seam");
-        assert.equal(adapter.isInFlight, true);
-        mocks.timers[0]?.callback();
-        const accepted = mocks.dbusCalls.filter((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted"));
-        assert.equal(accepted.length, 1, "ack timeout must not replay ack");
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
-        // The uncertain ack timeout abandons instead of disabling; the late
-        // original ack is fenced and can never dispatch verify.
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.ok(
-            mocks.logs.some((l) => l.includes("event=abandon-requested") && l.includes("cause=timeout")),
-            mocks.logs.join("\n"),
-        );
-        assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-        mocks.callbacks[2]?.(ackReply(correlation));
-        assert.equal(mocks.dbusCalls.filter((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")).length, 1);
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        mocks.callbacks[2]?.(
-            JSON.stringify({ v: WORKSPACE_SEND_CONTRACT_VERSION, correlation_id: correlation, outcome: "rejected", kind: "no-pending" }),
-        );
-        assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("verify timeout never replays", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        mocks.callbacks[2]?.(ackReply(correlation));
-        assert.equal(mocks.dbusCalls.length, 4, "verify sent");
-        assert.ok(mocks.dbusCalls[3]?.payload.includes("send-to-workspace-verify"));
-        mocks.timers[0]?.callback();
-        assert.equal(mocks.dbusCalls.filter((c) => c.payload.includes("send-to-workspace-verify")).length, 1, "verify timeout must not replay");
-        // The uncertain verify timeout abandons instead of disabling; the
-        // late committed reply is fenced and never claims a KWin commit.
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        mocks.callbacks[3]?.(committedReply(correlation));
-        assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("missing/malformed/lost replies, timeout, and owner loss reach abandon, never a commit", () => {
-        const refs = makeRefs();
-        const failing = (reply: unknown): string => {
-            const innerRefs = makeRefs();
-            const inner = mockEnv(innerRefs);
-            const innerAdapter = new WorkspaceSendAdapter(inner.env);
-            innerAdapter.enable({ owner: "owner-1", generation: "gen-1" });
-            assert.equal(innerAdapter.requestSend("ws-2"), true);
-            inner.callbacks[0]?.(":1.7");
-            const call = inner.dbusCalls[1];
-            const corr = parsePayload(call?.payload ?? "{}")["correlation_id"] as string;
-            void corr;
-            inner.callbacks[1]?.(reply);
-            // Pre-actuation ambiguous failures run one cancel round trip
-            // first; its unanswered deadline reaches abandon.
-            inner.timers[1]?.callback();
-            assert.equal(innerAdapter.isEnabled, true);
-            const abandon = abandonPayloadsOf(inner);
-            assert.equal(abandon.length, 1, inner.logs.join("\n"));
-            const line = inner.logs[inner.logs.length - 1] ?? "";
-            assert.ok(!line.includes("outcome=no-pending"), `must not interpret as no-pending: ${line}`);
-            assert.ok(!inner.logs.some((l) => l.includes("outcome=committed")), inner.logs.join("\n"));
-            return line;
-        };
-        assert.ok(failing(undefined).includes("event=abandon-requested"));
-        assert.ok(failing("{not-json").includes("event=abandon-requested"));
-        const bogusCorrelation = (() => {
-            const innerRefs = makeRefs();
-            const inner = mockEnv(innerRefs);
-            const innerAdapter = new WorkspaceSendAdapter(inner.env);
-            innerAdapter.enable({ owner: "owner-1", generation: "gen-1" });
-            assert.equal(innerAdapter.requestSend("ws-2"), true);
-            inner.callbacks[0]?.(":1.7");
-            const call = inner.dbusCalls[1];
-            const corr = parsePayload(call?.payload ?? "{}")["correlation_id"] as string;
-            inner.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: corr, outcome: "bogus" }));
-            inner.timers[1]?.callback();
-            const line = inner.logs[inner.logs.length - 1] ?? "";
-            assert.ok(!line.includes("outcome=no-pending"), `must not interpret as no-pending: ${line}`);
-            assert.ok(inner.logs.some((l) => l.includes("cause=service-fault")), inner.logs.join("\n"));
-            return line;
-        })();
-        assert.ok(bogusCorrelation.includes("event=abandon-requested"), bogusCorrelation);
-        const explicit = (() => {
-            const innerRefs = makeRefs();
-            const inner = mockEnv(innerRefs);
-            const innerAdapter = new WorkspaceSendAdapter(inner.env);
-            innerAdapter.enable({ owner: "owner-1", generation: "gen-1" });
-            assert.equal(innerAdapter.requestSend("ws-2"), true);
-            inner.callbacks[0]?.(":1.7");
-            const call = inner.dbusCalls[1];
-            const corr = parsePayload(call?.payload ?? "{}")["correlation_id"] as string;
-            inner.callbacks[1]?.(plannedReply(corr));
-            inner.callbacks[2]?.(
-                JSON.stringify({ v: WORKSPACE_SEND_CONTRACT_VERSION, correlation_id: corr, outcome: "rejected", kind: "no-pending" }),
-            );
-            // An explicit well-formed no-pending ack rejection still abandons
-            // the retained pending instead of re-interpreting success.
-            assert.equal(innerAdapter.isEnabled, true);
-            assert.equal(abandonPayloadsOf(inner).length, 1, inner.logs.join("\n"));
-            const line = inner.logs[inner.logs.length - 1] ?? "";
-            assert.ok(line.includes("event=abandon-requested"), `abandon follows the rejection: ${line}`);
-            assert.ok(!inner.logs.some((l) => l.includes("outcome=committed")), inner.logs.join("\n"));
-            return line;
-        })();
-        void explicit;
-        void refs;
-    });
-});
-
-describe("cosmic send-to-workspace deadline epoch", () => {
-    function startWithheld(refs: { a: object; b: object; t: object; desktop: object }): {
-        mocks: Mocks;
-        adapter: WorkspaceSendAdapter;
-        seam: EchoSeam;
-        correlation: string;
-    } {
-        const mocks = mockEnv(refs);
-        const seam = addEchoSeam(mocks);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        return { mocks, adapter, seam, correlation };
-    }
-
-    it("old pre-ack deadline fired during settlement-to-ack is ignored", () => {
-        const refs = makeRefs();
-        const { mocks, adapter, seam, correlation } = startWithheld(refs);
-        assert.equal(mocks.timers.length, 1);
-        const old = mocks.timers[0];
-        assert.ok(old && !old.cancelled);
-        mocks.timers[0]?.callback();
-        assert.equal(mocks.dbusCalls.length, 3, "settlement sends one ack");
-        assert.equal(adapter.isInFlight, true);
-        assert.equal(old.cancelled, true, "original deadline retired");
-        assert.equal(mocks.timers.length, 2);
-        const calls = mocks.dbusCalls.length;
-        old.callback();
-        assert.equal(mocks.dbusCalls.length, calls, "stale original deadline must not replay or teardown");
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        mocks.callbacks[2]?.(ackReply(correlation));
-        mocks.callbacks[3]?.(committedReply(correlation));
-        assert.equal(adapter.isInFlight, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-        void seam;
-    });
-
-    it("synchronous settlement-deadline reentrancy never tears down the settled flight", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const seam = addEchoSeam(mocks);
-        const baseSchedule = mocks.env.scheduleOnce;
-        let syncFire = false;
-        const syncEnv: WorkspaceSendAdapterEnv = {
-            ...mocks.env,
-            scheduleOnce: (delayMs, callback) => {
-                const timer = { delayMs, callback, cancelled: false };
-                mocks.timers.push(timer);
-                // Second arming is the settlement ack deadline: invoke its
-                // callback synchronously before returning to model reentrant
-                // scheduleOnce behavior.
-                if (mocks.timers.length === 2 && syncFire) {
-                    callback();
-                }
-                return () => {
-                    timer.cancelled = true;
-                };
-            },
-        };
-        void baseSchedule;
-        (mocks as { env: WorkspaceSendAdapterEnv }).env = syncEnv;
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        syncFire = true;
-        mocks.timers[0]?.callback();
-        assert.equal(adapter.isInFlight, true, "sync reentrant ack deadline must not teardown");
-        assert.equal(adapter.isEnabled, true);
-        const ackCall = mocks.dbusCalls[2];
-        assert.ok(ackCall?.payload.includes("send-to-workspace-ack"));
-        mocks.callbacks[2]?.(ackReply(correlation));
-        mocks.callbacks[3]?.(committedReply(correlation));
-        assert.equal(adapter.isInFlight, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-        void seam;
-    });
-
-    it("synchronous abandon deadline releases once without dispatching after release", () => {
-        const mocks = mockEnv(makeRefs());
-        let handoffs = 0;
-        const env: WorkspaceSendAdapterEnv = {
-            ...mocks.env,
-            onAbandoned: () => { handoffs += 1; },
-            scheduleOnce: (delayMs, callback) => {
-                const timer = { delayMs, callback, cancelled: false };
-                mocks.timers.push(timer);
-                if (mocks.timers.length === 2) {
-                    callback();
-                }
-                return () => { timer.cancelled = true; };
-            },
-        };
-        const adapter = new WorkspaceSendAdapter(env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "diverged", kind: "stale" }));
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.blocksPlan, false);
-        assert.equal(handoffs, 1);
-        assert.equal(mocks.dbusCalls.filter((call) => call.payload.includes("send-to-workspace-abandon")).length, 0);
-        assert.ok(mocks.logs.some((line) => line.includes("event=abandon-released outcome=unconfirmed")));
-    });
-
-    it("retired deadlines never touch a future flight", () => {
-        const refs = makeRefs();
-        const { mocks, adapter, seam, correlation } = startWithheld(refs);
-        const oldTimer = mocks.timers[0];
-        assert.ok(oldTimer);
-        mocks.timers[0]?.callback();
-        mocks.callbacks[2]?.(ackReply(correlation));
-        mocks.callbacks[3]?.(committedReply(correlation));
-        assert.equal(adapter.isInFlight, false);
-        for (const entry of mocks.world.windows) {
-            if (entry.id === "win-a") {
-                entry.workspace = "ws-1";
-                entry.rect = rect(0, 0, 100, 100);
-            } else if (entry.id === "win-b") {
-                entry.workspace = "ws-1";
-                entry.rect = rect(100, 0, 100, 100);
-            } else if (entry.id === "win-t") {
-                entry.workspace = "ws-2";
-                entry.rect = rect(0, 0, 100, 100);
-            }
-        }
-        assert.equal(adapter.requestSend("ws-2"), true);
-        const calls = mocks.dbusCalls.length;
-        oldTimer.callback();
-        mocks.timers[1]?.callback();
-        assert.equal(mocks.dbusCalls.length, calls, "retired deadlines must not touch future flight");
-        assert.equal(adapter.isInFlight, true);
-        const base = calls - 1;
-        mocks.callbacks[base]?.(":1.7");
-        const request2 = mocks.dbusCalls[base + 1];
-        const correlation2 = parsePayload(request2?.payload ?? "{}")["correlation_id"] as string;
-        assert.notEqual(correlation2, correlation);
-        mocks.callbacks[base + 1]?.(plannedReply(correlation2));
-        seam.fire();
-        seam.fireGeometry();
-        mocks.callbacks[base + 2]?.(ackReply(correlation2));
-        mocks.callbacks[base + 3]?.(committedReply(correlation2));
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(adapter.isEnabled, true);
-    });
-});
-
-describe("cosmic send-to-workspace narrow remote-clean recovery", () => {
-    function requestCorrelation(mocks: Mocks): string {
-        const requestCall = mocks.dbusCalls[1];
-        return parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-    }
-
-    it("well-formed request rejected focus-mismatch stays enabled with no adapter-lost and next send works", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const correlation = requestCorrelation(mocks);
-        mocks.callbacks[1]?.(
-            JSON.stringify({ v: WORKSPACE_SEND_CONTRACT_VERSION, correlation_id: correlation, outcome: "rejected", kind: "focus-mismatch" }),
-        );
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=focus-mismatch")), mocks.logs.join("\n"));
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        assert.equal(mocks.geometries.length, 0);
-        assert.equal(mocks.desktops.length, 0);
-        assert.equal(adapter.requestSend("ws-2"), true, "next distinct send works");
-        const base = mocks.dbusCalls.length - 1;
-        mocks.callbacks[base]?.(":1.7");
-        const request2 = mocks.dbusCalls[base + 1];
-        const correlation2 = parsePayload(request2?.payload ?? "{}")["correlation_id"] as string;
-        assert.notEqual(correlation2, correlation);
-        mocks.callbacks[base + 1]?.(plannedReply(correlation2));
-        mocks.callbacks[base + 2]?.(ackReply(correlation2));
-        mocks.callbacks[base + 3]?.(committedReply(correlation2));
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-    });
-
-    it("non-allowlisted genuine pre-pending rejection recovers and next send works", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const correlation = requestCorrelation(mocks);
-        // "workspace-target-invalid" was absent from the old allowlist but is
-        // returned by validate_workspace_input before workspace_pending is
-        // retained, so it proves no pending and must recover.
-        mocks.callbacks[1]?.(
-            JSON.stringify({ v: WORKSPACE_SEND_CONTRACT_VERSION, correlation_id: correlation, outcome: "rejected", kind: "workspace-target-invalid" }),
-        );
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=workspace-target-invalid")), mocks.logs.join("\n"));
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        assert.equal(mocks.geometries.length, 0);
-        assert.equal(mocks.desktops.length, 0);
-        assert.equal(adapter.requestSend("ws-2"), true, "next distinct send works");
-        const base = mocks.dbusCalls.length - 1;
-        mocks.callbacks[base]?.(":1.7");
-        const request2 = mocks.dbusCalls[base + 1];
-        const correlation2 = parsePayload(request2?.payload ?? "{}")["correlation_id"] as string;
-        assert.notEqual(correlation2, correlation);
-        mocks.callbacks[base + 1]?.(plannedReply(correlation2));
-        mocks.callbacks[base + 2]?.(ackReply(correlation2));
-        mocks.callbacks[base + 3]?.(committedReply(correlation2));
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-    });
-
-    it("malformed unknown request rejection kind reaches abandon and stays enabled", () => {
-        for (const replyOf of [
-            (c: string): string =>
-                JSON.stringify({ v: WORKSPACE_SEND_CONTRACT_VERSION, correlation_id: c, outcome: "rejected", kind: "Bogus-Kind" }),
-            (c: string): string =>
-                JSON.stringify({ v: WORKSPACE_SEND_CONTRACT_VERSION, correlation_id: c, outcome: "rejected" }),
-        ]) {
-            const refs = makeRefs();
-            const mocks = mockEnv(refs);
-            const adapter = new WorkspaceSendAdapter(mocks.env);
-            adapter.enable({ owner: "owner-1", generation: "gen-1" });
-            assert.equal(adapter.requestSend("ws-2"), true);
-            mocks.callbacks[0]?.(":1.7");
-            const correlation = requestCorrelation(mocks);
-            mocks.callbacks[1]?.(replyOf(correlation));
-            // Malformed kinds attempt one cancel round trip first; the
-            // unanswered deadline reaches abandon instead of disabling.
-            assert.equal(adapter.isInFlight, true);
-            mocks.timers[1]?.callback();
-            assert.equal(adapter.isEnabled, true, replyOf(correlation));
-            assert.equal(adapter.isInFlight, true);
-            assert.equal(abandonPayloadsOf(mocks).length, 1, replyOf(correlation));
-            assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
-            assert.equal(adapter.isInFlight, false);
-            assert.equal(adapter.requestSend("ws-2"), true, "send reusable after abandon");
-        }
-    });
-
-    it("pending-exists and diverged reach abandon and stay enabled", () => {
-        for (const replyOf of [
-            (c: string): string =>
-                JSON.stringify({ v: WORKSPACE_SEND_CONTRACT_VERSION, correlation_id: c, outcome: "rejected", kind: "pending-exists" }),
-            (c: string): string =>
-                JSON.stringify({ v: WORKSPACE_SEND_CONTRACT_VERSION, correlation_id: c, outcome: "diverged", kind: "stale-revision" }),
-        ]) {
-            const refs = makeRefs();
-            const mocks = mockEnv(refs);
-            const adapter = new WorkspaceSendAdapter(mocks.env);
-            adapter.enable({ owner: "owner-1", generation: "gen-1" });
-            assert.equal(adapter.requestSend("ws-2"), true);
-            mocks.callbacks[0]?.(":1.7");
-            const correlation = requestCorrelation(mocks);
-            mocks.callbacks[1]?.(replyOf(correlation));
-            // A `diverged` reply proves Rust terminal for cancel and reaches
-            // abandon at once; any other pre-actuation failure first attempts
-            // one cancel round trip, whose unanswered deadline reaches
-            // abandon. Neither disables.
-            if (!replyOf(correlation).includes('"diverged"')) {
-                assert.equal(adapter.isInFlight, true);
-                assert.ok(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-cancel")));
-                mocks.timers[1]?.callback();
-            }
-            assert.equal(adapter.isEnabled, true, replyOf(correlation));
-            assert.equal(adapter.isInFlight, true);
-            assert.equal(abandonPayloadsOf(mocks).length, 1, replyOf(correlation));
-            assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
-            assert.equal(adapter.isInFlight, false);
-            assert.equal(adapter.requestSend("ws-2"), true, "send reusable after abandon");
-        }
-    });
-
-    it("ambiguous send/timeout/malformed/owner-loss reach abandon or clean release, never disable", () => {
-        const refs = makeRefs();
-        const timeoutMocks = mockEnv(refs);
-        const timeoutAdapter = new WorkspaceSendAdapter(timeoutMocks.env);
-        timeoutAdapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(timeoutAdapter.requestSend("ws-2"), true);
-        // Activation never resolves, so the planner request is never
-        // dispatched: the timeout releases clean with no round trip.
-        timeoutMocks.timers[0]?.callback();
-        assert.equal(timeoutAdapter.isEnabled, true);
-        assert.equal(timeoutAdapter.isInFlight, false);
-        assert.ok(timeoutMocks.logs.some((l) => l.includes("outcome=timeout")), timeoutMocks.logs.join("\n"));
-        assert.equal(timeoutAdapter.requestSend("ws-2"), true, "send reusable after clean timeout release");
-
-        const malformedRefs = makeRefs();
-        const malformed = mockEnv(malformedRefs);
-        const malformedAdapter = new WorkspaceSendAdapter(malformed.env);
-        malformedAdapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(malformedAdapter.requestSend("ws-2"), true);
-        malformed.callbacks[0]?.(":1.7");
-        malformed.callbacks[1]?.("{not-json");
-        // Pre-actuation zero-dispatch failure: one cancel attempt precedes
-        // abandon. With no Rust answer the cancel deadline reaches abandon.
-        assert.equal(malformedAdapter.isInFlight, true);
-        assert.ok(malformed.dbusCalls.some((c) => c.payload.includes("send-to-workspace-cancel")));
-        malformed.timers[1]?.callback();
-        assert.equal(malformedAdapter.isEnabled, true);
-        assert.equal(abandonPayloadsOf(malformed).length, 1);
-    });
-});
-
-describe("cosmic send-to-workspace recovery payload and entry timing", () => {
-    it("settlement ack preserves revision/fingerprint/domains and verify preserves preconditions/operation", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const seam = addEchoSeam(mocks);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const requestPayload = parsePayload(requestCall?.payload ?? "{}");
-        const correlation = requestPayload["correlation_id"] as string;
-        const requestDomain = requestPayload["domain"] as Record<string, unknown>;
-        const requestTarget = requestPayload["target_domain"] as Record<string, unknown>;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        mocks.timers[0]?.callback();
-        const ackCall = mocks.dbusCalls[2];
-        const ackPayload = parsePayload(ackCall?.payload ?? "{}");
-        assert.equal(ackPayload["correlation_id"], correlation);
-        assert.equal(ackPayload["owner"], "owner-1");
-        assert.equal(ackPayload["generation"], "gen-1");
-        assert.equal(ackPayload["revision"], 0);
-        assert.equal(typeof ackPayload["fingerprint"], "number");
-        assert.deepEqual(ackPayload["domain"], requestDomain);
-        assert.deepEqual(ackPayload["target_domain"], requestTarget);
-        assert.equal((ackPayload["command"] as Record<string, unknown>)["op"], "send-to-workspace-ack");
-        assert.equal((ackPayload["command"] as Record<string, unknown>)["ack_outcome"], "accepted");
-        mocks.callbacks[2]?.(ackReply(correlation));
-        const verifyCall = mocks.dbusCalls[3];
-        const verifyPayload = parsePayload(verifyCall?.payload ?? "{}");
-        assert.equal(verifyPayload["correlation_id"], correlation);
-        assert.equal(verifyPayload["revision"], 0);
-        assert.equal(verifyPayload["fingerprint"], ackPayload["fingerprint"]);
-        assert.deepEqual(verifyPayload["domain"], requestDomain);
-        assert.deepEqual(verifyPayload["target_domain"], requestTarget);
-        const verifyCommand = verifyPayload["command"] as Record<string, unknown>;
-        assert.equal(verifyCommand["op"], "send-to-workspace-verify");
-        assert.equal(verifyCommand["verified"], true);
-        assert.deepEqual(verifyCommand["preconditions"], KNOWN_PRECONDITIONS);
-        assert.deepEqual(verifyCommand["operation"], {
-            op: "move-tiled",
-            window: "win-a",
-            leaf: "leaf-win-a",
-            source_output: "out-1",
-            source_workspace: "ws-1",
-            target_output: "out-1",
-            target_workspace: "ws-2",
-        });
-        mocks.callbacks[3]?.(committedReply(correlation));
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        void seam;
-    });
-
-    it("production entry completes with a busy-refused command while echoes settle", () => {
-        const harness = startEntryForPlannedFlight();
-        assert.ok(harness.handle !== null);
-        const handle = harness.handle;
-        assert.equal(handle.requestSend("ws-2"), true);
-        harness.callbacks[0]?.(":1.7");
-        const requestCall = harness.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        harness.callbacks[1]?.(plannedReply(correlation));
-        assert.equal(
-            harness.dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
-            false,
-            "ack waits for echoes",
-        );
-        assert.equal(handle.requestSend("ws-1"), false, "rapid second command is busy-refused, not completed");
-        harness.fireGeometry();
-        harness.fireMoverEcho();
-        const ackCall = harness.dbusCalls[2];
-        assert.ok(ackCall?.payload.includes("send-to-workspace-ack") && ackCall?.payload.includes("accepted"));
-        harness.callbacks[2]?.(ackReply(correlation));
-        const verifyCall = harness.dbusCalls[3];
-        assert.ok(verifyCall?.payload.includes("send-to-workspace-verify"));
-        harness.callbacks[3]?.(committedReply(correlation));
-        assert.ok(harness.logs.some((l) => l.includes("outcome=committed")), harness.logs.join("\n"));
-        assert.equal(harness.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        harness.fireOldGeometry();
-        assert.ok(harness.logs.some((l) => l.includes("outcome=committed")), harness.logs.join("\n"));
-    });
-});
-
-describe("cosmic send-to-workspace dispatch membership diagnostics", () => {
-    function flagOf(line: string, name: string): string {
-        const marker = `${name}=`;
-        const at = line.indexOf(marker);
-        assert.ok(at >= 0, `${name} missing in:\n${line}`);
-        const rest = line.slice(at + marker.length);
-        const end = rest.search(/[\s]/);
-        return end < 0 ? rest : rest.slice(0, end);
-    }
-
-    function lineFor(logs: string[], correlation: string, event: string): string {
-        const line = logs.find((l) => l.includes(`correlation=${correlation}`) && l.includes(`event=${event}`)) ?? "";
-        assert.ok(line.length > 0, `${event} missing for ${correlation}:\n${logs.join("\n")}`);
-        return line;
-    }
-
-    function indexFor(logs: string[], correlation: string, event: string): number {
-        const at = logs.findIndex((l) => l.includes(`correlation=${correlation}`) && l.includes(`event=${event}`));
-        assert.ok(at >= 0, `${event} missing for ${correlation}:\n${logs.join("\n")}`);
-        return at;
-    }
-
-    it("emits dispatch at the request boundary and proves source-to-target membership", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        mocks.observeImpl = () => ({
-            ...makeWorldObserved(mocks.world, refs),
-            targetOrdinal: 1,
-            targetNumber: 2,
-            outputOrdinal: 0,
-            currentOrdinal: 0,
-            currentNumber: 1,
-            currentIdEq: 0,
-            currentRefEq: 0,
-        });
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        runLifecycle(mocks, adapter, 2);
-        assert.equal(mocks.geometries.length, 3);
-        assert.equal(mocks.desktops.length, 1);
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
-        const dispatched = lineFor(mocks.logs, correlation, "send-dispatched");
-        const preMover = lineFor(mocks.logs, correlation, "send-pre-mover");
-        const postMover = lineFor(mocks.logs, correlation, "send-post-mover");
-        // Dispatch uses the original request observation at revision 0.
-        assert.equal(flagOf(dispatched, "revision"), "0");
-        assert.equal(flagOf(dispatched, "outcome"), "observed");
-        for (const line of [dispatched, preMover]) {
-            assert.equal(flagOf(line, "mover_in_target"), "0");
-            assert.equal(flagOf(line, "src_in_src"), "1");
-            assert.equal(flagOf(line, "src_in_tgt"), "0");
-            assert.ok(line.includes("generation=gen-1"), line);
-            assert.ok(line.includes("req_ord=2"), line);
-        }
-        assert.equal(flagOf(postMover, "mover_in_target"), "1");
-        assert.equal(flagOf(postMover, "src_in_src"), "1");
-        assert.equal(flagOf(postMover, "src_in_tgt"), "0");
-        // Frozen dispatch source survives later dynamic reads.
-        assert.equal(flagOf(preMover, "src_in_src"), flagOf(postMover, "src_in_src"));
-        // Early follow starts from the confirmed mover observation, before the
-        // later complete post-write observation used for acknowledgement.
-        assert.ok(indexFor(mocks.logs, correlation, "send-dispatched") < indexFor(mocks.logs, correlation, "send-pre-mover"));
-        assert.ok(indexFor(mocks.logs, correlation, "send-pre-mover") < indexFor(mocks.logs, correlation, "follow-pre"));
-        assert.ok(indexFor(mocks.logs, correlation, "follow-pre") < indexFor(mocks.logs, correlation, "send-post-mover"));
-        // No extra echo observations.
-        assert.ok(!mocks.logs.some((l) => l.includes(`correlation=${correlation}`) && l.includes("send-mover-echo")));
-        assert.ok(!mocks.logs.some((l) => l.includes(`correlation=${correlation}`) && l.includes("send-geometry-echo")));
-        for (const line of [dispatched, preMover, postMover]) {
-            for (const raw of ["win-a", "win-b", "win-t", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
-                assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
-            }
-        }
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("orders source-current to target-current and shows the first observed change", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        let calls = 0;
-        mocks.observeImpl = () => {
-            calls += 1;
-            const live = makeWorldObserved(mocks.world, refs);
-            // Calls 1-5 cover dispatch through the pre-switch gate with live
-            // current on the source; call 6 onward (post-switch and later)
-            // sees live current on the target. Runtime may already be target;
-            // this covers the transitioning case only.
-            const current =
-                calls >= 4
-                    ? { currentOrdinal: 1, currentNumber: 2, currentIdEq: 1, currentRefEq: 1 }
-                    : { currentOrdinal: 0, currentNumber: 1, currentIdEq: 0, currentRefEq: 0 };
-            return {
-                ...live,
-                targetOrdinal: 1,
-                targetNumber: 2,
-                outputOrdinal: 0,
-                ...current,
-            };
-        };
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        runLifecycle(mocks, adapter, 2);
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
-        const dispatched = lineFor(mocks.logs, correlation, "send-dispatched");
-        const preMover = lineFor(mocks.logs, correlation, "send-pre-mover");
-        const postMover = lineFor(mocks.logs, correlation, "send-post-mover");
-        const pre = lineFor(mocks.logs, correlation, "follow-pre");
-        const switched = lineFor(mocks.logs, correlation, "follow-switched");
-        const focused = lineFor(mocks.logs, correlation, "follow-focused");
-        // Dispatch and pre-mover lines retain the source current map.
-        for (const line of [dispatched, preMover, pre]) {
-            assert.equal(flagOf(line, "cur_id_eq"), "0", line);
-            assert.ok(line.includes("cur_ord=0") && line.includes("cur_num=1"), line);
-            assert.ok(line.includes("tgt_ord=1") && line.includes("tgt_num=2"), line);
-            assert.ok(line.includes("out_ord=0"), line);
-        }
-        // Membership moves before current does; the later complete observation
-        // records the target map established by the early follow.
-        assert.equal(flagOf(postMover, "mover_in_target"), "1");
-        assert.equal(flagOf(pre, "mover_in_target"), "1");
-        // First target-current observation is the post-switch line.
-        assert.equal(flagOf(switched, "cur_id_eq"), "1");
-        assert.ok(switched.includes("cur_ord=1") && switched.includes("cur_num=2"), switched);
-        assert.equal(flagOf(focused, "cur_id_eq"), "1");
-        const order = ["send-dispatched", "send-pre-mover", "follow-pre", "follow-switched", "follow-focused", "send-post-mover", "follow-settled"].map(
-            (event) => indexFor(mocks.logs, correlation, event),
-        );
-        for (let i = 1; i < order.length; i += 1) {
-            assert.ok(order[i - 1]! < order[i]!, `out of order at ${String(i)}:\n${mocks.logs.join("\n")}`);
-        }
-        const firstTarget = mocks.logs.findIndex(
-            (l) => l.includes(`correlation=${correlation}`) && l.includes("stage=follow") && l.includes("cur_id_eq=1"),
-        );
-        assert.equal(firstTarget, indexFor(mocks.logs, correlation, "follow-switched"));
-    });
-
-    it("tolerates observer and log failures without changing behavior", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const liveObserve = mocks.observeImpl;
-        let calls = 0;
-        mocks.observeImpl = () => {
-            calls += 1;
-            // Post-switch and post-focus re-reads fail; dispatch, pre-write,
-            // verified, ack-verify, pre-switch, and settled reads still observe.
-            if (calls === 4 || calls === 5) {
-                return null;
-            }
-            return liveObserve();
-        };
-        const adapter = new WorkspaceSendAdapter({
-            ...mocks.env,
-            log: (message: string) => {
-                if (message.includes("event=send-dispatched") || message.includes("event=send-pre-mover") || message.includes("event=send-post-mover")) {
-                    throw new Error("log lost");
-                }
-                mocks.logs.push(message);
-            },
-        });
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        runLifecycle(mocks, adapter, 2);
-        assert.equal(mocks.geometries.length, 3);
-        assert.equal(mocks.desktops.length, 1);
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
-        for (const event of ["event=follow-switched", "event=follow-focused"]) {
-            const line = mocks.logs.find((l) => l.includes(event)) ?? "";
-            assert.ok(line.includes("outcome=unknown"), `${event} must report unknown:\n${line}`);
-        }
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        // Fenced path emits nothing on echo callbacks.
-        const refs2 = makeRefs();
-        const mocks2 = mockEnv(refs2);
-        const seam = addEchoSeam(mocks2);
-        const adapter2 = new WorkspaceSendAdapter(mocks2.env);
-        assert.equal(adapter2.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter2.requestSend("ws-2", 2), true);
-        mocks2.callbacks[0]?.(":1.7");
-        const correlation = parsePayload(mocks2.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
-        mocks2.callbacks[1]?.(plannedReply(correlation));
-        seam.fire();
-        seam.fireGeometry();
-        assert.ok(!mocks2.logs.some((l) => l.includes("send-mover-echo")), mocks2.logs.join("\n"));
-        assert.ok(!mocks2.logs.some((l) => l.includes("send-geometry-echo")), mocks2.logs.join("\n"));
-        const postMover = lineFor(mocks2.logs, correlation, "send-post-mover");
-        assert.equal(flagOf(postMover, "mover_in_target"), "1");
-        assert.equal(flagOf(postMover, "src_in_src"), "1");
-        mocks2.callbacks[2]?.(ackReply(correlation));
-        mocks2.callbacks[3]?.(committedReply(correlation));
-        assert.deepEqual(mocks2.switches, [refs2.desktop]);
-        assert.deepEqual(mocks2.focuses, [refs2.a]);
-    });
-
-    it("proves the transition through the production entry integration", () => {
-        const harness = startEntryForPlannedFlight();
-        assert.ok(harness.handle !== null);
-        assert.equal(harness.handle.requestSend("ws-2"), true);
-        harness.callbacks[0]?.(":1.7");
-        const correlation = parsePayload(harness.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
-        const dispatched = lineFor(harness.logs, correlation, "send-dispatched");
-        assert.equal(flagOf(dispatched, "revision"), "0");
-        assert.equal(flagOf(dispatched, "mover_in_target"), "0");
-        assert.equal(flagOf(dispatched, "src_in_src"), "1");
-        harness.callbacks[1]?.(plannedReply(correlation));
-        const preMover = lineFor(harness.logs, correlation, "send-pre-mover");
-        assert.equal(flagOf(preMover, "mover_in_target"), "0");
-        assert.equal(flagOf(preMover, "src_in_src"), "1");
-        harness.fireMoverEcho();
-        harness.fireGeometry();
-        assert.ok(!harness.logs.some((l) => l.includes("send-mover-echo")), harness.logs.join("\n"));
-        assert.ok(!harness.logs.some((l) => l.includes("send-geometry-echo")), harness.logs.join("\n"));
-        const postMover = lineFor(harness.logs, correlation, "send-post-mover");
-        assert.equal(flagOf(postMover, "mover_in_target"), "1");
-        assert.equal(flagOf(postMover, "src_in_src"), "1");
-        harness.callbacks[2]?.(ackReply(correlation));
-        harness.callbacks[3]?.(committedReply(correlation));
-        assert.ok(harness.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), harness.logs.join("\n"));
-        for (const line of [dispatched, preMover, postMover]) {
-            for (const raw of ["win-a", "win-b", "win-t", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
-                assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
-            }
-        }
-        harness.handle.stop();
-    });
-});
-
-describe("cosmic send-to-workspace timeout settlement diagnostics", () => {
-    function startWithheld(refs: { a: object; b: object; t: object; desktop: object }): {
-        mocks: Mocks;
-        adapter: WorkspaceSendAdapter;
-        seam: EchoSeam;
-        correlation: string;
-    } {
-        const mocks = mockEnv(refs);
-        const seam = addEchoSeam(mocks);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        return { mocks, adapter, seam, correlation };
-    }
-
-    function flagOf(line: string, name: string): string {
-        const marker = ` ${name}=`;
-        const at = line.indexOf(marker);
-        assert.ok(at >= 0, `${name} missing in:\n${line}`);
-        const rest = line.slice(at + marker.length);
-        const end = rest.search(/[\s]/);
-        return end < 0 ? rest : rest.slice(0, end);
-    }
-
-    function settleLines(logs: string[], correlation: string): string[] {
-        return logs.filter((l) => l.includes("event=timeout-settle") && l.includes(`correlation=${correlation}`));
-    }
-
-    function settleLine(logs: string[], correlation: string): string {
-        const lines = settleLines(logs, correlation);
-        assert.equal(lines.length, 1, `expected one timeout-settle for ${correlation}:\n${logs.join("\n")}`);
-        return lines[0] ?? "";
-    }
-
-    function assertNoRawLeak(line: string): void {
-        for (const raw of ["win-a", "win-b", "win-t", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
-            assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
-        }
-        assert.ok(line.startsWith("plasma-auto-tiler:route-diag component=cosmic-send "), line);
-        assert.ok(line.includes("stage=timeout"), line);
-        assert.ok(line.includes("generation=gen-1"), line);
-    }
-
-    function assertAbandonTimeout(
-        mocks: Mocks,
-        adapter: WorkspaceSendAdapter,
-        correlation: string,
-    ): void {
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
-            false,
-        );
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")),
-            false,
-            JSON.stringify(mocks.dbusCalls, null, 2),
-        );
-        assert.deepEqual(mocks.switches, [mocks.desktops[0]?.refs[0]]);
-        assert.deepEqual(mocks.focuses, [mocks.desktops[0]?.target]);
-        void correlation;
-    }
-
-    it("logs fresh-unavailable and retries abandon on the next valid observation without commit", () => {
-        const refs = makeRefs();
-        const { mocks, adapter, seam, correlation } = startWithheld(refs);
-        mocks.observeImpl = () => null;
-        mocks.timers[0]?.callback();
-        const line = settleLine(mocks.logs, correlation);
-        assert.ok(line.includes("outcome=fresh-unavailable"), line);
-        assert.equal(flagOf(line, "verify_reason"), "none");
-        assert.equal(flagOf(line, "fence_pending"), "3");
-        assert.equal(flagOf(line, "fence_total"), "3");
-        assert.equal(flagOf(line, "mover_seen"), "0");
-        assert.equal(flagOf(line, "fence_idx"), "0,1,2");
-        assertNoRawLeak(line);
-        // Unreadable scope sends nothing but stays retained and enabled.
-        assert.equal(abandonPayloadsOf(mocks).length, 0);
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        assert.ok(
-            mocks.logs.some((l) => l.includes("event=abandon-retry") && l.includes(`correlation=${correlation}`)),
-            mocks.logs.join("\n"),
-        );
-        // Option B single bounded wait: the next valid echo before the
-        // deadline retries the same flight without resetting the deadline.
-        mocks.observeImpl = () => makeWorldObserved(mocks.world, refs);
-        seam.fire();
-        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(adapter.blocksPlan, false);
-        assert.deepEqual(mocks.switches, [mocks.desktops[0]?.refs[0]]);
-    });
-
-    it("distinguishes scope drift with redacted category", () => {
-        const refs = makeRefs();
-        const { mocks, adapter, seam, correlation } = startWithheld(refs);
-        void seam;
-        mocks.observeImpl = () => makeObserved(refs, { sourceOutput: "out-9" });
-        mocks.timers[0]?.callback();
-        assertAbandonTimeout(mocks, adapter, correlation);
-        const line = settleLine(mocks.logs, correlation);
-        assert.ok(line.includes("outcome=verify-failed"), line);
-        assert.equal(flagOf(line, "verify_reason"), "scope-source-output");
-        assert.equal(flagOf(line, "verify_geo_idx"), "-1");
-        assert.equal(flagOf(line, "fence_pending"), "3");
-        assert.equal(flagOf(line, "fence_total"), "3");
-        assert.equal(flagOf(line, "mover_seen"), "0");
-        assert.equal(flagOf(line, "fence_idx"), "0,1,2");
-        assertNoRawLeak(line);
-        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("distinguishes geometry mismatch with plan-relative index", () => {
-        const refs = makeRefs();
-        const { mocks, adapter, seam, correlation } = startWithheld(refs);
-        void seam;
-        mocks.observeImpl = () => {
-            const full = makeWorldObserved(mocks.world, refs);
-            const targetWindows = Object.freeze(
-                full.targetWindows.map((entry) =>
-                    entry.id === "win-t"
-                        ? Object.freeze({ id: entry.id, ref: entry.ref, rect: Object.freeze(rect(0, 0, 100, 100)) })
-                        : entry,
-                ),
-            );
-            return { ...full, sourceWindows: full.sourceWindows, targetWindows };
-        };
-        mocks.timers[0]?.callback();
-        assertAbandonTimeout(mocks, adapter, correlation);
-        const line = settleLine(mocks.logs, correlation);
-        assert.ok(line.includes("outcome=verify-failed"), line);
-        assert.equal(flagOf(line, "verify_reason"), "geometry-rect-mismatch");
-        assert.equal(flagOf(line, "verify_geo_idx"), "2");
-        assert.equal(flagOf(line, "fence_pending"), "3");
-        assert.equal(flagOf(line, "fence_total"), "3");
-        assert.equal(flagOf(line, "fence_idx"), "0,1,2");
-        assertNoRawLeak(line);
-        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("distinguishes retained membership with plan-relative index", () => {
-        const refs = makeRefs();
-        const { mocks, adapter, seam, correlation } = startWithheld(refs);
-        void seam;
-        mocks.observeImpl = () =>
-            makeObserved(refs, {
-                focused: "win-b",
-                sourceWindows: Object.freeze([
-                    Object.freeze({ id: "win-b", ref: refs.b, rect: Object.freeze(rect(0, 0, 1200, 800)) }),
-                    Object.freeze({ id: "win-t", ref: refs.t, rect: Object.freeze(rect(600, 0, 600, 800)) }),
-                ]),
-                targetWindows: Object.freeze([
-                    Object.freeze({ id: "win-a", ref: refs.a, rect: Object.freeze(rect(0, 0, 600, 800)) }),
-                ]),
-            });
-        mocks.timers[0]?.callback();
-        assertAbandonTimeout(mocks, adapter, correlation);
-        const line = settleLine(mocks.logs, correlation);
-        assert.ok(line.includes("outcome=verify-failed"), line);
-        assert.equal(flagOf(line, "verify_reason"), "retained-target-membership");
-        assert.equal(flagOf(line, "verify_geo_idx"), "2");
-        assert.equal(flagOf(line, "fence_pending"), "3");
-        assert.equal(flagOf(line, "fence_total"), "3");
-        assert.equal(flagOf(line, "fence_idx"), "0,1,2");
-        assertNoRawLeak(line);
-        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("logs settled success with armed fence and still commits", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        // Pre-converge one planned rect so the armed fence (2) differs from
-        // the full plan length (3): fence_total must report the armed count.
-        for (const entry of mocks.world.windows) {
-            if (entry.id === "win-t") {
-                entry.rect = rect(600, 0, 600, 800);
-            }
-        }
-        const seam = addEchoSeam(mocks);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        const geosBefore = mocks.geometries.length;
-        const desksBefore = mocks.desktops.length;
-        mocks.timers[0]?.callback();
-        const line = settleLine(mocks.logs, correlation);
-        assert.ok(line.includes("outcome=settled"), line);
-        assert.equal(flagOf(line, "verify_reason"), "ok");
-        assert.equal(flagOf(line, "fence_pending"), "2");
-        assert.equal(flagOf(line, "fence_total"), "2");
-        assert.equal(flagOf(line, "mover_seen"), "0");
-        assert.equal(flagOf(line, "fence_idx"), "0,1");
-        assertNoRawLeak(line);
-        assert.equal(mocks.geometries.length, geosBefore, "settlement must not rewrite geometry");
-        assert.equal(mocks.desktops.length, desksBefore, "settlement must not rewrite membership");
-        mocks.callbacks[2]?.(ackReply(correlation));
-        mocks.callbacks[3]?.(committedReply(correlation));
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.ok(mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-        void seam;
-    });
-
-    it("keeps exact settlement and commit when timeout diagnostics throw", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const seam = addEchoSeam(mocks);
-        const adapter = new WorkspaceSendAdapter({
-            ...mocks.env,
-            log: (message: string) => {
-                if (message.includes("stage=timeout")) {
-                    throw new Error("timeout diagnostic lost");
-                }
-                mocks.logs.push(message);
-            },
-        });
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestCall = mocks.dbusCalls[1];
-        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        mocks.timers[0]?.callback();
-        assert.ok(
-            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted")),
-        );
-        mocks.callbacks[2]?.(ackReply(correlation));
-        mocks.callbacks[3]?.(committedReply(correlation));
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.deepEqual(mocks.switches, [refs.desktop]);
-        assert.deepEqual(mocks.focuses, [refs.a]);
-        void seam;
-    });
-});
-
-describe("cosmic send-to-workspace deliberate gap reload", () => {
-    function gapsOf(payload: string): { gap: unknown; outer_gap: unknown; targetGap: unknown; targetOuter: unknown } {
-        const parsed = parsePayload(payload);
-        const domain = parsed["domain"] as Record<string, unknown>;
-        const targetDomain = parsed["target_domain"] as Record<string, unknown>;
-        return {
-            gap: domain["gap"],
-            outer_gap: domain["outer_gap"],
-            targetGap: targetDomain["gap"],
-            targetOuter: targetDomain["outer_gap"],
-        };
-    }
-
-    function plannerPayloads(mocks: Mocks): string[] {
-        return mocks.dbusCalls
-            .filter((call) => call.method === WORKSPACE_SEND_METHOD)
-            .map((call) => call.payload);
-    }
-
-    function resetWorldForNextSend(mocks: Mocks): void {
-        for (const entry of mocks.world.windows) {
-            if (entry.id === "win-a") {
-                entry.workspace = "ws-1";
-                entry.rect = { x: 0, y: 0, w: 100, h: 100 };
-            } else if (entry.id === "win-b") {
-                entry.workspace = "ws-1";
-                entry.rect = { x: 100, y: 0, w: 100, h: 100 };
-            } else {
-                entry.workspace = "ws-2";
-                entry.rect = { x: 0, y: 0, w: 100, h: 100 };
-            }
-        }
-    }
-
-    it("updates subsequent requests to the validated pair in both domains", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env, { innerGap: 8, outerGap: 8 });
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        adapter.updateGaps({ innerGap: 12, outerGap: 14 });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestPayload = mocks.dbusCalls[1]?.payload as string;
-        assert.deepEqual(gapsOf(requestPayload), { gap: 12, outer_gap: 14, targetGap: 12, targetOuter: 14 });
-        const correlation = parsePayload(requestPayload)["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        const ackPayload = mocks.dbusCalls[2]?.payload as string;
-        assert.deepEqual(gapsOf(ackPayload), { gap: 12, outer_gap: 14, targetGap: 12, targetOuter: 14 });
-        mocks.callbacks[2]?.(ackReply(correlation));
-        const verifyPayload = mocks.dbusCalls[3]?.payload as string;
-        assert.deepEqual(gapsOf(verifyPayload), { gap: 12, outer_gap: 14, targetGap: 12, targetOuter: 14 });
-        mocks.callbacks[3]?.(committedReply(correlation));
-        assert.equal(adapter.isInFlight, false);
-        adapter.disable();
-    });
-
-    it("freezes the request-wait transaction when reload lands before the planned reply", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env, { innerGap: 8, outerGap: 8 });
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestPayload = mocks.dbusCalls[1]?.payload as string;
-        assert.deepEqual(gapsOf(requestPayload), { gap: 8, outer_gap: 8, targetGap: 8, targetOuter: 8 });
-        const correlation = parsePayload(requestPayload)["correlation_id"] as string;
-        adapter.updateGaps({ innerGap: 12, outerGap: 14 });
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        assert.deepEqual(gapsOf(mocks.dbusCalls[2]?.payload as string), {
-            gap: 8,
-            outer_gap: 8,
-            targetGap: 8,
-            targetOuter: 8,
-        });
-        mocks.callbacks[2]?.(ackReply(correlation));
-        assert.deepEqual(gapsOf(mocks.dbusCalls[3]?.payload as string), {
-            gap: 8,
-            outer_gap: 8,
-            targetGap: 8,
-            targetOuter: 8,
-        });
-        mocks.callbacks[3]?.(committedReply(correlation));
-        assert.equal(adapter.isInFlight, false);
-        resetWorldForNextSend(mocks);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        const base = mocks.dbusCalls.length - 1;
-        mocks.callbacks[base]?.(":1.7");
-        assert.deepEqual(gapsOf(mocks.dbusCalls[base + 1]?.payload as string), {
-            gap: 12,
-            outer_gap: 14,
-            targetGap: 12,
-            targetOuter: 14,
-        });
-        adapter.disable();
-    });
-
-    it("freezes the ack-wait transaction when reload lands before the ack reply", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env, { innerGap: 8, outerGap: 8 });
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestPayload = mocks.dbusCalls[1]?.payload as string;
-        const correlation = parsePayload(requestPayload)["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        assert.deepEqual(gapsOf(mocks.dbusCalls[2]?.payload as string), {
-            gap: 8,
-            outer_gap: 8,
-            targetGap: 8,
-            targetOuter: 8,
-        });
-        adapter.updateGaps({ innerGap: 12, outerGap: 14 });
-        mocks.callbacks[2]?.(ackReply(correlation));
-        assert.deepEqual(gapsOf(mocks.dbusCalls[3]?.payload as string), {
-            gap: 8,
-            outer_gap: 8,
-            targetGap: 8,
-            targetOuter: 8,
-        });
-        mocks.callbacks[3]?.(committedReply(correlation));
-        resetWorldForNextSend(mocks);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        const base = mocks.dbusCalls.length - 1;
-        mocks.callbacks[base]?.(":1.7");
-        assert.deepEqual(gapsOf(mocks.dbusCalls[base + 1]?.payload as string), {
-            gap: 12,
-            outer_gap: 14,
-            targetGap: 12,
-            targetOuter: 14,
-        });
-        adapter.disable();
-    });
-
-    it("freezes the verify-wait transaction when reload lands before the committed reply", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env, { innerGap: 8, outerGap: 8 });
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestPayload = mocks.dbusCalls[1]?.payload as string;
-        const correlation = parsePayload(requestPayload)["correlation_id"] as string;
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        mocks.callbacks[2]?.(ackReply(correlation));
-        const verifyPayload = mocks.dbusCalls[3]?.payload as string;
-        assert.deepEqual(gapsOf(verifyPayload), { gap: 8, outer_gap: 8, targetGap: 8, targetOuter: 8 });
-        adapter.updateGaps({ innerGap: 12, outerGap: 14 });
-        mocks.callbacks[3]?.(committedReply(correlation));
-        assert.ok(plannerPayloads(mocks).every((payload) => gapsOf(payload).gap === 8));
-        resetWorldForNextSend(mocks);
-        assert.equal(adapter.requestSend("ws-2"), true);
-        const base = mocks.dbusCalls.length - 1;
-        mocks.callbacks[base]?.(":1.7");
-        assert.deepEqual(gapsOf(mocks.dbusCalls[base + 1]?.payload as string), {
-            gap: 12,
-            outer_gap: 14,
-            targetGap: 12,
-            targetOuter: 14,
-        });
-        adapter.disable();
-    });
-
-    it("uses the current validated pair after a pre-dispatch clean rejection", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env, { innerGap: 8, outerGap: 8 });
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        adapter.updateGaps({ innerGap: 12, outerGap: 14 });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const requestPayload = mocks.dbusCalls[1]?.payload as string;
-        assert.deepEqual(gapsOf(requestPayload), { gap: 12, outer_gap: 14, targetGap: 12, targetOuter: 14 });
-        const correlation = parsePayload(requestPayload)["correlation_id"] as string;
-        mocks.callbacks[1]?.(
-            JSON.stringify({ v: WORKSPACE_SEND_CONTRACT_VERSION, correlation_id: correlation, outcome: "rejected", kind: "focus-mismatch" }),
-        );
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        adapter.updateGaps({ innerGap: 4, outerGap: 6 });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        const base = mocks.dbusCalls.length - 1;
-        mocks.callbacks[base]?.(":1.7");
-        assert.deepEqual(gapsOf(mocks.dbusCalls[base + 1]?.payload as string), {
-            gap: 4,
-            outer_gap: 6,
-            targetGap: 4,
-            targetOuter: 6,
-        });
-        adapter.disable();
-    });
-
-    it("normalizes invalid gap input without refusal", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env, { innerGap: 8, outerGap: 8 });
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        adapter.updateGaps({ innerGap: 999, outerGap: "bad" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        assert.deepEqual(gapsOf(mocks.dbusCalls[1]?.payload as string), {
-            gap: 8,
-            outer_gap: 8,
-            targetGap: 8,
-            targetOuter: 8,
-        });
-        adapter.disable();
-    });
-});
-
-describe("cosmic send-to-workspace pre-actuation cancellation", () => {
-    function staleReply(correlation: string): string {
-        return JSON.stringify({
-            v: WORKSPACE_SEND_CONTRACT_VERSION,
-            correlation_id: correlation,
-            outcome: "rejected",
-            kind: "stale",
-            message: "cancel identity does not match the pending transaction",
-        });
-    }
-
-    // Drive enable + send + owner pin so the DescribePlan request is live and
-    // unanswered (request-phase failure shape: no plan bound, no writes).
-    function driveToLiveRequest(): {
-        adapter: WorkspaceSendAdapter;
-        mocks: Mocks;
-        correlation: string;
-    } {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const request = mocks.dbusCalls[1];
-        assert.equal(request?.service, ":1.7");
-        assert.equal(request?.method, WORKSPACE_SEND_METHOD);
-        const correlation = parsePayload(request?.payload ?? "{}")["correlation_id"] as string;
-        assert.ok(correlation.length > 0);
-        return { adapter, mocks, correlation };
-    }
-
-    function cancelCall(mocks: Mocks): DbusCall | undefined {
-        return mocks.dbusCalls.find((c) => c.payload.includes("send-to-workspace-cancel"));
-    }
-
-    it("abandons on request-phase timeout and stays enabled on abandoned", () => {
-        const { adapter, mocks, correlation } = driveToLiveRequest();
-        let observations = 0;
-        const baseObserve = mocks.observeImpl;
-        mocks.observeImpl = () => {
-            observations += 1;
-            return baseObserve();
-        };
-        // The whole-flight timer fires with no plan bound and no writes: the
-        // uncertain timeout reaches abandon directly (no cancel on timeouts).
-        mocks.timers[0]?.callback();
-        const abandon = abandonPayloadsOf(mocks);
-        assert.equal(abandon.length, 1, JSON.stringify(mocks.dbusCalls.map((c) => c.method)));
-        const body = abandon[0] ?? {};
-        // Exact retained identity, scope, and base revision; no windows, no
-        // focus, never a commit claim.
-        assert.equal(body["correlation_id"], correlation);
-        assert.equal(body["revision"], 0);
-        assert.equal(body["owner"], "owner-1");
-        assert.equal(body["generation"], "gen-1");
-        assert.deepEqual(body["focused_window"], "");
-        assert.deepEqual(body["windows"], []);
-        assert.deepEqual(body["target_windows"], []);
-        assert.equal((body["command"] as Record<string, unknown>)?.["op"], "send-to-workspace-abandon");
-        const request = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}");
-        assert.deepEqual(body["domain"], request["domain"]);
-        assert.deepEqual(body["target_domain"], request["target_domain"]);
-        // Flight retained through the wait; exactly one fresh gating
-        // observation ran.
-        assert.equal(adapter.isInFlight, true);
-        assert.equal(adapter.blocksPlan, true);
-        assert.equal(observations, 1);
-        assert.equal(mocks.timers[0]?.cancelled, true);
-        // Structured requested record with the dispatch correlation.
-        assert.ok(
-            mocks.logs.some(
-                (l) =>
-                    l.includes("component=cosmic-send") &&
-                    l.includes("route=send-to-workspace") &&
-                    l.includes("stage=abandon") &&
-                    l.includes(`correlation=${correlation}`) &&
-                    l.includes("generation=gen-1") &&
-                    l.includes("revision=0") &&
-                    l.includes("event=abandon-requested") &&
-                    l.includes("outcome=requested") &&
-                    l.includes("cause=timeout"),
-            ),
-            mocks.logs.join("\n"),
-        );
-        // Exact abandonment clears the flight without teardown: enabled,
-        // unblocked, no loss report, zero native writes.
-        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(adapter.blocksPlan, false);
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        assert.equal(mocks.geometries.length, 0);
-        assert.equal(mocks.desktops.length, 0);
-        assert.equal(mocks.switches.length, 0);
-        assert.equal(mocks.focuses.length, 0);
-        assert.ok(
-            mocks.logs.some(
-                (l) =>
-                    l.includes(`correlation=${correlation}`) &&
-                    l.includes("stage=abandon") &&
-                    l.includes("event=abandon-replied") &&
-                    l.includes("outcome=abandoned"),
-            ),
-            mocks.logs.join("\n"),
-        );
-        assert.ok(
-            mocks.logs.some(
-                (l) =>
-                    l.includes(`correlation=${correlation}`) &&
-                    l.includes("stage=abandon") &&
-                    l.includes("event=abandon-handoff") &&
-                    l.includes("outcome=resync-requested"),
-            ),
-            mocks.logs.join("\n"),
-        );
-        // Later commands proceed under a new correlation.
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[3]?.(":1.7");
-        const next = parsePayload(mocks.dbusCalls[4]?.payload ?? "{}")[
-            "correlation_id"
-        ] as string;
-        assert.notEqual(next, correlation);
-        assert.ok(
-            mocks.logs.some(
-                (l) =>
-                    l.includes(`correlation=${next}`) &&
-                    l.includes("event=dispatch") &&
-                    l.includes("outcome=started"),
-            ),
-            mocks.logs.join("\n"),
-        );
-    });
-
-    it("still withdraws provably zero-dispatch flights via cancel on reply-driven failures", () => {
-        const { adapter, mocks, correlation } = driveToLiveRequest();
-        // Malformed request reply with no plan bound and no writes: one
-        // cancel round trip runs before any abandon.
-        mocks.callbacks[1]?.("{not-json");
-        const cancel = cancelCall(mocks);
-        assert.ok(cancel, JSON.stringify(mocks.dbusCalls.map((c) => c.method)));
-        assert.equal(cancel?.service, ":1.7");
-        const payload = parsePayload(cancel?.payload ?? "{}");
-        assert.equal(payload["correlation_id"], correlation);
-        assert.equal(payload["revision"], 0);
-        assert.equal((payload["command"] as Record<string, unknown>)?.["op"], "send-to-workspace-cancel");
-        assert.equal((payload["command"] as Record<string, unknown>)?.["zero_dispatch"], true);
-        assert.equal(adapter.isInFlight, true);
-        // Exact matching cancellation clears the flight without teardown and
-        // without any abandon: enabled, unblocked, no loss report.
-        mocks.callbacks[2]?.(
-            JSON.stringify({
-                v: WORKSPACE_SEND_CONTRACT_VERSION,
-                correlation_id: correlation,
-                outcome: "cancelled",
-                kind: "send-to-workspace",
-                base_revision: 3,
-            }),
-        );
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(adapter.blocksPlan, false);
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        assert.equal(abandonPayloadsOf(mocks).length, 0);
-        assert.equal(mocks.geometries.length, 0);
-        assert.equal(mocks.desktops.length, 0);
-        assert.equal(adapter.requestSend("ws-2"), true, "later commands proceed under a new correlation");
-    });
-
-    it("reaches abandon unchanged when cancel is refused", () => {
-        const { adapter, mocks, correlation } = driveToLiveRequest();
-        // Reply-driven pre-actuation failure: the malformed request reply
-        // attempts one cancel round trip first.
-        mocks.callbacks[1]?.("{not-json");
-        assert.ok(cancelCall(mocks));
-        mocks.callbacks[2]?.(staleReply(correlation));
-        // The Rust refusal kind is attributed on the cancel line; the
-        // fallthrough reaches abandon instead of disabling.
-        assert.ok(
-            mocks.logs.some(
-                (l) => l.includes("event=reply") && l.includes("outcome=refused-stale") && l.includes(`correlation=${correlation}`),
-            ),
-            mocks.logs.join("\n"),
-        );
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(mocks.geometries.length, 0);
-        assert.equal(mocks.desktops.length, 0);
-    });
-
-    it("reaches abandon unchanged when the cancel reply is malformed", () => {
-        const { adapter, mocks, correlation } = driveToLiveRequest();
-        mocks.callbacks[1]?.("{not-json");
-        assert.ok(cancelCall(mocks));
-        mocks.callbacks[2]?.("{not-json");
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(mocks.geometries.length, 0);
-        assert.equal(mocks.desktops.length, 0);
-    });
-
-    it("reaches abandon unchanged when the cancel round trip times out", () => {
-        const { adapter, mocks, correlation } = driveToLiveRequest();
-        mocks.callbacks[1]?.("{not-json");
-        assert.ok(cancelCall(mocks));
-        assert.equal(mocks.timers[1]?.cancelled, false);
-        // The cancel deadline fires with no reply: cancel-specific timeout
-        // attribution, then abandon.
-        mocks.timers[1]?.callback();
-        assert.ok(
-            mocks.logs.some((l) => l.includes("event=timeout") && l.includes("outcome=timed-out")),
-            mocks.logs.join("\n"),
-        );
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("reaches abandon unchanged when the cancel send throws", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const baseCallDbus = mocks.env.callDbus.bind(mocks.env);
-        const throwingEnv: WorkspaceSendAdapterEnv = {
-            ...mocks.env,
-            callDbus: (service, path, iface, method, payload, callback) => {
-                if (payload.includes("send-to-workspace-cancel")) {
-                    throw new Error("transport down");
-                }
-                baseCallDbus(service, path, iface, method, payload, callback);
-            },
-        };
-        const adapter = new WorkspaceSendAdapter(throwingEnv);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        mocks.callbacks[1]?.("{not-json");
-        // The cancel attempt cannot leave the adapter: bounded unavailable
-        // record, then abandon on the working transport.
-        assert.ok(
-            mocks.logs.some((l) => l.includes("event=send") && l.includes("outcome=unavailable")),
-            mocks.logs.join("\n"),
-        );
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-    });
-
-    it("never attempts cancel after a setter threw", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        mocks.geometryImpl = () => {
-            throw new Error("native write fault");
-        };
-        const adapter = new WorkspaceSendAdapter(mocks.env);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
-        // A valid plan binds, then the first geometry setter throws: the
-        // flight dispatched, so no cancel may be attempted (ineligible
-        // recorded with the dispatched reason, which wins over merely bound)
-        // and the flight abandons instead of reporting adapter-lost.
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        assert.equal(cancelCall(mocks), undefined);
-        assert.ok(
-            mocks.logs.some(
-                (l) => l.includes("event=eligibility") && l.includes("outcome=ineligible-dispatched"),
-            ),
-            mocks.logs.join("\n"),
-        );
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")),
-            false,
-            JSON.stringify(mocks.dbusCalls, null, 2),
-        );
-        assert.equal(abandonPayloadsOf(mocks).length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
-        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("drops the late original reply and duplicate abandon callbacks while armed", () => {
-        const { adapter, mocks, correlation } = driveToLiveRequest();
-        // The whole-flight timer reaches abandon directly; no cancel runs on
-        // the timeout path.
-        mocks.timers[0]?.callback();
-        assert.equal(cancelCall(mocks), undefined);
-        assert.equal(abandonPayloadsOf(mocks).length, 1);
-        const callsBefore = mocks.dbusCalls.length;
-        // Late original planned reply while armed: inert, no actuation, no ack.
-        mocks.callbacks[1]?.(plannedReply(correlation));
-        assert.equal(mocks.geometries.length, 0);
-        assert.equal(mocks.desktops.length, 0);
-        assert.equal(
-            mocks.dbusCalls.some((c) => c.payload.includes("accepted")),
-            false,
-        );
-        assert.equal(adapter.isInFlight, true);
-        // Exact abandonment settles; replays of its callback and timer are inert.
-        assert.equal(settleAbandon(mocks, "abandoned"), correlation);
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        mocks.callbacks[2]?.(abandonedReply(correlation));
-        mocks.timers[1]?.callback();
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(mocks.dbusCalls.length, callsBefore);
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        assert.equal(
-            mocks.logs.filter((l) => l.includes("event=abandon-replied") && l.includes("outcome=abandoned")).length,
-            1,
-            mocks.logs.join("\n"),
-        );
-    });
-
-    it("reaches abandon for unknown cancel refusal kinds without echo", () => {
-        for (const outcome of ["rejected", "diverged"]) {
-            const driven = driveToLiveRequest();
-            // Reply-driven pre-actuation failure attempts cancel; the
-            // foreign-kind refusal is attributed without echo, then abandon.
-            driven.mocks.callbacks[1]?.("{not-json");
-            assert.ok(cancelCall(driven.mocks));
-            driven.mocks.callbacks[2]?.(
-                JSON.stringify({ v: 1, correlation_id: driven.correlation, outcome, kind: "bogus-kind" }),
-            );
-            // Syntax-valid but foreign kinds never echo: the record carries
-            // the allowlist fallback while the fallthrough abandons.
-            assert.ok(
-                driven.mocks.logs.some(
-                    (l) => l.includes("event=reply") && l.includes("outcome=refused-unknown") && l.includes(`correlation=${driven.correlation}`),
-                ),
-                driven.mocks.logs.join("\n"),
-            );
-            assert.ok(
-                driven.mocks.logs.every((l) => !l.includes("bogus-kind")),
-                driven.mocks.logs.join("\n"),
-            );
-            assert.equal(driven.adapter.isEnabled, true);
-            assert.equal(abandonPayloadsOf(driven.mocks).length, 1, driven.mocks.logs.join("\n"));
-            assert.equal(settleAbandon(driven.mocks, "abandoned"), driven.correlation);
-            assert.equal(driven.adapter.isInFlight, false);
-        }
-    });
-
-    it("attributes a malformed cancel reply before the abandon fallthrough", () => {
-        const { adapter, mocks, correlation } = driveToLiveRequest();
-        mocks.callbacks[1]?.("{not-json");
-        assert.ok(cancelCall(mocks));
-        mocks.callbacks[2]?.("{not-json");
-        assert.ok(
-            mocks.logs.some(
-                (l) => l.includes("event=reply") && l.includes("outcome=reply-malformed") && l.includes(`correlation=${correlation}`),
-            ),
-            mocks.logs.join("\n"),
-        );
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, true);
-        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        assert.equal(abandonPayloadsOf(mocks).length, 1, mocks.logs.join("\n"));
-        assert.equal(settleAbandon(mocks, "no-pending-unknown"), correlation);
-        assert.equal(adapter.isInFlight, false);
-    });
-
-    it("keeps logging failure-harmless when the logger throws", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        const throwingEnv: WorkspaceSendAdapterEnv = {
-            ...mocks.env,
-            log: () => {
-                throw new Error("log down");
-            },
-        };
-        const adapter = new WorkspaceSendAdapter(throwingEnv);
-        adapter.enable({ owner: "owner-1", generation: "gen-1" });
-        assert.equal(adapter.requestSend("ws-2"), true);
-        mocks.callbacks[0]?.(":1.7");
-        const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
-        // The whole-flight timer reaches abandon directly; every abandon
-        // diagnostic throws inside the adapter and is swallowed.
-        mocks.timers[0]?.callback();
-        assert.equal(abandonPayloadsOf(mocks).length, 1);
-        mocks.callbacks[2]?.(
-            JSON.stringify({
-                v: WORKSPACE_SEND_CONTRACT_VERSION,
-                correlation_id: correlation,
-                outcome: "abandoned",
-                kind: "send-to-workspace",
-            }),
-        );
-        // Every diagnostic above threw inside the adapter and was swallowed:
-        // the flight still settles exactly like the logged path.
-        assert.equal(adapter.isEnabled, true);
-        assert.equal(adapter.isInFlight, false);
-        assert.equal(adapter.requestSend("ws-2"), true);
-    });
-});
-
-describe("cancel/status observability wiring (offline capture proof)", () => {
-    function repoFile(...parts: string[]): string {
-        const candidates = [resolve(process.cwd(), ...parts), resolve(process.cwd(), "..", ...parts)];
-        for (const candidate of candidates) {
-            try {
-                readFileSync(candidate, "utf8");
-                return candidate;
-            } catch (error) {
-                void error;
-            }
-        }
-        throw new Error(`missing source under test: ${parts.join("/")}`);
-    }
-
-    it("routes every cancel/status line through journal-captured prefixes at normal level", () => {
-        const ws = readFileSync(repoFile("kwin", "src", "workspace-send-adapter.ts"), "utf8");
-        const plan = readFileSync(repoFile("kwin", "src", "plan-adapter.ts"), "utf8");
-        // The combined-capture journal filter is the literal
-        // `plasma-auto-tiler:` substring; both adapters' diag facilities use
-        // prefixes carrying it, so every cancel/status record is captured.
-        assert.ok(ws.includes('"plasma-auto-tiler:route-diag"'));
-        assert.ok(plan.includes('"plasma-auto-tiler:plan"'));
-        // Cancel outcomes bypass trace gating on both routes: workspace
-        // admits the whole `cancel` event family in its diag filter (the
-        // `event !== "cancel"` clause defeats the trace-only return), Plan
-        // logs every non-dispatch outcome (cancel lines included).
-        assert.ok(ws.includes('event !== "cancel"'));
-        assert.ok(ws.includes("`ineligible-${ineligible}`"));
-        assert.ok(ws.includes("`refused-${refusal}`"));
-        assert.ok(plan.includes("cancel-ineligible-"));
-        assert.ok(plan.includes("cancel-refused-"));
-        // No cancel/status record echoes payloads, ids, geometry, or owners:
-        // refusal attribution passes through the allowlisted kind helper
-        // (known Rust cancellation/divergence kinds, else `unknown`), never
-        // the syntax-only sanitizer or raw reply bytes.
-        assert.ok(ws.includes("refusal = cancelRefusalKind("));
-        assert.ok(plan.includes("refusal = cancelRefusalKind("));
-        assert.ok(ws.includes('"cancel-op-invalid"'));
-        assert.ok(plan.includes('"cancel-op-invalid"'));
-    });
-
-    it("keeps the combined dev capture wiring both sinks", () => {
-        const justfile = readFileSync(repoFile("justfile"), "utf8");
-        // Planner stderr file tail plus the KWin journal filter feed the
-        // combined stream; either sink going missing fails bring-up loudly.
-        assert.ok(justfile.includes('tail -n +1 -F "$PLANNER_LOG"'));
-        assert.ok(justfile.includes('grep --line-buffered -F "plasma-auto-tiler:"'));
-        assert.ok(justfile.includes("dev-planner-stream"));
-        assert.ok(justfile.includes("dev-kwin-stream"));
-    });
-
-    it("keeps Rust summaries bounded with no raw payload trace", () => {
-        const protocol = readFileSync(repoFile("crates", "tiler-protocol", "src", "planner_protocol.rs"), "utf8");
-        const service = readFileSync(repoFile("crates", "plasma-auto-tiler", "src", "planner_service.rs"), "utf8");
-        // The raw full-JSON trace is gone; summaries are the only record.
-        assert.ok(!protocol.includes("plan-trace:request"));
-        assert.ok(!service.includes("plan-trace:request"));
-        assert.ok(protocol.includes("PLAN_SUMMARY_PREFIX"));
-        assert.ok(service.includes("summarize_plan_ingress"));
-        assert.ok(service.includes("summarize_plan_egress"));
-        // Trace wiring (env var + gated shape line) is preserved.
-        assert.ok(service.includes("PLASMA_AUTO_TILER_TRACE"));
-        assert.ok(protocol.includes("summarize_plan_shape"));
+        assert.equal(mocks.settled, 1);
+        assert.equal(mocks.timers.length, timerAt + 2);
+        assertRedacted(mocks);
     });
 });

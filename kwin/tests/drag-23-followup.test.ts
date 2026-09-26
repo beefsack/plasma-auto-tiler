@@ -666,95 +666,6 @@ describe("drag-23 rejected-drop converge", () => {
     });
 });
 
-describe("drag-23 blocked and parked paths", () => {
-    function unitObserved(): PlanObserved {
-        const a = {};
-        const b = {};
-        return {
-            domainOutput: "out-1",
-            domainWorkspace: "ws-1",
-            domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
-            domainGap: 0,
-            domainOuterGap: 0,
-            focusedId: "win-a",
-            windows: Object.freeze([
-                Object.freeze({ id: "win-a", ref: a, rect: { x: 0, y: 0, w: 600, h: 800 }, output: "out-1", workspace: "ws-1", fullscreen: false, maximized: false }),
-                Object.freeze({ id: "win-b", ref: b, rect: { x: 600, y: 0, w: 600, h: 800 }, output: "out-1", workspace: "ws-1", fullscreen: false, maximized: false }),
-            ]),
-            activeRef: a,
-            fingerprint: "fp-unit",
-            revalidate: () => true,
-        };
-    }
-
-    function unitAdapter(opts: { sendActive: boolean }): { adapter: PlanAdapter; logs: string[]; sent: string[]; setSend: (active: boolean) => void } {
-        const logs: string[] = [];
-        const sent: string[] = [];
-        let sendActive = opts.sendActive;
-        const env: PlanAdapterEnv = {
-            callDbus: (_s, _p, _i, method, payload, callback): void => {
-                if (method === "NameHasOwner") { callback(true); return; }
-                if (method === "GetNameOwner") { callback(":1.7"); return; }
-                if (method === "StartServiceByName") { callback(1); return; }
-                sent.push(payload);
-                // Leave the DescribePlan reply pending: the flight stays live.
-            },
-            scheduleOnce: (): (() => void) => (): void => {},
-            log: (message): void => {
-                logs.push(message);
-            },
-            observe: (): PlanObserved | null => unitObserved(),
-            clearMaximize: (): "invoked" => "invoked",
-            setGeometry: (): boolean => true,
-            setActive: (): boolean => true,
-            active: (): object | null => null,
-            subscribe: (): (() => void) => (): void => {},
-            isSendActive: (): boolean => sendActive,
-        };
-        const adapter = new PlanAdapter(env);
-        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
-        return { adapter, logs, sent, setSend: (active: boolean): void => { sendActive = active; } };
-    }
-
-    it("send-blocked refusal queues one deferred follow-up that dispatches on release", () => {
-        const { adapter, logs, sent, setSend } = unitAdapter({ sendActive: true });
-        assert.equal(adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-50"), false);
-        assert.ok(logs.some((line) => line === "plasma-auto-tiler:plan:busy-refused kind=pointer-resize"));
-        assert.ok(logs.some((line) => line.includes("drag-rejected") && line.includes("correlation=drag-50") && line.includes("reason=busy")));
-        assert.ok(logs.some((line) => line.includes("drag-reconcile") && line.includes("correlation=drag-50") && line.includes("dispatch=deferred")));
-        assert.equal(sent.length, 0, "nothing sent while the send flight blocks");
-        setSend(false);
-        (adapter as unknown as { requestResync: () => void }).requestResync();
-        // requestResync debounces via scheduleOnce (noop mock): drive the
-        // preserved queue through finishFlight instead.
-        (adapter as unknown as { finishFlight: () => void }).finishFlight();
-        assert.equal(sent.length, 1, "exactly one follow-up on release");
-        assert.ok(sent[0]?.includes("reconcile"), "the follow-up is a reconcile");
-        assert.ok(!sent[0]?.includes("pointer-resize"), "no pointer replay");
-    });
-
-    it("parked finishFlight keeps the marker instead of dropping it", () => {
-        const { adapter, logs, sent, setSend } = unitAdapter({ sendActive: true });
-        assert.equal(adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-51"), false);
-        const markers = (adapter as unknown as { dragRestore: Map<string, { drags: string[]; dispatched: boolean }> }).dragRestore;
-        assert.equal(markers.size, 1, "rejected drop marks its domain while blocked");
-        assert.equal((adapter as unknown as { deferredAuto: unknown }).deferredAuto, null, "markers never occupy the single slot");
-        setSend(false);
-        (adapter as unknown as { parked: boolean }).parked = true;
-        (adapter as unknown as { reconcileAttempts: number }).reconcileAttempts = 3;
-        (adapter as unknown as { finishFlight: () => void }).finishFlight();
-        assert.equal(sent.length, 0, "parked dispatches nothing");
-        assert.equal(markers.size, 1, "marker persists through parking, not discarded");
-        (adapter as unknown as { parked: boolean }).parked = false;
-        (adapter as unknown as { reconcileAttempts: number }).reconcileAttempts = 0;
-        (adapter as unknown as { finishFlight: () => void }).finishFlight();
-        assert.equal(sent.length, 1, "exactly one follow-up after unpark");
-        assert.ok(sent[0]?.includes("reconcile"));
-        assert.ok(!logs.some((line) => line.includes("drag-51") && line.includes("lost")), "never silently lost");
-        assert.equal(markers.size, 1, "marker clears only on an applied or failed plan, not on dispatch");
-    });
-});
-
 describe("drag restore marker scope", () => {
     interface RestoreSent {
         readonly payload: string;
@@ -769,7 +680,6 @@ describe("drag restore marker scope", () => {
     }
 
     function restoreWorld(opts: {
-        sendActive?: boolean;
         observeThrows?: boolean;
         scheduleThrows?: boolean;
         dbusThrows?: boolean;
@@ -778,14 +688,12 @@ describe("drag restore marker scope", () => {
         adapter: PlanAdapter;
         logs: string[];
         sent: RestoreSent[];
-        setSend: (active: boolean) => void;
         setDomain: (output: string, workspace: string) => void;
         setRect: (id: string, rect: RestoreRect) => void;
         rectOf: (id: string) => RestoreRect;
     } {
         const logs: string[] = [];
         const sent: RestoreSent[] = [];
-        let sendActive = opts.sendActive === true;
         let output = "out-1";
         let workspace = "ws-1";
         const refs = new Map<string, object>([
@@ -876,7 +784,6 @@ describe("drag restore marker scope", () => {
             },
             active: (): object | null => refs.get(activeId) ?? null,
             subscribe: (): (() => void) => (): void => {},
-            isSendActive: (): boolean => sendActive,
         };
         const adapter = new PlanAdapter(env);
         assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
@@ -884,9 +791,6 @@ describe("drag restore marker scope", () => {
             adapter,
             logs,
             sent,
-            setSend: (active: boolean): void => {
-                sendActive = active;
-            },
             setDomain: (nextOutput: string, nextWorkspace: string): void => {
                 output = nextOutput;
                 workspace = nextWorkspace;
@@ -897,156 +801,6 @@ describe("drag restore marker scope", () => {
             rectOf: (id: string): RestoreRect => ({ ...(rects.get(id) as RestoreRect) }),
         };
     }
-
-    function unitPlanned(
-        correlation: string,
-        output: string,
-        workspace: string,
-        geom: ReadonlyArray<{ window: string; rect: RestoreRect }>,
-    ): string {
-        return JSON.stringify({
-            v: 1,
-            correlation_id: correlation,
-            outcome: "planned",
-            base_revision: 2,
-            detail: { kind: "reconcile" },
-            desired_geometry: geom.map((entry) => ({
-                window: entry.window,
-                leaf: `${entry.window}-leaf`,
-                output,
-                workspace,
-                rect: entry.rect,
-            })),
-        });
-    }
-
-    function unitFocusPlanned(
-        correlation: string,
-        output: string,
-        workspace: string,
-        geom: ReadonlyArray<{ window: string; rect: RestoreRect }>,
-    ): string {
-        const body = JSON.parse(unitPlanned(correlation, output, workspace, geom)) as Record<string, unknown>;
-        body["desired_focus"] = { domain_output: output, domain_workspace: workspace, leaf: "win-b-leaf" };
-        return JSON.stringify(body);
-    }
-
-    function unitFloatPlanned(
-        correlation: string,
-        output: string,
-        workspace: string,
-        geom: ReadonlyArray<{ window: string; rect: RestoreRect }>,
-    ): string {
-        const body = JSON.parse(unitPlanned(correlation, output, workspace, geom)) as Record<string, unknown>;
-        body["float_geometry"] = { window: "win-a", rect: { x: 300, y: 100, w: 600, h: 400 } };
-        return JSON.stringify(body);
-    }
-
-    function sentCommand(call: RestoreSent | undefined): Record<string, unknown> {
-        return (JSON.parse(call?.payload as string) as Record<string, unknown>)["command"] as Record<string, unknown>;
-    }
-
-    function sentCorrelation(call: RestoreSent | undefined): string {
-        return (JSON.parse(call?.payload as string) as Record<string, unknown>)["correlation_id"] as string;
-    }
-
-    function retained(): ReadonlyArray<{ window: string; rect: RestoreRect }> {
-        return [
-            { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
-            { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
-        ];
-    }
-
-    it("a later accepted drop satisfies the marker with no marker dispatch", () => {
-        const w = restoreWorld();
-        w.setSend(true);
-        assert.equal(w.adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-70"), false);
-        assert.equal(w.sent.length, 0, "nothing sent while the send flight blocks");
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile") && line.includes("correlation=drag-70") && line.includes("dispatch=deferred")));
-        w.setSend(false);
-        // Native drift: the refused drop left the window at its dragged rect.
-        w.setRect("win-a", { x: 0, y: 0, w: 750, h: 800 });
-        // A later accepted drop dispatches its own pointer and owns the slot.
-        assert.equal(w.adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-71"), true);
-        assert.equal(w.sent.length, 1);
-        assert.deepEqual(sentCommand(w.sent[0])["op"], "pointer-resize");
-        const pointerCorr = sentCorrelation(w.sent[0]);
-        w.sent[0]?.callback(unitPlanned(pointerCorr, "out-1", "ws-1", retained()));
-        assert.deepEqual(w.rectOf("win-a"), { x: 0, y: 0, w: 600, h: 800 }, "retained geometry restored");
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-70") && line.includes("outcome=applied") && line.includes(`plan=${pointerCorr}`)), "accepted plan satisfies the earlier drop");
-        assert.equal(w.sent.length, 1, "no marker dispatch once satisfied");
-        assert.ok(!w.logs.some((line) => line.includes("drag-reconcile") && line.includes("correlation=drag-70") && line.includes("dispatch=dispatched")), "marker never dispatched its own reconcile");
-    });
-
-    it("a focus-only application never satisfies the marker", () => {
-        const w = restoreWorld();
-        w.setSend(true);
-        assert.equal(w.adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-80"), false);
-        w.setSend(false);
-        w.setRect("win-a", { x: 0, y: 0, w: 750, h: 800 });
-        w.adapter.requestFocus("right");
-        assert.equal(w.sent.length, 1, "focus dispatches while the marker pends");
-        assert.deepEqual(sentCommand(w.sent[0])["op"], "focus");
-        const focusCorr = sentCorrelation(w.sent[0]);
-        w.sent[0]?.callback(unitFocusPlanned(focusCorr, "out-1", "ws-1", retained()));
-        assert.ok(!w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-80")), "focus applies no geometry, so the marker persists");
-        assert.equal(w.sent.length, 2, "the marker still dispatches its single reconcile");
-        assert.deepEqual(sentCommand(w.sent[1])["op"], "reconcile");
-        const markerCorr = sentCorrelation(w.sent[1]);
-        w.sent[1]?.callback(unitPlanned(markerCorr, "out-1", "ws-1", retained()));
-        assert.deepEqual(w.rectOf("win-a"), { x: 0, y: 0, w: 600, h: 800 }, "retained geometry restored");
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-80") && line.includes("outcome=applied") && line.includes(`plan=${markerCorr}`)));
-        assert.equal(w.sent.length, 2, "no retry after the marker settles");
-    });
-
-    it("an unrelated domain application never satisfies the marker", () => {
-        const w = restoreWorld();
-        w.setSend(true);
-        assert.equal(w.adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-82"), false);
-        w.setSend(false);
-        // Ordinary traffic applies in another domain while the marker pends.
-        w.setDomain("out-1", "ws-2");
-        assert.equal(w.adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-83"), true);
-        assert.equal(w.sent.length, 1);
-        const otherCorr = sentCorrelation(w.sent[0]);
-        w.sent[0]?.callback(unitPlanned(otherCorr, "out-1", "ws-2", retained()));
-        assert.ok(!w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-82")), "unrelated domain leaves the marker pending");
-        assert.equal(w.sent.length, 1, "no marker dispatch while its domain is not observed");
-        // Back in the marked domain the single reconcile dispatches and converges.
-        w.setDomain("out-1", "ws-1");
-        w.setRect("win-a", { x: 0, y: 0, w: 750, h: 800 });
-        (w.adapter as unknown as { finishFlight: () => void }).finishFlight();
-        assert.equal(w.sent.length, 2, "exactly one marker reconcile on return");
-        assert.deepEqual(sentCommand(w.sent[1])["op"], "reconcile");
-        const markerCorr = sentCorrelation(w.sent[1]);
-        w.sent[1]?.callback(unitPlanned(markerCorr, "out-1", "ws-1", retained()));
-        assert.deepEqual(w.rectOf("win-a"), { x: 0, y: 0, w: 600, h: 800 }, "retained geometry restored");
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-82") && line.includes("outcome=applied") && line.includes(`plan=${markerCorr}`)));
-        assert.equal(w.sent.length, 2, "no retry after the marker settles");
-    });
-
-    it("a toggle-float application never satisfies the marker", () => {
-        const w = restoreWorld();
-        w.setSend(true);
-        assert.equal(w.adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-84"), false);
-        w.setSend(false);
-        w.setRect("win-a", { x: 0, y: 0, w: 750, h: 800 });
-        // Toggle-float applies only the float transition, never the domain's
-        // full retained projection.
-        w.adapter.requestFloat();
-        assert.equal(w.sent.length, 1, "toggle-float dispatches while the marker pends");
-        assert.deepEqual(sentCommand(w.sent[0])["op"], "toggle-float");
-        const floatCorr = sentCorrelation(w.sent[0]);
-        w.sent[0]?.callback(unitFloatPlanned(floatCorr, "out-1", "ws-1", retained()));
-        assert.ok(!w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-84")), "float transition leaves the marker pending");
-        assert.equal(w.sent.length, 2, "the marker still dispatches its single reconcile");
-        assert.deepEqual(sentCommand(w.sent[1])["op"], "reconcile");
-        const markerCorr = sentCorrelation(w.sent[1]);
-        w.sent[1]?.callback(unitPlanned(markerCorr, "out-1", "ws-1", retained()));
-        assert.deepEqual(w.rectOf("win-a"), { x: 0, y: 0, w: 600, h: 800 }, "retained geometry restored");
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-84") && line.includes("outcome=applied") && line.includes(`plan=${markerCorr}`)));
-        assert.equal(w.sent.length, 2, "no retry after the marker settles");
-    });
 
     it("a truly unscoped drop fails closed with an unavailable terminal", () => {
         const w = restoreWorld({ observeThrows: true });
@@ -1084,20 +838,6 @@ describe("drag restore marker scope", () => {
         assert.equal(w.sent.length, 0, "no retry after the bound terminal");
     });
 
-    it("a failed marker activation binds its terminal with the allocated plan", () => {
-        const w = restoreWorld({ ownerBroken: true });
-        w.setSend(true);
-        assert.equal(w.adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-88"), false);
-        w.setSend(false);
-        (w.adapter as unknown as { finishFlight: () => void }).finishFlight();
-        assert.equal(w.sent.length, 0, "activation never reached the planner send");
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-88") && line.includes("outcome=no-planner") && line.includes("plan=gen-1-p0")), "exact failure names the allocated plan correlation");
-        const markers = (w.adapter as unknown as { dragRestore: Map<string, unknown> }).dragRestore;
-        assert.equal(markers.size, 0, "failed attempt clears with no retry");
-        (w.adapter as unknown as { finishFlight: () => void }).finishFlight();
-        assert.equal(w.sent.length, 0, "no retry after the bound terminal");
-    });
-
     it("markers retain beyond sixteen domains without eviction", () => {
         const w = restoreWorld();
         for (let i = 1; i <= 20; i += 1) {
@@ -1112,23 +852,6 @@ describe("drag restore marker scope", () => {
         assert.equal(w.adapter.requestPointerResize("win-a", "sideways", 1000, undefined, undefined, "drag-99"), false);
         assert.equal(markers.size, 21, "new domains never evict a retained marker");
         assert.ok(!w.logs.some((line) => line.includes("correlation=drag-99") && line.includes("outcome=unavailable")), "no overflow terminal");
-    });
-
-    it("marker correlation overflow fails closed with an unavailable terminal", () => {
-        const w = restoreWorld({ sendActive: true });
-        for (let i = 0; i < 64; i += 1) {
-            assert.equal(w.adapter.requestPointerResize("win-a", "sideways", 1000, undefined, undefined, `drag-${100 + i}`), false);
-        }
-        const markers = (w.adapter as unknown as { dragRestore: Map<string, { drags: string[] }> }).dragRestore;
-        assert.equal(markers.size, 1, "one shared domain marker");
-        const only = [...markers.values()][0] as { drags: string[] };
-        assert.equal(only.drags.length, 64, "bounded correlation list");
-        // The 65th overlapping drop cannot be retained: loud unavailable
-        // terminal, and the shared marker keeps its 64 correlations.
-        assert.equal(w.adapter.requestPointerResize("win-a", "sideways", 1000, undefined, undefined, "drag-200"), false);
-        assert.equal(only.drags.length, 64, "overflow never evicts a retained correlation");
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-200") && line.includes("outcome=unavailable") && line.includes("plan=none")));
-        assert.equal(w.sent.length, 0, "nothing sent while blocked");
     });
 });
 
@@ -1149,7 +872,6 @@ describe("drag restore marker interactive-suppression race", () => {
         adapter: PlanAdapter;
         logs: string[];
         sent: RaceSent[];
-        setSend: (active: boolean) => void;
         setInteractive: (active: boolean) => void;
         setDomain: (output: string, workspace: string) => void;
         setRect: (id: string, rect: RaceRect) => void;
@@ -1161,7 +883,6 @@ describe("drag restore marker interactive-suppression race", () => {
     } {
         const logs: string[] = [];
         const sent: RaceSent[] = [];
-        let sendActive = false;
         let interactive = false;
         let scheduleThrows = 0;
         let output = "out-1";
@@ -1235,7 +956,6 @@ describe("drag restore marker interactive-suppression race", () => {
             },
             active: (): object | null => refs.get(activeId) ?? null,
             subscribe: (): (() => void) => (): void => {},
-            isSendActive: (): boolean => sendActive,
             isInteractiveResizeActive: (): boolean => interactive,
         };
         const adapter = new PlanAdapter(env);
@@ -1244,9 +964,6 @@ describe("drag restore marker interactive-suppression race", () => {
             adapter,
             logs,
             sent,
-            setSend: (active: boolean): void => {
-                sendActive = active;
-            },
             setInteractive: (active: boolean): void => {
                 interactive = active;
             },
@@ -1301,10 +1018,6 @@ describe("drag restore marker interactive-suppression race", () => {
         });
     }
 
-    function raceRejected(correlation: string): string {
-        return JSON.stringify({ v: 1, correlation_id: correlation, outcome: "rejected", kind: "focus-mismatch", detail: null });
-    }
-
     function raceRetained(): ReadonlyArray<{ window: string; rect: RaceRect }> {
         return [
             { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
@@ -1323,141 +1036,6 @@ describe("drag restore marker interactive-suppression race", () => {
     function markersOf(w: { adapter: PlanAdapter }): Map<string, { drags: string[]; dispatched: boolean }> {
         return (w.adapter as unknown as { dragRestore: Map<string, { drags: string[]; dispatched: boolean }> }).dragRestore;
     }
-
-    function finish(w: { adapter: PlanAdapter }): void {
-        (w.adapter as unknown as { finishFlight: () => void }).finishFlight();
-    }
-
-    // Rejected drop leaves a pending marker; freeing the slot dispatches its
-    // single reconcile, which stays in flight for the race below.
-    function armMarkerInFlight(w: ReturnType<typeof raceWorld>, drag: string): string {
-        w.setSend(true);
-        assert.equal(w.adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, drag), false);
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile") && line.includes(`correlation=${drag}`) && line.includes("dispatch=deferred")));
-        w.setSend(false);
-        finish(w);
-        assert.equal(w.sent.length, 1, "marker reconcile dispatched");
-        assert.deepEqual(raceCommand(w.sent[0])["op"], "reconcile");
-        assert.equal(markersOf(w).size, 1);
-        return raceCorrelation(w.sent[0]);
-    }
-
-    it("same-domain accepted drop satisfies the cancelled marker with full coverage", () => {
-        const w = raceWorld();
-        armMarkerInFlight(w, "drag-300");
-        // A new interactive resize starts while the marker reconcile holds
-        // the slot: suppression cancels it, re-arms the same marker pending,
-        // and logs the correlated cancellation without dispatching.
-        w.setInteractive(true);
-        w.adapter.setInteractiveResizeActive(true);
-        const marker = [...markersOf(w).values()][0] as { drags: string[]; dispatched: boolean };
-        assert.equal(marker.dispatched, false, "same marker re-armed pending, not dispatched");
-        assert.deepEqual(marker.drags, ["drag-300"], "same marker, no duplicate");
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile") && line.includes("correlation=drag-300") && line.includes("dispatch=cancelled")), "correlated cancellation logged");
-        assert.equal(w.sent.length, 1, "suppression dispatches nothing");
-        // The gesture finishes and its accepted drop applies the full domain
-        // geometry: the pending marker is satisfied, never redispatched.
-        w.setInteractive(false);
-        w.adapter.setInteractiveResizeActive(false);
-        w.setRect("win-a", { x: 0, y: 0, w: 750, h: 800 });
-        assert.equal(w.adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-301"), true);
-        assert.equal(w.sent.length, 2);
-        assert.deepEqual(raceCommand(w.sent[1])["op"], "pointer-resize");
-        const pointerCorr = raceCorrelation(w.sent[1]);
-        w.sent[1]?.callback(racePlanned(pointerCorr, "out-1", "ws-1", raceRetained()));
-        assert.deepEqual(w.rectOf("win-a"), { x: 0, y: 0, w: 600, h: 800 }, "retained geometry restored");
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-300") && line.includes("outcome=applied") && line.includes(`plan=${pointerCorr}`) && line.includes("covered=2/2")), "accepted plan satisfies with full coverage");
-        assert.equal(w.sent.length, 2, "no marker dispatch once satisfied");
-        assert.equal(w.logs.filter((line) => line.includes("drag-reconcile") && line.includes("correlation=drag-300") && line.includes("dispatch=dispatched")).length, 1, "cancelled marker dispatched exactly once, never redispatched");
-        assert.equal(w.activeId(), "win-a", "focus preserved, single slot, no queues");
-        assert.equal(markersOf(w).size, 0, "marker cleared");
-    });
-
-    it("same-domain rejected drop triggers one follow-up; its failure never retries", () => {
-        const w = raceWorld();
-        armMarkerInFlight(w, "drag-310");
-        w.setInteractive(true);
-        w.adapter.setInteractiveResizeActive(true);
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile") && line.includes("correlation=drag-310") && line.includes("dispatch=cancelled")));
-        // The next drop refuses while the gesture is live: it joins the same
-        // re-armed marker and dispatches nothing of its own.
-        w.setFullscreen("win-a", true);
-        assert.equal(w.adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-311"), false);
-        assert.ok(w.logs.some((line) => line.includes("drag-rejected") && line.includes("correlation=drag-311") && line.includes("reason=fullscreen")));
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile") && line.includes("correlation=drag-311") && line.includes("dispatch=deferred")));
-        assert.equal(w.sent.length, 1, "refusal dispatches nothing while interactive");
-        // Gesture over: exactly one follow-up reconcile converges both drops.
-        w.setFullscreen("win-a", false);
-        w.setInteractive(false);
-        finish(w);
-        assert.equal(w.sent.length, 2, "exactly one follow-up for the shared marker");
-        assert.deepEqual(raceCommand(w.sent[1]), { op: "reconcile" });
-        const follow = raceCorrelation(w.sent[1]);
-        w.sent[1]?.callback(raceRejected(follow));
-        for (const drag of ["drag-310", "drag-311"]) {
-            assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes(`correlation=${drag}`) && line.includes("outcome=rejected") && line.includes(`plan=${follow}`)), `${drag} gets its own failure terminal naming the plan`);
-        }
-        assert.equal(markersOf(w).size, 0, "genuine failure clears with no retry");
-        finish(w);
-        assert.equal(w.sent.length, 2, "no retry after the failed follow-up");
-    });
-
-    it("different-domain drop leaves the marker pending for a free-slot dispatch", () => {
-        const w = raceWorld();
-        armMarkerInFlight(w, "drag-320");
-        w.setInteractive(true);
-        w.adapter.setInteractiveResizeActive(true);
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile") && line.includes("correlation=drag-320") && line.includes("dispatch=cancelled")));
-        w.setInteractive(false);
-        w.adapter.setInteractiveResizeActive(false);
-        // Accepted drop in another domain applies without touching the marker.
-        w.setDomain("out-1", "ws-2");
-        w.setRect("win-a", { x: 0, y: 0, w: 750, h: 800 });
-        assert.equal(w.adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-321"), true);
-        const otherCorr = raceCorrelation(w.sent[1]);
-        w.sent[1]?.callback(racePlanned(otherCorr, "out-1", "ws-2", raceRetained()));
-        assert.ok(!w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-320")), "unrelated domain never satisfies the marker");
-        assert.equal(markersOf(w).size, 1, "marker persists");
-        finish(w);
-        assert.equal(w.sent.length, 2, "no marker dispatch while its domain is not observed");
-        // Back in the marked domain the single reconcile dispatches on the
-        // free slot and converges with full coverage.
-        w.setDomain("out-1", "ws-1");
-        w.setRect("win-a", { x: 0, y: 0, w: 750, h: 800 });
-        finish(w);
-        assert.equal(w.sent.length, 3, "exactly one marker reconcile on return");
-        assert.deepEqual(raceCommand(w.sent[2]), { op: "reconcile" });
-        const markerCorr = raceCorrelation(w.sent[2]);
-        w.sent[2]?.callback(racePlanned(markerCorr, "out-1", "ws-1", raceRetained()));
-        assert.deepEqual(w.rectOf("win-a"), { x: 0, y: 0, w: 600, h: 800 }, "retained geometry restored");
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-320") && line.includes("outcome=applied") && line.includes(`plan=${markerCorr}`) && line.includes("covered=2/2")));
-        assert.equal(w.sent.length, 3, "no retry after the marker settles");
-    });
-
-    it("skipped fullscreen dragged window settles partial, never applied", () => {
-        const w = raceWorld();
-        w.setSend(true);
-        assert.equal(w.adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-330"), false);
-        w.setSend(false);
-        w.setFullscreen("win-a", true);
-        // Drift the sibling so the apply writes exactly one member: the
-        // ordinary terminal then names the fullscreen skip alone.
-        w.setRect("win-b", { x: 600, y: 0, w: 500, h: 800 });
-        finish(w);
-        assert.equal(w.sent.length, 1, "marker reconcile dispatched");
-        const markerCorr = raceCorrelation(w.sent[0]);
-        w.sent[0]?.callback(racePlanned(markerCorr, "out-1", "ws-1", raceRetained()));
-        // win-a (the dragged window) skipped at write time: the marker's own
-        // reconcile settles a truthful partial terminal, never an applied
-        // restoring claim, and the ordinary terminal names the skip.
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-330") && line.includes("outcome=partial") && line.includes(`plan=${markerCorr}`) && line.includes("covered=1/2")), "terminal reports covered vs not");
-        assert.ok(!w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-330") && line.includes("outcome=applied")), "skipped dragged window never claims applied restore");
-        assert.ok(!w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-330") && line.includes("covered=2/2")), "skipped member excluded from the restored count");
-        assert.ok(w.logs.some((line) => line.includes("skipped-fullscreen")), "ordinary terminal names the skip");
-        assert.equal(markersOf(w).size, 0, "marker converges once with no retry");
-        assert.equal(w.sent.length, 1, "no follow-up after the bound terminal");
-        assert.equal(w.activeId(), "win-a", "focus preserved");
-    });
 
     it("synchronous dispatch failure reports refusal and never accepted", () => {
         const w = raceWorld();
@@ -1480,66 +1058,6 @@ describe("drag restore marker interactive-suppression race", () => {
         assert.equal(markersOf(w).size, 0);
     });
 
-    it("skipped maximized sibling settles the marker partial with no retry", () => {
-        const w = raceWorld();
-        w.setSend(true);
-        assert.equal(w.adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-410"), false);
-        w.setSend(false);
-        w.setMaximized("win-b", true);
-        w.setRect("win-a", { x: 0, y: 0, w: 750, h: 800 });
-        finish(w);
-        assert.equal(w.sent.length, 1, "marker reconcile dispatched");
-        assert.deepEqual(raceCommand(w.sent[0]), { op: "reconcile" });
-        const markerCorr = raceCorrelation(w.sent[0]);
-        w.sent[0]?.callback(racePlanned(markerCorr, "out-1", "ws-1", raceRetained()));
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-410") && line.includes("outcome=partial") && line.includes(`plan=${markerCorr}`) && line.includes("covered=1/2")), "maximized sibling excluded from the restored count");
-        assert.ok(!w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-410") && line.includes("outcome=applied")), "no applied restoring claim while a member stays skipped");
-        assert.equal(markersOf(w).size, 0, "partial clears with no retry");
-        finish(w);
-        assert.equal(w.sent.length, 1, "no retry after the partial terminal");
-    });
-
-    it("another plan partial leaves the marker pending for a free-slot dispatch", () => {
-        const w = raceWorld();
-        w.setSend(true);
-        assert.equal(w.adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-420"), false);
-        w.setSend(false);
-        w.setMaximized("win-b", true);
-        // An accepted drop for the same domain applies while the sibling is
-        // maximized: its partial application never satisfies the marker.
-        w.setRect("win-a", { x: 0, y: 0, w: 750, h: 800 });
-        assert.equal(w.adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-421"), true);
-        assert.equal(w.sent.length, 1);
-        const pointerCorr = raceCorrelation(w.sent[0]);
-        w.sent[0]?.callback(racePlanned(pointerCorr, "out-1", "ws-1", raceRetained()));
-        assert.ok(!w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-420")), "partial application never settles the marker");
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile") && line.includes("correlation=drag-420") && line.includes("dispatch=pending") && line.includes("covered=1/2")), "pending coverage reported");
-        assert.equal(markersOf(w).size, 1, "marker stays pending");
-        // The freed slot dispatches the marker's single reconcile, whose own
-        // partial application then settles truthfully with no retry.
-        assert.equal(w.sent.length, 2, "marker dispatches once the slot is free");
-        assert.deepEqual(raceCommand(w.sent[1]), { op: "reconcile" });
-        const markerCorr = raceCorrelation(w.sent[1]);
-        w.sent[1]?.callback(racePlanned(markerCorr, "out-1", "ws-1", raceRetained()));
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-420") && line.includes("outcome=partial") && line.includes(`plan=${markerCorr}`) && line.includes("covered=1/2")));
-        assert.ok(!w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-420") && line.includes("outcome=applied")));
-        assert.equal(w.sent.length, 2, "no retry after the partial terminal");
-    });
-
-    it("disable settles pending markers unavailable with no silent loss", () => {
-        const w = raceWorld();
-        w.setSend(true);
-        assert.equal(w.adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-430"), false);
-        assert.equal(w.adapter.requestPointerResize("win-a", "right", 1100, undefined, undefined, "drag-431"), false);
-        assert.equal(markersOf(w).size, 1, "shared marker pending");
-        w.adapter.disable();
-        for (const drag of ["drag-430", "drag-431"]) {
-            assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes(`correlation=${drag}`) && line.includes("outcome=unavailable") && line.includes("plan=none")), `${drag} gets its own teardown terminal`);
-        }
-        assert.equal(markersOf(w).size, 0, "teardown clears");
-        assert.equal(w.sent.length, 0, "teardown dispatches nothing");
-    });
-
     it("invalid and unknown windows fail closed with no unrelated marker", () => {
         const w = raceWorld();
         // Unknown but well-formed window with a pre-observation refusal: no
@@ -1548,11 +1066,6 @@ describe("drag restore marker interactive-suppression race", () => {
         assert.equal(w.adapter.requestPointerResize("win-ghost", "sideways", 1000, undefined, undefined, "drag-440"), false);
         assert.ok(w.logs.some((line) => line.includes("drag-rejected") && line.includes("correlation=drag-440")));
         assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-440") && line.includes("outcome=unavailable") && line.includes("plan=none")));
-        // Send-blocked refusal for an unknown window: same fail-closed path.
-        w.setSend(true);
-        assert.equal(w.adapter.requestPointerResize("win-ghost", "right", 1000, undefined, undefined, "drag-441"), false);
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-441") && line.includes("outcome=unavailable") && line.includes("plan=none")));
-        w.setSend(false);
         // Invalid (non-opaque) window identity: never a marker either.
         assert.equal(w.adapter.requestPointerResize(123, "right", 1000, undefined, undefined, "drag-442"), false);
         assert.ok(w.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-identity"));
@@ -1561,42 +1074,5 @@ describe("drag restore marker interactive-suppression race", () => {
         assert.equal(w.sent.length, 0, "nothing dispatched without a scope");
         // A later valid drop still converges normally in its own domain.
         assert.equal(w.adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-443"), true);
-    });
-
-    it("eligible later marker dispatches while an older off-domain marker pends", () => {
-        const w = raceWorld();
-        w.setSend(true);
-        assert.equal(w.adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-450"), false);
-        // Second domain refused while blocked: its marker is newer, and it is
-        // the currently observed domain.
-        w.setDomain("out-1", "ws-2");
-        assert.equal(w.adapter.requestPointerResize("win-a", "right", 1000, undefined, undefined, "drag-451"), false);
-        assert.equal(markersOf(w).size, 2, "one marker per domain");
-        w.setSend(false);
-        w.setRect("win-a", { x: 0, y: 0, w: 750, h: 800 });
-        finish(w);
-        // The older ws-1 marker must not starve the eligible ws-2 marker.
-        assert.equal(w.sent.length, 1, "exactly one eligible dispatch, no starvation");
-        assert.deepEqual(raceCommand(w.sent[0]), { op: "reconcile" });
-        const first = markersOf(w).get("out-1\u0000ws-1") as { drags: string[]; dispatched: boolean };
-        const second = markersOf(w).get("out-1\u0000ws-2") as { drags: string[]; dispatched: boolean };
-        assert.equal(first.dispatched, false, "off-domain marker stays pending untouched");
-        assert.equal(second.dispatched, true, "eligible marker consumes its single attempt");
-        const markerCorr = raceCorrelation(w.sent[0]);
-        w.sent[0]?.callback(racePlanned(markerCorr, "out-1", "ws-2", raceRetained()));
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-451") && line.includes("outcome=applied") && line.includes(`plan=${markerCorr}`) && line.includes("covered=2/2")), "eligible marker converges in its own domain");
-        assert.ok(!w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-450")), "off-domain marker never claimed by the unrelated plan");
-        assert.equal(markersOf(w).size, 1, "only the off-domain marker persists");
-        // Returning to the first domain dispatches its single reconcile.
-        w.setDomain("out-1", "ws-1");
-        w.setRect("win-a", { x: 0, y: 0, w: 750, h: 800 });
-        finish(w);
-        assert.equal(w.sent.length, 2, "exactly one follow-up on return");
-        assert.deepEqual(raceCommand(w.sent[1]), { op: "reconcile" });
-        const returnCorr = raceCorrelation(w.sent[1]);
-        w.sent[1]?.callback(racePlanned(returnCorr, "out-1", "ws-1", raceRetained()));
-        assert.deepEqual(w.rectOf("win-a"), { x: 0, y: 0, w: 600, h: 800 }, "retained geometry restored");
-        assert.ok(w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-450") && line.includes("outcome=applied") && line.includes(`plan=${returnCorr}`) && line.includes("covered=2/2")));
-        assert.equal(w.sent.length, 2, "no retry after both markers settle");
     });
 });

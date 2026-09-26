@@ -15,8 +15,9 @@
 // Only normal windows are observed; every other classification is skipped
 // before the snapshot so it can never be sent. Native writes are direct
 // frameGeometry writes in the shared canonical order plus only the mover's
-// Window.desktops membership write, then the legacy follow (target desktop
-// switch plus mover focus) only after the verified commit.
+// Window.desktops membership write, then follow (target desktop switch plus
+// mover focus, no retry) only after a fresh exact native membership proof.
+// There is no ack/verify protocol and no blocksPlan.
 //
 // The single D-Bus transport is org.plasmaautotiler.Planner DescribePlan; no
 // other method is invoked and same-UID authorization stays the Planner's own
@@ -54,7 +55,11 @@ export interface WorkspaceSendEntryOverrides {
 export interface WorkspaceSendEntryHandle {
     readonly stop: () => void;
     readonly requestSend: (targetWorkspace: unknown) => boolean;
-    readonly blocksPlan: () => boolean;
+    // Live flight state only. Deprecated alias `blocksPlan` was retired with
+    // the transaction protocol: send flights never block Plan; terminal
+    // settlement is observed through the adapter's `onSettled` edge (left
+    // unbound in this legacy dev entry, which owns no Plan).
+    readonly isInFlight: () => boolean;
     readonly isEnabled: () => boolean;
 }
 
@@ -359,8 +364,18 @@ function observeNative(
         if (windows === null) {
             return null;
         }
-        const sourceWindows: Array<{ id: string; ref: object; rect: { x: number; y: number; w: number; h: number } }> = [];
-        const targetWindows: Array<{ id: string; ref: object; rect: { x: number; y: number; w: number; h: number } }> = [];
+        type SendWindow = {
+            id: string;
+            ref: object;
+            rect: { x: number; y: number; w: number; h: number };
+            fullscreen: boolean;
+            maximized: boolean;
+            floating: boolean;
+            sticky: boolean;
+            fitExcluded: boolean;
+        };
+        const sourceWindows: SendWindow[] = [];
+        const targetWindows: SendWindow[] = [];
         const seen = new Set<string>();
         for (const item of windows) {
             if (typeof item !== "object" || item === null) {
@@ -376,15 +391,7 @@ function observeNative(
             if (readProp(ref, "minimized") !== false) {
                 continue;
             }
-            if (readProp(ref, "fullScreen") !== false) {
-                continue;
-            }
-            if (readProp(ref, "maximizeMode") !== 0) {
-                continue;
-            }
-            if (readProp(ref, "onAllDesktops") !== false) {
-                continue;
-            }
+            // Exceptions/overlays stay observed with flags; mover stays gated below.
             const output = readProp(ref, "output");
             if (typeof output !== "object" || output === null) {
                 continue;
@@ -422,10 +429,23 @@ function observeNative(
             if (rect === null) {
                 return null;
             }
+            // Local flags only; the adapter normalizes fitExcluded to wire fit_excluded.
+            const sticky = readProp(ref, "onAllDesktops") === true;
+            const fullscreen = readProp(ref, "fullScreen") !== false;
+            const maximized = readProp(ref, "maximizeMode") !== 0;
+            const floating = sticky;
+            const fitExcluded = floating || sticky || fullscreen || maximized;
+            const flags = {
+                fullscreen,
+                maximized,
+                floating,
+                sticky,
+                fitExcluded,
+            };
             if (onSource) {
-                sourceWindows.push({ id, ref, rect });
+                sourceWindows.push({ id, ref, rect, ...flags });
             } else {
-                targetWindows.push({ id, ref, rect });
+                targetWindows.push({ id, ref, rect, ...flags });
             }
         }
         let focusedId = "";
@@ -442,6 +462,10 @@ function observeNative(
                 const activeId = cache.get(activeNative) ?? (cache.set(activeNative, activeNative), activeNative);
                 for (const entry of sourceWindows) {
                     if (entry.id === activeId) {
+                        // Tiled-only mover; exceptions keep "" / null and refuse downstream.
+                        if (entry.fullscreen || entry.maximized || entry.floating || entry.sticky || entry.fitExcluded) {
+                            break;
+                        }
                         focusedId = entry.id;
                         moverRef = entry.ref;
                         break;
@@ -460,6 +484,13 @@ function observeNative(
                     id: entry.id,
                     ref: entry.ref,
                     rect: Object.freeze({ x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h }),
+                    fullscreen: entry.fullscreen,
+                    maximized: entry.maximized,
+                    floating: entry.floating,
+                    sticky: entry.sticky,
+                    fitExcluded: entry.fitExcluded,
+                    // Derived wire alias; internal working type holds fitExcluded only.
+                    fit_excluded: entry.fitExcluded,
                 }),
             ),
         );
@@ -469,6 +500,13 @@ function observeNative(
                     id: entry.id,
                     ref: entry.ref,
                     rect: Object.freeze({ x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h }),
+                    fullscreen: entry.fullscreen,
+                    maximized: entry.maximized,
+                    floating: entry.floating,
+                    sticky: entry.sticky,
+                    fitExcluded: entry.fitExcluded,
+                    // Derived wire alias; internal working type holds fitExcluded only.
+                    fit_excluded: entry.fitExcluded,
                 }),
             ),
         );
@@ -621,14 +659,6 @@ export function startWorkspaceSendAdapterEntry(
                 return null;
             }
         },
-        subscribeWindowGeometry: (windowRef, handler) => {
-            try {
-                return connectSignal(readSignal(windowRef, "frameGeometryChanged"), handler);
-            } catch (error) {
-                void error;
-                return null;
-            }
-        },
         switchToTarget: (desktopRef) => {
             try {
                 const surface = liveWorkspace as Record<string, unknown>;
@@ -690,7 +720,7 @@ export function startWorkspaceSendAdapterEntry(
                 return false;
             }
         },
-        blocksPlan: () => adapter.blocksPlan,
+        isInFlight: () => adapter.isInFlight,
         isEnabled: () => adapter.isEnabled,
     };
 }

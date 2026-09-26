@@ -11,45 +11,35 @@
 // This adapter carries the existing portable COSMIC same-output
 // distinct-workspace send operation over the ONE existing DescribePlan D-Bus
 // transport. Rust owns all planning, topology, membership, focus, and rejection
-// policy. This module owns KWin observation of the focused output's source and
-// target desktops, owner activation/pinning, the request/ack/verify phases,
-// exact source+target re-validation, sequential native frameGeometry writes
-// plus the mover's Window.desktops membership write. A fresh exact native
-// membership observation may then switch to the target desktop and focus the
-// mover before unrelated geometry convergence; Rust acknowledgement and commit
-// still require the complete exact post-observation and structured route
-// diagnostics.
+// policy and commits the planned topology synchronously in the same call,
+// returning both-domain geometry plus the native assignment. This module owns
+// KWin observation of the focused output's source and target desktops, owner
+// activation/pinning, a single request round trip, exact source+target
+// re-validation, synchronous planned-geometry writes then the mover's
+// Window.desktops membership write, and exactly one follow (target desktop
+// switch then mover focus, no retry) on a fresh exact native membership proof:
+// mover absent from source and present on target. The proof comes from an
+// immediate post-write observation AND a one-shot mover desktopsChanged signal
+// for delayed arrival. There is no ack/verify/cancel/abandon/status protocol,
+// no per-window geometry echo, no settlement timer, and no blocksPlan: Plan is
+// never blocked by a send flight.
+//
+// Source and target stay pinned from dispatch until arrival or a bounded
+// arrival deadline; a separate unanswered-request deadline releases the flight
+// and late replies are ignored by token. Every terminal path (arrival, failed
+// native write, stale reply, rejected/diverged reply, missing callback,
+// timeout, closed mover, disable with a live flight) clears the pin and calls
+// exactly one entry-owned `onSettled` hook for a forced complete source AND
+// target refresh through the single-flight Plan chain. Pre-flight refusals
+// carry no hook and leave no flight.
 //
 // Activation first uses NameHasOwner's normal boolean reply. A present owner is
 // resolved and pinned; only a confirmed absent name runs one
 // StartServiceByName(service, 0) phase accepting 1 PrimaryOwner / 2
 // AlreadyOwner, followed by one post-start GetNameOwner. Every planner call
-// targets that pinned unique `:N.M` owner. One timer, no retry, no polling.
-// Same-UID authorization stays solely the Planner's existing single check.
-//
-// The planner commits only after an exact accepted acknowledgement and a
-// matching verified post-observation: request proposes and retains one pending
-// two-domain Session, then ack then verify each bind one owner/generation/
-// correlation/base-revision. Any send unable to verify cleanly (nonexact
-// post-observation, unreadable source/third/absent scope, deadline, lost/late
-// reply, ack/verify timeout) uses ONE fenced correlated Planner op
-// `send-to-workspace-abandon` carrying the retained identity, scope, and base
-// revision. An exact reply (`abandoned`, `orphan-abandoned`, or
-// `no-pending-unknown` with exact version/correlation/kind) settles the
-// flight: the adapter stays enabled, unblocks Plan, and hands off to one
-// ordinary Plan resync over native observation, never claiming a KWin commit.
-// `orphan-abandoned` retires ANY live workspace-send pending from another
-// generation/correlation/owner/scope and is logged distinctly. Exact verify
-// is unchanged and nothing replays native setters. One single bounded
-// abandon wait runs on the existing one-shot deadline: while unreadable it
-// keeps trying on a valid echo before the deadline without resetting it;
-// when the wait expires the local flight releases as UNCONFIRMED (never
-// claiming Rust retirement or commit), stays enabled, unblocks Plan, and
-// hands off to the ordinary resync; a later send re-activates the current
-// Planner owner and its abandon can still retire any surviving pending. The
-// pre-actuation cancel below stays for provably zero-dispatch withdrawal
-// when it succeeds; every uncertain or lost planned result reaches abandon
-// instead of any terminal disabling.
+// targets that pinned unique `:N.M` owner. Two one-shot timers, no retry, no
+// polling. Same-UID authorization stays solely the Planner's existing single
+// check.
 //
 // Refusal routes are exact bounded tokens: no-planner, owner-loss,
 // stale-revision, cross-output, same-workspace, absent-focus, non-tiled-focus,
@@ -57,24 +47,13 @@
 // last-desktop (no distinct target desktop can exist). Pre-flight refusals
 // (scope-invalid plus the requestSend validation tokens above) log one
 // structured best-effort `plasma-auto-tiler:route-diag` line and return false
-// with the adapter still enabled, so a later valid send can proceed. Every
-// uncertain post-dispatch result (post-flight/planner/stale/owner/generation/
-// partial/timeout divergence) runs the single fenced correlated
-// `send-to-workspace-abandon` op and settles on its exact reply
-// (`abandoned`, `orphan-abandoned`, `no-pending-unknown`) or, when the
-// single bounded wait expires with no definitive reply, releases the local
-// flight as UNCONFIRMED instead of disabling: the adapter stays enabled
-// and unblocks Plan with one ordinary resync handoff. Post-plan abandon never sends the legacy
-// `send-to-workspace-ack` `adapter-lost` report. All logs carry fixed fields
-// (component, stage, correlation, generation, revision, event, outcome) with
-// no sensitive, native, or payload data.
+// with the adapter still enabled, so a later valid send can proceed.
 //
-// All logs are fixed redacted tokens. Only minimal public events are used and
-// all are detached on disable. No polling.
+// All logs carry fixed fields (component, stage, correlation, generation,
+// revision, event, outcome) with no sensitive, native, or payload data.
 
 import { DOMAIN_GAP_DEFAULT, DomainGaps, normalizeGap, OUTER_DOMAIN_GAP_DEFAULT, readDomainGaps } from "./domain-gap";
 import { orderGeometryWrites } from "./geometry-order";
-import { KWIN_TRACE_ENABLED } from "./trace";
 
 export const WORKSPACE_SEND_SERVICE = "org.plasmaautotiler.Planner";
 export const WORKSPACE_SEND_OBJECT = "/org/plasmaautotiler/Planner";
@@ -134,6 +113,15 @@ export interface WorkspaceSendObservedWindow {
     readonly id: string;
     readonly ref: object;
     readonly rect: WorkspaceSendRect;
+    // Complete-observation flags from the send observers (standalone and
+    // production). Optional so legacy synthetic fixtures without flags keep
+    // validating: absence normalizes to false, never drops an observed true.
+    readonly floating?: boolean;
+    readonly fitExcluded?: boolean;
+    readonly fit_excluded?: boolean;
+    readonly fullscreen?: boolean;
+    readonly maximized?: boolean;
+    readonly sticky?: boolean;
 }
 
 export interface WorkspaceSendObserved {
@@ -175,11 +163,19 @@ export interface WorkspaceSendObserved {
 
 // Primitive-only snapshot retained across the async D-Bus boundary. Never
 // holds Window objects, refs, or revalidation closures: ids, geometry values,
-// scope, and fingerprints only. Targets are always resolved from a fresh
-// synchronous observation while handling replies.
+// scope, fingerprints, and complete-observation flags only. Targets are
+// always resolved from a fresh synchronous observation while handling
+// replies. Native fullscreen/maximized/sticky stay local snapshot semantics
+// for the dispatch-frozen fence; only floating and fitExcluded ride the
+// portable request wire (as `floating` / `fit_excluded`).
 export interface WorkspaceSendSnapshotWindow {
     readonly id: string;
     readonly rect: WorkspaceSendRect;
+    readonly floating: boolean;
+    readonly fitExcluded: boolean;
+    readonly fullscreen: boolean;
+    readonly maximized: boolean;
+    readonly sticky: boolean;
 }
 
 export interface WorkspaceSendSnapshot {
@@ -208,35 +204,39 @@ export interface WorkspaceSendAdapterEnv {
     readonly scheduleOnce: (delayMs: number, callback: () => void) => () => void;
     readonly log: (message: string) => void;
     readonly observe: (targetWorkspace: string, pinnedSourceWorkspace?: string) => WorkspaceSendObserved | null;
-    // Settlement edge for entry-owned coordination: invoked exactly once
-    // after a committed send no longer blocks Plan and after follow/focus
-    // ordering. Never invoked for pre-dispatch clean recovery or uncertain
-    // terminal divergence.
-    readonly onCommitted?: () => void;
-    // Abandon settlement edge for entry-owned coordination: invoked exactly
-    // once after an exact `abandoned`/`no-pending-unknown` reply releases an
-    // unverifiable flight. The entry runs one ordinary Plan resync over
-    // native observation; the adapter never resets the Plan baseline itself.
-    // Never invoked for clean recovery, cancel withdrawal, or commit.
-    readonly onAbandoned?: () => void;
+    // Single settlement edge for entry-owned coordination: invoked exactly
+    // once on every terminal path that held a flight (arrival, failed native
+    // write, stale/rejected reply, missing callback, deadline, closed mover,
+    // disable with a live flight), carrying the exact terminal flight's
+    // source/target domain keys. The entry runs one forced complete source
+    // AND target refresh through the single-flight Plan chain; the adapter
+    // never resets the Plan baseline itself and never claims a native commit.
+    // Never invoked for pre-dispatch refusals, which hold no pin.
+    readonly onSettled?: (settled: WorkspaceSendSettled) => void;
     readonly setGeometry: (target: object, rect: WorkspaceSendRect) => boolean;
     readonly readGeometry?: (target: object) => WorkspaceSendRect | null;
     readonly setDesktops: (target: object, refs: ReadonlyArray<object>) => boolean;
     readonly switchToTarget?: (desktopRef: object, diagnostic: WorkspaceFollowNativeDiagnostic) => boolean;
     readonly focusWindow?: (windowRef: object, diagnostic: WorkspaceFollowNativeDiagnostic) => boolean;
-    // Narrow mover desktop-change subscription seam for the bounded signal
-    // fence. Production entries bind this to the mover Window.desktopsChanged
+    // Narrow mover desktop-change subscription seam for delayed arrival.
+    // Production entries bind this to the mover Window.desktopsChanged
     // public signal via the shared signal-capability helpers. One-shot: the
-    // adapter detaches after the first echo and on every terminal path.
-    // Absent only in legacy isolated core tests, which retain the exact
-    // synchronous post-write observe path.
+    // adapter detaches after the first signal and on every terminal path.
+    // Absent only in legacy isolated core tests, which retain the immediate
+    // post-write observation path.
     readonly subscribeMoverDesktops?: (moverRef: object, handler: () => void) => (() => void) | null;
-    // Narrow geometry-change subscription seam for the bounded signal fence.
-    // Production entries bind this to each changed Window.frameGeometryChanged
-    // public signal via the shared signal-capability helpers. One-shot per
-    // window: detached after its echo and on every terminal path. Absent only
-    // in legacy isolated tests, which retain the mover-only fence.
-    readonly subscribeWindowGeometry?: (windowRef: object, handler: () => void) => (() => void) | null;
+}
+
+// Exact terminal flight domains carried on the single settlement edge so the
+// entry can force a complete source AND target refresh through the
+// single-flight Plan chain. Primitive ids only, captured from the flight
+// snapshot before the pin clears; empty strings only on the defensive
+// no-flight path, which the entry treats as a generic resync.
+export interface WorkspaceSendSettled {
+    readonly sourceOutput: string;
+    readonly sourceWorkspace: string;
+    readonly targetOutput: string;
+    readonly targetWorkspace: string;
 }
 
 // Bounded per-flight sequencing is diagnostic-only. Production native hooks use
@@ -386,38 +386,6 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
     return true;
 }
 
-// Allowlisted Rust cancellation/divergence kinds for the cancel refusal
-// record: every kind the cancel evaluator can emit (`stale`,
-// `cancel-refused`, `cancel-mismatch`, `no-pending`, `cancel-op-invalid`,
-// plus the shared divergence reasons). Known kinds pass through verbatim;
-// anything else (transport mangling, never genuine Rust output on this
-// route) maps to `unknown` with no echo of the received bytes. Syntax-only
-// sanitization alone would admit well-formed but foreign kinds.
-const CANCEL_REFUSAL_KINDS: readonly string[] = Object.freeze([
-    "stale",
-    "cancel-refused",
-    "cancel-mismatch",
-    "no-pending",
-    "cancel-op-invalid",
-    "stale-revision",
-    "owner-mismatch",
-    "generation-mismatch",
-    "correlation-mismatch",
-    "capability-refused",
-    "partial-application",
-    "adapter-lost",
-    "postcondition-unverified",
-    "postcondition-mismatch",
-    "revision-exhausted",
-]);
-
-function cancelRefusalKind(value: unknown): string {
-    if (typeof value !== "string") {
-        return "unknown";
-    }
-    return CANCEL_REFUSAL_KINDS.indexOf(value) >= 0 ? value : "unknown";
-}
-
 // Bounded rejection-kind token: lowercase dashes only, otherwise redacted to
 // `unknown`. Never echoes payload bytes.
 function sanitizeKind(value: unknown): string {
@@ -456,7 +424,11 @@ function toDiagOrdinal(value: unknown): number {
     return toDiagInt(value, 0, 9);
 }
 
-// Exact lifecycle precondition vector for a same-output move-tiled plan.
+// Exact lifecycle precondition vector for a same-output move-tiled plan. The
+// `adapter-must-verify-postconditions` token is accepted for codec
+// compatibility with the immediate-commit Rust reply; this adapter performs
+// no native-verification claim and treats the vector as an opaque exact
+// binding, never as proof of native state.
 const KNOWN_PRECONDITIONS: readonly string[] = Object.freeze([
     "window-observed",
     "desired-topology-valid",
@@ -634,9 +606,9 @@ function validatePlanned(reply: unknown, correlationId: string): WorkspacePlanne
     if (operation === null) {
         return null;
     }
-    // Legacy follow is Rust-owned: the planned desired focus must name the
-    // moved leaf in the operation target domain. Any other focus is a
-    // mismatched reply and never follows.
+    // Follow is target-bound: the planned desired focus must name the moved
+    // leaf in the operation target domain. Any other focus is a mismatched
+    // reply and never follows.
     const focusRaw = reply["desired_focus"];
     if (!isRecord(focusRaw) || !hasExactKeys(focusRaw, ["domain_output", "domain_workspace", "leaf"])) {
         return null;
@@ -729,6 +701,20 @@ function validateObserved(observed: WorkspaceSendObserved | null): observed is W
         if (!isTargetRect({ x: candidate.rect.x, y: candidate.rect.y, w: candidate.rect.w, h: candidate.rect.h })) {
             return false;
         }
+        // Complete-observation flags: absent normalizes to false downstream;
+        // a present non-boolean never sanitizes, it fails closed.
+        for (const flag of [
+            candidate.floating,
+            candidate.fitExcluded,
+            candidate.fit_excluded,
+            candidate.fullscreen,
+            candidate.maximized,
+            candidate.sticky,
+        ]) {
+            if (flag !== undefined && typeof flag !== "boolean") {
+                return false;
+            }
+        }
         if (seen.has(candidate.id)) {
             return false;
         }
@@ -758,15 +744,21 @@ function validateObserved(observed: WorkspaceSendObserved | null): observed is W
     return true;
 }
 
+function snapshotWindowOf(entry: WorkspaceSendObservedWindow): WorkspaceSendSnapshotWindow {
+    return {
+        id: entry.id,
+        rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
+        floating: entry.floating === true,
+        fitExcluded: entry.fitExcluded === true || entry.fit_excluded === true,
+        fullscreen: entry.fullscreen === true,
+        maximized: entry.maximized === true,
+        sticky: entry.sticky === true,
+    };
+}
+
 export function snapshotOf(observed: WorkspaceSendObserved): WorkspaceSendSnapshot {
-    const sourceWindows = observed.sourceWindows.map((entry) => ({
-        id: entry.id,
-        rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
-    }));
-    const targetWindows = observed.targetWindows.map((entry) => ({
-        id: entry.id,
-        rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
-    }));
+    const sourceWindows = observed.sourceWindows.map(snapshotWindowOf);
+    const targetWindows = observed.targetWindows.map(snapshotWindowOf);
     return {
         sourceOutput: observed.sourceOutput,
         sourceWorkspace: observed.sourceWorkspace,
@@ -821,13 +813,7 @@ function snapshotsEqual(a: WorkspaceSendSnapshot, b: WorkspaceSendSnapshot): boo
     }
     for (const entry of b.sourceWindows) {
         const other = sourceById.get(entry.id);
-        if (
-            other === undefined ||
-            other.rect.x !== entry.rect.x ||
-            other.rect.y !== entry.rect.y ||
-            other.rect.w !== entry.rect.w ||
-            other.rect.h !== entry.rect.h
-        ) {
+        if (other === undefined || !snapshotWindowsEqual(other, entry)) {
             return false;
         }
     }
@@ -837,17 +823,51 @@ function snapshotsEqual(a: WorkspaceSendSnapshot, b: WorkspaceSendSnapshot): boo
     }
     for (const entry of b.targetWindows) {
         const other = targetById.get(entry.id);
-        if (
-            other === undefined ||
-            other.rect.x !== entry.rect.x ||
-            other.rect.y !== entry.rect.y ||
-            other.rect.w !== entry.rect.w ||
-            other.rect.h !== entry.rect.h
-        ) {
+        if (other === undefined || !snapshotWindowsEqual(other, entry)) {
             return false;
         }
     }
     return true;
+}
+
+// Per-survivor equality: identical rect plus identical complete-observation
+// flags. A survivor changing flags without rect/membership change still
+// mismatches, on either domain, so the reply fence stales before any setter.
+function snapshotWindowsEqual(a: WorkspaceSendSnapshotWindow, b: WorkspaceSendSnapshotWindow): boolean {
+    return (
+        a.rect.x === b.rect.x &&
+        a.rect.y === b.rect.y &&
+        a.rect.w === b.rect.w &&
+        a.rect.h === b.rect.h &&
+        a.floating === b.floating &&
+        a.fitExcluded === b.fitExcluded &&
+        a.fullscreen === b.fullscreen &&
+        a.maximized === b.maximized &&
+        a.sticky === b.sticky
+    );
+}
+
+// Immutable scope fence for arrival and follow: the live source/target
+// domains, bounds, and target existence still equal the dispatch snapshot.
+// Membership and geometry are checked separately; wrapper identity is never
+// compared because KWin may return a fresh wrapper per read.
+function scopeMatchesSnapshot(observed: WorkspaceSendObserved, snapshot: WorkspaceSendSnapshot): boolean {
+    return (
+        observed.sourceOutput === snapshot.sourceOutput &&
+        observed.sourceWorkspace === snapshot.sourceWorkspace &&
+        observed.targetOutput === snapshot.targetOutput &&
+        observed.targetWorkspace === snapshot.targetWorkspace &&
+        observed.sourceBounds.x === snapshot.sourceBounds.x &&
+        observed.sourceBounds.y === snapshot.sourceBounds.y &&
+        observed.sourceBounds.w === snapshot.sourceBounds.w &&
+        observed.sourceBounds.h === snapshot.sourceBounds.h &&
+        observed.targetBounds.x === snapshot.targetBounds.x &&
+        observed.targetBounds.y === snapshot.targetBounds.y &&
+        observed.targetBounds.w === snapshot.targetBounds.w &&
+        observed.targetBounds.h === snapshot.targetBounds.h &&
+        observed.targetExists === true &&
+        observed.targetDesktopRef !== null
+    );
 }
 
 interface WorkspacePendingFlight {
@@ -858,9 +878,9 @@ interface WorkspacePendingFlight {
     readonly windowCount: number;
     readonly requestPayload: string;
     readonly targetDesktopRef: object | null;
-    // Dispatch-frozen validated gap pair for this transaction. Request, ack,
-    // and verify payloads for this correlation all carry exactly these
-    // values even when a deliberate reload updates subsequent requests.
+    // Dispatch-frozen validated gap pair for this flight. The request payload
+    // carries exactly these values even when a deliberate reload updates
+    // subsequent requests.
     readonly innerGap: number;
     readonly outerGap: number;
     // Requested logical ordinal from the plan entry (0 permitted for the
@@ -872,55 +892,12 @@ interface WorkspacePendingFlight {
     readonly srcInSource: number;
     readonly srcInTarget: number;
     baseRevision: number;
-    preconditions: readonly string[];
-    operation: Record<string, unknown> | null;
     planned: WorkspacePlanned | null;
-    verifiedObserved: WorkspaceSendObserved | null;
-    acked: boolean;
-    // Original request revision carried at dispatch (always 0 on the request
-    // phase). Cancellation echoes exactly this value, never a base revision
-    // learned from a stale probe.
-    requestRevision: number;
-    // Native move/follow is a distinct, at-most-once partial-success result.
-    // It never advances the Rust acknowledgement or layout commit phases.
-    followStarted: boolean;
+    // Arrival follow runs at most once per flight. It never advances any
+    // planner phase: the Rust topology is already committed.
+    followed: boolean;
     followOutcome: string;
-    // Armed geometry-fence size recorded after subscriptions succeed.
-    // Diagnostic only: never gates behavior.
-    fenceTotal: number;
 }
-
-interface GeometryReadbackDetail {
-    readonly outcome: string;
-    readonly dx: number;
-    readonly dy: number;
-    readonly dw: number;
-    readonly dh: number;
-}
-
-interface GeometryVerifyDetail {
-    readonly reason: string;
-    readonly geoIdx: number;
-    readonly role: string;
-    readonly dx: number;
-    readonly dy: number;
-    readonly dw: number;
-    readonly dh: number;
-}
-
-// Source-grounded request-phase recovery rule: Planner::
-// evaluate_workspace_request (src/planner_protocol.rs) stores
-// `workspace_pending` only on the Ok(plan) path, and its only
-// pre-existing-pending rejection is kind "pending-exists"; pre-existing
-// pending divergence is outcome "diverged". Therefore a well-formed request
-// reply (valid version/correlation, outcome "rejected", bounded valid kind
-// per sanitizeKind) with any kind other than "pending-exists" proves Rust
-// retained no pending and ran before any native write (planned === null here).
-// Only "pending-exists" and malformed "unknown" stay terminal on this path.
-// Version/correlation envelope mismatch, outcome "diverged", lost/timeout/
-// request-send ambiguity/owner loss, and every post-plan ack/verify response
-// stay terminal elsewhere. Post-plan/native-mutated phases never use this.
-const TERMINAL_REQUEST_REJECTION = "pending-exists";
 
 export interface WorkspaceSendGaps {
     readonly innerGap?: unknown;
@@ -936,57 +913,33 @@ export class WorkspaceSendAdapter {
     // construction, then re-resolved only through updateGaps on the
     // deliberate Options configChanged reload. Each dispatched flight
     // freezes its own pair at request time so a reload during an active
-    // request never alters its ack/verify payloads.
+    // request never alters its payload.
     private innerGap: number;
     private outerGap: number;
     private inFlight = false;
     private token = 0;
     private activeToken = 0;
+    // Separate bounded deadlines: the request deadline releases an
+    // unanswered request; the arrival deadline bounds the source+target pin
+    // and delayed-arrival follow. Distinct epochs so a stale timer can never
+    // touch a later flight.
     private deadlineToken = 0;
-    private activeDeadline = 0;
-    private timeoutDepth = 0;
-    private callbackSeen = false;
-    private cancelTimer: (() => void) | null = null;
+    private requestDeadline = 0;
+    private arrivalDeadline = 0;
+    private requestTimer: (() => void) | null = null;
+    private arrivalTimer: (() => void) | null = null;
     private pinnedOwner: string | null = null;
     private activationStep = 0;
     private pending: WorkspacePendingFlight | null = null;
-    // Per-flight native-dispatch count: incremented immediately before every
-    // geometry, membership, and follow setter invocation, even when the call
-    // throws. Zero proves this flight never dispatched a native write, which
-    // is the adapter half of cancellation eligibility. Reset on every flight.
-    private nativeDispatches = 0;
-    // Cancellation fence: while armed, the original late replies, timers,
-    // echoes, completions, setters, and new commands cannot write or recover.
-    // Armed before the fresh cancel observation and cleared on cancel
-    // settlement (success or fallthrough) or explicit disable.
-    private cancelArmed = false;
-    private cancelReplySeen = false;
-    // Abandon fence: while armed, the original late replies, timers, echoes,
-    // completions, setters, and new planner sends cannot write, recover, or
-    // settle. Armed when an uncertain result starts the fenced
-    // `send-to-workspace-abandon` attempts and cleared only on their exact
-    // reply or explicit disable. Missed, inexact, or unanswered attempts
-    // re-send on the next valid observation or timeout opportunity while the
-    // retained pending flight lives; the adapter never disables on this path.
-    private abandonArmed = false;
-    // Fallthrough terminal outcome (plus diag event) preserved across the
-    // cancel attempt so a failed cancellation runs the exact terminal path
-    // the original failure would have run.
-    private cancelOutcome = "";
-    private cancelEvent = "";
-    private cancelFollow: string | undefined = undefined;
+    // One-shot delayed-arrival subscription. Armed after the native writes
+    // when the immediate observation shows no arrival yet; detached on the
+    // first signal and on every terminal path.
+    private arrivalDetach: (() => void) | null = null;
     private seq = 0;
-    private lossReported = false;
-    private echoDetach: (() => void) | null = null;
-    private echoArmed = false;
-    private moverSeen = false;
-    private geoDetaches = new Map<string, () => void>();
-    private geoPending = new Set<string>();
-    private geoRefs = new Map<string, object>();
-    private geoDiagSeq = 0;
     private diagSeq = 0;
     // KWin signals may be delivered synchronously from a setter. Do not let
-    // them complete a flight or switch desktops while the write stack is live.
+    // them follow or settle while the write stack is live; the immediate
+    // post-write observation after the stack covers synchronous arrival.
     private nativeWriteDepth = 0;
     private nativeFollowDepth = 0;
 
@@ -1041,15 +994,6 @@ export class WorkspaceSendAdapter {
         return this.inFlight;
     }
 
-    get blocksPlan(): boolean {
-        // Plan is blocked exactly while a send flight is live. Abandon
-        // settlement releases the Rust pending without committing, so Plan
-        // then adopts the ordinary native observation through the resync
-        // handoff instead of holding uncommitted visible state at arm's
-        // length. Nothing here latches a block past the flight.
-        return this.inFlight;
-    }
-
     // Derived from the existing retained flight only. Entry diagnostics use
     // this to label a refused shortcut without retaining another history.
     get activeCorrelation(): string {
@@ -1067,20 +1011,17 @@ export class WorkspaceSendAdapter {
         if (pending.planned === null) {
             return "request";
         }
-        if (pending.verifiedObserved === null) {
-            return "fence";
-        }
-        return pending.acked ? "verify" : "ack";
+        return "arrival";
     }
 
-    // Bounded transaction identities for native cleanup ordering: the exact
-    // pending source/target workspace ids, present only while a valid plan is
-    // bound (post-plan, pre-commit/terminal). Empty before a plan or after
-    // the flight settles, so retention is strictly transaction-lifetime.
-    // Primitive ids only, never refs or history.
+    // Bounded source+target pin for native cleanup ordering: the exact
+    // dispatch source/target workspace ids, present from dispatch until
+    // arrival or the bounded arrival deadline clears them on every terminal
+    // path. Empty before dispatch or after settlement, so retention is
+    // strictly flight-lifetime. Primitive ids only, never refs or history.
     get pendingWorkspaces(): ReadonlyArray<string> {
         const pending = this.pending;
-        if (!this.inFlight || pending === null || pending.planned === null) {
+        if (!this.inFlight || pending === null) {
             return Object.freeze([]);
         }
         return Object.freeze([pending.snapshot.sourceWorkspace, pending.snapshot.targetWorkspace]);
@@ -1103,22 +1044,7 @@ export class WorkspaceSendAdapter {
         this.inFlight = false;
         this.pending = null;
         this.seq = 0;
-        this.lossReported = false;
-        this.echoDetach = null;
-        this.echoArmed = false;
-        this.moverSeen = false;
-        this.geoDetaches = new Map<string, () => void>();
-        this.geoPending = new Set<string>();
-        this.geoRefs = new Map<string, object>();
-        this.geoDiagSeq = 0;
         this.diagSeq = 0;
-        this.nativeDispatches = 0;
-        this.cancelArmed = false;
-        this.cancelReplySeen = false;
-        this.cancelOutcome = "";
-        this.cancelFollow = undefined;
-        this.cancelEvent = "";
-        this.abandonArmed = false;
         return true;
     }
 
@@ -1126,39 +1052,14 @@ export class WorkspaceSendAdapter {
         if (!this.enabled && !this.inFlight) {
             return;
         }
-        // A planned flight torn down here (explicit disable or entry stop) is
-        // terminal divergence: report exactly one bounded best-effort
-        // `send-to-workspace-ack` `adapter-lost` to the still pinned unique
-        // owner before clearing. Never fires before a valid plan, never the
-        // well-known name, never a retry; logger/DBus failure is ignored and
-        // never changes the disable outcome.
-        // Silent pre-commit teardown emits one best-effort redacted terminal
-        // diagnostic before the loss report so a future exact occurrence can
-        // distinguish an incomplete mover/geometry fence, a
-        // `stale-revision` versus `post-observation-mismatch` verifier
-        // outcome, and direct disable teardown versus unknown log delivery.
-        // Diagnostic-only: never gates, retries, writes, or re-enables.
-        this.logDisableTerminal();
-        this.reportAdapterLost();
+        // A live flight torn down here (explicit disable or entry stop) is a
+        // terminal release: clear the pin and run the single settlement hook
+        // so the entry refreshes both domains from native observation. Never
+        // reports to the planner and never claims anything about Rust state.
+        if (this.inFlight) {
+            this.settleTerminal(this.activeToken, this.pending?.correlation ?? "", "disabled", "release");
+        }
         this.enabled = false;
-        this.inFlight = false;
-        this.pending = null;
-        this.pinnedOwner = null;
-        this.activationStep = 0;
-        this.activeDeadline = 0;
-        this.clearTimer();
-        this.clearEcho();
-        // Explicit disable wins over a pending cancel wait: the outstanding
-        // cancel reply, if any, is fenced by the cleared flight below. An
-        // outstanding abandon wait is likewise retired: explicit teardown
-        // owns the flight and the unanswered abandon is simply dropped.
-        this.cancelArmed = false;
-        this.cancelReplySeen = false;
-        this.cancelOutcome = "";
-        this.cancelFollow = undefined;
-        this.cancelEvent = "";
-        this.abandonArmed = false;
-        this.nativeDispatches = 0;
     }
 
     requestSend(targetWorkspace: unknown, requestedOrdinal?: unknown): boolean {
@@ -1267,17 +1168,30 @@ export class WorkspaceSendAdapter {
         innerGap: number,
         outerGap: number,
     ): string | null {
+        // Portable wire fields only: `floating` and `fit_excluded` (the
+        // observer-carried fit opt-out, already ORed over floating, sticky,
+        // fullscreen, and maximized at observation). Native
+        // fullscreen/maximized/sticky never ride the wire; they stay local
+        // snapshot semantics for the dispatch-frozen fence.
+        const wireFlags = (entry: WorkspaceSendObservedWindow): Record<string, boolean> => ({
+            ...(entry.floating === true ? { floating: true } : {}),
+            ...(entry.floating === true || entry.fitExcluded === true || entry.fit_excluded === true
+                ? { fit_excluded: true }
+                : {}),
+        });
         const sourceWindows = observed.sourceWindows.map((entry) => ({
             window: entry.id,
             output: observed.sourceOutput,
             workspace: observed.sourceWorkspace,
             rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
+            ...wireFlags(entry),
         }));
         const targetWindows = observed.targetWindows.map((entry) => ({
             window: entry.id,
             output: observed.targetOutput,
             workspace: observed.targetWorkspace,
             rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
+            ...wireFlags(entry),
         }));
         let payload = "";
         try {
@@ -1329,139 +1243,6 @@ export class WorkspaceSendAdapter {
         return payload;
     }
 
-    private buildAckPayload(observed: WorkspaceSendObserved, correlation: string, revision: number): string | null {
-        const flight = this.pending;
-        const flightInnerGap = flight !== null && flight.correlation === correlation ? flight.innerGap : this.innerGap;
-        const flightOuterGap = flight !== null && flight.correlation === correlation ? flight.outerGap : this.outerGap;
-        const sourceWindows = observed.sourceWindows.map((entry) => ({
-            window: entry.id,
-            output: observed.sourceOutput,
-            workspace: observed.sourceWorkspace,
-            rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
-        }));
-        const targetWindows = observed.targetWindows.map((entry) => ({
-            window: entry.id,
-            output: observed.targetOutput,
-            workspace: observed.targetWorkspace,
-            rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
-        }));
-        let payload = "";
-        try {
-            payload = JSON.stringify({
-                v: WORKSPACE_SEND_CONTRACT_VERSION,
-                correlation_id: correlation,
-                owner: this.owner,
-                generation: this.generation,
-                revision,
-                fingerprint: this.scopeFingerprint(observed),
-                domain: {
-                    output: observed.sourceOutput,
-                    workspace: observed.sourceWorkspace,
-                    bounds: {
-                        x: observed.sourceBounds.x,
-                        y: observed.sourceBounds.y,
-                        w: observed.sourceBounds.w,
-                        h: observed.sourceBounds.h,
-                    },
-                    gap: flightInnerGap,
-                    outer_gap: flightOuterGap,
-                },
-                target_domain: {
-                    output: observed.targetOutput,
-                    workspace: observed.targetWorkspace,
-                    bounds: {
-                        x: observed.targetBounds.x,
-                        y: observed.targetBounds.y,
-                        w: observed.targetBounds.w,
-                        h: observed.targetBounds.h,
-                    },
-                    gap: flightInnerGap,
-                    outer_gap: flightOuterGap,
-                },
-                focused_window: observed.focusedId,
-                windows: sourceWindows,
-                target_windows: targetWindows,
-                command: { op: "send-to-workspace-ack", ack_outcome: "accepted" },
-            });
-        } catch (error) {
-            void error;
-            return null;
-        }
-        return payload;
-    }
-
-    private buildVerifyPayload(observed: WorkspaceSendObserved, correlation: string, revision: number): string | null {
-        const pending = this.pending;
-        if (pending === null || pending.preconditions === null || pending.operation === null) {
-            return null;
-        }
-        if (pending.correlation !== correlation) {
-            return null;
-        }
-        const flightInnerGap = pending.innerGap;
-        const flightOuterGap = pending.outerGap;
-        const sourceWindows = observed.sourceWindows.map((entry) => ({
-            window: entry.id,
-            output: observed.sourceOutput,
-            workspace: observed.sourceWorkspace,
-            rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
-        }));
-        const targetWindows = observed.targetWindows.map((entry) => ({
-            window: entry.id,
-            output: observed.targetOutput,
-            workspace: observed.targetWorkspace,
-            rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
-        }));
-        let payload = "";
-        try {
-            payload = JSON.stringify({
-                v: WORKSPACE_SEND_CONTRACT_VERSION,
-                correlation_id: correlation,
-                owner: this.owner,
-                generation: this.generation,
-                revision,
-                fingerprint: this.scopeFingerprint(observed),
-                domain: {
-                    output: observed.sourceOutput,
-                    workspace: observed.sourceWorkspace,
-                    bounds: {
-                        x: observed.sourceBounds.x,
-                        y: observed.sourceBounds.y,
-                        w: observed.sourceBounds.w,
-                        h: observed.sourceBounds.h,
-                    },
-                    gap: flightInnerGap,
-                    outer_gap: flightOuterGap,
-                },
-                target_domain: {
-                    output: observed.targetOutput,
-                    workspace: observed.targetWorkspace,
-                    bounds: {
-                        x: observed.targetBounds.x,
-                        y: observed.targetBounds.y,
-                        w: observed.targetBounds.w,
-                        h: observed.targetBounds.h,
-                    },
-                    gap: flightInnerGap,
-                    outer_gap: flightOuterGap,
-                },
-                focused_window: observed.focusedId,
-                windows: sourceWindows,
-                target_windows: targetWindows,
-                command: {
-                    op: "send-to-workspace-verify",
-                    verified: true,
-                    preconditions: pending.preconditions,
-                    operation: pending.operation,
-                },
-            });
-        } catch (error) {
-            void error;
-            return null;
-        }
-        return payload;
-    }
-
     private scopeFingerprint(observed: WorkspaceSendObserved): number {
         const sourceIds = observed.sourceWindows.map((entry) => entry.id).sort();
         const targetIds = observed.targetWindows.map((entry) => entry.id).sort();
@@ -1483,17 +1264,8 @@ export class WorkspaceSendAdapter {
         outerGap: number,
     ): void {
         this.inFlight = true;
-        this.callbackSeen = false;
-        this.clearEcho();
-        this.geoDiagSeq = 0;
+        this.detachArrival();
         this.diagSeq = 0;
-        this.nativeDispatches = 0;
-        this.cancelArmed = false;
-        this.cancelReplySeen = false;
-        this.cancelOutcome = "";
-        this.cancelFollow = undefined;
-        this.cancelEvent = "";
-        this.abandonArmed = false;
         const flags = snapshotMoverFlags(snapshot, moverId);
         this.pending = {
             correlation,
@@ -1509,19 +1281,13 @@ export class WorkspaceSendAdapter {
             srcInSource: flags.srcInSource,
             srcInTarget: flags.srcInTarget,
             baseRevision: 0,
-            requestRevision: 0,
-            preconditions: [],
-            operation: null,
             planned: null,
-            verifiedObserved: null,
-            acked: false,
-            followStarted: false,
+            followed: false,
             followOutcome: "not-reached",
-            fenceTotal: 0,
         };
         this.diag("request", correlation, 0, "dispatch", "started");
         // True command-dispatch observation at the request boundary, using the
-        // original dispatch observation and revision 0. Best-effort only.
+        // original dispatch observation. Best-effort only.
         this.emitFollowDiag(
             correlation,
             0,
@@ -1544,22 +1310,53 @@ export class WorkspaceSendAdapter {
         this.token += 1;
         const flight = this.token;
         this.activeToken = flight;
+        // Arm both bounded deadlines from dispatch: the request deadline
+        // releases an unanswered request, the arrival deadline bounds the
+        // pin and delayed-arrival follow. Separate epochs; neither resets.
         this.deadlineToken += 1;
-        this.activeDeadline = this.deadlineToken;
-        const deadline = this.activeDeadline;
-        let cancel: (() => void) | null = null;
+        this.requestDeadline = this.deadlineToken;
+        const requestEpoch = this.requestDeadline;
+        let requestCancel: (() => void) | null = null;
         try {
-            cancel = this.env.scheduleOnce(WORKSPACE_SEND_TIMEOUT_MS, () => this.onTimeout(flight, "request", deadline));
+            requestCancel = this.env.scheduleOnce(WORKSPACE_SEND_TIMEOUT_MS, () =>
+                this.onRequestTimeout(flight, requestEpoch),
+            );
         } catch (error) {
             void error;
+            requestCancel = null;
+        }
+        if (requestCancel === null) {
             this.inFlight = false;
-            this.activationStep = 0;
             this.pending = null;
-            this.activeDeadline = 0;
+            this.activationStep = 0;
+            this.requestDeadline = 0;
             this.refuse("timeout");
             return;
         }
-        this.cancelTimer = cancel;
+        this.requestTimer = requestCancel;
+        this.deadlineToken += 1;
+        this.arrivalDeadline = this.deadlineToken;
+        const arrivalEpoch = this.arrivalDeadline;
+        let arrivalCancel: (() => void) | null = null;
+        try {
+            arrivalCancel = this.env.scheduleOnce(WORKSPACE_SEND_TIMEOUT_MS, () =>
+                this.onArrivalTimeout(flight, arrivalEpoch),
+            );
+        } catch (error) {
+            void error;
+            arrivalCancel = null;
+        }
+        if (arrivalCancel === null) {
+            this.clearRequestTimer();
+            this.inFlight = false;
+            this.pending = null;
+            this.activationStep = 0;
+            this.requestDeadline = 0;
+            this.arrivalDeadline = 0;
+            this.refuse("timeout");
+            return;
+        }
+        this.arrivalTimer = arrivalCancel;
         // Phase 1: distinguish presence through NameHasOwner's normal boolean
         // reply. KWin does not call back for GetNameOwner's absent-name error.
         try {
@@ -1573,12 +1370,7 @@ export class WorkspaceSendAdapter {
             );
         } catch (error) {
             void error;
-            this.clearTimer();
-            this.inFlight = false;
-            this.activationStep = 0;
-            this.pending = null;
-            this.diag("request", correlation, 0, "activate", "no-planner");
-            this.activeDeadline = 0;
+            this.settleTerminal(flight, correlation, "no-planner", "release");
         }
     }
 
@@ -1599,22 +1391,12 @@ export class WorkspaceSendAdapter {
                 );
             } catch (error) {
                 void error;
-                this.clearTimer();
-                this.inFlight = false;
-                this.activationStep = 0;
-                this.pending = null;
-                this.diag("request", correlation, 0, "activate", "no-planner");
-                this.activeDeadline = 0;
+                this.settleTerminal(flight, correlation, "no-planner", "release");
             }
             return;
         }
         if (reply !== false) {
-            this.clearTimer();
-            this.inFlight = false;
-            this.activationStep = 0;
-            this.pending = null;
-            this.diag("request", correlation, 0, "activate", "no-planner");
-            this.activeDeadline = 0;
+            this.settleTerminal(flight, correlation, "no-planner", "release");
             return;
         }
         // Absent name: exactly one StartServiceByName(service, 0) phase.
@@ -1631,13 +1413,7 @@ export class WorkspaceSendAdapter {
             );
         } catch (error) {
             void error;
-            this.clearTimer();
-            this.inFlight = false;
-            this.activationStep = 0;
-            this.pinnedOwner = null;
-            this.pending = null;
-            this.diag("request", correlation, 0, "activate", "no-planner");
-            this.activeDeadline = 0;
+            this.settleTerminal(flight, correlation, "no-planner", "release");
         }
     }
 
@@ -1646,12 +1422,7 @@ export class WorkspaceSendAdapter {
             return;
         }
         if (!isUniqueOwner(reply)) {
-            this.clearTimer();
-            this.inFlight = false;
-            this.activationStep = 0;
-            this.pending = null;
-            this.diag("request", correlation, 0, "activate", "no-planner");
-            this.activeDeadline = 0;
+            this.settleTerminal(flight, correlation, "no-planner", "release");
             return;
         }
         this.pinnedOwner = reply;
@@ -1665,13 +1436,7 @@ export class WorkspaceSendAdapter {
             return;
         }
         if (reply !== WORKSPACE_SEND_START_PRIMARY && reply !== WORKSPACE_SEND_START_ALREADY) {
-            this.clearTimer();
-            this.inFlight = false;
-            this.activationStep = 0;
-            this.pinnedOwner = null;
-            this.pending = null;
-            this.diag("request", correlation, 0, "activate", "no-planner");
-            this.activeDeadline = 0;
+            this.settleTerminal(flight, correlation, "no-planner", "release");
             return;
         }
         // Exactly one bounded post-activation owner resolution, then pin
@@ -1688,13 +1453,7 @@ export class WorkspaceSendAdapter {
             );
         } catch (error) {
             void error;
-            this.clearTimer();
-            this.inFlight = false;
-            this.activationStep = 0;
-            this.pinnedOwner = null;
-            this.pending = null;
-            this.diag("request", correlation, 0, "activate", "no-planner");
-            this.activeDeadline = 0;
+            this.settleTerminal(flight, correlation, "no-planner", "release");
         }
     }
 
@@ -1703,13 +1462,7 @@ export class WorkspaceSendAdapter {
             return;
         }
         if (!isUniqueOwner(reply)) {
-            this.clearTimer();
-            this.inFlight = false;
-            this.activationStep = 0;
-            this.pinnedOwner = null;
-            this.pending = null;
-            this.diag("request", correlation, 0, "activate", "no-planner");
-            this.activeDeadline = 0;
+            this.settleTerminal(flight, correlation, "no-planner", "release");
             return;
         }
         this.pinnedOwner = reply;
@@ -1724,16 +1477,9 @@ export class WorkspaceSendAdapter {
         }
         const pending = this.pending;
         if (pending === null || !isUniqueOwner(this.pinnedOwner)) {
-            this.clearTimer();
-            this.inFlight = false;
-            this.activationStep = 0;
-            this.pinnedOwner = null;
-            this.pending = null;
-            this.diag("request", correlation, 0, "activate", "no-planner");
-            this.activeDeadline = 0;
+            this.settleTerminal(flight, correlation, "no-planner", "release");
             return;
         }
-        this.callbackSeen = false;
         try {
             this.env.callDbus(
                 this.pinnedOwner,
@@ -1745,38 +1491,29 @@ export class WorkspaceSendAdapter {
             );
         } catch (error) {
             void error;
-            this.failTerminal(flight, correlation, "owner-loss");
+            this.settleTerminal(flight, correlation, "owner-loss", "release");
         }
     }
 
     private onRequestReply(reply: unknown, flight: number, correlation: string): void {
-        if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
-            return;
-        }
-        // Cancel-armed fence: a late original reply arriving while the
-        // withdrawal awaits must never bind a plan or actuate. The cancel
-        // outcome alone settles the flight. The abandon fence below applies
-        // the same rule while the correlated abandon round trip awaits.
-        if (this.cancelArmed || this.abandonArmed) {
+        // A late reply after the request deadline released the flight is
+        // ignored by token and never actuates. One bounded redacted line.
+        if (!this.inFlight || flight !== this.activeToken) {
+            this.logLateReply(reply);
             return;
         }
         const pending = this.pending;
-        if (pending === null || !isUniqueOwner(this.pinnedOwner) || this.activationStep !== 5) {
+        if (pending === null || pending.correlation !== correlation || !isUniqueOwner(this.pinnedOwner) || this.activationStep !== 5) {
             return;
         }
-        // Late duplicate request replies after the plan is bound (including
-        // after a pre-ack timeout settlement) must never replay native writes.
-        // Missing/malformed/lost replies, timeouts, owner loss, and transport
-        // ambiguity are never treated as no-pending: Rust may create pending
-        // before the client receives the reply.
+        // A duplicate reply after the plan was already bound must never
+        // replay native writes.
         if (pending.planned !== null) {
             return;
         }
-        this.callbackSeen = true;
-        // The single whole-flight timer stays armed through the ack and verify
-        // phases; it is released only on final commit or failure.
+        this.clearRequestTimer();
         if (typeof reply !== "string" || reply.length > WORKSPACE_SEND_MAX_REPLY_BYTES) {
-            this.failFlight(flight, correlation, "service-fault");
+            this.settleTerminal(flight, correlation, "service-fault", "release");
             return;
         }
         let parsed: unknown = null;
@@ -1784,90 +1521,83 @@ export class WorkspaceSendAdapter {
             parsed = JSON.parse(reply);
         } catch (error) {
             void error;
-            this.failFlight(flight, correlation, "service-fault");
+            this.settleTerminal(flight, correlation, "service-fault", "release");
             return;
         }
         if (!isRecord(parsed)) {
-            this.failFlight(flight, correlation, "service-fault");
+            this.settleTerminal(flight, correlation, "service-fault", "release");
             return;
         }
         if (parsed["v"] !== WORKSPACE_SEND_CONTRACT_VERSION) {
-            this.failFlight(flight, correlation, "service-fault");
+            this.settleTerminal(flight, correlation, "service-fault", "release");
             return;
         }
         if (parsed["correlation_id"] !== correlation) {
-            this.failFlight(flight, correlation, "correlation-mismatch");
+            this.settleTerminal(flight, correlation, "correlation-mismatch", "release");
             return;
         }
         const outcome = parsed["outcome"];
-        if (outcome === "diverged") {
-            this.failFlight(flight, correlation, sanitizeKind(parsed["kind"]), false);
-            return;
-        }
-        if (outcome === "rejected") {
-            const kind = sanitizeKind(parsed["kind"]);
-            // Source-grounded remote-clean recovery: any well-formed
-            // request-phase rejection other than "pending-exists" proves Rust
-            // retained no pending (pending is only stored on the planned path
-            // after the pending-exists gate). No native write has occurred
-            // (planned === null checked above), so no adapter-lost is sent,
-            // the adapter stays enabled, and the next distinct send may
-            // proceed. "pending-exists", malformed "unknown", outcome
-            // "diverged", and every post-plan rejection with native mutation
-            // stay terminal.
-            if (kind !== "unknown" && kind !== TERMINAL_REQUEST_REJECTION) {
-                this.recoverClean(flight, correlation, kind);
-                return;
-            }
-            this.failFlight(flight, correlation, kind);
+        if (outcome === "rejected" || outcome === "diverged") {
+            this.settleTerminal(flight, correlation, sanitizeKind(parsed["kind"]), "release");
             return;
         }
         if (outcome !== "planned") {
-            this.failFlight(flight, correlation, "service-fault");
+            this.settleTerminal(flight, correlation, "service-fault", "release");
             return;
         }
         const planned = validatePlanned(parsed, correlation);
         if (planned === null) {
-            this.failFlight(flight, correlation, "precondition-mismatch");
+            this.settleTerminal(flight, correlation, "precondition-mismatch", "release");
             return;
         }
         if (!this.geometryCovers(planned, pending)) {
-            this.failFlight(flight, correlation, "precondition-mismatch");
+            this.settleTerminal(flight, correlation, "precondition-mismatch", "release");
             return;
         }
         if (!this.operationMatchesSnapshot(planned, pending)) {
-            this.failFlight(flight, correlation, "precondition-mismatch");
+            this.settleTerminal(flight, correlation, "precondition-mismatch", "release");
             return;
         }
-        this.applyPlanned(planned, flight, correlation);
+        pending.baseRevision = planned.baseRevision;
+        pending.planned = planned;
+        this.diag("request", correlation, planned.baseRevision, "plan", "planned");
+        this.actuate(flight, correlation);
     }
 
     // Complete-reply binding: the reply geometry must cover exactly the
-    // observed source+target window set. Unknown or partial windows never
-    // reach native writes.
+    // observed tiled source+target window set (entries where floating
+    // !== true). Floating exceptions stay observed but carry no planned
+    // geometry. Fullscreen/maximized overlays stay tiled: fit_excluded
+    // alone is NOT floating. Unknown, missing, duplicate, or floated
+    // windows never reach native writes.
     private geometryCovers(planned: WorkspacePlanned, flightState: WorkspacePendingFlight): boolean {
         const wanted = new Set<string>();
         for (const entry of flightState.snapshot.sourceWindows) {
-            wanted.add(entry.id);
+            if (entry.floating !== true) {
+                wanted.add(entry.id);
+            }
         }
         for (const entry of flightState.snapshot.targetWindows) {
-            wanted.add(entry.id);
+            if (entry.floating !== true) {
+                wanted.add(entry.id);
+            }
         }
         if (planned.geometry.length !== wanted.size) {
             return false;
         }
+        const seen = new Set<string>();
         for (const entry of planned.geometry) {
-            if (!wanted.has(entry.window)) {
+            if (!wanted.has(entry.window) || seen.has(entry.window)) {
                 return false;
             }
+            seen.add(entry.window);
         }
         return true;
     }
 
-    // Operation-to-snapshot binding from Rust's established intent: the
-    // move-tiled operation must name the flight mover plus the exact captured
-    // source/target domains. Any other target/object is a mismatched reply
-    // and never follows.
+    // Operation-to-snapshot binding: the move-tiled operation must name the
+    // flight mover plus the exact captured source/target domains. Any other
+    // target/object is a mismatched reply and never actuates.
     private operationMatchesSnapshot(planned: WorkspacePlanned, flightState: WorkspacePendingFlight): boolean {
         const operation = planned.operation;
         const snapshot = flightState.snapshot;
@@ -1890,149 +1620,84 @@ export class WorkspaceSendAdapter {
         return true;
     }
 
-    // Reply-boundary revalidation: never touch a possibly-destroyed Window
-    // observed before dispatch. Re-observe synchronously, exact-revalidate the
-    // source+target scope against the flight snapshot, then apply geometry and
-    // the mover's desktop membership. With the mover echo seam present the
-    // verified post-observation runs only after the mover desktopsChanged echo
-    // plus every required geometry echo; without the seam the exact
-    // synchronous post-write observe path runs for legacy isolated tests.
-    // Then ack.
-    private applyPlanned(planned: WorkspacePlanned, flight: number, correlation: string): void {
+    // Identity fence held before every native setter and before switch/focus:
+    // the flight token, correlation, and pinned owner/generation binding are
+    // unchanged. Snapshot scope is fenced separately against a fresh
+    // observation at each boundary.
+    private fencesHold(flight: number, correlation: string): boolean {
         const pending = this.pending;
-        if (pending === null) {
-            this.failFlight(flight, correlation, "stale-scope");
+        return (
+            this.inFlight &&
+            flight === this.activeToken &&
+            pending !== null &&
+            pending.correlation === correlation &&
+            this.activationStep === 5 &&
+            isUniqueOwner(this.pinnedOwner)
+        );
+    }
+
+    // Reply-boundary actuation: re-observe synchronously, exact-revalidate
+    // the source+target scope against the flight snapshot, then apply the
+    // planned geometry plus the mover's desktop membership. The arrival
+    // follow runs once on a fresh exact membership proof: an immediate
+    // post-write observation plus, for delayed arrival, a one-shot mover
+    // desktopsChanged signal. Never waits for unrelated geometry and never
+    // claims a native commit.
+    private actuate(flight: number, correlation: string): void {
+        const pending = this.pending;
+        const planned = pending?.planned ?? null;
+        if (pending === null || planned === null || !this.fencesHold(flight, correlation)) {
+            this.settleTerminal(flight, correlation, "stale-scope", "release");
             return;
         }
         const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
         if (fresh === null) {
-            this.failFlight(flight, correlation, "stale-revision");
+            this.settleTerminal(flight, correlation, "stale-revision", "release");
             return;
         }
         if (!snapshotsEqual(snapshotOf(fresh), pending.snapshot)) {
-            this.failFlight(flight, correlation, "stale-revision");
+            this.settleTerminal(flight, correlation, "stale-revision", "release");
             return;
         }
-        // Bind the accepted plan to the flight before any native write so a
-        // post-plan failure reports the exact owner/generation/correlation/
-        // base revision to the planner.
-        pending.baseRevision = planned.baseRevision;
-        pending.preconditions = planned.preconditions;
-        pending.operation = planned.operation;
-        pending.planned = planned;
-        const subscribe = this.env.subscribeMoverDesktops;
-        if (typeof subscribe !== "function") {
-            this.nativeWriteDepth += 1;
-            const geometryWritten = this.writeGeometries(planned, pending, fresh);
-            if (!geometryWritten) {
-                this.nativeWriteDepth -= 1;
-                this.failFlight(flight, correlation, "write-failed");
-                return;
-            }
-            // Pre-write observation immediately before mover membership write.
-            this.emitFollowDiag(correlation, planned.baseRevision, "send-pre-mover", fresh, this.diagBasisOf(pending), -1, -1);
-            const moverWritten = this.writeMoverDesktops(pending, fresh);
-            this.nativeWriteDepth -= 1;
-            if (!moverWritten) {
-                this.failFlight(flight, correlation, "write-failed");
-                return;
-            }
-            this.followAfterNativeMove(flight, correlation);
-            this.completePostWrite(planned, flight, correlation);
+        // Dispatch-frozen gap fence before ANY native setter: a configChanged
+        // reload must stale the reply even though bounds/membership still
+        // match. Terminal stale with forced refresh via settleTerminal.
+        if (!this.flightGapsHold(pending)) {
+            this.settleTerminal(flight, correlation, "stale-revision", "release");
             return;
         }
-        // Bounded signal fence grounded in actual expected native writes: arm
-        // one-shot mover plus required geometry echoes before any native
-        // write, then write geometry plus mover membership and defer the
-        // strict post-observation plus accepted ack until the mover membership
-        // echo and every required geometry-write echo have occurred.
-        // Unchanged geometry never waits for a signal.
-        const moverRef = this.resolveMoverRef(pending, fresh);
-        if (moverRef === null) {
-            this.failFlight(flight, correlation, "write-failed");
-            return;
-        }
-        let detach: (() => void) | null = null;
-        try {
-            detach = subscribe(moverRef, () => this.onMoverEcho(flight, correlation));
-        } catch (error) {
-            void error;
-            detach = null;
-        }
-        if (detach === null || typeof detach !== "function") {
-            this.failFlight(flight, correlation, "write-failed");
-            return;
-        }
-        this.echoDetach = detach;
-        this.echoArmed = true;
-        this.moverSeen = false;
-        this.geoDetaches = new Map<string, () => void>();
-        this.geoPending = new Set<string>();
-        const changedIds = this.changedGeometryIds(planned, fresh);
-        const subscribeGeo = this.env.subscribeWindowGeometry;
-        if (changedIds.length > 0 && typeof subscribeGeo === "function") {
-            const byRef = new Map<string, object>();
-            for (const entry of fresh.sourceWindows) {
-                byRef.set(entry.id, entry.ref);
-            }
-            for (const entry of fresh.targetWindows) {
-                byRef.set(entry.id, entry.ref);
-            }
-            for (const id of changedIds) {
-                const ref = byRef.get(id);
-                if (ref === undefined) {
-                    this.clearEcho();
-                    this.failFlight(flight, correlation, "write-failed");
-                    return;
-                }
-                const windowId = id;
-                let geoDetach: (() => void) | null = null;
-                try {
-                    geoDetach = subscribeGeo(ref, () => this.onGeometryEcho(windowId, flight, correlation));
-                } catch (error) {
-                    void error;
-                    geoDetach = null;
-                }
-                if (geoDetach === null || typeof geoDetach !== "function") {
-                    this.clearEcho();
-                    this.failFlight(flight, correlation, "write-failed");
-                    return;
-                }
-                this.geoDetaches.set(windowId, geoDetach);
-                this.geoPending.add(windowId);
-                this.geoRefs.set(windowId, ref);
-            }
-        }
-        pending.fenceTotal = this.geoPending.size;
+        // Arm the one-shot arrival signal BEFORE native writes so a delayed
+        // arrival signalling reentrantly between setters and the post-write
+        // observation stays observable. Synchronous echo during the write
+        // stack stays deferred via nativeWriteDepth and is covered by the
+        // immediate post-write observation.
+        this.armArrivalSignal(flight, correlation);
         this.nativeWriteDepth += 1;
-        const geometryWritten = this.writeGeometries(planned, pending, fresh);
-        if (!geometryWritten) {
-            this.nativeWriteDepth -= 1;
-            this.clearEcho();
-            this.failFlight(flight, correlation, "write-failed");
-            return;
-        }
-        // Pre-write observation immediately before mover membership write.
+        const geometryWritten = this.writeGeometries(flight, correlation, pending, planned);
+        // Pre-write observation immediately before the mover membership
+        // write. Best-effort only.
         this.emitFollowDiag(correlation, planned.baseRevision, "send-pre-mover", fresh, this.diagBasisOf(pending), -1, -1);
-        const moverWritten = this.writeMoverDesktops(pending, fresh);
+        const moverWritten = geometryWritten && this.writeMoverDesktops(flight, correlation, pending);
         this.nativeWriteDepth -= 1;
-        if (!moverWritten) {
-            this.clearEcho();
-            this.failFlight(flight, correlation, "write-failed");
+        if (!geometryWritten || !moverWritten) {
+            if (!this.fencesHold(flight, correlation) || !this.scopeStillMatches(pending) || !this.flightGapsHold(pending)) {
+                this.settleTerminal(flight, correlation, "stale-revision", "release");
+                return;
+            }
+            this.settleTerminal(flight, correlation, "write-failed", "release");
             return;
         }
-        this.followAfterNativeMove(flight, correlation);
-        // Synchronous fence callbacks may have consumed every echo while the
-        // native writes were guarded. Resume completion only after follow has
-        // returned from its switch/focus setter stack.
-        this.tryMaybeComplete(flight, correlation);
-        if (!this.inFlight || flight !== this.activeToken) {
+        this.diag("arrival", correlation, planned.baseRevision, "write", "applied");
+        // Immediate post-write arrival check; delayed arrival waits on the
+        // one-shot mover signal (already armed above) until the bounded
+        // arrival deadline.
+        if (this.checkArrival(flight, correlation)) {
             return;
         }
-        this.diag("request", correlation, planned.baseRevision, "plan-echo", "waiting");
-        if (this.geoPending.size > 0) {
-            this.diag("request", correlation, planned.baseRevision, "plan-geometry", "waiting");
+        if (this.arrivalDetach === null) {
+            this.armArrivalSignal(flight, correlation);
         }
+        this.diag("arrival", correlation, planned.baseRevision, "arrival", "waiting");
     }
 
     private resolveMoverRef(pending: WorkspacePendingFlight, current: WorkspaceSendObserved): object | null {
@@ -2049,69 +1714,47 @@ export class WorkspaceSendAdapter {
         return null;
     }
 
-    private changedGeometryIds(planned: WorkspacePlanned, current: WorkspaceSendObserved): string[] {
-        const freshById = new Map<string, WorkspaceSendRect>();
-        for (const entry of current.sourceWindows) {
-            freshById.set(entry.id, entry.rect);
+    // One-shot delayed-arrival trigger: the next mover desktopsChanged signal
+    // re-observes and follows once on a fresh exact membership proof. The
+    // armed arrival deadline still bounds the wait; the immediate post-write
+    // observation covers synchronous arrival. Armed before native writes so
+    // a signal between setters and the post-write observation is not missed.
+    private armArrivalSignal(flight: number, correlation: string): void {
+        const pending = this.pending;
+        if (pending === null || pending.correlation !== correlation) {
+            return;
         }
-        for (const entry of current.targetWindows) {
-            freshById.set(entry.id, entry.rect);
+        if (this.arrivalDetach !== null) {
+            return;
         }
-        const changed: string[] = [];
-        for (const entry of planned.geometry) {
-            const fresh = freshById.get(entry.window);
-            if (fresh === undefined) {
-                continue;
-            }
-            if (fresh.x !== entry.rect.x || fresh.y !== entry.rect.y || fresh.w !== entry.rect.w || fresh.h !== entry.rect.h) {
-                changed.push(entry.window);
-            }
+        const subscribe = this.env.subscribeMoverDesktops;
+        if (typeof subscribe !== "function") {
+            return;
         }
-        return changed;
+        const current = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+        if (current === null) {
+            return;
+        }
+        const moverRef = this.resolveMoverRef(pending, current);
+        if (moverRef === null) {
+            return;
+        }
+        let detach: (() => void) | null = null;
+        try {
+            detach = subscribe(moverRef, () => this.onArrivalSignal(flight, correlation));
+        } catch (error) {
+            void error;
+            detach = null;
+        }
+        if (detach === null || typeof detach !== "function") {
+            return;
+        }
+        this.arrivalDetach = detach;
     }
 
-    private onMoverEcho(flight: number, correlation: string): void {
-        // Abandon retry trigger before the single deadline: a still-waiting
-        // abandon re-attempts on this valid observation without resetting
-        // the armed deadline. The one-shot is consumed first, then the
-        // gated send re-arms the next trigger. An unreadable observation
-        // sends nothing and simply waits for the next trigger or the
-        // deadline, which releases as UNCONFIRMED.
-        if (this.abandonArmed) {
-            if (!this.inFlight || flight !== this.activeToken) {
-                return;
-            }
-            const pending = this.pending;
-            const detach = this.echoDetach;
-            this.echoDetach = null;
-            this.echoArmed = false;
-            this.moverSeen = false;
-            if (detach !== null) {
-                try {
-                    detach();
-                } catch (error) {
-                    void error;
-                }
-            }
-            if (pending === null || pending.correlation !== correlation) {
-                return;
-            }
-            this.trySendAbandon(flight, correlation, false);
-            return;
-        }
-        if (!this.inFlight || flight !== this.activeToken || !this.echoArmed || this.cancelArmed || this.abandonArmed) {
-            return;
-        }
-        const pending = this.pending;
-        const planned = pending?.planned ?? null;
-        if (pending === null || planned === null) {
-            return;
-        }
-        // One-shot: detach before any further fence progress so a duplicate
-        // echo cannot produce a duplicate membership write or ack.
-        const detach = this.echoDetach;
-        this.echoDetach = null;
-        this.echoArmed = false;
+    private detachArrival(): void {
+        const detach = this.arrivalDetach;
+        this.arrivalDetach = null;
         if (detach !== null) {
             try {
                 detach();
@@ -2119,120 +1762,20 @@ export class WorkspaceSendAdapter {
                 void error;
             }
         }
-        this.moverSeen = true;
-        this.diag("request", correlation, planned.baseRevision, "plan-echo", "consumed");
-        this.tryMaybeComplete(flight, correlation);
     }
 
-    private onGeometryEcho(windowId: string, flight: number, correlation: string): void {
-        if (!this.inFlight || flight !== this.activeToken || this.cancelArmed || this.abandonArmed) {
+    private onArrivalSignal(flight: number, correlation: string): void {
+        // A signal arriving mid-write or mid-follow is covered by the
+        // immediate post-write observation / in-progress follow instead.
+        // Keep the one-shot armed so the delayed arrival stays observable;
+        // do not consume it while the write/follow stack is live.
+        if (this.nativeWriteDepth > 0 || this.nativeFollowDepth > 0) {
             return;
         }
-        if (!this.geoPending.has(windowId)) {
-            return;
-        }
-        const pending = this.pending;
-        const planned = pending?.planned ?? null;
-        if (pending === null || planned === null) {
-            return;
-        }
-        const detach = this.geoDetaches.get(windowId);
-        const entry = this.geometryEntry(planned, windowId);
-        if (KWIN_TRACE_ENABLED) {
-            this.logGeometryDiag({
-                correlation,
-                revision: planned.baseRevision,
-                event: "plan-geometry",
-                outcome: "consumed",
-                planned,
-                pending,
-                entry,
-                writeOrdinal: -1,
-                writeTotal: -1,
-                writeReturned: -1,
-                readback: this.readGeometryDetail(this.geoRefs.get(windowId), entry?.rect),
-            });
-        }
-        if (detach !== undefined) {
-            this.geoDetaches.delete(windowId);
-            try {
-                detach();
-            } catch (error) {
-                void error;
-            }
-        }
-        this.geoPending.delete(windowId);
-        this.geoRefs.delete(windowId);
-        this.tryMaybeComplete(flight, correlation);
-    }
-
-    private tryMaybeComplete(flight: number, correlation: string): void {
-        if (!this.inFlight || flight !== this.activeToken || this.nativeWriteDepth > 0 || this.nativeFollowDepth > 0 || this.cancelArmed || this.abandonArmed) {
-            return;
-        }
-        if (!this.moverSeen || this.geoPending.size > 0) {
-            return;
-        }
-        const pending = this.pending;
-        const planned = pending?.planned ?? null;
-        if (pending === null || planned === null) {
-            return;
-        }
-        this.completePostWrite(planned, flight, correlation);
-    }
-
-    private completePostWrite(planned: WorkspacePlanned, flight: number, correlation: string): void {
-        if (this.nativeWriteDepth > 0 || this.nativeFollowDepth > 0 || this.cancelArmed || this.abandonArmed) {
-            return;
-        }
-        const pending = this.pending;
-        if (pending === null) {
-            this.failFlight(flight, correlation, "stale-scope");
-            return;
-        }
-        // Exact re-observation after the writes becomes the verified
-        // post-observation carried by the ack and verify requests. It must
-        // bind strictly to the retained plan: every desired window observed
-        // once with the planned rectangle, the mover absent from source and
-        // present in target, all other windows retaining their planned
-        // memberships, and the source/target domains, bounds, and target ref
-        // still matching the captured stable scope. Any mismatch is terminal without
-        // a verify commit.
-        const verified = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
-        if (verified === null) {
-            this.failFlight(flight, correlation, "stale-revision");
-            return;
-        }
-        const postMismatch = this.verifyPlannedPost(planned, pending, verified);
-        if (postMismatch !== "") {
-            this.failFlight(flight, correlation, postMismatch);
-            return;
-        }
-        pending.verifiedObserved = verified;
-        // The complete observation is also a valid membership proof when no
-        // earlier native read observed the mover transfer.
-        this.followAfterNativeMove(flight, correlation, verified);
-        // Post-write observation: verified read shows the mover in target
-        // while the basis keeps the frozen dispatch source. Best-effort only.
-        this.emitFollowDiag(correlation, planned.baseRevision, "send-post-mover", verified, this.diagBasisOf(pending), -1, -1);
-        const payload = this.buildAckPayload(verified, correlation, planned.baseRevision);
-        if (payload === null) {
-            this.failFlight(flight, correlation, "precondition-mismatch");
-            return;
-        }
-        if (payload.length > WORKSPACE_SEND_MAX_REQUEST_BYTES) {
-            this.failFlight(flight, correlation, "request-over-cap");
-            return;
-        }
-        this.diag("request", correlation, planned.baseRevision, "plan", "planned");
-        this.sendAck(flight, correlation, payload);
-    }
-
-    private clearEcho(): void {
-        const detach = this.echoDetach;
-        this.echoDetach = null;
-        this.echoArmed = false;
-        this.moverSeen = false;
+        // One-shot: detach before any further progress so a duplicate signal
+        // cannot produce a second follow.
+        const detach = this.arrivalDetach;
+        this.arrivalDetach = null;
         if (detach !== null) {
             try {
                 detach();
@@ -2240,495 +1783,133 @@ export class WorkspaceSendAdapter {
                 void error;
             }
         }
-        for (const geoDetach of this.geoDetaches.values()) {
-            try {
-                geoDetach();
-            } catch (error) {
-                void error;
-            }
-        }
-        this.geoDetaches = new Map<string, () => void>();
-        this.geoPending = new Set<string>();
-        this.geoRefs = new Map<string, object>();
+        this.checkArrival(flight, correlation);
     }
 
-    // Cancellation fence helper: incremented immediately before every
-    // native dispatch (geometry, membership, follow switch/focus), even when
-    // the call throws. Cancellation eligibility reads the counter, never an
-    // inferred phase.
-    private markNativeDispatch(): void {
-        this.nativeDispatches += 1;
-    }
-
-    private writeGeometries(
-        planned: WorkspacePlanned,
-        flightState: WorkspacePendingFlight,
-        current: WorkspaceSendObserved,
-    ): boolean {
-        const byRef = new Map<string, object>();
-        const oldById = new Map<string, WorkspaceSendRect>();
-        for (const entry of current.sourceWindows) {
-            byRef.set(entry.id, entry.ref);
-            oldById.set(entry.id, { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h });
-        }
-        for (const entry of current.targetWindows) {
-            byRef.set(entry.id, entry.ref);
-            oldById.set(entry.id, { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h });
-        }
-        const ordered = orderGeometryWrites(oldById, planned.geometry);
-        for (let writeOrdinal = 0; writeOrdinal < ordered.length; writeOrdinal += 1) {
-            const entry = ordered[writeOrdinal];
-            if (entry === undefined) {
-                return false;
-            }
-            const target = byRef.get(entry.window);
-            if (target === undefined) {
-                return false;
-            }
-            let written = false;
-            try {
-                this.markNativeDispatch();
-                written = this.env.setGeometry(target, entry.rect) === true;
-            } catch (error) {
-                void error;
-                written = false;
-            }
-            if (KWIN_TRACE_ENABLED) {
-                this.logGeometryDiag({
-                    correlation: planned.correlationId,
-                    revision: planned.baseRevision,
-                    event: "geometry-write",
-                    outcome: "returned",
-                    planned,
-                    pending: flightState,
-                    entry,
-                    writeOrdinal,
-                    writeTotal: ordered.length,
-                    writeReturned: written ? 1 : 0,
-                    readback: this.readGeometryDetail(target, entry.rect),
-                });
-            }
-            if (!written) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private writeMoverDesktops(pending: WorkspacePendingFlight, current: WorkspaceSendObserved): boolean {
-        if (current.targetDesktopRef === null) {
+    // Fresh exact arrival proof: the mover is absent from the source and
+    // present on the target with the dispatch scope unchanged. Returns true
+    // when the flight reached a terminal path (arrival follow done, closed
+    // mover, or stale scope); false when the mover simply has not arrived
+    // yet and the flight keeps waiting for the signal or the deadline.
+    // Never waits for unrelated geometry.
+    private checkArrival(flight: number, correlation: string): boolean {
+        const pending = this.pending;
+        const planned = pending?.planned ?? null;
+        if (pending === null || planned === null || !this.fencesHold(flight, correlation)) {
             return false;
         }
-        let mover: object | null = null;
-        for (const entry of current.sourceWindows) {
+        const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+        if (fresh === null) {
+            return false;
+        }
+        if (!scopeMatchesSnapshot(fresh, pending.snapshot)) {
+            this.settleTerminal(flight, correlation, "stale-revision", "release");
+            return true;
+        }
+        let inSource = false;
+        for (const entry of fresh.sourceWindows) {
             if (entry.id === pending.moverId) {
-                mover = entry.ref;
+                inSource = true;
                 break;
             }
         }
-        if (mover === null) {
-            for (const entry of current.targetWindows) {
-                if (entry.id === pending.moverId) {
-                    mover = entry.ref;
-                    break;
-                }
-            }
-        }
-        if (mover === null) {
-            return false;
-        }
-        let written = false;
-        try {
-            this.markNativeDispatch();
-            written = this.env.setDesktops(mover, [current.targetDesktopRef]) === true;
-        } catch (error) {
-            void error;
-            written = false;
-        }
-        return written;
-    }
-
-    // Strict post-observation binding against the retained plan. Returns ""
-    // when the post-observation is exact, otherwise the terminal refusal token
-    // (`stale-revision` for scope drift, `post-observation-mismatch` for any
-    // geometry or membership divergence). Never commits a divergent state.
-    private verifyPlannedPost(
-        planned: WorkspacePlanned,
-        pending: WorkspacePendingFlight,
-        verified: WorkspaceSendObserved,
-    ): string {
-        // Captured scope: source/target domains, bounds, target existence, and
-        // the exact target desktop ref must be unchanged.
-        const snapshot = pending.snapshot;
-        if (
-            verified.sourceOutput !== snapshot.sourceOutput ||
-            verified.sourceWorkspace !== snapshot.sourceWorkspace ||
-            verified.targetOutput !== snapshot.targetOutput ||
-            verified.targetWorkspace !== snapshot.targetWorkspace ||
-            verified.sourceBounds.x !== snapshot.sourceBounds.x ||
-            verified.sourceBounds.y !== snapshot.sourceBounds.y ||
-            verified.sourceBounds.w !== snapshot.sourceBounds.w ||
-            verified.sourceBounds.h !== snapshot.sourceBounds.h ||
-            verified.targetBounds.x !== snapshot.targetBounds.x ||
-            verified.targetBounds.y !== snapshot.targetBounds.y ||
-            verified.targetBounds.w !== snapshot.targetBounds.w ||
-            verified.targetBounds.h !== snapshot.targetBounds.h ||
-            verified.targetDesktopRef === null ||
-            verified.targetExists !== true
-        ) {
-            return "stale-revision";
-        }
-        const byId = new Map<string, { rect: WorkspaceSendRect; inSource: boolean; inTarget: boolean }>();
-        for (const entry of verified.sourceWindows) {
-            byId.set(entry.id, { rect: entry.rect, inSource: true, inTarget: false });
-        }
-        for (const entry of verified.targetWindows) {
-            byId.set(entry.id, { rect: entry.rect, inSource: false, inTarget: true });
-        }
-        // Every planned desired window exists exactly once with the planned
-        // rectangle; the observed set must not exceed the plan.
-        const seen = new Set<string>();
-        for (const entry of planned.geometry) {
-            if (seen.has(entry.window)) {
-                return "post-observation-mismatch";
-            }
-            seen.add(entry.window);
-            const found = byId.get(entry.window);
-            if (
-                found === undefined ||
-                found.rect.x !== entry.rect.x ||
-                found.rect.y !== entry.rect.y ||
-                found.rect.w !== entry.rect.w ||
-                found.rect.h !== entry.rect.h
-            ) {
-                return "post-observation-mismatch";
-            }
-        }
-        if (seen.size !== byId.size) {
-            return "post-observation-mismatch";
-        }
-        // The mover is absent from the source and present in the target.
-        const mover = byId.get(pending.moverId);
-        if (mover === undefined || mover.inSource || !mover.inTarget) {
-            return "post-observation-mismatch";
-        }
-        // All other windows retain their planned source/target memberships.
-        for (const entry of snapshot.sourceWindows) {
+        let moverRef: object | null = null;
+        for (const entry of fresh.targetWindows) {
             if (entry.id === pending.moverId) {
-                continue;
-            }
-            const found = byId.get(entry.id);
-            if (found === undefined || !found.inSource || found.inTarget) {
-                return "post-observation-mismatch";
+                moverRef = entry.ref;
+                break;
             }
         }
-        for (const entry of snapshot.targetWindows) {
-            if (entry.id === pending.moverId) {
-                continue;
-            }
-            const found = byId.get(entry.id);
-            if (found === undefined || found.inSource || !found.inTarget) {
-                return "post-observation-mismatch";
-            }
+        if (!inSource && moverRef !== null) {
+            this.diag("arrival", correlation, planned.baseRevision, "arrival", "arrived");
+            // Post-write observation: verified read shows the mover in target
+            // while the basis keeps the frozen dispatch source. Best-effort.
+            this.emitFollowDiag(correlation, planned.baseRevision, "send-post-mover", fresh, this.diagBasisOf(pending), -1, -1);
+            this.followOnce(flight, correlation, fresh);
+            this.settleTerminal(flight, correlation, "arrived", "arrival");
+            return true;
         }
-        return "";
+        if (!inSource && moverRef === null) {
+            // The mover is in neither scope: closed or moved elsewhere
+            // mid-flight. The entry refresh on settlement converges both
+            // domains from native observation; never a phantom, no replay.
+            this.settleTerminal(flight, correlation, "mover-closed", "release");
+            return true;
+        }
+        return false;
     }
 
-    // Native move-follow deliberately verifies only the transferred mover and
-    // immutable flight scope. Retained geometry remains an acknowledgement and
-    // commit gate in verifyPlannedPost, never a visibility/focus prerequisite.
-    private verifyNativeMove(
-        planned: WorkspacePlanned,
-        pending: WorkspacePendingFlight,
-        observed: WorkspaceSendObserved,
-    ): object | null {
-        const snapshot = pending.snapshot;
-        if (
-            pending.planned !== planned ||
-            !this.operationMatchesSnapshot(planned, pending) ||
-            observed.sourceOutput !== snapshot.sourceOutput ||
-            observed.sourceWorkspace !== snapshot.sourceWorkspace ||
-            observed.targetOutput !== snapshot.targetOutput ||
-            observed.targetWorkspace !== snapshot.targetWorkspace ||
-            observed.sourceBounds.x !== snapshot.sourceBounds.x ||
-            observed.sourceBounds.y !== snapshot.sourceBounds.y ||
-            observed.sourceBounds.w !== snapshot.sourceBounds.w ||
-            observed.sourceBounds.h !== snapshot.sourceBounds.h ||
-            observed.targetBounds.x !== snapshot.targetBounds.x ||
-            observed.targetBounds.y !== snapshot.targetBounds.y ||
-            observed.targetBounds.w !== snapshot.targetBounds.w ||
-            observed.targetBounds.h !== snapshot.targetBounds.h ||
-            observed.targetExists !== true ||
-            observed.targetDesktopRef === null
-        ) {
-            return null;
-        }
-        if (observed.sourceWindows.some((entry) => entry.id === pending.moverId)) {
-            return null;
-        }
-        for (const entry of observed.targetWindows) {
-            if (entry.id === pending.moverId) {
-                return entry.ref;
-            }
-        }
-        return null;
-    }
-
-    private sendAck(flight: number, correlation: string, payload: string): void {
-        if (!this.inFlight || flight !== this.activeToken || !isUniqueOwner(this.pinnedOwner) || this.cancelArmed || this.abandonArmed) {
-            return;
-        }
-        this.callbackSeen = false;
-        try {
-            this.env.callDbus(
-                this.pinnedOwner,
-                WORKSPACE_SEND_OBJECT,
-                WORKSPACE_SEND_INTERFACE,
-                WORKSPACE_SEND_METHOD,
-                payload,
-                (reply) => this.onAckReply(reply, flight, correlation),
-            );
-        } catch (error) {
-            void error;
-            this.failFlight(flight, correlation, "owner-loss");
-        }
-    }
-
-    private onAckReply(reply: unknown, flight: number, correlation: string): void {
-        if (!this.inFlight || flight !== this.activeToken || this.callbackSeen || this.cancelArmed || this.abandonArmed) {
-            return;
-        }
-        const pending = this.pending;
-        if (pending === null || pending.verifiedObserved === null) {
-            this.failFlight(flight, correlation, "stale-scope");
-            return;
-        }
-        // Late duplicate ack replies (including after a pre-ack timeout
-        // settlement already consumed the ack) must never replay verify.
-        // Ack/verify timeouts stay uncertain and never re-interpret a
-        // well-formed no-pending rejection as success.
-        if (pending.acked) {
-            return;
-        }
-        this.callbackSeen = true;
-        // The single whole-flight timer stays armed through the verify phase.
-        if (typeof reply !== "string" || reply.length > WORKSPACE_SEND_MAX_REPLY_BYTES) {
-            this.failFlight(flight, correlation, "service-fault");
-            return;
-        }
-        let parsed: unknown = null;
-        try {
-            parsed = JSON.parse(reply);
-        } catch (error) {
-            void error;
-            this.failFlight(flight, correlation, "service-fault");
-            return;
-        }
-        if (!isRecord(parsed) || parsed["v"] !== WORKSPACE_SEND_CONTRACT_VERSION) {
-            this.failFlight(flight, correlation, "service-fault");
-            return;
-        }
-        if (parsed["correlation_id"] !== correlation) {
-            this.failFlight(flight, correlation, "correlation-mismatch");
-            return;
-        }
-        const outcome = parsed["outcome"];
-        if (outcome === "rejected" || outcome === "diverged") {
-            this.failFlight(flight, correlation, sanitizeKind(parsed["kind"]));
-            return;
-        }
-        if (outcome !== "acknowledged") {
-            this.failFlight(flight, correlation, "service-fault");
-            return;
-        }
-        pending.acked = true;
-        this.diag("ack", correlation, pending.baseRevision, "ack", "acknowledged");
-        // Scope may have changed between the ack and the verify: take a fresh
-        // observation and rerun the strict post-observation binding so stale
-        // data never reaches a verify. Any mismatch fails closed with one
-        // best-effort adapter-lost report.
-        const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
-        if (fresh === null || pending.planned === null) {
-            this.failFlight(flight, correlation, "stale-revision");
-            return;
-        }
-        const mismatch = this.verifyPlannedPost(pending.planned, pending, fresh);
-        if (mismatch !== "") {
-            this.failFlight(flight, correlation, mismatch);
-            return;
-        }
-        const payload = this.buildVerifyPayload(fresh, correlation, pending.baseRevision);
-        if (payload === null) {
-            this.failFlight(flight, correlation, "precondition-mismatch");
-            return;
-        }
-        if (payload.length > WORKSPACE_SEND_MAX_REQUEST_BYTES) {
-            this.failFlight(flight, correlation, "request-over-cap");
-            return;
-        }
-        this.sendVerify(flight, correlation, payload);
-    }
-
-    private sendVerify(flight: number, correlation: string, payload: string): void {
-        if (!this.inFlight || flight !== this.activeToken || !isUniqueOwner(this.pinnedOwner) || this.cancelArmed || this.abandonArmed) {
-            return;
-        }
-        this.callbackSeen = false;
-        try {
-            this.env.callDbus(
-                this.pinnedOwner,
-                WORKSPACE_SEND_OBJECT,
-                WORKSPACE_SEND_INTERFACE,
-                WORKSPACE_SEND_METHOD,
-                payload,
-                (reply) => this.onVerifyReply(reply, flight, correlation),
-            );
-        } catch (error) {
-            void error;
-            this.failFlight(flight, correlation, "owner-loss");
-        }
-    }
-
-    private onVerifyReply(reply: unknown, flight: number, correlation: string): void {
-        if (!this.inFlight || flight !== this.activeToken || this.callbackSeen || this.cancelArmed || this.abandonArmed) {
-            return;
-        }
-        const pending = this.pending;
-        if (pending === null) {
-            this.failFlight(flight, correlation, "stale-scope");
-            return;
-        }
-        this.callbackSeen = true;
-        this.clearTimer();
-        if (typeof reply !== "string" || reply.length > WORKSPACE_SEND_MAX_REPLY_BYTES) {
-            this.failFlight(flight, correlation, "service-fault");
-            return;
-        }
-        let parsed: unknown = null;
-        try {
-            parsed = JSON.parse(reply);
-        } catch (error) {
-            void error;
-            this.failFlight(flight, correlation, "service-fault");
-            return;
-        }
-        if (!isRecord(parsed) || parsed["v"] !== WORKSPACE_SEND_CONTRACT_VERSION) {
-            this.failFlight(flight, correlation, "service-fault");
-            return;
-        }
-        if (parsed["correlation_id"] !== correlation) {
-            this.failFlight(flight, correlation, "correlation-mismatch");
-            return;
-        }
-        const outcome = parsed["outcome"];
-        if (outcome === "rejected" || outcome === "diverged") {
-            this.failFlight(flight, correlation, sanitizeKind(parsed["kind"]));
-            return;
-        }
-        if (outcome !== "committed") {
-            this.failFlight(flight, correlation, "service-fault");
-            return;
-        }
-        const revision = parsed["base_revision"];
-        if (!isRevision(revision)) {
-            this.failFlight(flight, correlation, "service-fault");
-            return;
-        }
-        this.diag("verify", correlation, revision as number, "verify", "committed");
-        // The committed exact observation remains a final one-shot follow
-        // proof if an earlier native membership read was unavailable.
-        this.followAfterNativeMove(flight, correlation);
-        this.inFlight = false;
-        // Settled-observation basis for the later follow-settled line below.
-        // Captured before teardown so the existing settlement edge stays
-        // correlated without a new subscription, timer, or poll. Source
-        // membership stays frozen from the immutable dispatch snapshot.
-        const settledBasis: WorkspaceFollowDiagBasis | null =
-            this.pending === null ? null : this.diagBasisOf(this.pending);
-        const settledSource: string | null = this.pending === null ? null : this.pending.snapshot.sourceWorkspace;
-        this.pending = null;
-        this.activationStep = 0;
-        this.activeDeadline = 0;
-        this.clearEcho();
-        try {
-            this.env.onCommitted?.();
-        } catch (error) {
-            void error;
-        }
-        // Relevant existing later lifecycle observation boundary: one
-        // best-effort synchronous public re-observation after the settlement
-        // edge, correlated with this flight. Diagnostic only: a null/absent
-        // observation logs unknown fields and never affects commit, flight
-        // teardown, resync, or enablement.
-        let settled: WorkspaceSendObserved | null = null;
-        try {
-            settled =
-                settledBasis === null || settledSource === null
-                    ? null
-                    : this.freshObserved(settledBasis.targetWorkspace, settledSource);
-        } catch (error) {
-            void error;
-            settled = null;
-        }
-        this.emitFollowDiag(correlation, revision as number, "follow-settled", settled, settledBasis, -1, -1);
-    }
-
-    // Follow a confirmed native mover transfer once. The caller may supply a
-    // just-verified complete observation; otherwise this takes one fresh read.
-    // It intentionally does not acknowledge, commit, retire fences, or resync.
-    private followAfterNativeMove(
+    // Follow a confirmed native mover transfer exactly once: switch to the
+    // target desktop, then focus the mover. A fresh exact arrival proof is
+    // required before the switch AND before focus; ambiguous or stale proof
+    // refuses the follow without setters. A failed or ambiguous switch
+    // never focuses; switch/focus failures are logged without retry or
+    // setter replay. Token, owner, and scope fences are rechecked before
+    // each setter.
+    private followOnce(
         flight: number,
         correlation: string,
-        observed?: WorkspaceSendObserved,
+        arrival: WorkspaceSendObserved,
     ): void {
-        if (
-            !this.inFlight ||
-            flight !== this.activeToken ||
-            this.activationStep !== 5 ||
-            this.nativeWriteDepth > 0 ||
-            this.nativeFollowDepth > 0 ||
-            this.cancelArmed ||
-            this.abandonArmed ||
-            !isUniqueOwner(this.pinnedOwner)
-        ) {
-            return;
-        }
+        void arrival;
         const pending = this.pending;
         const planned = pending?.planned ?? null;
-        if (pending === null || planned === null || pending.followStarted || pending.correlation !== correlation) {
+        if (pending === null || planned === null || pending.followed || !this.fencesHold(flight, correlation)) {
             return;
         }
         const switchToTarget = this.env.switchToTarget;
         const focusWindow = this.env.focusWindow;
         if (typeof switchToTarget !== "function" || typeof focusWindow !== "function") {
-            pending.followStarted = true;
+            pending.followed = true;
             pending.followOutcome = "hooks-unavailable";
             this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
             return;
         }
-        const fresh = observed ?? this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
-        if (fresh === null) {
+        // Fresh arrival membership proof before the switch: the passed
+        // arrival may be stale after the intervening setters.
+        const preSwitch = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+        if (preSwitch === null || !this.fencesHold(flight, correlation) || this.pending !== pending) {
+            pending.followed = true;
+            pending.followOutcome = "arrival-unconfirmed";
+            this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
             return;
         }
-        const moverRef = this.verifyNativeMove(planned, pending, fresh);
-        const targetDesktopRef = fresh.targetDesktopRef;
-        if (moverRef === null || targetDesktopRef === null) {
+        let preSwitchMoverRef: object | null = null;
+        let preSwitchInSource = false;
+        for (const entry of preSwitch.sourceWindows) {
+            if (entry.id === pending.moverId) {
+                preSwitchInSource = true;
+                break;
+            }
+        }
+        for (const entry of preSwitch.targetWindows) {
+            if (entry.id === pending.moverId) {
+                preSwitchMoverRef = entry.ref;
+                break;
+            }
+        }
+        const preSwitchDesktopRef = preSwitch.targetDesktopRef;
+        if (
+            preSwitchInSource ||
+            preSwitchMoverRef === null ||
+            preSwitchDesktopRef === null ||
+            !scopeMatchesSnapshot(preSwitch, pending.snapshot)
+        ) {
+            pending.followed = true;
+            pending.followOutcome = "arrival-unconfirmed";
+            this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
             return;
         }
-        // Flight-pinned diagnostic basis. The gates above stay the only
-        // correctness checks (stable-id binding plus the existing ref gate);
-        // current wrapper equality below is diagnostic only. Source membership
-        // stays frozen from the immutable dispatch snapshot.
+        // Flight-pinned diagnostic basis. The fences above stay the only
+        // correctness checks; wrapper equality below is diagnostic only.
+        // Source membership stays frozen from the immutable dispatch snapshot.
         const basis: WorkspaceFollowDiagBasis = this.diagBasisOf(pending);
-        // Before-setter observation: the pre-switch `fresh` binding above.
-        pending.followStarted = true;
-        this.diag("follow", correlation, planned.baseRevision, "native-move-confirmed", "observed");
-        this.emitFollowDiag(correlation, planned.baseRevision, "follow-pre", fresh, basis, -1, -1);
+        pending.followed = true;
+        this.emitFollowDiag(correlation, planned.baseRevision, "follow-pre", preSwitch, basis, -1, -1);
         let switched = false;
         this.nativeFollowDepth += 1;
         try {
-            this.markNativeDispatch();
-            switched = switchToTarget(targetDesktopRef, {
+            switched = switchToTarget(preSwitchDesktopRef, {
                 correlation,
                 revision: planned.baseRevision,
                 nextSequence: () => this.nextDiagSeq(),
@@ -2762,14 +1943,43 @@ export class WorkspaceSendAdapter {
             this.nativeFollowDepth -= 1;
             return;
         }
-        if (!this.inFlight || flight !== this.activeToken || this.pending !== pending) {
+        if (!this.fencesHold(flight, correlation) || this.pending !== pending) {
+            this.nativeFollowDepth -= 1;
+            return;
+        }
+        // Fresh arrival membership proof before focus: the mover may have
+        // closed or moved elsewhere during the switch. Ambiguous or stale
+        // proof refuses focus without a setter.
+        const preFocus = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+        if (preFocus === null || !this.fencesHold(flight, correlation) || this.pending !== pending) {
+            pending.followOutcome = "arrival-unconfirmed";
+            this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
+            this.nativeFollowDepth -= 1;
+            return;
+        }
+        let focusMoverRef: object | null = null;
+        let focusInSource = false;
+        for (const entry of preFocus.sourceWindows) {
+            if (entry.id === pending.moverId) {
+                focusInSource = true;
+                break;
+            }
+        }
+        for (const entry of preFocus.targetWindows) {
+            if (entry.id === pending.moverId) {
+                focusMoverRef = entry.ref;
+                break;
+            }
+        }
+        if (focusInSource || focusMoverRef === null || !scopeMatchesSnapshot(preFocus, pending.snapshot)) {
+            pending.followOutcome = "arrival-unconfirmed";
+            this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
             this.nativeFollowDepth -= 1;
             return;
         }
         let focused = false;
         try {
-            this.markNativeDispatch();
-            focused = focusWindow(moverRef, {
+            focused = focusWindow(focusMoverRef, {
                 correlation,
                 revision: planned.baseRevision,
                 nextSequence: () => this.nextDiagSeq(),
@@ -2796,19 +2006,7 @@ export class WorkspaceSendAdapter {
             1,
             focused ? 1 : 0,
         );
-        if (!focused) {
-            pending.followOutcome = "focus-unconfirmed";
-            this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
-            this.nativeFollowDepth -= 1;
-            return;
-        }
-        // Truthful telemetry only: WorkspaceWrapper setCurrentDesktopForScreen
-        // is void and only updates the current-desktop map; visible switch,
-        // activation, effects, and scene updates are downstream with no
-        // composited/visible completion signal. state-confirmed means only
-        // the immediate native current-map readback plus mover focus were
-        // confirmed, never physical visible completion.
-        pending.followOutcome = "state-confirmed";
+        pending.followOutcome = focused ? "state-confirmed" : "focus-unconfirmed";
         this.diag("follow", correlation, planned.baseRevision, "follow", pending.followOutcome);
         this.nativeFollowDepth -= 1;
     }
@@ -2843,16 +2041,10 @@ export class WorkspaceSendAdapter {
     // source/target scopes, frozen at dispatch so later dynamic reads never
     // overwrite the source view), switched/focused (native hook results, -1
     // when not yet invoked).
-    // Together the correlated dispatch/pre/post plus pre/switched/focused/
-    // settled lines distinguish the requested target (req/tgt), live current
-    // divergence (cur_*), output mismatch (out_*), and state reversal after
-    // focus. The dispatch/pre pair (mover_in_target=0, src_in_src=1) and post
-    // line (mover_in_target=1, same frozen source) mark the membership
-    // transition. Raw
-    // desktop ids, output identifiers, window native ids, object refs,
+    // Raw desktop ids, output identifiers, window native ids, object refs,
     // captions, app data, payload, and environment never enter logs. Wrapper
     // equality here is diagnostic only; existing follow gates stay unchanged.
-    // Never throws or affects follow result, commit, focus behavior,
+    // Never throws or affects follow result, arrival, focus behavior,
     // enablement, or flight state.
     private emitFollowDiag(
         correlation: string,
@@ -2945,996 +2137,232 @@ export class WorkspaceSendAdapter {
         }
     }
 
-    private failFlight(flight: number, correlation: string, outcome: string, allowCancel = true): void {
-        if (flight !== this.activeToken) {
-            return;
-        }
-        // One automatic pre-actuation recovery attempt: when the flight never
-        // bound a plan and never dispatched a native write, Rust may hold a
-        // clean unacknowledged pending worth withdrawing before the abandon
-        // below. Any ineligibility falls through to abandon unchanged.
-        // Callers proving Rust terminal for this scope (a `diverged` reply)
-        // bypass the attempt: cancellation refuses diverged transactions, so
-        // the attempt could never succeed, while abandon retires any state.
-        if (allowCancel && this.tryStartCancel(flight, "result", outcome)) {
-            return;
-        }
-        this.startAbandon(flight, correlation, outcome);
-    }
-
-    // Correlated abandon for every uncertain result: fenced
-    // `send-to-workspace-abandon` attempts carrying the retained identity,
-    // scope, and base revision, settled only by their exact reply
-    // (`abandoned`, `orphan-abandoned`, `no-pending-unknown`). The adapter
-    // stays enabled and Plan unblocks through the ordinary resync handoff
-    // on settlement; nothing here disables, reports adapter-lost, replays
-    // setters, or claims a commit. Every attempt is gated on one fresh
-    // valid observation (an unreadable scope sends nothing). One single
-    // bounded wait runs on the existing one-shot deadline: valid echoes
-    // before the deadline may re-attempt on the same correlation without
-    // resetting the deadline; when the wait expires the local flight
-    // releases as UNCONFIRMED with the ordinary resync handoff, never
-    // claiming Rust retirement or commit.
-    private startAbandon(flight: number, correlation: string, cause: string): void {
-        if (!this.inFlight || flight !== this.activeToken) {
-            return;
-        }
-        const pending = this.pending;
-        if (pending === null || pending.correlation !== correlation || this.abandonArmed) {
-            return;
-        }
-        // The original phases are over: their late replies, echoes, timers,
-        // and setters must never run while the abandon round trip awaits.
-        // Cancel is disarmed first so the two waits never overlap.
-        this.cancelArmed = false;
-        this.cancelReplySeen = false;
-        this.cancelOutcome = "";
-        this.cancelEvent = "";
-        this.cancelFollow = undefined;
-        this.abandonArmed = true;
-        this.abandonLog(correlation, pending.baseRevision, "abandon-requested", "requested", cause);
-        if (!this.trySendAbandon(flight, correlation, true)) {
-            this.armAbandonRetryTimer(flight);
-            // When even the single wait cannot be armed, release bounded
-            // immediately rather than holding Plan blocked with no deadline.
-            if (!this.inFlight || flight !== this.activeToken || !this.abandonArmed || this.activeDeadline === 0) {
-                if (this.inFlight && flight === this.activeToken && this.abandonArmed) {
-                    this.releaseAbandonUnconfirmed(flight, correlation, "timer-unavailable");
-                }
-            }
-        }
-    }
-
-    // Gated abandon attempt: one fresh valid observation proves a reachable
-    // scope before anything is sent. Unreadable scope sends nothing and logs
-    // the retry; the caller keeps the flight for the next trigger before the
-    // single deadline. Retries never reset the armed deadline.
-    private trySendAbandon(flight: number, correlation: string, rearm: boolean): boolean {
-        if (!this.inFlight || flight !== this.activeToken || !this.abandonArmed) {
-            return false;
-        }
-        const pending = this.pending;
-        if (pending === null || pending.correlation !== correlation) {
-            return false;
-        }
-        const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
-        if (fresh === null) {
-            this.abandonLog(correlation, pending.baseRevision, "abandon-retry", "retrying");
-            return false;
-        }
-        return this.sendAbandonGated(flight, correlation, fresh, rearm);
-    }
-
-    // Abandon payload: the retained snapshot scope (source/target domains,
-    // bounds, flight gaps) with the flight base revision and the
-    // `send-to-workspace-abandon` op. Rust retires any live workspace-send
-    // pending and distinguishes exact from orphan retirement; window sets
-    // never gate it, so the payload carries no windows and no focus.
-    // The fresh observation above only gates reachability; its drifted scope
-    // never replaces the retained one. On success the one-shot mover echo is
-    // re-armed as the retry trigger before the single deadline. Retries keep
-    // the armed deadline epoch and never reset it.
-    private sendAbandonGated(
-        flight: number,
-        correlation: string,
-        fresh: WorkspaceSendObserved,
-        rearm: boolean,
-    ): boolean {
-        if (!this.inFlight || flight !== this.activeToken || !this.abandonArmed) {
-            return false;
-        }
-        const pending = this.pending;
-        if (pending === null || pending.correlation !== correlation) {
-            return false;
-        }
-        // The pinned planner endpoint is unreachable: release the local
-        // flight as UNCONFIRMED with the ordinary resync handoff so Plan
-        // unblocks, stays enabled, and a later send can re-activate the
-        // current owner. Never claims Rust retirement or commit.
-        if (!isUniqueOwner(this.pinnedOwner)) {
-            this.releaseAbandonUnconfirmed(flight, correlation, "owner-invalid");
-            return false;
-        }
-        const payload = this.buildAbandonPayload(pending);
-        if (payload === null || payload.length > WORKSPACE_SEND_MAX_REQUEST_BYTES) {
-            this.abandonLog(correlation, pending.baseRevision, "abandon-retry", "retrying");
-            return false;
-        }
-        if (!rearm) {
-            // Bounded retry before the single deadline: keep the armed epoch
-            // and timer untouched, send on the same correlation, and re-arm
-            // the echo trigger only. Performs zero native writes.
-            const deadline = this.activeDeadline;
-            if (deadline === 0) {
-                this.abandonLog(correlation, pending.baseRevision, "abandon-retry", "retrying");
-                return false;
-            }
-            try {
-                this.env.callDbus(
-                    this.pinnedOwner as string,
-                    WORKSPACE_SEND_OBJECT,
-                    WORKSPACE_SEND_INTERFACE,
-                    WORKSPACE_SEND_METHOD,
-                    payload,
-                    (reply) => this.onAbandonReply(reply, flight, correlation, deadline),
-                );
-            } catch (error) {
-                void error;
-                this.abandonLog(correlation, pending.baseRevision, "abandon-retry", "retrying");
-                return false;
-            }
-            this.armAbandonEcho(flight, correlation, fresh);
-            return true;
-        }
-        // Retire the firing/armed whole-flight deadline and arm the single
-        // bounded abandon round trip on a fresh epoch; a stale epoch can
-        // never touch the wait. Performs zero native writes.
-        this.clearTimer();
-        this.deadlineToken += 1;
-        this.activeDeadline = this.deadlineToken;
-        const deadline = this.activeDeadline;
-        let timer: (() => void) | null = null;
+    // Dispatch-frozen gap fence: the live configured pair must still equal
+    // the flight-frozen primitives before any reply geometry or membership
+    // write. Never throws.
+    private flightGapsHold(pending: WorkspacePendingFlight): boolean {
         try {
-            timer = this.env.scheduleOnce(WORKSPACE_SEND_TIMEOUT_MS, () =>
-                this.onTimeout(flight, "abandon", deadline),
+            return pending.innerGap === this.innerGap && pending.outerGap === this.outerGap;
+        } catch (error) {
+            void error;
+            return false;
+        }
+    }
+
+    // Bounded scope fence for mid-write checks: a fresh observation still
+    // carries the exact dispatch source+target scope. Never throws.
+    private scopeStillMatches(pending: WorkspacePendingFlight): boolean {
+        try {
+            const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+            return (
+                fresh !== null &&
+                scopeMatchesSnapshot(fresh, pending.snapshot) &&
+                this.flagsStillMatch(fresh, pending.snapshot)
             );
         } catch (error) {
             void error;
-            timer = null;
-        }
-        if (timer === null) {
-            this.activeDeadline = 0;
-            this.abandonLog(correlation, pending.baseRevision, "abandon-retry", "retrying");
             return false;
-        }
-        if (!this.inFlight || flight !== this.activeToken || !this.abandonArmed || deadline !== this.activeDeadline) {
-            try {
-                timer();
-            } catch (error) {
-                void error;
-            }
-            return false;
-        }
-        this.cancelTimer = timer;
-        try {
-            this.env.callDbus(
-                this.pinnedOwner as string,
-                WORKSPACE_SEND_OBJECT,
-                WORKSPACE_SEND_INTERFACE,
-                WORKSPACE_SEND_METHOD,
-                payload,
-                (reply) => this.onAbandonReply(reply, flight, correlation, deadline),
-            );
-        } catch (error) {
-            void error;
-            this.clearTimer();
-            this.activeDeadline = 0;
-            this.abandonLog(correlation, pending.baseRevision, "abandon-retry", "retrying");
-            return false;
-        }
-        this.armAbandonEcho(flight, correlation, fresh);
-        return true;
-    }
-
-    // One-shot mover-echo retry trigger before the single deadline: the next
-    // native membership signal re-observes and re-sends on the same
-    // correlation without resetting the armed deadline. Reuses the existing
-    // echo flags; the original fence is over and its guards stay fenced by
-    // abandonArmed. A live fence subscription already serves as the trigger
-    // and is left alone; without the seam or a resolvable mover ref the
-    // single wait simply expires into the UNCONFIRMED release.
-    private armAbandonEcho(flight: number, correlation: string, current: WorkspaceSendObserved): void {
-        if (!this.inFlight || flight !== this.activeToken || !this.abandonArmed) {
-            return;
-        }
-        if (this.echoArmed) {
-            return;
-        }
-        const subscribe = this.env.subscribeMoverDesktops;
-        if (typeof subscribe !== "function") {
-            return;
-        }
-        const pending = this.pending;
-        if (pending === null || pending.correlation !== correlation) {
-            return;
-        }
-        const moverRef = this.resolveMoverRef(pending, current);
-        if (moverRef === null) {
-            return;
-        }
-        let detach: (() => void) | null = null;
-        try {
-            detach = subscribe(moverRef, () => this.onMoverEcho(flight, correlation));
-        } catch (error) {
-            void error;
-            detach = null;
-        }
-        if (detach === null || typeof detach !== "function") {
-            return;
-        }
-        this.echoDetach = detach;
-        this.echoArmed = true;
-        this.moverSeen = false;
-    }
-
-    // Single wait arming when the first abandon attempt could not be sent
-    // (unreadable scope, unbuildable payload, or transport throw): one bare
-    // one-shot deadline for the bounded wait whose fire releases the local
-    // flight as UNCONFIRMED. The flight stays retained and enabled until
-    // then; a scheduling fault here leaves activeDeadline at 0 so the
-    // starter releases immediately instead of holding Plan blocked.
-    private armAbandonRetryTimer(flight: number): void {
-        if (!this.inFlight || flight !== this.activeToken || !this.abandonArmed) {
-            return;
-        }
-        this.clearTimer();
-        this.deadlineToken += 1;
-        this.activeDeadline = this.deadlineToken;
-        const deadline = this.activeDeadline;
-        try {
-            const timer = this.env.scheduleOnce(WORKSPACE_SEND_TIMEOUT_MS, () =>
-                this.onTimeout(flight, "abandon", deadline),
-            );
-            if (timer === null) {
-                this.activeDeadline = 0;
-                return;
-            }
-            if (!this.inFlight || flight !== this.activeToken || !this.abandonArmed || deadline !== this.activeDeadline) {
-                try {
-                    timer();
-                } catch (error) {
-                    void error;
-                }
-                return;
-            }
-            this.cancelTimer = timer;
-        } catch (error) {
-            void error;
-            this.cancelTimer = null;
-            this.activeDeadline = 0;
         }
     }
 
-    // Abandon payload: the retained snapshot scope (source/target domains,
-    // bounds, flight gaps) with the flight base revision and the
-    // `send-to-workspace-abandon` op. Rust gates abandon only on the
-    // retained identity, scope, and revision; window sets never gate it, so
-    // the payload carries no windows and no focus. Never claims a commit.
-    private buildAbandonPayload(pending: WorkspacePendingFlight): string | null {
-        const snapshot = pending.snapshot;
-        let payload = "";
+    // Earlier setters may change rects; fence flags without comparing rects.
+    private flagsStillMatch(current: WorkspaceSendObserved, snapshot: WorkspaceSendSnapshot): boolean {
         try {
-            payload = JSON.stringify({
-                v: WORKSPACE_SEND_CONTRACT_VERSION,
-                correlation_id: pending.correlation,
-                owner: this.owner,
-                generation: this.generation,
-                revision: pending.baseRevision,
-                fingerprint: this.snapshotFingerprint(snapshot),
-                domain: {
-                    output: snapshot.sourceOutput,
-                    workspace: snapshot.sourceWorkspace,
-                    bounds: {
-                        x: snapshot.sourceBounds.x,
-                        y: snapshot.sourceBounds.y,
-                        w: snapshot.sourceBounds.w,
-                        h: snapshot.sourceBounds.h,
-                    },
-                    gap: pending.innerGap,
-                    outer_gap: pending.outerGap,
-                },
-                target_domain: {
-                    output: snapshot.targetOutput,
-                    workspace: snapshot.targetWorkspace,
-                    bounds: {
-                        x: snapshot.targetBounds.x,
-                        y: snapshot.targetBounds.y,
-                        w: snapshot.targetBounds.w,
-                        h: snapshot.targetBounds.h,
-                    },
-                    gap: pending.innerGap,
-                    outer_gap: pending.outerGap,
-                },
-                focused_window: "",
-                windows: [],
-                target_windows: [],
-                command: { op: "send-to-workspace-abandon" },
+            const freshById = new Map([...current.sourceWindows, ...current.targetWindows].map((entry) => [entry.id, entry]));
+            return [...snapshot.sourceWindows, ...snapshot.targetWindows].every((entry) => {
+                const fresh = freshById.get(entry.id);
+                return fresh !== undefined &&
+                    (fresh.fullscreen === true) === entry.fullscreen &&
+                    (fresh.maximized === true) === entry.maximized &&
+                    (fresh.floating === true) === entry.floating &&
+                    (fresh.sticky === true) === entry.sticky &&
+                    (fresh.fitExcluded === true || fresh.fit_excluded === true) === entry.fitExcluded;
             });
         } catch (error) {
             void error;
-            return null;
+            return false;
         }
-        return payload;
     }
 
-    private onAbandonReply(reply: unknown, flight: number, correlation: string, deadline: number): void {
-        if (!this.inFlight || flight !== this.activeToken || !this.abandonArmed) {
-            return;
+    private writeGeometries(
+        flight: number,
+        correlation: string,
+        pending: WorkspacePendingFlight,
+        planned: WorkspacePlanned,
+    ): boolean {
+        // Stable ordering baseline from the dispatch snapshot; per-setter
+        // targets and scope fences below always resolve from a fresh
+        // observation.
+        const baseline = new Map<string, WorkspaceSendRect>();
+        for (const entry of pending.snapshot.sourceWindows) {
+            baseline.set(entry.id, { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h });
         }
-        if (deadline !== this.activeDeadline) {
-            return;
+        for (const entry of pending.snapshot.targetWindows) {
+            baseline.set(entry.id, { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h });
         }
-        const pending = this.pending;
-        if (pending === null || pending.correlation !== correlation) {
-            return;
-        }
-        // The single wait stays armed while this reply is not the exact
-        // settlement. An inexact reply never consumes the attempt: a later
-        // same-epoch exact reply still settles, and the deadline still
-        // bounds the wait into the UNCONFIRMED release.
-        let settled: string | null = null;
-        if (typeof reply === "string" && reply.length <= WORKSPACE_SEND_MAX_REPLY_BYTES) {
+        const overlays = new Set(
+            [...pending.snapshot.sourceWindows, ...pending.snapshot.targetWindows]
+                .filter((entry) => entry.fullscreen || entry.maximized)
+                .map((entry) => entry.id),
+        );
+        const ordered = orderGeometryWrites(baseline, planned.geometry);
+        for (let writeOrdinal = 0; writeOrdinal < ordered.length; writeOrdinal += 1) {
+            // Retain the exact source+target scope and token before every
+            // native setter: a window may resize, move, or close mid-write.
+            if (!this.fencesHold(flight, correlation) || this.pending !== pending) {
+                return false;
+            }
+            const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+            if (fresh === null || !scopeMatchesSnapshot(fresh, pending.snapshot) || !this.flightGapsHold(pending)) {
+                return false;
+            }
+            if (!this.flagsStillMatch(fresh, pending.snapshot)) {
+                return false;
+            }
+            const entry = ordered[writeOrdinal];
+            if (entry === undefined) {
+                return false;
+            }
+            // Retain an overlaid tile's allocation without writing its native frame.
+            if (overlays.has(entry.window)) {
+                continue;
+            }
+            const target = this.resolveWindowRef(fresh, entry.window);
+            if (target === null) {
+                return false;
+            }
+            let written = false;
             try {
-                const parsed: unknown = JSON.parse(reply);
-                if (
-                    isRecord(parsed) &&
-                    parsed["v"] === WORKSPACE_SEND_CONTRACT_VERSION &&
-                    parsed["correlation_id"] === correlation &&
-                    parsed["kind"] === "send-to-workspace" &&
-                    (parsed["outcome"] === "abandoned" ||
-                        parsed["outcome"] === "orphan-abandoned" ||
-                        parsed["outcome"] === "no-pending-unknown")
-                ) {
-                    settled = parsed["outcome"] as string;
-                }
+                written = this.env.setGeometry(target, entry.rect) === true;
             } catch (error) {
                 void error;
-                settled = null;
+                written = false;
+            }
+            if (!written) {
+                return false;
             }
         }
-        if (settled === null) {
-            // Answered but inexact, lost, or malformed: never a commit claim
-            // and never a teardown. The armed single wait keeps running until
-            // its deadline releases as UNCONFIRMED.
-            this.abandonLog(correlation, pending.baseRevision, "abandon-retry", "retrying");
-            return;
-        }
-        const revision = pending.baseRevision;
-        this.clearTimer();
-        this.clearEcho();
-        this.inFlight = false;
-        this.pending = null;
-        this.activationStep = 0;
-        this.pinnedOwner = null;
-        this.activeDeadline = 0;
-        this.callbackSeen = false;
-        this.abandonArmed = false;
-        this.nativeDispatches = 0;
-        this.abandonLog(correlation, revision, "abandon-replied", settled);
-        this.abandonLog(correlation, revision, "abandon-handoff", "resync-requested");
-        try {
-            this.env.onAbandoned?.();
-        } catch (error) {
-            void error;
-        }
+        return true;
     }
 
-    // Bounded local release when the single abandon wait expires with no
-    // definitive reply: the KWin flight clears as UNCONFIRMED without ever
-    // claiming Rust retirement or commit. Stays enabled, unblocks Plan, and
-    // hands off to the ordinary resync; a later send re-activates the
-    // current Planner owner and its abandon can still retire any surviving
-    // pending. Performs zero native writes and never reports adapter-lost.
-    private releaseAbandonUnconfirmed(flight: number, correlation: string, cause: string): void {
-        if (!this.inFlight || flight !== this.activeToken || !this.abandonArmed) {
+    private resolveWindowRef(current: WorkspaceSendObserved, id: string): object | null {
+        for (const entry of current.sourceWindows) {
+            if (entry.id === id) {
+                return entry.ref;
+            }
+        }
+        for (const entry of current.targetWindows) {
+            if (entry.id === id) {
+                return entry.ref;
+            }
+        }
+        return null;
+    }
+
+    private writeMoverDesktops(
+        flight: number,
+        correlation: string,
+        pending: WorkspacePendingFlight,
+    ): boolean {
+        // Fresh scope fence immediately before the mover membership setter:
+        // never reuse the pre-geometry observation after geometry writes.
+        if (!this.fencesHold(flight, correlation) || this.pending !== pending) {
+            return false;
+        }
+        const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+        if (fresh === null || !scopeMatchesSnapshot(fresh, pending.snapshot) || !this.flightGapsHold(pending)) {
+            return false;
+        }
+        if (fresh.targetDesktopRef === null) {
+            return false;
+        }
+        const mover = this.resolveWindowRef(fresh, pending.moverId);
+        if (mover === null) {
+            return false;
+        }
+        let written = false;
+        try {
+            written = this.env.setDesktops(mover, [fresh.targetDesktopRef]) === true;
+        } catch (error) {
+            void error;
+            written = false;
+        }
+        return written;
+    }
+
+    // Single terminal exit for every flight path: release both deadline
+    // timers, detach the arrival signal, clear the source+target pin, log one
+    // bounded redacted release line, and invoke the entry-owned settlement
+    // hook exactly once for a forced complete source AND target refresh.
+    // Never reports to the planner, never replays setters, never claims a
+    // native commit. A stale flight token never settles.
+    private settleTerminal(flight: number, correlation: string, outcome: string, event: string): void {
+        if (flight !== this.activeToken) {
             return;
         }
         const pending = this.pending;
-        if (pending === null || pending.correlation !== correlation) {
-            return;
-        }
-        const revision = pending.baseRevision;
-        this.clearTimer();
-        this.clearEcho();
+        const revision = pending?.baseRevision ?? 0;
+        const settledCorrelation = pending?.correlation ?? correlation;
+        const snapshot = pending?.snapshot ?? null;
+        this.clearRequestTimer();
+        this.clearArrivalTimer();
+        this.detachArrival();
         this.inFlight = false;
         this.pending = null;
         this.activationStep = 0;
         this.pinnedOwner = null;
-        this.activeDeadline = 0;
-        this.callbackSeen = false;
-        this.abandonArmed = false;
-        this.nativeDispatches = 0;
-        this.abandonLog(correlation, revision, "abandon-released", "unconfirmed", cause);
-        this.abandonLog(correlation, revision, "abandon-handoff", "resync-requested");
-        try {
-            this.env.onAbandoned?.();
-        } catch (error) {
-            void error;
-        }
-    }
-
-    // Structured correlated bounded abandon lines: requested (one per
-    // started wait, carrying the cause), replied (`abandoned`,
-    // `orphan-abandoned`, `no-pending-unknown`, or `unconfirmed` for the
-    // bounded local release with no definitive reply), retrying (inexact,
-    // lost, malformed, unreadable, or unanswered attempts before the
-    // deadline), and the Plan handoff. Always logged (never
-    // gated), fixed redacted fields only: no native identifiers, payloads,
-    // owners, or geometry. Never throws and never affects flight state.
-    private abandonLog(
-        correlation: string,
-        revision: number,
-        event: string,
-        outcome: string,
-        cause?: string,
-    ): void {
+        this.requestDeadline = 0;
+        this.arrivalDeadline = 0;
         try {
             this.env.log(
-                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} route=send-to-workspace stage=abandon correlation=${correlation} generation=${this.generation} revision=${String(revision)} diag_seq=${String(this.nextDiagSeq())} event=${sanitizeKind(event)} outcome=${sanitizeKind(outcome)}${cause === undefined ? "" : ` cause=${sanitizeKind(cause)}`}`,
+                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} route=send-to-workspace stage=release correlation=${settledCorrelation} generation=${this.generation} revision=${String(revision)} diag_seq=${String(this.nextDiagSeq())} event=${sanitizeKind(event)} outcome=${sanitizeKind(outcome)}`,
             );
         } catch (error) {
             void error;
         }
-    }
-
-    // One automatic pre-actuation recovery attempt. Eligible only while still
-    // holding the single-flight for a request that reached the planner
-    // (activation step 5) but never bound a plan and never dispatched a
-    // native write: Rust may hold a clean unacknowledged pending worth
-    // withdrawing before terminal teardown. Returns true when the attempt
-    // started (caller must return immediately with the flight retained);
-    // false when the caller must run its terminal path unchanged.
-    private tryStartCancel(
-        flight: number,
-        event: string,
-        outcome: string,
-        followFallback?: string,
-    ): boolean {
-        if (!this.inFlight || flight !== this.activeToken) {
-            return false;
-        }
-        const pending = this.pending;
-        // Null flight record or an already-running attempt: internal states,
-        // silently left to their owning paths.
-        if (pending === null || this.cancelArmed) {
-            return false;
-        }
-        // Bounded ineligibility reason for the normal-level cancel line, so a
-        // skipped attempt stays attributable without touching terminal
-        // behavior. A dispatched setter wins over a merely bound plan: any
-        // native dispatch (including a throw) proves actuation started, while
-        // binding alone does not.
-        const ineligible =
-            this.nativeDispatches !== 0
-                ? "dispatched"
-                : pending.planned !== null
-                  ? "bound"
-                  : this.activationStep !== 5
-                    ? "phase"
-                    : !isUniqueOwner(this.pinnedOwner)
-                      ? "owner"
-                      : null;
-        if (ineligible !== null) {
-            this.diag(
-                "cancel",
-                pending.correlation,
-                pending.baseRevision,
-                "eligibility",
-                `ineligible-${ineligible}`,
-                undefined,
-                outcome,
-            );
-            return false;
-        }
-        // Arm before the fresh observation so a late original reply, echo, or
-        // timer firing between observation and send cannot actuate or recover
-        // the flight being withdrawn.
-        this.cancelArmed = true;
-        this.cancelReplySeen = false;
-        this.cancelOutcome = outcome;
-        this.cancelEvent = event;
-        this.cancelFollow = followFallback;
-        const correlation = pending.correlation;
-        const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
-        if (fresh === null) {
-            return this.abortCancelStart(pending);
-        }
-        const payload = this.buildCancelPayload(
-            fresh,
-            correlation,
-            pending.requestRevision,
-            pending.innerGap,
-            pending.outerGap,
-        );
-        if (payload === null) {
-            return this.abortCancelStart(pending);
-        }
-        if (payload.length > WORKSPACE_SEND_MAX_REQUEST_BYTES) {
-            this.diag("request", correlation, pending.baseRevision, "refuse", "request-over-cap");
-            return this.abortCancelStart(pending);
-        }
-        // Retire the firing/armed whole-flight deadline and arm the single
-        // bounded cancel round trip on a fresh epoch; a stale epoch can never
-        // touch the wait.
-        this.clearTimer();
-        this.deadlineToken += 1;
-        this.activeDeadline = this.deadlineToken;
-        const deadline = this.activeDeadline;
-        let timer: (() => void) | null = null;
         try {
-            timer = this.env.scheduleOnce(WORKSPACE_SEND_TIMEOUT_MS, () =>
-                this.onTimeout(flight, "cancel", deadline),
-            );
-        } catch (error) {
-            void error;
-            timer = null;
-        }
-        if (timer === null) {
-            this.activeDeadline = 0;
-            return this.abortCancelStart(pending);
-        }
-        this.cancelTimer = timer;
-        try {
-            this.env.callDbus(
-                this.pinnedOwner as string,
-                WORKSPACE_SEND_OBJECT,
-                WORKSPACE_SEND_INTERFACE,
-                WORKSPACE_SEND_METHOD,
-                payload,
-                (reply) => this.onCancelReply(reply, flight, correlation),
-            );
-        } catch (error) {
-            void error;
-            this.clearTimer();
-            this.activeDeadline = 0;
-            return this.abortCancelStart(pending);
-        }
-        this.diag("cancel", correlation, pending.baseRevision, "attempt", "requested", undefined, outcome);
-        return true;
-    }
-
-    // Abort a just-armed attempt before any send: disarm, emit the bounded
-    // unavailable outcome, and report failure so the caller runs its terminal
-    // path unchanged. Covers unobservable scope, unbuildable/oversize
-    // payloads, timer arming faults, and D-Bus send throws.
-    private abortCancelStart(pending: WorkspacePendingFlight): false {
-        const cause = this.cancelOutcome;
-        this.cancelArmed = false;
-        this.cancelReplySeen = false;
-        this.cancelOutcome = "";
-        this.cancelEvent = "";
-        this.cancelFollow = undefined;
-        this.diag(
-            "cancel",
-            pending.correlation,
-            pending.baseRevision,
-            "send",
-            "unavailable",
-            undefined,
-            cause,
-        );
-        return false;
-    }
-
-    // Cancel payload: the exact current pre-observation with the original
-    // request revision (never a base learned from a stale probe) plus the
-    // zero-dispatch attestation. The attempt itself performs zero native
-    // writes: one synchronous observation and one D-Bus send only.
-    private buildCancelPayload(
-        observed: WorkspaceSendObserved,
-        correlation: string,
-        requestRevision: number,
-        innerGap: number,
-        outerGap: number,
-    ): string | null {
-        const sourceWindows = observed.sourceWindows.map((entry) => ({
-            window: entry.id,
-            output: observed.sourceOutput,
-            workspace: observed.sourceWorkspace,
-            rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
-        }));
-        const targetWindows = observed.targetWindows.map((entry) => ({
-            window: entry.id,
-            output: observed.targetOutput,
-            workspace: observed.targetWorkspace,
-            rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
-        }));
-        let payload = "";
-        try {
-            payload = JSON.stringify({
-                v: WORKSPACE_SEND_CONTRACT_VERSION,
-                correlation_id: correlation,
-                owner: this.owner,
-                generation: this.generation,
-                revision: requestRevision,
-                fingerprint: this.scopeFingerprint(observed),
-                domain: {
-                    output: observed.sourceOutput,
-                    workspace: observed.sourceWorkspace,
-                    bounds: {
-                        x: observed.sourceBounds.x,
-                        y: observed.sourceBounds.y,
-                        w: observed.sourceBounds.w,
-                        h: observed.sourceBounds.h,
-                    },
-                    gap: innerGap,
-                    outer_gap: outerGap,
-                },
-                target_domain: {
-                    output: observed.targetOutput,
-                    workspace: observed.targetWorkspace,
-                    bounds: {
-                        x: observed.targetBounds.x,
-                        y: observed.targetBounds.y,
-                        w: observed.targetBounds.w,
-                        h: observed.targetBounds.h,
-                    },
-                    gap: innerGap,
-                    outer_gap: outerGap,
-                },
-                focused_window: observed.focusedId,
-                windows: sourceWindows,
-                target_windows: targetWindows,
-                command: { op: "send-to-workspace-cancel", zero_dispatch: true },
+            this.env.onSettled?.({
+                sourceOutput: snapshot?.sourceOutput ?? "",
+                sourceWorkspace: snapshot?.sourceWorkspace ?? "",
+                targetOutput: snapshot?.targetOutput ?? "",
+                targetWorkspace: snapshot?.targetWorkspace ?? "",
             });
         } catch (error) {
             void error;
-            return null;
         }
-        return payload;
     }
 
-    private onCancelReply(reply: unknown, flight: number, correlation: string): void {
-        if (!this.inFlight || flight !== this.activeToken || !this.cancelArmed || this.cancelReplySeen) {
+    // Unanswered-request deadline: the planner callback never arrived. The
+    // flight releases with no native write; a late reply arriving afterwards
+    // is ignored by token. The entry refresh on settlement converges both
+    // domains from native observation.
+    private onRequestTimeout(flight: number, deadline: number): void {
+        if (!this.inFlight || flight !== this.activeToken || deadline !== this.requestDeadline) {
             return;
         }
-        const pending = this.pending;
-        if (pending === null || pending.correlation !== correlation || pending.planned !== null) {
-            this.cancelArmed = false;
-            this.cancelReplySeen = false;
-            const event = this.cancelEvent;
-            const outcome = this.cancelOutcome;
-            const follow = this.cancelFollow;
-            this.cancelOutcome = "";
-            this.cancelEvent = "";
-            this.cancelFollow = undefined;
-            void event;
-            void follow;
-            this.startAbandon(flight, correlation, outcome);
+        // A bound plan is already actuating synchronously past the request
+        // boundary; the arrival deadline owns the flight from there.
+        if (this.pending?.planned !== null) {
             return;
         }
-        this.cancelReplySeen = true;
-        this.clearTimer();
-        // Success binds the exact correlation, the cancelled outcome for this
-        // route, and a well-formed Rust base revision (the un-advanced pending
-        // base, which the adapter never knew pre-plan). A well-formed refusal
-        // is attributed with its allowlisted kind before the preserved
-        // fallthrough; anything else, including a lost or malformed reply,
-        // falls through without further attribution.
-        let cancelled = false;
-        let refusal: string | null = null;
-        let releaseRevision = pending.baseRevision;
-        if (typeof reply === "string" && reply.length <= WORKSPACE_SEND_MAX_REPLY_BYTES) {
-            try {
-                const parsed: unknown = JSON.parse(reply);
-                cancelled =
-                    isRecord(parsed) &&
-                    parsed["v"] === WORKSPACE_SEND_CONTRACT_VERSION &&
-                    parsed["correlation_id"] === correlation &&
-                    parsed["outcome"] === "cancelled" &&
-                    parsed["kind"] === "send-to-workspace" &&
-                    isRevision(parsed["base_revision"]);
-                if (cancelled && isRecord(parsed)) {
-                    releaseRevision = parsed["base_revision"] as number;
-                }
-                if (
-                    !cancelled &&
-                    isRecord(parsed) &&
-                    parsed["v"] === WORKSPACE_SEND_CONTRACT_VERSION &&
-                    parsed["correlation_id"] === correlation &&
-                    (parsed["outcome"] === "rejected" || parsed["outcome"] === "diverged")
-                ) {
-                    refusal = cancelRefusalKind(parsed["kind"]);
-                }
-            } catch (error) {
-                void error;
-                cancelled = false;
-                refusal = null;
-            }
-        }
-        if (refusal !== null) {
-            this.diag(
-                "cancel",
-                correlation,
-                pending.baseRevision,
-                "reply",
-                `refused-${refusal}`,
-                undefined,
-                this.cancelOutcome,
-            );
-        } else if (!cancelled) {
-            this.diag(
-                "cancel",
-                correlation,
-                pending.baseRevision,
-                "reply",
-                "reply-malformed",
-                undefined,
-                this.cancelOutcome,
-            );
-        }
-        if (!cancelled) {
-            const event = this.cancelEvent;
-            const outcome = this.cancelOutcome;
-            const follow = this.cancelFollow;
-            this.cancelArmed = false;
-            this.cancelReplySeen = false;
-            this.cancelOutcome = "";
-            this.cancelEvent = "";
-            this.cancelFollow = undefined;
-            void event;
-            void follow;
-            this.startAbandon(flight, correlation, outcome);
-            return;
-        }
-        const cause = this.cancelOutcome;
-        this.diag("cancel", correlation, releaseRevision, "reply", "accepted", undefined, cause);
-        // Withdrawn: the matching unacknowledged Rust pending is gone with
-        // its staged desired state, nothing committed, nothing written. Clear
-        // the flight exactly like a clean recovery and stay enabled so later
-        // commands may proceed under new correlations.
-        this.clearEcho();
-        this.inFlight = false;
-        this.pending = null;
-        this.activationStep = 0;
-        this.pinnedOwner = null;
-        this.activeDeadline = 0;
-        this.callbackSeen = false;
-        this.cancelArmed = false;
-        this.cancelReplySeen = false;
-        this.cancelOutcome = "";
-        this.cancelEvent = "";
-        this.cancelFollow = undefined;
-        this.nativeDispatches = 0;
-        this.diag("release", correlation, releaseRevision, "local-release", "cancelled", undefined, cause);
+        const correlation = this.pending?.correlation ?? "";
+        this.settleTerminal(flight, correlation, "timeout", "release");
     }
 
-    // Narrow remote-clean recovery: no plan/pending exists on either side, so
-    // no adapter-lost is reported, the adapter stays enabled with no flight,
-    // and the retired deadline can never touch a future flight. Used only for
-    // failures definitely before planner request dispatch (activation paths)
-    // and for well-formed request-phase rejections other than
-    // "pending-exists"/"unknown" (see rule above). Ambiguous send/timeout/
-    // lost/malformed/owner-loss and every post-write path stay terminal via
-    // failFlight.
-    private recoverClean(flight: number, correlation: string, outcome: string): void {
-        if (flight !== this.activeToken) {
+    // Bounded arrival deadline: the pin and delayed-arrival wait expire with
+    // no exact membership proof. No phantom is retained; the entry refresh
+    // on settlement converges both domains from native observation.
+    private onArrivalTimeout(flight: number, deadline: number): void {
+        if (!this.inFlight || flight !== this.activeToken || deadline !== this.arrivalDeadline) {
             return;
         }
-        this.clearTimer();
-        this.clearEcho();
-        this.inFlight = false;
-        this.pending = null;
-        this.activationStep = 0;
-        this.pinnedOwner = null;
-        this.activeDeadline = 0;
-        this.callbackSeen = false;
-        this.cancelArmed = false;
-        this.cancelReplySeen = false;
-        this.cancelOutcome = "";
-        this.cancelFollow = undefined;
-        this.cancelEvent = "";
-        this.abandonArmed = false;
-        this.diag("result", correlation, 0, "result", outcome);
+        const correlation = this.pending?.correlation ?? "";
+        this.settleTerminal(flight, correlation, "arrival-timeout", "release");
     }
 
-    private failTerminal(flight: number, correlation: string, outcome: string): void {
-        this.failFlight(flight, correlation, outcome);
-    }
-
-    private onTimeout(flight: number, stage: string, deadline: number): void {
-        void stage;
-        if (!this.inFlight || flight !== this.activeToken || deadline !== this.activeDeadline) {
-            return;
-        }
-        // Abandon wait timeout: the single bounded wait expired with no
-        // definitive reply. Release the local flight as UNCONFIRMED with
-        // the ordinary resync handoff; never a commit claim and never a
-        // disable. A later send re-activates the current owner and its
-        // abandon can still retire any surviving pending.
-        if (this.abandonArmed) {
-            const correlation = this.pending === null ? "" : this.pending.correlation;
-            this.releaseAbandonUnconfirmed(flight, correlation, "timeout");
-            return;
-        }
-        // Cancel wait timeout: the single bounded cancel round trip never
-        // answered. Attribute the wait, then disarm and fall through to
-        // abandon below.
-        if (this.cancelArmed) {
-            const correlation = this.pending === null ? "" : this.pending.correlation;
-            const revision = this.pending === null ? 0 : this.pending.baseRevision;
-            const event = this.cancelEvent;
-            const outcome = this.cancelOutcome;
-            const follow = this.cancelFollow;
-            this.diag("cancel", correlation, revision, "timeout", "timed-out", undefined, outcome);
-            this.cancelArmed = false;
-            this.cancelReplySeen = false;
-            this.cancelOutcome = "";
-            this.cancelFollow = undefined;
-            this.cancelEvent = "";
-            void event;
-            void follow;
-            this.startAbandon(flight, correlation, outcome);
-            return;
-        }
-        // Synchronous settlement-deadline reentrancy (scheduleOnce invoking
-        // its callback before returning) must never tear down the just-settled
-        // flight: ignore any reentrant timeout while settlement is arming.
-        if (this.timeoutDepth > 0) {
-            return;
-        }
-        const pending = this.pending;
-        const correlation = pending === null ? "" : pending.correlation;
-        const revision = pending === null ? 0 : pending.baseRevision;
-        // Exact pre-ack settlement only: a valid planned flight that has not
-        // yet verified (verifiedObserved === null) may have converged locally
-        // while its geometry/membership echoes were withheld or missed. Make
-        // one fresh complete source/target observation and run the existing
-        // exact verifyPlannedPost. If exact, safely retire the exhausted
-        // subscriptions and enter the original ack/verify continuation with
-        // the same owner/generation/correlation/base revision/preconditions/
-        // operation and one normal bounded deadline. No new native write,
-        // replay, new transaction, polling, false ack, or busy-key change.
-        // Ack/verify timeouts (verifiedObserved !== null) stay uncertain and
-        // never replay or re-interpret no-pending success. Owner validation is
-        // preserved; late events/callbacks/timers cannot duplicate ack/follow
-        // or touch a future flight via token, deadline epoch, echo, and acked
-        // guards.
-        // Permanent disablement never applies on this path: only provably
-        // safe pre-dispatch failures (no valid plan, no native write) and
-        // well-formed request-phase rejections other than
-        // "pending-exists"/"unknown" recover clean as Rust-clean. Every other
-        // uncertain result reaches abandon below: missing/malformed/lost
-        // planned replies, request timeouts, owner loss, and transport
-        // ambiguity are never treated as no-pending because Rust can create
-        // pending before the client receives a reply. Outcome diverged is
-        // never remote-clean: Rust retains the wedged pending, which only
-        // abandon retires. Explicit well-formed rejections after a plan/ack
-        // abandon the retained pending instead of disabling because native
-        // writes already mutated KWin state.
-        if (
-            pending !== null &&
-            pending.planned !== null &&
-            pending.verifiedObserved === null &&
-            !pending.acked &&
-            isUniqueOwner(this.pinnedOwner)
-        ) {
-            const planned = pending.planned;
-            const armedTotal = pending.fenceTotal;
-            const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
-            if (fresh === null) {
-                this.logTimeoutSettle({
-                    correlation,
-                    revision,
-                    outcome: "fresh-unavailable",
-                    verify: this.geometryVerifyDetail("none", -1, "unknown"),
-                    fence: this.timeoutFenceDetail(planned, armedTotal),
-                });
-            } else if (this.verifyPlannedPost(planned, pending, fresh) !== "") {
-                const detail = this.timeoutVerifyDetail(planned, pending, fresh);
-                this.logTimeoutSettle({
-                    correlation,
-                    revision,
-                    outcome: "verify-failed",
-                    verify: detail,
-                    fence: this.timeoutFenceDetail(planned, armedTotal),
-                });
-            } else {
-                const fencePre = this.timeoutFenceDetail(planned, armedTotal);
-                this.clearEcho();
-                pending.verifiedObserved = fresh;
-                this.followAfterNativeMove(flight, correlation, fresh);
-                const payload = this.buildAckPayload(fresh, correlation, planned.baseRevision);
-                if (payload === null) {
-                    this.logTimeoutSettle({
-                        correlation,
-                        revision,
-                        outcome: "payload-invalid",
-                        verify: this.geometryVerifyDetail("ok", -1, "unknown"),
-                        fence: fencePre,
-                    });
-                } else if (payload.length > WORKSPACE_SEND_MAX_REQUEST_BYTES) {
-                    this.logTimeoutSettle({
-                        correlation,
-                        revision,
-                        outcome: "request-over-cap",
-                        verify: this.geometryVerifyDetail("ok", -1, "unknown"),
-                        fence: fencePre,
-                    });
-                } else {
-                    this.clearTimer();
-                    this.deadlineToken += 1;
-                    this.activeDeadline = this.deadlineToken;
-                    const nextDeadline = this.activeDeadline;
-                    let cancel: (() => void) | null = null;
-                    this.timeoutDepth += 1;
-                    try {
-                        cancel = this.env.scheduleOnce(WORKSPACE_SEND_TIMEOUT_MS, () => this.onTimeout(flight, "ack", nextDeadline));
-                    } catch (error) {
-                        void error;
-                        cancel = null;
-                    }
-                    this.timeoutDepth -= 1;
-                    if (cancel !== null && isUniqueOwner(this.pinnedOwner)) {
-                        this.logTimeoutSettle({
-                            correlation,
-                            revision,
-                            outcome: "settled",
-                            verify: this.geometryVerifyDetail("ok", -1, "unknown"),
-                            fence: fencePre,
-                        });
-                        this.cancelTimer = cancel;
-                        this.diag("request", correlation, planned.baseRevision, "plan", "planned");
-                        this.sendAck(flight, correlation, payload);
-                        return;
-                    }
-                    this.logTimeoutSettle({
-                        correlation,
-                        revision,
-                        outcome: cancel === null ? "schedule-unavailable" : "owner-invalid",
-                        verify: this.geometryVerifyDetail("ok", -1, "unknown"),
-                        fence: fencePre,
-                    });
-                    // Settlement arming failed: retire the fresh deadline so the
-                    // failed epoch can never fire later.
-                    this.activeDeadline = 0;
-                }
-            }
-        } else if (
-            pending !== null &&
-            pending.planned !== null &&
-            pending.verifiedObserved === null &&
-            !pending.acked
-        ) {
-            // The only pre-ack settlement guard that can fail after a valid
-            // planned flight exists is the pinned unique owner. Keep the
-            // established terminal path unchanged, but identify it.
-            this.logTimeoutSettle({
-                correlation,
-                revision,
-                outcome: "owner-invalid",
-                verify: this.geometryVerifyDetail("none", -1, "unknown"),
-                fence: this.timeoutFenceDetail(pending.planned, pending.fenceTotal),
-            });
-        }
-        // Whole-flight deadline with no settlement above: the outstanding
-        // reply (if any) is lost or late, which is inherently uncertain -
-        // Rust may already hold or have retired state. Pre-actuation cancel
-        // stays available only on reply-driven failFlight paths, never here:
-        // every timeout reaches abandon directly. A timeout before the
-        // planner request was ever dispatched (activation/owner phases run
-        // no planner op, so Rust can hold no pending) releases clean and
-        // enabled without any D-Bus round trip.
-        if (this.activationStep !== 5) {
-            this.recoverClean(flight, correlation, "timeout");
-            return;
-        }
-        this.startAbandon(flight, correlation, "timeout");
-    }
-
-    private clearTimer(): void {
-        const cancel = this.cancelTimer;
-        this.cancelTimer = null;
+    private clearRequestTimer(): void {
+        const cancel = this.requestTimer;
+        this.requestTimer = null;
         if (cancel !== null) {
             try {
                 cancel();
@@ -3944,103 +2372,46 @@ export class WorkspaceSendAdapter {
         }
     }
 
-    // Bounded best-effort terminal divergence for a received plan that can no
-    // longer be completed locally. One narrow fire-and-forget
-    // `send-to-workspace-ack` with `ack_outcome: "adapter-lost"` bound to the
-    // exact pending owner/generation/correlation/base revision. No timer, no
-    // retry, no native write; the noop callback never touches flight state so
-    // stray replies cannot race. Never fires before a valid planned reply
-    // exists (pending.operation/preconditions are only set after
-    // `validatePlanned`), never falls back to the well-known name, and a
-    // failed report never changes the failure behavior.
-    private reportAdapterLost(): void {
-        const pending = this.pending;
-        if (
-            pending === null ||
-            pending.operation === null ||
-            pending.preconditions === null ||
-            this.lossReported
-        ) {
-            return;
+    private clearArrivalTimer(): void {
+        const cancel = this.arrivalTimer;
+        this.arrivalTimer = null;
+        if (cancel !== null) {
+            try {
+                cancel();
+            } catch (error) {
+                void error;
+            }
         }
-        const target = this.pinnedOwner;
-        if (!isUniqueOwner(target)) {
-            return;
-        }
-        this.lossReported = true;
-        let payload = "";
+    }
+
+    // Bounded redacted late-reply line: a reply arriving after the flight
+    // released is ignored and never actuates. The correlation echoes only
+    // when it passes the opaque-id shape; anything else stays empty.
+    private logLateReply(reply: unknown): void {
         try {
-            payload = JSON.stringify({
-                v: WORKSPACE_SEND_CONTRACT_VERSION,
-                correlation_id: pending.correlation,
-                owner: this.owner,
-                generation: this.generation,
-                revision: pending.baseRevision,
-                fingerprint: this.snapshotFingerprint(pending.snapshot),
-                domain: {
-                    output: pending.snapshot.sourceOutput,
-                    workspace: pending.snapshot.sourceWorkspace,
-                    bounds: {
-                        x: pending.snapshot.sourceBounds.x,
-                        y: pending.snapshot.sourceBounds.y,
-                        w: pending.snapshot.sourceBounds.w,
-                        h: pending.snapshot.sourceBounds.h,
-                    },
-                    gap: this.innerGap,
-                    outer_gap: this.outerGap,
-                },
-                target_domain: {
-                    output: pending.snapshot.targetOutput,
-                    workspace: pending.snapshot.targetWorkspace,
-                    bounds: {
-                        x: pending.snapshot.targetBounds.x,
-                        y: pending.snapshot.targetBounds.y,
-                        w: pending.snapshot.targetBounds.w,
-                        h: pending.snapshot.targetBounds.h,
-                    },
-                    gap: this.innerGap,
-                    outer_gap: this.outerGap,
-                },
-                focused_window: "",
-                windows: [],
-                target_windows: [],
-                command: { op: "send-to-workspace-ack", ack_outcome: "adapter-lost" },
-            });
-        } catch (error) {
-            void error;
-            return;
-        }
-        if (payload.length === 0 || payload.length > WORKSPACE_SEND_MAX_REQUEST_BYTES) {
-            this.diag("request", pending.correlation, pending.baseRevision, "refuse", "request-over-cap");
-            return;
-        }
-        try {
-            this.env.callDbus(
-                target,
-                WORKSPACE_SEND_OBJECT,
-                WORKSPACE_SEND_INTERFACE,
-                WORKSPACE_SEND_METHOD,
-                payload,
-                () => {},
+            let correlation = "";
+            if (typeof reply === "string" && reply.length <= WORKSPACE_SEND_MAX_REPLY_BYTES) {
+                try {
+                    const parsed: unknown = JSON.parse(reply);
+                    if (isRecord(parsed) && isCorrelationId(parsed["correlation_id"])) {
+                        correlation = parsed["correlation_id"] as string;
+                    }
+                } catch (error) {
+                    void error;
+                }
+            }
+            this.env.log(
+                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} route=send-to-workspace stage=request correlation=${correlation} generation=${this.generation} revision=0 diag_seq=${String(this.nextDiagSeq())} event=late-reply outcome=ignored`,
             );
         } catch (error) {
             void error;
         }
     }
 
-    // Scope fingerprint from the retained primitive-only snapshot (the request
-    // observation already passed strict validation, so its fingerprints are
-    // trusted without a live observation).
-    private snapshotFingerprint(snapshot: WorkspaceSendSnapshot): number {
-        const source = parseInt(snapshot.sourceFingerprint, 10) || 0;
-        const target = parseInt(snapshot.targetFingerprint, 10) || 0;
-        return (source ^ target) >>> 0;
-    }
-
-    // Refusal during pre-flight (no correlation yet): one structured route
+    // Refusal during pre-flight (no pin, no hook): one structured route
     // diagnostic with an exact bounded token. Pre-flight refusals stay
-    // enabled with no flight, timer, D-Bus, native, follow, or loss report so
-    // a subsequent valid send can proceed.
+    // enabled with no flight, timer, D-Bus, native, or follow so a
+    // subsequent valid send can proceed.
     private refuse(outcome: string, correlation = ""): void {
         this.diag("request", correlation, 0, "refuse", outcome);
     }
@@ -4051,404 +2422,24 @@ export class WorkspaceSendAdapter {
         revision: number,
         event: string,
         outcome: string,
-        terminalFollowOutcome?: string,
-        cancellationCause?: string,
     ): void {
-        if (
-            !KWIN_TRACE_ENABLED &&
-            stage !== "result" &&
-            stage !== "follow" &&
-            event !== "refuse" &&
-            event !== "cancel" &&
-            event !== "dispatch" &&
-            event !== "eligibility" &&
-            event !== "attempt" &&
-            event !== "send" &&
-            event !== "reply" &&
-            event !== "timeout" &&
-            event !== "local-release" &&
-            outcome !== "no-planner" &&
-            !(event === "plan" && outcome === "planned") &&
-            !(event === "ack" && outcome === "acknowledged") &&
-            !(event === "verify" && outcome === "committed")
-        ) {
-            return;
-        }
         try {
-            const followed =
-                terminalFollowOutcome === "state-confirmed" ||
-                terminalFollowOutcome === "switch-unconfirmed" ||
-                terminalFollowOutcome === "focus-unconfirmed" ||
-                terminalFollowOutcome === "hooks-unavailable";
             const followGate =
-                followed && (event === "result" || event.startsWith("timeout-"))
-                    ? ` follow=${terminalFollowOutcome} gate=native-move`
-                    : event === "refuse"
+                event === "refuse"
                     ? ` follow=not-reached gate=pre-commit phase=request reason=${outcome}`
-                    : event === "result"
-                      ? ` follow=not-reached gate=pre-commit phase=result reason=${outcome}`
-                      : event === "activate" && outcome === "no-planner"
-                        ? " follow=not-reached gate=pre-commit phase=activation reason=no-planner"
-                        : event.startsWith("timeout-") && outcome === "timeout"
-                          ? ` follow=not-reached gate=pre-commit phase=timeout reason=${event}`
-                          : "";
+                    : event === "activate" && outcome === "no-planner"
+                      ? " follow=not-reached gate=pre-commit phase=activation reason=no-planner"
+                      : "";
             this.env.log(
-                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} route=send-to-workspace stage=${stage} correlation=${correlation} generation=${this.generation} revision=${String(revision)} diag_seq=${String(this.nextDiagSeq())} event=${event} outcome=${outcome}${cancellationCause === undefined ? "" : ` cause=${sanitizeKind(cancellationCause)}`}${followGate}`,
+                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} route=send-to-workspace stage=${stage} correlation=${correlation} generation=${this.generation} revision=${String(revision)} diag_seq=${String(this.nextDiagSeq())} event=${event} outcome=${outcome}${followGate}`,
             );
         } catch (error) {
             void error;
         }
-    }
-
-    // Best-effort redacted timeout-settlement diagnostic for the eligible
-    // pre-ack path only. One compact object call, one log line, one try/catch.
-    // Carries the settlement outcome, the verifier category (scope variants,
-    // geometry with plan-relative index, observed-count, mover membership,
-    // retained source/target membership), and the armed fence (armed total,
-    // pending count, plan-relative pending indices, mover-seen). Counts and
-    // indices only; never raw ids, geometry values, payloads, captions, focus
-    // data, owner, or native refs. Never affects behavior.
-    private logTimeoutSettle(detail: {
-        readonly correlation: string;
-        readonly revision: number;
-        readonly outcome: string;
-        readonly verify: GeometryVerifyDetail;
-        readonly fence: { readonly pending: number; readonly total: number; readonly moverSeen: number; readonly idx: string };
-    }): void {
-        try {
-            const followOutcome = this.pending?.followOutcome ?? "not-reached";
-            const followGate = followOutcome === "not-reached" ? "pre-commit" : "native-move";
-            this.env.log(
-                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=timeout correlation=${detail.correlation} generation=${this.generation} revision=${String(toDiagInt(detail.revision, -1, WORKSPACE_SEND_MAX_REVISION))} diag_seq=${String(this.nextDiagSeq())} event=timeout-settle outcome=${sanitizeKind(detail.outcome)} follow=${sanitizeKind(followOutcome)} gate=${followGate} verify_reason=${sanitizeKind(detail.verify.reason)} verify_gates=${detail.verify.reason === "ok" ? "complete" : "incomplete"} verify_geo_idx=${String(toDiagInt(detail.verify.geoIdx, -1, WORKSPACE_SEND_MAX_SEQ))} verify_role=${sanitizeKind(detail.verify.role)} verify_dx=${String(toDiagInt(detail.verify.dx, -32768, 32768))} verify_dy=${String(toDiagInt(detail.verify.dy, -32768, 32768))} verify_dw=${String(toDiagInt(detail.verify.dw, -32768, 32768))} verify_dh=${String(toDiagInt(detail.verify.dh, -32768, 32768))} geo_seq=${String(this.nextGeometryDiagSeq())} fence_pending=${String(toDiagInt(detail.fence.pending, -1, WORKSPACE_SEND_MAX_SEQ))} fence_total=${String(toDiagInt(detail.fence.total, -1, WORKSPACE_SEND_MAX_SEQ))} mover_seen=${String(toDiagInt(detail.fence.moverSeen, -1, 1))} fence_idx=${detail.fence.idx}`,
-            );
-        } catch (error) {
-            void error;
-        }
-    }
-
-    // Best-effort redacted terminal diagnostic for the otherwise silent
-    // pre-commit `disable()` teardown of a valid planned flight. Emits exactly
-    // one `event=disable-terminal` line before the bounded `adapter-lost`
-    // report so a future exact occurrence distinguishes an incomplete
-    // mover/geometry fence (`fence_pending`/`fence_total`/`fence_idx` plus
-    // `mover_seen`), the exact verifier category (`verify_reason` with
-    // plan-relative `verify_geo_idx`: `scope-*` for the `stale-revision`
-    // branch versus geometry/membership reasons for
-    // `post-observation-mismatch`, `none` when no fresh observation exists,
-    // `ok` when converged but echoes withheld), and direct disable teardown
-    // versus unknown log delivery (presence of this line proves the disable
-    // path ran). Reuses the redacted `timeoutFenceDetail` /
-    // `timeoutVerifyDetail` shapes; counts and plan-relative indices only,
-    // never raw ids, geometry values, payloads, captions, focus data, owner,
-    // or native refs. Fires only for the first reporter of a planned pre-commit
-    // flight, so `failFlight`/`onTimeout` follow-ups (which already emit
-    // `result`/`timeout-settle`) never double-emit. Any diagnostic failure is
-    // ignored and never changes the disable outcome, timer, fence, or
-    // enablement. Does not reconstruct any historical path.
-    private logDisableTerminal(): void {
-        try {
-            const pending = this.pending;
-            const planned = pending?.planned ?? null;
-            if (
-                pending === null ||
-                planned === null ||
-                pending.operation === null ||
-                pending.preconditions === null ||
-                this.lossReported ||
-                !isUniqueOwner(this.pinnedOwner)
-            ) {
-                return;
-            }
-            const fence = this.timeoutFenceDetail(planned, pending.fenceTotal);
-            const followOutcome = pending.followOutcome;
-            const followGate = followOutcome === "not-reached" ? "pre-commit" : "native-move";
-            let verify: GeometryVerifyDetail = this.geometryVerifyDetail("none", -1, "unknown");
-            try {
-                const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
-                if (fresh !== null) {
-                    verify = this.timeoutVerifyDetail(planned, pending, fresh);
-                }
-            } catch (error) {
-                void error;
-                verify = this.geometryVerifyDetail("unknown", -1, "unknown");
-            }
-            try {
-                this.env.log(
-                    `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=request correlation=${pending.correlation} generation=${this.generation} revision=${String(toDiagInt(pending.baseRevision, -1, WORKSPACE_SEND_MAX_REVISION))} diag_seq=${String(this.nextDiagSeq())} event=disable-terminal outcome=disable-teardown follow=${sanitizeKind(followOutcome)} gate=${followGate} phase=disable reason=disable-teardown verify_reason=${sanitizeKind(verify.reason)} verify_gates=${verify.reason === "ok" ? "complete" : "incomplete"} verify_geo_idx=${String(toDiagInt(verify.geoIdx, -1, WORKSPACE_SEND_MAX_SEQ))} verify_role=${sanitizeKind(verify.role)} verify_dx=${String(toDiagInt(verify.dx, -32768, 32768))} verify_dy=${String(toDiagInt(verify.dy, -32768, 32768))} verify_dw=${String(toDiagInt(verify.dw, -32768, 32768))} verify_dh=${String(toDiagInt(verify.dh, -32768, 32768))} geo_seq=${String(this.nextGeometryDiagSeq())} fence_pending=${String(toDiagInt(fence.pending, -1, WORKSPACE_SEND_MAX_SEQ))} fence_total=${String(toDiagInt(fence.total, -1, WORKSPACE_SEND_MAX_SEQ))} mover_seen=${String(toDiagInt(fence.moverSeen, -1, 1))} fence_idx=${fence.idx}`,
-                );
-            } catch (error) {
-                void error;
-            }
-        } catch (error) {
-            void error;
-        }
-    }
-
-    // Armed fence snapshot: pending count from the live fence, total from the
-    // count recorded at arming, pending ids mapped to stable plan-relative
-    // indices. No logging, no state change.
-    private timeoutFenceDetail(
-        planned: WorkspacePlanned,
-        armedTotal: number,
-    ): { readonly pending: number; readonly total: number; readonly moverSeen: number; readonly idx: string } {
-        try {
-            return this.timeoutFenceDetailUnchecked(planned, armedTotal);
-        } catch (error) {
-            void error;
-            return { pending: -1, total: -1, moverSeen: -1, idx: "-" };
-        }
-    }
-
-    private timeoutFenceDetailUnchecked(
-        planned: WorkspacePlanned,
-        armedTotal: number,
-    ): { readonly pending: number; readonly total: number; readonly moverSeen: number; readonly idx: string } {
-        const indices: number[] = [];
-        for (const id of this.geoPending) {
-            for (let index = 0; index < planned.geometry.length; index += 1) {
-                if (planned.geometry[index]?.window === id) {
-                    indices.push(index);
-                    break;
-                }
-            }
-        }
-        indices.sort((a, b) => a - b);
-        return {
-            pending: this.geoPending.size,
-            total: armedTotal,
-            moverSeen: this.moverSeen ? 1 : 0,
-            idx: indices.length === 0 ? "-" : indices.join(","),
-        };
-    }
-
-    private nextGeometryDiagSeq(): number {
-        this.geoDiagSeq += 1;
-        return this.geoDiagSeq;
     }
 
     private nextDiagSeq(): number {
         this.diagSeq += 1;
         return this.diagSeq;
-    }
-
-    private geometryEntry(planned: WorkspacePlanned, windowId: string): WorkspaceGeometryEntry | null {
-        for (const entry of planned.geometry) {
-            if (entry.window === windowId) {
-                return entry;
-            }
-        }
-        return null;
-    }
-
-    private geometryRole(pending: WorkspacePendingFlight, entry: WorkspaceGeometryEntry | null): string {
-        if (entry === null) {
-            return "unknown";
-        }
-        if (entry.window === pending.moverId) {
-            return "mover";
-        }
-        if (pending.snapshot.sourceWindows.some((window) => window.id === entry.window)) {
-            return "source-retained";
-        }
-        if (pending.snapshot.targetWindows.some((window) => window.id === entry.window)) {
-            return "target-retained";
-        }
-        return "unknown";
-    }
-
-    private readGeometryDetail(target: object | undefined, expected: WorkspaceSendRect | undefined): GeometryReadbackDetail {
-        if (target === undefined || expected === undefined || typeof this.env.readGeometry !== "function") {
-            return { outcome: "unavailable", dx: -1, dy: -1, dw: -1, dh: -1 };
-        }
-        try {
-            const actual = this.env.readGeometry(target);
-            if (actual === null || !isTargetRect(actual)) {
-                return { outcome: "unavailable", dx: -1, dy: -1, dw: -1, dh: -1 };
-            }
-            const dx = actual.x - expected.x;
-            const dy = actual.y - expected.y;
-            const dw = actual.w - expected.w;
-            const dh = actual.h - expected.h;
-            return { outcome: dx === 0 && dy === 0 && dw === 0 && dh === 0 ? "exact" : "mismatch", dx, dy, dw, dh };
-        } catch (error) {
-            void error;
-            return { outcome: "unavailable", dx: -1, dy: -1, dw: -1, dh: -1 };
-        }
-    }
-
-    private geometryVerifyDetail(
-        reason: string,
-        geoIdx: number,
-        role: string,
-        expected?: WorkspaceSendRect,
-        actual?: WorkspaceSendRect,
-    ): GeometryVerifyDetail {
-        if (expected === undefined || actual === undefined) {
-            return { reason, geoIdx, role, dx: -1, dy: -1, dw: -1, dh: -1 };
-        }
-        return {
-            reason,
-            geoIdx,
-            role,
-            dx: actual.x - expected.x,
-            dy: actual.y - expected.y,
-            dw: actual.w - expected.w,
-            dh: actual.h - expected.h,
-        };
-    }
-
-    private logGeometryDiag(detail: {
-        readonly correlation: string;
-        readonly revision: number;
-        readonly event: string;
-        readonly outcome: string;
-        readonly planned: WorkspacePlanned;
-        readonly pending: WorkspacePendingFlight;
-        readonly entry: WorkspaceGeometryEntry | null;
-        readonly writeOrdinal: number;
-        readonly writeTotal: number;
-        readonly writeReturned: number;
-        readonly readback: GeometryReadbackDetail;
-    }): void {
-        if (!KWIN_TRACE_ENABLED) {
-            return;
-        }
-        try {
-            const geoIdx = detail.entry === null ? -1 : detail.planned.geometry.indexOf(detail.entry);
-            this.env.log(
-                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=request correlation=${detail.correlation} generation=${this.generation} revision=${String(toDiagInt(detail.revision, -1, WORKSPACE_SEND_MAX_REVISION))} diag_seq=${String(this.nextDiagSeq())} event=${sanitizeKind(detail.event)} outcome=${sanitizeKind(detail.outcome)} geo_idx=${String(toDiagInt(geoIdx, -1, WORKSPACE_SEND_MAX_SEQ))} geo_role=${sanitizeKind(this.geometryRole(detail.pending, detail.entry))} write_ord=${String(toDiagInt(detail.writeOrdinal, -1, WORKSPACE_SEND_MAX_SEQ))} write_total=${String(toDiagInt(detail.writeTotal, -1, WORKSPACE_SEND_MAX_SEQ))} write_return=${String(toDiagInt(detail.writeReturned, -1, 1))} readback=${sanitizeKind(detail.readback.outcome)} dx=${String(toDiagInt(detail.readback.dx, -32768, 32768))} dy=${String(toDiagInt(detail.readback.dy, -32768, 32768))} dw=${String(toDiagInt(detail.readback.dw, -32768, 32768))} dh=${String(toDiagInt(detail.readback.dh, -32768, 32768))} geo_seq=${String(this.nextGeometryDiagSeq())}`,
-            );
-        } catch (error) {
-            void error;
-        }
-    }
-
-    // Diagnostic-only mirror of verifyPlannedPost categories. The verifier
-    // itself stays the single behavior gate; this only names the branch for
-    // the eligible-path log. First mismatch wins, same order as the verifier.
-    private timeoutVerifyDetail(
-        planned: WorkspacePlanned,
-        pending: WorkspacePendingFlight,
-        verified: WorkspaceSendObserved,
-    ): GeometryVerifyDetail {
-        try {
-            return this.timeoutVerifyDetailUnchecked(planned, pending, verified);
-        } catch (error) {
-            void error;
-            return this.geometryVerifyDetail("unknown", -1, "unknown");
-        }
-    }
-
-    private timeoutVerifyDetailUnchecked(
-        planned: WorkspacePlanned,
-        pending: WorkspacePendingFlight,
-        verified: WorkspaceSendObserved,
-    ): GeometryVerifyDetail {
-        const snapshot = pending.snapshot;
-        if (verified.sourceOutput !== snapshot.sourceOutput) {
-            return this.geometryVerifyDetail("scope-source-output", -1, "unknown");
-        }
-        if (verified.sourceWorkspace !== snapshot.sourceWorkspace) {
-            return this.geometryVerifyDetail("scope-source-workspace", -1, "unknown");
-        }
-        if (verified.targetOutput !== snapshot.targetOutput) {
-            return this.geometryVerifyDetail("scope-target-output", -1, "unknown");
-        }
-        if (verified.targetWorkspace !== snapshot.targetWorkspace) {
-            return this.geometryVerifyDetail("scope-target-workspace", -1, "unknown");
-        }
-        if (
-            verified.sourceBounds.x !== snapshot.sourceBounds.x ||
-            verified.sourceBounds.y !== snapshot.sourceBounds.y ||
-            verified.sourceBounds.w !== snapshot.sourceBounds.w ||
-            verified.sourceBounds.h !== snapshot.sourceBounds.h
-        ) {
-            return this.geometryVerifyDetail("scope-source-bounds", -1, "unknown");
-        }
-        if (
-            verified.targetBounds.x !== snapshot.targetBounds.x ||
-            verified.targetBounds.y !== snapshot.targetBounds.y ||
-            verified.targetBounds.w !== snapshot.targetBounds.w ||
-            verified.targetBounds.h !== snapshot.targetBounds.h
-        ) {
-            return this.geometryVerifyDetail("scope-target-bounds", -1, "unknown");
-        }
-        if (verified.targetDesktopRef !== pending.targetDesktopRef) {
-            return this.geometryVerifyDetail("scope-target-ref", -1, "unknown");
-        }
-        if (verified.targetExists !== true) {
-            return this.geometryVerifyDetail("scope-target-exists", -1, "unknown");
-        }
-        const byId = new Map<string, { rect: WorkspaceSendRect; inSource: boolean; inTarget: boolean }>();
-        for (const entry of verified.sourceWindows) {
-            byId.set(entry.id, { rect: entry.rect, inSource: true, inTarget: false });
-        }
-        for (const entry of verified.targetWindows) {
-            byId.set(entry.id, { rect: entry.rect, inSource: false, inTarget: true });
-        }
-        const planIndexOf = (windowId: string): number => {
-            for (let index = 0; index < planned.geometry.length; index += 1) {
-                if (planned.geometry[index]?.window === windowId) {
-                    return index;
-                }
-            }
-            return -1;
-        };
-        const seen = new Set<string>();
-        for (let index = 0; index < planned.geometry.length; index += 1) {
-            const entry = planned.geometry[index];
-            if (entry === undefined) {
-                continue;
-            }
-            if (seen.has(entry.window)) {
-                return this.geometryVerifyDetail("geometry-duplicate", index, this.geometryRole(pending, entry));
-            }
-            seen.add(entry.window);
-            const found = byId.get(entry.window);
-            if (found === undefined) {
-                return this.geometryVerifyDetail("geometry-missing", index, this.geometryRole(pending, entry));
-            }
-            if (
-                found.rect.x !== entry.rect.x ||
-                found.rect.y !== entry.rect.y ||
-                found.rect.w !== entry.rect.w ||
-                found.rect.h !== entry.rect.h
-            ) {
-                return this.geometryVerifyDetail("geometry-rect-mismatch", index, this.geometryRole(pending, entry), entry.rect, found.rect);
-            }
-        }
-        if (seen.size !== byId.size) {
-            return this.geometryVerifyDetail("observed-count-mismatch", -1, "unknown");
-        }
-        const mover = byId.get(pending.moverId);
-        const moverIdx = planIndexOf(pending.moverId);
-        if (mover === undefined) {
-            return this.geometryVerifyDetail("mover-missing", moverIdx, "mover");
-        }
-        if (mover.inSource) {
-            return this.geometryVerifyDetail("mover-in-source", moverIdx, "mover");
-        }
-        if (!mover.inTarget) {
-            return this.geometryVerifyDetail("mover-not-in-target", moverIdx, "mover");
-        }
-        for (const entry of snapshot.sourceWindows) {
-            if (entry.id === pending.moverId) {
-                continue;
-            }
-            const found = byId.get(entry.id);
-            if (found === undefined || !found.inSource || found.inTarget) {
-                return this.geometryVerifyDetail("retained-source-membership", planIndexOf(entry.id), "source-retained");
-            }
-        }
-        for (const entry of snapshot.targetWindows) {
-            if (entry.id === pending.moverId) {
-                continue;
-            }
-            const found = byId.get(entry.id);
-            if (found === undefined || found.inSource || !found.inTarget) {
-                return this.geometryVerifyDetail("retained-target-membership", planIndexOf(entry.id), "target-retained");
-            }
-        }
-        return this.geometryVerifyDetail("ok", -1, "unknown");
     }
 }

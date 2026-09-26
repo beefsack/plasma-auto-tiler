@@ -1,8 +1,9 @@
 # AR11: Workspace-send expectations
 
-Parked 2026-09-25 by user direction; superseded by
-[incremental send recovery](incremental-send-recovery-and-admission-batching.md).
-Retained for reference.
+Obsolete historical design: parked 2026-09-25 by user direction, superseded
+first by [incremental send recovery](incremental-send-recovery-and-admission-batching.md)
+and then by [observation convergence](archive/observation-convergence.md)
+on 2026-09-26. Its ten skipped fixture rows were removed. Retained for reference.
 
 ## Goal and scope
 
