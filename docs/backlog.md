@@ -105,10 +105,12 @@ decisions of 2026-09-24 are recorded under
   transition once. The press spy installs late on the same events when input
   redirection was unavailable at construction (ordinary).
 - P1 | Tray icon not appearing | User report (2026-09-26): the tray icon has
-  not been seen for some time, across many rebuilds and restarts; believed
-  non-functional. Cause unknown. Investigate from the tray journald
-  diagnostics and how the tray is started in dev and dogfood before or with
-  the decision M fix; the M fix alone may not explain it.
+  not been seen for some time, across many rebuilds and restarts. Cause
+  (read-only investigation): nothing starts the tray - `just dev` and dogfood
+  launch it only on demand since `1535a07`, and no Home Manager autostart
+  entry exists on this host; no crash evidence. User decision (2026-09-26):
+  `just dev` starts, owns (logs into the trace) and stops a worktree tray.
+  Implement with M, N, O, P, Q.
   [audit](changes/resilience-audit.md)
 - P1 | Fail-closed sweep | New Resilience rule (user, 2026-09-26): fail
   closed only when recovery is impossible or continuing would cause harm such
@@ -596,6 +598,20 @@ Existing work:
 - P3 | Artifact publication | Publish reproducible KPackage artifacts to KDE
   Store and GitHub Release after MVP delivery dependencies complete.
   [foundations](changes/archive/delivered-foundations.md)
+- P2 | Mainstream install path | User direction (2026-09-26): the long-term
+  target is the simplest install for a mainstream KDE user (e.g. Kubuntu): a
+  single install, probably through the distro package manager given multiple
+  parts (script, native effect tied to the host KWin ABI, Planner, tray);
+  ideal UX is installing one KDE plugin, weighed realistically. Delivery and
+  lifecycle choices (e.g. tray autostart) should serve this target; `just
+  dev` is only for development iteration.
+  [research](research/distribution-package-feasibility/feasibility.md)
+- P3 | Dev build alongside a stable install | User direction (2026-09-26),
+  no solution needed yet: find the cleanest, most effective way to run a dev
+  build on a machine that also has the stable version installed (D-Bus names,
+  plugin/script IDs, config, tray and Planner ownership). Keep it in mind in
+  delivery and dev-loop changes; today a dev tray exits if an installed tray
+  owns the name.
 - P3 | Live workspace-mode switch | Post-MVP (user, 2026-09-25). On save,
   quiesce, rebuild the backing-desktop mapping and fresh-adopt current windows
   without native moves, keeping focus and visible desktops; layouts may be lost
