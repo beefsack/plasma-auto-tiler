@@ -8,6 +8,17 @@ each review claim before acting; it was a static sampling review. User
 decisions of 2026-09-24 are recorded under
 [Architecture Direction](decisions.md#architecture-direction).
 
+- P1 | Born-fullscreen windows stay out of tiling - dogfood | User decision
+  option 2 (2026-09-26, from dogfooding a fullscreen game that left a tiling
+  gap): a window whose first observation is KWin fullscreen takes no tile slot
+  while it remains fullscreen; on its first non-fullscreen observation it
+  receives fresh admission at normal placement. Already-tiled windows keep the
+  existing retain-slot fullscreen behavior. No borderless-windowed heuristic
+  (option 3 declined for now). Shipped offline; user dogfood deferred to the
+  multi-output PC: game fullscreen beside tiles (no gap,
+  `initial-fullscreen-held`), exit (fresh tile, `initial-fullscreen-released`),
+  re-enter/exit (slot retained).
+  [change](changes/archive/born-fullscreen-admission.md)
 - P1 | Multi-output PC remaining re-test | Directional focus/move and
   cross-output focus/move accepted live by the user (2026-09-26, trace
   `~/Downloads/plasma-auto-tiler-dev.rRHFMS.log`) after carrying each

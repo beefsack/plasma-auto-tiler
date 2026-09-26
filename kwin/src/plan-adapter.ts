@@ -1691,6 +1691,18 @@ export class PlanAdapter {
     // output/workspace. Written only on successful applied plan replies
     // alongside appliedById; never admission or membership authority.
     private appliedScopeByDomain = new Map<string, { bounds: PlanRect; gap: number; outerGap: number }>();
+    // First-seen fullscreen hold: ids ever observed non-fullscreen versus ids
+    // first seen fullscreen and still held. A first-seen fullscreen window
+    // rides the wire as a synthetic floating exception (planner observation
+    // only, never native float) so it takes no Rust tile slot while initially
+    // fullscreen. First non-fullscreen observation releases to normal fresh
+    // admission; later fullscreen retains its slot. Already tiled ids
+    // (applied evidence) and ever-seen-normal ids never hold. Each entry
+    // pins the exact native ref observed first: a reused id with a different
+    // ref never inherits the old marker, and the exact native removal signal
+    // evicts even marker-only ids with no applied slot.
+    private seenNonFullscreen = new Map<string, object>();
+    private heldInitialFullscreen = new Map<string, object>();
     private reconcileAttempts = 0;
     // One-shot forced complete reconciliation for send-settled domains,
     // keyed by domain output/workspace. A terminal send flight carries its
@@ -1847,6 +1859,8 @@ export class PlanAdapter {
         this.epoch = 0;
         this.appliedById.clear();
         this.appliedScopeByDomain.clear();
+        this.seenNonFullscreen.clear();
+        this.heldInitialFullscreen.clear();
         this.settleDragRestoreUnavailable();
         this.reconcileAttempts = 0;
         this.sendForcedDomains.clear();
@@ -1886,6 +1900,8 @@ export class PlanAdapter {
         this.deferredAuto = null;
         this.appliedById.clear();
         this.appliedScopeByDomain.clear();
+        this.seenNonFullscreen.clear();
+        this.heldInitialFullscreen.clear();
         this.settleDragRestoreUnavailable();
         this.reconcileAttempts = 0;
         this.sendForcedDomains.clear();
@@ -2060,8 +2076,65 @@ export class PlanAdapter {
     // change, so carry its applied projection rather than invalidating the
     // complete snapshot. Unknown non-overlay windows still fail closed.
     // Applied evidence is read-only here; only applied replies mutate it.
+    // Initial-fullscreen hold is overlaid first (synthetic floating for
+    // first-seen fullscreen only) so dispatch, quiet equality, reprojection,
+    // and foreground/hidden paths agree from one snapshot shape.
+    private withInitialFullscreenHold(observed: PlanObserved): PlanObserved {
+        let changed = false;
+        const windows = observed.windows.map((entry) => {
+            if (!entry.fullscreen) {
+                const seenRef = this.seenNonFullscreen.get(entry.id);
+                if (seenRef === undefined || seenRef !== entry.ref) {
+                    this.seenNonFullscreen.set(entry.id, entry.ref);
+                }
+                const heldRef = this.heldInitialFullscreen.get(entry.id);
+                if (heldRef !== undefined) {
+                    this.heldInitialFullscreen.delete(entry.id);
+                    if (heldRef === entry.ref) {
+                        this.logToken(`${LOG_PREFIX}:initial-fullscreen-released window=${entry.id}`);
+                    }
+                    changed = true;
+                }
+                return entry;
+            }
+            const seenRef = this.seenNonFullscreen.get(entry.id);
+            if (seenRef !== undefined) {
+                if (seenRef === entry.ref) {
+                    return entry;
+                }
+                this.seenNonFullscreen.delete(entry.id);
+            }
+            const heldRef = this.heldInitialFullscreen.get(entry.id);
+            if (heldRef !== undefined) {
+                if (heldRef === entry.ref) {
+                    if (entry.floating === true) {
+                        return entry;
+                    }
+                    changed = true;
+                    return { ...entry, floating: true };
+                }
+                this.heldInitialFullscreen.delete(entry.id);
+            }
+            if (this.appliedById.has(entry.id)) {
+                return entry;
+            }
+            this.heldInitialFullscreen.set(entry.id, entry.ref);
+            this.logToken(`${LOG_PREFIX}:initial-fullscreen-held window=${entry.id}`);
+            changed = true;
+            if (entry.floating === true) {
+                return entry;
+            }
+            return { ...entry, floating: true };
+        });
+        if (!changed) {
+            return observed;
+        }
+        return { ...observed, windows: Object.freeze(windows) };
+    }
+
     private carriedSnapshot(observed: PlanObserved): PlanSnapshot {
-        const snapshot = snapshotOf(observed);
+        const held = this.withInitialFullscreenHold(observed);
+        const snapshot = snapshotOf(held);
         const windows = snapshot.windows.map((entry) => {
             const evidence = this.appliedById.get(entry.id);
             const retainedRect =
@@ -2184,7 +2257,8 @@ export class PlanAdapter {
     // per-id applied evidence for same-domain entries only; never baseline
     // authority.
     private reprojectionSnapshot(observed: PlanObserved): PlanSnapshot {
-        const snapshot = snapshotOf(observed);
+        const held = this.withInitialFullscreenHold(observed);
+        const snapshot = snapshotOf(held);
         const windows = snapshot.windows.map((entry) => {
             const evidence = this.appliedById.get(entry.id);
             const carried =
@@ -3754,8 +3828,22 @@ export class PlanAdapter {
             return;
         }
         // Evict only the removed native object, never inferred absence.
+        // Exact-object eviction covers marker-only ids with no applied slot,
+        // so truly removed windows never leave session-local residue. No
+        // native reads, no id logging, no per-domain inference: relocation
+        // survivors carry a different live ref and keep their markers.
         if (kind === "removed" && typeof target === "object" && target !== null) {
             this.stickyAttempts.delete(target);
+            for (const [id, ref] of [...this.heldInitialFullscreen]) {
+                if (ref === target) {
+                    this.heldInitialFullscreen.delete(id);
+                }
+            }
+            for (const [id, ref] of [...this.seenNonFullscreen]) {
+                if (ref === target) {
+                    this.seenNonFullscreen.delete(id);
+                }
+            }
         }
         // Bounded native-write exclusion only: signals delivered
         // synchronously from our own R4 setters must not advance epoch or
@@ -4367,7 +4455,12 @@ export class PlanAdapter {
         // Proven-departure cleanup only: an applied id in this domain omitted
         // from the complete observation retires its sticky/keep-above state
         // and emits noteRemoved. Covers single, simultaneous, and explicit
-        // empty departures in one place.
+        // empty departures in one place. Global initial-fullscreen markers
+        // (heldInitialFullscreen/seenNonFullscreen) are retained here: this
+        // per-domain view cannot prove the id is gone everywhere, and a
+        // cross-domain relocation survivor must keep its markers. True-gone
+        // cleanup is via the explicit-removed path, the exact native removal
+        // signal (which evicts even marker-only ids), and full resets.
         for (const [id, evidence] of [...this.appliedById]) {
             if (
                 evidence.output === freshSnapshot.domainOutput &&
@@ -4504,7 +4597,16 @@ export class PlanAdapter {
         const known = this.appliedById;
         const attempted: Array<{ id: string; ref: object; resourceClass: string }> = [];
         for (const entry of observed.windows) {
-            if (entry.fullscreen || !entry.maximized || known.has(entry.id) || this.maximizeAdmissionAttempts.has(entry.id)) {
+            // Admission clear runs before the initial-fullscreen hold release
+            // in carriedSnapshot, so a held id exiting fullscreen is still
+            // marked here. Held ids bypass the known-id skip: their applied
+            // slot (if any) is exception evidence, never a tile, while
+            // already-tiled ids never enter the held set. Fullscreen never
+            // clears; one-shot via maximizeAdmissionAttempts with no retry.
+            if (entry.fullscreen || !entry.maximized || this.maximizeAdmissionAttempts.has(entry.id)) {
+                continue;
+            }
+            if (known.has(entry.id) && this.heldInitialFullscreen.get(entry.id) !== entry.ref) {
                 continue;
             }
             this.maximizeAdmissionAttempts.add(entry.id);
@@ -5263,6 +5365,8 @@ export class PlanAdapter {
         this.clearProbeTimer();
         this.appliedById.clear();
         this.appliedScopeByDomain.clear();
+        this.seenNonFullscreen.clear();
+        this.heldInitialFullscreen.clear();
         this.reconcileAttempts = 0;
         this.backgroundAttempts.clear();
         this.pointerEcho = null;
@@ -6958,6 +7062,11 @@ export class PlanAdapter {
             if (flightState.op === "remove" && windows.length === 0) {
                 const emptyKey = this.domainKey(base);
                 this.appliedScopeByDomain.delete(emptyKey);
+                // Global initial-fullscreen markers retained: a per-domain
+                // remove-empty cannot prove cross-domain absence; relocation
+                // survivors keep markers. Explicit-removed below, the exact
+                // native removal signal, and full resets remain true-gone
+                // cleanup.
                 for (const [id, evidence] of [...this.appliedById]) {
                     if (evidence.output === base.domainOutput && evidence.workspace === base.domainWorkspace) {
                         this.appliedById.delete(id);
@@ -6971,6 +7080,8 @@ export class PlanAdapter {
                     this.keepAbovePrevious.delete(flightState.removed);
                     this.stickyPreviousFloating.delete(flightState.removed);
                     this.adoptedSticky.delete(flightState.removed);
+                    this.heldInitialFullscreen.delete(flightState.removed);
+                    this.seenNonFullscreen.delete(flightState.removed);
                     try {
                         this.env.noteRemoved?.(flightState.removed);
                     } catch (error) {
@@ -7013,6 +7124,9 @@ export class PlanAdapter {
                         evidence.workspace === retainedBase.domainWorkspace &&
                         !live.has(id)
                     ) {
+                        // Per-domain prune retires applied evidence only;
+                        // global markers retained for possible cross-domain
+                        // survivors (see above).
                         this.appliedById.delete(id);
                     }
                 }

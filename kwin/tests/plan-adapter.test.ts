@@ -4919,7 +4919,147 @@ describe("plan adapter fullscreen isolation", () => {
         assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-fullscreen"));
     });
 
-    it("admits a fullscreen member into the tree but never writes its geometry", () => {
+    it("holds a born-fullscreen member without a slot, then admits it on first exit", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        twoWindowBaseline(mocks, refs);
+        // win-c opens already fullscreen: it rides the wire as a synthetic
+        // floating exception with no Rust tile slot while siblings fill space.
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 600, h: 800 },
+                    "win-b": { x: 600, y: 0, w: 600, h: 800 },
+                    "win-c": { x: 0, y: 0, w: 1200, h: 800 },
+                },
+                fullscreen: { "win-c": true },
+            });
+        fire(mocks, "added");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 2);
+        assert.deepEqual((plannerPayload(mocks, 1)["command"] as Record<string, unknown>), { op: "reconcile" });
+        const sent = plannerPayload(mocks, 1)["windows"] as Array<Record<string, unknown>>;
+        assert.deepEqual(
+            sent.find((entry) => entry["window"] === "win-c"),
+            {
+                window: "win-c",
+                output: "out-1",
+                workspace: "ws-1",
+                rect: { x: 0, y: 0, w: 1200, h: 800 },
+                floating: true,
+                fit_excluded: true,
+            },
+            "born-fullscreen rides as a synthetic floating exception with no slot",
+        );
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:initial-fullscreen-held window=win-c"));
+        // Siblings fill the space alone: the reply covers only them.
+        const corr = plannerPayload(mocks, 1)["correlation_id"] as string;
+        const writesBefore = mocks.geometries.length;
+        mocks.callbacks[1]?.(
+            plannedReply(
+                corr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        assert.ok(mocks.logs.some((line) => line.includes(`cmd=${corr}`) && line.includes("outcome=planned-applied")));
+        assert.ok(!mocks.geometries.slice(writesBefore).some((entry) => entry.target === refs.c), "held member never actuated");
+        assert.ok(
+            !mocks.logs.some((line) => line.startsWith("plasma-auto-tiler:plan:write window=win-c")),
+            "held member without a slot carries no write disposition",
+        );
+        // First exit admits at normal placement through one reconcile.
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 600, h: 800 },
+                    "win-b": { x: 600, y: 0, w: 600, h: 800 },
+                    "win-c": { x: 0, y: 0, w: 100, h: 100 },
+                },
+            });
+        fire(mocks, "fullscreen");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 3);
+        const admitIndex = mocks.dbusCalls.length - 1;
+        assert.deepEqual((plannerPayload(mocks, admitIndex)["command"] as Record<string, unknown>)["op"], "reconcile");
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:initial-fullscreen-released window=win-c"));
+        const admitted = (plannerPayload(mocks, admitIndex)["windows"] as Array<Record<string, unknown>>).find((entry) => entry["window"] === "win-c");
+        assert.equal(admitted?.["floating"], undefined, "released member rides as a normal tile");
+        const admitCorr = plannerPayload(mocks, admitIndex)["correlation_id"] as string;
+        mocks.callbacks[admitIndex]?.(
+            plannedReply(
+                admitCorr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 400, h: 800 } },
+                    { window: "win-b", rect: { x: 400, y: 0, w: 400, h: 800 } },
+                    { window: "win-c", rect: { x: 800, y: 0, w: 400, h: 800 } },
+                ],
+                "win-c-leaf",
+            ),
+        );
+        assert.ok(
+            mocks.geometries.some((entry) => entry.target === refs.c && entry.rect.x === 800),
+            "first exit admits the released window at its normal placement",
+        );
+        // Later fullscreen of that tiled window retains its slot: entering
+        // fullscreen dispatches nothing and sibling drift skips its geometry.
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 400, h: 800 },
+                    "win-b": { x: 400, y: 0, w: 400, h: 800 },
+                    "win-c": { x: 0, y: 0, w: 1200, h: 800 },
+                },
+                fullscreen: { "win-c": true },
+            });
+        const callsBeforeFs = mocks.dbusCalls.length;
+        fire(mocks, "fullscreen");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsBeforeFs, "tiled fullscreen keeps its slot without dispatch");
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 420, h: 800 },
+                    "win-b": { x: 400, y: 0, w: 400, h: 800 },
+                    "win-c": { x: 0, y: 0, w: 1200, h: 800 },
+                },
+                fullscreen: { "win-c": true },
+            });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsBeforeFs + 1);
+        const slotIndex = mocks.dbusCalls.length - 1;
+        assert.deepEqual((plannerPayload(mocks, slotIndex)["command"] as Record<string, unknown>)["op"], "reconcile");
+        const slotCorr = plannerPayload(mocks, slotIndex)["correlation_id"] as string;
+        const slotWrites = mocks.geometries.length;
+        mocks.callbacks[slotIndex]?.(
+            plannedReply(
+                slotCorr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 400, h: 800 } },
+                    { window: "win-b", rect: { x: 400, y: 0, w: 400, h: 800 } },
+                    { window: "win-c", rect: { x: 800, y: 0, w: 400, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        assert.ok(!mocks.geometries.slice(slotWrites).some((entry) => entry.target === refs.c), "retained slot never actuated");
+        assert.ok(
+            mocks.logs.some(
+                (line) => line === "plasma-auto-tiler:plan:write window=win-c resource_class=unknown disposition=skip-fullscreen rect=800,0,400,800",
+            ),
+            "later fullscreen retains its slot with a skip-fullscreen disposition",
+        );
+    });
+
+    it("keeps a held born-fullscreen member floating across sibling drift without duplicate hold", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         twoWindowBaseline(mocks, refs);
@@ -4936,15 +5076,155 @@ describe("plan adapter fullscreen isolation", () => {
         fire(mocks, "added");
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, 2);
-        const cmd = plannerPayload(mocks, 1)["command"] as Record<string, unknown>;
-        assert.deepEqual(cmd, { op: "reconcile" });
-        const sent = plannerPayload(mocks, 1)["windows"] as Array<Record<string, unknown>>;
-        assert.ok(sent.some((entry) => entry["window"] === "win-c"), "fullscreen member stays observed");
-        const corr = plannerPayload(mocks, 1)["correlation_id"] as string;
+        const heldCorr = plannerPayload(mocks, 1)["correlation_id"] as string;
         const writesBefore = mocks.geometries.length;
         mocks.callbacks[1]?.(
             plannedReply(
-                corr,
+                heldCorr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        assert.ok(!mocks.geometries.slice(writesBefore).some((entry) => entry.target === refs.c), "held member never actuated");
+
+        // Repeated observation with sibling drift dispatches a fresh reconcile
+        // while the held member stays a synthetic floating exception.
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 616, h: 800 },
+                    "win-b": { x: 600, y: 0, w: 600, h: 800 },
+                    "win-c": { x: 0, y: 0, w: 1200, h: 800 },
+                },
+                fullscreen: { "win-c": true },
+            });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 3);
+        const repeatIndex = mocks.dbusCalls.length - 1;
+        assert.deepEqual((plannerPayload(mocks, repeatIndex)["command"] as Record<string, unknown>), { op: "reconcile" });
+        const repeatSent = plannerPayload(mocks, repeatIndex)["windows"] as Array<Record<string, unknown>>;
+        assert.deepEqual(
+            repeatSent.find((entry) => entry["window"] === "win-c"),
+            {
+                window: "win-c",
+                output: "out-1",
+                workspace: "ws-1",
+                rect: { x: 0, y: 0, w: 1200, h: 800 },
+                floating: true,
+                fit_excluded: true,
+            },
+            "held member stays a synthetic floating exception",
+        );
+        const repeatCorr = plannerPayload(mocks, repeatIndex)["correlation_id"] as string;
+        const repeatWrites = mocks.geometries.length;
+        mocks.callbacks[repeatIndex]?.(
+            plannedReply(
+                repeatCorr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        assert.ok(mocks.logs.some((line) => line.includes(`cmd=${repeatCorr}`) && line.includes("outcome=planned-applied")));
+        assert.ok(
+            mocks.geometries.slice(repeatWrites).some((entry) => entry.target === refs.a && entry.rect.w === 600),
+            "siblings retain full space",
+        );
+        assert.ok(!mocks.geometries.slice(repeatWrites).some((entry) => entry.target === refs.c), "held member never actuated");
+        assert.ok(
+            !mocks.logs.some((line) => line.startsWith("plasma-auto-tiler:plan:write window=win-c")),
+            "held member stays excluded from desired_geometry with no write disposition",
+        );
+        assert.equal(
+            mocks.logs.filter((line) => line === "plasma-auto-tiler:plan:initial-fullscreen-held window=win-c").length,
+            1,
+            "held exception logs exactly once",
+        );
+    });
+
+    it("closes a held initial-fullscreen window without residue", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        twoWindowBaseline(mocks, refs);
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 600, h: 800 },
+                    "win-b": { x: 600, y: 0, w: 600, h: 800 },
+                    "win-c": { x: 0, y: 0, w: 1200, h: 800 },
+                },
+                fullscreen: { "win-c": true },
+            });
+        fire(mocks, "added");
+        runDebounce(mocks);
+        const heldCorr = plannerPayload(mocks, 1)["correlation_id"] as string;
+        mocks.callbacks[1]?.(
+            plannedReply(
+                heldCorr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:initial-fullscreen-held window=win-c"));
+        // Close while held: the departed member leaves no slot or hold behind.
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
+            });
+        const callsBefore = mocks.dbusCalls.length;
+        fire(mocks, "removed", refs.c);
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsBefore + 1);
+        const removePayload = plannerPayload(mocks, callsBefore);
+        assert.deepEqual((removePayload["command"] as Record<string, unknown>), { op: "reconcile" });
+        assert.deepEqual(
+            (removePayload["windows"] as Array<Record<string, unknown>>).map((entry) => entry["window"]),
+            ["win-a", "win-b"],
+            "the removal reconcile carries only survivors",
+        );
+        const removeCorr = removePayload["correlation_id"] as string;
+        mocks.callbacks[callsBefore]?.(
+            plannedReply(
+                removeCorr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        // A later window reusing the domain tiles normally with no held residue.
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 600, h: 800 },
+                    "win-b": { x: 600, y: 0, w: 600, h: 800 },
+                    "win-c": { x: 0, y: 0, w: 100, h: 100 },
+                },
+            });
+        fire(mocks, "added");
+        runDebounce(mocks);
+        const readmitIndex = mocks.dbusCalls.length - 1;
+        assert.equal(mocks.dbusCalls.length, callsBefore + 2);
+        const readmit = (plannerPayload(mocks, readmitIndex)["windows"] as Array<Record<string, unknown>>).find((entry) => entry["window"] === "win-c");
+        assert.equal(readmit?.["floating"], undefined, "no held residue pins the reused id as floating");
+        const readmitCorr = plannerPayload(mocks, readmitIndex)["correlation_id"] as string;
+        mocks.callbacks[readmitIndex]?.(
+            plannedReply(
+                readmitCorr,
                 [
                     { window: "win-a", rect: { x: 0, y: 0, w: 400, h: 800 } },
                     { window: "win-b", rect: { x: 400, y: 0, w: 400, h: 800 } },
@@ -4953,17 +5233,7 @@ describe("plan adapter fullscreen isolation", () => {
                 "win-c-leaf",
             ),
         );
-        assert.ok(mocks.geometries.length > writesBefore, "siblings reflowed around the admission");
-        assert.ok(mocks.geometries.some((entry) => entry.target === refs.a || entry.target === refs.b));
-        assert.ok(!mocks.geometries.some((entry) => entry.target === refs.c), "fullscreen member never actuated");
-        assert.ok(mocks.logs.some((line) => line.includes("outcome=planned-applied")));
-        assert.ok(
-            mocks.logs.some(
-                (line) =>
-                    line === "plasma-auto-tiler:plan:write window=win-c resource_class=unknown disposition=skip-fullscreen rect=800,0,400,800",
-            ),
-            "fullscreen member carries skip-fullscreen disposition with its retained target rect",
-        );
+        assert.ok(mocks.geometries.some((entry) => entry.target === refs.c), "the reused id tiles normally once re-added");
     });
 
     it("entering fullscreen from tiled adopts the baseline with no reconcile and no write", () => {
@@ -5570,6 +5840,9 @@ describe("plan adapter maximize isolation", () => {
     it("leaves fullscreen admission isolated even when maximize is also set", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
+        // A window born fullscreen and maximized is held without a slot:
+        // fullscreen takes precedence over the maximize admission clear and
+        // the member rides as a synthetic floating exception.
         mocks.observeImpl = () =>
             makeObserved(refs, {
                 focused: refs.a,
@@ -5581,10 +5854,62 @@ describe("plan adapter maximize isolation", () => {
         adapter.requestResync();
         runDebounce(mocks);
         assert.equal(mocks.maximizeClears.length, 0, "fullscreen takes precedence over admission clear");
+        const sent = plannerPayload(mocks, 0)["windows"] as Array<Record<string, unknown>>;
+        assert.deepEqual(
+            sent.find((entry) => entry["window"] === "win-a"),
+            {
+                window: "win-a",
+                output: "out-1",
+                workspace: "ws-1",
+                rect: { x: 0, y: 0, w: 1200, h: 800 },
+                floating: true,
+                fit_excluded: true,
+            },
+            "born fullscreen-maximized rides held as a synthetic floating exception",
+        );
         const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
         mocks.callbacks[0]?.(
+            plannedReply(correlation, [{ window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } }], "win-b-leaf"),
+        );
+        assert.ok(mocks.logs.some((line) => line.includes(`cmd=${correlation}`) && line.includes("outcome=planned-applied")));
+        assert.ok(!mocks.geometries.some((entry) => entry.target === refs.a), "held member never actuated");
+        assert.ok(
+            !mocks.logs.some((line) => line.startsWith("plasma-auto-tiler:plan:write window=win-a")),
+            "held member without a slot carries no write disposition",
+        );
+    });
+
+    it("clears maximize once on first exit of a held born-fullscreen maximized window", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        twoWindowBaseline(mocks, refs);
+        let fullscreenC = true;
+        let maximizedC = true;
+        mocks.maximizeClearImpl = (target): MaximizeClearOutcome => {
+            assert.equal(target, refs.c);
+            maximizedC = false;
+            fire(mocks, "maximize", refs.c);
+            return "invoked";
+        };
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 600, h: 800 },
+                    "win-b": { x: 600, y: 0, w: 600, h: 800 },
+                    "win-c": { x: 0, y: 0, w: 1200, h: 800 },
+                },
+                fullscreen: fullscreenC ? { "win-c": true } : {},
+                maximized: maximizedC ? { "win-c": true } : {},
+            });
+        fire(mocks, "added");
+        runDebounce(mocks);
+        assert.equal(mocks.maximizeClears.length, 0, "no clear while fullscreen");
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:initial-fullscreen-held window=win-c"));
+        const heldCorr = plannerPayload(mocks, 1)["correlation_id"] as string;
+        mocks.callbacks[1]?.(
             plannedReply(
-                correlation,
+                heldCorr,
                 [
                     { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
                     { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
@@ -5592,8 +5917,90 @@ describe("plan adapter maximize isolation", () => {
                 "win-a-leaf",
             ),
         );
-        assert.ok(!mocks.geometries.some((entry) => entry.target === refs.a));
-        assert.ok(mocks.logs.some((line) => line.includes("window=win-a") && line.includes("disposition=skip-fullscreen")));
+        assert.ok(mocks.logs.some((line) => line.includes(`cmd=${heldCorr}`) && line.includes("outcome=planned-applied")));
+        // First non-fullscreen observation is still maximized: one native
+        // clear runs before the normal fresh admission, even though the
+        // prior synthetic floating exception already left applied evidence.
+        fullscreenC = false;
+        fire(mocks, "fullscreen");
+        runDebounce(mocks);
+        assert.deepEqual(mocks.maximizeClears, [refs.c], "exactly one admission clear on first exit");
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:initial-fullscreen-released window=win-c"));
+        assert.ok(
+            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:maximize-admission-clear window=win-c resource_class=unknown outcome=observed-cleared"),
+            "clear observed before fresh admission",
+        );
+        assert.equal(mocks.dbusCalls.length, 3);
+        const admitIndex = mocks.dbusCalls.length - 1;
+        assert.deepEqual((plannerPayload(mocks, admitIndex)["command"] as Record<string, unknown>)["op"], "reconcile");
+        const admitted = (plannerPayload(mocks, admitIndex)["windows"] as Array<Record<string, unknown>>).find((entry) => entry["window"] === "win-c");
+        assert.equal(admitted?.["floating"], undefined, "released member rides as a normal tile");
+        assert.equal(admitted?.["fit_excluded"], undefined, "cleared member rejoins the fit");
+        const admitCorr = plannerPayload(mocks, admitIndex)["correlation_id"] as string;
+        mocks.callbacks[admitIndex]?.(
+            plannedReply(
+                admitCorr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 400, h: 800 } },
+                    { window: "win-b", rect: { x: 400, y: 0, w: 400, h: 800 } },
+                    { window: "win-c", rect: { x: 800, y: 0, w: 400, h: 800 } },
+                ],
+                "win-c-leaf",
+            ),
+        );
+        assert.ok(
+            mocks.geometries.some((entry) => entry.target === refs.c && entry.rect.x === 800),
+            "first exit admits the released window at its normal placement",
+        );
+        // One-shot: the converged observation stays quiet with no retry.
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 400, h: 800 },
+                    "win-b": { x: 400, y: 0, w: 400, h: 800 },
+                    "win-c": { x: 800, y: 0, w: 400, h: 800 },
+                },
+            });
+        const callsAfterAdmit = mocks.dbusCalls.length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsAfterAdmit, "converged admission stays quiet");
+        assert.deepEqual(mocks.maximizeClears, [refs.c], "no retry after the one-shot clear");
+        // A later re-maximize of the admitted window never re-clears.
+        maximizedC = true;
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 400, h: 800 },
+                    "win-b": { x: 400, y: 0, w: 400, h: 800 },
+                    "win-c": { x: 0, y: 0, w: 1200, h: 800 },
+                },
+                maximized: { "win-c": true },
+            });
+        fire(mocks, "maximize");
+        runDebounce(mocks);
+        assert.deepEqual(mocks.maximizeClears, [refs.c], "post-admission maximize never re-clears");
+        assert.equal(mocks.dbusCalls.length, callsAfterAdmit, "post-admission maximize keeps its slot without dispatch");
+        // An already tiled window taking fullscreen plus maximize keeps its
+        // slot with no admission clear.
+        fullscreenC = true;
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 400, h: 800 },
+                    "win-b": { x: 400, y: 0, w: 400, h: 800 },
+                    "win-c": { x: 0, y: 0, w: 1200, h: 800 },
+                },
+                fullscreen: { "win-c": true },
+                maximized: { "win-c": true },
+            });
+        fire(mocks, "fullscreen");
+        runDebounce(mocks);
+        assert.deepEqual(mocks.maximizeClears, [refs.c], "already tiled fullscreen-maximized never clears");
+        assert.equal(mocks.dbusCalls.length, callsAfterAdmit, "already tiled overlay keeps its slot without dispatch");
     });
 
     it("refuses directional move/resize/pointer-resize on a maximized focused window with no dispatch", () => {
@@ -5756,21 +6163,65 @@ describe("plan adapter maximize isolation", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         twoWindowBaseline(mocks, refs);
+        // Admit win-c tiled first so its later fullscreen overlay retains a
+        // slot instead of the born-fullscreen hold.
         mocks.observeImpl = () =>
             makeObserved3(refs, {
                 focused: refs.a,
                 rects: {
                     "win-a": { x: 0, y: 0, w: 600, h: 800 },
                     "win-b": { x: 600, y: 0, w: 600, h: 800 },
+                    "win-c": { x: 0, y: 0, w: 100, h: 100 },
+                },
+            });
+        fire(mocks, "added");
+        runDebounce(mocks);
+        const admitCorr = plannerPayload(mocks, 1)["correlation_id"] as string;
+        mocks.callbacks[1]?.(
+            plannedReply(
+                admitCorr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 400, h: 800 } },
+                    { window: "win-b", rect: { x: 400, y: 0, w: 400, h: 800 } },
+                    { window: "win-c", rect: { x: 800, y: 0, w: 400, h: 800 } },
+                ],
+                "win-c-leaf",
+            ),
+        );
+        // The tiled member takes both overlays at once; the slot is retained.
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 400, h: 800 },
+                    "win-b": { x: 400, y: 0, w: 400, h: 800 },
                     "win-c": { x: 0, y: 0, w: 1200, h: 800 },
                 },
                 fullscreen: { "win-c": true },
                 maximized: { "win-c": true },
             });
-        fire(mocks, "added");
+        const callsBefore = mocks.dbusCalls.length;
+        fire(mocks, "fullscreen");
         runDebounce(mocks);
-        const corr = plannerPayload(mocks, 1)["correlation_id"] as string;
-        mocks.callbacks[1]?.(
+        assert.equal(mocks.dbusCalls.length, callsBefore, "overlay entry keeps its slot without dispatch");
+        // Sibling drift reconciles; the doubly overlaid member keeps its slot.
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 420, h: 800 },
+                    "win-b": { x: 400, y: 0, w: 400, h: 800 },
+                    "win-c": { x: 0, y: 0, w: 1200, h: 800 },
+                },
+                fullscreen: { "win-c": true },
+                maximized: { "win-c": true },
+            });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsBefore + 1);
+        const corr = plannerPayload(mocks, mocks.dbusCalls.length - 1)["correlation_id"] as string;
+        const overlayWrites = mocks.geometries.length;
+        mocks.callbacks[mocks.dbusCalls.length - 1]?.(
             plannedReply(
                 corr,
                 [
@@ -5781,7 +6232,7 @@ describe("plan adapter maximize isolation", () => {
                 "win-c-leaf",
             ),
         );
-        assert.ok(!mocks.geometries.some((entry) => entry.target === refs.c), "overlay member never actuated");
+        assert.ok(!mocks.geometries.slice(overlayWrites).some((entry) => entry.target === refs.c), "overlay member never actuated");
         assert.ok(
             mocks.logs.some(
                 (line) =>
@@ -6541,11 +6992,18 @@ describe("plan ordinary lifecycle diagnostics", () => {
         {
             const refs = makeRefs();
             const mocks = mockEnv(refs);
-            mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, fullscreen: { "win-b": true } });
+            mocks.observeImpl = () => makeObserved(refs, { focused: refs.a });
             const adapter = enableAdapter(mocks);
+            // Seed win-b as a known tiled member so its later fullscreen
+            // overlay retains a slot instead of the born-fullscreen hold.
+            fire(mocks, "added");
+            runTimers(mocks);
+            const seed = plannerPayload(mocks, 0)["correlation_id"] as string;
+            mocks.callbacks[0]?.(rejectedReply(seed, "snapshot-invalid"));
+            mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, fullscreen: { "win-b": true } });
             adapter.requestMove("right");
-            const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
-            mocks.callbacks[0]?.(plannedReply(correlation, [{ window: "win-a", rect: succA }, { window: "win-b", rect: succB }], "win-a-leaf"));
+            const correlation = plannerPayload(mocks, 1)["correlation_id"] as string;
+            mocks.callbacks[1]?.(plannedReply(correlation, [{ window: "win-a", rect: succA }, { window: "win-b", rect: succB }], "win-a-leaf"));
             assert.ok(!mocks.geometries.some((g) => g.target === refs.b), "fullscreen never actuated");
             const lines = lifecycle(mocks);
             assert.ok(lines.some((l) => l.includes("event=setters") && l.includes("outcome=applied") && l.includes("skipped-fullscreen")), lines.join("\n"));
@@ -6671,12 +7129,23 @@ describe("plan ordinary lifecycle diagnostics", () => {
                 makeObserved(refs, {
                     focused: refs.a,
                     rects: { "win-a": { x: 0, y: 0, w: 100, h: 100 }, "win-b": { x: 100, y: 0, w: 500, h: 500 } },
-                    fullscreen: { "win-b": true },
                 });
             const adapter = enableAdapter(mocks);
+            // Seed win-b as a known tiled member so its later fullscreen
+            // overlay retains a slot instead of the born-fullscreen hold.
+            fire(mocks, "added");
+            runTimers(mocks);
+            const seed = plannerPayload(mocks, 0)["correlation_id"] as string;
+            mocks.callbacks[0]?.(rejectedReply(seed, "snapshot-invalid"));
+            mocks.observeImpl = () =>
+                makeObserved(refs, {
+                    focused: refs.a,
+                    rects: { "win-a": { x: 0, y: 0, w: 100, h: 100 }, "win-b": { x: 100, y: 0, w: 500, h: 500 } },
+                    fullscreen: { "win-b": true },
+                });
             adapter.requestMove("right");
-            const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
-            mocks.callbacks[0]?.(
+            const correlation = plannerPayload(mocks, 1)["correlation_id"] as string;
+            mocks.callbacks[1]?.(
                 plannedReply(
                     correlation,
                     [

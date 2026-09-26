@@ -844,4 +844,116 @@ describe("background tiling through production entry", () => {
         assert.equal(world.desktopSwitches, 0);
         handle?.stop();
     });
+
+    it("holds born-fullscreen hidden startup without a slot, then admits on first exit and retires all-life close", () => {
+        const world = makeWorld(3);
+        const ws1 = world.desktops[0] as FakeDesktop;
+        const ws2 = world.desktops[1] as FakeDesktop;
+        const ws3 = world.desktops[2] as FakeDesktop;
+        const winA = addWindow(world, "win-a", ws1, { x: 0, y: 0, width: 600, height: 800 });
+        addWindow(world, "win-d", ws2, { x: 0, y: 0, width: 1200, height: 400 });
+        const winF = addWindow(world, "win-f", ws2, { x: 0, y: 400, width: 1200, height: 400 });
+        winF.fullScreen = true;
+        const winG = addWindow(world, "win-g", ws3, { x: 0, y: 0, width: 1200, height: 800 });
+        winG.fullScreen = true;
+        (world.workspace as { activeWindow: unknown }).activeWindow = winA;
+        world.activeSets = 0;
+
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        runDebounce(mocks);
+        const answered = converge(mocks, new Set(["ws-2", "ws-3"]));
+        assert.equal(answered, 3, "foreground plus two hidden startup flights");
+
+        const calls = planCalls(mocks);
+        const mixed = calls.find(
+            (call) => (call.payload["domain"] as Record<string, unknown>)["workspace"] === "ws-2",
+        ) as { payload: Record<string, unknown>; raw: string };
+        const only = calls.find(
+            (call) => (call.payload["domain"] as Record<string, unknown>)["workspace"] === "ws-3",
+        ) as { payload: Record<string, unknown>; raw: string };
+        assert.deepEqual(mixed.payload["command"], { op: "reconcile" });
+        assert.deepEqual(only.payload["command"], { op: "reconcile" });
+        assert.equal(mixed.payload["focused_window"], "win-d");
+        const mixedWindows = mixed.payload["windows"] as Array<Record<string, unknown>>;
+        assert.deepEqual(mixedWindows.map((entry) => entry["window"]).sort(), ["win-d", "win-f"]);
+        assert.equal(mixedWindows.find((entry) => entry["window"] === "win-f")?.["floating"], true);
+        assert.equal(mixedWindows.find((entry) => entry["window"] === "win-f")?.["fit_excluded"], true);
+        assert.equal(mixedWindows.find((entry) => entry["window"] === "win-d")?.["floating"], undefined);
+        const onlyWindows = only.payload["windows"] as Array<Record<string, unknown>>;
+        assert.deepEqual(onlyWindows.map((entry) => entry["window"]), ["win-g"]);
+        assert.equal(onlyWindows[0]?.["floating"], true);
+        assert.equal(onlyWindows[0]?.["fit_excluded"], true);
+        // Planner allocation covers only the non-floating sibling: the
+        // born-fullscreen member takes no Rust tile slot.
+        const mixedGeom = (
+            JSON.parse(replyFor({ payload: mixed.raw }, true)) as Record<string, unknown>
+        )["desired_geometry"] as Array<Record<string, unknown>>;
+        assert.deepEqual(mixedGeom.map((entry) => entry["window"]), ["win-d"]);
+        const onlyGeom = (
+            JSON.parse(replyFor({ payload: only.raw }, true)) as Record<string, unknown>
+        )["desired_geometry"] as Array<Record<string, unknown>>;
+        assert.deepEqual(onlyGeom, []);
+        assert.ok(mocks.logs.some((line) => line.includes("initial-fullscreen-held window=win-f")));
+        assert.ok(mocks.logs.some((line) => line.includes("initial-fullscreen-held window=win-g")));
+        assert.deepEqual(winF.frameGeometry, { x: 0, y: 400, width: 1200, height: 400 });
+        assert.equal(world.activeSets, 0, "hidden startup never writes native focus");
+        assert.equal(activeWindowOf(world), winA);
+        assert.equal(currentDesktopOf(world), ws1);
+        assert.equal(world.desktopSwitches, 0);
+
+        // First non-fullscreen observation of the held member admits normally.
+        // The still-held exception-only domain may refresh in the same chain,
+        // so accept its refresh and assert on the ws-2 flight specifically.
+        winF.fullScreen = false;
+        const heldSignals = world.windowSignals.get("win-f") as { desktops: FakeSignal; geometry: FakeSignal };
+        const beforeAdmit = planCalls(mocks).length;
+        fire(heldSignals.geometry, winF);
+        runDebounce(mocks);
+        const admitted = converge(mocks, new Set(["ws-2", "ws-3"]));
+        assert.ok(admitted >= 1, "released member dispatches at least one hidden reconcile");
+        const freshAdmit = planCalls(mocks).slice(beforeAdmit);
+        const admit = freshAdmit.find(
+            (call) => (call.payload["domain"] as Record<string, unknown>)["workspace"] === "ws-2",
+        )?.payload as Record<string, unknown>;
+        assert.ok(admit !== undefined, "released domain dispatches");
+        assert.deepEqual(admit["command"], { op: "reconcile" });
+        const admitWindows = admit["windows"] as Array<Record<string, unknown>>;
+        assert.deepEqual(admitWindows.map((entry) => entry["window"]).sort(), ["win-d", "win-f"]);
+        assert.ok(admitWindows.every((entry) => entry["floating"] === undefined));
+        assert.ok(mocks.logs.some((line) => line.includes("initial-fullscreen-released window=win-f")));
+
+        // All-life fullscreen close leaves no stale slot: exact native removal
+        // retires the marker-only domain through one explicit-empty reconcile.
+        world.wins = world.wins.filter((win) => win !== winG);
+        fire(world.signals.windowRemoved, winG);
+        runDebounce(mocks);
+        const retired = converge(mocks, new Set(["ws-2", "ws-3"]));
+        assert.equal(retired, 1, "all-life close retires through one reconcile");
+        const retire = planCalls(mocks)[planCalls(mocks).length - 1]?.payload as Record<string, unknown>;
+        assert.equal((retire["domain"] as Record<string, unknown>)["workspace"], "ws-3");
+        assert.deepEqual(retire["command"], { op: "reconcile" });
+        assert.deepEqual(retire["windows"], []);
+        runDebounce(mocks);
+        const settled = planCalls(mocks).length;
+        assert.equal(planCalls(mocks).length, settled, "retired domain sends nothing further");
+
+        // Reusing the same id tiles normally with no held residue.
+        const winG2 = addWindow(world, "win-g", ws3, { x: 0, y: 0, width: 1200, height: 800 });
+        fire(world.signals.windowAdded, winG2);
+        runDebounce(mocks);
+        const readmit = converge(mocks, new Set(["ws-2", "ws-3"]));
+        assert.equal(readmit, 1, "reused id admits normally after exact removal");
+        const readmitPayload = planCalls(mocks)[planCalls(mocks).length - 1]?.payload as Record<string, unknown>;
+        assert.equal((readmitPayload["domain"] as Record<string, unknown>)["workspace"], "ws-3");
+        const readmitWindows = readmitPayload["windows"] as Array<Record<string, unknown>>;
+        assert.deepEqual(readmitWindows.map((entry) => entry["window"]), ["win-g"]);
+        assert.equal(readmitWindows[0]?.["floating"], undefined, "no held residue pins the reused id");
+
+        assert.equal(world.activeSets, 0, "hidden release and removal never write native focus");
+        assert.equal(activeWindowOf(world), winA);
+        assert.equal(currentDesktopOf(world), ws1);
+        assert.equal(world.desktopSwitches, 0);
+        handle?.stop();
+    });
 });

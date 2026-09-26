@@ -315,6 +315,16 @@ non-sensitive resource class, and `<rect>` is `x,y,w,h`):
 
 `write-failed` and `float-write-failed` remain ordinary failure evidence.
 
+Per initially fullscreen window (once on hold and once on its first
+non-fullscreen observation; `<id>` is the same opaque normalized window id):
+
+- `plasma-auto-tiler:plan:initial-fullscreen-held window=<id>`
+- `plasma-auto-tiler:plan:initial-fullscreen-released window=<id>`
+
+Held windows are planner-only floating exceptions with no tile slot and no
+geometry write. A subsequent fullscreen of a tiled window still retains its
+slot and reports `skip-fullscreen` when a plan reflows siblings.
+
 Per work-area/scope change (dedicated pair, never the generic reconcile line):
 
 - `plasma-auto-tiler:plan:scope-transition old=<old-rect> new=<new-rect>`

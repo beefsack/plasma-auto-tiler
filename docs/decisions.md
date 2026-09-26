@@ -459,7 +459,15 @@ the corresponding item ships; each such entry names its replacement.
   the focused observed window toggles KWin's public `Window.fullScreen`
   property, while KWin keeps cover-and-restore ownership. The member retains
   its tree allocation, receives no geometry write while fullscreen, and
-  restores that allocation on exit.
+  restores that allocation on exit. User decision option 2 (2026-09-26): a
+  window first observed by the KWin adapter as fullscreen instead stays out
+  of the tree while initially fullscreen, so siblings occupy all tile space.
+  Its first non-fullscreen observation receives normal fresh admission; any
+  later fullscreen retains its tile as above. This includes startup and hidden
+  domains. KWin carries the initial hold as a planner-only floating exception,
+  never intentional native floating; a window still maximized on first exit
+  receives the existing one-shot admission-time maximize clear. Borderless
+  output-sized windows are not inferred to be fullscreen.
 - Maximize isolation mirrors fullscreen, authorized 2026-09-14. A nonzero KWin
   `maximizeMode` (1 vertical, 2 horizontal, 3 full) is collapsed to one adapter
   boolean; no horizontal or vertical maximize concept enters the Rust engine or

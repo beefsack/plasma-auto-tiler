@@ -454,23 +454,31 @@ describe("drag-23 inactive kwin-thirds drop", () => {
 
 describe("drag-23 rejected-drop converge", () => {
     it("adapter-refused drop converges once via a correlated reconcile with no retry", () => {
-        const live = world({ fullscreen: ["win-a"] });
+        const live = world();
         const { stop, mocks } = startEntry(live);
+        runDebounce(mocks);
+        const baseline = correlationOf(mocks.planCalls[0]);
+        mocks.planCalls[0]?.callback(planned(baseline, [
+            { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+            { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+        ]));
+        const winA = live.wins["win-a"] as Record<string, unknown>;
+        winA["fullScreen"] = true;
         fireAll(live.signals["startedA"]);
         fireAll(live.signals["finishedA"]);
         (mocks.oracleCalls[0] as (reply: unknown) => void)(verdict({ x: 0, y: 0, w: 1000, h: 800 }, "drag-31"));
-        assert.equal(mocks.planCalls.length, 1, "refused pointer still converges once");
-        assert.deepEqual(commandOf(mocks.planCalls[0]), { op: "reconcile" });
+        assert.equal(mocks.planCalls.length, 2, "refused pointer still converges once");
+        assert.deepEqual(commandOf(mocks.planCalls[1]), { op: "reconcile" });
         assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-fullscreen"));
         assert.ok(mocks.logs.some((line) => line.includes("drag-dispatched") && line.includes("correlation=drag-31") && line.includes("accepted=false")));
         assert.ok(mocks.logs.some((line) => line.includes("drag-rejected") && line.includes("correlation=drag-31") && line.includes("reason=fullscreen")));
         assert.ok(mocks.logs.some((line) => line.includes("drag-reconcile") && line.includes("correlation=drag-31") && line.includes("dispatch=dispatched")));
-        const follow = correlationOf(mocks.planCalls[0]);
-        mocks.planCalls[0]?.callback(planned(follow, [
+        const follow = correlationOf(mocks.planCalls[1]);
+        mocks.planCalls[1]?.callback(planned(follow, [
             { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
             { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
         ]));
-        assert.equal(mocks.planCalls.length, 1, "no retry after the follow-up settles");
+        assert.equal(mocks.planCalls.length, 2, "no retry after the follow-up settles");
         assert.ok(mocks.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-31") && line.includes("outcome=partial") && line.includes(`plan=${follow}`) && line.includes("covered=1/2")), "skipped fullscreen member settles partial, never a false applied restore");
         assert.ok(!mocks.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-31") && line.includes("outcome=applied")), "no applied restoring claim while a member stays skipped");
         stop();
