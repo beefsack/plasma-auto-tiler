@@ -8,6 +8,15 @@ each review claim before acting; it was a static sampling review. User
 decisions of 2026-09-24 are recorded under
 [Architecture Direction](decisions.md#architecture-direction).
 
+- P0 | Multi-output PC failures (2026-09-26) | User test on the multi-output
+  PC (exact commit tested unconfirmed). (1) Shortcut Apply refused: "Meta+G is claimed
+  by kwin/plasma-auto-tiler-float-toggle" and "...kwin/plasma-auto-tiler-
+  toggle" - our own (possibly legacy) actions block Apply and Force did not
+  help. (2) Most navigate/move commands on several terminals were rejected.
+  Trace `~/Downloads/plasma-auto-tiler-dev.caWaFc.log` (Orchestrator
+  skim: 87 `observe-excluded reason=output-mismatch`, rejected focus/move
+  with `snapshot-invalid detail=window-out-of-bounds`). Cross-output moves
+  not yet reachable. Diagnose and fix before other work.
 - P2 | Drop-intent edge drag live cases | Shipped with passive native press
   capture and interim move-drop snap-back
   ([follow-up](changes/archive/passive-press-move-snapback.md)). User manually
@@ -608,8 +617,10 @@ Existing work:
   the host KWin ABI (the script is JS; Planner and tray use D-Bus only; the
   native KCM's KWin linkage is unverified), so the target is packages built
   alongside KWin: official distro packages ideally, starting with our own
-  (PPA, COPR, AUR, nixpkgs/flake; evaluate OBS as one service for several
-  distros). Aim to cover 80-90% of Linux KDE users: Arch family,
+  (PPA, COPR, AUR, nixpkgs/flake). Tentative plan (user, 2026-09-26): the
+  openSUSE Build Service (OBS) as the one service building for several
+  distros, pending research confirming fit or a POC, ideally integrating
+  cleanly with GitHub Actions. Aim to cover 80-90% of Linux KDE users: Arch family,
   Ubuntu/Kubuntu/neon/Debian, Fedora, openSUSE, NixOS. Flatpak/Snap cannot
   carry KWin plugins. An effect that fails to load after a KWin update must
   leave tiling working. A reduced no-native tier (script, Planner, tray;
