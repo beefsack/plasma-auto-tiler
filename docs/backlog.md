@@ -604,7 +604,16 @@ Existing work:
   parts (script, native effect tied to the host KWin ABI, Planner, tray);
   ideal UX is installing one KDE plugin, weighed realistically. Delivery and
   lifecycle choices (e.g. tray autostart) should serve this target; `just
-  dev` is only for development iteration.
+  dev` is only for development iteration. Only the native effect is bound to
+  the host KWin ABI (the script is JS; Planner and tray use D-Bus only; the
+  native KCM's KWin linkage is unverified), so the target is packages built
+  alongside KWin: official distro packages ideally, starting with our own
+  (PPA, COPR, AUR, nixpkgs/flake; evaluate OBS as one service for several
+  distros). Aim to cover 80-90% of Linux KDE users: Arch family,
+  Ubuntu/Kubuntu/neon/Debian, Fedora, openSUSE, NixOS. Flatpak/Snap cannot
+  carry KWin plugins. An effect that fails to load after a KWin update must
+  leave tiling working. A reduced no-native tier (script, Planner, tray;
+  no borders or drag oracle) is possible but unverified.
   [research](research/distribution-package-feasibility/feasibility.md)
 - P3 | Dev build alongside a stable install | User direction (2026-09-26),
   no solution needed yet: find the cleanest, most effective way to run a dev
