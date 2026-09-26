@@ -42,6 +42,10 @@ Development process principles, approved by the user. Product goals live in
   differences and converge gracefully, in ways that do not surprise the user.
 - Windows change themselves. They resize, change modes, move, and close at any
   time, including mid-operation. Handle these as normal events, not failures.
+- Fail closed only when recovery is impossible, or when continuing would cause
+  harm such as system instability. Otherwise degrade as narrowly as possible,
+  log the cause, and keep functioning, reconciling differences as they are
+  observed.
 
 ## Observability
 

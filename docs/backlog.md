@@ -82,12 +82,28 @@ decisions of 2026-09-24 are recorded under
 - P1 | Resilience fixes | Principle (user, 2026-09-25): no permanent give-up
   short of hard failure. Read-only audit complete (2026-09-26) at `9549721`:
   21 findings, ranked. Ordinary fixes proceed in bounded changes: (1) KWin
-  script H (empty startup disables tiling for the session), J, B, C, E, U;
-  (2) Rust tray/Planner O, N, P, Q; (3) low severity T, D, F, K, L. Needs
-  user decision: A (client-held geometry parking), G (pre-write drift drops
-  the command), I (missing maximize signal disables all tiling), M (tray
-  watcher loss), R/S (native endpoint registration retry).
+  script H, J, B, C, E, U - shipped offline `a55ae9d`; live check: empty
+  login then open a window, resize completion, Meta+M; (2) Rust
+  tray/Planner O, N, P, Q; (3) low severity T, D, F, K, L, plus a move
+  Started without Finished still holding automatic reconcile (found in
+  batch 1). User decisions: I - option 2 (user, 2026-09-26): tile a window
+  lacking `maximizedChanged`, log once, rely on fresh `maximizeMode` reads.
+  Pending: A (client-held geometry parking), G (pre-write drift drops the
+  command), M (tray watcher loss), R/S (native endpoint registration retry).
   [audit](changes/resilience-audit.md)
+- P1 | Fail-closed sweep | New Resilience rule (user, 2026-09-26): fail
+  closed only when recovery is impossible or continuing would cause harm such
+  as system instability. Review `docs/decisions.md` (9 fail-closed mentions)
+  and production fail-closed paths (about 175 mentions) against it; adjust
+  decisions that conflict, and list behavior changes that need a user
+  decision. Unsafe-write fences that refuse one operation and let the next
+  observation converge are consistent with the rule.
+  [principles](principles.md#resilience)
+- P2 | Robust difference reconciliation | User direction (2026-09-26, with
+  decision I): find a way to make the implementation more robust and able to
+  reconcile differences between expected and observed state where they
+  occur, rather than depending on individual native signals. Design work;
+  scope with the user before implementation.
 - P3 | AR6 Logical workspace model in core | 7.10. Deferred 2026-09-24 until a
   non-KWin host needs it. The current KWin implementation is the "native
   workspaces" mode of a future native/custom choice.
