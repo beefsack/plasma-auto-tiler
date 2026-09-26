@@ -1,15 +1,16 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::io;
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, StructureBuilder, Type, Value};
 
-use crate::tray_endpoint::{TrayState, emit_tray_diag, status_projected_line};
+use crate::tray_endpoint::{TrayState, emit_tray_diag, lock_tray_state, status_projected_line};
 
 pub const STATUS_NOTIFIER_ITEM_OBJECT: &str = "/StatusNotifierItem";
 pub const MENU_OBJECT: &str = "/Menu";
@@ -109,6 +110,38 @@ fn menu_status(status: &str) -> &'static str {
     }
 }
 
+/// Row P: bounded emission deadline. zbus 5.19 `emit_signal` has no timeout
+/// (`method_timeout` defaults to `None`), so the four-signal block below runs
+/// under this single deadline on the project async-io reactor (the same
+/// executor `zbus::block_on` drives). On expiry the block future is dropped,
+/// the notification lock releases, and the status stays unremembered.
+pub(crate) const NOTIFICATION_TIMEOUT: Duration = Duration::from_secs(2);
+
+async fn with_emit_deadline<T>(
+    timeout: Duration,
+    send: impl Future<Output = zbus::Result<T>>,
+) -> zbus::Result<T> {
+    use std::pin::pin;
+    use std::task::Poll;
+    let mut send = pin!(send);
+    let mut timer = pin!(async_io::Timer::after(timeout));
+    // Prefer the signal block when both are ready on the same poll; a timer
+    // win drops `send` (cancelling the hung emit) via the returned `None`.
+    std::future::poll_fn(|cx| {
+        if let Poll::Ready(value) = send.as_mut().poll(cx) {
+            return Poll::Ready(Some(value));
+        }
+        if timer.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(None);
+        }
+        Poll::Pending
+    })
+    .await
+    .unwrap_or(Err(zbus::Error::Failure(
+        "tray notification timed out".to_owned(),
+    )))
+}
+
 #[derive(Clone, Debug)]
 pub struct TrayProjection {
     state: Arc<Mutex<TrayState>>,
@@ -150,10 +183,7 @@ impl TrayProjection {
                 ));
             }
         };
-        let mut process = self
-            .settings_process
-            .lock()
-            .expect("settings process mutex poisoned");
+        let mut process = self.lock_settings_process();
         launch_settings_if_idle(&mut process, |child| child.try_wait(), || settings.spawn())
             .map_err(|error| match error {
                 SettingsLaunchError::Check(error) => {
@@ -175,12 +205,39 @@ impl TrayProjection {
         DbusMenu::new(self.clone())
     }
 
+    /// Row Q: lock the status cache, recovering a poisoned mutex at the
+    /// boundary instead of panicking. Recovery discards the cached status
+    /// (forcing one fresh re-emission) rather than trusting it.
+    fn lock_last_status(&self) -> std::sync::MutexGuard<'_, Option<String>> {
+        match self.last_status.lock() {
+            Ok(guard) => guard,
+            Err(poison) => {
+                let mut guard = poison.into_inner();
+                *guard = None;
+                self.last_status.clear_poison();
+                guard
+            }
+        }
+    }
+
+    /// Row Q: lock the settings child handle, recovering a poisoned mutex
+    /// at the boundary instead of panicking. Recovery drops the untrusted
+    /// handle so the next request spawns fresh.
+    fn lock_settings_process(&self) -> std::sync::MutexGuard<'_, Option<Child>> {
+        match self.settings_process.lock() {
+            Ok(guard) => guard,
+            Err(poison) => {
+                let mut guard = poison.into_inner();
+                *guard = None;
+                self.settings_process.clear_poison();
+                guard
+            }
+        }
+    }
+
     fn view(&self) -> crate::tray_endpoint::StateView {
         let now_ms = self.started.elapsed().as_millis().min(u64::MAX as u128) as u64;
-        self.state
-            .lock()
-            .expect("tray state mutex poisoned")
-            .view(now_ms)
+        lock_tray_state(&self.state).view(now_ms)
     }
 
     fn status(&self) -> &'static str {
@@ -213,18 +270,11 @@ impl TrayProjection {
     }
 
     fn should_emit_status(&self, status: &str) -> bool {
-        self.last_status
-            .lock()
-            .expect("tray notification mutex poisoned")
-            .as_deref()
-            != Some(status)
+        self.lock_last_status().as_deref() != Some(status)
     }
 
     fn remember_status(&self, status: String) {
-        *self
-            .last_status
-            .lock()
-            .expect("tray notification mutex poisoned") = Some(status);
+        *self.lock_last_status() = Some(status);
     }
 
     fn sni_changed(&self, status: &str) -> HashMap<String, OwnedValue> {
@@ -240,7 +290,16 @@ impl TrayProjection {
         changed
     }
 
-    pub async fn emit_changed(&self, connection: &zbus::Connection) -> zbus::Result<()> {
+    /// Locked projection step shared by production emission and offline
+    /// tests: holds the notification lock, recomputes the fresh status, runs
+    /// the caller-supplied signal block under one deadline, and remembers the
+    /// status only on success. Timeout or failure drops the guard without
+    /// remembering, so the next fresh projection re-attempts.
+    async fn emit_guarded<F, Fut>(&self, timeout: Duration, send: F) -> zbus::Result<()>
+    where
+        F: FnOnce(String) -> Fut,
+        Fut: Future<Output = zbus::Result<()>>,
+    {
         // Signals and status recording keep their exact order and behavior
         // under the notification lock; the already-built bounded projection
         // line is emitted only after the explicit guard release below.
@@ -249,50 +308,7 @@ impl TrayProjection {
         if !self.should_emit_status(&status) {
             return Ok(());
         }
-
-        let changed = self.sni_changed(&status);
-        connection
-            .emit_signal(
-                None::<&str>,
-                STATUS_NOTIFIER_ITEM_OBJECT,
-                DBUS_PROPERTIES_INTERFACE,
-                PROPERTIES_CHANGED_SIGNAL,
-                &(
-                    STATUS_NOTIFIER_ITEM_INTERFACE,
-                    changed,
-                    Vec::<String>::new(),
-                ),
-            )
-            .await?;
-        let mut menu_changed = HashMap::new();
-        menu_changed.insert("Status".to_owned(), owned_string(menu_status(&status)));
-        connection
-            .emit_signal(
-                None::<&str>,
-                MENU_OBJECT,
-                DBUS_PROPERTIES_INTERFACE,
-                PROPERTIES_CHANGED_SIGNAL,
-                &(DBUS_MENU_INTERFACE, menu_changed, Vec::<String>::new()),
-            )
-            .await?;
-        connection
-            .emit_signal(
-                None::<&str>,
-                STATUS_NOTIFIER_ITEM_OBJECT,
-                STATUS_NOTIFIER_ITEM_INTERFACE,
-                NEW_STATUS_SIGNAL,
-                &(status.as_str(),),
-            )
-            .await?;
-        connection
-            .emit_signal(
-                None::<&str>,
-                MENU_OBJECT,
-                DBUS_MENU_INTERFACE,
-                LAYOUT_UPDATED_SIGNAL,
-                &(self.next_menu_revision(), 0_i32),
-            )
-            .await?;
+        with_emit_deadline(timeout, send(status.clone())).await?;
 
         // Best-effort only: built solely on an actual projected-status
         // change (the early return above keeps steady state silent), and
@@ -303,6 +319,59 @@ impl TrayProjection {
         drop(_notification_guard);
         emit_tray_diag(&pending);
         Ok(())
+    }
+
+    pub async fn emit_changed(&self, connection: &zbus::Connection) -> zbus::Result<()> {
+        // Row P: the four signal emits run as one block under a single
+        // bounded deadline; on expiry the block is cancelled, the lock
+        // releases, and the status stays unremembered for a later retry.
+        self.emit_guarded(NOTIFICATION_TIMEOUT, |status| async move {
+            let changed = self.sni_changed(&status);
+            connection
+                .emit_signal(
+                    None::<&str>,
+                    STATUS_NOTIFIER_ITEM_OBJECT,
+                    DBUS_PROPERTIES_INTERFACE,
+                    PROPERTIES_CHANGED_SIGNAL,
+                    &(
+                        STATUS_NOTIFIER_ITEM_INTERFACE,
+                        changed,
+                        Vec::<String>::new(),
+                    ),
+                )
+                .await?;
+            let mut menu_changed = HashMap::new();
+            menu_changed.insert("Status".to_owned(), owned_string(menu_status(&status)));
+            connection
+                .emit_signal(
+                    None::<&str>,
+                    MENU_OBJECT,
+                    DBUS_PROPERTIES_INTERFACE,
+                    PROPERTIES_CHANGED_SIGNAL,
+                    &(DBUS_MENU_INTERFACE, menu_changed, Vec::<String>::new()),
+                )
+                .await?;
+            connection
+                .emit_signal(
+                    None::<&str>,
+                    STATUS_NOTIFIER_ITEM_OBJECT,
+                    STATUS_NOTIFIER_ITEM_INTERFACE,
+                    NEW_STATUS_SIGNAL,
+                    &(status.as_str(),),
+                )
+                .await?;
+            connection
+                .emit_signal(
+                    None::<&str>,
+                    MENU_OBJECT,
+                    DBUS_MENU_INTERFACE,
+                    LAYOUT_UPDATED_SIGNAL,
+                    &(self.next_menu_revision(), 0_i32),
+                )
+                .await?;
+            Ok(())
+        })
+        .await
     }
 
     fn next_menu_revision(&self) -> u32 {
@@ -627,6 +696,83 @@ mod tests {
         projection.remember_status("Active".to_owned());
         assert!(!projection.should_emit_status("Active"));
         assert!(projection.should_emit_status("Passive"));
+    }
+
+    #[test]
+    fn poisoned_tray_locks_recover_to_fresh_observation_and_round_trip() {
+        // Row Q: poisoned tray locks recover at the boundary instead of
+        // panicking; the recovered projection serves no stale snapshot and
+        // a fresh publish round-trips back to Active.
+        let made = projection(Some(true), Instant::now());
+        assert_eq!(made.status(), "Active");
+        made.remember_status("Active".to_owned());
+        for poison in [
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _guard = made.state.lock().unwrap();
+                panic!("inject tray state poison");
+            })),
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _guard = made.last_status.lock().unwrap();
+                panic!("inject status cache poison");
+            })),
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _guard = made.settings_process.lock().unwrap();
+                panic!("inject settings handle poison");
+            })),
+        ] {
+            assert!(poison.is_err());
+        }
+        assert!(made.state.is_poisoned());
+        assert!(made.last_status.is_poisoned());
+        assert!(made.settings_process.is_poisoned());
+        assert_eq!(
+            made.status(),
+            "NeedsAttention",
+            "recovered state must not serve the pre-poison snapshot"
+        );
+        assert!(!made.state.is_poisoned());
+        assert!(
+            made.should_emit_status("NeedsAttention"),
+            "recovered cache forces one fresh re-emission"
+        );
+        assert!(!made.last_status.is_poisoned());
+        made.remember_status("NeedsAttention".to_owned());
+        assert!(!made.should_emit_status("NeedsAttention"));
+        assert!(
+            made.lock_settings_process().is_none(),
+            "recovered handle store is usable and empty"
+        );
+        assert!(!made.settings_process.is_poisoned());
+        made.state
+            .lock()
+            .unwrap()
+            .publish_snapshot(1, "generation".to_owned(), 1, true, 0)
+            .expect("next fresh publish converges");
+        assert_eq!(made.status(), "Active");
+    }
+
+    #[test]
+    fn emission_deadline_releases_lock_and_leaves_status_unremembered_for_retry() {
+        // Row P: a hung signal block under the notification lock times out,
+        // releases the lock, and leaves the status unremembered so a later
+        // fresh projection retries; the retry then remembers normally.
+        let made = projection(Some(true), Instant::now());
+        assert!(made.should_emit_status("Active"));
+        let hung = zbus::block_on(made.emit_guarded(Duration::from_millis(20), |_| {
+            std::future::pending::<zbus::Result<()>>()
+        }));
+        assert!(hung.is_err(), "hung emission must time out");
+        assert!(
+            made.notification_lock.try_lock().is_some(),
+            "deadline must release the notification lock"
+        );
+        assert!(
+            made.should_emit_status("Active"),
+            "timed-out status stays unremembered for a later retry"
+        );
+        zbus::block_on(made.emit_guarded(Duration::from_secs(2), |_| async { Ok(()) }))
+            .expect("later fresh projection retries");
+        assert!(!made.should_emit_status("Active"));
     }
 
     #[test]

@@ -46,9 +46,13 @@ pub const DRAG_PRESS_BINDING_DEFAULT: u8 = 0;
 pub const DRAG_PRESS_BINDING_CONFIGURED: u8 = 1;
 const COORD_LIMIT: i32 = 16384;
 static CORRELATION: AtomicU64 = AtomicU64::new(0);
-static LAST_JSON: LazyLock<Mutex<Vec<u8>>> = LazyLock::new(|| {
-    Mutex::new(br#"{"v":1,"cancelled":true,"finalRect":{"x":0,"y":0,"w":1,"h":1},"windowIdentity":"","correlation":"drag-0","reason":"no-observation"}"#.to_vec())
-});
+/// Trusted cancelled verdict used to reset poisoned storage. It is served
+/// only for reads arriving before any fresh observation after recovery;
+/// poisoned reads themselves fail closed (null/0) and never serve the
+/// untrusted stale bytes.
+const POISON_RECOVERY_JSON: &[u8] = br#"{"v":1,"cancelled":true,"finalRect":{"x":0,"y":0,"w":1,"h":1},"windowIdentity":"","correlation":"drag-0","reason":"no-observation"}"#;
+static LAST_JSON: LazyLock<Mutex<Vec<u8>>> =
+    LazyLock::new(|| Mutex::new(POISON_RECOVERY_JSON.to_vec()));
 fn bad_dim(r: DragRect) -> bool {
     r.w <= 0 || r.h <= 0
 }
@@ -147,9 +151,21 @@ pub fn build_verdict(
     (bytes, correlation)
 }
 fn store_last(json: &[u8]) {
-    if let Ok(mut guard) = LAST_JSON.lock() {
-        guard.clear();
-        guard.extend_from_slice(json);
+    match LAST_JSON.lock() {
+        Ok(mut guard) => {
+            guard.clear();
+            guard.extend_from_slice(json);
+        }
+        // Row Q: a previous panic under the verdict lock poisoned storage.
+        // Recover at the boundary by storing this fresh observation instead
+        // of silently dropping it; the fresh bytes replace the untrusted
+        // stale ones.
+        Err(poison) => {
+            let mut guard = poison.into_inner();
+            guard.clear();
+            guard.extend_from_slice(json);
+            LAST_JSON.clear_poison();
+        }
     }
 }
 fn record_inner(start: DragRect, end: DragRect, id: &[u8], press: DragPress) -> u64 {
@@ -197,7 +213,17 @@ pub extern "C" fn drag_oracle_last(out_len: *mut usize) -> *const u8 {
                 }
                 guard.as_ptr()
             }
-            Err(_) => std::ptr::null(),
+            // Row Q: poisoned storage never serves the untrusted stale
+            // bytes. Reset to the trusted cancelled verdict and fail closed
+            // (null) for this read; FFI panic containment is unchanged and
+            // the next fresh record round-trips normally.
+            Err(poison) => {
+                let mut guard = poison.into_inner();
+                guard.clear();
+                guard.extend_from_slice(POISON_RECOVERY_JSON);
+                LAST_JSON.clear_poison();
+                std::ptr::null()
+            }
         }
     }) {
         Ok(ptr) => ptr,
@@ -218,7 +244,16 @@ pub extern "C" fn drag_oracle_last_copy(out: *mut u8, capacity: usize) -> usize 
                 }
                 take
             }
-            Err(_) => 0,
+            // Row Q: same fail-closed recovery as the borrowed read: reset
+            // to the trusted verdict, serve nothing (0) for this read, and
+            // leave storage usable for the next fresh record.
+            Err(poison) => {
+                let mut guard = poison.into_inner();
+                guard.clear();
+                guard.extend_from_slice(POISON_RECOVERY_JSON);
+                LAST_JSON.clear_poison();
+                0
+            }
         }
     }) {
         Ok(take) => take,
@@ -679,6 +714,72 @@ mod tests {
         // SAFETY: `ptr`/`len` borrow the oracle's last verdict for this read.
         let view = unsafe { std::slice::from_raw_parts(ptr, len) };
         assert_eq!(reason_of(view), "ok-moved");
+    }
+
+    #[test]
+    fn poisoned_storage_fails_closed_then_recovers_on_fresh_record() {
+        // Row Q: poisoned verdict storage never serves the stale verdict;
+        // poisoned reads fail closed and reset storage, and the next fresh
+        // record round-trips. FFI panic containment (no unwind, null/0 on
+        // failure) is unchanged.
+        let start = DragRect {
+            x: 0,
+            y: 0,
+            w: 120,
+            h: 90,
+        };
+        let end = DragRect {
+            x: 10,
+            y: 0,
+            w: 120,
+            h: 90,
+        };
+        let bait = id("poison-stale-bait");
+        assert!(drag_oracle_record(start, end, bait.as_ptr(), bait.len(), DragPress::absent()) > 0);
+        let poisoned = std::panic::catch_unwind(|| {
+            let _guard = LAST_JSON.lock().unwrap();
+            panic!("inject drag oracle poison");
+        });
+        assert!(poisoned.is_err());
+        assert!(LAST_JSON.is_poisoned());
+        let mut len = 0usize;
+        assert!(
+            drag_oracle_last(&mut len as *mut usize).is_null(),
+            "poisoned borrow must fail closed, never serve stale bytes"
+        );
+        assert!(
+            !LAST_JSON.is_poisoned(),
+            "poisoned reads must reset storage"
+        );
+        let repoisoned = std::panic::catch_unwind(|| {
+            let _guard = LAST_JSON.lock().unwrap();
+            panic!("inject drag oracle poison again");
+        });
+        assert!(repoisoned.is_err());
+        let mut buf = vec![0u8; DRAG_ORACLE_MAX_JSON];
+        assert_eq!(
+            drag_oracle_last_copy(buf.as_mut_ptr(), buf.len()),
+            0,
+            "poisoned copy must serve nothing"
+        );
+        assert!(
+            !LAST_JSON.is_poisoned(),
+            "poisoned reads must reset storage"
+        );
+        let fresh = id("poison-recover-1");
+        assert!(
+            drag_oracle_record(start, end, fresh.as_ptr(), fresh.len(), DragPress::absent()) > 0
+        );
+        let taken = drag_oracle_last_copy(buf.as_mut_ptr(), buf.len());
+        assert!(taken > 0 && taken <= DRAG_ORACLE_MAX_JSON);
+        let text = std::str::from_utf8(&buf[..taken]).expect("verdict is ASCII JSON");
+        assert_json_shape(text);
+        assert!(text.contains("\"windowIdentity\":\"poison-recover-1\""));
+        assert!(
+            !text.contains("poison-stale-bait"),
+            "stale verdict is never re-served"
+        );
+        assert_eq!(reason_of(&buf[..taken]), "ok-moved");
     }
 
     #[test]

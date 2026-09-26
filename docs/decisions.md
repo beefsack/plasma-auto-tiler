@@ -923,7 +923,10 @@ the corresponding item ships; each such entry names its replacement.
 ## Tray
 
 - Use a portable Rust StatusNotifierItem carrier with the KWin backend first;
-  fail closed without a watcher. The bridge is outbound state-snapshot based,
+  stay alive without a watcher or after watcher loss and register whenever a
+  live-confirmed watcher owner appears. Transient registration failure remains
+  retryable; registration is reported only after confirmation. The bridge is
+  outbound state-snapshot based,
   reconnecting, idempotent, with no KWin executable allowlist, and has no
   shell, input, or helper-to-KWin action route. Tiling settings belong to the
   KWin script Configure page; the effect KCM keeps border and explicit
@@ -934,10 +937,13 @@ the corresponding item ships; each such entry names its replacement.
 - The static bridge includes freshness and ordering/generation checks,
   idempotent notifications, and bounded watcher retry.
 - Home Manager autostart uses the immutable store tray binary with the `tray`
-  command; `TryExec` points to that same binary. Dev and dogfood start the
-  worktree binary on demand. A second instance exits successfully when the
-  D-Bus name is taken. The tray stops if its own name or connection is lost,
-  or at session teardown; it does not restart automatically after a crash.
+  command; `TryExec` points to that same binary. Foreground `just dev` starts
+  and owns a worktree tray, includes its stderr diagnostics in the labeled dev
+  trace, and stops only its verified instance at teardown. An already-owned
+  tray name is logged and preserved. Dogfood starts its worktree tray on
+  demand. A second instance exits successfully when the D-Bus name is taken.
+  The tray stops if its own name or connection is lost, or at session teardown;
+  it does not restart automatically after a crash.
   Name acquisition/loss, owner transitions and changed or refused snapshots
   emit bounded, redacted diagnostics on stderr. The queryable autostart sink
   is best-effort native journald submission alongside retained stderr,

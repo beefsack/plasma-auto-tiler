@@ -4,7 +4,8 @@ set -euo pipefail
 # AR13 hermetic tray single-instance/delivery check on a private bus.
 # Exercises the one `tray` command only: first instance acquires
 # org.plasmaautotiler.Tray, a second exits 0 (DoNotQueue taken), the first
-# keeps serving, watcher loss and missing watcher fail closed, and no
+# keeps serving, watcher loss and missing watcher stay alive unregistered
+# and re-register on watcher return, and no
 # PID/lock/helper state is ever created. No live KWin, no host mutation.
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BINARY="${TRAY_05B_BINARY:-}"
@@ -82,8 +83,10 @@ printf '%s\n' \
   'pass() { PASS=$((PASS + 1)); }' \
   'WATCHER_PID=""' \
   'FIRST_PID=""' \
+  'LATE_PID=""' \
   'cleanup_processes() {' \
   '  [[ -z "$FIRST_PID" ]] || { kill -TERM "$FIRST_PID" 2>/dev/null || true; wait "$FIRST_PID" 2>/dev/null || true; }' \
+  '  [[ -z "$LATE_PID" ]] || { kill -TERM "$LATE_PID" 2>/dev/null || true; wait "$LATE_PID" 2>/dev/null || true; }' \
   '  [[ -z "$WATCHER_PID" ]] || { kill -TERM "$WATCHER_PID" 2>/dev/null || true; wait "$WATCHER_PID" 2>/dev/null || true; }' \
   '}' \
   'trap cleanup_processes EXIT' \
@@ -134,16 +137,43 @@ printf '%s\n' \
   'kill -TERM "$WATCHER_PID"' \
   'WATCHER_PID=""' \
   'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
-  '  if ! kill -0 "$FIRST_PID" 2>/dev/null; then break; fi' \
+  '  if "$BUSCTL" --user status org.kde.StatusNotifierWatcher > /dev/null 2>&1; then sleep 0.01; else break; fi' \
+  'done' \
+  '"$BUSCTL" --user status org.kde.StatusNotifierWatcher > /dev/null 2>&1 && { echo "watcher name still owned after kill" >&2; exit 1; } || true' \
+  'stay_alive=1' \
+  'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
+  '  if ! kill -0 "$FIRST_PID" 2>/dev/null; then stay_alive=0; break; fi' \
   '  sleep 0.01' \
   'done' \
-  'if kill -0 "$FIRST_PID" 2>/dev/null; then cat "$WORK/endpoint.out" >&2; exit 1; fi' \
+  '[[ "$stay_alive" == 1 ]] || { echo "first tray died on watcher loss, expected stay-alive unregistered" >&2; exit 1; }' \
   'pass' \
-  'FIRST_CODE=0' \
-  'wait "$FIRST_PID" || FIRST_CODE=$?' \
+  '"$BUSCTL" --user status org.plasmaautotiler.Tray > /dev/null 2>&1 || { echo "tray name lost on watcher loss" >&2; exit 1; }' \
+  'pass' \
+  '"$DBUS_TEST_TOOL" echo --session --name=org.kde.StatusNotifierWatcher > "$WORK/watcher2.out" 2>&1 &' \
+  'WATCHER_PID=$!' \
+  'watcher_ready=0' \
+  'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
+  '  if "$BUSCTL" --user status org.kde.StatusNotifierWatcher > /dev/null 2>&1; then watcher_ready=1; break; fi' \
+  '  sleep 0.01' \
+  'done' \
+  '[[ "$watcher_ready" == 1 ]] || { cat "$WORK/watcher2.out" >&2; exit 1; }' \
+  'pass' \
+  'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
+  '  if [[ "$(grep -c "stage=watcher event=register outcome=registered" "$WORK/endpoint.out" || true)" -ge 2 ]]; then break; fi' \
+  '  sleep 0.01' \
+  'done' \
+  '[[ "$(grep -c "stage=watcher event=register outcome=registered" "$WORK/endpoint.out" || true)" -ge 2 ]] || { echo "tray did not re-register after watcher return" >&2; cat "$WORK/endpoint.out" >&2; exit 1; }' \
+  'pass' \
+  'kill -0 "$FIRST_PID" 2>/dev/null || { echo "first tray died on watcher return" >&2; exit 1; }' \
+  'pass' \
+  '"$BUSCTL" --user status org.plasmaautotiler.Tray > /dev/null 2>&1 || { echo "tray name lost on watcher return" >&2; exit 1; }' \
+  'pass' \
+  'kill -TERM "$FIRST_PID" 2>/dev/null || true' \
+  'wait "$FIRST_PID" 2>/dev/null || true' \
   'FIRST_PID=""' \
-  '[[ "$FIRST_CODE" -ne 0 ]] || { echo "first tray exited 0 on watcher loss, expected fail-closed" >&2; exit 1; }' \
-  'pass' \
+  'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
+  '  if "$BUSCTL" --user status org.plasmaautotiler.Tray > /dev/null 2>&1; then sleep 0.01; else break; fi' \
+  'done' \
   '[[ ! -e "$DATA_ROOT/plasma-auto-tiler" ]]' \
   'pass' \
   '[[ ! -e "$RUNTIME_ROOT/plasma-auto-tiler-managed" ]]' \
@@ -152,12 +182,60 @@ printf '%s\n' \
   'pass' \
   '[[ ! -e "$CONFIG_ROOT/autostart/plasma-auto-tiler.desktop" ]]' \
   'pass' \
-  'NOWATCH_CODE=0' \
-  '"$TIMEOUT_BIN" 20 "$tray_binary" tray > "$WORK/no-watcher.out" 2>&1 || NOWATCH_CODE=$?' \
-  '[[ "$NOWATCH_CODE" -ne 0 ]] || { echo "tray without watcher exited 0, expected fail-closed" >&2; exit 1; }' \
+  'kill -TERM "$WATCHER_PID" 2>/dev/null || true' \
+  'wait "$WATCHER_PID" 2>/dev/null || true' \
+  'WATCHER_PID=""' \
+  'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
+  '  if "$BUSCTL" --user status org.kde.StatusNotifierWatcher > /dev/null 2>&1; then sleep 0.01; else break; fi' \
+  'done' \
+  '"$tray_binary" tray > "$WORK/no-watcher.out" 2>&1 &' \
+  'LATE_PID=$!' \
+  'late_ready=0' \
+  'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
+  '  if "$BUSCTL" --user status org.plasmaautotiler.Tray > /dev/null 2>&1; then late_ready=1; break; fi' \
+  '  if ! kill -0 "$LATE_PID" 2>/dev/null; then cat "$WORK/no-watcher.out" >&2; exit 1; fi' \
+  '  sleep 0.01' \
+  'done' \
+  '[[ "$late_ready" == 1 ]] || { cat "$WORK/no-watcher.out" >&2; exit 1; }' \
   'pass' \
-  'grep -Fq "has no owner" "$WORK/no-watcher.out" || { cat "$WORK/no-watcher.out" >&2; exit 1; }' \
+  'late_alive=1' \
+  'for ((attempt = 0; attempt < 200; attempt += 1)); do' \
+  '  if ! kill -0 "$LATE_PID" 2>/dev/null; then late_alive=0; break; fi' \
+  '  sleep 0.01' \
+  'done' \
+  '[[ "$late_alive" == 1 ]] || { echo "tray without watcher died, expected stay-alive unregistered" >&2; exit 1; }' \
   'pass' \
+  'late_acquired=0' \
+  'for ((attempt = 0; attempt < 100; attempt += 1)); do' \
+  '  if grep -Fq "outcome=acquired" "$WORK/no-watcher.out" 2>/dev/null; then late_acquired=1; break; fi' \
+  '  sleep 0.01' \
+  'done' \
+  '[[ "$late_acquired" == 1 ]] || { cat "$WORK/no-watcher.out" >&2; exit 1; }' \
+  'pass' \
+  'grep -Fq "stage=watcher event=startup outcome=absent" "$WORK/no-watcher.out" || { cat "$WORK/no-watcher.out" >&2; exit 1; }' \
+  'pass' \
+  '"$DBUS_TEST_TOOL" echo --session --name=org.kde.StatusNotifierWatcher > "$WORK/watcher3.out" 2>&1 &' \
+  'WATCHER_PID=$!' \
+  'watcher_ready=0' \
+  'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
+  '  if "$BUSCTL" --user status org.kde.StatusNotifierWatcher > /dev/null 2>&1; then watcher_ready=1; break; fi' \
+  '  sleep 0.01' \
+  'done' \
+  '[[ "$watcher_ready" == 1 ]] || { cat "$WORK/watcher3.out" >&2; exit 1; }' \
+  'pass' \
+  'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
+  '  if grep -Fq "stage=watcher event=register outcome=registered" "$WORK/no-watcher.out"; then break; fi' \
+  '  sleep 0.01' \
+  'done' \
+  'grep -Fq "stage=watcher event=register outcome=registered" "$WORK/no-watcher.out" || { echo "tray did not register after watcher-less startup" >&2; cat "$WORK/no-watcher.out" >&2; exit 1; }' \
+  'pass' \
+  'kill -0 "$LATE_PID" 2>/dev/null || { echo "tray died on late watcher return" >&2; exit 1; }' \
+  'pass' \
+  '"$BUSCTL" --user status org.plasmaautotiler.Tray > /dev/null 2>&1 || { echo "tray name lost on late watcher return" >&2; exit 1; }' \
+  'pass' \
+  'kill -TERM "$LATE_PID" 2>/dev/null || true' \
+  'wait "$LATE_PID" 2>/dev/null || true' \
+  'LATE_PID=""' \
   'printf "05b tray single-instance fixture: %d passed\n" "$PASS"' > "$SEQUENCE"
 chmod 700 "$SEQUENCE"
 
@@ -173,8 +251,8 @@ export BUSCTL DBUS_TEST_TOOL TIMEOUT_BIN DATA_ROOT CONFIG_ROOT RUNTIME_ROOT WORK
   tray_binary="$BINARY" \
   "$SEQUENCE" \
   | tee "$WORK/sequence.out"
-grep -Fq '05b tray single-instance fixture: 19 passed' "$WORK/sequence.out" \
-  || fail "single-instance fixture count was not 19"
+grep -Fq '05b tray single-instance fixture: 29 passed' "$WORK/sequence.out" \
+  || fail "single-instance fixture count was not 29"
 pass
 
 printf '05b tray self-test: %d passed\n' "$PASS"

@@ -696,6 +696,10 @@ case "$*" in
   *"GetConnectionUnixProcessID s :1.50"*)
     pid="$(cat "$state/owner-pid" 2>/dev/null || printf '4242')"
     printf '{"type":"u","data":[%s]}\n' "$pid" ;;
+  *"GetNameOwner s org.plasmaautotiler.Tray"*)
+    # Native-only integration exercises pre-owned tray preservation; the
+    # foreground tray launch/teardown belongs to dev-loop-split.test.sh.
+    printf 's ":1.60"\n' ;;
   *"GetNameOwner s org.kde.KWin"*)
     if [[ -f "$state/kwin-unowned" ]]; then exit 1; fi
     owner="$(cat "$state/kwin-owner" 2>/dev/null || printf ':1.99')"

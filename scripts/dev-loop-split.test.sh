@@ -35,6 +35,21 @@ case "$*" in
   *"GetConnectionUnixProcessID s :1.50"*)
     pid="$(cat "$state/owner-pid" 2>/dev/null || printf '4242')"
     printf '{"type":"u","data":[%s]}\n' "$pid" ;;
+  *"GetNameOwner s org.plasmaautotiler.Tray"*)
+    if [[ -f "$state/tray-never-owned" ]]; then
+      exit 1
+    elif [[ -f "$state/tray-owned" ]]; then
+      printf 's ":1.60"\n'
+      exit 0
+    elif grep -Fq " tray" "${FAKE_CALL_LOG:?}" 2>/dev/null; then
+      printf 's ":1.60"\n'
+      exit 0
+    else
+      exit 1
+    fi ;;
+  *"GetConnectionUnixProcessID s :1.60"*)
+    pid="$(cat "$state/tray-owner-pid" 2>/dev/null || printf '434343')"
+    printf '{"type":"u","data":[%s]}\n' "$pid" ;;
   *"GetNameOwner s org.kde.KWin"*)
     if [[ -f "$state/kwin-unowned" ]]; then
       exit 1
@@ -166,9 +181,10 @@ if [[ -z "$build_dir" ]]; then
   done
 fi
 if [[ -n "$build_dir" ]]; then
-  mkdir -p "$build_dir/bin/kwin/effects/plugins" "$build_dir/bin/kwin/effects/configs"
+  mkdir -p "$build_dir/bin/kwin/effects/plugins" "$build_dir/bin/kwin/effects/configs" "$build_dir/bin/kwin/scripts/configs"
   [[ -f "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so" ]] || printf 'fake-effect' > "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
   [[ -f "$build_dir/bin/kwin/effects/configs/plasma-auto-tiler-active-border_config.so" ]] || printf 'fake-kcm' > "$build_dir/bin/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+  [[ -f "$build_dir/bin/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so" ]] || printf 'fake-script-kcm' > "$build_dir/bin/kwin/scripts/configs/plasma-auto-tiler-kwin_config.so"
 fi
 exit 0
 EOF
@@ -268,7 +284,23 @@ EOF
   # Host-matched store + provenance (real files so builder resolution is real).
   mkdir -p "$WORK/fake-store/hash-rustc/bin" "$WORK/fake-store/hash-cargo/bin" "$WORK/fake-store/hash-cmake/bin"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$WORK/fake-store/hash-rustc/bin/rustc"
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$WORK/fake-store/hash-cargo/bin/cargo"
+  # Logging cargo fake under the store root: build-native-effect runs the host
+  # builder with CARGO_BIN unset, so the builder resolves cargo via PATH and
+  # requires it under the (fake) store root. PATH ordering in run_just puts
+  # this dir first so the outer require_tool finds it (not $FAKE_BIN cargo).
+  cat > "$WORK/fake-store/hash-cargo/bin/cargo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'cargo %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
+if [[ -f "${FAKE_STATE_DIR:?}/cargo-fails" ]]; then
+  echo "fake cargo: simulated build failure" >&2
+  exit 1
+fi
+bin="${PLASMA_AUTO_TILER_BIN:?}"
+mkdir -p "${bin%/*}"
+[[ -x "$bin" ]] || { printf '#!/usr/bin/env bash\nexit 0\n' > "$bin"; chmod +x "$bin"; }
+exit 0
+EOF
   chmod +x "$WORK/fake-store/hash-rustc/bin/rustc" "$WORK/fake-store/hash-cargo/bin/cargo"
   cp "$FAKE_BIN/bin/cmake" "$WORK/fake-store/hash-cmake/bin/cmake"
   chmod +x "$WORK/fake-store/hash-cmake/bin/cmake"
@@ -394,6 +426,7 @@ reset_state() {
   printf '5151\n' > "$WORK/state/kwin-pid"
   rm -f "$WORK/state/planner-owned" "$WORK/state/owner-pid" "$WORK/state/loaded-malformed" "$WORK/state/loaded-call-fail" "$WORK/state/start-fails" "$WORK/state/stop-fails" "$WORK/state/cargo-fails" "$WORK/state/npm-fails" "$WORK/state/cmake-fails"
   rm -f "$WORK/state/kwin-unowned" "$WORK/state/effect-supported-fail" "$WORK/state/effect-supported-malformed" "$WORK/state/effect-loaded-fail" "$WORK/state/effect-loaded-malformed" "$WORK/state/effect-load-fail" "$WORK/state/effect-unload-fail"
+  rm -f "$WORK/state/tray-owned" "$WORK/state/tray-owner-pid" "$WORK/state/tray-never-owned"
   printf '// fake kwin bundle\n' > "$WORK/fake-kwin/contents/code/main.js"
   printf 'cmake_minimum_required(VERSION 3.19)\nproject(fake)\n' > "$WORK/fake-native-source/CMakeLists.txt"
   export FAKE_STATE_DIR="$WORK/state"
@@ -426,6 +459,11 @@ reset_state() {
   printf '4242\n' > "$WORK/state/owner-pid"
   mkdir -p "$PROC_ROOT/5151"
   printf '5151 (kwin_wayland) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 777888\n' > "$PROC_ROOT/5151/stat"
+  mkdir -p "$PROC_ROOT/434343"
+  printf '434343 (fake-tray) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 404040\n' > "$PROC_ROOT/434343/stat"
+  ln -sfn -- "$PLASMA_AUTO_TILER_BIN" "$PROC_ROOT/434343/exe"
+  printf 'fake\0tray\0' > "$PROC_ROOT/434343/cmdline"
+  printf '434343\n' > "$WORK/state/tray-owner-pid"
 }
 
 make_planner_proc() {
@@ -434,6 +472,20 @@ make_planner_proc() {
   printf '%s (fake-planner) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 %s\n' "$pid" "$start" > "$PROC_ROOT/$pid/stat"
   ln -sfn -- "$exe_target" "$PROC_ROOT/$pid/exe"
   printf 'fake\0%s\0' "$cmdline" > "$PROC_ROOT/$pid/cmdline"
+}
+
+make_tray_proc() {
+  local pid="$1" start="$2" exe_target="${3:-$PLASMA_AUTO_TILER_BIN}"
+  mkdir -p "$PROC_ROOT/$pid"
+  printf '%s (fake-tray) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 %s\n' "$pid" "$start" > "$PROC_ROOT/$pid/stat"
+  ln -sfn -- "$exe_target" "$PROC_ROOT/$pid/exe"
+  printf 'fake\0tray\0' > "$PROC_ROOT/$pid/cmdline"
+}
+
+set_tray_owned() {
+  local pid="$1"
+  touch "$WORK/state/tray-owned"
+  printf '%s\n' "$pid" > "$WORK/state/tray-owner-pid"
 }
 
 set_planner_owned() {
@@ -448,7 +500,7 @@ set_controller() {
 
 run_just() {
   set +e
-  FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" PLASMA_AUTO_TILER_KWIN_DIR="$WORK/fake-kwin" PLASMA_AUTO_TILER_NATIVE_SOURCE="$WORK/fake-native-source" PLASMA_AUTO_TILER_NATIVE_BUILD="$WORK/fake-native-build" PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/fake-native-stage" PLASMA_AUTO_TILER_TARGET_DIR="$WORK/fake-target" PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake" PLASMA_AUTO_TILER_HOST_KWIN_BIN="$WORK/fake-host/kwin_wayland" PLASMA_AUTO_TILER_STORE_ROOT="$WORK/fake-store" NIX_BIN="$FAKE_BIN/bin/nix" RUSTC_BIN="$WORK/fake-store/hash-rustc/bin/rustc" CARGO_BIN="$WORK/fake-store/hash-cargo/bin/cargo" CMAKE_BIN="$WORK/fake-store/hash-cmake/bin/cmake" FAKE_DRV="$FAKE_DRV" FAKE_STORE_PATH="$FAKE_STORE_PATH" FAKE_DEV_OUT="$FAKE_DEV_OUT" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" PATH="$FAKE_BIN/bin:$PATH" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1
+  FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" PLASMA_AUTO_TILER_KWIN_DIR="$WORK/fake-kwin" PLASMA_AUTO_TILER_NATIVE_SOURCE="$WORK/fake-native-source" PLASMA_AUTO_TILER_NATIVE_BUILD="$WORK/fake-native-build" PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/fake-native-stage" PLASMA_AUTO_TILER_TARGET_DIR="$WORK/fake-target" PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake" PLASMA_AUTO_TILER_HOST_KWIN_BIN="$WORK/fake-host/kwin_wayland" PLASMA_AUTO_TILER_STORE_ROOT="$WORK/fake-store" NIX_BIN="$FAKE_BIN/bin/nix" RUSTC_BIN="$WORK/fake-store/hash-rustc/bin/rustc" CARGO_BIN="$WORK/fake-store/hash-cargo/bin/cargo" CMAKE_BIN="$WORK/fake-store/hash-cmake/bin/cmake" FAKE_DRV="$FAKE_DRV" FAKE_STORE_PATH="$FAKE_STORE_PATH" FAKE_DEV_OUT="$FAKE_DEV_OUT" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" PATH="$WORK/fake-store/hash-cargo/bin:$FAKE_BIN/bin:$PATH" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
 }
@@ -456,7 +508,7 @@ run_just() {
 run_just_async() {
   set +e
   set -m
-  FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" PLASMA_AUTO_TILER_KWIN_DIR="$WORK/fake-kwin" PLASMA_AUTO_TILER_NATIVE_SOURCE="$WORK/fake-native-source" PLASMA_AUTO_TILER_NATIVE_BUILD="$WORK/fake-native-build" PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/fake-native-stage" PLASMA_AUTO_TILER_TARGET_DIR="$WORK/fake-target" PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake" PLASMA_AUTO_TILER_HOST_KWIN_BIN="$WORK/fake-host/kwin_wayland" PLASMA_AUTO_TILER_STORE_ROOT="$WORK/fake-store" NIX_BIN="$FAKE_BIN/bin/nix" RUSTC_BIN="$WORK/fake-store/hash-rustc/bin/rustc" CARGO_BIN="$WORK/fake-store/hash-cargo/bin/cargo" CMAKE_BIN="$WORK/fake-store/hash-cmake/bin/cmake" FAKE_DRV="$FAKE_DRV" FAKE_STORE_PATH="$FAKE_STORE_PATH" FAKE_DEV_OUT="$FAKE_DEV_OUT" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" FAKE_TAIL_FOLLOW_BLOCK="${FAKE_TAIL_FOLLOW_BLOCK:-0}" PATH="$FAKE_BIN/bin:$PATH" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1 &
+  FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" PLASMA_AUTO_TILER_KWIN_DIR="$WORK/fake-kwin" PLASMA_AUTO_TILER_NATIVE_SOURCE="$WORK/fake-native-source" PLASMA_AUTO_TILER_NATIVE_BUILD="$WORK/fake-native-build" PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/fake-native-stage" PLASMA_AUTO_TILER_TARGET_DIR="$WORK/fake-target" PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake" PLASMA_AUTO_TILER_HOST_KWIN_BIN="$WORK/fake-host/kwin_wayland" PLASMA_AUTO_TILER_STORE_ROOT="$WORK/fake-store" NIX_BIN="$FAKE_BIN/bin/nix" RUSTC_BIN="$WORK/fake-store/hash-rustc/bin/rustc" CARGO_BIN="$WORK/fake-store/hash-cargo/bin/cargo" CMAKE_BIN="$WORK/fake-store/hash-cmake/bin/cmake" FAKE_DRV="$FAKE_DRV" FAKE_STORE_PATH="$FAKE_STORE_PATH" FAKE_DEV_OUT="$FAKE_DEV_OUT" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" FAKE_TAIL_FOLLOW_BLOCK="${FAKE_TAIL_FOLLOW_BLOCK:-0}" PATH="$WORK/fake-store/hash-cargo/bin:$FAKE_BIN/bin:$PATH" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1 &
   JUST_ASYNC_PID=$!
   set +m
   set -e
@@ -954,6 +1006,10 @@ EXIT="$DEV_CYCLE_EXIT"
 check_exit 0 "dev down cycle exit"
 assert_contains "[planner]" "dev down planner label"
 assert_contains "[kwin]" "dev down kwin label"
+assert_contains "[tray]" "dev down tray label"
+assert_contains "tray pid 434343 acquired org.plasmaautotiler.Tray" "dev down tray acquired"
+assert_contains "owned tray pid 434343 already exited; nothing to stop" "dev down tray teardown branch"
+assert_not_contains "tray running" "dev down no tray-running claim"
 assert_contains "plasma-auto-tiler:plan" "dev down kwin plugin line"
 assert_contains "[kwin] plasma-auto-tiler:route-diag:drag-pull action=dispatch" "dev down kwin route diagnostic line"
 assert_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so remains stale until logout/login." "dev down native warning"
@@ -965,6 +1021,7 @@ assert_calls_contain "setsid" "dev down launch"
 assert_calls_contain "start-test start" "dev down start"
 assert_calls_contain "tail " "dev down tail"
 assert_calls_contain "journalctl " "dev down journal"
+assert_calls_contain " tray" "dev down tray launch"
 assert_calls_contain "start-test stop 7" "dev down teardown stop"
 assert_calls_contain "dogfood enable" "dev down teardown enable"
 assert_calls_contain "loadEffect" "dev down native load"
@@ -983,9 +1040,186 @@ START_LINE="$(grep -n -F "start-test start" "$WORK/calls.log" | head -n 1 | cut 
 if [[ -n "$CARGO_LINE" && -n "$NPM_LINE" && -n "$CMAKE_LINE" && -n "$DOGFOOD_LINE" && -n "$SETSID_LINE" && -n "$START_LINE" && "$CARGO_LINE" -lt "$DOGFOOD_LINE" && "$NPM_LINE" -lt "$DOGFOOD_LINE" && "$CMAKE_LINE" -lt "$DOGFOOD_LINE" && "$CARGO_LINE" -lt "$SETSID_LINE" && "$NPM_LINE" -lt "$SETSID_LINE" && "$CMAKE_LINE" -lt "$SETSID_LINE" && "$CARGO_LINE" -lt "$START_LINE" && "$NPM_LINE" -lt "$START_LINE" && "$CMAKE_LINE" -lt "$START_LINE" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev down build before lifecycle]" >&2; cat "$WORK/calls.log" >&2; FAIL=$((FAIL + 1)); fi
 DEV_LOG_PATH="$(grep -F "combined log:" "$OUTPUT" | head -n 1 | sed 's/.*combined log: //;s/[[:space:]]*$//')"
 if [[ -n "${DEV_LOG_PATH:-}" && -f "$DEV_LOG_PATH" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev down durable log retained]" >&2; FAIL=$((FAIL + 1)); fi
-if [[ -n "${DEV_LOG_PATH:-}" ]] && grep -Fq "[planner]" "$DEV_LOG_PATH" && grep -Fq "[kwin]" "$DEV_LOG_PATH"; then PASS=$((PASS + 1)); else echo "FAIL [dev down durable log labeled content]" >&2; FAIL=$((FAIL + 1)); fi
+if [[ -n "${DEV_LOG_PATH:-}" ]] && grep -Fq "[planner]" "$DEV_LOG_PATH" && grep -Fq "[kwin]" "$DEV_LOG_PATH" && grep -Fq "[tray]" "$DEV_LOG_PATH"; then PASS=$((PASS + 1)); else echo "FAIL [dev down durable log labeled content]" >&2; FAIL=$((FAIL + 1)); fi
 if [[ "$(grep -c -F "combined log:" "$OUTPUT" || true)" -ge 2 ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev down combined log teardown reprint]" >&2; FAIL=$((FAIL + 1)); fi
-if [[ ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-log" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-planner-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-kwin-stream" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev down stream state removed]" >&2; FAIL=$((FAIL + 1)); fi
+if [[ ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-log" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-planner-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-kwin-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-tray-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/tray-pid" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/tray-log" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev down stream state removed]" >&2; FAIL=$((FAIL + 1)); fi
+
+# dev: pre-owned tray name is preserved, never launched or killed.
+reset_state
+set_controller false
+sleep 300 &
+FOREIGN_TRAY_PID=$!
+mkdir -p "$PROC_ROOT/$FOREIGN_TRAY_PID"
+printf '%s (fake-tray) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 606060\n' "$FOREIGN_TRAY_PID" > "$PROC_ROOT/$FOREIGN_TRAY_PID/stat"
+ln -sfn -- "/nix/store/fake/plasma-auto-tiler" "$PROC_ROOT/$FOREIGN_TRAY_PID/exe"
+printf 'fake\0tray\0' > "$PROC_ROOT/$FOREIGN_TRAY_PID/cmdline"
+set_tray_owned "$FOREIGN_TRAY_PID"
+sleep 300 &
+DEV_TAKEN_PLANNER_PID=$!
+make_planner_proc "$DEV_TAKEN_PLANNER_PID" 777010
+printf '%s\n' "$DEV_TAKEN_PLANNER_PID" > "$WORK/state/owner-pid"
+run_just dev
+DEV_TAKEN_EXIT="$EXIT"
+kill "$DEV_TAKEN_PLANNER_PID" 2>/dev/null || true
+wait "$DEV_TAKEN_PLANNER_PID" 2>/dev/null || true
+EXIT="$DEV_TAKEN_EXIT"
+check_exit 0 "dev tray taken exit"
+assert_contains "already owned" "dev tray taken preserved"
+assert_contains "installed tray preserved, worktree tray not started" "dev tray taken plain log"
+assert_not_contains "tray running" "dev tray taken no running claim"
+assert_not_contains "[tray]" "dev tray taken no tray stream"
+assert_calls_missing " tray" "dev tray taken no worktree launch"
+assert_calls_contain "start-test stop 7" "dev tray taken teardown stop"
+assert_calls_contain "dogfood enable" "dev tray taken teardown enable"
+if kill -0 "$FOREIGN_TRAY_PID" 2>/dev/null; then PASS=$((PASS + 1)); else echo "FAIL [dev tray taken killed installed tray]" >&2; FAIL=$((FAIL + 1)); fi
+kill "$FOREIGN_TRAY_PID" 2>/dev/null || true
+wait "$FOREIGN_TRAY_PID" 2>/dev/null || true
+
+# dev: a pre-owned worktree-exe tray this session did not start is preserved too.
+reset_state
+set_controller false
+sleep 300 &
+DEV_PRIOR_TRAY_PID=$!
+make_tray_proc "$DEV_PRIOR_TRAY_PID" 777011
+printf '%s\n' "$DEV_PRIOR_TRAY_PID" > "$WORK/state/tray-owner-pid"
+touch "$WORK/state/tray-owned"
+sleep 300 &
+DEV_PRIOR_PLANNER_PID=$!
+make_planner_proc "$DEV_PRIOR_PLANNER_PID" 777012
+printf '%s\n' "$DEV_PRIOR_PLANNER_PID" > "$WORK/state/owner-pid"
+run_just dev
+DEV_PRIOR_EXIT="$EXIT"
+kill "$DEV_PRIOR_PLANNER_PID" 2>/dev/null || true
+wait "$DEV_PRIOR_PLANNER_PID" 2>/dev/null || true
+EXIT="$DEV_PRIOR_EXIT"
+check_exit 0 "dev tray prior exit"
+assert_contains "already owned" "dev tray prior preserved"
+assert_not_contains "tray running" "dev tray prior no running claim"
+assert_calls_missing " tray" "dev tray prior no worktree launch"
+if kill -0 "$DEV_PRIOR_TRAY_PID" 2>/dev/null; then PASS=$((PASS + 1)); else echo "FAIL [dev tray prior killed tray it did not start]" >&2; FAIL=$((FAIL + 1)); fi
+kill "$DEV_PRIOR_TRAY_PID" 2>/dev/null || true
+wait "$DEV_PRIOR_TRAY_PID" 2>/dev/null || true
+
+# dev: tray bounded-window timeout logs unresolved launch identity and never
+# signals a foreign PID. The fake setsid exits at once, so the launch hint
+# has no provable start identity (setsid-fork case): teardown must refuse.
+reset_state
+set_controller false
+touch "$WORK/state/tray-never-owned"
+sleep 300 &
+FOREIGN_TIMEOUT_PID=$!
+sleep 300 &
+DEV_TIMEOUT_PLANNER_PID=$!
+make_planner_proc "$DEV_TIMEOUT_PLANNER_PID" 777020
+printf '%s\n' "$DEV_TIMEOUT_PLANNER_PID" > "$WORK/state/owner-pid"
+run_just dev
+DEV_TIMEOUT_EXIT="$EXIT"
+kill "$DEV_TIMEOUT_PLANNER_PID" 2>/dev/null || true
+wait "$DEV_TIMEOUT_PLANNER_PID" 2>/dev/null || true
+EXIT="$DEV_TIMEOUT_EXIT"
+check_exit 1 "dev tray timeout exit"
+assert_contains "was not owned by a verified worktree tray within the bounded window" "dev tray timeout bounded msg"
+assert_contains "launch identity unresolved" "dev tray timeout unresolved"
+assert_contains "not touching any" "dev tray timeout no foreign signal"
+assert_not_contains "tray pid " "dev tray timeout no acquire claim"
+assert_not_contains "tray running" "dev tray timeout no running claim"
+if kill -0 "$FOREIGN_TIMEOUT_PID" 2>/dev/null; then PASS=$((PASS + 1)); else echo "FAIL [dev tray timeout killed foreign pid]" >&2; FAIL=$((FAIL + 1)); fi
+kill "$FOREIGN_TIMEOUT_PID" 2>/dev/null || true
+wait "$FOREIGN_TIMEOUT_PID" 2>/dev/null || true
+
+# dev: a live owned tray this session started is stopped on teardown.
+# Pre-launch the tray name is unowned (no tray-owned flag, no " tray" in the
+# call log yet), so foreground dev launches and acquires it; the owner pid is
+# a live fixture sleep with a matching fake-proc tray identity, so teardown
+# takes the kill branch rather than the already-exited branch.
+reset_state
+set_controller false
+sleep 300 &
+DEV_LIVE_PLANNER_PID=$!
+make_planner_proc "$DEV_LIVE_PLANNER_PID" 777030
+printf '%s\n' "$DEV_LIVE_PLANNER_PID" > "$WORK/state/owner-pid"
+sleep 300 &
+DEV_LIVE_TRAY_PID=$!
+make_tray_proc "$DEV_LIVE_TRAY_PID" 777031
+printf '%s\n' "$DEV_LIVE_TRAY_PID" > "$WORK/state/tray-owner-pid"
+run_just dev
+DEV_LIVE_EXIT="$EXIT"
+EXIT="$DEV_LIVE_EXIT"
+check_exit 0 "dev live tray exit"
+assert_contains "tray pid $DEV_LIVE_TRAY_PID acquired" "dev live tray acquired"
+assert_not_contains "already exited; nothing to stop" "dev live tray live kill branch"
+assert_not_contains "identity changed" "dev live tray no identity refusal"
+assert_calls_contain "start-test stop 7" "dev live tray teardown stop"
+assert_calls_contain "dogfood enable" "dev live tray teardown enable"
+TRAY_DEAD=0
+for _ in $(seq 1 50); do kill -0 "$DEV_LIVE_TRAY_PID" 2>/dev/null || { TRAY_DEAD=1; break; }; sleep 0.2; done
+if [[ "$TRAY_DEAD" -eq 1 ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev live tray still running]" >&2; FAIL=$((FAIL + 1)); fi
+kill "$DEV_LIVE_TRAY_PID" 2>/dev/null || true
+wait "$DEV_LIVE_TRAY_PID" 2>/dev/null || true
+kill "$DEV_LIVE_PLANNER_PID" 2>/dev/null || true
+wait "$DEV_LIVE_PLANNER_PID" 2>/dev/null || true
+
+# dev: an owned tray whose start identity changed before teardown is never
+# signaled. Acquisition records start 777041; after the acquire is observed
+# the fixture stat is rewritten to 999999, so the teardown reverify
+# mismatches and must refuse. INT drives teardown while the tray stays live.
+reset_state
+set_controller false
+sleep 300 &
+DEV_ID_PLANNER_PID=$!
+make_planner_proc "$DEV_ID_PLANNER_PID" 777040
+printf '%s\n' "$DEV_ID_PLANNER_PID" > "$WORK/state/owner-pid"
+sleep 300 &
+DEV_ID_TRAY_PID=$!
+make_tray_proc "$DEV_ID_TRAY_PID" 777041
+printf '%s\n' "$DEV_ID_TRAY_PID" > "$WORK/state/tray-owner-pid"
+export FAKE_TAIL_FOLLOW_BLOCK=1
+: > "$OUTPUT"
+run_just_async dev
+JUST_PID="$JUST_ASYNC_PID"
+READY=0
+for _ in $(seq 1 50); do
+  if grep -Fq "tray pid $DEV_ID_TRAY_PID acquired" "$OUTPUT" 2>/dev/null; then READY=1; break; fi
+  if ! kill -0 "$JUST_PID" 2>/dev/null; then break; fi
+  sleep 0.2
+done
+if [[ "$READY" -ne 1 ]]; then
+  echo "FAIL [dev tray identity setup missing acquired tray]" >&2
+  cat "$OUTPUT" >&2
+  FAIL=$((FAIL + 1))
+  kill "$JUST_PID" 2>/dev/null || true
+  kill -KILL "$JUST_PID" 2>/dev/null || true
+  kill -KILL -- "-$JUST_PID" 2>/dev/null || true
+  set +e; wait "$JUST_PID" 2>/dev/null; set -e
+  EXIT=1
+else
+  printf '%s (fake-tray) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 999999\n' "$DEV_ID_TRAY_PID" > "$PROC_ROOT/$DEV_ID_TRAY_PID/stat"
+  kill -INT "$JUST_PID" 2>/dev/null || true
+  kill -INT -- "-$JUST_PID" 2>/dev/null || true
+  set +e
+  N=0
+  while kill -0 "$JUST_PID" 2>/dev/null; do
+    N=$((N + 1))
+    if [[ "$N" -gt 50 ]]; then kill -KILL "$JUST_PID" 2>/dev/null || true; break; fi
+    sleep 0.2
+  done
+  wait "$JUST_PID" 2>/dev/null
+  EXIT=$?
+  set -e
+  check_exit 1 "dev tray identity exit"
+  assert_contains "identity changed" "dev tray identity refusal msg"
+  assert_contains "refusing to kill ambiguously" "dev tray identity no ambiguous kill"
+  assert_contains "teardown is unverified" "dev tray identity unverified"
+  assert_not_contains "already exited; nothing to stop" "dev tray identity not exited branch"
+  assert_calls_contain "start-test stop 7" "dev tray identity dev-off still attempted"
+  if kill -0 "$DEV_ID_TRAY_PID" 2>/dev/null; then PASS=$((PASS + 1)); else echo "FAIL [dev tray identity signaled changed tray]" >&2; FAIL=$((FAIL + 1)); fi
+fi
+kill -KILL -- "-$JUST_PID" 2>/dev/null || true
+unset FAKE_TAIL_FOLLOW_BLOCK
+kill "$DEV_ID_TRAY_PID" 2>/dev/null || true
+wait "$DEV_ID_TRAY_PID" 2>/dev/null || true
+kill "$DEV_ID_PLANNER_PID" 2>/dev/null || true
+wait "$DEV_ID_PLANNER_PID" 2>/dev/null || true
 
 # Isolated justfile: list and dry-run include all four builds.
 reset_state

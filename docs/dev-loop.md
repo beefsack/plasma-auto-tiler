@@ -25,18 +25,31 @@ just dev-off     # unload exact script, stop recorded Planner, re-enable package
   Malformed `isScriptLoaded` fails closed before mutation. On DOWN it runs
   `just dev-on`; on bring-up failure it exits non-zero with no logs tailed
   and no extra teardown (rollback stays owned by `dev-on`). On success it
-  arms `just dev-off` for `INT`/`TERM`/`EXIT`, then tails the live Planner
-  log from `$STATE_DIR/planner-log` prefixed `[planner]` and the KWin
+  starts the worktree tray (`target/debug/plasma-auto-tiler tray`) as the
+  only tray owner in this session: when `org.plasmaautotiler.Tray` is
+  already owned, it logs the name-taken owner plainly, preserves the
+  installed tray, and runs without a worktree tray instead of claiming one.
+  Only a D-Bus owner that verifies as this worktree `$BIN tray` (exe,
+  cmdline, `/proc/<pid>/stat` start identity) is recorded at
+  `$STATE_DIR/tray-pid`, `tray-exe`, `tray-start`, and `tray-log` and tailed
+  with the `[tray]` prefix; anything else is never killed. It then arms
+  `just dev-off` for `INT`/`TERM`/`EXIT`, then tails the live Planner
+  log from `$STATE_DIR/planner-log` prefixed `[planner]`, the tray stderr
+  log prefixed `[tray]` when owned, and the KWin
    journal plugin lines (`journalctl --user -f _PID=<kwin-pid>` from the
     receipt `.pid`, filtered to `plasma-auto-tiler:`) prefixed `[kwin]`.
    The labeled stream is also captured at `$STATE_DIR/dev-log`'s path; the
    durable file persists after teardown.
-   `Ctrl-C` stops the tails and runs the existing fail-closed receipt-bound
-   `dev-off`; a `dev-off` failure exits non-zero loudly. Missing log,
+   `Ctrl-C` stops the tails, stops only the verified owned tray pid
+   (re-verified first; a changed identity is refused, never signalled, and
+   no generic `jobs` cleanup ever signals it), and runs the existing
+   fail-closed receipt-bound
+   `dev-off`; a `dev-off` or tray-stop failure exits non-zero loudly. Missing log,
    receipt, KWin pid, `tail`, or `journalctl` fails closed through the same
    teardown trap rather than tailing silently. An unverified controller teardown
    never retries unload; a verified Planner is still stopped before recovery is
-   directed through logout/login.
+   directed through logout/login. Detached `dev-on`/`dev-off` never start,
+   stop, or record the tray.
 - `dev-on` disables the packaged KWin script, verifies `isScriptLoaded`
   `false`, requires `org.plasmaautotiler.Planner` to be unowned (it does not
   stop units for you), builds, launches exactly

@@ -839,7 +839,8 @@ dev-status:
 
 # `just dev verbose` keeps bounded lifecycle and failure diagnostics. `just dev trace`
 # additionally enables bounded structural Planner request/reply, KWin per-window writes, and hook detail.
-# Foreground full-solution dev session: build all components, refuse unless DOWN, run dev-on, tail logs, and tear down on exit/Ctrl-C.
+# Foreground full-solution dev session: build all components, refuse unless DOWN, run dev-on,
+# start the worktree tray, tail logs, and tear down on exit/Ctrl-C.
 [continue]
 dev mode="":
     #!/usr/bin/env bash
@@ -876,6 +877,7 @@ dev mode="":
     # effect state; unsupported/unavailable fails closed with setup +
     # logout/login guidance. Ordinary transport/parse failures fail closed.
     REPO_ROOT="{{ justfile_directory() }}"
+    BIN="$REPO_ROOT/target/debug/plasma-auto-tiler"
     NATIVE_HELPER="$REPO_ROOT/scripts/dev-native-effect.sh"
     BORDER_EFFECT="plasma-auto-tiler-active-border"
     NATIVE_PREFLIGHT_OUT=""
@@ -978,6 +980,55 @@ dev mode="":
     DEV_FIFO="$STATE_DIR/dev-stream"
     PLANNER_STREAM="$STATE_DIR/dev-planner-stream"
     KWIN_STREAM="$STATE_DIR/dev-kwin-stream"
+    TRAY_BUS="org.plasmaautotiler.Tray"
+    TRAY_OWNED=0
+    TRAY_PID=""
+    TRAY_START=""
+    TRAY_LOG=""
+    TRAY_TAIL_PID=""
+    TRAY_STREAM="$STATE_DIR/dev-tray-stream"
+    tray_start_identity() {
+      local pid="$1" stat_line stat_pid rest
+      local -a fields=()
+      stat_line="$(<"/proc/$pid/stat")" || return 1
+      [[ "$stat_line" != *$'\n'* ]] || return 1
+      stat_pid="${stat_line%% *}"
+      [[ "$stat_pid" == "$pid" ]] || return 1
+      rest="${stat_line##*) }"
+      [[ "$rest" != "$stat_line" ]] || return 1
+      read -r -a fields <<<"$rest"
+      [[ "${#fields[@]}" -ge 20 && "${fields[0]:-}" =~ ^[A-Za-z]$ ]] || return 1
+      [[ "${fields[19]:-}" =~ ^[1-9][0-9]*$ ]] || return 1
+      printf '%s\n' "${fields[19]}"
+    }
+    tray_exe_is_worktree() {
+      local raw="$1" normalized="$1"
+      [[ -n "$raw" ]] || return 1
+      case "$BIN" in *" (deleted)") return 1 ;; esac
+      case "$normalized" in *" (deleted)") normalized="${normalized%' (deleted)'}"; ;; esac
+      case "$normalized" in */nix/store/*) return 1 ;; esac
+      [[ "$normalized" == "$BIN" ]] || return 1
+    }
+    tray_verify_worktree() {
+      local pid="$1" exe candidate_start
+      [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+      [[ -d "/proc/$pid" ]] || return 1
+      exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+      tray_exe_is_worktree "$exe" || return 1
+      tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -Fq "tray" || return 1
+      candidate_start="$(tray_start_identity "$pid")" || return 1
+      [[ "$candidate_start" =~ ^[1-9][0-9]*$ ]] || return 1
+      printf '%s\n' "$candidate_start"
+    }
+    tray_dbus_owner_pid() {
+      local owner_reply owner_name owner_pid
+      owner_reply="$(busctl --user call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetNameOwner s "$TRAY_BUS" 2>/dev/null)" || return 1
+      owner_name="$(echo "$owner_reply" | awk '{print $NF}' | tr -d '\"')"
+      [[ -n "$owner_name" ]] || return 1
+      owner_pid="$(busctl --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetConnectionUnixProcessID s "$owner_name" 2>/dev/null | jq -r '.data[0] // empty' 2>/dev/null || true)"
+      [[ "$owner_pid" =~ ^[0-9]+$ ]] || return 1
+      printf '%s\n' "$owner_pid"
+    }
     dev_cleanup() {
       local rc=$?
       if [[ "${1:-}" != "" ]]; then
@@ -987,12 +1038,43 @@ dev mode="":
       set +e
       if [[ -n "${TAIL_PID:-}" ]]; then kill "$TAIL_PID" 2>/dev/null || true; fi
       if [[ -n "${JOURNAL_PID:-}" ]]; then kill "$JOURNAL_PID" 2>/dev/null || true; fi
+      if [[ -n "${TRAY_TAIL_PID:-}" ]]; then kill "$TRAY_TAIL_PID" 2>/dev/null || true; fi
       if [[ -n "${FOLLOW_PID:-}" ]]; then kill "$FOLLOW_PID" 2>/dev/null || true; fi
       if [[ -n "${TEE_PID:-}" ]]; then kill "$TEE_PID" 2>/dev/null || true; fi
-      if jobs -p >/dev/null 2>&1; then kill $(jobs -p) 2>/dev/null || true; fi
-      wait 2>/dev/null || true
+      # No generic `kill $(jobs -p)`: the owned tray is a child job and is
+      # stopped only through the verified tray teardown below.
       if [[ "${TEARDOWN_DONE:-0}" -eq 0 ]]; then
         TEARDOWN_DONE=1
+        TRAY_OFF_RC=0
+        if [[ "${TRAY_OWNED:-0}" -eq 1 ]]; then
+          if [[ -z "${TRAY_PID:-}" ]]; then
+            echo "error: just dev: tray marked owned but pid is missing; refusing ambiguous teardown" >&2
+            TRAY_OFF_RC=1
+          elif ! kill -0 "$TRAY_PID" 2>/dev/null; then
+            echo "just dev: owned tray pid $TRAY_PID already exited; nothing to stop"
+          else
+            TRAY_REVERIFY=""
+            TRAY_REVERIFY="$(tray_verify_worktree "$TRAY_PID" 2>/dev/null || true)"
+            if [[ -z "$TRAY_REVERIFY" || -z "${TRAY_START:-}" || "$TRAY_REVERIFY" != "$TRAY_START" ]]; then
+              echo "error: just dev: owned tray identity changed for pid $TRAY_PID; refusing to kill ambiguously" >&2
+              TRAY_OFF_RC=1
+            else
+              kill "$TRAY_PID" 2>/dev/null || { echo "error: just dev: could not terminate owned tray pid $TRAY_PID" >&2; TRAY_OFF_RC=1; }
+              if [[ "$TRAY_OFF_RC" -eq 0 ]]; then
+                for _ in $(seq 1 50); do kill -0 "$TRAY_PID" 2>/dev/null || break; sleep 0.2; done
+                if kill -0 "$TRAY_PID" 2>/dev/null; then
+                  echo "error: just dev: owned tray pid $TRAY_PID did not exit after SIGTERM; refusing to SIGKILL ambiguously" >&2
+                  TRAY_OFF_RC=1
+                fi
+              fi
+            fi
+          fi
+        fi
+        # Wait for the stopped log followers, never a tray whose identity
+        # changed and therefore must remain untouched.
+        for child in "${TAIL_PID:-}" "${JOURNAL_PID:-}" "${TRAY_TAIL_PID:-}" "${FOLLOW_PID:-}" "${TEE_PID:-}"; do
+          if [[ -n "$child" ]]; then wait "$child" 2>/dev/null || true; fi
+        done
         just --justfile "$JUSTFILE" dev-off
         OFF_RC=$?
         NATIVE_OFF_RC=0
@@ -1000,7 +1082,10 @@ dev mode="":
           native_unload_owned_reverse || NATIVE_OFF_RC=$?
         fi
         if [[ -n "${DEV_LOG:-}" ]]; then echo "combined log: $DEV_LOG"; fi
-        rm -f -- "$STATE_DIR/dev-stream" "$STATE_DIR/dev-planner-stream" "$STATE_DIR/dev-kwin-stream" 2>/dev/null || true
+        rm -f -- "$STATE_DIR/dev-stream" "$STATE_DIR/dev-planner-stream" "$STATE_DIR/dev-kwin-stream" "$STATE_DIR/dev-tray-stream" "$STATE_DIR/tray-pid" "$STATE_DIR/tray-exe" "$STATE_DIR/tray-start" "$STATE_DIR/tray-log" 2>/dev/null || true
+        if [[ "$TRAY_OFF_RC" -ne 0 ]]; then
+          echo "error: just dev: owned tray teardown failed; teardown is unverified" >&2
+        fi
         if [[ "$NATIVE_OFF_RC" -ne 0 ]]; then
           echo "error: just dev: owned native effect unload failed; native state is unresolved (do not retry unload; recover with logout/login)" >&2
         fi
@@ -1008,6 +1093,10 @@ dev mode="":
           echo "error: just dev: dev-off teardown failed (exit $OFF_RC)" >&2
           echo "error: just dev: teardown is unverified; do not retry unload. Recover with logout/login." >&2
           exit "$OFF_RC"
+        fi
+        if [[ "$TRAY_OFF_RC" -ne 0 ]]; then
+          echo "error: just dev: teardown is unverified; do not retry unload. Recover with logout/login." >&2
+          exit "$TRAY_OFF_RC"
         fi
         if [[ "$NATIVE_OFF_RC" -ne 0 ]]; then
           echo "error: just dev: teardown is unverified; do not retry unload. Recover with logout/login." >&2
@@ -1064,11 +1153,98 @@ dev mode="":
     trap dev_cleanup EXIT
     trap 'INT_RECEIVED=1; exit 130' INT
     trap 'exit 143' TERM
+    # Foreground-only worktree tray, started after observed dev-on success.
+    # Detached dev-on/off never touch it. A pre-owned name means an installed
+    # tray holds it: log that plainly and run without a worktree tray rather
+    # than claiming it. Only a D-Bus owner that verifies as this worktree
+    # `$BIN tray` (exe, cmdline, start identity) is recorded and stopped.
+    PRE_TRAY_OWNER=""
+    PRE_TRAY_OWNER="$(tray_dbus_owner_pid 2>/dev/null || true)"
+    if [[ -n "$PRE_TRAY_OWNER" ]]; then
+      echo "just dev: tray name $TRAY_BUS already owned (pid $PRE_TRAY_OWNER); installed tray preserved, worktree tray not started"
+      TRAY_OWNED=0
+    else
+      [[ -x "$BIN" ]] || { echo "error: just dev: worktree binary missing for tray: $BIN" >&2; exit 1; }
+      TRAY_LOG="$(mktemp "$RUNTIME_DIR/plasma-auto-tiler-tray-dev.XXXXXX.log")" || { echo "error: just dev: could not create tray log" >&2; exit 1; }
+      setsid nohup "$BIN" tray >"$TRAY_LOG" 2>&1 </dev/null &
+      TRAY_LAUNCH_PID=$!
+      # Direct-child identity only: $! is a hint (setsid may fork), so
+      # capture its start identity immediately. Timeout teardown stops
+      # only this PID when it still verifies as this worktree tray with
+      # the same start; otherwise it logs unresolved and touches nothing.
+      TRAY_LAUNCH_START=""
+      TRAY_LAUNCH_START="$(tray_start_identity "$TRAY_LAUNCH_PID" 2>/dev/null || true)"
+      TRAY_PID=""
+      TRAY_START=""
+      TRAY_PROVED=0
+      for _ in $(seq 1 50); do
+        if TRAY_OWNER_PID="$(tray_dbus_owner_pid 2>/dev/null)"; then
+          if TRAY_CAND_START="$(tray_verify_worktree "$TRAY_OWNER_PID" 2>/dev/null)"; then
+            TRAY_PID="$TRAY_OWNER_PID"
+            TRAY_START="$TRAY_CAND_START"
+            TRAY_PROVED=1
+            break
+          else
+            echo "just dev: tray name $TRAY_BUS owned by unexpected pid $TRAY_OWNER_PID (not verified as worktree $BIN tray); installed tray preserved, worktree tray not running (launch hint was ${TRAY_LAUNCH_PID:-unknown})"
+            TRAY_OWNED=0
+            TRAY_PID=""
+            TRAY_PROVED=2
+            break
+          fi
+        fi
+        sleep 0.2
+      done
+      if [[ "$TRAY_PROVED" -eq 1 ]]; then
+        TRAY_OWNED=1
+        printf '%s\n' "$TRAY_PID" > "$STATE_DIR/tray-pid" || { echo "error: just dev: could not record tray pid" >&2; exit 1; }
+        printf '%s\n' "$BIN" > "$STATE_DIR/tray-exe" || { echo "error: just dev: could not record tray exe" >&2; exit 1; }
+        printf '%s\n' "$TRAY_START" > "$STATE_DIR/tray-start" || { echo "error: just dev: could not record tray start identity" >&2; exit 1; }
+        printf '%s\n' "$TRAY_LOG" > "$STATE_DIR/tray-log" || { echo "error: just dev: could not record tray log path" >&2; exit 1; }
+        echo "just dev: tray pid $TRAY_PID acquired $TRAY_BUS"
+        echo "tray log: $TRAY_LOG"
+      elif [[ "$TRAY_PROVED" -eq 2 ]]; then
+        :
+      else
+        # Bounded-window timeout: a hung direct child could acquire the
+        # name after this exit. Stop only the directly launched PID when
+        # it still proves as this worktree tray with the launch start
+        # identity. Any fork/ambiguity logs unresolved without signaling.
+        if [[ "${TRAY_LAUNCH_PID:-}" =~ ^[0-9]+$ && -n "${TRAY_LAUNCH_START:-}" ]]; then
+          if kill -0 "$TRAY_LAUNCH_PID" 2>/dev/null; then
+            TRAY_LAUNCH_REVERIFY=""
+            TRAY_LAUNCH_REVERIFY="$(tray_verify_worktree "$TRAY_LAUNCH_PID" 2>/dev/null || true)"
+            if [[ -n "$TRAY_LAUNCH_REVERIFY" && "$TRAY_LAUNCH_REVERIFY" == "$TRAY_LAUNCH_START" ]]; then
+              if kill "$TRAY_LAUNCH_PID" 2>/dev/null; then
+                for _ in $(seq 1 50); do kill -0 "$TRAY_LAUNCH_PID" 2>/dev/null || break; sleep 0.2; done
+                if kill -0 "$TRAY_LAUNCH_PID" 2>/dev/null; then
+                  echo "error: just dev: launched tray pid $TRAY_LAUNCH_PID did not exit after SIGTERM; leaving it running (refusing SIGKILL); teardown is unresolved" >&2
+                else
+                  echo "just dev: stopped hung tray launch pid $TRAY_LAUNCH_PID (verified worktree tray, start $TRAY_LAUNCH_START)"
+                fi
+              else
+                echo "just dev: launched tray pid $TRAY_LAUNCH_PID could not be signaled; launch identity unresolved; not touching any other PID"
+              fi
+            elif [[ -n "$TRAY_LAUNCH_REVERIFY" ]]; then
+              echo "error: just dev: launched tray identity changed for pid $TRAY_LAUNCH_PID (current $TRAY_LAUNCH_REVERIFY, launch $TRAY_LAUNCH_START); refusing to kill ambiguously" >&2
+            else
+              echo "just dev: launched tray pid $TRAY_LAUNCH_PID did not verify as worktree $BIN tray; launch identity unresolved; not touching pid $TRAY_LAUNCH_PID"
+            fi
+          else
+            echo "just dev: launched tray pid $TRAY_LAUNCH_PID is no longer running; launch identity unresolved (setsid may have forked); not touching any other PID"
+          fi
+        else
+          echo "just dev: tray launch identity unresolved (launch hint ${TRAY_LAUNCH_PID:-unknown}); not touching any PID; a hung tray may still be starting"
+        fi
+        echo "error: just dev: tray name $TRAY_BUS was not owned by a verified worktree tray within the bounded window (launch hint ${TRAY_LAUNCH_PID:-unknown}); see $TRAY_LOG" >&2
+        exit 1
+      fi
+    fi
     # From here the session is UP via this command; refresh stream paths
     # (already initialized before loads) before touching logs.
     DEV_FIFO="$STATE_DIR/dev-stream"
     PLANNER_STREAM="$STATE_DIR/dev-planner-stream"
     KWIN_STREAM="$STATE_DIR/dev-kwin-stream"
+    TRAY_STREAM="$STATE_DIR/dev-tray-stream"
     [[ -f "$STATE_DIR/planner-log" ]] || { echo "error: just dev: missing planner log pointer ($STATE_DIR/planner-log)" >&2; exit 1; }
     PLANNER_LOG="$(cat "$STATE_DIR/planner-log")"
     [[ -n "$PLANNER_LOG" && -f "$PLANNER_LOG" && ! -L "$PLANNER_LOG" ]] || { echo "error: just dev: planner log missing or symlinked: ${PLANNER_LOG:-unknown}" >&2; exit 1; }
@@ -1080,15 +1256,20 @@ dev mode="":
     command -v tail >/dev/null 2>&1 || { echo "error: just dev: required tool 'tail' not found" >&2; exit 1; }
     command -v journalctl >/dev/null 2>&1 || { echo "error: just dev: required tool 'journalctl' not found" >&2; exit 1; }
     command -v tee >/dev/null 2>&1 || { echo "error: just dev: required tool 'tee' not found" >&2; exit 1; }
-    echo "just dev: up; tailing planner log and KWin journal (Ctrl-C tears down via dev-off)"
+    if [[ "${TRAY_OWNED:-0}" -eq 1 ]]; then
+      echo "just dev: up; tailing planner log, tray log, and KWin journal (Ctrl-C tears down via dev-off)"
+    else
+      echo "just dev: up without worktree tray; tailing planner log and KWin journal (Ctrl-C tears down via dev-off)"
+    fi
     echo "planner log: $PLANNER_LOG"
     echo "kwin pid: $KWIN_PID"
     DEV_LOG="$(mktemp "$RUNTIME_DIR/plasma-auto-tiler-dev.XXXXXX.log")" || { echo "error: just dev: could not create combined log" >&2; exit 1; }
     printf '%s\n' "$DEV_LOG" > "$STATE_DIR/dev-log" || { echo "error: just dev: could not record combined log path" >&2; exit 1; }
-    rm -f -- "$DEV_FIFO" "$PLANNER_STREAM" "$KWIN_STREAM" 2>/dev/null || true
+    rm -f -- "$DEV_FIFO" "$PLANNER_STREAM" "$KWIN_STREAM" "$TRAY_STREAM" 2>/dev/null || true
     mkfifo -- "$DEV_FIFO" || { echo "error: just dev: could not create stream $DEV_FIFO" >&2; exit 1; }
     : > "$PLANNER_STREAM" || { echo "error: just dev: could not create $PLANNER_STREAM" >&2; exit 1; }
     : > "$KWIN_STREAM" || { echo "error: just dev: could not create $KWIN_STREAM" >&2; exit 1; }
+    : > "$TRAY_STREAM" || { echo "error: just dev: could not create $TRAY_STREAM" >&2; exit 1; }
     echo "combined log: $DEV_LOG"
     tee -a "$DEV_LOG" <"$DEV_FIFO" &
     TEE_PID=$!
@@ -1096,8 +1277,15 @@ dev mode="":
     TAIL_PID=$!
     journalctl --user -f _PID="$KWIN_PID" -o cat --no-pager 2>/dev/null | grep --line-buffered -F "plasma-auto-tiler:" | sed -u 's/^/[kwin] /' >>"$KWIN_STREAM" &
     JOURNAL_PID=$!
-    tail -q -n +1 -s 0.2 -F "$PLANNER_STREAM" "$KWIN_STREAM" >"$DEV_FIFO" 2>/dev/null &
-    FOLLOW_PID=$!
+    if [[ "${TRAY_OWNED:-0}" -eq 1 ]]; then
+      tail -n +1 -F "$TRAY_LOG" 2>/dev/null | sed -u 's/^/[tray] /' >>"$TRAY_STREAM" &
+      TRAY_TAIL_PID=$!
+      tail -q -n +1 -s 0.2 -F "$PLANNER_STREAM" "$KWIN_STREAM" "$TRAY_STREAM" >"$DEV_FIFO" 2>/dev/null &
+      FOLLOW_PID=$!
+    else
+      tail -q -n +1 -s 0.2 -F "$PLANNER_STREAM" "$KWIN_STREAM" >"$DEV_FIFO" 2>/dev/null &
+      FOLLOW_PID=$!
+    fi
     wait
 
 # Build the Rust Planner binary via devenv-aware cargo build (subset build).

@@ -55,6 +55,13 @@ pub struct TrayState {
     generation: Option<String>,
     revision: Option<i32>,
     ordering_conflicted: bool,
+    /// Row Q one-shot: after poison recovery the next fresh heartbeat
+    /// repeats the same generation/revision (KWin only bumps revision on
+    /// change), which the ordinary equal-revision fence would refuse once
+    /// the retained snapshot is gone. Allows exactly one same-generation
+    /// same-revision acceptance; any other generation/revision still follows
+    /// the ordinary fences. Cleared on accept or owner epoch change.
+    poison_same_revision_once: bool,
     snapshot: Option<Snapshot>,
     revoked_snapshot: Option<Snapshot>,
     refreshed_at: Option<u64>,
@@ -73,6 +80,7 @@ impl TrayState {
             self.generation = None;
             self.revision = None;
             self.ordering_conflicted = false;
+            self.poison_same_revision_once = false;
             self.retired_generations.clear();
             self.quarantined_generations.clear();
             self.revoked_snapshot = None;
@@ -107,7 +115,9 @@ impl TrayState {
             None => true,
             Some(current) if current == incoming.generation => {
                 self.revision.is_some_and(|revision| {
-                    if self.ordering_conflicted {
+                    if self.poison_same_revision_once && incoming.revision == revision {
+                        true
+                    } else if self.ordering_conflicted {
                         incoming.revision > revision
                     } else {
                         incoming.revision > revision
@@ -133,6 +143,7 @@ impl TrayState {
             self.generation = Some(incoming.generation.clone());
             self.revision = Some(incoming.revision);
             self.ordering_conflicted = false;
+            self.poison_same_revision_once = false;
             self.snapshot = Some(incoming);
             self.revoked_snapshot = None;
             self.refreshed_at = Some(now_ms);
@@ -270,6 +281,41 @@ impl TrayState {
     fn revoke_accepted_snapshot(&mut self) {
         self.revoked_snapshot = self.snapshot.clone();
         self.clear_snapshot();
+    }
+
+    /// Row Q: poison recovery at the lock boundary. A previous panic under
+    /// the state lock leaves the guarded snapshot untrusted, so recovery
+    /// clears the served snapshot (forcing `NeedsAttention` until a fresh
+    /// publish arrives) and re-arms diagnostic failure memory, while keeping
+    /// the owner epoch and generation/revision replay floors so the next
+    /// fresh publish is authorized and ordered correctly. Arms a one-shot
+    /// same-generation same-revision acceptance for the next fresh heartbeat
+    /// from the current live KWin owner (KWin repeats the same revision
+    /// until the state changes); all other transitions keep the ordinary
+    /// fences, and the one-shot clears on accept or owner epoch change.
+    pub(crate) fn recover_poisoned(&mut self) {
+        self.clear_snapshot();
+        self.revoked_snapshot = None;
+        self.poison_same_revision_once = self.generation.is_some() && self.revision.is_some();
+        self.diag = TrayDiagTracker::default();
+    }
+}
+
+/// Row Q: lock the shared tray state, recovering a poisoned mutex at the
+/// boundary instead of panicking. Recovery never serves the pre-poison
+/// snapshot (see [`TrayState::recover_poisoned`]); the caller's fresh
+/// observation (publish, owner change, or view) then proceeds normally.
+pub(crate) fn lock_tray_state(
+    state: &Arc<Mutex<TrayState>>,
+) -> std::sync::MutexGuard<'_, TrayState> {
+    match state.lock() {
+        Ok(guard) => guard,
+        Err(poison) => {
+            let mut guard = poison.into_inner();
+            guard.recover_poisoned();
+            state.clear_poison();
+            guard
+        }
     }
 }
 
@@ -503,6 +549,24 @@ fn service_name_lost_line() -> String {
     )
 }
 
+/// Bounded malformed owner-signal record. The signal payload is never
+/// carried, only the fixed failure category. The serving loop emits this and
+/// continues; a later valid signal re-resolves and reprojects.
+fn owner_signal_malformed_line() -> String {
+    format!(
+        "{TRAY_DIAG_PREFIX} component={TRAY_DIAG_COMPONENT} stage=owner event=signal outcome=malformed-signal"
+    )
+}
+
+/// Bounded invalid owner-signal args record. The decode error is never
+/// carried, only the fixed failure category. The serving loop emits this and
+/// continues; a later valid signal re-resolves and reprojects.
+fn owner_signal_args_invalid_line() -> String {
+    format!(
+        "{TRAY_DIAG_PREFIX} component={TRAY_DIAG_COMPONENT} stage=owner event=signal outcome=invalid-args"
+    )
+}
+
 /// Single-instance decision over a `DoNotQueue` name request. `PrimaryOwner`
 /// and `AlreadyOwner` proceed to serve; `Exists` (the `DoNotQueue` taken
 /// reply) and `InQueue` (defensive: unreachable with `DoNotQueue`) exit 0.
@@ -663,7 +727,7 @@ impl TrayEndpoint {
         // signals leave failure memory untouched.
         let line = {
             let _operation_guard = self.operation_lock.lock_blocking();
-            let mut state = self.state.lock().expect("tray state mutex poisoned");
+            let mut state = lock_tray_state(&self.state);
             let before_present = state.owner.is_some();
             let changed = state.owner.as_deref() != owner;
             state.owner_changed(owner);
@@ -692,7 +756,7 @@ impl TrayEndpoint {
         // returned for the caller to emit after the state mutex (and, on the
         // D-Bus path, the operation lock) are released. Logging never changes
         // the result below.
-        let mut state = self.state.lock().expect("tray state mutex poisoned");
+        let mut state = lock_tray_state(&self.state);
         state.publish_snapshot_from(
             Some(publisher),
             live_owner,
@@ -723,12 +787,11 @@ impl TrayEndpoint {
         // Diagnostic-only decision under the state mutex; emission happens
         // after both locks release. No sender or owner is logged, only the
         // fixed reason and the i32 revision.
-        let live_before = current_kwin_owner(emitter.connection()).await;
+        let live_before =
+            current_kwin_owner_with_deadline(emitter.connection(), OWNER_QUERY_TIMEOUT).await;
         if !sender_is_current_kwin_owner(publisher, live_before.as_deref()) {
             pending.extend(
-                self.state
-                    .lock()
-                    .expect("tray state mutex poisoned")
+                lock_tray_state(&self.state)
                     .collect_early_refusal("not-current-KWin-owner", revision),
             );
             return (Err(TrayError::UnauthorizedPublisher), pending);
@@ -744,9 +807,10 @@ impl TrayEndpoint {
         // operation lock (owner-change signals serialize on the same lock);
         // an accepted snapshot under a moved owner is revoked before release
         // so it is never served or signalled.
-        let live_after = current_kwin_owner(emitter.connection()).await;
+        let live_after =
+            current_kwin_owner_with_deadline(emitter.connection(), OWNER_QUERY_TIMEOUT).await;
         if result.is_ok() && !sender_is_current_kwin_owner(publisher, live_after.as_deref()) {
-            let mut state = self.state.lock().expect("tray state mutex poisoned");
+            let mut state = lock_tray_state(&self.state);
             state.revoke_accepted_snapshot();
             let outcome = publish_outcome_line(
                 true,
@@ -769,9 +833,7 @@ impl TrayEndpoint {
             // Best-effort only: the transport error is never logged, only the
             // bounded failure category. The publication result above stands.
             pending.extend(
-                self.state
-                    .lock()
-                    .expect("tray state mutex poisoned")
+                lock_tray_state(&self.state)
                     .diag
                     .failure_line(signal_emission_failed_line()),
             );
@@ -779,11 +841,7 @@ impl TrayEndpoint {
         }
         // Signal recovery re-arms only signal-stage suppression; the state
         // mutex is held for this diagnostic-only decision alone.
-        self.state
-            .lock()
-            .expect("tray state mutex poisoned")
-            .diag
-            .note_signal_success();
+        lock_tray_state(&self.state).diag.note_signal_success();
         (result, pending)
     }
 }
@@ -805,11 +863,8 @@ impl TrayEndpoint {
             // collected under the state mutex alone (the operation lock is
             // never taken on this path) and emitted after release, so
             // repeated sender-less calls stay bounded consistently.
-            let line = self
-                .state
-                .lock()
-                .expect("tray state mutex poisoned")
-                .collect_early_refusal("missing-sender", revision);
+            let line =
+                lock_tray_state(&self.state).collect_early_refusal("missing-sender", revision);
             if let Some(line) = line {
                 emit_tray_diag(&line);
             }
@@ -894,31 +949,91 @@ pub fn run() -> zbus::Result<()> {
     }
     let our_unique = connection.unique_name().map(|name| name.to_string());
 
-    let watcher_owner = watcher_owner
-        .ok_or_else(|| zbus::Error::Failure("status notifier watcher has no owner".to_owned()))?;
-    register_status_notifier_item_with_retry(&connection, &watcher_owner)?;
+    // Audit M (option 2): the tray carrier stays alive with no watcher.
+    // Registration happens only against a live-confirmed owner; a transient
+    // failure leaves the carrier unregistered and retryable, never claimed.
+    // Loss of our own service name/connection below stays terminal.
+    // The live query, transition, and registration run under the same shared
+    // lock on every path, so a watchdog tick can never store an owner that
+    // the serving loop already released (stale `Some` forever). The watchdog
+    // re-checks the live owner on every tick, so a stale confirmation can
+    // never block recovery. Diagnostics are bounded, redacted, and
+    // change-driven (no per-tick spam); emission happens after lock release.
+    let registered_watcher_owner = Arc::new(Mutex::new(WatcherState::default()));
+    if watcher_owner.is_none() {
+        emit_tray_diag(&watcher_absent_line());
+    }
+    {
+        let pending = {
+            let mut guard = lock_watcher_state(&registered_watcher_owner);
+            handle_watcher_owner_change(&mut guard, watcher_owner, |owner| {
+                register_status_notifier_item_with_retry(&connection, owner)
+            })
+        };
+        if let Some(line) = pending {
+            emit_tray_diag(&line);
+        }
+    }
     let stop_watchdog = Arc::new(AtomicBool::new(false));
     let watchdog_stop = Arc::clone(&stop_watchdog);
     let watchdog_projection = projection.clone();
     let watchdog_connection = connection.clone();
+    let watchdog_watcher_owner = Arc::clone(&registered_watcher_owner);
     let watchdog = thread::spawn(move || {
+        let mut emission_failed = false;
         while !watchdog_stop.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_secs(1));
             if watchdog_stop.load(Ordering::Relaxed) {
                 break;
             }
-            let _ = zbus::block_on(watchdog_projection.emit_changed(watchdog_connection.inner()));
+            if zbus::block_on(watchdog_projection.emit_changed(watchdog_connection.inner()))
+                .is_err()
+            {
+                if !emission_failed {
+                    emit_tray_diag(&signal_emission_failed_line());
+                }
+                emission_failed = true;
+            } else {
+                emission_failed = false;
+            }
+            // Audit M retry: re-resolve the live owner on every tick under
+            // the shared lock (same helper as the signal path). A transient
+            // registration failure stays retryable while the live owner
+            // remains; a stale confirmation is replaced on the next tick.
+            // Repeated identical failures stay silent; only transitions,
+            // the first failure, and recovery emit.
+            let pending = {
+                let mut guard = lock_watcher_state(&watchdog_watcher_owner);
+                poll_watcher_once(
+                    &mut guard,
+                    || query_name_owner(&watchdog_connection, STATUS_NOTIFIER_WATCHER_SERVICE),
+                    |owner| register_status_notifier_item_with_retry(&watchdog_connection, owner),
+                )
+            };
+            if let Some(line) = pending {
+                emit_tray_diag(&line);
+            }
         }
     });
-    let mut registered_watcher_owner = None;
     let result: zbus::Result<()> = (|| {
-        registered_watcher_owner = Some(watcher_owner);
         for message in owner_changes {
+            // Transport loss / monitor closed stays terminal via `?` below.
             let message = message?;
-            let signal = NameOwnerChanged::from_message(message).ok_or_else(|| {
-                zbus::Error::Failure("owner-change iterator yielded a non-owner signal".to_owned())
-            })?;
-            let args = signal.args()?;
+            // Audit N: a malformed owner signal or undecodable args logs one
+            // bounded redacted record and continues. The next valid signal
+            // re-resolves live and reprojects, so transient bus noise never
+            // exits the tray. Own-name/connection loss below stays terminal.
+            let Some(signal) = NameOwnerChanged::from_message(message) else {
+                emit_tray_diag(&owner_signal_malformed_line());
+                continue;
+            };
+            let args = match signal.args() {
+                Ok(args) => args,
+                Err(_) => {
+                    emit_tray_diag(&owner_signal_args_invalid_line());
+                    continue;
+                }
+            };
             let owner = args.new_owner().as_ref().map(ToString::to_string);
             match args.name().as_str() {
                 KWIN_SERVICE => {
@@ -935,12 +1050,34 @@ pub fn run() -> zbus::Result<()> {
                             .flatten()
                             .as_deref(),
                     );
-                    zbus::block_on(projection.emit_changed(connection.inner()))?;
+                    // Audit N: a failed owner-change notification logs one
+                    // bounded redacted record and continues. The transport
+                    // error is never carried. The 1 Hz watchdog and the next
+                    // valid signal reproject, so this never exits the tray.
+                    if zbus::block_on(projection.emit_changed(connection.inner())).is_err() {
+                        emit_tray_diag(&signal_emission_failed_line());
+                    }
                 }
                 STATUS_NOTIFIER_WATCHER_SERVICE => {
-                    handle_watcher_owner_change(&mut registered_watcher_owner, owner, |owner| {
-                        register_status_notifier_item_with_retry(&connection, owner)
-                    })?
+                    // Live-confirmed only: the queued payload is never
+                    // trusted (stale replay/overflow). The live query,
+                    // transition, and registration run under the shared lock
+                    // (same helper as the watchdog), so concurrent ticks can
+                    // never interleave a stale store. Absence, transient
+                    // failure, and query errors stay alive unregistered with
+                    // one bounded record; the watchdog tick retries while
+                    // the live owner remains.
+                    let pending = {
+                        let mut guard = lock_watcher_state(&registered_watcher_owner);
+                        poll_watcher_once(
+                            &mut guard,
+                            || query_name_owner(&connection, STATUS_NOTIFIER_WATCHER_SERVICE),
+                            |owner| register_status_notifier_item_with_retry(&connection, owner),
+                        )
+                    };
+                    if let Some(line) = pending {
+                        emit_tray_diag(&line);
+                    }
                 }
                 SERVICE
                     if !service_name_lost_live(
@@ -1039,28 +1176,186 @@ fn register_status_notifier_item_with_retry(
     )
 }
 
+/// Bounded watcher registration records. The D-Bus unique name is never
+/// carried: only presence transitions and fixed outcome labels are logged.
+/// `registered` is emitted on a confirmed registration (the recovery
+/// evidence); `lost` on a live-confirmed absence that clears a prior
+/// registration; `registration-failed` on the first transient registration
+/// failure per owner episode; `query-failed` on the first live-query transport
+/// failure. Steady-state repeats stay silent (no per-tick spam).
+fn watcher_registered_line() -> String {
+    format!(
+        "{TRAY_DIAG_PREFIX} component={TRAY_DIAG_COMPONENT} stage=watcher event=register outcome=registered"
+    )
+}
+
+/// Bounded watcher-loss record. Emitted once per live-confirmed transition
+/// from a registered owner to no owner; steady-state absence stays silent.
+fn watcher_lost_line() -> String {
+    format!(
+        "{TRAY_DIAG_PREFIX} component={TRAY_DIAG_COMPONENT} stage=watcher event=owner-changed outcome=lost"
+    )
+}
+
+fn watcher_absent_line() -> String {
+    format!(
+        "{TRAY_DIAG_PREFIX} component={TRAY_DIAG_COMPONENT} stage=watcher event=startup outcome=absent"
+    )
+}
+
+/// Bounded watcher registration-failure record. The transport error is never
+/// carried, only the fixed failure category.
+fn watcher_registration_failed_line() -> String {
+    format!(
+        "{TRAY_DIAG_PREFIX} component={TRAY_DIAG_COMPONENT} stage=watcher event=register outcome=registration-failed"
+    )
+}
+
+/// Bounded watcher live-query failure record. The transport error is never
+/// carried; the existing registration is kept and the next tick retries.
+fn watcher_query_failed_line() -> String {
+    format!(
+        "{TRAY_DIAG_PREFIX} component={TRAY_DIAG_COMPONENT} stage=watcher event=query outcome=query-failed"
+    )
+}
+
+/// Shared watcher registration state. Guarded by a single mutex in `run` so
+/// the live query, transition, and registration serialize on every path
+/// (signal loop and watchdog tick). `last_failure_line` gates failure records
+/// only and is never read by transition, retry, or terminal logic.
+#[derive(Debug, Default)]
+struct WatcherState {
+    registered: Option<String>,
+    last_failure_line: Option<String>,
+}
+
+fn lock_watcher_state(state: &Mutex<WatcherState>) -> std::sync::MutexGuard<'_, WatcherState> {
+    match state.lock() {
+        Ok(guard) => guard,
+        Err(poison) => {
+            let mut guard = poison.into_inner();
+            *guard = WatcherState::default();
+            state.clear_poison();
+            emit_tray_diag(&watcher_registration_failed_line());
+            guard
+        }
+    }
+}
+
+impl WatcherState {
+    fn failure_line(&mut self, line: String) -> Option<String> {
+        if self.last_failure_line.as_deref() == Some(line.as_str()) {
+            return None;
+        }
+        self.last_failure_line = Some(line);
+        self.last_failure_line.clone()
+    }
+
+    fn note_registered(&mut self) {
+        self.last_failure_line = None;
+    }
+}
+
+/// Audit M (option 2) watcher registration: stay alive unregistered when
+/// there is no live-confirmed owner; register whenever one appears; a
+/// transient registration failure stays retryable while the owner remains
+/// and never claims success until confirmed. Callers must pass a fresh live
+/// query result (subscribe-before-query is established in `run`), never the
+/// stale signal payload. Returns a bounded redacted diagnostic line on
+/// transition, first failure, or recovery, and `None` when nothing changed
+/// (idempotent ticks stay silent). Never terminal: only loss of our own
+/// service name/connection elsewhere terminates the tray.
 fn handle_watcher_owner_change<Register>(
-    registered_owner: &mut Option<String>,
-    new_owner: Option<String>,
+    state: &mut WatcherState,
+    live_owner: Option<String>,
     register: Register,
-) -> zbus::Result<()>
+) -> Option<String>
 where
     Register: FnOnce(&str) -> zbus::Result<()>,
 {
-    if new_owner.as_deref() == registered_owner.as_deref() {
-        return Ok(());
+    if live_owner.as_deref() == state.registered.as_deref() {
+        return None;
     }
 
-    *registered_owner = None;
-    let Some(new_owner) = new_owner else {
-        return Err(zbus::Error::Failure(
-            "status notifier watcher ownership was lost after registration".to_owned(),
-        ));
+    state.registered = None;
+    let Some(live_owner) = live_owner else {
+        state.last_failure_line = None;
+        return Some(watcher_lost_line());
     };
 
-    register(&new_owner)?;
-    *registered_owner = Some(new_owner);
-    Ok(())
+    match register(&live_owner) {
+        Ok(()) => {
+            state.registered = Some(live_owner);
+            state.note_registered();
+            Some(watcher_registered_line())
+        }
+        Err(_) => state.failure_line(watcher_registration_failed_line()),
+    }
+}
+
+/// Bounded live-query failure path. Keeps the existing registration (a
+/// transient bus error never evicts a healthy owner) and returns the query
+/// failure record once per episode; identical repeats stay silent.
+fn note_watcher_query_failure(state: &mut WatcherState) -> Option<String> {
+    state.failure_line(watcher_query_failed_line())
+}
+
+/// Single serialized watcher poll used by both the serving loop and the
+/// watchdog tick: live query, transition, and registration run under the
+/// caller's shared lock. Every tick re-checks the live owner, so a stale
+/// confirmation is replaced rather than wedging recovery. Returns the bounded
+/// diagnostic line, if any; callers emit it after releasing the lock.
+fn poll_watcher_once<Query, Register>(
+    state: &mut WatcherState,
+    query: Query,
+    register: Register,
+) -> Option<String>
+where
+    Query: FnOnce() -> zbus::Result<Option<String>>,
+    Register: FnOnce(&str) -> zbus::Result<()>,
+{
+    match query() {
+        Ok(live) => handle_watcher_owner_change(state, live, register),
+        Err(_) => note_watcher_query_failure(state),
+    }
+}
+
+/// Row P: bounded owner-lookup deadline for the two awaits held under the
+/// publication (operation) lock. zbus 5.19 has no timeout on these lookups
+/// either, so a hang becomes `None` (fail-closed refusal): the hung query
+/// future is dropped, the operation lock releases on return, and no state is
+/// touched so a later publication retries.
+const OWNER_QUERY_TIMEOUT: Duration = Duration::from_secs(2);
+
+async fn with_owner_deadline(
+    timeout: Duration,
+    query: impl std::future::Future<Output = Option<String>>,
+) -> Option<String> {
+    use std::pin::pin;
+    use std::task::Poll;
+    let mut query = pin!(query);
+    let mut timer = pin!(async_io::Timer::after(timeout));
+    // A timer win yields the outer `None`, which `flatten` maps to the same
+    // fail-closed `None` as a genuine no-owner answer; the hung query is
+    // dropped on cancellation.
+    std::future::poll_fn(|cx| {
+        if let Poll::Ready(value) = query.as_mut().poll(cx) {
+            return Poll::Ready(Some(value));
+        }
+        if timer.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(None);
+        }
+        Poll::Pending
+    })
+    .await
+    .flatten()
+}
+
+async fn current_kwin_owner_with_deadline(
+    connection: &zbus::Connection,
+    timeout: Duration,
+) -> Option<String> {
+    with_owner_deadline(timeout, current_kwin_owner(connection)).await
 }
 
 /// Live KWin owner query. Returns the current `org.kde.KWin` owner unique
@@ -1130,12 +1425,15 @@ mod tests {
 
     use super::{
         KWIN_SERVICE, REGISTER_STATUS_NOTIFIER_ITEM, SERVICE, STATUS_NOTIFIER_WATCHER_INTERFACE,
-        STATUS_NOTIFIER_WATCHER_OBJECT, STATUS_NOTIFIER_WATCHER_SERVICE, authorized_publisher,
-        classify_name_reply, handle_watcher_owner_change, invalid_snapshot_reason,
-        owner_changes_match_rule, owner_outcome_line, publish_early_refusal_line,
-        publish_outcome_line, reconcile_initial_owner, retry_registration,
-        sender_is_current_kwin_owner, service_name_acquired_line, service_name_lost_line,
-        service_name_taken_line, status_projected_line, tray_name_lost,
+        STATUS_NOTIFIER_WATCHER_OBJECT, STATUS_NOTIFIER_WATCHER_SERVICE, WatcherState,
+        authorized_publisher, classify_name_reply, handle_watcher_owner_change,
+        invalid_snapshot_reason, note_watcher_query_failure, owner_changes_match_rule,
+        owner_outcome_line, owner_signal_args_invalid_line, owner_signal_malformed_line,
+        poll_watcher_once, publish_early_refusal_line, publish_outcome_line,
+        reconcile_initial_owner, retry_registration, sender_is_current_kwin_owner,
+        service_name_acquired_line, service_name_lost_line, service_name_taken_line,
+        status_projected_line, tray_name_lost, watcher_lost_line, watcher_query_failed_line,
+        watcher_registered_line, watcher_registration_failed_line,
     };
 
     #[test]
@@ -1202,6 +1500,49 @@ mod tests {
     }
 
     #[test]
+    fn malformed_owner_signal_lines_are_bounded_and_non_owner_message_is_detected() {
+        // Audit N: malformed signal/args log a fixed redacted record and the
+        // loop continues; own-name loss stays terminal (covered above).
+        assert_eq!(
+            owner_signal_malformed_line(),
+            "plasma-auto-tiler:route-diag component=tray-endpoint stage=owner event=signal outcome=malformed-signal"
+        );
+        assert_eq!(
+            owner_signal_args_invalid_line(),
+            "plasma-auto-tiler:route-diag component=tray-endpoint stage=owner event=signal outcome=invalid-args"
+        );
+        for line in [
+            owner_signal_malformed_line(),
+            owner_signal_args_invalid_line(),
+        ] {
+            assert!(!line.contains('\n'));
+            assert!(!line.contains(":1."));
+        }
+        // Actual behavior: a non-owner message never parses as an owner
+        // signal, so the serving loop takes the log-and-continue path.
+        let message = zbus::message::Message::method_call(
+            STATUS_NOTIFIER_WATCHER_OBJECT,
+            REGISTER_STATUS_NOTIFIER_ITEM,
+        )
+        .unwrap()
+        .destination(STATUS_NOTIFIER_WATCHER_SERVICE)
+        .unwrap()
+        .interface(STATUS_NOTIFIER_WATCHER_INTERFACE)
+        .unwrap()
+        .build(&("arg",))
+        .unwrap();
+        assert!(zbus::fdo::NameOwnerChanged::from_message(message).is_none());
+        // Failed owner-change notification reuses the bounded signal record
+        // without transport detail; the next valid event reprojects.
+        let emission = super::signal_emission_failed_line();
+        assert_eq!(
+            emission,
+            "plasma-auto-tiler:route-diag component=tray-endpoint stage=signal event=emit outcome=emission-failed"
+        );
+        assert!(!emission.contains('\n'));
+    }
+
+    #[test]
     fn sender_must_equal_the_live_kwin_owner() {
         assert!(sender_is_current_kwin_owner(":1.1", Some(":1.1")));
         assert!(!sender_is_current_kwin_owner(":1.1", Some(":1.2")));
@@ -1210,6 +1551,167 @@ mod tests {
             "not-a-unique-name",
             Some("not-a-unique-name")
         ));
+    }
+
+    #[test]
+    fn owner_query_deadline_fails_closed_and_releases_the_operation_lock() {
+        // Row P: a hung KWin-owner lookup awaited under the publication lock
+        // times out to `None` (fail-closed), drops the hung query, and
+        // releases the lock; a later fresh query still resolves.
+        let endpoint = super::TrayEndpoint::new(Some(":org.kwin"));
+        zbus::block_on(async {
+            let _operation_guard = endpoint.operation_lock.lock().await;
+            let owner = super::with_owner_deadline(
+                Duration::from_millis(20),
+                std::future::pending::<Option<String>>(),
+            )
+            .await;
+            assert_eq!(owner, None, "hung owner query must fail closed");
+            drop(_operation_guard);
+        });
+        assert!(
+            endpoint.operation_lock.try_lock().is_some(),
+            "deadline must release the operation lock"
+        );
+        let owner = zbus::block_on(super::with_owner_deadline(Duration::from_secs(2), async {
+            Some(":org.kwin".to_owned())
+        }));
+        assert_eq!(owner.as_deref(), Some(":org.kwin"));
+    }
+
+    #[test]
+    fn poisoned_tray_state_recovers_and_serves_only_fresh_snapshots() {
+        // Row Q: a poisoned tray state lock recovers at the boundary instead
+        // of panicking; recovery serves no stale snapshot and the next fresh
+        // publish round-trips to current.
+        let endpoint = super::TrayEndpoint::new(Some(":1.7"));
+        let snapshot = |revision| super::Snapshot {
+            generation: "gen-1".to_owned(),
+            revision,
+            enabled: true,
+        };
+        let (result, _) = super::lock_tray_state(&endpoint.state).publish_snapshot_from(
+            Some(":1.7"),
+            Some(":1.7"),
+            1,
+            snapshot(0),
+            0,
+        );
+        assert!(result.is_ok());
+        assert!(super::lock_tray_state(&endpoint.state).view(0).current);
+        let state = Arc::clone(&endpoint.state);
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = state.lock().unwrap();
+            panic!("inject tray state poison");
+        }));
+        assert!(poisoned.is_err());
+        assert!(endpoint.state.is_poisoned());
+        let recovered = super::lock_tray_state(&endpoint.state).view(0);
+        assert!(
+            !endpoint.state.is_poisoned(),
+            "boundary lock must clear poison"
+        );
+        assert!(recovered.owner, "owner epoch survives recovery");
+        assert!(
+            !recovered.current,
+            "recovered state must not serve the pre-poison snapshot"
+        );
+        let (result, _) = super::lock_tray_state(&endpoint.state).publish_snapshot_from(
+            Some(":1.7"),
+            Some(":1.7"),
+            1,
+            snapshot(1),
+            1,
+        );
+        assert!(result.is_ok(), "next fresh publish converges");
+        let view = super::lock_tray_state(&endpoint.state).view(1);
+        assert!(view.current);
+        assert_eq!(view.snapshot.map(|snapshot| snapshot.enabled), Some(true));
+    }
+
+    #[test]
+    fn poison_recovery_accepts_next_same_revision_heartbeat_once() {
+        // Row Q narrow fix: KWin heartbeats repeat the SAME revision until
+        // the state changes, so after poison recovery (snapshot cleared but
+        // generation/revision floors kept) the next fresh same-generation
+        // same-revision heartbeat from the current live owner must recover
+        // once, without weakening ordinary replay.
+        let endpoint = super::TrayEndpoint::new(Some(":1.7"));
+        let snapshot = |generation: &str, revision: i32, enabled: bool| super::Snapshot {
+            generation: generation.to_owned(),
+            revision,
+            enabled,
+        };
+        super::lock_tray_state(&endpoint.state)
+            .publish_snapshot_from(Some(":1.7"), Some(":1.7"), 1, snapshot("gen-1", 5, true), 0)
+            .0
+            .unwrap();
+        let state = Arc::clone(&endpoint.state);
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = state.lock().unwrap();
+            panic!("inject tray state poison");
+        }));
+        assert!(poisoned.is_err());
+        let recovered = super::lock_tray_state(&endpoint.state).view(0);
+        assert!(recovered.owner);
+        assert!(!recovered.current);
+        // Mismatched owner still refuses and does not consume the one-shot.
+        let (result, _) = super::lock_tray_state(&endpoint.state).publish_snapshot_from(
+            Some(":1.8"),
+            Some(":1.8"),
+            1,
+            snapshot("gen-1", 5, true),
+            1,
+        );
+        assert_eq!(result.unwrap_err(), super::TrayError::UnauthorizedPublisher);
+        // Stale same-generation revision still refuses.
+        let (result, _) = super::lock_tray_state(&endpoint.state).publish_snapshot_from(
+            Some(":1.7"),
+            Some(":1.7"),
+            1,
+            snapshot("gen-1", 4, true),
+            2,
+        );
+        assert!(result.is_err());
+        // Fresh same-generation same-revision heartbeat recovers.
+        let (result, _) = super::lock_tray_state(&endpoint.state).publish_snapshot_from(
+            Some(":1.7"),
+            Some(":1.7"),
+            1,
+            snapshot("gen-1", 5, true),
+            3,
+        );
+        assert!(result.is_ok(), "same-revision heartbeat must recover once");
+        assert!(super::lock_tray_state(&endpoint.state).view(3).current);
+        // One-shot is consumed: stale and mismatched-owner replays refuse again.
+        let (result, _) = super::lock_tray_state(&endpoint.state).publish_snapshot_from(
+            Some(":1.7"),
+            Some(":1.7"),
+            1,
+            snapshot("gen-1", 4, true),
+            4,
+        );
+        assert!(
+            result.is_err(),
+            "ordinary revision floor returns after recovery"
+        );
+        let (result, _) = super::lock_tray_state(&endpoint.state).publish_snapshot_from(
+            Some(":1.8"),
+            Some(":1.8"),
+            1,
+            snapshot("gen-1", 5, true),
+            5,
+        );
+        assert_eq!(result.unwrap_err(), super::TrayError::UnauthorizedPublisher);
+        // A new generation still needs revision 0.
+        let (result, _) = super::lock_tray_state(&endpoint.state).publish_snapshot_from(
+            Some(":1.7"),
+            Some(":1.7"),
+            1,
+            snapshot("gen-2", 1, true),
+            6,
+        );
+        assert!(result.is_err());
     }
 
     #[test]
@@ -1610,18 +2112,231 @@ mod tests {
     }
 
     #[test]
-    fn watcher_loss_after_registration_returns_a_terminal_error_without_reregistering() {
-        let mut registered_owner = Some(":watcher".to_owned());
+    fn watcher_absence_and_loss_stay_alive_unregistered_without_claiming() {
+        // Audit M (option 2): no live owner clears registration and never
+        // fails; the carrier stays alive for a later live-confirmed owner.
+        // The loss transition emits one bounded record; steady absence stays
+        // silent (no per-tick spam).
+        let mut state = WatcherState {
+            registered: Some(":watcher".to_owned()),
+            last_failure_line: None,
+        };
         let mut registration_attempts = 0;
-        let result = handle_watcher_owner_change(&mut registered_owner, None, |_| {
+        let line = handle_watcher_owner_change(&mut state, None, |_| {
             registration_attempts += 1;
             Ok(())
         });
 
-        let error = result.unwrap_err().to_string();
-        assert!(error.contains("ownership was lost"));
-        assert_eq!(registered_owner, None);
+        assert_eq!(line, Some(watcher_lost_line()));
+        assert_eq!(state.registered, None);
         assert_eq!(registration_attempts, 0);
+
+        // Steady-state absence: idempotent, silent.
+        let line = handle_watcher_owner_change(&mut state, None, |_| {
+            registration_attempts += 1;
+            Ok(())
+        });
+        assert_eq!(line, None);
+        assert_eq!(state.registered, None);
+        assert_eq!(registration_attempts, 0);
+    }
+
+    #[test]
+    fn watcher_transient_failure_stays_retryable_and_never_claims_until_confirmed() {
+        // Audit M (option 2): a transient registration failure leaves the
+        // carrier unregistered (retryable while the owner remains) and only
+        // a confirmed registration is claimed. The first failure emits one
+        // bounded record; an identical repeat stays silent; recovery emits
+        // the registered record and re-arms failure logging.
+        let mut state = WatcherState::default();
+        let mut attempts = 0;
+        let line = handle_watcher_owner_change(&mut state, Some(":watcher".to_owned()), |_| {
+            attempts += 1;
+            Err(zbus::Error::Failure("transient".to_owned()))
+        });
+        assert_eq!(line, Some(watcher_registration_failed_line()));
+        assert_eq!(state.registered, None);
+        assert_eq!(attempts, 1);
+
+        // Identical repeat: still unregistered, still one attempt, silent.
+        let line = handle_watcher_owner_change(&mut state, Some(":watcher".to_owned()), |_| {
+            attempts += 1;
+            Err(zbus::Error::Failure("transient".to_owned()))
+        });
+        assert_eq!(line, None);
+        assert_eq!(state.registered, None);
+        assert_eq!(attempts, 2);
+
+        // Retry while the same live owner remains succeeds and claims.
+        let line = handle_watcher_owner_change(&mut state, Some(":watcher".to_owned()), |owner| {
+            attempts += 1;
+            assert_eq!(owner, ":watcher");
+            Ok(())
+        });
+        assert_eq!(line, Some(watcher_registered_line()));
+        assert_eq!(state.registered, Some(":watcher".to_owned()));
+        assert_eq!(attempts, 3);
+
+        // Idempotent: the confirmed owner never re-registers.
+        let line = handle_watcher_owner_change(&mut state, Some(":watcher".to_owned()), |_| {
+            attempts += 1;
+            Ok(())
+        });
+        assert_eq!(line, None);
+        assert_eq!(state.registered, Some(":watcher".to_owned()));
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn watcher_stale_confirmation_recovers_on_live_recheck() {
+        // A stale `Some(old)` never blocks recovery: every poll re-checks
+        // the live owner, so a moved owner re-registers instead of wedging.
+        let mut state = WatcherState {
+            registered: Some(":old".to_owned()),
+            last_failure_line: None,
+        };
+        let mut seen = Vec::new();
+        let line = poll_watcher_once(
+            &mut state,
+            || Ok(Some(":new".to_owned())),
+            |owner| {
+                seen.push(owner.to_owned());
+                Ok(())
+            },
+        );
+        assert_eq!(seen, [":new"]);
+        assert_eq!(line, Some(watcher_registered_line()));
+        assert_eq!(state.registered, Some(":new".to_owned()));
+
+        // Steady confirmation stays silent without re-registering.
+        let line = poll_watcher_once(
+            &mut state,
+            || Ok(Some(":new".to_owned())),
+            |_| {
+                seen.push("unexpected".to_owned());
+                Ok(())
+            },
+        );
+        assert_eq!(line, None);
+        assert_eq!(seen.len(), 1);
+    }
+
+    #[test]
+    fn watcher_query_failure_keeps_registration_and_stays_bounded() {
+        // A transient live-query failure never evicts a healthy owner; the
+        // first failure emits one bounded record and repeats stay silent.
+        let mut state = WatcherState {
+            registered: Some(":watcher".to_owned()),
+            last_failure_line: None,
+        };
+        let line = note_watcher_query_failure(&mut state);
+        assert_eq!(line, Some(watcher_query_failed_line()));
+        assert_eq!(state.registered, Some(":watcher".to_owned()));
+        assert_eq!(note_watcher_query_failure(&mut state), None);
+
+        // Recovery (a confirmed registration) re-arms failure logging.
+        let line = handle_watcher_owner_change(&mut state, Some(":other".to_owned()), |_| Ok(()));
+        assert_eq!(line, Some(watcher_registered_line()));
+        let line = note_watcher_query_failure(&mut state);
+        assert_eq!(line, Some(watcher_query_failed_line()));
+    }
+
+    #[test]
+    fn watcher_lines_are_bounded_without_identity() {
+        assert_eq!(
+            watcher_registered_line(),
+            "plasma-auto-tiler:route-diag component=tray-endpoint stage=watcher event=register outcome=registered"
+        );
+        assert_eq!(
+            watcher_lost_line(),
+            "plasma-auto-tiler:route-diag component=tray-endpoint stage=watcher event=owner-changed outcome=lost"
+        );
+        assert_eq!(
+            watcher_registration_failed_line(),
+            "plasma-auto-tiler:route-diag component=tray-endpoint stage=watcher event=register outcome=registration-failed"
+        );
+        assert_eq!(
+            watcher_query_failed_line(),
+            "plasma-auto-tiler:route-diag component=tray-endpoint stage=watcher event=query outcome=query-failed"
+        );
+        for line in [
+            watcher_registered_line(),
+            watcher_lost_line(),
+            watcher_registration_failed_line(),
+            watcher_query_failed_line(),
+        ] {
+            assert!(!line.contains(":watcher"));
+            assert!(!line.contains('\n'));
+        }
+    }
+
+    #[test]
+    fn watcher_shared_lock_serializes_concurrent_polls_to_one_registration() {
+        // Watchdog tick and signal path share one mutex: concurrent polls
+        // with the same live owner register exactly once; the rest observe
+        // the confirmed owner idempotently instead of re-registering (the
+        // pre-fix watchdog queried outside the lock and could store stale
+        // owners or duplicate registrations).
+        use std::sync::atomic::AtomicUsize;
+
+        let state = Arc::new(std::sync::Mutex::new(WatcherState::default()));
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let barrier = Arc::new(Barrier::new(4));
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let state = Arc::clone(&state);
+            let attempts = Arc::clone(&attempts);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                let mut guard = state.lock().expect("watcher state mutex poisoned");
+                poll_watcher_once(
+                    &mut guard,
+                    || Ok(Some(":watcher".to_owned())),
+                    |_| {
+                        attempts.fetch_add(1, Ordering::Relaxed);
+                        Ok(())
+                    },
+                )
+            }));
+        }
+        let mut lines = Vec::new();
+        for handle in handles {
+            lines.push(handle.join().expect("poll thread panicked"));
+        }
+        assert_eq!(attempts.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            state
+                .lock()
+                .expect("watcher state mutex poisoned")
+                .registered,
+            Some(":watcher".to_owned())
+        );
+        assert_eq!(
+            lines.iter().filter(|line| line.is_some()).count(),
+            1,
+            "exactly one transition record, no per-thread spam"
+        );
+    }
+
+    #[test]
+    fn poisoned_watcher_lock_recovers_and_registers_on_next_poll() {
+        let state = std::sync::Mutex::new(WatcherState::default());
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = state.lock().unwrap();
+            panic!("inject watcher poison");
+        });
+        let line = poll_watcher_once(
+            &mut super::lock_watcher_state(&state),
+            || Ok(Some(":watcher".to_owned())),
+            |_| Ok(()),
+        );
+        assert_eq!(line, Some(watcher_registered_line()));
+        assert!(!state.is_poisoned());
+        assert_eq!(
+            state.lock().unwrap().registered.as_deref(),
+            Some(":watcher")
+        );
     }
 
     #[test]

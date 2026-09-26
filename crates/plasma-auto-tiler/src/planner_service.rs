@@ -84,7 +84,7 @@ pub fn planner_trace_enabled() -> bool {
 }
 
 /// Bounded terminal summary for an evaluation failure that produces no
-/// reply (for example a poisoned planner lock surfacing as `Unavailable`).
+/// reply (for example an oversize reply surfacing as `Unavailable`).
 /// Pure over the request string so the `describe_plan` error branch stays a
 /// thin drop-then-emit sequence (lock released before logging, exactly like
 /// the success path) and the redaction behavior is unit-testable.
@@ -147,17 +147,27 @@ impl PlannerEndpoint {
 
     /// Planning route. Delegates to the authoritative
     /// live-tree [`tiler_protocol::planner_protocol::Planner`] held across calls
-    /// (per-domain committed sessions, single discard-and-rebuild recovery);
-    /// application-level rejections arrive as `Ok` JSON so fresh observations
-    /// recover. Only an oversize reply or a poisoned planner lock fails
-    /// closed as `Unavailable`.
+    /// (per-domain committed sessions, single discard-and-rebuild
+    /// recovery); application-level rejections arrive as `Ok` JSON so fresh
+    /// observations recover. Only an oversize reply fails closed as
+    /// `Unavailable`. A poisoned planner lock is replaced with fresh state
+    /// under a bounded redacted fault log, and the current complete request
+    /// then evaluates against that fresh state without claiming the old
+    /// topology survived.
     fn evaluate_plan_request(&self, request: &str) -> Result<String, PlannerError> {
         let reply = match self.planner.lock() {
             Ok(mut planner) => planner.evaluate(request),
-            Err(_) => {
-                return Err(PlannerError::Unavailable(
-                    "planner state is unavailable".to_owned(),
-                ));
+            Err(poison) => {
+                let reply = {
+                    let mut planner = poison.into_inner();
+                    *planner = tiler_protocol::planner_protocol::Planner::new();
+                    planner.evaluate(request)
+                };
+                self.planner.clear_poison();
+                eprintln!(
+                    "plasma-auto-tiler:planner-fault kind=poisoned-lock detail=replaced-with-fresh"
+                );
+                reply
             }
         };
         if reply.len() > PLAN_MAX_REPLY {
@@ -647,6 +657,40 @@ mod tests {
     }
 
     #[test]
+    fn poisoned_planner_is_replaced_and_next_request_converges() {
+        let endpoint = PlannerEndpoint::new();
+        let planner = Arc::clone(&endpoint.planner);
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = planner.lock().unwrap();
+            panic!("inject planner poison");
+        }));
+        assert!(poisoned.is_err());
+        assert!(endpoint.planner.is_poisoned());
+        let good = plan_request_for(
+            "plan-poison-recover-1",
+            "win-1",
+            &["win-1"],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let reply = endpoint
+            .evaluate_plan_request(&good)
+            .expect("poisoned planner recovers on next complete request");
+        assert!(reply.len() <= PLAN_MAX_REPLY);
+        let value: serde_json::Value =
+            serde_json::from_str(&reply).expect("recovered plan is JSON");
+        assert_eq!(value["outcome"], "planned");
+        let geometry = value["desired_geometry"]
+            .as_array()
+            .expect("full target geometries");
+        assert_eq!(geometry.len(), 1);
+        assert_eq!(geometry[0]["window"], "win-1");
+        assert!(
+            !endpoint.planner.is_poisoned(),
+            "poisoned lock is replaced with fresh state"
+        );
+    }
+
+    #[test]
     fn planner_trace_is_default_off_and_opt_in_by_single_env() {
         // Default-off gate for the opt-in structural shape line. Single test
         // touches the process env var to avoid parallel-test races.
@@ -676,8 +720,8 @@ mod tests {
     fn error_egress_summary_is_bounded_without_echo() {
         // The failure branch emits a redacted terminal summary with no reply
         // to summarize: unparseable sides degrade to placeholders and no
-        // caller-controlled bytes escape, so poisoned-lock and oversize
-        // terminals stay attributable without echo.
+        // caller-controlled bytes escape, so oversize terminals stay
+        // attributable without echo.
         let line = super::plan_egress_for_error("{\"v\":1}");
         assert_eq!(
             line,
