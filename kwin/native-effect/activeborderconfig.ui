@@ -163,20 +163,6 @@
            </property>
           </widget>
          </item>
-         <item>
-          <widget class="QPushButton" name="shortcutFinishApplyButton">
-           <property name="text">
-            <string>Finish Apply</string>
-           </property>
-          </widget>
-         </item>
-          <item>
-           <widget class="QPushButton" name="shortcutRestoreButton">
-            <property name="text">
-             <string>Restore</string>
-            </property>
-           </widget>
-          </item>
           <item>
            <widget class="QPushButton" name="shortcutForceApplyButton">
             <property name="text">
@@ -196,7 +182,7 @@
         <item>
          <widget class="QLabel" name="shortcutDescription">
           <property name="text">
-           <string>Focus-right takes Meta+L; Apply moves Lock Session to Meta+Esc. Settings Apply never changes shortcuts; use these buttons with confirmation. Finish Apply and Restore appear only for an interrupted apply. Force Apply and Cancel appear only for a confirmed clear-row mismatch preview.</string>
+            <string>Focus-right takes Meta+L; Apply moves Lock Session to Meta+Esc. Settings Apply never changes shortcuts; use these buttons with confirmation. Force Apply appears only for a pending preview that lists every holder with the exact keys removed and kept. Cancel discards the preview without writes. Revert restores KDE defaults for cleared bindings.</string>
           </property>
          <property name="wordWrap">
           <bool>true</bool>

@@ -29,13 +29,11 @@ public:
     static bool isEffectReconfigureFailed(const QDBusMessage &reply);
     virtual bool requestEffectReconfigure();
 
-    void setShortcutStores(ShortcutStore *store, JournalStore *journal, JournalStore *legacyJournal = nullptr);
+    void setShortcutStores(ShortcutStore *store, ClearedActionsStore *cleared);
     void setShortcutConfirmHandler(std::function<bool(const QString &, const QString &)> handler);
     QString shortcutStatusText() const;
     QString shortcutErrorText() const;
     QString shortcutForcePreviewText() const;
-    bool isShortcutFinishApplyVisible() const;
-    bool isShortcutRestoreVisible() const;
     bool isShortcutForceApplyVisible() const;
     bool isShortcutForceCancelVisible() const;
     void refreshShortcutState();
@@ -46,9 +44,7 @@ public Q_SLOTS:
     void save() override;
     void defaults() override;
     void requestShortcutApply();
-    void requestShortcutFinishApply();
     void requestShortcutRevert();
-    void requestShortcutRestore();
     void requestShortcutForceApply();
     void requestShortcutForceCancel();
 
@@ -57,16 +53,15 @@ private:
     void runShortcutRevert(const char *operation);
     void clearForcePreview();
     static QString buildForcePreviewText(const ShortcutForcePreview &preview);
-    void updateShortcutPresentation(bool interrupted);
+    void updateShortcutPresentation();
 
     ::Ui::ActiveBorderConfig m_ui;
     bool m_effectReconfigurePending = false;
     ShortcutStore *m_shortcutStore = nullptr;
-    JournalStore *m_shortcutJournal = nullptr;
-    // Single explicit legacy journal source. Read-only until a confirmed
-    // mutation operation migrates it; never written by open, refresh,
-    // preview, or cancel.
-    JournalStore *m_shortcutLegacyJournal = nullptr;
+    // Durable cleared-ID list in the project-owned config. Never
+    // read/written/removed except via confirmed Force
+    // (union-persist before clearing) and Revert (consume then empty).
+    ClearedActionsStore *m_clearedStore = nullptr;
     bool m_ownsShortcutStores = false;
     std::function<bool(const QString &, const QString &)> m_shortcutConfirm;
     QString m_shortcutStatus;

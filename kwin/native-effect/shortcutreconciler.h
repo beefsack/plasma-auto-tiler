@@ -105,6 +105,21 @@ inline const QString &shortcutAvailableMethod()
     static const QString value = QStringLiteral("globalShortcutAvailable");
     return value;
 }
+inline const QString &shortcutDefaultKeysMethod()
+{
+    static const QString value = QStringLiteral("defaultShortcutKeys");
+    return value;
+}
+inline const QString &shortcutSetForeignKeysMethod()
+{
+    static const QString value = QStringLiteral("setForeignShortcutKeys");
+    return value;
+}
+inline const QString &shortcutActiveKeysMethod()
+{
+    static const QString value = QStringLiteral("shortcutKeys");
+    return value;
+}
 // User-authorized explicit displacement (auditable): System Monitor `_launch`
 // may hold Meta+Esc; Apply may displace it onto Lock Session without
 // rebinding System Monitor itself. No other foreign occupier is authorized.
@@ -158,40 +173,6 @@ inline const QString &shortcutMonocleComponent() { static const QString v = QStr
 inline const QString &shortcutMonocleAction() { static const QString v = QStringLiteral("KrohnkiteMonocleLayout"); return v; }
 inline const QString &shortcutResolutionRelocate() { static const QString v = QStringLiteral("relocate"); return v; }
 inline const QString &shortcutResolutionClear() { static const QString v = QStringLiteral("clear"); return v; }
-inline const QString &shortcutJournalSchema()
-{
-    static const QString value = QStringLiteral("shortcut-override-v3");
-    return value;
-}
-// Persisted predecessor schema: v2 journals carry only the original three
-// rows. They remain loadable, resumable, and revertible for those rows;
-// apply() upgrades a v2 journal to v3 from live state before touching the
-// new rows. Never assumed to contain rows 3-4.
-inline const QString &shortcutJournalSchemaV2()
-{
-    static const QString value = QStringLiteral("shortcut-override-v2");
-    return value;
-}
-inline const QString &shortcutJournalGroup()
-{
-    static const QString value = QStringLiteral("ShortcutOverride");
-    return value;
-}
-inline const QString &shortcutJournalPhasePending()
-{
-    static const QString value = QStringLiteral("apply-pending");
-    return value;
-}
-inline const QString &shortcutJournalPhaseFocusApplied()
-{
-    static const QString value = QStringLiteral("focus-applied");
-    return value;
-}
-inline const QString &shortcutJournalPhaseComplete()
-{
-    static const QString value = QStringLiteral("apply-complete");
-    return value;
-}
 
 struct ShortcutTuple
 {
@@ -200,39 +181,6 @@ struct ShortcutTuple
     QString componentFriendly;
     QString friendly;
     QList<int> active;
-};
-
-struct ShortcutJournalEntry
-{
-    QString component;
-    QString action;
-    QList<int> pre;
-    QList<int> post;
-};
-
-struct ShortcutJournal
-{
-    QString schema;
-    QString phase;
-    QString owner;
-    uint uid = 0;
-    ShortcutJournalEntry focus;
-    ShortcutJournalEntry lock;
-    ShortcutJournalEntry resizeUp;
-    ShortcutJournalEntry switchNext;
-    ShortcutJournalEntry resizeRight;
-    ShortcutJournalEntry switchLast;
-    // Rows 3-4 (v3 only): empty identity/keys in a v2 journal and never
-    // read there. v3 journals always carry all five rows.
-    ShortcutJournalEntry floatToggle;
-    ShortcutJournalEntry gridView;
-    ShortcutJournalEntry maximizeToggle;
-    ShortcutJournalEntry monocle;
-    QString row0Kind;
-    QString row1Kind;
-    QString row2Kind;
-    QString row3Kind;
-    QString row4Kind;
 };
 
 struct ShortcutConflictRow
@@ -318,11 +266,15 @@ struct ShortcutApplyResult
     int writes = 0;
 };
 
-// Explicit confirmed override for compiled clear-row foreign mismatches
-// only (rows 1-4 foreign clear targets). Produced by previewForceApply and
-// consumed by applyForced; never constructed from arbitrary UI input. The
-// confirmed actuals are system-observed live baselines adopted as journal
-// preimages so Revert restores them.
+// Explicit confirmed override for holders of project-required chords.
+// Produced by previewForceApply and consumed by applyForced; never
+// constructed from arbitrary UI input. One row per cleared holder:
+//   actual is the full live active list observed for the holder,
+//   expectedPre carries precisely the conflicting required subset being
+//     removed (actual intersected with the project-required chords),
+//   post carries the remainder kept on the holder (actual minus the
+//     conflicting subset, order-preserving; possibly empty).
+// Revert does not consume preimages: it restores defaults.
 struct ShortcutForceMismatch
 {
     QString component;
@@ -330,35 +282,25 @@ struct ShortcutForceMismatch
     QList<int> expectedPre;
     QList<int> actual;
     QList<int> post;
-};
-
-enum class ShortcutForceContext
-{
-    Fresh,
-    V2Upgrade
+    // Cosmetic actionId parts observed for the holder (empty allowed, e.g.
+    // for .desktop-only holders). Transient preview labels only: never
+    // persisted to the cleared-ID list; never part of identity.
+    QString componentFriendly;
+    QString friendly;
 };
 
 struct ShortcutForcePreview
 {
     bool forceable = false;
     QString error;
-    ShortcutForceContext context = ShortcutForceContext::Fresh;
     QList<ShortcutForceMismatch> mismatches;
-    // Upgrade-context snapshot: the persisted v2 old-row image the preview
-    // was taken against, for stale revalidation before writes.
-    ShortcutJournalEntry focusPre;
-    ShortcutJournalEntry lockPre;
-    ShortcutJournalEntry resizeUpPre;
-    ShortcutJournalEntry switchNextPre;
-    ShortcutJournalEntry resizeRightPre;
-    ShortcutJournalEntry switchLastPre;
-    QString journalSchema;
-    QString journalPhase;
-    QString journalOwner;
     // Full bounded preflight image. Force accepts only this exact live image,
-    // not merely the rows that initially needed adoption.
+    // not merely the rows that initially needed clearing.
     QString owner;
     uint uid = 0;
+    // Project/lock actives at preview time (focus, lock, resize-up,
+    // resize-right, float, maximize, in table order). Any drift fails the
+    // confirmation as stale with zero writes.
     QList<QList<int>> liveImages;
 };
 
@@ -371,11 +313,10 @@ struct ShortcutForceApplyResult
 
 // Bounded structured diagnostics through QLoggingCategory
 // "plasmaautotiler.shortcut" (visible in the kcmshell6/System Settings
-// journal). Only safe fields are ever logged: operation, stage, outcome,
-// allowlisted component/action identity, key images, schema, phase, and the
-// journal selector (canonical/legacy, never full paths). Logging never
-// affects behavior: the sink is void, exceptions are swallowed, and no
-// caller branches on logging.
+// journald log). Only safe fields are ever logged: operation, stage,
+// outcome, allowlisted component/action identity, and key images. Logging
+// never affects behavior: the sink is void, exceptions are swallowed, and
+// no caller branches on logging.
 using ShortcutLogSink = std::function<void(QtMsgType, const QString &)>;
 class ShortcutDiag
 {
@@ -391,8 +332,6 @@ struct ShortcutRevertResult
     bool ok = false;
     QString error;
     int writes = 0;
-    QStringList untouched;
-    bool journalRemoved = false;
 };
 
 class ShortcutStore
@@ -409,28 +348,18 @@ public:
     virtual bool shortcutAvailable(int key, const QString &component, bool *available, QString *error) = 0;
     virtual bool writeKeys(const QString &component, const QString &action, const QString &componentFriendly,
                            const QString &friendly, const QList<int> &keys, QList<int> *confirmed, QString *error) = 0;
+    // Bounded native TRANSPORT seam: exact KGlobalAccel
+    // defaultShortcutKeys(as)->a(ai) read and setForeignShortcutKeys
+    // (as,a(ai))->void write against the pinned org.kde.KGlobalAccel owner.
+    // Policy/UI paths use writeKeys for project rows; these methods
+    // establish the injectable seam for foreign defaults/clears.
+    virtual bool defaultShortcutKeys(const QString &component, const QString &action,
+                                     const QString &componentFriendly, const QString &friendly,
+                                     QList<int> *defaults, QString *error) = 0;
+    virtual bool setForeignShortcutKeys(const QString &component, const QString &action,
+                                        const QString &componentFriendly, const QString &friendly,
+                                        const QList<int> &keys, QString *error) = 0;
     virtual int writeCount() const = 0;
-};
-
-class JournalStore
-{
-public:
-    virtual ~JournalStore() = default;
-    virtual bool hasJournal() const = 0;
-    virtual bool hasExistingPath() const
-    {
-        return hasJournal();
-    }
-    virtual bool load(ShortcutJournal *journal, QString *error) const = 0;
-    virtual bool persist(const ShortcutJournal &journal, QString *error) = 0;
-    virtual bool remove(QString *error) = 0;
-    // Read-only discovery check. Real file stores distinguish an absent path
-    // from an unsafe existing path before a confirmed migration operation.
-    virtual bool validateDiscovery(QString *error) const
-    {
-        Q_UNUSED(error);
-        return true;
-    }
 };
 
 // Real D-Bus backend using QDBus with the exact observed contract.
@@ -444,6 +373,10 @@ public:
     bool shortcutAvailable(int key, const QString &component, bool *available, QString *error) override;
     bool writeKeys(const QString &component, const QString &action, const QString &componentFriendly,
                    const QString &friendly, const QList<int> &keys, QList<int> *confirmed, QString *error) override;
+    bool defaultShortcutKeys(const QString &component, const QString &action, const QString &componentFriendly,
+                             const QString &friendly, QList<int> *defaults, QString *error) override;
+    bool setForeignShortcutKeys(const QString &component, const QString &action, const QString &componentFriendly,
+                                const QString &friendly, const QList<int> &keys, QString *error) override;
     int writeCount() const override
     {
         return m_writes;
@@ -466,17 +399,52 @@ private:
     QString m_pinnedOwner;
 };
 
-// Real KConfig journal backend rooted at an explicit project-owned file.
-class KConfigFileJournal : public JournalStore
+// Minimal durable Force record: ONLY the component/action IDs Force
+// cleared, in the project-owned config. Union-persisted BEFORE Force
+// clearing so an interrupted Force stays revertible; emptied only after
+// Revert restores every non-project entry. No cosmetic labels are
+// persisted: Revert resolves each ID to its fresh current tuple from
+// readAll to supply the current friendly labels for the 4-field actionId
+// (KGlobalAccel 4-field semantics proven; 2-field daemon behavior
+// unproven, so never assumed). Identity is component/action.
+struct ClearedAction
+{
+    QString component;
+    QString action;
+};
+
+inline bool operator==(const ClearedAction &a, const ClearedAction &b)
+{
+    return a.component == b.component && a.action == b.action;
+}
+
+inline bool clearedActionSameId(const ClearedAction &a, const ClearedAction &b)
+{
+    return a.component == b.component && a.action == b.action;
+}
+
+class ClearedActionsStore
 {
 public:
-    explicit KConfigFileJournal(const QString &filePath);
-    bool hasJournal() const override;
-    bool hasExistingPath() const override;
-    bool load(ShortcutJournal *journal, QString *error) const override;
-    bool persist(const ShortcutJournal &journal, QString *error) override;
-    bool remove(QString *error) override;
-    bool validateDiscovery(QString *error) const override;
+    virtual ~ClearedActionsStore() = default;
+    // Absent config loads as an empty list (no error). Bounded: at most
+    // SHORTCUT_MAX_TUPLES entries, strict component/action identity only.
+    // Only Components+Actions are stored; legacy friendly keys are ignored.
+    virtual bool load(QList<ClearedAction> *actions, QString *error) = 0;
+    // Whole-list replace with write+sync+readback.
+    virtual bool save(const QList<ClearedAction> &actions, QString *error) = 0;
+    // Empty the list after a complete Revert.
+    virtual bool clear(QString *error) = 0;
+};
+
+// Real KConfig backend rooted at an explicit project-owned file.
+class KConfigClearedActions : public ClearedActionsStore
+{
+public:
+    explicit KConfigClearedActions(const QString &filePath);
+    bool load(QList<ClearedAction> *actions, QString *error) override;
+    bool save(const QList<ClearedAction> &actions, QString *error) override;
+    bool clear(QString *error) override;
 
 private:
     QString m_filePath;
@@ -485,27 +453,53 @@ private:
 class ShortcutReconciler
 {
 public:
-    ShortcutReconciler(ShortcutStore *store, JournalStore *journal);
-    // Optional legacy journal source for the single explicit kcmshell6-host
-    // migration. Never owned. Migration runs only at the start of a
-    // confirmed mutation operation (apply, applyForced, revert),
-    // immediately before reconciliation; construction, refresh, and force
-    // preview never migrate and never write config.
-    void setLegacyJournal(JournalStore *legacy);
+    explicit ShortcutReconciler(ShortcutStore *store, ClearedActionsStore *cleared = nullptr);
     ShortcutApplyResult apply();
+    // Revert restores defaults for every non-project ID in the durable
+    // cleared list (project-owned kwin/plasma-auto-tiler-* IDs, including
+    // legacy ones, stay cleared) and empties the list only after all of
+    // them are restored. Each persisted ID is resolved to its fresh
+    // current tuple from readAll to supply the current friendly labels
+    // (empty allowed) for the 4-field actionId; absent or duplicate IDs
+    // fail closed without writing unrelated actions and retain the list
+    // for retry. Empty list is a no-op success.
     ShortcutRevertResult revert();
-    // Read-only force preview: full preflight plus the exact compiled
-    // clear-row foreign mismatches. Never forceable when any store, journal,
-    // ownership, transport, or parsing check fails, when a v3/resumable
-    // journal already governs, or when the only refusals are non-clear-row.
+    // Read-only force preview: every actual holder of a project-required
+    // chord (known, unknown, and legacy project IDs alike), except the
+    // project actions themselves, Lock Session, and the authorized System
+    // Monitor Meta+Esc holder. Never forceable when any store, ownership,
+    // transport, or parsing check fails.
     ShortcutForcePreview previewForceApply();
-    // Confirmed force: revalidates the preview snapshot against fresh live
-    // state (stale snapshots fail closed with zero writes) then applies with
-    // the confirmed actuals adopted as preimages for exactly the confirmed
-    // rows. All other gates stay enforced.
+    // Confirmed force: revalidates the preview snapshot against a fresh live
+    // read (stale snapshots fail closed with zero writes, including zero
+    // cleared-list writes when stale before persist), persists the union of
+    // cleared component/action IDs (no cosmetic labels) to the project
+    // config BEFORE clearing, re-reads each
+    // holder immediately before its foreign setter and aborts when its
+    // active list changed (zero further KGlobalAccel writes), clears only
+    // the conflicting keys from each holder (unrelated keys preserved),
+    // then assigns the project keys and relocates Lock Session. Drift after
+    // persist retains the persisted union (a superset when the drifted
+    // holder was never cleared); a later Revert may therefore restore
+    // defaults for an action Force never cleared.
     ShortcutForceApplyResult applyForced(const ShortcutForcePreview &confirmed);
 
     static bool isAllowlisted(const QString &component, const QString &action);
+    // Current project-owned action (one of the five conflict-table project
+    // rows). Never cleared by Force, never restored by Revert.
+    static bool isProjectAction(const QString &component, const QString &action);
+    // Any own-prefix action: kwin/plasma-auto-tiler-*, covering the current
+    // project rows and legacy IDs (e.g. plasma-auto-tiler-float-toggle,
+    // plasma-auto-tiler-toggle). Force may clear them; Revert leaves them
+    // cleared.
+    static bool isProjectOwned(const QString &component, const QString &action);
+    static bool isLockAction(const QString &component, const QString &action);
+    // Required-chord subset of a live active list (the keys Force removes),
+    // order-preserving. Empty means the holder claims no required chord.
+    static QList<int> conflictingKeys(const QList<int> &active);
+    // Remainder kept on a cleared holder (active minus required chords),
+    // order-preserving.
+    static QList<int> remainderAfterClear(const QList<int> &active);
     static QList<int> focusPostKeys();
     static QList<int> lockPostFor(const QList<int> &lockPre);
     static QList<int> resizeUpPostKeys();
@@ -558,9 +552,20 @@ public:
     // decoder: each group must be exactly four bounded slots; the outer
     // count must not exceed SHORTCUT_MAX_KEYS_PER_TUPLE. Empty accepted.
     static bool decodeSetterReplySlotSets(const QList<QList<int>> &slotGroups, QSet<QKeySequence> *out);
-    static bool journalPathSafe(const QString &path, QString *error);
-    static bool journalRolesValid(const ShortcutJournal &journal);
-    static bool journalPostsValid(const ShortcutJournal &journal);
+    // Bounded native TRANSPORT pure seams (Delivery 2 Unit 1, no live bus):
+    // exact defaultShortcutKeys(as)->a(ai) reply decode into primitive
+    // defaults (flattened distinct non-zero slots, sorted for determinism),
+    // exact setForeignShortcutKeys(as,a(ai))->void reply validation (empty
+    // void reply only), and order-insensitive set comparison for the void
+    // setter fresh readback. Ordered type then signature then arity.
+    static bool parseDefaultShortcutKeysReply(QDBusMessage::MessageType replyType, const QString &replySignature,
+                                              const QList<QVariant> &replyArgs, QList<int> *defaults,
+                                              QString *error);
+    static bool parseSetForeignShortcutKeysReply(QDBusMessage::MessageType replyType,
+                                                 const QString &replySignature, const QList<QVariant> &replyArgs,
+                                                 QString *error);
+    static bool foreignReadbackMatches(const QList<int> &expected, const QList<int> &actual);
+    static bool clearedActionsPathSafe(const QString &path, QString *error);
     // Defect B keyed conflict detection (authoritative, not enumeration).
     static QList<int> relevantConflictKeys();
     static QString keyDisplayName(int key);
@@ -617,76 +622,86 @@ public:
                                                   const QString &replySignature, const QList<QVariant> &replyArgs,
                                                   bool *available, QString *error);
     // Calls shortcutsByKey + shortcutAvailable for every relevant key.
-    // Skips allowlisted holders and the explicit System Monitor Meta+Esc
-    // displacement; any other holder fails closed with a "claimed by"
-    // error before any journal/write. Availability consistency fails
-    // closed in both directions: holders empty must report available,
-    // holders non-empty must report unavailable (whole-key semantics).
+    // Skips only the project actions, Lock Session, and the explicit
+    // System Monitor Meta+Esc displacement (shared with the backend
+    // holder scan); any other holder, known or unknown, fails closed
+    // with a "claimed by" error before any write. Availability
+    // consistency fails closed in both directions: holders empty must
+    // report available, holders non-empty must report unavailable
+    // (whole-key semantics).
     static KeyedOccupancyResult checkKeyedForeignOccupancyDetailed(ShortcutStore *store);
     static bool checkKeyedForeignOccupancy(ShortcutStore *store, QString *error);
+    // Shared occupancy exemption behind the status check and the backend
+    // holder scan: project actions own their chords, Lock Session owns
+    // its chord, and the explicit System Monitor Meta+Esc holder is
+    // user-authorized. Every other holder, including the compiled
+    // foreign rows (Grid View, Switcher, Monocle), is a conflict.
+    static bool isHolderExempt(const QString &component, const QString &action, int key);
 
 private:
     ShortcutStore *m_store = nullptr;
-    JournalStore *m_journal = nullptr;
-    JournalStore *m_legacyJournal = nullptr;
+    // Durable cleared-ID list in the project config. Not owned.
+    // Force persists the union here before clearing; Revert consumes it.
+    ClearedActionsStore *m_cleared = nullptr;
 
-    struct LiveSnapshot
+    // One observed holder row needing clearance.
+    struct ClearRow
+    {
+        QString component;
+        QString action;
+        QString componentFriendly;
+        QString friendly;
+        QList<int> active;
+        QList<int> removals;
+        QList<int> remainder;
+    };
+    // A non-exempt holder listed for a required key without any required
+    // key in its active list (e.g. a .desktop-declared default). It claims
+    // the chord but offers nothing Force can clear: Apply refuses and Force
+    // is not available until it is unbound manually.
+    struct Blocker
+    {
+        QString component;
+        QString action;
+        int key = 0;
+    };
+    struct HolderSnapshot
     {
         QString owner;
         uint uid = 0;
         ShortcutTuple focus;
         ShortcutTuple lock;
         ShortcutTuple resizeUp;
-        ShortcutTuple switchNext;
         ShortcutTuple resizeRight;
-        ShortcutTuple switchLast;
         ShortcutTuple floatToggle;
-        ShortcutTuple gridView;
         ShortcutTuple maximizeToggle;
-        ShortcutTuple monocle;
+        QList<ClearRow> rows;
+        QList<Blocker> blocked;
     };
-    // Shared read prologue for apply and force preview: setter contract,
-    // owner, tuple enumeration with allowlist resolution, key bounds,
-    // unrelated structural validation, and keyed occupancy. Zero writes.
-    bool collectLiveSnapshot(LiveSnapshot *snapshot, QString *error);
-    // Deferred legacy migration through the store seam (no paths, no scans):
-    // canonical present wins, legacy absent is a no-op, otherwise the exact
-    // legacy journal is copied (undo history preserved) after load-validity
-    // and UID checks. Any failure fails closed with no canonical write.
-    // Called only by confirmed mutation entry points, never by preview.
-    bool ensureLegacyMigrated(QString *error);
-    // Read-only effective journal for previews: canonical when present, else
-    // the legacy content without migrating. Zero writes on every path.
-    bool loadEffectiveJournal(ShortcutJournal *journal, bool *haveJournal, QString *error);
-    static bool isForcedClearRow(const ShortcutForcePreview *forced, const QString &component, const QString &action,
-                                 const QList<int> &live);
-    ShortcutApplyResult applyImpl(const ShortcutForcePreview *forced);
-    ShortcutForcePreview computeForcePreview();
+    // Shared fresh read for apply and force preview: setter contract, owner,
+    // project/lock tuple resolution with key bounds, and the per-required-key
+    // holder scan. Zero writes. Fails closed on any transport, parsing,
+    // consistency, or lock-precondition failure.
+    bool collectHolderSnapshot(HolderSnapshot *snapshot, QString *error);
+    // Assigns project posts and relocates Lock Session from a fresh read.
+    // Used by both apply (no holders present) and the second half of force
+    // (holders just cleared). Owner-pinned with confirmed replies.
+    ShortcutApplyResult writeProjectKeys(const char *operation);
+    // Fresh preview builder behind previewForceApply and the force
+    // revalidation inside applyForced.
+    ShortcutForcePreview buildForcePreview();
+    static bool forceMismatchFromRow(const ClearRow &row, ShortcutForceMismatch *out);
 };
 
 // Live backend factories for KCM integration. The KCM calls only these and
 // the allowlisted reconciler API; no other identities are exposed here.
 ShortcutStore *createLiveShortcutStore();
-JournalStore *createLiveShortcutJournal(const QString &filePath);
-// Host-independent canonical journal path (GenericConfigLocation,
-// project-owned) so one journal is shared by kcmshell6 and System Settings hosts.
-QString defaultShortcutJournalPath();
-// Single explicit legacy location: the known kcmshell6-host journal. The
-// only migration source; never a scan.
-QString legacyShortcutJournalPath();
+ClearedActionsStore *createLiveClearedActionsStore(const QString &filePath);
+// Host-independent project config path (GenericConfigLocation,
+// project-owned) for the durable cleared-ID list.
+QString defaultClearedActionsPath();
 
-struct JournalMigrationResult
-{
-    bool ok = false;
-    bool migrated = false;
-    QString error;
-};
-// Explicit canonical/explicit-legacy migration (no scans): canonical present
-// wins and legacy is ignored; canonical absent with legacy present copies the
-// exact legacy journal (undo history preserved) after safety/validity
-// checks; absent/absent is a no-op. Unsafe, malformed, foreign-UID, or
-// otherwise unloadable legacy fails closed with no canonical write.
-JournalMigrationResult migrateLegacyShortcutJournal(const QString &canonicalPath, const QString &legacyPath);
+
 
 } // namespace KWin
 Q_DECLARE_METATYPE(KWin::ShortcutMatchType)

@@ -681,70 +681,82 @@ the corresponding item ships; each such entry names its replacement.
 - Approved 2026-09-21: clear Grid View's `Meta+G` and Krohnkite Monocle's
   `Meta+M` through reversible Apply/Revert overrides. The user grants standing
   authorization, until revoked, to clear other exact project-required shortcut
-  conflicts. Each action must have an exact identified conflict and recorded
-  preimage for restoration. This does not authorize relocation chords, broad
+  conflicts. The "recorded preimage" and "does not authorize relocation
+  chords" limitations are superseded by the current Force/Revert contract
+  below (durable cleared-ID list; Lock Session `Meta+L` to `Meta+Esc`
+  relocation). This still does not authorize broad
   shortcut deletion, unverified actions, changes to ownership/readback
   requirements, or startup mutation.
 - The initial release supports standard US keyboards and preserves hardcoded
   shifted aliases. Layout detection, omission, opt-in configuration, migration,
   and KGlobalAccel reconciliation are deferred.
 - Non-conflicting project shortcuts register by default. Conflicting
-  Plasma-global shortcuts change only through explicit KCM Apply and Revert.
-  The allowlist is a closed compiled-in ordered table: each row specifies the
-  project component/action and chord, foreign component/action, expected foreign
-  preimage, and a `relocate` or `clear` resolution. No user-supplied or
-  arbitrary row is accepted. Recovery is explicit in the KCM, Revert restores
-  only bindings still owned by that override, unexpected table preimages or
-  target conflicts are refused before any mutation, and installation/startup
-  never mutate global shortcuts. The sole approved target-occupant exception
-  is row 1's `Meta+Esc`: System Monitor
-  `org.kde.plasma.systemmonitor` / `_launch` is deliberately displaced when
-  Lock Session relocates there. It is recorded in row 1's compiled-in target
-  exception, is not writable by the override, and no other foreign holder is
-  approved.
-- Table row 1 is `kwin/plasma-auto-tiler-focus-right` taking `Meta+L` from
-  `ksmserver/Lock Session` by relocating `Meta+L` to `Meta+Esc`; other lock keys
-  retain order, deliberately taking over System Monitor `_launch`'s declared
-  `Meta+Esc` default. Row 2 is
-  `kwin/plasma-auto-tiler-resize-outwards-up` taking `Meta+Alt+K` by clearing
-  `KDE Keyboard Layout Switcher/Switch to Next Keyboard Layout` from exact
-  preimage `Meta+Alt+K`. Row 3 is
-  `kwin/plasma-auto-tiler-resize-outwards-right` taking `Meta+Alt+L` by clearing
-  `KDE Keyboard Layout Switcher/Switch to Last-Used Keyboard Layout` from exact
-  preimage `Meta+Alt+L`.
-- Table row 4 is `kwin/plasma-auto-tiler-toggle-float` taking `Meta+G` by
-  clearing `kwin/Grid View` from exact preimage `Meta+G`. Row 5 is
-  `kwin/plasma-auto-tiler-toggle-maximize` taking `Meta+M` by clearing
-  `kwin/KrohnkiteMonocleLayout` from exact preimage `Meta+M`. New five-row
-  journals record all preimages; existing three-row journals remain strictly
-  resumable and revertible without claiming the two new rows.
-- The private project journal records each resolution kind and exact prior keys.
-- The project journal is host-independent at
-  `~/.config/plasma-auto-tiler/shortcut-override-journalrc`, shared by every
-  KCM host. The single explicit legacy source is the known kcmshell6-host
-  journal at `~/.config/kcmshell6/shortcut-override-journalrc`; it migrates by
-   exact copy (undo history preserved) after safety and validity checks, and
-   fails closed when unsafe, malformed, or foreign. A safe canonical journal
-   wins over legacy; directory scans are never
-  used. Migration runs only after an already-confirmed mutation operation
-  (Apply, Force Apply, Finish Apply, Revert, Restore), immediately before
-  reconciliation; opening, refreshing, previewing, or cancelling never
-  writes config. A clear row already at its postimage (empty) is normal idempotent
-  state and applies without force; any other unexpected value still refuses.
-- Confirmed Force Apply is approved only for exact compiled clear-row foreign
-  mismatches: preview lists each row with its found value, proposed clear, and
-  paired project assignment/chord from the compiled table. Force revalidates
-  the complete confirmed managed live image, journal image, and owner before
-  any write (stale snapshots abort with zero writes), adopts exactly the
-  confirmed actuals as journal preimages for those rows only, and Revert
-  restores the adopted values. Force never accepts arbitrary actions or keys
-  and never bypasses store, journal, ownership, or transport/parsing checks.
+  Plasma-global shortcuts change only through explicit KCM Apply, Force Apply,
+  and Revert. Installation/startup never mutate global shortcuts. Ordinary
+  settings Save never mutates shortcuts. The five project-required chords are
+  `Meta+L` (focus-right, relocating `ksmserver/Lock Session` `Meta+L` to
+  `Meta+Esc`), `Meta+Alt+K`, `Meta+Alt+L`, `Meta+G`, and `Meta+M`. The sole
+  approved target-occupant exception is `Meta+Esc`: System Monitor
+  `org.kde.plasma-systemmonitor.desktop` / `_launch` may hold it and is
+  displaced without rebinding System Monitor itself; it is never writable by
+  the override. No other foreign occupier is authorized, and no per-component
+  `cleanUp()` path exists.
+- Current Force/Revert contract, Orchestrator decision 2026-09-26 applying the
+  user's 2026-09-26 Delivery 2 direction (see
+  `docs/changes/multi-output-failures.md`): Force may clear ANY holder of a
+  project-required chord after listing and confirmation, not only exact
+  compiled foreign rows. The preview lists every active holder with its found
+  keys, the exact required keys removed, and the unrelated keys kept,
+  including unknown and legacy project-owned (`kwin/plasma-auto-tiler-*`)
+  IDs; project actions, Lock Session, and the authorized System Monitor
+  `Meta+Esc` holder are exempt. A holder claiming a chord with no required key
+  in its active list (e.g. a `.desktop`-declared default) blocks Force until
+  unbound manually. Confirmed Force revalidates owner, project/lock live
+  images, and the full holder snapshot against fresh state before persist;
+  stale confirmations there fail closed with zero writes, including zero
+  cleared-list writes. After persist, each holder is re-read immediately
+  before its foreign setter and aborts on active drift with zero further
+  KGlobalAccel writes; the persisted union is retained as an
+  interruption-safe superset, so Revert may restore an action never cleared.
+  Clearing removes only the required keys and preserves unrelated keys.
+  Minimal durable cleared component/action ID list (IDs only, no cosmetic
+  labels; Components+Actions in config; union by ID) at
+  `~/.config/plasma-auto-tiler/shortcut-clearedrc` is union-persisted
+  BEFORE clearing and emptied only after successful Revert, so an
+  interrupted Force stays revertible. Force preview transient labels are
+  never persisted. Stateless Revert was rejected: it would alter
+  never-cleared actions, activate default-only holders, and miss custom
+  holders (Simplicity/Resilience: smallest state that is actually correct).
+- Revert restores KDE defaults for every non-project ID in the cleared
+  list via `defaultShortcutKeys`/`setForeignShortcutKeys`: each persisted
+  ID is resolved to its fresh current tuple from `readAll` to supply the
+  current friendly labels (empty allowed) for the 4-field actionId (no
+  2-field daemon assumption); the full default key set replaces the
+  active set, so custom cleared bindings are lost, as the user accepted
+  2026-09-26. Project-owned IDs (`kwin/plasma-auto-tiler-*`, current and
+  legacy) stay cleared. Absent or duplicate IDs fail closed without
+  writing unrelated actions and retain the list for retry; other partial
+  Revert failure likewise retains the list for a later resume; an empty
+  list is a no-op success. Existing journal files
+  (`shortcut-override-journalrc`, including the kcmshell6 legacy path) are
+  ignored and untouched; no migration, Finish Apply, or Restore path
+  remains.
+- SUPERSEDED 2026-09-26, historical only: the closed compiled-in allowlist as
+  the only conflict source, exact foreign preimages, the private project
+  journal (host-independent path, kcmshell6 legacy migration, three/five-row
+  resumability, Finish/Restore recovery), Force limited to exact compiled
+  clear-row mismatches with preimage adoption, Revert restoring adopted
+  preimages or only still-owned bindings, and the 2026-09-21 "does not
+  authorize relocation chords" limitation (Lock Session `Meta+L` to `Meta+Esc`
+  relocation is current behavior above). Historical attribution preserved;
+  none of the superseded machinery is current.
 - Shortcut operations emit bounded structured diagnostics on
   `plasmaautotiler.shortcut` (operation, stage, outcome, allowlisted
-  identity, key images, schema, phase, journal selector only). Query with
+  identity, key images, cleared count/writes only; foreign occupants
+  redacted). Query with
    `journalctl --user --no-pager -g "plasmaautotiler.shortcut op="`.
    Operational warnings and info are enabled by default; the logging rule adds
-   debug-only records. Logging never affects behavior.
+  debug-only records. Logging never affects behavior.
 
 ## Planner Unauthorized Reply Correlation
 

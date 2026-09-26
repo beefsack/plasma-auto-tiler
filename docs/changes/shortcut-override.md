@@ -2,382 +2,99 @@
 
 ## Goal
 
-Deliver the approved explicit KCM shortcut override table for the MVP. Explicit
-KCM Apply alone resolves only the closed compiled-in rows.
+Explicit KCM shortcut override for the MVP under the current contract in
+[decisions](../decisions.md#shortcuts): Apply assigns the five
+project-required chords; confirmed Force clears any holder of those chords;
+Revert restores KDE defaults for cleared non-project actions.
 
 ## Scope And Non-Goals
 
-- Explicit KCM Apply performs the override; explicit KCM Revert recovers it.
-  Installation and startup never mutate global shortcuts.
-- Non-conflicting project shortcuts register by default. The closed table is
-  the only conflict allowlist and carries each project identity/chord, foreign
-  identity, expected foreign preimage, and either `relocate` or `clear`.
-- Layout detection, omission, opt-in configuration, migration, KGlobalAccel
-  reconciliation, and complete keyboard-layout support remain deferred to the
-  parked post-release record in [Shortcut Scope](shortcuts.md).
-- This record covers the override contract only, not COSMIC movement, pointer
-  resize, runtime, border, tray, or Nix delivery behavior.
+- Explicit KCM Apply, Force Apply (preview + confirm + revalidate), and Revert
+  only. Installation, startup, and ordinary settings Save never mutate
+  shortcuts. No per-component `cleanUp()`.
+- Project-required chords: `Meta+L` (focus-right; relocates
+  `ksmserver/Lock Session` `Meta+L` to `Meta+Esc`), `Meta+Alt+K`,
+  `Meta+Alt+L`, `Meta+G`, `Meta+M`. Sole authorized target occupant:
+  System Monitor `org.kde.plasma-systemmonitor.desktop` / `_launch` on
+  `Meta+Esc` (displaced, never written).
+- Force clears only the required keys on each listed holder; unrelated keys
+  are preserved. Revert restores the full KDE default set for non-project
+  cleared actions via `defaultShortcutKeys`/`setForeignShortcutKeys`;
+  custom cleared bindings are lost (user-accepted). Project-owned IDs
+  (`kwin/plasma-auto-tiler-*`, current and legacy) stay cleared.
+- Durable state is the minimal cleared component/action ID list at
+  `~/.config/plasma-auto-tiler/shortcut-clearedrc` (Components+Actions
+  only, no cosmetic labels), union-persisted by ID BEFORE Force clearing
+  and emptied only after successful Revert. Force preview transient
+  labels are never persisted. Revert resolves each persisted ID to its
+  fresh current tuple from `readAll` to supply the current friendly
+  labels (empty allowed) for the 4-field `defaultShortcutKeys` /
+  `setForeignShortcutKeys` actionId; absent or duplicate IDs fail closed
+  without writing unrelated actions and retain the list for retry. No
+  2-field daemon behavior is assumed. Existing journal files
+  (`shortcut-override-journalrc`, including kcmshell6 legacy) are ignored
+  and untouched: no migration, Finish Apply, or Restore path.
+- Layout detection, omission, opt-in configuration, and complete
+  keyboard-layout support remain deferred.
 
 ## Acceptance
 
-- Row 1: `kwin` / `plasma-auto-tiler-focus-right` takes `Meta+L`; `ksmserver`
-  / `Lock Session` relocates `Meta+L` to `Meta+Esc`. Non-`Meta+L` lock keys
-  keep their order. The row deliberately displaces System Monitor
-  `org.kde.plasma-systemmonitor.desktop` / `_launch`'s declared `Meta+Esc`
-  default;
-  that exact target occupant is compiled into the row and is never writable.
-- Row 2: `kwin` / `plasma-auto-tiler-resize-outwards-up` takes `Meta+Alt+K`;
-  `KDE Keyboard Layout Switcher` / `Switch to Next Keyboard Layout` clears
-  from the exact preimage `Meta+Alt+K`.
-- Row 3: `kwin` / `plasma-auto-tiler-resize-outwards-right` takes
-  `Meta+Alt+L`; `KDE Keyboard Layout Switcher` / `Switch to Last-Used Keyboard
-  Layout` clears from the exact preimage `Meta+Alt+L`.
-- Row 4: `kwin` / `plasma-auto-tiler-toggle-float` takes `Meta+G`; `kwin` /
-  `Grid View` clears from the exact preimage `Meta+G`.
-- Row 5: `kwin` / `plasma-auto-tiler-toggle-maximize` takes `Meta+M`; `kwin` /
-  `KrohnkiteMonocleLayout` clears from the exact preimage `Meta+M`.
-- Whole-table preflight fails closed for any unexpected row preimage or target
-  conflict, before journal creation or mutation.
-- Every KGlobalAccel reply-validation failure emits one bounded, non-reflective
-  detail token identifying its exact condition. Empty cosmetic labels in a
-  valid `a(ssssssaiai)` shortcut-info record are accepted; identity and all
-  size/key bounds remain fail-closed.
-- Revert restores only bindings still owned by that override.
-- One live Finish Apply completed the three-row postimage. Revert, the two
-  Lock Session physical checks, Phase 2 physical resize checks, and interrupted
-  recovery Restore remain separate unproven user-run gates.
+- Apply refuses closed on any unexpected holder of a required chord, with
+  zero writes.
+- Force preview lists every active holder (known, unknown, legacy project
+  IDs) with found keys, exact required keys removed, and unrelated keys
+  kept; project actions, Lock Session, and the authorized System Monitor
+  `Meta+Esc` holder are exempt. `.desktop`-default-only claimants with
+  nothing to clear block Force until unbound manually.
+- Confirmed Force revalidates owner, project/lock live images, and the full
+  holder snapshot against fresh state; stale confirmations before persist
+  fail with zero writes, including zero cleared-list writes.
+  Forged/duplicate/unbounded confirmations refuse. After the union is
+  persisted, each holder is re-read immediately before its foreign setter
+  and aborts on active drift with zero further KGlobalAccel writes; the
+  persisted union is then retained as an interruption-safe superset, so a
+  later Revert may restore defaults for an action Force never cleared.
+- Revert on an empty list is a no-op success; partial failure retains the
+  list for resume, including absent/duplicate-ID resolution failures with
+  zero unrelated writes. Owner drift fails closed.
+- Bounded structured diagnostics on `plasmaautotiler.shortcut` only
+  (`op=`, `stage=`, `outcome=`, allowlisted identity, key images); foreign
+  occupants redacted, logging never gates behavior. Query with
+  `journalctl --user --no-pager -g "plasmaautotiler.shortcut op="`.
+- KCM: Force Apply/Cancel appear only for a pending preview; Cancel discards
+  without writes; Revert confirms the recorded cleared count and the loss of
+  custom bindings. No Finish/Restore controls.
 
-## Approach And Dependencies
+## Verification (offline, uncommitted tree)
 
-- Minimal KCM-owned Apply/Revert path with fail-closed preflight and
-  ownership-scoped revert; no install/startup mutation path.
-- Depends only on the existing shortcut catalog and KGlobalAccel ownership
-  checks; no settings-group, default, or unrelated binding changes.
+- Recorded interim verification per `docs/changes/archive/multi-output-failures.md`
+  (Lead note, 2026-09-26): `just build-native-effect`, host-matched native
+  CTest 29/29 (shortcut subset 15/15 at the transport green point), and
+  `git diff --check` pass. Interim tree ~2500 insertions / ~5080 deletions
+  vs HEAD, covering transport seam (`defaultShortcutKeys`,
+  `setForeignShortcutKeys` with owner pinning, strict reply validation,
+  void-setter readback), backend clear/revert rewrite with cleared-list
+  regression tests, and KCM preview/cancel/confirm plus Save-isolation tests.
+- This docs unit ran no live bus, KWin, Plasma, or config mutation; no
+  tests, staging, or commit.
 
-## Verification
+## Outstanding Live Checks (second PC, user-owned)
 
-- Static-only complete: KCM Apply/Revert with Finish Apply/Restore recovery,
-  confirmation-gated mutations, ordinary Settings Apply without shortcut
-  mutation, ordered v3 ten-write Apply (v2 remains six-write), ownership-scoped
-  Revert, and private project journal.
-- Focused static coverage in `shortcutreconciler_test.cpp` (Apply order,
-  `Meta+Esc` refusal without mutation, partial-write resume, setter `a(ai)`
-  reply decoding, stale-owner recovery, external-edit handling, journal/path
-  safety) and `activeborderconfig_shortcut_test.cpp`
-  (ordinary-save isolation, recovery routing, confirmation gates, state/error
-  presentation). One live Finish Apply is recorded below; its remaining
-  physical and recovery branches are unproven.
+- Apply, Force (preview/confirm/revalidate/clear), and Revert on the
+  multi-output PC, including the reported Apply refusal and unknown/legacy
+  holders: unproven.
+- Physical chords (`Meta+L`, `Meta+Esc` lock, `Meta+Alt+K/L`, `Meta+G`,
+  `Meta+M`), exact Revert-to-default restoration, and interrupted-Force
+  resume via the cleared list: unproven.
 
-## Material Decisions And Accepted Evidence
+## Historic Evidence (compact, not current)
 
-- Approved durable contract, including exact role allowlist, preserved
-  non-`Meta+L` lock keys, and private project journal, is recorded in
-  [decisions](../decisions.md#shortcuts); this record duplicates no decision.
-- Static KCM table/recovery implementation with the focused coverage above is
-  accepted as static-only. One live Finish Apply is recorded below; no Revert,
-  Restore, or unrun physical path is claimed.
-- Resolved Plasma 6 KGlobalAccel compatibility defect: host Plasma/KWin 6.7.4
-  exposes `setShortcutKeys` as an out-first XML method: `a(ai)` out, then
-  `as`, `a(ai)`, `u` inputs, with direction-relative `Out0`/`In1`
-  `QSet<QKeySequence>` annotations. The validator incorrectly treated document
-  order as input-first call order, rejecting this exact contract before writes.
-  It now accepts the exact out-first contract and still rejects absent or
-  mismatched methods.
-- Resolved target-conflict blindness: Apply and KCM status now use strict
-  `globalShortcutsByKey((ai)(i))` and `globalShortcutAvailable((ai)s)` checks
-  for `Meta+L`, `Meta+Esc`, `Meta+Alt+K`, and `Meta+Alt+L`, including
-  .desktop-declared defaults absent from the tuple enumeration. The only
-  accepted foreign holder is the user-approved System Monitor `_launch` on
-  row 1's `Meta+Esc` target; all other holders, malformed replies, and
-  availability inconsistencies fail closed before journal creation or writes.
-- Hermetic evidence: the exact captured out-first XML is accepted while absent
-  and mismatched methods are rejected; keyed fake-store coverage makes a
-  default-only holder (empty active keys, default `Meta+Esc`) visible despite
-  its absence from `readAll`, and proves zero-write rejection for relocation
-  and clear targets. It also proves the authorized System Monitor case applies
-  six allowlisted writes without writing System Monitor. CTest passed 21/21;
-  `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`,
-  `nix flake check`, and the KWin TypeScript suite (385 tests, 47 suites)
-  passed. No live Apply, setter, KWin, Plasma, or config mutation was run.
-- Resolved the next masked preflight refusal: dynamic `QDBusInterface` objects
-  perform implicit owner tracking and introspection at construction. In the KCM,
-  that made the bus-daemon proxy invalid despite the connected session bus.
-  Owner resolution now uses `QDBusConnection::interface()->serviceOwner()` and
-  `serviceUid()`; KGlobalAccel reads and the pinned-owner setter use raw method
-  calls, avoiding every dynamic proxy. The owner pin remains immutable and the
-  write path still re-confirms it immediately before each write. Hermetic owner
-  coverage accepts a valid owner, rejects an absent service before any write,
-  and rejects owner drift without changing the pin. Read-only live inspection
-  confirmed `org.kde.kglobalaccel` owner `:1.614`, UID `1000`, and the exact
-  setter contract. No live Apply, setter, KWin, Plasma, or config mutation was
-  run for this correction.
-- Resolved the fourth masked preflight refusal from real session data. The
-  `KDE Keyboard Layout Switcher` component supplied two valid shortcut-info
-  records whose action-friendly field was empty: `Switch to Next Keyboard
-  Layout` at `Meta+Alt+K`, and `Switch to Last-Used Keyboard Layout` at
-  `Meta+Alt+L`. The observed tuple order is exactly `action`, `friendly`,
-  `component`, `componentFriendly`, `contextUnique`, `contextFriendly`,
-  `active`, `defaults`, matching `a(ssssssaiai)`. `friendly` is cosmetic and
-  is not used for allowlisting, owner checks, or occupancy decisions, so it
-  may be empty while retaining the 256-character bound. `action` and
-  `component` remain nonempty and bounded; every key list remains bounded and
-  limited to nonnegative values. The capture had 20 components and 349 tuples;
-  maxima were 3 keys, key value 503316512, and string length 65, all within the
-  existing bounds. No session payload fixture is committed: the regression
-  test uses the captured `a(ssssssaiai)` shape with generic identifiers, so no
-  application/activity data needed redaction.
-- The raw all-shortcut-info read now validates its exact reply signature and
-  preserves a fail-fast 16,384-tuple wire bound. Owner pinning, exact write
-  allowlist, the setter validator, keyed `.desktop` occupancy checks, and the
-  six-write Apply cap are unchanged.
-- Verification for this correction: 78 of 78 bounded preflight detail tokens
-  have an exact-equality producing-condition test. The count is 50 static
-  production literals plus 14 field suffixes under each of the two reply
-  prefixes. The captured-shape fixture proves the empty-friendly record is
-  accepted; malformed type/signature/arity/shape, all key/string bounds,
-  wire/collection bounds, keyed consistency, and owner drift remain refusing.
-  CTest passed 21/21; `cargo fmt --check`, `cargo clippy --all-targets
-  --all-features -- -D warnings`, `nix flake check`, and the KWin TypeScript
-  suite passed (386 tests, 47 suites). No live mutation was run.
-- A follow-up read-only capture re-queried all 20 KGlobalAccel components and
-  349 `a(ssssssaiai)` records. The same two Keyboard Layout Switcher records
-  have an empty `friendly` field; all identity fields are nonempty. The largest
-  record has 3 keys, the largest key is 503316512, and the longest string is
-  65 characters, so no configured bound refuses this session data. The tuple
-  order is `action`, `friendly`, `component`, `componentFriendly`,
-  `contextUnique`, `contextFriendly`, `active`, `defaults`, matching the
-  decoder.
-- The rows that clear Keyboard Layout Switcher intentionally send an empty
-  `QSet<QKeySequence>`, encoded as a well-formed empty `a(ai)` array. A
-  nonempty sequence is always encoded as `(ai)` with four integer slots,
-  including zero padding. Therefore this path cannot emit the malformed D-Bus
-  type framing from the retained KWin abort; no write guard is needed. This was
-  established without a setter or live Apply. Native CTest passed 21/21, and
-  `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D
-   warnings`, and `nix flake check` passed.
-- Resolved the KCM crash during an actual Apply. `writeKeys` received the
-  setter reply as `a(ai)` (`QSet<QKeySequence>`) but put its reply argument in
-  write mode and read an `int` where the next value was the inner `ai` array.
-  It now reads the nested array in read mode with array, structure, inner-array,
-  and basic-type guards before each descent. Unexpected framing and invalid
-  slot sets refuse the write confirmation without reaching a basic read. The
-  same audit guarded every other reply decoder that descends from a container
-  to a basic value. Hermetic coverage encodes exact empty and two-sequence
-  `a(ai)` sets, accepts both decoded slot sets, and rejects short, long,
-  out-of-range, and over-limit shapes.
-- A journal records a D-Bus unique owner only as provenance. On Finish Apply or
-  Restore, a dead prior unique name with the same verified UID now rebinds to
-  the current pinned owner after the recorded image is validated and before
-  recovery writes. Owner drift during the current recovery remains fail-closed.
-  Focus-applied Finish Apply and Restore coverage both use stale `:1.1191` and
-  verify the expected postimage or restored preimage respectively. The real
-  crash left a `focus-applied` journal; Finish Apply is now live-proven, while
-  Restore remains unexecuted.
-- Read-only keyed KGlobalAccel getters confirmed the exact whole-key holders:
-  `Meta+Esc` has only `org.kde.plasma-systemmonitor.desktop` / `_launch`;
-  `Meta+L` has `kwin` / `plasma-auto-tiler-focus-right` and `ksmserver` /
-  `Lock Session`; `Meta+Alt+K` has its `kwin` project action and `KDE Keyboard
-  Layout Switcher` / `Switch to Next Keyboard Layout`; and `Meta+Alt+L` has
-  its `kwin` project action and `KDE Keyboard Layout Switcher` / `Switch to
-  Last-Used Keyboard Layout`. Every key reported unavailable, consistently
-  with its nonempty holder set. The System Monitor component is hyphenated and
-  has the `.desktop` suffix, so the row-owned authorized-target identity now
-  matches it exactly. It remains outside the write allowlist. The Switcher
-  action-friendly labels are empty in the same live payload; write validation
-  now treats both friendly fields as bounded cosmetic data, as read validation
-  already did. Component/action identity and key validation remain strict.
-- Current full read-only enumeration returned 20 components and 349 tuples.
-  Every identity was nonempty; maximum string length was 65, active/default
-  key-list maxima were 3, and the maximum key was 503316512, within all
-  configured bounds. The six allowlisted tuples have the closed-table expected
-  preimages. CTest passed 21/21; `cargo fmt --check`, `cargo clippy
-  --all-targets --all-features -- -D warnings`, and `nix flake check` passed.
-  No live mutation was run.
-- First successful live recovery/Apply: the KCM reported `Interrupted apply
-  found (phase focus-applied). Finish Apply or Restore.` before the user chose
-  `Finish Apply`, then `Shortcuts applied (journal complete, 3 rows).` The user
-  physically pressed `Meta+L`; focus moved right. The six previously masked
-  gates are closed through the real table path: setter contract, target
-  occupancy, raw-call owner resolution, cosmetic Switcher labels, setter reply
-  framing, and stale-owner recovery. The confirmed postimage is
-  `kglobalshortcutsrc` size 20191, sha256
-  `e412626d6f0d32d58e48c93a845cc4c7e713cf0caa3f775acfae4a55807f4614`:
-  Switcher Last/Next are `none,Meta+Alt+L,`/`none,Meta+Alt+K,`; Lock Session is
-  `Screensaver\tMeta+Esc,Screensaver\tMeta+L,Lock Session`; focus-right is
-  `Meta+L,none,Focus window right`; resize-outwards-right/up are
-  `Meta+Alt+L,none,Grow window towards right` and
-  `Meta+Alt+K,none,Grow window towards up`; `Meta+Esc` has exactly the
-  `[ksmserver]` Lock Session claimant. The journal is size 884, sha256
-  `bd7df5392509005ea7530ea5c1d4b8d7cd4f43fc8d6901a7ffaf32d852132787`, with
-  `Phase=apply-complete`, `Owner=:1.1191`, `Uid=1000`, and
-  `SchemaVersion=shortcut-override-v2`. Rows 2-3 are written live for the first
-  time but their physical chords are untested.
-
-- Host-independent journal with explicit legacy migration: source inspection
-  shows the former `QStandardPaths::AppConfigLocation` path was host-dependent.
-  That makes a completed `kcmshell6` journal (`~/.config/kcmshell6/
-  shortcut-override-journalrc`) a source-proven explanation for the reported
-  fresh-preimage refusal, but no retained prior-host process record proves the
-  journal was missing in that process. The canonical path is
-  now `~/.config/plasma-auto-tiler/shortcut-override-journalrc`
-  (`GenericConfigLocation`, project-owned). The single explicit legacy source
-  is the known kcmshell6 file; migration copies it exactly (schema, phase,
-  owner, every pre/post image) after path-safety, load-validity, and UID
-  checks, and fails closed when unsafe, malformed, foreign, or
-  unpersistable. Canonical present wins; absent/absent is a no-op. No
-  directory scan exists. Migration runs only after an already-confirmed
-  mutation operation (Apply, Force Apply, Finish Apply, Revert, Restore),
-  immediately before reconciliation; opening, refreshing, previewing, or
-  cancelling never writes config. A failed migration fails that operation
-  closed with zero writes.
-- Clear rows already at postimage are normal: a fresh Apply accepts a foreign
-  clear target that is already empty (adopted with pre == post, no write, no
-  force). Only a genuine third image refuses or needs Force. Revert of such
-  rows is a no-op; project rows still restore.
-- Confirmed Force Apply for exact compiled clear-row foreign mismatches
-  only. A refused Apply with only such mismatches raises a preview
-  (`Force Apply`/`Cancel` buttons plus, per row, the foreign found value,
-  the proposed clear, and the paired project assignment and chord from the
-  compiled table). Force confirms, then revalidates the confirmed snapshot against fresh
-  full live preflight image before any write: any changed managed binding,
-  journal image, owner, or store/journal/transport failure aborts with zero
-  writes. Adopted rows record exactly the confirmed actuals as preimages;
-  all other rows keep original pres, and existing journal rows are never
-  rewritten. Revert restores adopted actuals for forced rows and original
-  pres elsewhere, with unchanged partial Finish/Revert semantics. No
-  arbitrary action or key input exists; relocate rows, project rows, governed
-  v3 journals, drift, conflicts, and malformed/ownership failures are never
-  overridable.
-- Bounded structured diagnostics on `QLoggingCategory`
-  `plasmaautotiler.shortcut`: operations (`apply`, `finish-apply`,
-  `force-apply`, `force-preview`, `revert`, `restore`, `migrate`) log stages
-  and outcomes with
-  allowlisted component/action identity, key images, schema, phase, and the
-  journal selector (`canonical`/`legacy`, never full paths) only. The sink is
-  injectable for hermetic tests; logging is void, exception-safe, and never
-  gates behavior. Operational `info`/`warning` outcomes are visible by default;
-  query with `journalctl --user --no-pager -g "plasmaautotiler.shortcut op="`.
-  `QT_LOGGING_RULES="plasmaautotiler.shortcut.debug=true"` additionally enables
-  debug-only start and no-op records.
-- Verification for this correction: fresh postimage adoption (6 writes,
-  pre == post rows revert as no-ops), completed-v2 old-row mismatch as
-  nonoverridable drift, legacy migration normal path end to end through the
-  v2 upgrade, migration fail-closed (unsafe symlink/non-private paths,
-  malformed canonical preservation, canonical-wins, empty paths), deferred
-  store-seam migration (open/refresh/
-  preview/cancel write nothing; confirmed Apply migrates, preserves undo,
-  and reverts; unloadable and foreign-UID legacies fail closed; canonical
-  wins), force accept/revert (single, multi-key,
-  multi-row, v2-upgrade with old-pres preserved), force cancel (button and
-  declined confirmation, zero mutation), stale live and stale journal
-  full managed snapshots (including an unrelated pre-to-post change, zero
-  writes), interrupted forced recovery through normal resume,
-  forged/empty confirmations, the full nonoverridable set, KCM force
-  preview/accept/cancel/revert UI with paired project text, KCM deferred
-  migration (open/refresh/preview/cancel zero-write; confirmed Apply
-  migrates and reverts; migration failure fails closed), and
-  sink-captured category-prefixed operation logs with foreign occupants
-  redacted, plus a throwing sink preserving behavior.
-  Native CTest passes 31/31 (15 shortcut cases). No live mutation was run.
-
-## Diagnostic Token Map
-All details below are static ASCII text. `Shortcut state unavailable:` is the
-KCM wrapper; no token includes foreign reply values.
-
-| Token | Producing condition |
-| --- | --- |
-| `unexpected allComponents reply: wrong message type` | Reply is not a D-Bus reply message. |
-| `unexpected allComponents reply: wrong signature` | Reply signature is not `ao`. |
-| `unexpected allComponents reply: wrong arity` | Reply does not have exactly one argument. |
-| `unexpected allComponents reply: wrong variant shape` | Argument is neither the typed object-path list nor a D-Bus argument. |
-| `unexpected allComponents reply: wrong array framing` | D-Bus argument is not an array. |
-| `unexpected allComponents reply: empty object path in typed list` | Typed object-path list contains an empty path. |
-| `unexpected allComponents reply: empty object path in argument array` | D-Bus object-path array contains an empty path. |
-| `unexpected allComponents reply: too many components` | Component count exceeds 1024. |
-| `unexpected allShortcutInfos reply: wrong message type` | Per-component reply is not a reply message. |
-| `unexpected allShortcutInfos reply: wrong signature` | Per-component reply signature is not `a(ssssssaiai)`. |
-| `unexpected allShortcutInfos reply: wrong arity` | Per-component reply does not have exactly one argument. |
-| `unexpected allShortcutInfos reply: wrong variant shape` | Per-component argument is not a D-Bus argument. |
-| `unexpected allShortcutInfos reply: wrong array framing` | Per-component D-Bus argument is not an array. |
-| `unexpected allShortcutInfos reply: too many wire tuples` | One D-Bus array exceeds 16,384 decoded records. |
-| `unexpected allShortcutInfos reply: too many tuples` | Shared record mapping receives more than 16,384 records. |
-| `unexpected allShortcutInfos reply: too many collected tuples` | Cross-component collection exceeds 16,384 records. |
-| `unexpected globalShortcutsByKey reply: wrong message type` | Keyed reply is not a reply message. |
-| `unexpected globalShortcutsByKey reply: wrong signature` | Keyed reply signature is not `a(ssssssaiai)`. |
-| `unexpected globalShortcutsByKey reply: wrong arity` | Keyed reply does not have exactly one argument. |
-| `unexpected globalShortcutsByKey reply: wrong variant shape` | Keyed argument is not a D-Bus argument. |
-| `unexpected globalShortcutsByKey reply: wrong array framing` | Keyed D-Bus argument is not an array. |
-| `unexpected globalShortcutsByKey reply: too many wire holders` | One keyed D-Bus array exceeds 16,384 decoded records. |
-| `unexpected globalShortcutsByKey reply: too many holders` | Shared keyed-record mapping receives more than 16,384 records. |
-| `unexpected globalShortcutAvailable reply: wrong message type` | Availability reply is not a reply message. |
-| `unexpected globalShortcutAvailable reply: wrong signature` | Availability reply signature is not `b`. |
-| `unexpected globalShortcutAvailable reply: wrong arity` | Availability reply does not have exactly one argument. |
-| `unexpected globalShortcutAvailable reply: wrong variant shape` | Availability argument is not a bool. |
-
-The following field suffixes each produce two distinct full tokens, prefixed by
-either `unexpected allShortcutInfos reply: ` or `unexpected globalShortcutsByKey
-reply: `: `empty action`, `oversized action`, `empty component`, `oversized
-component`, `oversized friendly`, `oversized component friendly`, `oversized
-context unique`, `oversized context friendly`, `too many active keys`,
-`negative active key`, `oversized active key`, `too many default keys`,
-`negative default key`, and `oversized default key`. They identify the one
-failed field predicate in the fixed validation order.
-
-| Token | Producing condition |
-| --- | --- |
-| `unexpected globalShortcutsByKey reply: negative key` | Keyed lookup input is negative. |
-| `unexpected globalShortcutsByKey reply: non-positive key` | Keyed lookup input is zero. |
-| `unexpected globalShortcutsByKey reply: oversized key` | Keyed lookup input exceeds the key bound. |
-| `unexpected globalShortcutAvailable reply: negative key` | Availability input is negative. |
-| `unexpected globalShortcutAvailable reply: non-positive key` | Availability input is zero. |
-| `unexpected globalShortcutAvailable reply: oversized key` | Availability input exceeds the key bound. |
-| `unexpected globalShortcutAvailable reply: oversized component` | Availability component argument exceeds 256 characters. |
-| `unexpected globalShortcutsByKey reply: negative occupancy key` | Reconciler occupancy key is negative. |
-| `unexpected globalShortcutsByKey reply: non-positive occupancy key` | Reconciler occupancy key is zero. |
-| `unexpected globalShortcutsByKey reply: oversized occupancy key` | Reconciler occupancy key exceeds the key bound. |
-| `unexpected globalShortcutsByKey reply: too many occupancy holders` | Store returns more than 16,384 holders. |
-| `unexpected globalShortcutAvailable reply: empty holders report unavailable` | Empty holder list disagrees with availability. |
-| `unexpected globalShortcutAvailable reply: occupied holders report available` | Nonempty holder list disagrees with availability. |
-
-Holder revalidation likewise has one token per predicate: `empty holder
-component`, `oversized holder component`, `empty holder action`, `oversized
-holder action`, `too many holder active keys`, `negative holder active key`,
-`oversized holder active key`, `too many holder default keys`, `negative holder
-default key`, and `oversized holder default key`, each prefixed by `unexpected
-globalShortcutsByKey reply: `.
-
-Migration and Force Apply add these bounded tokens (no foreign reply data):
-
-| Token | Producing condition |
-| --- | --- |
-| `canonical shortcut journal path is unavailable` | Canonical config base is empty or not absolute. |
-| `legacy shortcut journal is unsafe; refusing migration` | Legacy path is a symlink, non-regular, non-private, or has an unsafe parent. |
-| `legacy shortcut journal is malformed; refusing migration` | Legacy file exists but fails journal load validation. |
-| `legacy shortcut journal has a foreign UID; refusing migration` | Legacy journal UID differs from the current UID. |
-| `legacy shortcut journal migration failed; refusing migration` | Exact legacy copy failed to persist with readback. |
-| `no forced override applies: live state needs no clear-row adoption` | Preview with no third-image clear-row mismatch. |
-| `journal present; finish or revert before forcing` | Preview against a governed v3 or pending-v2 journal. |
-| `confirmed force image is stale; re-preview before forcing` | Live state or journal image changed after preview. |
-| `forced override is outside the exact allowlist` | Forged, duplicate, unbounded, or non-clear-row confirmation. |
-| `no confirmed forced override to apply` | Force invoked without a forceable preview. |
-
-## Next Action
-
-- Remain user-run: physically verify `Meta+Esc` locks, every other Lock Session
-  key still locks, Revert exact restoration, Phase 2 resize chords, and the
-  Restore branch of interrupted recovery. Restore cannot be safely induced.
-
-## Retained Core Triage
-
-- PID 3568836 aborted while KWin's D-Bus server demarshalled an inbound
-  `QKeySequence` argument (`deliverCall`/`activateObject`), before its target
-  method ran. This is unrelated to Apply/Revert, which sends `setShortcutKeys`
-  from KWin to the separate KGlobalAccel service. The stripped stack does not
-  identify the inbound method or sender.
-
-## Moved Evidence (from docs/decisions.md)
-
-- KCM table override/recovery has focused static coverage; ordinary Settings
-  Apply never mutates shortcuts. One user-run Finish Apply completed the
-  three-row postimage; Revert, Restore, Lock Session physical checks, and
-  physical resize checks remain unproven.
+- Journal-era static coverage (closed allowlist, preimage journal, legacy
+  migration, Finish/Restore) is superseded and removed; retained in Git
+  history only.
+- One live Finish Apply completed the three-row postimage with a physically
+  verified `Meta+L` focus move (`kglobalshortcutsrc` sha256
+  `e412626d...f4614`); Revert/Restore and resize/float/maximize physical
+  checks from that era were never proven. Read-only captures (20 components,
+  349 tuples) fixed empty-friendly validation and the out-first setter
+  contract. No stateless-Revert or never-cleared-action mutation is claimed.

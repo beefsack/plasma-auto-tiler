@@ -23,6 +23,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
+
 // QKeySequence D-Bus encoding is (ai): a struct holding an int array of up
 // to four combined key values. QSet<QKeySequence> therefore encodes as
 // a(ai). QList<QList<int>> would encode as aai and is wrong here. These
@@ -240,13 +242,6 @@ const QDBusArgument &operator>>(const QDBusArgument &argument, ShortcutInfoField
     return argument;
 }
 
-// Shared exact journal-entry comparison (component/action/pre/post), used by
-// the persist readback and the force upgrade stale-image checks alike.
-bool journalEntryEqual(const ShortcutJournalEntry &a, const ShortcutJournalEntry &b)
-{
-    return a.component == b.component && a.action == b.action && a.pre == b.pre && a.post == b.post;
-}
-
 namespace
 {
 
@@ -273,43 +268,6 @@ bool findAllowlisted(const QList<ShortcutTuple> &tuples, const QString &componen
         *out = found;
     }
     return true;
-}
-
-QString keysToString(const QList<int> &keys)
-{
-    QStringList parts;
-    parts.reserve(keys.size());
-    for (int key : keys) {
-        parts.append(QString::number(key));
-    }
-    return parts.join(QStringLiteral(","));
-}
-
-QList<int> keysFromString(const QString &value, bool *ok)
-{
-    QList<int> keys;
-    if (value.isEmpty()) {
-        if (ok) {
-            *ok = true;
-        }
-        return keys;
-    }
-    const QStringList parts = value.split(QStringLiteral(","));
-    for (const QString &part : parts) {
-        bool parsed = false;
-        const int key = part.toInt(&parsed);
-        if (!parsed) {
-            if (ok) {
-                *ok = false;
-            }
-            return {};
-        }
-        keys.append(key);
-    }
-    if (ok) {
-        *ok = true;
-    }
-    return keys;
 }
 
 // Bounded key-list classifier without duplicate validation: single ordered
@@ -342,76 +300,12 @@ KeyListFailure classifyKeyList(const QList<int> &keys)
     return KeyListFailure::None;
 }
 
-bool journalEntryValid(const ShortcutJournalEntry &entry)
-{
-    if (!ShortcutReconciler::isAllowlisted(entry.component, entry.action)) {
-        return false;
-    }
-    return ShortcutReconciler::keysValid(entry.pre) && ShortcutReconciler::keysValid(entry.post);
-}
-
-bool readJournalKeys(const KConfigGroup &group, const QString &key, QList<int> *out, QString *error)
-{
-    bool ok = false;
-    const QList<int> values = keysFromString(group.readEntry(key, QString()), &ok);
-    if (!ok) {
-        if (error) {
-            *error = QStringLiteral("journal is malformed");
-        }
-        return false;
-    }
-    if (out) {
-        *out = values;
-    }
-    return true;
-}
-
-void writeJournalEntry(KConfigGroup &group, const QString &prefix, const ShortcutJournalEntry &entry)
-{
-    group.writeEntry(prefix + QStringLiteral("Component"), entry.component);
-    group.writeEntry(prefix + QStringLiteral("Action"), entry.action);
-    group.writeEntry(prefix + QStringLiteral("Pre"), keysToString(entry.pre));
-    group.writeEntry(prefix + QStringLiteral("Post"), keysToString(entry.post));
-}
-
-bool readJournalEntry(const KConfigGroup &group, const QString &prefix, ShortcutJournalEntry *out, QString *error)
-{
-    out->component = group.readEntry(prefix + QStringLiteral("Component"), QString());
-    out->action = group.readEntry(prefix + QStringLiteral("Action"), QString());
-    return readJournalKeys(group, prefix + QStringLiteral("Pre"), &out->pre, error)
-        && readJournalKeys(group, prefix + QStringLiteral("Post"), &out->post, error);
-}
-
-// One exact ordered journal comparison for persist readback: every scalar
-// field in fixed order, including all ten entries even for v2 (v2 persists
-// carry the new rows empty and inert, so they must round-trip too) and all
-// schema, phase, owner, UID, and row-kind scalars.
-bool journalsEqual(const ShortcutJournal &a, const ShortcutJournal &b)
-{
-    if (a.schema != b.schema || a.phase != b.phase || a.owner != b.owner || a.uid != b.uid) {
-        return false;
-    }
-    const ShortcutJournalEntry *aEntries[10] = {&a.focus, &a.lock, &a.resizeUp, &a.switchNext,
-                                                &a.resizeRight, &a.switchLast, &a.floatToggle, &a.gridView,
-                                                &a.maximizeToggle, &a.monocle};
-    const ShortcutJournalEntry *bEntries[10] = {&b.focus, &b.lock, &b.resizeUp, &b.switchNext,
-                                                &b.resizeRight, &b.switchLast, &b.floatToggle, &b.gridView,
-                                                &b.maximizeToggle, &b.monocle};
-    for (int i = 0; i < 10; ++i) {
-        if (!journalEntryEqual(*aEntries[i], *bEntries[i])) {
-            return false;
-        }
-    }
-    return a.row0Kind == b.row0Kind && a.row1Kind == b.row1Kind && a.row2Kind == b.row2Kind
-        && a.row3Kind == b.row3Kind && a.row4Kind == b.row4Kind;
-}
-
 bool ensurePrivateDir(const QString &dirPath, QString *error)
 {
     QDir dir;
     if (!dir.mkpath(dirPath)) {
         if (error) {
-            *error = QStringLiteral("could not create the journal directory");
+            *error = QStringLiteral("could not create the cleared shortcut directory");
         }
         return false;
     }
@@ -420,20 +314,20 @@ bool ensurePrivateDir(const QString &dirPath, QString *error)
     struct stat st = {};
     if (::stat(encoded.constData(), &st) != 0) {
         if (error) {
-            *error = QStringLiteral("could not stat the journal directory");
+            *error = QStringLiteral("could not stat the cleared shortcut directory");
         }
         return false;
     }
     if (st.st_uid != static_cast<uid_t>(::geteuid())) {
         if (error) {
-            *error = QStringLiteral("journal directory is not owned by this user");
+            *error = QStringLiteral("cleared shortcut directory is not owned by this user");
         }
         return false;
     }
     if ((st.st_mode & 0077) != 0) {
         if (::chmod(encoded.constData(), 0700) != 0) {
             if (error) {
-                *error = QStringLiteral("journal directory is not private");
+                *error = QStringLiteral("cleared shortcut directory is not private");
             }
             return false;
         }
@@ -450,14 +344,14 @@ bool ensurePrivateFile(const QString &filePath, QString *error)
     }
     if (st.st_uid != static_cast<uid_t>(::geteuid())) {
         if (error) {
-            *error = QStringLiteral("journal file is not owned by this user");
+            *error = QStringLiteral("cleared shortcut file is not owned by this user");
         }
         return false;
     }
     if ((st.st_mode & 0077) != 0) {
         if (::chmod(encoded.constData(), 0600) != 0) {
             if (error) {
-                *error = QStringLiteral("journal file is not private");
+                *error = QStringLiteral("cleared shortcut file is not private");
             }
             return false;
         }
@@ -473,6 +367,7 @@ void ensureKeySequenceMetaTypes()
     }
     qDBusRegisterMetaType<QKeySequence>();
     qDBusRegisterMetaType<QSet<QKeySequence>>();
+    qDBusRegisterMetaType<QList<QKeySequence>>();
     qDBusRegisterMetaType<ShortcutMatchType>();
     registered = true;
 }
@@ -488,6 +383,19 @@ QSet<QKeySequence> keySetFromInts(const QList<int> &keys)
     return out;
 }
 
+QList<QKeySequence> keyListFromInts(const QList<int> &keys)
+{
+    // Installed kf6_org.kde.KGlobalAccel.xml annotates the v2 key inputs as
+    // QList<QKeySequence> (a(ai) framing); the QSet form encodes identically
+    // but the list matches the pinned interface annotation.
+    QList<QKeySequence> out;
+    out.reserve(keys.size());
+    for (int key : keys) {
+        out.append(QKeySequence(key, 0, 0, 0));
+    }
+    return out;
+}
+
 QSet<int> intSetFromKeySet(const QSet<QKeySequence> &keys)
 {
     QSet<int> out;
@@ -496,6 +404,24 @@ QSet<int> intSetFromKeySet(const QSet<QKeySequence> &keys)
             out.insert(sequence[static_cast<uint>(i)].toCombined());
         }
     }
+    return out;
+}
+
+QSet<int> intSetFromKeyList(const QList<QKeySequence> &keys)
+{
+    QSet<int> out;
+    for (const QKeySequence &sequence : keys) {
+        for (int i = 0; i < sequence.count(); ++i) {
+            out.insert(sequence[static_cast<uint>(i)].toCombined());
+        }
+    }
+    return out;
+}
+
+QList<int> sortedIntsFromSet(const QSet<int> &set)
+{
+    QList<int> out(set.begin(), set.end());
+    std::sort(out.begin(), out.end());
     return out;
 }
 
@@ -532,6 +458,56 @@ bool ShortcutReconciler::isAllowlisted(const QString &component, const QString &
         }
     }
     return false;
+}
+
+bool ShortcutReconciler::isProjectAction(const QString &component, const QString &action)
+{
+    const QList<ShortcutConflictRow> &table = shortcutConflictTable();
+    for (const ShortcutConflictRow &row : table) {
+        if (component == row.projectComponent && action == row.projectAction) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ShortcutReconciler::isProjectOwned(const QString &component, const QString &action)
+{
+    // Own prefix, current and legacy alike (e.g. plasma-auto-tiler-toggle,
+    // plasma-auto-tiler-float-toggle). Lock Session and foreign components
+    // never match.
+    return component == shortcutFocusComponent() && action.startsWith(QStringLiteral("plasma-auto-tiler-"));
+}
+
+bool ShortcutReconciler::isLockAction(const QString &component, const QString &action)
+{
+    return component == shortcutLockComponent() && action == shortcutLockAction();
+}
+
+QList<int> ShortcutReconciler::conflictingKeys(const QList<int> &active)
+{
+    const QList<int> required = relevantConflictKeys();
+    QList<int> out;
+    out.reserve(active.size());
+    for (int key : active) {
+        if (required.contains(key) && !out.contains(key)) {
+            out.append(key);
+        }
+    }
+    return out;
+}
+
+QList<int> ShortcutReconciler::remainderAfterClear(const QList<int> &active)
+{
+    const QList<int> required = relevantConflictKeys();
+    QList<int> out;
+    out.reserve(active.size());
+    for (int key : active) {
+        if (!required.contains(key)) {
+            out.append(key);
+        }
+    }
+    return out;
 }
 
 QList<int> ShortcutReconciler::focusPostKeys() { return shortcutConflictTable().at(0).projectPost; }
@@ -752,6 +728,152 @@ bool ShortcutReconciler::decodeSetterReplySlotSets(const QList<QList<int>> &slot
         *out = set;
     }
     return true;
+}
+
+bool ShortcutReconciler::parseDefaultShortcutKeysReply(QDBusMessage::MessageType replyType,
+                                                       const QString &replySignature,
+                                                       const QList<QVariant> &replyArgs, QList<int> *defaults,
+                                                       QString *error)
+{
+    auto fail = [&](const QString &message) {
+        if (error) {
+            *error = message;
+        }
+        return false;
+    };
+    // Exact transport only (installed kf6_org.kde.KGlobalAccel.xml:123-127):
+    // ReplyMessage with signature "a(ai)" carrying the default key list.
+    // Ordered type then signature then arity; any other shape fails closed.
+    if (replyType != QDBusMessage::ReplyMessage) {
+        return fail(QStringLiteral("unexpected defaultShortcutKeys reply: wrong message type"));
+    }
+    if (replySignature != QStringLiteral("a(ai)")) {
+        return fail(QStringLiteral("unexpected defaultShortcutKeys reply: wrong signature"));
+    }
+    if (replyArgs.size() != 1) {
+        return fail(QStringLiteral("unexpected defaultShortcutKeys reply: wrong arity"));
+    }
+    const QVariant first = replyArgs.at(0);
+    QSet<int> parsed;
+    if (first.userType() == qMetaTypeId<QSet<QKeySequence>>()) {
+        const QSet<QKeySequence> set = first.value<QSet<QKeySequence>>();
+        if (set.size() > SHORTCUT_MAX_KEYS_PER_TUPLE) {
+            return fail(QStringLiteral("unexpected defaultShortcutKeys reply: did not return expected keys"));
+        }
+        parsed = intSetFromKeySet(set);
+    } else if (first.userType() == qMetaTypeId<QList<QKeySequence>>()) {
+        const QList<QKeySequence> list = first.value<QList<QKeySequence>>();
+        if (list.size() > SHORTCUT_MAX_KEYS_PER_TUPLE) {
+            return fail(QStringLiteral("unexpected defaultShortcutKeys reply: did not return expected keys"));
+        }
+        parsed = intSetFromKeyList(list);
+    } else if (first.canConvert<QDBusArgument>()) {
+        const QDBusArgument arg = first.value<QDBusArgument>();
+        if (arg.currentType() != QDBusArgument::ArrayType) {
+            return fail(QStringLiteral("unexpected defaultShortcutKeys reply: wrong array framing"));
+        }
+        QList<QList<int>> slotGroups;
+        bool framingOk = true;
+        arg.beginArray();
+        while (!arg.atEnd() && framingOk) {
+            if (arg.currentType() != QDBusArgument::StructureType) {
+                framingOk = false;
+                break;
+            }
+            arg.beginStructure();
+            if (arg.currentType() != QDBusArgument::ArrayType) {
+                framingOk = false;
+                arg.endStructure();
+                break;
+            }
+            arg.beginArray();
+            QList<int> values;
+            int innerCount = 0;
+            while (!arg.atEnd()) {
+                if (arg.currentType() != QDBusArgument::BasicType) {
+                    framingOk = false;
+                    break;
+                }
+                int value = 0;
+                arg >> value;
+                if (innerCount < 5) {
+                    values.append(value);
+                }
+                ++innerCount;
+            }
+            if (!framingOk) {
+                arg.endArray();
+                arg.endStructure();
+                break;
+            }
+            if (innerCount != 4) {
+                framingOk = false;
+                arg.endArray();
+                arg.endStructure();
+                break;
+            }
+            slotGroups.append(values);
+            if (slotGroups.size() > SHORTCUT_MAX_KEYS_PER_TUPLE) {
+                framingOk = false;
+                arg.endArray();
+                arg.endStructure();
+                break;
+            }
+            arg.endArray();
+            arg.endStructure();
+        }
+        arg.endArray();
+        if (!framingOk) {
+            return fail(QStringLiteral("unexpected defaultShortcutKeys reply: did not return expected keys"));
+        }
+        QSet<QKeySequence> decoded;
+        if (!decodeSetterReplySlotSets(slotGroups, &decoded)) {
+            return fail(QStringLiteral("unexpected defaultShortcutKeys reply: did not return expected keys"));
+        }
+        parsed = intSetFromKeySet(decoded);
+    } else {
+        return fail(QStringLiteral("unexpected defaultShortcutKeys reply: wrong variant shape"));
+    }
+    const QList<int> out = sortedIntsFromSet(parsed);
+    if (!keysValid(out)) {
+        return fail(QStringLiteral("unexpected defaultShortcutKeys reply: did not return expected keys"));
+    }
+    if (defaults) {
+        *defaults = out;
+    }
+    return true;
+}
+
+bool ShortcutReconciler::parseSetForeignShortcutKeysReply(QDBusMessage::MessageType replyType,
+                                                          const QString &replySignature,
+                                                          const QList<QVariant> &replyArgs, QString *error)
+{
+    auto fail = [&](const QString &message) {
+        if (error) {
+            *error = message;
+        }
+        return false;
+    };
+    // Exact void transport only (installed kf6_org.kde.KGlobalAccel.xml:145-149):
+    // ReplyMessage with empty signature and zero args. Any payload fails closed.
+    if (replyType != QDBusMessage::ReplyMessage) {
+        return fail(QStringLiteral("unexpected setForeignShortcutKeys reply: wrong message type"));
+    }
+    if (replySignature != QString()) {
+        return fail(QStringLiteral("unexpected setForeignShortcutKeys reply: wrong signature"));
+    }
+    if (!replyArgs.isEmpty()) {
+        return fail(QStringLiteral("unexpected setForeignShortcutKeys reply: wrong arity"));
+    }
+    return true;
+}
+
+bool ShortcutReconciler::foreignReadbackMatches(const QList<int> &expected, const QList<int> &actual)
+{
+    // Void setter has no reply keys: the fresh shortcutKeys readback must
+    // confirm the exact set. Order-insensitive set comparison; duplicates
+    // collapse as the live QSet reply has no order.
+    return QSet<int>(expected.begin(), expected.end()) == QSet<int>(actual.begin(), actual.end());
 }
 
 bool ShortcutReconciler::uniqueNameValid(const QString &owner)
@@ -998,6 +1120,19 @@ bool ShortcutReconciler::isAuthorizedDisplacement(int key, const QString &compon
     return false;
 }
 
+bool ShortcutReconciler::isHolderExempt(const QString &component, const QString &action, int key)
+{
+    // Single shared policy for the status keyed check and the backend
+    // holder scan. Project rows and Lock Session own their chords; the
+    // authorized System Monitor Meta+Esc displacement is user-approved.
+    // Known compiled foreign holders (Grid View, Switcher, Monocle) and
+    // unknown holders are never exempt.
+    if (isProjectAction(component, action) || isLockAction(component, action)) {
+        return true;
+    }
+    return isAuthorizedDisplacement(key, component, action);
+}
+
 bool ShortcutReconciler::holdersFromInfoFields(const QList<ShortcutInfoFields> &infos,
                                                QList<ShortcutKeyHolder> *holders, QString *error)
 {
@@ -1230,10 +1365,7 @@ KeyedOccupancyResult ShortcutReconciler::checkKeyedForeignOccupancyDetailed(Shor
             case KeyListFailure::None:
                 break;
             }
-            if (isAllowlisted(holder.component, holder.action)) {
-                continue;
-            }
-            if (isAuthorizedDisplacement(key, holder.component, holder.action)) {
+            if (isHolderExempt(holder.component, holder.action, key)) {
                 continue;
             }
             return conflict(QStringLiteral("refusing to apply: %1 is claimed by %2/%3")
@@ -1242,9 +1374,10 @@ KeyedOccupancyResult ShortcutReconciler::checkKeyedForeignOccupancyDetailed(Shor
         // Whole-key consistency, fail closed both directions:
         // globalShortcutAvailable(key, "") reports whole-key availability,
         // so empty holders must report available and non-empty holders
-        // must report unavailable. Allowlisted/authorized holders count
-        // as occupying the key, so they keep the non-empty/unavailable
-        // expectation and stay Clear after the skips above.
+        // must report unavailable. Exempt (project/lock/authorized)
+        // holders count as occupying the key, so they keep the
+        // non-empty/unavailable expectation and stay Clear after the
+        // skips above.
         if (holders.isEmpty() != available) {
             if (holders.isEmpty()) {
                 return unavailable(QStringLiteral(
@@ -1269,17 +1402,17 @@ bool ShortcutReconciler::checkKeyedForeignOccupancy(ShortcutStore *store, QStrin
     return true;
 }
 
-bool ShortcutReconciler::journalPathSafe(const QString &path, QString *error)
+bool ShortcutReconciler::clearedActionsPathSafe(const QString &path, QString *error)
 {
     if (path.isEmpty()) {
         if (error) {
-            *error = QStringLiteral("journal path is empty; refusing CWD fallback");
+            *error = QStringLiteral("cleared shortcut path is empty; refusing CWD fallback");
         }
         return false;
     }
     if (!QDir::isAbsolutePath(path)) {
         if (error) {
-            *error = QStringLiteral("journal path must be absolute; refusing CWD fallback");
+            *error = QStringLiteral("cleared shortcut path must be absolute; refusing CWD fallback");
         }
         return false;
     }
@@ -1291,34 +1424,34 @@ bool ShortcutReconciler::journalPathSafe(const QString &path, QString *error)
         if (::lstat(encoded.constData(), &st) == 0) {
             if (S_ISLNK(st.st_mode)) {
                 if (error) {
-                    *error = QStringLiteral("journal path must not be a symlink");
+                    *error = QStringLiteral("cleared shortcut path must not be a symlink");
                 }
                 return false;
             }
             if (!S_ISREG(st.st_mode)) {
                 if (error) {
-                    *error = QStringLiteral("journal path must be a regular file");
+                    *error = QStringLiteral("cleared shortcut path must be a regular file");
                 }
                 return false;
             }
             if (st.st_uid != static_cast<uid_t>(::geteuid())) {
                 if (error) {
-                    *error = QStringLiteral("journal file is not owned by this user");
+                    *error = QStringLiteral("cleared shortcut file is not owned by this user");
                 }
                 return false;
             }
             if ((st.st_mode & 0077) != 0) {
                 if (error) {
-                    *error = QStringLiteral("journal file is not private");
+                    *error = QStringLiteral("cleared shortcut file is not private");
                 }
                 return false;
             }
             Q_UNUSED(leaf);
         }
     }
-    // The direct journal directory is the writable trust boundary. It may be
-    // readable (legacy kcmshell6), but cannot be foreign-owned or writable by
-    // group/other; all ancestors are still checked for symlinks below.
+    // The direct parent directory is the writable trust boundary. It cannot
+    // be foreign-owned or writable by group/other; all ancestors are still
+    // checked for symlinks below.
     QDir parent = QFileInfo(path).dir();
     {
         struct stat st = {};
@@ -1327,13 +1460,13 @@ bool ShortcutReconciler::journalPathSafe(const QString &path, QString *error)
             if (S_ISLNK(st.st_mode) || !S_ISDIR(st.st_mode) || st.st_uid != static_cast<uid_t>(::geteuid())
                 || (st.st_mode & 0022) != 0) {
                 if (error) {
-                    *error = QStringLiteral("journal parent directory is unsafe");
+                    *error = QStringLiteral("cleared shortcut parent directory is unsafe");
                 }
                 return false;
             }
         } else if (errno != ENOENT) {
             if (error) {
-                *error = QStringLiteral("journal parent directory is unavailable");
+                *error = QStringLiteral("cleared shortcut parent directory is unavailable");
             }
             return false;
         }
@@ -1345,7 +1478,7 @@ bool ShortcutReconciler::journalPathSafe(const QString &path, QString *error)
         if (::lstat(encoded.constData(), &st) == 0) {
             if (S_ISLNK(st.st_mode)) {
                 if (error) {
-                    *error = QStringLiteral("journal parent path must not contain a symlink");
+                    *error = QStringLiteral("cleared shortcut parent path must not contain a symlink");
                 }
                 return false;
             }
@@ -1357,54 +1490,6 @@ bool ShortcutReconciler::journalPathSafe(const QString &path, QString *error)
         parent = QDir(next);
     }
     return true;
-}
-
-bool ShortcutReconciler::journalRolesValid(const ShortcutJournal &journal)
-{
-    const QList<ShortcutConflictRow> &table = shortcutConflictTable();
-    if (table.size() != 5) {
-        return false;
-    }
-    if (journal.focus.component != table.at(0).projectComponent || journal.focus.action != table.at(0).projectAction
-        || journal.lock.component != table.at(0).foreignComponent || journal.lock.action != table.at(0).foreignAction
-        || journal.resizeUp.component != table.at(1).projectComponent
-        || journal.resizeUp.action != table.at(1).projectAction || journal.switchNext.component != table.at(1).foreignComponent
-        || journal.switchNext.action != table.at(1).foreignAction || journal.resizeRight.component != table.at(2).projectComponent
-        || journal.resizeRight.action != table.at(2).projectAction || journal.switchLast.component != table.at(2).foreignComponent
-        || journal.switchLast.action != table.at(2).foreignAction) {
-        return false;
-    }
-    if (journal.row0Kind != table.at(0).resolution || journal.row1Kind != table.at(1).resolution
-        || journal.row2Kind != table.at(2).resolution) {
-        return false;
-    }
-    if (journal.schema == shortcutJournalSchemaV2()) {
-        // v2 journals carry only the original three rows; rows 3-4 are
-        // never read or assumed here.
-        return true;
-    }
-    if (journal.floatToggle.component != table.at(3).projectComponent
-        || journal.floatToggle.action != table.at(3).projectAction || journal.gridView.component != table.at(3).foreignComponent
-        || journal.gridView.action != table.at(3).foreignAction || journal.maximizeToggle.component != table.at(4).projectComponent
-        || journal.maximizeToggle.action != table.at(4).projectAction || journal.monocle.component != table.at(4).foreignComponent
-        || journal.monocle.action != table.at(4).foreignAction) {
-        return false;
-    }
-    return journal.row3Kind == table.at(3).resolution && journal.row4Kind == table.at(4).resolution;
-}
-
-bool ShortcutReconciler::journalPostsValid(const ShortcutJournal &journal)
-{
-    if (journal.focus.post != focusPostKeys() || journal.lock.post != lockPostFor(journal.lock.pre)
-        || journal.resizeUp.post != resizeUpPostKeys() || !journal.switchNext.post.isEmpty()
-        || journal.resizeRight.post != resizeRightPostKeys() || !journal.switchLast.post.isEmpty()) {
-        return false;
-    }
-    if (journal.schema == shortcutJournalSchemaV2()) {
-        return true;
-    }
-    return journal.floatToggle.post == floatPostKeys() && journal.gridView.post.isEmpty()
-        && journal.maximizeToggle.post == maximizePostKeys() && journal.monocle.post.isEmpty();
 }
 
 bool KGlobalAccelStore::checkSetterContract(QString *error)
@@ -1912,181 +1997,246 @@ bool KGlobalAccelStore::writeKeys(const QString &component, const QString &actio
     return true;
 }
 
-KConfigFileJournal::KConfigFileJournal(const QString &filePath)
+bool KGlobalAccelStore::defaultShortcutKeys(const QString &component, const QString &action,
+                                            const QString &componentFriendly, const QString &friendly,
+                                            QList<int> *defaults, QString *error)
+{
+    // Bounded native TRANSPORT seam: exact defaultShortcutKeys(as)->a(ai)
+    // against the pinned owner. Arbitrary component/action IDs allowed:
+    // identity strict, cosmetic bounded, pin plus drift enforced before the
+    // call; reply strictly validated. No policy/UI effect; writeKeys
+    // remains the project-row path.
+    if (!ShortcutReconciler::stringValid(component) || !ShortcutReconciler::stringValid(action)
+        || !ShortcutReconciler::cosmeticValid(componentFriendly) || !ShortcutReconciler::cosmeticValid(friendly)) {
+        if (error) {
+            *error = QStringLiteral("refusing default keys with unbounded tuple");
+        }
+        return false;
+    }
+    if (m_pinnedOwner.isEmpty() || !ShortcutReconciler::uniqueNameValid(m_pinnedOwner)) {
+        if (error) {
+            *error = QStringLiteral("refusing default keys without a pinned KGlobalAccel owner");
+        }
+        return false;
+    }
+    {
+        const QDBusConnection connection = QDBusConnection::sessionBus();
+        if (!connection.isConnected()) {
+            if (error) {
+                *error = QStringLiteral("D-Bus daemon interface is invalid");
+            }
+            return false;
+        }
+        QDBusConnectionInterface *bus = connection.interface();
+        if (!bus) {
+            if (error) {
+                *error = QStringLiteral("D-Bus daemon interface is invalid");
+            }
+            return false;
+        }
+        const QDBusReply<QString> liveOwner = bus->serviceOwner(shortcutService());
+        const bool liveValid = liveOwner.isValid();
+        const QString liveValue = liveValid ? liveOwner.value() : QString();
+        if (!checkPinnedDrift(liveValid, liveValue, m_pinnedOwner, error)) {
+            return false;
+        }
+    }
+    ensureKeySequenceMetaTypes();
+    const QStringList actionId{component, action, componentFriendly, friendly};
+    if (!QDBusConnection::sessionBus().isConnected()) {
+        if (error) {
+            *error = QStringLiteral("KGlobalAccel interface is invalid");
+        }
+        return false;
+    }
+    QDBusMessage call =
+        QDBusMessage::createMethodCall(m_pinnedOwner, shortcutPath(), shortcutInterface(), shortcutDefaultKeysMethod());
+    call.setArguments({actionId});
+    const QDBusMessage reply = QDBusConnection::sessionBus().call(call);
+    return ShortcutReconciler::parseDefaultShortcutKeysReply(reply.type(), reply.signature(), reply.arguments(),
+                                                             defaults, error);
+}
+
+bool KGlobalAccelStore::setForeignShortcutKeys(const QString &component, const QString &action,
+                                               const QString &componentFriendly, const QString &friendly,
+                                               const QList<int> &keys, QString *error)
+{
+    // Bounded native TRANSPORT seam: exact setForeignShortcutKeys
+    // (as,a(ai))->void against the pinned owner with strict void validation,
+    // owner drift checks, and fresh shortcutKeys readback confirmation. The
+    // void reply carries no keys, so confirmation reads back active keys for
+    // the same actionId and compares as sets. Arbitrary IDs allowed; successful
+    // foreign writes count against the same lifetime cap as writeKeys.
+    if (!ShortcutReconciler::keysValid(keys) || !ShortcutReconciler::stringValid(component)
+        || !ShortcutReconciler::stringValid(action) || !ShortcutReconciler::cosmeticValid(componentFriendly)
+        || !ShortcutReconciler::cosmeticValid(friendly)) {
+        if (error) {
+            *error = QStringLiteral("refusing foreign write with unbounded tuple");
+        }
+        return false;
+    }
+    if (m_pinnedOwner.isEmpty() || !ShortcutReconciler::uniqueNameValid(m_pinnedOwner)) {
+        if (error) {
+            *error = QStringLiteral("refusing foreign write without a pinned KGlobalAccel owner");
+        }
+        return false;
+    }
+    if (m_writes >= 64) {
+        if (error) {
+            *error = QStringLiteral("refusing write beyond the lifetime bound");
+        }
+        return false;
+    }
+    auto driftCheck = [&](QString *driftError) {
+        const QDBusConnection connection = QDBusConnection::sessionBus();
+        if (!connection.isConnected()) {
+            if (driftError) {
+                *driftError = QStringLiteral("D-Bus daemon interface is invalid");
+            }
+            return false;
+        }
+        QDBusConnectionInterface *bus = connection.interface();
+        if (!bus) {
+            if (driftError) {
+                *driftError = QStringLiteral("D-Bus daemon interface is invalid");
+            }
+            return false;
+        }
+        const QDBusReply<QString> liveOwner = bus->serviceOwner(shortcutService());
+        const bool liveValid = liveOwner.isValid();
+        const QString liveValue = liveValid ? liveOwner.value() : QString();
+        return checkPinnedDrift(liveValid, liveValue, m_pinnedOwner, driftError);
+    };
+    if (!driftCheck(error)) {
+        return false;
+    }
+    ensureKeySequenceMetaTypes();
+    const QStringList actionId{component, action, componentFriendly, friendly};
+    const QList<QKeySequence> keyList = keyListFromInts(keys);
+    if (!QDBusConnection::sessionBus().isConnected()) {
+        if (error) {
+            *error = QStringLiteral("KGlobalAccel interface is invalid");
+        }
+        return false;
+    }
+    QDBusMessage setCall = QDBusMessage::createMethodCall(m_pinnedOwner, shortcutPath(), shortcutInterface(),
+                                                          shortcutSetForeignKeysMethod());
+    setCall.setArguments({actionId, QVariant::fromValue(keyList)});
+    const QDBusMessage setReply = QDBusConnection::sessionBus().call(setCall);
+    if (!ShortcutReconciler::parseSetForeignShortcutKeysReply(setReply.type(), setReply.signature(),
+                                                              setReply.arguments(), error)) {
+        return false;
+    }
+    if (!driftCheck(error)) {
+        return false;
+    }
+    // Fresh readback confirmation: the void setter returns nothing, so read
+    // active keys for the same actionId and compare as sets.
+    QDBusMessage getCall =
+        QDBusMessage::createMethodCall(m_pinnedOwner, shortcutPath(), shortcutInterface(), shortcutActiveKeysMethod());
+    getCall.setArguments({actionId});
+    const QDBusMessage getReply = QDBusConnection::sessionBus().call(getCall);
+    QList<int> readback;
+    if (!ShortcutReconciler::parseDefaultShortcutKeysReply(getReply.type(), getReply.signature(),
+                                                           getReply.arguments(), &readback, nullptr)) {
+        if (error) {
+            *error = QStringLiteral("setForeignShortcutKeys readback did not confirm expected keys");
+        }
+        return false;
+    }
+    if (!ShortcutReconciler::foreignReadbackMatches(keys, readback)) {
+        if (error) {
+            *error = QStringLiteral("setForeignShortcutKeys readback did not confirm expected keys");
+        }
+        return false;
+    }
+    ++m_writes;
+    return true;
+}
+
+ShortcutReconciler::ShortcutReconciler(ShortcutStore *store, ClearedActionsStore *cleared)
+    : m_store(store)
+    , m_cleared(cleared)
+{
+}
+
+ShortcutStore *createLiveShortcutStore()
+{
+    return new KGlobalAccelStore;
+}
+
+namespace
+{
+
+// Bounded cleared-entry validation shared by load and save: strict
+// component/action identity only, at most SHORTCUT_MAX_TUPLES entries.
+// No cosmetic labels are stored.
+bool clearedEntriesValid(const QList<ClearedAction> &actions, QString *error)
+{
+    if (actions.size() > SHORTCUT_MAX_TUPLES) {
+        if (error) {
+            *error = QStringLiteral("cleared shortcut list is unbounded");
+        }
+        return false;
+    }
+    for (const ClearedAction &entry : actions) {
+        if (!ShortcutReconciler::stringValid(entry.component) || !ShortcutReconciler::stringValid(entry.action)) {
+            if (error) {
+                *error = QStringLiteral("cleared shortcut entry is unbounded");
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+KConfigClearedActions::KConfigClearedActions(const QString &filePath)
     : m_filePath(filePath)
 {
 }
 
-bool KConfigFileJournal::validateDiscovery(QString *error) const
+bool KConfigClearedActions::load(QList<ClearedAction> *actions, QString *error)
 {
-    struct stat st = {};
-    const QByteArray encoded = m_filePath.toLocal8Bit();
-    if (::lstat(encoded.constData(), &st) != 0) {
-        if (errno == ENOENT) {
-            return true;
-        }
-        if (error) {
-            *error = QStringLiteral("journal path is unavailable");
-        }
-        return false;
-    }
-    return ShortcutReconciler::journalPathSafe(m_filePath, error);
-}
-
-bool KConfigFileJournal::hasExistingPath() const
-{
-    struct stat st = {};
-    return ::lstat(m_filePath.toLocal8Bit().constData(), &st) == 0;
-}
-
-bool KConfigFileJournal::hasJournal() const
-{
-    if (!validateDiscovery(nullptr)) {
+    if (!ShortcutReconciler::clearedActionsPathSafe(m_filePath, error)) {
         return false;
     }
     KConfig config(m_filePath, KConfig::SimpleConfig);
-    const KConfigGroup group = config.group(shortcutJournalGroup());
-    return group.hasKey(QStringLiteral("SchemaVersion")) && group.hasKey(QStringLiteral("Phase"));
-}
-
-bool KConfigFileJournal::load(ShortcutJournal *journal, QString *error) const
-{
-    if (!journal) {
-        return false;
-    }
-    if (!ShortcutReconciler::journalPathSafe(m_filePath, error)) {
-        return false;
-    }
-    KConfig config(m_filePath, KConfig::SimpleConfig);
-    const KConfigGroup group = config.group(shortcutJournalGroup());
-    ShortcutJournal loaded;
-    loaded.schema = group.readEntry(QStringLiteral("SchemaVersion"), QString());
-    loaded.phase = group.readEntry(QStringLiteral("Phase"), QString());
-    loaded.owner = group.readEntry(QStringLiteral("Owner"), QString());
-    loaded.uid = group.readEntry(QStringLiteral("Uid"), 0u);
-    loaded.row0Kind = group.readEntry(QStringLiteral("Row0Kind"), QString());
-    loaded.row1Kind = group.readEntry(QStringLiteral("Row1Kind"), QString());
-    loaded.row2Kind = group.readEntry(QStringLiteral("Row2Kind"), QString());
-    loaded.row3Kind = group.readEntry(QStringLiteral("Row3Kind"), QString());
-    loaded.row4Kind = group.readEntry(QStringLiteral("Row4Kind"), QString());
-    if (!readJournalEntry(group, QStringLiteral("Focus"), &loaded.focus, error)
-        || !readJournalEntry(group, QStringLiteral("Lock"), &loaded.lock, error)
-        || !readJournalEntry(group, QStringLiteral("ResizeUp"), &loaded.resizeUp, error)
-        || !readJournalEntry(group, QStringLiteral("SwitchNext"), &loaded.switchNext, error)
-        || !readJournalEntry(group, QStringLiteral("ResizeRight"), &loaded.resizeRight, error)
-        || !readJournalEntry(group, QStringLiteral("SwitchLast"), &loaded.switchLast, error)
-        || !readJournalEntry(group, QStringLiteral("FloatToggle"), &loaded.floatToggle, error)
-        || !readJournalEntry(group, QStringLiteral("GridView"), &loaded.gridView, error)
-        || !readJournalEntry(group, QStringLiteral("MaximizeToggle"), &loaded.maximizeToggle, error)
-        || !readJournalEntry(group, QStringLiteral("Monocle"), &loaded.monocle, error)) {
-        return false;
-    }
-    if (loaded.schema == QStringLiteral("shortcut-override-v1")) {
+    const KConfigGroup group = config.group(QStringLiteral("ClearedActions"));
+    const QStringList components = group.readEntry(QStringLiteral("Components"), QStringList());
+    const QStringList acts = group.readEntry(QStringLiteral("Actions"), QStringList());
+    // IDs only: legacy ComponentFriendlies/Friendlies keys are ignored, never
+    // read, never required.
+    if (components.size() != acts.size()) {
         if (error) {
-            *error = QStringLiteral("journal schema version v1 is unsupported; expected shortcut-override-v3 (upgrade required, no migration)");
+            *error = QStringLiteral("cleared shortcut list is malformed");
         }
         return false;
     }
-    const bool isV2 = loaded.schema == shortcutJournalSchemaV2();
-    if (!isV2 && loaded.schema != shortcutJournalSchema()) {
-        if (error) {
-            *error = QStringLiteral("journal schema is unknown");
-        }
+    QList<ClearedAction> loaded;
+    loaded.reserve(components.size());
+    for (int i = 0; i < components.size(); ++i) {
+        ClearedAction entry;
+        entry.component = components.at(i);
+        entry.action = acts.at(i);
+        loaded.append(entry);
+    }
+    if (!clearedEntriesValid(loaded, error)) {
         return false;
     }
-    if (loaded.phase != shortcutJournalPhasePending() && loaded.phase != shortcutJournalPhaseFocusApplied()
-        && loaded.phase != shortcutJournalPhaseComplete()) {
-        if (error) {
-            *error = QStringLiteral("journal phase is unknown");
-        }
-        return false;
+    if (actions) {
+        *actions = loaded;
     }
-    if (!journalEntryValid(loaded.focus) || !journalEntryValid(loaded.lock) || !journalEntryValid(loaded.resizeUp)
-        || !journalEntryValid(loaded.switchNext) || !journalEntryValid(loaded.resizeRight)
-        || !journalEntryValid(loaded.switchLast)) {
-        if (error) {
-            *error = QStringLiteral("journal entries are outside the exact allowlist");
-        }
-        return false;
-    }
-    if (!isV2) {
-        // v3 journals always carry rows 3-4; v2 journals never do and their
-        // (empty) new-row fields are ignored, never assumed.
-        if (!journalEntryValid(loaded.floatToggle) || !journalEntryValid(loaded.gridView)
-            || !journalEntryValid(loaded.maximizeToggle) || !journalEntryValid(loaded.monocle)) {
-            if (error) {
-                *error = QStringLiteral("journal entries are outside the exact allowlist");
-            }
-            return false;
-        }
-    }
-    // Exact ordered roles: table order plus resolution kinds.
-    if (!ShortcutReconciler::journalRolesValid(loaded)) {
-        if (error) {
-            *error = QStringLiteral("journal roles are swapped or not the exact allowlist");
-        }
-        return false;
-    }
-    if (!ShortcutReconciler::journalPostsValid(loaded)) {
-        if (error) {
-            *error = QStringLiteral("journal postimage is not the allowed image");
-        }
-        return false;
-    }
-    if (!ShortcutReconciler::uniqueNameValid(loaded.owner)) {
-        if (error) {
-            *error = QStringLiteral("journal owner is malformed");
-        }
-        return false;
-    }
-    *journal = loaded;
     return true;
 }
 
-bool KConfigFileJournal::persist(const ShortcutJournal &journal, QString *error)
+bool KConfigClearedActions::save(const QList<ClearedAction> &actions, QString *error)
 {
-    // Reject invalid phase/owner/UID up front, before any I/O.
-    if (journal.phase != shortcutJournalPhasePending() && journal.phase != shortcutJournalPhaseFocusApplied()
-        && journal.phase != shortcutJournalPhaseComplete()) {
-        if (error) {
-            *error = QStringLiteral("refusing to persist a journal with an unknown phase");
-        }
+    if (!clearedEntriesValid(actions, error)) {
         return false;
     }
-    if (!ShortcutReconciler::uniqueNameValid(journal.owner)) {
-        if (error) {
-            *error = QStringLiteral("refusing to persist a journal with a malformed owner");
-        }
-        return false;
-    }
-    if (journal.uid != static_cast<uint>(::geteuid())) {
-        if (error) {
-            *error = QStringLiteral("refusing to persist a journal with a foreign UID");
-        }
-        return false;
-    }
-    const bool persistV2 = journal.schema == shortcutJournalSchemaV2();
-    if ((!persistV2 && journal.schema != shortcutJournalSchema()) || !journalEntryValid(journal.focus) || !journalEntryValid(journal.lock)
-        || !journalEntryValid(journal.resizeUp) || !journalEntryValid(journal.switchNext)
-        || !journalEntryValid(journal.resizeRight) || !journalEntryValid(journal.switchLast)
-        || !ShortcutReconciler::journalRolesValid(journal)) {
-        if (error) {
-            *error = QStringLiteral("refusing to persist a journal outside the exact allowlist");
-        }
-        return false;
-    }
-    if (!persistV2) {
-        // v3 journals always carry rows 3-4; v2 persists keep only the
-        // original three rows (new-row fields persist empty and inert).
-        if (!journalEntryValid(journal.floatToggle) || !journalEntryValid(journal.gridView)
-            || !journalEntryValid(journal.maximizeToggle) || !journalEntryValid(journal.monocle)) {
-            if (error) {
-                *error = QStringLiteral("refusing to persist a journal outside the exact allowlist");
-            }
-            return false;
-        }
-    }
-    if (!ShortcutReconciler::journalPathSafe(m_filePath, error)) {
+    if (!ShortcutReconciler::clearedActionsPathSafe(m_filePath, error)) {
         return false;
     }
     const QString parentPath = QFileInfo(m_filePath).dir().path();
@@ -2095,87 +2245,75 @@ bool KConfigFileJournal::persist(const ShortcutJournal &journal, QString *error)
     }
     {
         KConfig config(m_filePath, KConfig::SimpleConfig);
-        KConfigGroup group = config.group(shortcutJournalGroup());
-        group.writeEntry(QStringLiteral("SchemaVersion"), journal.schema);
-        group.writeEntry(QStringLiteral("Phase"), journal.phase);
-        group.writeEntry(QStringLiteral("Owner"), journal.owner);
-        group.writeEntry(QStringLiteral("Uid"), journal.uid);
-        writeJournalEntry(group, QStringLiteral("Focus"), journal.focus);
-        writeJournalEntry(group, QStringLiteral("Lock"), journal.lock);
-        writeJournalEntry(group, QStringLiteral("ResizeUp"), journal.resizeUp);
-        writeJournalEntry(group, QStringLiteral("SwitchNext"), journal.switchNext);
-        writeJournalEntry(group, QStringLiteral("ResizeRight"), journal.resizeRight);
-        writeJournalEntry(group, QStringLiteral("SwitchLast"), journal.switchLast);
-        writeJournalEntry(group, QStringLiteral("FloatToggle"), journal.floatToggle);
-        writeJournalEntry(group, QStringLiteral("GridView"), journal.gridView);
-        writeJournalEntry(group, QStringLiteral("MaximizeToggle"), journal.maximizeToggle);
-        writeJournalEntry(group, QStringLiteral("Monocle"), journal.monocle);
-        group.writeEntry(QStringLiteral("Row0Kind"), journal.row0Kind);
-        group.writeEntry(QStringLiteral("Row1Kind"), journal.row1Kind);
-        group.writeEntry(QStringLiteral("Row2Kind"), journal.row2Kind);
-        group.writeEntry(QStringLiteral("Row3Kind"), journal.row3Kind);
-        group.writeEntry(QStringLiteral("Row4Kind"), journal.row4Kind);
+        KConfigGroup group = config.group(QStringLiteral("ClearedActions"));
+        QStringList components;
+        QStringList acts;
+        components.reserve(actions.size());
+        acts.reserve(actions.size());
+        for (const ClearedAction &entry : actions) {
+            components.append(entry.component);
+            acts.append(entry.action);
+        }
+        group.writeEntry(QStringLiteral("Components"), components);
+        group.writeEntry(QStringLiteral("Actions"), acts);
+        // IDs only: never write cosmetic labels. Remove any legacy
+        // friendly keys so the persisted shape stays Components+Actions.
+        group.deleteEntry(QStringLiteral("ComponentFriendlies"));
+        group.deleteEntry(QStringLiteral("Friendlies"));
         config.sync();
     }
-    // Private owner-safe permissions without weakening KConfig durability
-    // (sync already completed; chmod only tightens).
     if (!ensurePrivateFile(m_filePath, error)) {
         return false;
     }
-    // Write+sync+readback before any mutation.
-    ShortcutJournal readback;
+    // Write+sync+readback before any daemon mutation.
+    QList<ClearedAction> readback;
     if (!load(&readback, nullptr)) {
         if (error) {
-            *error = QStringLiteral("journal readback failed");
+            *error = QStringLiteral("cleared shortcut readback failed");
         }
         return false;
     }
-    if (!journalsEqual(readback, journal)) {
+    if (readback != actions) {
         if (error) {
-            *error = QStringLiteral("journal readback mismatch");
+            *error = QStringLiteral("cleared shortcut readback mismatch");
         }
         return false;
     }
     return true;
 }
 
-bool KConfigFileJournal::remove(QString *error)
+bool KConfigClearedActions::clear(QString *error)
 {
-    if (!ShortcutReconciler::journalPathSafe(m_filePath, error)) {
+    if (!ShortcutReconciler::clearedActionsPathSafe(m_filePath, error)) {
         return false;
     }
     if (!QFile::exists(m_filePath)) {
         return true;
     }
-    // Only remove the project-owned journal file, never global config.
+    // Only removes the project-owned cleared-actions file, never global config.
     if (!QFile::remove(m_filePath)) {
         if (error) {
-            *error = QStringLiteral("could not remove the journal");
+            *error = QStringLiteral("could not clear the cleared shortcut list");
         }
         return false;
     }
     return true;
 }
 
-ShortcutReconciler::ShortcutReconciler(ShortcutStore *store, JournalStore *journal)
-    : m_store(store)
-    , m_journal(journal)
+ClearedActionsStore *createLiveClearedActionsStore(const QString &filePath)
 {
+    return new KConfigClearedActions(filePath);
 }
 
-void ShortcutReconciler::setLegacyJournal(JournalStore *legacy)
+QString defaultClearedActionsPath()
 {
-    m_legacyJournal = legacy;
-}
-
-ShortcutStore *createLiveShortcutStore()
-{
-    return new KGlobalAccelStore;
-}
-
-JournalStore *createLiveShortcutJournal(const QString &filePath)
-{
-    return new KConfigFileJournal(filePath);
+    // Host-independent project location for the durable cleared-ID
+    // list, shared by every KCM host. Never falls back to CWD.
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
+    if (base.isEmpty() || !QDir::isAbsolutePath(base)) {
+        return QString();
+    }
+    return base + QStringLiteral("/plasma-auto-tiler/shortcut-clearedrc");
 }
 
 Q_LOGGING_CATEGORY(lcShortcut, "plasmaautotiler.shortcut");
@@ -2184,13 +2322,6 @@ namespace
 {
 
 ShortcutLogSink g_shortcutLogSink;
-
-QString journalSelectorDetail(const QString &selector, const QString &schema, const QString &phase, bool migrated)
-{
-    return QStringLiteral("journal=%1 schema=%2 phase=%3 migrated=%4")
-        .arg(selector, schema.isEmpty() ? QStringLiteral("-") : schema,
-             phase.isEmpty() ? QStringLiteral("-") : phase, migrated ? QStringLiteral("true") : QStringLiteral("false"));
-}
 
 } // namespace
 
@@ -2241,107 +2372,7 @@ void ShortcutDiag::log(QtMsgType type, const char *operation, const char *stage,
     }
 }
 
-QString defaultShortcutJournalPath()
-{
-    // Host-independent canonical location: project-owned, shared by every
-    // KCM host (kcmshell6, System Settings). Never falls back to CWD.
-    const QString base = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
-    if (base.isEmpty() || !QDir::isAbsolutePath(base)) {
-        return QString();
-    }
-    return base + QStringLiteral("/plasma-auto-tiler/shortcut-override-journalrc");
-}
-
-QString legacyShortcutJournalPath()
-{
-    // Single explicit legacy source: the kcmshell6-host journal. The only
-    // migration source; directory scans are never used.
-    const QString base = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
-    if (base.isEmpty() || !QDir::isAbsolutePath(base)) {
-        return QString();
-    }
-    return base + QStringLiteral("/kcmshell6/shortcut-override-journalrc");
-}
-
-JournalMigrationResult migrateLegacyShortcutJournal(const QString &canonicalPath, const QString &legacyPath)
-{
-    JournalMigrationResult result;
-    QString pathError;
-    auto fail = [&](const char *outcome, const QString &message, const QString &selector) {
-        result.ok = false;
-        result.migrated = false;
-        result.error = message;
-        ShortcutDiag::log(QtWarningMsg, "migrate", "legacy-journal", outcome,
-                          journalSelectorDetail(selector, QString(), QString(), false));
-        return result;
-    };
-    if (canonicalPath.isEmpty() || legacyPath.isEmpty()) {
-        return fail("unavailable", QStringLiteral("canonical shortcut journal path is unavailable"),
-                    QStringLiteral("canonical"));
-    }
-    if (canonicalPath == legacyPath) {
-        result.ok = true;
-        ShortcutDiag::log(QtDebugMsg, "migrate", "legacy-journal", "same-path",
-                          QStringLiteral("canonical=present legacy=present"));
-        return result;
-    }
-    KConfigFileJournal canonical(canonicalPath);
-    if (!canonical.validateDiscovery(&pathError)) {
-        return fail("unsafe", QStringLiteral("canonical shortcut journal is unsafe; refusing migration"),
-                    QStringLiteral("canonical"));
-    }
-    if (canonical.hasJournal()) {
-        // Canonical authority wins; a stale legacy file is ignored, never
-        // merged and never an ambiguity failure (post-migration runs always
-        // have both files).
-        result.ok = true;
-        ShortcutDiag::log(QtDebugMsg, "migrate", "legacy-journal", "canonical-present",
-                          journalSelectorDetail(QStringLiteral("canonical"), QString(), QString(), false));
-        return result;
-    }
-    if (canonical.hasExistingPath()) {
-        return fail("malformed", QStringLiteral("canonical shortcut journal is malformed; refusing migration"),
-                    QStringLiteral("canonical"));
-    }
-    KConfigFileJournal legacy(legacyPath);
-    if (!legacy.validateDiscovery(&pathError)) {
-        return fail("unsafe", QStringLiteral("legacy shortcut journal is unsafe; refusing migration"),
-                    QStringLiteral("legacy"));
-    }
-    if (!QFile::exists(legacyPath)) {
-        result.ok = true;
-        ShortcutDiag::log(QtDebugMsg, "migrate", "legacy-journal", "legacy-absent",
-                          journalSelectorDetail(QStringLiteral("legacy"), QString(), QString(), false));
-        return result;
-    }
-    if (!legacy.hasJournal()) {
-        return fail("malformed", QStringLiteral("legacy shortcut journal is malformed; refusing migration"),
-                    QStringLiteral("legacy"));
-    }
-    ShortcutJournal journal;
-    if (!legacy.load(&journal, &pathError)) {
-        return fail("malformed", QStringLiteral("legacy shortcut journal is malformed; refusing migration"),
-                    QStringLiteral("legacy"));
-    }
-    if (journal.uid != static_cast<uint>(::geteuid())) {
-        return fail("foreign-uid", QStringLiteral("legacy shortcut journal has a foreign UID; refusing migration"),
-                    QStringLiteral("legacy"));
-    }
-    // Exact copy: schema, phase, owner, and every pre/post image are carried
-    // over untouched so the original undo history is preserved. persist
-    // revalidates and readbacks before reporting success.
-    if (!canonical.persist(journal, &pathError)) {
-        return fail("persist-failed", QStringLiteral("legacy shortcut journal migration failed; refusing migration"),
-                    QStringLiteral("canonical"));
-    }
-    result.ok = true;
-    result.migrated = true;
-    ShortcutDiag::log(QtInfoMsg, "migrate", "legacy-journal", "migrated",
-                      journalSelectorDetail(QStringLiteral("legacy"), journal.schema, journal.phase, true));
-    return result;
-}
-
-bool ShortcutReconciler::collectLiveSnapshot(LiveSnapshot *snapshot, QString *error)
+bool ShortcutReconciler::collectHolderSnapshot(HolderSnapshot *snapshot, QString *error)
 {
     if (!m_store) {
         if (error) {
@@ -2352,7 +2383,7 @@ bool ShortcutReconciler::collectLiveSnapshot(LiveSnapshot *snapshot, QString *er
     if (!m_store->checkSetterContract(error)) {
         return false;
     }
-    LiveSnapshot snap;
+    HolderSnapshot snap;
     if (!m_store->currentOwner(&snap.owner, &snap.uid, error)) {
         return false;
     }
@@ -2366,41 +2397,29 @@ bool ShortcutReconciler::collectLiveSnapshot(LiveSnapshot *snapshot, QString *er
         }
         return false;
     }
-    if (!findAllowlisted(tuples, shortcutFocusComponent(), shortcutFocusAction(), &snap.focus, error)) {
-        return false;
-    }
-    if (!findAllowlisted(tuples, shortcutLockComponent(), shortcutLockAction(), &snap.lock, error)) {
-        return false;
-    }
-    if (!findAllowlisted(tuples, shortcutResizeUpComponent(), shortcutResizeUpAction(), &snap.resizeUp, error)
-        || !findAllowlisted(tuples, shortcutSwitchNextComponent(), shortcutSwitchNextAction(), &snap.switchNext,
-                            error)
+    if (!findAllowlisted(tuples, shortcutFocusComponent(), shortcutFocusAction(), &snap.focus, error)
+        || !findAllowlisted(tuples, shortcutLockComponent(), shortcutLockAction(), &snap.lock, error)
+        || !findAllowlisted(tuples, shortcutResizeUpComponent(), shortcutResizeUpAction(), &snap.resizeUp, error)
         || !findAllowlisted(tuples, shortcutResizeRightComponent(), shortcutResizeRightAction(), &snap.resizeRight,
                             error)
-        || !findAllowlisted(tuples, shortcutSwitchLastComponent(), shortcutSwitchLastAction(), &snap.switchLast,
-                            error)
         || !findAllowlisted(tuples, shortcutFloatComponent(), shortcutFloatAction(), &snap.floatToggle, error)
-        || !findAllowlisted(tuples, shortcutGridViewComponent(), shortcutGridViewAction(), &snap.gridView, error)
         || !findAllowlisted(tuples, shortcutMaximizeComponent(), shortcutMaximizeAction(), &snap.maximizeToggle,
-                            error)
-        || !findAllowlisted(tuples, shortcutMonocleComponent(), shortcutMonocleAction(), &snap.monocle, error)) {
+                            error)) {
         return false;
     }
     if (!keysValid(snap.focus.active) || !keysValid(snap.lock.active) || !keysValid(snap.resizeUp.active)
-        || !keysValid(snap.switchNext.active) || !keysValid(snap.resizeRight.active)
-        || !keysValid(snap.switchLast.active) || !keysValid(snap.floatToggle.active)
-        || !keysValid(snap.gridView.active) || !keysValid(snap.maximizeToggle.active)
-        || !keysValid(snap.monocle.active)) {
+        || !keysValid(snap.resizeRight.active) || !keysValid(snap.floatToggle.active)
+        || !keysValid(snap.maximizeToggle.active)) {
         if (error) {
             *error = QStringLiteral("allowlisted tuple is unbounded");
         }
         return false;
     }
-    // Independent structural validation of enumerated state (not conflict
-    // detection): unbounded unrelated tuples fail closed with zero writes.
-    // Foreign conflicts stay authoritative via the keyed lookup below.
+    // Independent structural validation of enumerated state: unbounded
+    // unrelated tuples fail closed with zero writes.
+    QMap<QString, QPair<QString, QString>> cosmetics;
     for (const ShortcutTuple &tuple : tuples) {
-        if (isAllowlisted(tuple.component, tuple.action)) {
+        if (isProjectAction(tuple.component, tuple.action) || isLockAction(tuple.component, tuple.action)) {
             continue;
         }
         if (!keysValid(tuple.active)) {
@@ -2409,14 +2428,184 @@ bool ShortcutReconciler::collectLiveSnapshot(LiveSnapshot *snapshot, QString *er
             }
             return false;
         }
+        cosmetics.insert(tuple.component + QStringLiteral("/") + tuple.action,
+                         qMakePair(tuple.componentFriendly, tuple.friendly));
     }
-    // Authoritative keyed foreign-occupancy preflight (Defect B): keyed
-    // globalShortcutsByKey + globalShortcutAvailable for Meta+L, Meta+Esc,
-    // Meta+Alt+K, Meta+Alt+L. Not tuple/config enumeration, so
-    // .desktop-declared-only holders are visible. Fails closed before any
-    // journal/write. The explicit System Monitor `_launch` Meta+Esc holder
-    // is user-authorized and skipped; every other foreign occupier fails.
-    if (!checkKeyedForeignOccupancy(m_store, error)) {
+    // Authoritative per-required-key holder scan. Project actions and Lock
+    // Session own their chords; the explicit System Monitor Meta+Esc holder
+    // is user-authorized. Every other actual holder becomes a clear row,
+    // whatever its identity (known, unknown, or legacy project IDs).
+    // Transport, parsing, and consistency failures sort before the lock
+    // gate below, matching the historical refusal precedence.
+    const QList<int> required = relevantConflictKeys();
+    QMap<QString, int> rowIndex;
+    for (int key : required) {
+        QString keyError;
+        if (!checkOccupancyKeyRange(key, &keyError)) {
+            if (error) {
+                *error = keyError;
+            }
+            return false;
+        }
+        QList<ShortcutKeyHolder> holders;
+        QString storeError;
+        if (!m_store->shortcutsByKey(key, &holders, &storeError)) {
+            if (error) {
+                *error = storeError.isEmpty() ? QStringLiteral("globalShortcutsByKey call failed") : storeError;
+            }
+            return false;
+        }
+        bool available = false;
+        if (!m_store->shortcutAvailable(key, QString(), &available, &storeError)) {
+            if (error) {
+                *error = storeError.isEmpty() ? QStringLiteral("globalShortcutAvailable call failed") : storeError;
+            }
+            return false;
+        }
+        if (holders.size() > SHORTCUT_MAX_TUPLES) {
+            if (error) {
+                *error = QStringLiteral("unexpected globalShortcutsByKey reply: too many occupancy holders");
+            }
+            return false;
+        }
+        for (const ShortcutKeyHolder &holder : holders) {
+            if (holder.component.isEmpty()) {
+                if (error) {
+                    *error = QStringLiteral("unexpected globalShortcutsByKey reply: empty holder component");
+                }
+                return false;
+            }
+            if (holder.component.size() > SHORTCUT_MAX_STRING_LEN) {
+                if (error) {
+                    *error = QStringLiteral("unexpected globalShortcutsByKey reply: oversized holder component");
+                }
+                return false;
+            }
+            if (holder.action.isEmpty()) {
+                if (error) {
+                    *error = QStringLiteral("unexpected globalShortcutsByKey reply: empty holder action");
+                }
+                return false;
+            }
+            if (holder.action.size() > SHORTCUT_MAX_STRING_LEN) {
+                if (error) {
+                    *error = QStringLiteral("unexpected globalShortcutsByKey reply: oversized holder action");
+                }
+                return false;
+            }
+            switch (classifyKeyList(holder.active)) {
+            case KeyListFailure::TooMany:
+                if (error) {
+                    *error = QStringLiteral("unexpected globalShortcutsByKey reply: too many holder active keys");
+                }
+                return false;
+            case KeyListFailure::Negative:
+                if (error) {
+                    *error = QStringLiteral("unexpected globalShortcutsByKey reply: negative holder active key");
+                }
+                return false;
+            case KeyListFailure::Oversized:
+                if (error) {
+                    *error = QStringLiteral("unexpected globalShortcutsByKey reply: oversized holder active key");
+                }
+                return false;
+            case KeyListFailure::None:
+                break;
+            }
+            switch (classifyKeyList(holder.defaults)) {
+            case KeyListFailure::TooMany:
+                if (error) {
+                    *error = QStringLiteral("unexpected globalShortcutsByKey reply: too many holder default keys");
+                }
+                return false;
+            case KeyListFailure::Negative:
+                if (error) {
+                    *error = QStringLiteral("unexpected globalShortcutsByKey reply: negative holder default key");
+                }
+                return false;
+            case KeyListFailure::Oversized:
+                if (error) {
+                    *error = QStringLiteral("unexpected globalShortcutsByKey reply: oversized holder default key");
+                }
+                return false;
+            case KeyListFailure::None:
+                break;
+            }
+            if (isHolderExempt(holder.component, holder.action, key)) {
+                continue;
+            }
+            const QString id = holder.component + QStringLiteral("/") + holder.action;
+            const auto existing = rowIndex.find(id);
+            if (existing == rowIndex.end()) {
+                const QList<int> removals = conflictingKeys(holder.active);
+                if (removals.isEmpty()) {
+                    // Listed for the key but holds no required chord in its
+                    // active list: claims the chord (e.g. via a
+                    // .desktop-declared default) with nothing to clear.
+                    Blocker blocker;
+                    blocker.component = holder.component;
+                    blocker.action = holder.action;
+                    blocker.key = key;
+                    snap.blocked.append(blocker);
+                    continue;
+                }
+                ClearRow row;
+                row.component = holder.component;
+                row.action = holder.action;
+                const auto cosmetic = cosmetics.find(id);
+                if (cosmetic != cosmetics.end()) {
+                    row.componentFriendly = cosmetic->first;
+                    row.friendly = cosmetic->second;
+                }
+                row.active = holder.active;
+                row.removals = removals;
+                row.remainder = remainderAfterClear(holder.active);
+                rowIndex.insert(id, snap.rows.size());
+                snap.rows.append(row);
+                if (snap.rows.size() > SHORTCUT_MAX_TUPLES) {
+                    if (error) {
+                        *error = QStringLiteral("unexpected globalShortcutsByKey reply: too many occupancy holders");
+                    }
+                    return false;
+                }
+            } else {
+                ClearRow &row = snap.rows[existing.value()];
+                if (row.active != holder.active) {
+                    if (error) {
+                        *error = QStringLiteral(
+                            "unexpected globalShortcutsByKey reply: inconsistent holder for the requested key");
+                    }
+                    return false;
+                }
+            }
+        }
+        // Whole-key consistency, fail closed both directions: empty holders
+        // must report available and non-empty holders must report
+        // unavailable. Skipped project/lock/authorized holders still occupy
+        // the key and keep the non-empty/unavailable expectation.
+        if (holders.isEmpty() != available) {
+            if (error) {
+                *error = holders.isEmpty()
+                    ? QStringLiteral("unexpected globalShortcutAvailable reply: empty holders report unavailable")
+                    : QStringLiteral("unexpected globalShortcutAvailable reply: occupied holders report available");
+            }
+            return false;
+        }
+    }
+    // Deterministic row order regardless of daemon reply order, so a fresh
+    // re-preview compares exactly against the confirmed snapshot.
+    std::sort(snap.rows.begin(), snap.rows.end(), [](const ClearRow &a, const ClearRow &b) {
+        if (a.component != b.component) {
+            return a.component < b.component;
+        }
+        return a.action < b.action;
+    });
+    // Lock preconditions are relocate logic: without Meta+L to replace and
+    // without Meta+Esc already held there is nothing safe to do.
+    if (!snap.lock.active.contains(SHORTCUT_META_L) && !snap.lock.active.contains(SHORTCUT_META_ESC)) {
+        if (error) {
+            *error = QStringLiteral("refusing to apply: lock binding has no Meta+L to replace");
+        }
         return false;
     }
     if (snapshot) {
@@ -2425,165 +2614,41 @@ bool ShortcutReconciler::collectLiveSnapshot(LiveSnapshot *snapshot, QString *er
     return true;
 }
 
-bool ShortcutReconciler::isForcedClearRow(const ShortcutForcePreview *forced, const QString &component,
-                                          const QString &action, const QList<int> &live)
-{
-    if (!forced || !forced->forceable) {
-        return false;
-    }
-    for (const ShortcutForceMismatch &mismatch : forced->mismatches) {
-        if (mismatch.component == component && mismatch.action == action && mismatch.actual == live) {
-            return true;
-        }
-    }
-    return false;
-}
-
-ShortcutApplyResult ShortcutReconciler::apply()
-{
-    return applyImpl(nullptr);
-}
-
-bool ShortcutReconciler::ensureLegacyMigrated(QString *error)
-{
-    auto fail = [&](const char *outcome, const QString &message, const QString &selector) {
-        if (error) {
-            *error = message;
-        }
-        ShortcutDiag::log(QtWarningMsg, "migrate", "legacy-journal", outcome,
-                          journalSelectorDetail(selector, QString(), QString(), false));
-        return false;
-    };
-    if (!m_journal) {
-        return fail("unconfigured", QStringLiteral("reconciler is not configured"),
-                    QStringLiteral("canonical"));
-    }
-    if (!m_legacyJournal) {
-        return true;
-    }
-    QString discoveryError;
-    if (!m_journal->validateDiscovery(&discoveryError)) {
-        return fail("unsafe", QStringLiteral("canonical shortcut journal is unsafe; refusing migration"),
-                    QStringLiteral("canonical"));
-    }
-    if (m_journal->hasJournal()) {
-        // Canonical authority wins; a stale legacy journal is ignored, never
-        // merged. Post-migration runs always have both present.
-        ShortcutDiag::log(QtDebugMsg, "migrate", "legacy-journal", "canonical-present",
-                          journalSelectorDetail(QStringLiteral("canonical"), QString(), QString(), false));
-        return true;
-    }
-    if (m_journal->hasExistingPath()) {
-        return fail("malformed", QStringLiteral("canonical shortcut journal is malformed; refusing migration"),
-                    QStringLiteral("canonical"));
-    }
-    if (!m_legacyJournal->validateDiscovery(&discoveryError)) {
-        return fail("unsafe", QStringLiteral("legacy shortcut journal is unsafe; refusing migration"),
-                    QStringLiteral("legacy"));
-    }
-    if (!m_legacyJournal->hasJournal()) {
-        if (m_legacyJournal->hasExistingPath()) {
-            return fail("malformed", QStringLiteral("legacy shortcut journal is malformed; refusing migration"),
-                        QStringLiteral("legacy"));
-        }
-        ShortcutDiag::log(QtDebugMsg, "migrate", "legacy-journal", "legacy-absent",
-                          journalSelectorDetail(QStringLiteral("legacy"), QString(), QString(), false));
-        return true;
-    }
-    ShortcutJournal journal;
-    QString loadError;
-    if (!m_legacyJournal->load(&journal, &loadError)) {
-        return fail("malformed", loadError.isEmpty() ? QStringLiteral("legacy shortcut journal is malformed; refusing migration") : loadError,
-                    QStringLiteral("legacy"));
-    }
-    if (journal.uid != static_cast<uint>(::geteuid())) {
-        return fail("foreign-uid", QStringLiteral("legacy shortcut journal has a foreign UID; refusing migration"),
-                    QStringLiteral("legacy"));
-    }
-    // Exact copy: schema, phase, owner, and every pre/post image are carried
-    // over untouched so the original undo history is preserved. persist
-    // revalidates and readbacks before reporting success.
-    QString persistError;
-    if (!m_journal->persist(journal, &persistError)) {
-        return fail("persist-failed",
-                    persistError.isEmpty() ? QStringLiteral("legacy shortcut journal migration failed; refusing migration") : persistError,
-                    QStringLiteral("canonical"));
-    }
-    ShortcutDiag::log(QtInfoMsg, "migrate", "legacy-journal", "migrated",
-                      journalSelectorDetail(QStringLiteral("legacy"), journal.schema, journal.phase, true));
-    return true;
-}
-
-bool ShortcutReconciler::loadEffectiveJournal(ShortcutJournal *journal, bool *haveJournal, QString *error)
-{
-    if (!m_journal) {
-        if (error) {
-            *error = QStringLiteral("reconciler is not configured");
-        }
-        return false;
-    }
-    if (m_journal->hasJournal()) {
-        if (!m_journal->load(journal, error)) {
-            return false;
-        }
-        if (haveJournal) {
-            *haveJournal = true;
-        }
-        return true;
-    }
-    if (m_journal->hasExistingPath()) {
-        if (error) {
-            *error = QStringLiteral("canonical shortcut journal is malformed; refusing migration");
-        }
-        return false;
-    }
-    // Read-only legacy consult: previews see the accurate context without
-    // migrating and without writing config.
-    if (m_legacyJournal && m_legacyJournal->hasJournal()) {
-        if (!m_legacyJournal->load(journal, error)) {
-            return false;
-        }
-        if (haveJournal) {
-            *haveJournal = true;
-        }
-        return true;
-    }
-    if (m_legacyJournal && m_legacyJournal->hasExistingPath()) {
-        if (error) {
-            *error = QStringLiteral("legacy shortcut journal is malformed; refusing migration");
-        }
-        return false;
-    }
-    if (haveJournal) {
-        *haveJournal = false;
-    }
-    return true;
-}
-
-ShortcutApplyResult ShortcutReconciler::applyImpl(const ShortcutForcePreview *forced)
+ShortcutApplyResult ShortcutReconciler::writeProjectKeys(const char *operation)
 {
     ShortcutApplyResult result;
-    if (!m_store || !m_journal) {
+    if (!m_store) {
         result.error = QStringLiteral("reconciler is not configured");
         return result;
     }
-    ShortcutDiag::log(QtDebugMsg, forced ? "force-apply" : "apply", "start", "running",
-                      QStringLiteral("rows=5"));
-    QString error;
-    // Deferred legacy migration runs here: this entry point is only reached
-    // after explicit user confirmation, immediately before reconciliation.
-    if (!ensureLegacyMigrated(&error)) {
-        result.error = error;
-        return result;
-    }
+    ShortcutDiag::log(QtDebugMsg, operation, "start", "running", QStringLiteral("rows=5"));
     const int startWrites = m_store->writeCount();
     auto usedWrites = [&]() {
         return m_store->writeCount() - startWrites;
     };
-    LiveSnapshot snap;
-    if (!collectLiveSnapshot(&snap, &error)) {
+    QString error;
+    HolderSnapshot snap;
+    if (!collectHolderSnapshot(&snap, &error)) {
         result.error = error;
-        ShortcutDiag::log(QtWarningMsg, forced ? "force-apply" : "apply", "preflight", "refused", error);
+        ShortcutDiag::log(QtWarningMsg, operation, "preflight", "refused", error);
+        return result;
+    }
+    if (!snap.rows.isEmpty() || !snap.blocked.isEmpty()) {
+        if (!snap.blocked.isEmpty()) {
+            const Blocker &first = snap.blocked.first();
+            result.error = QStringLiteral("refusing to apply: %1 is claimed by %2/%3")
+                               .arg(keyDisplayName(first.key), first.component, first.action);
+        } else {
+            const ClearRow &first = snap.rows.first();
+            const int key = first.removals.isEmpty() ? 0 : first.removals.first();
+            if (key == 0) {
+                result.error = QStringLiteral("refusing to apply: holder state is inconsistent");
+            } else {
+                result.error = QStringLiteral("refusing to apply: %1 is claimed by %2/%3")
+                                   .arg(keyDisplayName(key), first.component, first.action);
+            }
+        }
+        ShortcutDiag::log(QtWarningMsg, operation, "preflight", "refused", result.error);
         return result;
     }
     const QString owner = snap.owner;
@@ -2602,538 +2667,159 @@ ShortcutApplyResult ShortcutReconciler::applyImpl(const ShortcutForcePreview *fo
         }
         return true;
     };
-    ShortcutTuple focusCurrent = snap.focus;
-    ShortcutTuple lockCurrent = snap.lock;
-    ShortcutTuple resizeUpCurrent = snap.resizeUp;
-    ShortcutTuple switchNextCurrent = snap.switchNext;
-    ShortcutTuple resizeRightCurrent = snap.resizeRight;
-    ShortcutTuple switchLastCurrent = snap.switchLast;
-    ShortcutTuple floatCurrent = snap.floatToggle;
-    ShortcutTuple gridViewCurrent = snap.gridView;
-    ShortcutTuple maximizeCurrent = snap.maximizeToggle;
-    ShortcutTuple monocleCurrent = snap.monocle;
-
-    const QList<int> focusPost = focusPostKeys();
-    const QList<int> lockPost = lockPostFor(lockCurrent.active);
-    const QList<int> resizeUpPost = resizeUpPostKeys();
-    const QList<int> resizeRightPost = resizeRightPostKeys();
-    const QList<int> floatPost = floatPostKeys();
-    const QList<int> maximizePost = maximizePostKeys();
-    const bool focusNeeds = focusCurrent.active != focusPost;
-    const bool lockHadMetaL = lockCurrent.active.contains(SHORTCUT_META_L);
-    const bool lockHasMetaEsc = lockCurrent.active.contains(SHORTCUT_META_ESC);
-    const bool lockNeeds = lockCurrent.active != lockPost;
-    if (!lockHadMetaL && !lockHasMetaEsc) {
-        result.error = QStringLiteral("refusing to apply: lock binding has no Meta+L to replace");
-        return result;
-    }
-    if (usedWrites() > SHORTCUT_MAX_WRITES) {
-        result.error = QStringLiteral("tuple writes exceed the exact ten writes max");
-        return result;
-    }
-
-    const bool haveJournal = m_journal->hasJournal();
-    ShortcutJournal journal;
-    if (haveJournal) {
-        if (!m_journal->load(&journal, &error)) {
-            result.error = error;
-            result.writes = usedWrites();
-            return result;
-        }
-        if (journal.uid != uid) {
-            result.error = QStringLiteral("KGlobalAccel service owner drifted");
-            result.writes = usedWrites();
-            return result;
-        }
-        if (journal.schema == shortcutJournalSchemaV2()) {
-            // Adopt a persisted v2 journal into v3 from live state: the
-            // three recorded rows are carried over untouched and the two
-            // new rows are built from current live bindings (pre = live,
-            // post = table image), never assumed. Persist before any write.
-            // Completed v2 journals need a bounded upgrade: the old rows are
-            // already applied while the new foreign chords are still live
-            // preimages, so persisting the upgrade as complete would demand
-            // the new postimage before the newly authorized rows are
-            // applied. Demote only the legitimate completed upgrade to
-            // focus-applied so the new rows resume; genuine drift fails
-            // closed here without persisting any upgrade.
-            const bool completingUpgrade = journal.phase == shortcutJournalPhaseComplete();
-            if (completingUpgrade) {
-                const bool oldAtPost = focusCurrent.active == journal.focus.post
-                    && lockCurrent.active == journal.lock.post
-                    && resizeUpCurrent.active == journal.resizeUp.post
-                    && switchNextCurrent.active == journal.switchNext.post
-                    && resizeRightCurrent.active == journal.resizeRight.post
-                    && switchLastCurrent.active == journal.switchLast.post;
-                if (!oldAtPost) {
-                    result.error = QStringLiteral("state drifted after apply-complete; revert before re-applying");
-                    result.writes = usedWrites();
-                    return result;
-                }
-                const bool gridKnown = gridViewCurrent.active == gridViewExpectedPre()
-                    || gridViewCurrent.active.isEmpty()
-                    || isForcedClearRow(forced, shortcutGridViewComponent(), shortcutGridViewAction(),
-                                        gridViewCurrent.active);
-                const bool monocleKnown = monocleCurrent.active == monocleExpectedPre()
-                    || monocleCurrent.active.isEmpty()
-                    || isForcedClearRow(forced, shortcutMonocleComponent(), shortcutMonocleAction(),
-                                        monocleCurrent.active);
-                if (!gridKnown) {
-                    result.error = QStringLiteral("refusing to apply: %1/%2 preimage is not exactly Meta+G")
-                                       .arg(shortcutGridViewComponent(), shortcutGridViewAction());
-                    result.writes = usedWrites();
-                    return result;
-                }
-                if (!monocleKnown) {
-                    result.error = QStringLiteral("refusing to apply: %1/%2 preimage is not exactly Meta+M")
-                                       .arg(shortcutMonocleComponent(), shortcutMonocleAction());
-                    result.writes = usedWrites();
-                    return result;
-                }
-            }
-            // One shared v2->v3 upgrade construction and persist path: the
-            // two new rows are built from current live bindings (pre = live,
-            // post = table image) while the three recorded rows stay
-            // untouched. Only a legitimate completed upgrade demotes to
-            // focus-applied so the new rows resume; pending upgrades keep
-            // their phase.
-            journal.floatToggle = {shortcutFloatComponent(), shortcutFloatAction(), floatCurrent.active,
-                                   floatPost};
-            journal.gridView = {shortcutGridViewComponent(), shortcutGridViewAction(), gridViewCurrent.active,
-                                QList<int>{}};
-            journal.maximizeToggle = {shortcutMaximizeComponent(), shortcutMaximizeAction(), maximizeCurrent.active,
-                                      maximizePost};
-            journal.monocle = {shortcutMonocleComponent(), shortcutMonocleAction(), monocleCurrent.active,
-                               QList<int>{}};
-            journal.row3Kind = shortcutResolutionClear();
-            journal.row4Kind = shortcutResolutionClear();
-            journal.schema = shortcutJournalSchema();
-            if (completingUpgrade) {
-                journal.phase = shortcutJournalPhaseFocusApplied();
-            }
-            if (!m_journal->persist(journal, &error)) {
-                result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
-                result.writes = usedWrites();
-                return result;
-            }
-        }
-        if (journal.phase == shortcutJournalPhaseComplete()) {
-            if (focusCurrent.active == journal.focus.post && lockCurrent.active == journal.lock.post
-                && resizeUpCurrent.active == journal.resizeUp.post && switchNextCurrent.active == journal.switchNext.post
-                && resizeRightCurrent.active == journal.resizeRight.post
-                && switchLastCurrent.active == journal.switchLast.post
-                && floatCurrent.active == journal.floatToggle.post && gridViewCurrent.active == journal.gridView.post
-                && maximizeCurrent.active == journal.maximizeToggle.post
-                && monocleCurrent.active == journal.monocle.post) {
-                // Stale unique names are volatile across a crashed KCM or
-                // service lifetime: same UID rebinds to the verified current
-                // owner before returning success.
-                if (journal.owner != owner) {
-                    if (!checkOwner(&error)) {
-                        result.error = error;
-                        result.writes = usedWrites();
-                        return result;
-                    }
-                    journal.owner = owner;
-                    if (!m_journal->persist(journal, &error)) {
-                        result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
-                        result.writes = usedWrites();
-                        return result;
-                    }
-                }
-                result.ok = true;
-                result.writes = usedWrites();
-                return result;
-            }
-            result.error = QStringLiteral("state drifted after apply-complete; revert before re-applying");
-            result.writes = usedWrites();
-            return result;
-        }
-        // Resume gate: before any write, each live tuple must be exactly
-        // its recorded pre or post. Zero writes have occurred, so clean.
-        {
-            const bool known = focusCurrent.active == journal.focus.pre || focusCurrent.active == journal.focus.post;
-            const bool lockKnown = lockCurrent.active == journal.lock.pre || lockCurrent.active == journal.lock.post;
-            const bool upKnown = resizeUpCurrent.active == journal.resizeUp.pre
-                || resizeUpCurrent.active == journal.resizeUp.post;
-            const bool nextKnown = switchNextCurrent.active == journal.switchNext.pre
-                || switchNextCurrent.active == journal.switchNext.post;
-            const bool rightKnown = resizeRightCurrent.active == journal.resizeRight.pre
-                || resizeRightCurrent.active == journal.resizeRight.post;
-            const bool lastKnown = switchLastCurrent.active == journal.switchLast.pre
-                || switchLastCurrent.active == journal.switchLast.post;
-            const bool floatKnown = floatCurrent.active == journal.floatToggle.pre
-                || floatCurrent.active == journal.floatToggle.post;
-            const bool gridKnown = gridViewCurrent.active == journal.gridView.pre
-                || gridViewCurrent.active == journal.gridView.post;
-            const bool maximizeKnown = maximizeCurrent.active == journal.maximizeToggle.pre
-                || maximizeCurrent.active == journal.maximizeToggle.post;
-            const bool monocleKnown = monocleCurrent.active == journal.monocle.pre
-                || monocleCurrent.active == journal.monocle.post;
-            if (!known || !lockKnown || !upKnown || !nextKnown || !rightKnown || !lastKnown || !floatKnown || !gridKnown
-                || !maximizeKnown || !monocleKnown) {
-                result.error = QStringLiteral("current state matches neither the recorded pre nor post image");
-                result.writes = usedWrites();
-                return result;
-            }
-        }
-        // Stale-owner recovery: the old D-Bus unique name is volatile, so a
-        // different old name with the same UID rebinds to the verified
-        // current owner (pinned/reconfirmed throughout via checkOwner) and
-        // persists before any recovery write. UID mismatch still fails above
-        // and current-operation drift still fails below.
-        if (journal.owner != owner) {
-            if (!checkOwner(&error)) {
-                result.error = error;
-                result.writes = usedWrites();
-                return result;
-            }
-            journal.owner = owner;
-            if (!m_journal->persist(journal, &error)) {
-                result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
-                result.writes = usedWrites();
-                return result;
-            }
-        }
-    } else {
-        // Fresh closed-table foreign preimage preflight before any journal/write.
-        // A clear row already at its postimage (empty) is normal idempotent
-        // state: adopted with pre == post and no write. Only a genuine third
-        // image refuses, or is adopted through a confirmed force preview.
-        auto freshClearKnown = [&](const ShortcutTuple &current, const QList<int> &expectedPre) {
-            if (current.active == expectedPre || current.active.isEmpty()) {
-                return true;
-            }
-            return isForcedClearRow(forced, current.component, current.action, current.active);
-        };
-        if (!freshClearKnown(switchNextCurrent, switchNextExpectedPre())) {
-            result.error = QStringLiteral("refusing to apply: %1/%2 preimage is not exactly Meta+Alt+K")
-                               .arg(shortcutSwitchNextComponent(), shortcutSwitchNextAction());
-            return result;
-        }
-        if (!freshClearKnown(switchLastCurrent, switchLastExpectedPre())) {
-            result.error = QStringLiteral("refusing to apply: %1/%2 preimage is not exactly Meta+Alt+L")
-                               .arg(shortcutSwitchLastComponent(), shortcutSwitchLastAction());
-            return result;
-        }
-        if (!freshClearKnown(gridViewCurrent, gridViewExpectedPre())) {
-            result.error = QStringLiteral("refusing to apply: %1/%2 preimage is not exactly Meta+G")
-                               .arg(shortcutGridViewComponent(), shortcutGridViewAction());
-            return result;
-        }
-        if (!freshClearKnown(monocleCurrent, monocleExpectedPre())) {
-            result.error = QStringLiteral("refusing to apply: %1/%2 preimage is not exactly Meta+M")
-                               .arg(shortcutMonocleComponent(), shortcutMonocleAction());
-            return result;
-        }
-        journal.schema = shortcutJournalSchema();
-        journal.phase = shortcutJournalPhasePending();
-        journal.owner = owner;
-        journal.uid = uid;
-        journal.focus = {shortcutFocusComponent(), shortcutFocusAction(), focusCurrent.active, focusPost};
-        journal.lock = {shortcutLockComponent(), shortcutLockAction(), lockCurrent.active, lockPost};
-        journal.resizeUp = {shortcutResizeUpComponent(), shortcutResizeUpAction(), resizeUpCurrent.active, resizeUpPost};
-        journal.switchNext = {shortcutSwitchNextComponent(), shortcutSwitchNextAction(), switchNextCurrent.active,
-                              QList<int>{}};
-        journal.resizeRight = {shortcutResizeRightComponent(), shortcutResizeRightAction(), resizeRightCurrent.active,
-                               resizeRightPost};
-        journal.switchLast = {shortcutSwitchLastComponent(), shortcutSwitchLastAction(), switchLastCurrent.active,
-                              QList<int>{}};
-        journal.floatToggle = {shortcutFloatComponent(), shortcutFloatAction(), floatCurrent.active, floatPost};
-        journal.gridView = {shortcutGridViewComponent(), shortcutGridViewAction(), gridViewCurrent.active,
-                            QList<int>{}};
-        journal.maximizeToggle = {shortcutMaximizeComponent(), shortcutMaximizeAction(), maximizeCurrent.active,
-                                  maximizePost};
-        journal.monocle = {shortcutMonocleComponent(), shortcutMonocleAction(), monocleCurrent.active, QList<int>{}};
-        journal.row0Kind = shortcutResolutionRelocate();
-        journal.row1Kind = shortcutResolutionClear();
-        journal.row2Kind = shortcutResolutionClear();
-        journal.row3Kind = shortcutResolutionClear();
-        journal.row4Kind = shortcutResolutionClear();
-        if (!m_journal->persist(journal, &error)) {
-            result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
-            return result;
-        }
-    }
-
-    // Phase 1: focus must own Meta+L before lock drops it.
-    const bool focusAlready = focusCurrent.active == journal.focus.post;
-    if (!focusAlready) {
-        if (!checkOwner(&error)) {
-            result.error = error;
-            result.writes = usedWrites();
-            return result;
+    auto writeOne = [&](const QString &component, const QString &action, const QString &componentFriendly,
+                        const QString &friendly, const QList<int> &keys, const char *what, QString *writeError) {
+        if (!checkOwner(writeError)) {
+            return false;
         }
         QList<int> confirmed;
-        if (!m_store->writeKeys(journal.focus.component, journal.focus.action, focusCurrent.componentFriendly,
-                                focusCurrent.friendly, journal.focus.post, &confirmed, &error)) {
-            result.error = error.isEmpty() ? QStringLiteral("setShortcutKeys call failed for focus") : error;
-            result.writes = usedWrites();
-            return result;
-        }
-        result.writes = usedWrites();
-        if (confirmed != journal.focus.post) {
-            result.error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
-            return result;
-        }
-        if (!checkOwner(&error)) {
-            result.error = error;
-            return result;
-        }
-        QList<ShortcutTuple> afterFocus;
-        if (!m_store->readAll(&afterFocus, &error)) {
-            result.error = error;
-            return result;
-        }
-        ShortcutTuple focusAfter;
-        if (!findAllowlisted(afterFocus, shortcutFocusComponent(), shortcutFocusAction(), &focusAfter, &error)) {
-            result.error = error;
-            return result;
-        }
-        if (focusAfter.active != journal.focus.post) {
-            result.error = QStringLiteral("focus assignment did not verify");
-            return result;
-        }
-        journal.phase = shortcutJournalPhaseFocusApplied();
-        if (!m_journal->persist(journal, &error)) {
-            result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
-            return result;
-        }
-        focusCurrent = focusAfter;
-        // Refresh lock view after the focus write for the ordered gate below.
-        for (const ShortcutTuple &tuple : afterFocus) {
-            if (tuple.component == shortcutLockComponent() && tuple.action == shortcutLockAction()) {
-                lockCurrent = tuple;
-                break;
+        if (!m_store->writeKeys(component, action, componentFriendly, friendly, keys, &confirmed, writeError)) {
+            if (writeError && writeError->isEmpty()) {
+                *writeError =
+                    QStringLiteral("setShortcutKeys call failed for %1").arg(QString::fromUtf8(what));
             }
+            return false;
         }
-    } else if (journal.phase == shortcutJournalPhasePending()) {
-        journal.phase = shortcutJournalPhaseFocusApplied();
-        // Focus already owns Meta+L; durably record the phase before the
-        // lock write so interruption stays recoverable.
-        if (focusNeeds == false && lockNeeds == true) {
-            if (!m_journal->persist(journal, &error)) {
-                result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
-                return result;
+        if (confirmed != keys) {
+            if (writeError) {
+                *writeError = QStringLiteral("setShortcutKeys reply did not confirm expected key");
             }
+            return false;
         }
-    }
-
-    // Ordered gate: lock drops Meta+L only while focus still owns it.
-    if (focusCurrent.active != journal.focus.post) {
-        result.error = QStringLiteral("refusing the lock write while focus does not own Meta+L");
-        result.writes = usedWrites();
-        return result;
-    }
-
-    // Phase 2: lock migration preserving exact other keys/order.
-    const bool lockAlready = lockCurrent.active == journal.lock.post;
-    if (!lockAlready) {
-        if (!checkOwner(&error)) {
+        return checkOwner(writeError);
+    };
+    // Phase 1: focus must own Meta+L before lock drops it.
+    const QList<int> focusPost = focusPostKeys();
+    if (snap.focus.active != focusPost) {
+        if (!writeOne(snap.focus.component, snap.focus.action, snap.focus.componentFriendly, snap.focus.friendly,
+                      focusPost, "focus", &error)) {
             result.error = error;
             result.writes = usedWrites();
             return result;
         }
-        // Re-check focus ownership immediately before the lock write.
-        QList<ShortcutTuple> beforeLock;
-        if (!m_store->readAll(&beforeLock, &error)) {
+    }
+    // Phase 2: lock relocation preserving exact other keys/order, gated on a
+    // fresh read showing focus still owning Meta+L.
+    {
+        QList<ShortcutTuple> tuples;
+        if (!m_store->readAll(&tuples, &error)) {
             result.error = error;
             result.writes = usedWrites();
             return result;
         }
         ShortcutTuple focusGate;
         ShortcutTuple lockGate;
-        if (!findAllowlisted(beforeLock, shortcutFocusComponent(), shortcutFocusAction(), &focusGate, &error)
-            || !findAllowlisted(beforeLock, shortcutLockComponent(), shortcutLockAction(), &lockGate, &error)) {
+        if (!findAllowlisted(tuples, shortcutFocusComponent(), shortcutFocusAction(), &focusGate, &error)
+            || !findAllowlisted(tuples, shortcutLockComponent(), shortcutLockAction(), &lockGate, &error)) {
             result.error = error;
             result.writes = usedWrites();
             return result;
         }
-        if (focusGate.active != journal.focus.post) {
+        if (focusGate.active != focusPost) {
             result.error = QStringLiteral("refusing the lock write while focus does not own Meta+L");
             result.writes = usedWrites();
             return result;
         }
-        if (lockGate.active != journal.lock.pre && lockGate.active != journal.lock.post) {
-            result.error = QStringLiteral("lock binding changed during apply");
-            result.writes = usedWrites();
-            return result;
-        }
-        QList<int> confirmed;
-        if (!m_store->writeKeys(journal.lock.component, journal.lock.action, lockGate.componentFriendly, lockGate.friendly,
-                                journal.lock.post, &confirmed, &error)) {
-            result.error = error.isEmpty() ? QStringLiteral("setShortcutKeys call failed for lock") : error;
-            result.writes = usedWrites();
-            return result;
-        }
-        result.writes = usedWrites();
-        if (confirmed != journal.lock.post) {
-            result.error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
-            return result;
-        }
-        if (!checkOwner(&error)) {
-            result.error = error;
-            return result;
+        const QList<int> lockPost = lockPostFor(lockGate.active);
+        if (lockGate.active != lockPost) {
+            if (!writeOne(lockGate.component, lockGate.action, lockGate.componentFriendly, lockGate.friendly, lockPost,
+                          "lock", &error)) {
+                result.error = error;
+                result.writes = usedWrites();
+                return result;
+            }
         }
     }
-
-    // Rows 1-4 ordered: project then foreign(clear) per row, resumable.
-    if (journal.phase == shortcutJournalPhasePending()
-        && (resizeUpCurrent.active != journal.resizeUp.post || switchNextCurrent.active != journal.switchNext.post
-            || resizeRightCurrent.active != journal.resizeRight.post
-            || switchLastCurrent.active != journal.switchLast.post)) {
-        journal.phase = shortcutJournalPhaseFocusApplied();
-        if (!m_journal->persist(journal, &error)) {
-            result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
-            return result;
-        }
-    }
+    // Phase 3: remaining project assignments from a fresh read.
     {
-        ShortcutJournalEntry *projs[4] = {&journal.resizeUp, &journal.resizeRight, &journal.floatToggle,
-                                          &journal.maximizeToggle};
-        ShortcutJournalEntry *fors[4] = {&journal.switchNext, &journal.switchLast, &journal.gridView, &journal.monocle};
-        for (int r = 0; r < 4; ++r) {
-            QList<ShortcutTuple> cur;
-            if (!m_store->readAll(&cur, &error)) {
+        QList<ShortcutTuple> tuples;
+        if (!m_store->readAll(&tuples, &error)) {
+            result.error = error;
+            result.writes = usedWrites();
+            return result;
+        }
+        struct Need
+        {
+            ShortcutTuple current;
+            QList<int> post;
+            const char *what;
+        };
+        QList<Need> needs;
+        ShortcutTuple current;
+        if (!findAllowlisted(tuples, shortcutResizeUpComponent(), shortcutResizeUpAction(), &current, &error)) {
+            result.error = error;
+            result.writes = usedWrites();
+            return result;
+        }
+        needs.append({current, resizeUpPostKeys(), "resize-up"});
+        if (!findAllowlisted(tuples, shortcutResizeRightComponent(), shortcutResizeRightAction(), &current, &error)) {
+            result.error = error;
+            result.writes = usedWrites();
+            return result;
+        }
+        needs.append({current, resizeRightPostKeys(), "resize-right"});
+        if (!findAllowlisted(tuples, shortcutFloatComponent(), shortcutFloatAction(), &current, &error)) {
+            result.error = error;
+            result.writes = usedWrites();
+            return result;
+        }
+        needs.append({current, floatPostKeys(), "float"});
+        if (!findAllowlisted(tuples, shortcutMaximizeComponent(), shortcutMaximizeAction(), &current, &error)) {
+            result.error = error;
+            result.writes = usedWrites();
+            return result;
+        }
+        needs.append({current, maximizePostKeys(), "maximize"});
+        for (const Need &need : needs) {
+            if (need.current.active == need.post) {
+                continue;
+            }
+            if (!writeOne(need.current.component, need.current.action, need.current.componentFriendly,
+                          need.current.friendly, need.post, need.what, &error)) {
                 result.error = error;
                 result.writes = usedWrites();
                 return result;
-            }
-            ShortcutTuple proj;
-            ShortcutTuple foreign;
-            if (!findAllowlisted(cur, projs[r]->component, projs[r]->action, &proj, &error)
-                || !findAllowlisted(cur, fors[r]->component, fors[r]->action, &foreign, &error)) {
-                result.error = error;
-                result.writes = usedWrites();
-                return result;
-            }
-            if (foreign.active != fors[r]->pre && foreign.active != fors[r]->post) {
-                result.error = QStringLiteral("current state matches neither the recorded pre nor post image");
-                result.writes = usedWrites();
-                return result;
-            }
-            if (proj.active != projs[r]->post) {
-                if (proj.active != projs[r]->pre) {
-                    result.error = QStringLiteral("current state matches neither the recorded pre nor post image");
-                    result.writes = usedWrites();
-                    return result;
-                }
-                if (!checkOwner(&error)) {
-                    result.error = error;
-                    result.writes = usedWrites();
-                    return result;
-                }
-                QList<int> confirmed;
-                if (!m_store->writeKeys(projs[r]->component, projs[r]->action, proj.componentFriendly, proj.friendly,
-                                        projs[r]->post, &confirmed, &error)) {
-                    result.error = error.isEmpty() ? QStringLiteral("setShortcutKeys call failed") : error;
-                    result.writes = usedWrites();
-                    return result;
-                }
-                if (confirmed != projs[r]->post) {
-                    result.error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
-                    return result;
-                }
-                if (!checkOwner(&error)) {
-                    result.error = error;
-                    return result;
-                }
-            }
-            // Ordered gate: foreign clears only while its project owns the chord.
-            QList<ShortcutTuple> gate;
-            if (!m_store->readAll(&gate, &error)) {
-                result.error = error;
-                result.writes = usedWrites();
-                return result;
-            }
-            ShortcutTuple projGate;
-            ShortcutTuple forGate;
-            if (!findAllowlisted(gate, projs[r]->component, projs[r]->action, &projGate, &error)
-                || !findAllowlisted(gate, fors[r]->component, fors[r]->action, &forGate, &error)) {
-                result.error = error;
-                result.writes = usedWrites();
-                return result;
-            }
-            if (projGate.active != projs[r]->post) {
-                result.error = QStringLiteral("refusing the foreign write while its project does not own the chord");
-                result.writes = usedWrites();
-                return result;
-            }
-            if (forGate.active != fors[r]->post) {
-                if (forGate.active != fors[r]->pre) {
-                    result.error = QStringLiteral("foreign binding changed during apply");
-                    result.writes = usedWrites();
-                    return result;
-                }
-                if (!checkOwner(&error)) {
-                    result.error = error;
-                    result.writes = usedWrites();
-                    return result;
-                }
-                QList<int> confirmed;
-                if (!m_store->writeKeys(fors[r]->component, fors[r]->action, forGate.componentFriendly,
-                                        forGate.friendly, fors[r]->post, &confirmed, &error)) {
-                    result.error = error.isEmpty() ? QStringLiteral("setShortcutKeys call failed") : error;
-                    result.writes = usedWrites();
-                    return result;
-                }
-                if (confirmed != fors[r]->post) {
-                    result.error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
-                    return result;
-                }
-                if (!checkOwner(&error)) {
-                    result.error = error;
-                    result.writes = usedWrites();
-                    return result;
-                }
             }
         }
     }
-
-    // Finish Apply: only the allowed pre/post image is permitted.
-    QList<ShortcutTuple> finalTuples;
-    if (!m_store->readAll(&finalTuples, &error)) {
-        result.error = error;
-        result.writes = usedWrites();
-        return result;
-    }
-    ShortcutTuple focusFinal;
-    ShortcutTuple lockFinal;
-    ShortcutTuple upFinal;
-    ShortcutTuple nextFinal;
-    ShortcutTuple rightFinal;
-    ShortcutTuple lastFinal;
-    ShortcutTuple floatFinal;
-    ShortcutTuple gridViewFinal;
-    ShortcutTuple maximizeFinal;
-    ShortcutTuple monocleFinal;
-    if (!findAllowlisted(finalTuples, shortcutFocusComponent(), shortcutFocusAction(), &focusFinal, &error)
-        || !findAllowlisted(finalTuples, shortcutLockComponent(), shortcutLockAction(), &lockFinal, &error)
-        || !findAllowlisted(finalTuples, shortcutResizeUpComponent(), shortcutResizeUpAction(), &upFinal, &error)
-        || !findAllowlisted(finalTuples, shortcutSwitchNextComponent(), shortcutSwitchNextAction(), &nextFinal, &error)
-        || !findAllowlisted(finalTuples, shortcutResizeRightComponent(), shortcutResizeRightAction(), &rightFinal,
-                            &error)
-        || !findAllowlisted(finalTuples, shortcutSwitchLastComponent(), shortcutSwitchLastAction(), &lastFinal, &error)
-        || !findAllowlisted(finalTuples, shortcutFloatComponent(), shortcutFloatAction(), &floatFinal, &error)
-        || !findAllowlisted(finalTuples, shortcutGridViewComponent(), shortcutGridViewAction(), &gridViewFinal, &error)
-        || !findAllowlisted(finalTuples, shortcutMaximizeComponent(), shortcutMaximizeAction(), &maximizeFinal, &error)
-        || !findAllowlisted(finalTuples, shortcutMonocleComponent(), shortcutMonocleAction(), &monocleFinal,
-                            &error)) {
-        result.error = error;
-        result.writes = usedWrites();
-        return result;
-    }
-    if (focusFinal.active != journal.focus.post || lockFinal.active != journal.lock.post
-        || upFinal.active != journal.resizeUp.post || nextFinal.active != journal.switchNext.post
-        || rightFinal.active != journal.resizeRight.post || lastFinal.active != journal.switchLast.post
-        || floatFinal.active != journal.floatToggle.post || gridViewFinal.active != journal.gridView.post
-        || maximizeFinal.active != journal.maximizeToggle.post || monocleFinal.active != journal.monocle.post) {
-        result.error = QStringLiteral("finish-apply verification failed: live state drifted from the recorded post image");
-        result.writes = usedWrites();
-        return result;
+    // Finish: only the expected image is permitted.
+    {
+        QList<ShortcutTuple> finalTuples;
+        if (!m_store->readAll(&finalTuples, &error)) {
+            result.error = error;
+            result.writes = usedWrites();
+            return result;
+        }
+        ShortcutTuple focusFinal;
+        ShortcutTuple lockFinal;
+        ShortcutTuple upFinal;
+        ShortcutTuple rightFinal;
+        ShortcutTuple floatFinal;
+        ShortcutTuple maximizeFinal;
+        if (!findAllowlisted(finalTuples, shortcutFocusComponent(), shortcutFocusAction(), &focusFinal, &error)
+            || !findAllowlisted(finalTuples, shortcutLockComponent(), shortcutLockAction(), &lockFinal, &error)
+            || !findAllowlisted(finalTuples, shortcutResizeUpComponent(), shortcutResizeUpAction(), &upFinal, &error)
+            || !findAllowlisted(finalTuples, shortcutResizeRightComponent(), shortcutResizeRightAction(), &rightFinal,
+                                &error)
+            || !findAllowlisted(finalTuples, shortcutFloatComponent(), shortcutFloatAction(), &floatFinal, &error)
+            || !findAllowlisted(finalTuples, shortcutMaximizeComponent(), shortcutMaximizeAction(), &maximizeFinal,
+                                &error)) {
+            result.error = error;
+            result.writes = usedWrites();
+            return result;
+        }
+        if (focusFinal.active != focusPost || upFinal.active != resizeUpPostKeys()
+            || rightFinal.active != resizeRightPostKeys() || floatFinal.active != floatPostKeys()
+            || maximizeFinal.active != maximizePostKeys() || lockFinal.active.contains(SHORTCUT_META_L)
+            || !lockFinal.active.contains(SHORTCUT_META_ESC)) {
+            result.error = QStringLiteral("finish-apply verification failed: live state differs from the expected image");
+            result.writes = usedWrites();
+            return result;
+        }
     }
     if (usedWrites() > SHORTCUT_MAX_WRITES) {
         result.error = QStringLiteral("tuple writes exceed the exact ten writes max");
+        result.writes = usedWrites();
         return result;
     }
     if (!checkOwner(&error)) {
@@ -3141,50 +2827,26 @@ ShortcutApplyResult ShortcutReconciler::applyImpl(const ShortcutForcePreview *fo
         result.writes = usedWrites();
         return result;
     }
-    journal.phase = shortcutJournalPhaseComplete();
-    if (!m_journal->persist(journal, &error)) {
-        result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
-        result.writes = usedWrites();
-        return result;
-    }
     result.ok = true;
     result.writes = usedWrites();
-    ShortcutDiag::log(QtInfoMsg, forced ? "force-apply" : "apply", "finish", "ok",
-                      journalSelectorDetail(QStringLiteral("canonical"), journal.schema, journal.phase, false)
-                          + QStringLiteral(" writes=%1").arg(result.writes));
+    ShortcutDiag::log(QtInfoMsg, operation, "finish", "ok", QStringLiteral("writes=%1").arg(result.writes));
     return result;
+}
+
+ShortcutApplyResult ShortcutReconciler::apply()
+{
+    return writeProjectKeys("apply");
 }
 
 ShortcutRevertResult ShortcutReconciler::revert()
 {
     ShortcutRevertResult result;
-    if (!m_store || !m_journal) {
+    if (!m_store || !m_cleared) {
         result.error = QStringLiteral("reconciler is not configured");
         return result;
     }
-    ShortcutDiag::log(QtDebugMsg, "revert", "start", "running", QStringLiteral("rows=5"));
-    QString migrationError;
-    // Deferred legacy migration runs here: this entry point is only reached
-    // after explicit user confirmation, immediately before reconciliation.
-    if (!ensureLegacyMigrated(&migrationError)) {
-        result.error = migrationError;
-        return result;
-    }
-    if (!m_journal->hasJournal()) {
-        result.ok = true;
-        ShortcutDiag::log(QtInfoMsg, "revert", "finish", "ok", QStringLiteral("journal=canonical present=false"));
-        return result;
-    }
+    ShortcutDiag::log(QtDebugMsg, "revert", "start", "running", QStringLiteral("cleared=list"));
     QString error;
-    const int startWrites = m_store->writeCount();
-    auto usedWrites = [&]() {
-        return m_store->writeCount() - startWrites;
-    };
-    ShortcutJournal journal;
-    if (!m_journal->load(&journal, &error)) {
-        result.error = error;
-        return result;
-    }
     if (!m_store->checkSetterContract(&error)) {
         result.error = error;
         return result;
@@ -3209,237 +2871,110 @@ ShortcutRevertResult ShortcutReconciler::revert()
         }
         return true;
     };
-    if (journal.uid != uid) {
-        result.error = QStringLiteral("KGlobalAccel service owner drifted");
-        return result;
-    }
-    QList<ShortcutTuple> tuples;
-    if (!m_store->readAll(&tuples, &error)) {
+    QList<ClearedAction> existing;
+    if (!m_cleared->load(&existing, &error)) {
         result.error = error;
         return result;
     }
-    ShortcutTuple focusCurrent;
-    ShortcutTuple lockCurrent;
-    ShortcutTuple upCurrent;
-    ShortcutTuple nextCurrent;
-    ShortcutTuple rightCurrent;
-    ShortcutTuple lastCurrent;
-    ShortcutTuple floatCurrent;
-    ShortcutTuple gridViewCurrent;
-    ShortcutTuple maximizeCurrent;
-    ShortcutTuple monocleCurrent;
-    if (!findAllowlisted(tuples, shortcutFocusComponent(), shortcutFocusAction(), &focusCurrent, &error)
-        || !findAllowlisted(tuples, shortcutLockComponent(), shortcutLockAction(), &lockCurrent, &error)
-        || !findAllowlisted(tuples, shortcutResizeUpComponent(), shortcutResizeUpAction(), &upCurrent, &error)
-        || !findAllowlisted(tuples, shortcutSwitchNextComponent(), shortcutSwitchNextAction(), &nextCurrent, &error)
-        || !findAllowlisted(tuples, shortcutResizeRightComponent(), shortcutResizeRightAction(), &rightCurrent,
-                            &error)
-        || !findAllowlisted(tuples, shortcutSwitchLastComponent(), shortcutSwitchLastAction(), &lastCurrent, &error)) {
-        result.error = error;
+    if (existing.isEmpty()) {
+        result.ok = true;
+        ShortcutDiag::log(QtInfoMsg, "revert", "finish", "ok", QStringLiteral("cleared=empty writes=0"));
         return result;
     }
-    // v2 journals revert only the original three rows; rows 3-4 live in v3
-    // journals and are resolved here only for those.
-    const bool revertV2 = journal.schema == shortcutJournalSchemaV2();
-    if (!revertV2) {
-        if (!findAllowlisted(tuples, shortcutFloatComponent(), shortcutFloatAction(), &floatCurrent, &error)
-            || !findAllowlisted(tuples, shortcutGridViewComponent(), shortcutGridViewAction(), &gridViewCurrent, &error)
-            || !findAllowlisted(tuples, shortcutMaximizeComponent(), shortcutMaximizeAction(), &maximizeCurrent, &error)
-            || !findAllowlisted(tuples, shortcutMonocleComponent(), shortcutMonocleAction(), &monocleCurrent, &error)) {
-            result.error = error;
-            return result;
-        }
-    }
-    // Stale-owner recovery for Restore: same UID with a different old unique
-    // name rebinds to the verified current owner and persists before any
-    // restore write. Journal image/allowlist already validated by load;
-    // live tuples resolved above, so state is valid enough. Current drift
-    // and UID checks below stay strict.
-    if (journal.owner != owner) {
-        if (!checkOwner(&error)) {
-            result.error = error;
-            return result;
-        }
-        journal.owner = owner;
-        if (!m_journal->persist(journal, &error)) {
-            result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
-            return result;
-        }
-    }
-
-    // Reverse ordered restore: only currently owned postimages, scoped.
-    // v3 restores rows 4-3 before rows 2-0 (reverse of apply order); v2
-    // restores exactly the original six entries.
-    const int entryCount = revertV2 ? 6 : 10;
-    ShortcutJournalEntry *ordered[10] = {&journal.focus, &journal.lock, &journal.resizeUp, &journal.switchNext,
-                                         &journal.resizeRight, &journal.switchLast, &journal.floatToggle,
-                                         &journal.gridView, &journal.maximizeToggle, &journal.monocle};
-    QList<int> currents[10] = {focusCurrent.active, lockCurrent.active, upCurrent.active,
-                               nextCurrent.active, rightCurrent.active, lastCurrent.active,
-                               revertV2 ? QList<int>() : floatCurrent.active,
-                               revertV2 ? QList<int>() : gridViewCurrent.active,
-                               revertV2 ? QList<int>() : maximizeCurrent.active,
-                               revertV2 ? QList<int>() : monocleCurrent.active};
-    bool owned[10] = {false, false, false, false, false, false, false, false, false, false};
-    for (int i = 0; i < entryCount; ++i) {
-        owned[i] = ordered[i]->pre != ordered[i]->post && currents[i] == ordered[i]->post;
-    }
-    for (int idx = entryCount - 1; idx >= 0; --idx) {
-        if (!owned[idx]) {
-            continue;
-        }
-        QList<ShortcutTuple> mid;
-        if (!m_store->readAll(&mid, &error)) {
-            result.error = error;
-            result.writes = usedWrites();
-            return result;
-        }
-        ShortcutTuple live;
-        if (!findAllowlisted(mid, ordered[idx]->component, ordered[idx]->action, &live, &error)) {
-            result.error = error;
-            result.writes = usedWrites();
-            return result;
-        }
-        if (live.active != ordered[idx]->post && live.active != ordered[idx]->pre) {
-            result.untouched.append(QStringLiteral("%1/%2").arg(ordered[idx]->component, ordered[idx]->action));
-            continue;
-        }
-        if (live.active != ordered[idx]->post) {
-            continue;
-        }
-        if (!checkOwner(&error)) {
-            result.error = error;
-            result.writes = usedWrites();
-            return result;
-        }
-        QList<int> confirmed;
-        if (!m_store->writeKeys(ordered[idx]->component, ordered[idx]->action, live.componentFriendly, live.friendly,
-                                ordered[idx]->pre, &confirmed, &error)) {
-            result.error = error.isEmpty() ? QStringLiteral("setShortcutKeys call failed") : error;
-            result.writes = usedWrites();
-            return result;
-        }
-        if (confirmed != ordered[idx]->pre) {
-            result.error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
-            result.writes = usedWrites();
-            return result;
-        }
-        if (!checkOwner(&error)) {
-            result.error = error;
-            result.writes = usedWrites();
-            return result;
-        }
-    }
-
-    result.writes = usedWrites();
-    if (result.writes > SHORTCUT_MAX_WRITES) {
-        result.error = QStringLiteral("tuple writes exceed the exact ten writes max");
+    const int startWrites = m_store->writeCount();
+    auto usedWrites = [&]() {
+        return m_store->writeCount() - startWrites;
+    };
+    // Idempotent per-entry restore: resolve each persisted ID to its fresh
+    // current tuple from readAll to supply the current friendly labels
+    // (empty allowed) for the 4-field actionId. Never assume 2-field
+    // daemon semantics. Project-owned IDs (current and legacy) stay
+    // cleared. Absent or duplicate IDs fail closed without writing
+    // unrelated actions; any failure retains the list for resume.
+    QList<ShortcutTuple> fresh;
+    if (!m_store->readAll(&fresh, &error)) {
+        result.error = error.isEmpty() ? QStringLiteral("cleared shortcut resolve failed") : error;
+        result.writes = usedWrites();
         return result;
     }
-
-    QList<ShortcutTuple> finalTuples;
-    if (!m_store->readAll(&finalTuples, &error)) {
-        result.error = error;
-        return result;
-    }
-    ShortcutTuple finals[10];
-    for (int i = 0; i < entryCount; ++i) {
-        if (!findAllowlisted(finalTuples, ordered[i]->component, ordered[i]->action, &finals[i], &error)) {
-            result.error = error;
+    for (const ClearedAction &entry : existing) {
+        if (!stringValid(entry.component) || !stringValid(entry.action)) {
+            result.error = QStringLiteral("cleared shortcut entry is unbounded");
+            result.writes = usedWrites();
             return result;
         }
-        if (finals[i].active != ordered[i]->pre) {
-            result.untouched.append(QStringLiteral("%1/%2").arg(ordered[i]->component, ordered[i]->action));
+        if (isProjectOwned(entry.component, entry.action)) {
+            continue;
         }
-    }
-    {
-        QStringList deduped;
-        for (const QString &item : result.untouched) {
-            if (!deduped.contains(item)) {
-                deduped.append(item);
+        int matches = 0;
+        ShortcutTuple current;
+        for (const ShortcutTuple &tuple : fresh) {
+            if (tuple.component == entry.component && tuple.action == entry.action) {
+                ++matches;
+                current = tuple;
             }
         }
-        result.untouched = deduped;
-    }
-
-    bool allAtPre = true;
-    for (int i = 0; i < entryCount; ++i) {
-        if (finals[i].active != ordered[i]->pre) {
-            allAtPre = false;
-            break;
+        if (matches != 1) {
+            result.error = matches == 0
+                ? QStringLiteral("cleared shortcut action is absent; retaining list for retry")
+                : QStringLiteral("cleared shortcut action is ambiguous; retaining list for retry");
+            result.writes = usedWrites();
+            return result;
         }
-    }
-    if (allAtPre) {
+        // Fresh labels only; empty friendlies allowed, length bound applies.
+        if (!cosmeticValid(current.componentFriendly) || !cosmeticValid(current.friendly)) {
+            result.error = QStringLiteral("cleared shortcut entry is unbounded");
+            result.writes = usedWrites();
+            return result;
+        }
+        QList<int> defaults;
+        if (!m_store->defaultShortcutKeys(entry.component, entry.action, current.componentFriendly,
+                                          current.friendly, &defaults, &error)) {
+            result.error = error.isEmpty() ? QStringLiteral("defaultShortcutKeys call failed") : error;
+            result.writes = usedWrites();
+            return result;
+        }
         if (!checkOwner(&error)) {
             result.error = error;
+            result.writes = usedWrites();
             return result;
         }
-        if (!m_journal->remove(&error)) {
-            result.error = error.isEmpty() ? QStringLiteral("could not remove the journal") : error;
+        if (!m_store->setForeignShortcutKeys(entry.component, entry.action, current.componentFriendly,
+                                             current.friendly, defaults, &error)) {
+            result.error = error.isEmpty() ? QStringLiteral("setForeignShortcutKeys call failed") : error;
+            result.writes = usedWrites();
             return result;
         }
-        result.journalRemoved = true;
-        result.ok = result.untouched.isEmpty();
-        if (!result.untouched.isEmpty()) {
-            result.error = QStringLiteral("external edits left untouched");
-        }
-        ShortcutDiag::log(result.ok ? QtInfoMsg : QtWarningMsg, "revert", "finish",
-                          result.ok ? "ok" : "untouched",
-                          journalSelectorDetail(QStringLiteral("canonical"), journal.schema, journal.phase, false)
-                              + QStringLiteral(" writes=%1").arg(result.writes));
+    }
+    if (!m_cleared->clear(&error)) {
+        result.error = error.isEmpty() ? QStringLiteral("could not clear the cleared shortcut list") : error;
+        result.writes = usedWrites();
         return result;
     }
-    result.ok = false;
-    if (result.error.isEmpty()) {
-        result.error = QStringLiteral("external edits left untouched; journal retained");
-    }
-    ShortcutDiag::log(QtWarningMsg, "revert", "finish", "untouched",
-                      journalSelectorDetail(QStringLiteral("canonical"), journal.schema, journal.phase, false));
+    result.ok = true;
+    result.writes = usedWrites();
+    ShortcutDiag::log(QtInfoMsg, "revert", "finish", "ok", QStringLiteral("writes=%1").arg(result.writes));
     return result;
 }
 
-namespace
+bool ShortcutReconciler::forceMismatchFromRow(const ClearRow &row, ShortcutForceMismatch *out)
 {
-
-bool forceMismatchEqual(const ShortcutForceMismatch &a, const ShortcutForceMismatch &b)
-{
-    return a.component == b.component && a.action == b.action && a.expectedPre == b.expectedPre
-        && a.actual == b.actual && a.post == b.post;
-}
-
-bool forceLiveSnapshotEqual(const ShortcutForcePreview &a, const ShortcutForcePreview &b)
-{
-    return a.owner == b.owner && a.uid == b.uid && a.liveImages == b.liveImages && a.journalOwner == b.journalOwner;
-}
-
-// The only force-eligible identities: compiled clear-row foreign targets
-// (rows 1-4). Relocate rows, project rows, and anything outside the table
-// are never overridable.
-bool isCompiledClearForeign(const QString &component, const QString &action)
-{
-    const QList<ShortcutConflictRow> &table = shortcutConflictTable();
-    for (int r = 1; r < table.size(); ++r) {
-        if (component == table.at(r).foreignComponent && action == table.at(r).foreignAction) {
-            return true;
-        }
+    if (!out) {
+        return false;
     }
-    return false;
+    ShortcutForceMismatch mismatch;
+    mismatch.component = row.component;
+    mismatch.action = row.action;
+    mismatch.expectedPre = row.removals;
+    mismatch.actual = row.active;
+    mismatch.post = row.remainder;
+    mismatch.componentFriendly = row.componentFriendly;
+    mismatch.friendly = row.friendly;
+    *out = mismatch;
+    return true;
 }
 
-QList<int> compiledClearExpectedPre(const QString &component, const QString &action)
-{
-    const QList<ShortcutConflictRow> &table = shortcutConflictTable();
-    for (int r = 1; r < table.size(); ++r) {
-        if (component == table.at(r).foreignComponent && action == table.at(r).foreignAction) {
-            return table.at(r).foreignExpectedPre;
-        }
-    }
-    return {};
-}
-
-} // namespace
-
-ShortcutForcePreview ShortcutReconciler::computeForcePreview()
+ShortcutForcePreview ShortcutReconciler::buildForcePreview()
 {
     ShortcutForcePreview preview;
     auto refuse = [&](const QString &message) {
@@ -3447,106 +2982,36 @@ ShortcutForcePreview ShortcutReconciler::computeForcePreview()
         preview.error = message;
         return preview;
     };
-    if (!m_store || !m_journal) {
+    if (!m_store) {
         return refuse(QStringLiteral("reconciler is not configured"));
     }
-    LiveSnapshot snap;
+    HolderSnapshot snap;
     QString error;
-    // Force never bypasses store, journal, ownership, or transport/parsing
-    // failures: the full shared preflight must pass first.
-    if (!collectLiveSnapshot(&snap, &error)) {
+    if (!collectHolderSnapshot(&snap, &error)) {
         return refuse(error);
     }
-    preview.owner = snap.owner;
-    preview.uid = snap.uid;
-    preview.liveImages = {snap.focus.active, snap.lock.active, snap.resizeUp.active, snap.switchNext.active,
-                          snap.resizeRight.active, snap.switchLast.active, snap.floatToggle.active,
-                          snap.gridView.active, snap.maximizeToggle.active, snap.monocle.active};
-    // Lock preconditions are row-0 relocate logic, never forceable.
+    // Lock preconditions are relocate logic, never forceable: even with
+    // clearable holders, a lock binding with nothing to replace refuses the
+    // preview up front instead of failing mid-force after clearing.
     if (!snap.lock.active.contains(SHORTCUT_META_L) && !snap.lock.active.contains(SHORTCUT_META_ESC)) {
         return refuse(QStringLiteral("refusing to apply: lock binding has no Meta+L to replace"));
     }
-    if (!m_journal->hasJournal() && !(m_legacyJournal && m_legacyJournal->hasJournal())) {
-        preview.context = ShortcutForceContext::Fresh;
-        const ShortcutTuple *lives[4] = {&snap.switchNext, &snap.switchLast, &snap.gridView, &snap.monocle};
-        const QList<int> pres[4] = {switchNextExpectedPre(), switchLastExpectedPre(), gridViewExpectedPre(),
-                                    monocleExpectedPre()};
-        for (int i = 0; i < 4; ++i) {
-            // Pre or post (empty) is normal; only a genuine third image is a
-            // force candidate. keysValid already passed in the snapshot.
-            if (lives[i]->active == pres[i] || lives[i]->active.isEmpty()) {
-                continue;
-            }
-            ShortcutForceMismatch mismatch;
-            mismatch.component = lives[i]->component;
-            mismatch.action = lives[i]->action;
-            mismatch.expectedPre = pres[i];
-            mismatch.actual = lives[i]->active;
-            mismatch.post = QList<int>{};
-            preview.mismatches.append(mismatch);
-        }
-        if (preview.mismatches.isEmpty()) {
-            return refuse(QStringLiteral("no forced override applies: live state needs no clear-row adoption"));
-        }
-        preview.forceable = true;
-        return preview;
+    preview.owner = snap.owner;
+    preview.uid = snap.uid;
+    preview.liveImages = {snap.focus.active, snap.lock.active, snap.resizeUp.active, snap.resizeRight.active,
+                          snap.floatToggle.active, snap.maximizeToggle.active};
+    if (!snap.blocked.isEmpty()) {
+        const Blocker &first = snap.blocked.first();
+        return refuse(QStringLiteral("refusing force: %1 is claimed by %2/%3 with no active binding to clear")
+                          .arg(keyDisplayName(first.key), first.component, first.action));
     }
-    ShortcutJournal journal;
-    bool haveJournal = false;
-    if (!loadEffectiveJournal(&journal, &haveJournal, &error) || !haveJournal) {
-        // Unreachable when the Fresh branch above returns: kept defensive so
-        // a journal cannot be skipped silently.
-        return refuse(error.isEmpty() ? QStringLiteral("journal present; finish or revert before forcing") : error);
+    if (snap.rows.isEmpty()) {
+        return refuse(QStringLiteral("no forced override applies: no holder claims a project-required key"));
     }
-    if (journal.uid != snap.uid) {
-        return refuse(QStringLiteral("KGlobalAccel service owner drifted"));
-    }
-    if (journal.schema != shortcutJournalSchemaV2()) {
-        // A governed v3 journal is never forced; Finish Apply or Revert owns
-        // its recovery semantics.
-        return refuse(QStringLiteral("journal present; finish or revert before forcing"));
-    }
-    if (journal.phase != shortcutJournalPhaseComplete()) {
-        // Pending v2 upgrades adopt new rows from live state without
-        // preimage gates; nothing to force.
-        return refuse(QStringLiteral("journal present; finish or revert before forcing"));
-    }
-    const bool oldAtPost = snap.focus.active == journal.focus.post && snap.lock.active == journal.lock.post
-        && snap.resizeUp.active == journal.resizeUp.post && snap.switchNext.active == journal.switchNext.post
-        && snap.resizeRight.active == journal.resizeRight.post && snap.switchLast.active == journal.switchLast.post;
-    if (!oldAtPost) {
-        return refuse(QStringLiteral("state drifted after apply-complete; revert before re-applying"));
-    }
-    preview.context = ShortcutForceContext::V2Upgrade;
-    preview.focusPre = journal.focus;
-    preview.lockPre = journal.lock;
-    preview.resizeUpPre = journal.resizeUp;
-    preview.switchNextPre = journal.switchNext;
-    preview.resizeRightPre = journal.resizeRight;
-    preview.switchLastPre = journal.switchLast;
-    preview.journalSchema = journal.schema;
-    preview.journalPhase = journal.phase;
-    preview.journalOwner = journal.owner;
-    if (snap.gridView.active != gridViewExpectedPre() && !snap.gridView.active.isEmpty()) {
+    for (const ClearRow &row : snap.rows) {
         ShortcutForceMismatch mismatch;
-        mismatch.component = shortcutGridViewComponent();
-        mismatch.action = shortcutGridViewAction();
-        mismatch.expectedPre = gridViewExpectedPre();
-        mismatch.actual = snap.gridView.active;
-        mismatch.post = QList<int>{};
+        forceMismatchFromRow(row, &mismatch);
         preview.mismatches.append(mismatch);
-    }
-    if (snap.monocle.active != monocleExpectedPre() && !snap.monocle.active.isEmpty()) {
-        ShortcutForceMismatch mismatch;
-        mismatch.component = shortcutMonocleComponent();
-        mismatch.action = shortcutMonocleAction();
-        mismatch.expectedPre = monocleExpectedPre();
-        mismatch.actual = snap.monocle.active;
-        mismatch.post = QList<int>{};
-        preview.mismatches.append(mismatch);
-    }
-    if (preview.mismatches.isEmpty()) {
-        return refuse(QStringLiteral("no forced override applies: live state needs no clear-row adoption"));
     }
     preview.forceable = true;
     return preview;
@@ -3554,18 +3019,15 @@ ShortcutForcePreview ShortcutReconciler::computeForcePreview()
 
 ShortcutForcePreview ShortcutReconciler::previewForceApply()
 {
-    ShortcutForcePreview preview = computeForcePreview();
+    ShortcutForcePreview preview = buildForcePreview();
     if (preview.forceable) {
         QStringList rows;
         for (const ShortcutForceMismatch &mismatch : preview.mismatches) {
-            rows.append(QStringLiteral("%1/%2 actual=%3")
-                            .arg(mismatch.component, mismatch.action, keysDisplay(mismatch.actual)));
+            rows.append(QStringLiteral("%1/%2 actual=%3 remove=%4 keep=%5")
+                            .arg(mismatch.component, mismatch.action, keysDisplay(mismatch.actual),
+                                 keysDisplay(mismatch.expectedPre), keysDisplay(mismatch.post)));
         }
-        ShortcutDiag::log(QtInfoMsg, "force-preview", "preview", "forceable",
-                          QStringLiteral("context=%1 %2")
-                              .arg(preview.context == ShortcutForceContext::Fresh ? QStringLiteral("fresh")
-                                                                                  : QStringLiteral("v2-upgrade"),
-                                   rows.join(QStringLiteral("; "))));
+        ShortcutDiag::log(QtInfoMsg, "force-preview", "preview", "forceable", rows.join(QStringLiteral("; ")));
     } else {
         ShortcutDiag::log(QtDebugMsg, "force-preview", "preview", "not-forceable", preview.error);
     }
@@ -3582,93 +3044,177 @@ ShortcutForceApplyResult ShortcutReconciler::applyForced(const ShortcutForcePrev
         ShortcutDiag::log(QtWarningMsg, "force-apply", "confirm", outcome, message);
         return result;
     };
+    if (!m_store || !m_cleared) {
+        if (!m_store) {
+            return fail(QStringLiteral("reconciler is not configured"), "unconfigured");
+        }
+        return fail(QStringLiteral("cleared shortcut store is not configured"), "unconfigured");
+    }
     if (!confirmed.forceable) {
         return fail(QStringLiteral("no confirmed forced override to apply"), "no-confirmation");
     }
-    if (confirmed.mismatches.isEmpty() || confirmed.mismatches.size() > 4) {
-        return fail(QStringLiteral("forced override is outside the exact allowlist"), "unbounded");
+    if (confirmed.mismatches.isEmpty() || confirmed.mismatches.size() > SHORTCUT_MAX_TUPLES) {
+        return fail(QStringLiteral("forced override is unbounded"), "unbounded");
     }
-    // No arbitrary action/key inputs: every confirmed row must be an exact
-    // compiled clear-row foreign identity with table-exact expected/post
-    // images and bounded actuals. Anything forged fails closed here.
+    // No arbitrary action/key inputs: every confirmed row must carry a
+    // bounded identity with removals/remainder exactly derived from its
+    // actuals. Anything forged fails closed here.
     QStringList seen;
     for (const ShortcutForceMismatch &mismatch : confirmed.mismatches) {
+        if (!stringValid(mismatch.component) || !stringValid(mismatch.action)
+            || !cosmeticValid(mismatch.componentFriendly) || !cosmeticValid(mismatch.friendly)
+            || !keysValid(mismatch.actual) || !keysValid(mismatch.expectedPre) || !keysValid(mismatch.post)
+            || mismatch.actual.isEmpty() || mismatch.expectedPre.isEmpty()) {
+            return fail(QStringLiteral("forced override is unbounded"), "unbounded");
+        }
         const QString id = mismatch.component + QStringLiteral("/") + mismatch.action;
         if (seen.contains(id)) {
-            return fail(QStringLiteral("forced override is outside the exact allowlist"), "duplicate");
+            return fail(QStringLiteral("forced override is unbounded"), "duplicate");
         }
         seen.append(id);
-        if (!isCompiledClearForeign(mismatch.component, mismatch.action)) {
-            return fail(QStringLiteral("forced override is outside the exact allowlist"), "not-allowlisted");
-        }
-        if (mismatch.expectedPre != compiledClearExpectedPre(mismatch.component, mismatch.action)
-            || !mismatch.post.isEmpty()) {
-            return fail(QStringLiteral("forced override is outside the exact allowlist"), "image-mismatch");
-        }
-        if (!keysValid(mismatch.actual) || mismatch.actual.isEmpty()) {
-            return fail(QStringLiteral("forced override is outside the exact allowlist"), "unbounded");
-        }
-        if (mismatch.actual == mismatch.expectedPre) {
-            return fail(QStringLiteral("forced override is outside the exact allowlist"), "not-a-mismatch");
+        if (mismatch.expectedPre != conflictingKeys(mismatch.actual)
+            || mismatch.post != remainderAfterClear(mismatch.actual)) {
+            return fail(QStringLiteral("forced override is unbounded"), "image-mismatch");
         }
     }
-    if (confirmed.context == ShortcutForceContext::V2Upgrade) {
-        for (const ShortcutForceMismatch &mismatch : confirmed.mismatches) {
-            // Upgrade force adopts only the new rows; old-row mismatches
-            // stay drift-guarded, never overridable.
-            const bool isNewRow = (mismatch.component == shortcutGridViewComponent()
-                                   && mismatch.action == shortcutGridViewAction())
-                || (mismatch.component == shortcutMonocleComponent() && mismatch.action == shortcutMonocleAction());
-            if (!isNewRow) {
-                return fail(QStringLiteral("forced override is outside the exact allowlist"), "old-row");
-            }
-        }
-    }
-    // Revalidation after confirmation, before any write: migrate first so a
-    // known legacy journal governs (exactly as a confirmed Apply would see
-    // it), then recompute the full preflight and require the exact
-    // confirmed snapshot.
-    QString migrationError;
-    if (!ensureLegacyMigrated(&migrationError)) {
-        return fail(migrationError.isEmpty() ? QStringLiteral("legacy shortcut journal migration failed; refusing migration")
-                                             : migrationError,
-                    "migrate-failed");
-    }
-    const ShortcutForcePreview current = computeForcePreview();
+    // Revalidation after confirmation, before any write (including
+    // cleared-list writes): recompute the full preflight and require the
+    // exact confirmed snapshot.
+    const ShortcutForcePreview current = buildForcePreview();
     if (!current.forceable) {
         return fail(current.error.isEmpty() ? QStringLiteral("confirmed force image is stale; re-preview before forcing")
                                             : current.error,
                     "stale");
     }
-    if (current.context != confirmed.context || current.mismatches.size() != confirmed.mismatches.size()) {
-        return fail(QStringLiteral("confirmed force image is stale; re-preview before forcing"), "stale");
-    }
-    if (!forceLiveSnapshotEqual(current, confirmed)) {
+    if (current.owner != confirmed.owner || current.uid != confirmed.uid
+        || current.liveImages != confirmed.liveImages
+        || current.mismatches.size() != confirmed.mismatches.size()) {
         return fail(QStringLiteral("confirmed force image is stale; re-preview before forcing"), "stale");
     }
     for (int i = 0; i < current.mismatches.size(); ++i) {
-        if (!forceMismatchEqual(current.mismatches.at(i), confirmed.mismatches.at(i))) {
+        const ShortcutForceMismatch &a = current.mismatches.at(i);
+        const ShortcutForceMismatch &b = confirmed.mismatches.at(i);
+        if (a.component != b.component || a.action != b.action || a.expectedPre != b.expectedPre
+            || a.actual != b.actual || a.post != b.post || a.componentFriendly != b.componentFriendly
+            || a.friendly != b.friendly) {
             return fail(QStringLiteral("confirmed force image is stale; re-preview before forcing"), "stale");
         }
     }
-    if (confirmed.context == ShortcutForceContext::V2Upgrade) {
-        if (current.journalSchema != confirmed.journalSchema || current.journalPhase != confirmed.journalPhase
-            || !journalEntryEqual(current.focusPre, confirmed.focusPre)
-            || !journalEntryEqual(current.lockPre, confirmed.lockPre)
-            || !journalEntryEqual(current.resizeUpPre, confirmed.resizeUpPre)
-            || !journalEntryEqual(current.switchNextPre, confirmed.switchNextPre)
-            || !journalEntryEqual(current.resizeRightPre, confirmed.resizeRightPre)
-            || !journalEntryEqual(current.switchLastPre, confirmed.switchLastPre)) {
-            return fail(QStringLiteral("confirmed force image is stale; re-preview before forcing"), "stale");
+    const int startWrites = m_store->writeCount();
+    auto usedWrites = [&]() {
+        return m_store->writeCount() - startWrites;
+    };
+    // Durable union BEFORE clearing: an interrupted Force stays revertible.
+    QList<ClearedAction> existing;
+    QString storeError;
+    if (!m_cleared->load(&existing, &storeError)) {
+        return fail(storeError.isEmpty() ? QStringLiteral("cleared shortcut load failed") : storeError,
+                    "persist-failed");
+    }
+    QList<ClearedAction> merged = existing;
+    for (const ShortcutForceMismatch &mismatch : confirmed.mismatches) {
+        ClearedAction entry;
+        entry.component = mismatch.component;
+        entry.action = mismatch.action;
+        // Union by ID only: transient preview labels are never persisted.
+        bool found = false;
+        for (const ClearedAction &prior : merged) {
+            if (clearedActionSameId(prior, entry)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            merged.append(entry);
         }
     }
-    // All gates revalidated: adopt the confirmed actuals as preimages for
-    // exactly the confirmed rows. Non-forced rows keep their original live
-    // preimages; existing journal rows keep their recorded pres.
-    const ShortcutApplyResult inner = applyImpl(&confirmed);
-    result.ok = inner.ok;
-    result.error = inner.error;
-    result.writes = inner.writes;
+    if (!m_cleared->save(merged, &storeError)) {
+        return fail(storeError.isEmpty() ? QStringLiteral("cleared shortcut persist failed") : storeError,
+                    "persist-failed");
+    }
+    const QString owner = current.owner;
+    const uint uid = current.uid;
+    auto checkOwner = [&](QString *ownerError) {
+        QString liveOwner;
+        uint liveUid = 0;
+        if (!m_store->currentOwner(&liveOwner, &liveUid, ownerError)) {
+            return false;
+        }
+        if (liveOwner != owner || liveUid != uid) {
+            if (ownerError) {
+                *ownerError = QStringLiteral("KGlobalAccel service owner drifted");
+            }
+            return false;
+        }
+        return true;
+    };
+    // Clear only the conflicting keys from each holder; unrelated keys stay.
+    // Fresh per-holder re-read immediately before each foreign setter: the
+    // confirmed post image is stale, so abort when the live active list no
+    // longer matches the confirmed actual. This keeps a concurrent
+    // unrelated-key change from being erased. Owner is re-checked first.
+    // The persisted union is already written here, so this abort retains
+    // the list (a superset when the drifted holder was never cleared);
+    // Revert may then restore an action Force never cleared.
+    for (const ShortcutForceMismatch &mismatch : confirmed.mismatches) {
+        if (!checkOwner(&storeError)) {
+            result.ok = false;
+            result.error = storeError;
+            result.writes = usedWrites();
+            ShortcutDiag::log(QtWarningMsg, "force-apply", "clear", "drifted", storeError);
+            return result;
+        }
+        {
+            const int probeKey = mismatch.expectedPre.isEmpty() ? 0 : mismatch.expectedPre.first();
+            QList<ShortcutKeyHolder> liveHolders;
+            QString keyError;
+            if (probeKey == 0 || !m_store->shortcutsByKey(probeKey, &liveHolders, &keyError)) {
+                result.ok = false;
+                result.error = keyError.isEmpty()
+                    ? QStringLiteral("confirmed force image is stale; re-preview before forcing")
+                    : keyError;
+                result.writes = usedWrites();
+                ShortcutDiag::log(QtWarningMsg, "force-apply", "clear", "stale", result.error);
+                return result;
+            }
+            bool found = false;
+            for (const ShortcutKeyHolder &live : liveHolders) {
+                if (live.component == mismatch.component && live.action == mismatch.action) {
+                    found = true;
+                    if (live.active != mismatch.actual) {
+                        result.ok = false;
+                        result.error =
+                            QStringLiteral("confirmed force image is stale; re-preview before forcing");
+                        result.writes = usedWrites();
+                        ShortcutDiag::log(QtWarningMsg, "force-apply", "clear", "stale", result.error);
+                        return result;
+                    }
+                    break;
+                }
+            }
+            if (!found) {
+                result.ok = false;
+                result.error = QStringLiteral("confirmed force image is stale; re-preview before forcing");
+                result.writes = usedWrites();
+                ShortcutDiag::log(QtWarningMsg, "force-apply", "clear", "stale", result.error);
+                return result;
+            }
+        }
+        if (!m_store->setForeignShortcutKeys(mismatch.component, mismatch.action, mismatch.componentFriendly,
+                                             mismatch.friendly, mismatch.post, &storeError)) {
+            result.ok = false;
+            result.error =
+                storeError.isEmpty() ? QStringLiteral("setForeignShortcutKeys call failed") : storeError;
+            result.writes = usedWrites();
+            ShortcutDiag::log(QtWarningMsg, "force-apply", "clear", "failed", result.error);
+            return result;
+        }
+    }
+    // Project assignments from a fresh read now that holders are cleared.
+    const ShortcutApplyResult projects = writeProjectKeys("force-apply");
+    result.ok = projects.ok;
+    result.error = projects.error;
+    result.writes = usedWrites();
     ShortcutDiag::log(result.ok ? QtInfoMsg : QtWarningMsg, "force-apply", "finish", result.ok ? "ok" : "failed",
                       QStringLiteral("writes=%1").arg(result.writes));
     return result;
