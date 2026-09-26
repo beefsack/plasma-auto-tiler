@@ -8,23 +8,22 @@ each review claim before acting; it was a static sampling review. User
 decisions of 2026-09-24 are recorded under
 [Architecture Direction](decisions.md#architecture-direction).
 
-- P0 | Multi-output PC failures (2026-09-26) | User test on the multi-output
-  PC (exact commit tested unconfirmed). (1) Shortcut Apply refused: "Meta+G is claimed
-  by kwin/plasma-auto-tiler-float-toggle" and "...kwin/plasma-auto-tiler-
-  toggle" - our own (possibly legacy) actions block Apply and Force did not
-  help. (2) Most navigate/move commands on several terminals were rejected.
-  Trace `~/Downloads/plasma-auto-tiler-dev.caWaFc.log` (Orchestrator
-  skim: 87 `observe-excluded reason=output-mismatch`, rejected focus/move
-  with `snapshot-invalid detail=window-out-of-bounds`). Cross-output moves
-  not yet reachable. Diagnose and fix before other work. Diagnosis: (2)
-  directional focus/move check edge-tiled windows against inset (gap)
-  bounds while single-domain commands use raw bounds - fix to raw
-  containment. (1) Apply/Force accept only a compiled claimant table; old
-  project action IDs are unknown claimants. User decision (2026-09-26):
-  Force clears any holder of a required key, listed in the confirmation;
-  Revert restores each cleared action to its KDE default
-  (`defaultShortcutKeys` then `setForeignShortcutKeys`), accepting loss of a
-  custom binding on a cleared action; retire the exact-preimage journal.
+- P0 | Multi-output PC re-test | First multi-output test (2026-09-26,
+  trace `~/Downloads/plasma-auto-tiler-dev.caWaFc.log`) failed before
+  cross-output moves: (1) shortcut Apply refused old project action IDs as
+  claimants; (2) directional focus/move rejected edge-tiled windows
+  (`window-out-of-bounds`). Fixed offline: (2) raw output bounds for
+  directional commands, `8162377` (Rust only); (1) user decision: Force
+  clears any holder listed in the confirmation, Revert restores cleared
+  non-project actions to KDE defaults (custom bindings on them are lost),
+  exact-preimage journal retired (old journal files untouched); Orchestrator
+  chose an ID-only cleared list `~/.config/plasma-auto-tiler/shortcut-
+  clearedrc` written before clearing, `e69739f` (native; fresh Plasma login
+  after `just build-native-effect` and `just dev-native-setup`). User
+  re-test on the multi-output PC: Apply/Force/Revert per
+  docs/live-shortcut-override-verification.md, then directional focus/move
+  and cross-output moves, then the step 2-3 list below. Note the commit SHA
+  tested. [record](changes/archive/multi-output-failures.md)
 - P2 | Drop-intent edge drag live cases | Shipped with passive native press
   capture and interim move-drop snap-back
   ([follow-up](changes/archive/passive-press-move-snapback.md)). User manually
