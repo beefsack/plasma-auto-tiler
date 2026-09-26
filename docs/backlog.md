@@ -79,14 +79,15 @@ decisions of 2026-09-24 are recorded under
   refusal/release logs. Watch for recurrence of the floating-membership skew
   (`EIV6Rm.log` drag-4), whose refusal class steps 1-3 removed.
   [change](changes/archive/observation-convergence.md)
-- P1 | Resilience audit | Next after the step 2-3 live re-test. Principle
-  (user, 2026-09-25): no permanent give-up short of hard failure; tolerate
-  subtle host/client deviations; window self-changes are normal. Step 3
-  removed send/R4 pending and transaction-lifetime Plan blocking. Audit what
-  remains for conflicts and list fixes: drag restore markers, reconcile
-  parking, remaining `precondition-mismatch` and `partial-observation`
-  refusals, residual send `blocksPlan` (native-write exclusion), and any
-  other terminal or disable states. [principles](principles.md#resilience)
+- P1 | Resilience fixes | Principle (user, 2026-09-25): no permanent give-up
+  short of hard failure. Read-only audit complete (2026-09-26) at `9549721`:
+  21 findings, ranked. Ordinary fixes proceed in bounded changes: (1) KWin
+  script H (empty startup disables tiling for the session), J, B, C, E, U;
+  (2) Rust tray/Planner O, N, P, Q; (3) low severity T, D, F, K, L. Needs
+  user decision: A (client-held geometry parking), G (pre-write drift drops
+  the command), I (missing maximize signal disables all tiling), M (tray
+  watcher loss), R/S (native endpoint registration retry).
+  [audit](changes/resilience-audit.md)
 - P3 | AR6 Logical workspace model in core | 7.10. Deferred 2026-09-24 until a
   non-KWin host needs it. The current KWin implementation is the "native
   workspaces" mode of a future native/custom choice.
