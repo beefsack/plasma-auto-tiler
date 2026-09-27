@@ -34,6 +34,9 @@ pass() {
 [[ -n "$DBUS_TEST_TOOL" ]] || fail "dbus-test-tool is unavailable"
 [[ -n "$BUSCTL" ]] || fail "busctl is unavailable"
 [[ -n "$TIMEOUT_BIN" ]] || fail "timeout is unavailable"
+DBUS_RUN_SESSION="$(readlink -f -- "$DBUS_RUN_SESSION")" || fail "could not resolve dbus-run-session"
+DBUS_SESSION_CONFIG="${DBUS_RUN_SESSION%/bin/dbus-run-session}/share/dbus-1/session.conf"
+[[ -f "$DBUS_SESSION_CONFIG" ]] || fail "dbus package session config is unavailable: $DBUS_SESSION_CONFIG"
 
 if [[ -z "$BINARY" ]]; then
   TRAY_OUT="$(nix build "$REPO_ROOT#tray" --no-link --no-update-lock-file --print-out-paths)" \
@@ -76,9 +79,12 @@ mkdir -p -- "$HOME_ROOT" "$DATA_ROOT" "$CONFIG_ROOT" "$RUNTIME_ROOT"
 chmod 700 "$HOME_ROOT" "$DATA_ROOT" "$CONFIG_ROOT" "$RUNTIME_ROOT"
 
 SEQUENCE="$WORK/sequence.sh"
+# Host session overrides can add a second listener; zbus needs one address/GUID.
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
+  'DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS%%;*}"' \
+  'export DBUS_SESSION_BUS_ADDRESS' \
   'PASS=0' \
   'pass() { PASS=$((PASS + 1)); }' \
   'WATCHER_PID=""' \
@@ -243,7 +249,7 @@ printf '%s\n' \
 chmod 700 "$SEQUENCE"
 
 export BUSCTL DBUS_TEST_TOOL TIMEOUT_BIN DATA_ROOT CONFIG_ROOT RUNTIME_ROOT WORK
-"$DBUS_RUN_SESSION" -- env \
+"$DBUS_RUN_SESSION" --config-file="$DBUS_SESSION_CONFIG" -- env \
   HOME="$HOME_ROOT" \
   XDG_DATA_HOME="$DATA_ROOT" \
   XDG_CONFIG_HOME="$CONFIG_ROOT" \
