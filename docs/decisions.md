@@ -978,6 +978,11 @@ the corresponding item ships; each such entry names its replacement.
   snapshot; the tray remains available for the new owner's snapshot.
 - The static bridge includes freshness and ordering/generation checks,
   idempotent notifications, and bounded watcher retry.
+- Tray ordering (user decision C4 option 2, 2026-09-27): reject and log a
+  same-generation strictly lower-revision complete snapshot without clearing
+  or refreshing the trusted snapshot or entering conflict state. The matching
+  equal-revision heartbeat may refresh it. An equal-revision different-content
+  snapshot still revokes trust; owner and generation fences remain in force.
 - Home Manager autostart uses the immutable store tray binary with the `tray`
   command; `TryExec` points to that same binary. Foreground `just dev` starts
   and owns a worktree tray, includes its stderr diagnostics in the labeled dev

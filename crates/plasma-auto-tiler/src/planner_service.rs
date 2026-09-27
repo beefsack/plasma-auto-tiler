@@ -842,8 +842,9 @@ mod tests {
     fn malformed_owner_signal_skips_and_later_valid_signal_applies() {
         let our = ":1.7";
         let mut registered = Some(our.to_owned());
-        let decision = super::decide_owner_signal(malformed_owner_message(), &mut registered, Some(our))
-            .expect("malformed signal never fails");
+        let decision =
+            super::decide_owner_signal(malformed_owner_message(), &mut registered, Some(our))
+                .expect("malformed signal never fails");
         assert_eq!(decision, super::OwnerSignalDecision::SkippedMalformed);
         assert_eq!(registered, Some(our.to_owned()), "skip preserves owner pin");
         let line = super::owner_signal_malformed_line();
@@ -859,7 +860,11 @@ mod tests {
         )
         .expect("unrelated valid signal never fails");
         assert_eq!(decision, super::OwnerSignalDecision::Handled);
-        assert_eq!(registered, Some(our.to_owned()), "unrelated signal keeps pin");
+        assert_eq!(
+            registered,
+            Some(our.to_owned()),
+            "unrelated signal keeps pin"
+        );
     }
 
     #[test]

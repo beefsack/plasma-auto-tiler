@@ -184,7 +184,7 @@
         {"op": "owner-acquired", "expected": {"owner": true, "snapshot": null, "refreshedAt": null, "current": false}},
         {"op": "publish", "args": [1, "limits", -2147483648, true], "expected": {"owner": true, "snapshot": {"generation": "limits", "revision": -2147483648, "enabled": true}, "refreshedAt": 0, "current": true}},
         {"op": "publish", "args": [1, "limits", 2147483647, false], "expected": {"owner": true, "snapshot": {"generation": "limits", "revision": 2147483647, "enabled": false}, "refreshedAt": 0, "current": true}},
-        {"op": "publish", "args": [1, "limits", 2147483646, true], "expected": {"owner": true, "snapshot": null, "refreshedAt": null, "current": false}}
+        {"op": "publish", "args": [1, "limits", 2147483646, true], "expected": {"owner": true, "snapshot": {"generation": "limits", "revision": 2147483647, "enabled": false}, "refreshedAt": 0, "current": true}}
       ]
     }
   ]

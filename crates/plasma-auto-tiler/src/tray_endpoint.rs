@@ -149,16 +149,25 @@ impl TrayState {
             self.refreshed_at = Some(now_ms);
             Ok(())
         } else {
+            // C4 option 2: a stale same-generation lower revision is a
+            // refusal without state change (snapshot, refreshed_at,
+            // revision, and conflict memory all survive). The refusal is
+            // still logged by `publish_snapshot_from`.
+            if self.generation.as_deref() == Some(incoming.generation.as_str())
+                && self
+                    .revision
+                    .is_some_and(|revision| incoming.revision < revision)
+            {
+                return Err(TrayError::InvalidSnapshot(
+                    "revision is not a valid state transition".to_owned(),
+                ));
+            }
             let retired_generation = self.retired_generations.contains(&incoming.generation);
             let quarantined_generation =
                 self.quarantined_generations.contains(&incoming.generation);
             if !retired_generation && !quarantined_generation {
                 self.clear_snapshot();
-                if self.generation.as_deref() == Some(incoming.generation.as_str()) {
-                    self.revision = self.revision.map_or(Some(incoming.revision), |revision| {
-                        Some(revision.max(incoming.revision))
-                    });
-                } else {
+                if self.generation.as_deref() != Some(incoming.generation.as_str()) {
                     remember_generation(&mut self.quarantined_generations, &incoming.generation);
                 }
                 self.ordering_conflicted = true;
@@ -1009,8 +1018,8 @@ pub fn run() -> zbus::Result<()> {
         // unregistered with one bounded record; the existing watchdog/signal
         // poll retries while the live owner remains. Armed in the tracker so
         // a failing watchdog tick stays silent until recovery re-arms.
-        let pending = lock_watcher_state(&registered_watcher_owner)
-            .failure_line(watcher_query_failed_line());
+        let pending =
+            lock_watcher_state(&registered_watcher_owner).failure_line(watcher_query_failed_line());
         if let Some(line) = pending {
             emit_tray_diag(&line);
         }
@@ -1463,11 +1472,10 @@ mod tests {
         invalid_snapshot_reason, kwin_startup_query_failed_line, note_watcher_query_failure,
         owner_changes_match_rule, owner_outcome_line, owner_signal_args_invalid_line,
         owner_signal_malformed_line, poll_watcher_once, publish_early_refusal_line,
-        publish_outcome_line, retry_registration,
-        sender_is_current_kwin_owner, service_name_acquired_line, service_name_lost_line,
-        service_name_taken_line, startup_owner_outcome, status_projected_line, tray_name_lost,
-        watcher_lost_line, watcher_query_failed_line, watcher_registered_line,
-        watcher_registration_failed_line,
+        publish_outcome_line, retry_registration, sender_is_current_kwin_owner,
+        service_name_acquired_line, service_name_lost_line, service_name_taken_line,
+        startup_owner_outcome, status_projected_line, tray_name_lost, watcher_lost_line,
+        watcher_query_failed_line, watcher_registered_line, watcher_registration_failed_line,
     };
 
     #[test]
@@ -2445,8 +2453,7 @@ mod tests {
         assert_eq!(result.unwrap_err(), super::TrayError::UnauthorizedPublisher);
         assert_eq!(state.owner, None);
         // Live owner missing: refused, no resync.
-        let (result, _) =
-            state.publish_snapshot_from(Some(":1.7"), None, 1, snapshot(0), 1);
+        let (result, _) = state.publish_snapshot_from(Some(":1.7"), None, 1, snapshot(0), 1);
         assert_eq!(result.unwrap_err(), super::TrayError::UnauthorizedPublisher);
         assert_eq!(state.owner, None);
         // Authenticated publish from the current KWin owner: live-confirmed
@@ -2456,8 +2463,9 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(state.owner.as_deref(), Some(":1.7"));
         assert!(
-            line.as_deref().is_some_and(|line| line
-                .contains("outcome=accepted generation=alpha revision=0 enabled=true")),
+            line.as_deref()
+                .is_some_and(|line| line
+                    .contains("outcome=accepted generation=alpha revision=0 enabled=true")),
             "recovery record missing: {line:?}"
         );
         assert!(state.view(2).current);
@@ -2491,11 +2499,7 @@ mod tests {
         assert_eq!(line, None);
         assert_eq!(state.registered, None);
         // Later live owner appears: the same poll registers once (recovery).
-        let line = poll_watcher_once(
-            &mut state,
-            || Ok(Some(":watcher".to_owned())),
-            |_| Ok(()),
-        );
+        let line = poll_watcher_once(&mut state, || Ok(Some(":watcher".to_owned())), |_| Ok(()));
         assert_eq!(line, Some(watcher_registered_line()));
         assert_eq!(state.registered.as_deref(), Some(":watcher"));
     }

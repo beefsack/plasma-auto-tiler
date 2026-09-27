@@ -112,7 +112,7 @@ fn fixture_vectors_drive_cache_owner_and_freshness_transitions() {
 }
 
 #[test]
-fn semantic_invalid_input_surfaces_invalid_snapshot_and_clears_ordering_conflicts() {
+fn semantic_invalid_input_surfaces_invalid_snapshot_and_preserves_trusted_state() {
     let mut state = TrayState::default();
     state.owner_changed(Some(":kwin"));
     state
@@ -129,7 +129,8 @@ fn semantic_invalid_input_surfaces_invalid_snapshot_and_clears_ordering_conflict
         .publish_snapshot(1, "alpha".to_owned(), 0, false, 2)
         .unwrap_err();
     assert_eq!(error.name(), "org.plasmaautotiler.Tray1.InvalidSnapshot");
-    assert_eq!(state.view(2), empty_view(true));
+    assert_eq!(state.view(2).snapshot, Some(snapshot("alpha", 1, true)));
+    assert_eq!(state.view(2).refreshed_at, Some(0));
 
     let error = state
         .publish_snapshot(2, "alpha".to_owned(), 1, true, 3)
@@ -138,7 +139,7 @@ fn semantic_invalid_input_surfaces_invalid_snapshot_and_clears_ordering_conflict
 }
 
 #[test]
-fn ordering_conflict_keeps_a_revision_floor_after_clearing_state() {
+fn stale_lower_revision_is_refused_without_state_change_and_heartbeat_refreshes() {
     let mut state = TrayState::default();
     state.owner_changed(Some(":kwin"));
     state
@@ -148,6 +149,31 @@ fn ordering_conflict_keeps_a_revision_floor_after_clearing_state() {
     assert!(
         state
             .publish_snapshot(1, "alpha".to_owned(), 3, true, 1)
+            .is_err()
+    );
+    let view = state.view(1);
+    assert_eq!(view.snapshot, Some(snapshot("alpha", 4, true)));
+    assert_eq!(view.refreshed_at, Some(0));
+
+    state
+        .publish_snapshot(1, "alpha".to_owned(), 4, true, 2)
+        .unwrap();
+    let view = state.view(2);
+    assert_eq!(view.snapshot, Some(snapshot("alpha", 4, true)));
+    assert_eq!(view.refreshed_at, Some(2));
+}
+
+#[test]
+fn equal_revision_contradiction_still_revokes_state() {
+    let mut state = TrayState::default();
+    state.owner_changed(Some(":kwin"));
+    state
+        .publish_snapshot(1, "alpha".to_owned(), 4, true, 0)
+        .unwrap();
+
+    assert!(
+        state
+            .publish_snapshot(1, "alpha".to_owned(), 4, false, 1)
             .is_err()
     );
     assert_eq!(state.view(1), empty_view(true));

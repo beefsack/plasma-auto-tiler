@@ -120,7 +120,8 @@ decisions of 2026-09-24 are recorded under
   commands never blocked. Learned limits (option 4) are deferred to Robust
   difference reconciliation. C4 - option 2 (user, 2026-09-27): a
   lower-revision tray publication (each is a complete snapshot) is rejected
-  and logged without clearing the trusted current snapshot. D - option 2
+  and logged without clearing the trusted current snapshot. C4 fixed offline;
+  live verification remains. D - option 2
   (user, 2026-09-26, Orchestrator
   proposal): settle a drag-restore marker honestly as unavailable when its
   workspace or output no longer exists based on independently validated full
