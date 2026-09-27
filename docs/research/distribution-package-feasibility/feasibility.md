@@ -1,5 +1,7 @@
 # Distribution Package Feasibility
 
+[OBS multi-distribution package research](obs.md).
+
 Status: Bounded research complete. The reproducible KPackage artifact is
 delivered locally; KDE Store and GitHub Release publication remain manual.
 

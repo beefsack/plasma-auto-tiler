@@ -150,21 +150,15 @@ decisions of 2026-09-24 are recorded under
   `just dev` starts, owns (logs into the trace) and stops a worktree tray.
   Implement with M, N, O, P, Q.
   [audit](changes/resilience-audit.md)
-- P1 | Fail-closed sweep | New Resilience rule (user, 2026-09-26): fail
-  closed only when recovery is impossible or continuing would cause harm such
-  as system instability. Review `docs/decisions.md` (9 fail-closed mentions)
-  and production fail-closed paths (about 175 mentions) against it; adjust
-  decisions that conflict, and list behavior changes that need a user
-  decision. Unsafe-write fences that refuse one operation and let the next
-  observation converge are consistent with the rule.
-  [principles](principles.md#resilience)
-- P1 | Resilience change 4 offline status | C1 startup KWin attachment now
-  retries on window-added/config events; C2 tray startup owner-query failure
-  stays alive with live-confirmed owner recovery; C3 Planner skips malformed
-  owner signals with bounded logs. KWin 766 tests/typecheck, Rust workspace
-  tests, and diff check pass. No live verification. C4 tray ordering and the
-  settings launch gate await user decisions.
-  [change](changes/archive/resilience-change-4.md)
+- P1 | Resilience changes 3a, 3, 4 live checks | Fail-closed sweep done
+  (2026-09-27). Shipped offline: 3a D/T/L and 3 R/S (`5fe0eb5`); 4 C1-C3
+  (`5fe0eb5`) and C4 (`8191c0d`). No live verification. Live checks when
+  convenient: group outline after a config change and window close/reopen;
+  native endpoint `stage=failed`/`available=1` transitions; tray status stays
+  current. The sweep's settings launch-gate question: Orchestrator view is no
+  conflict (a launch quality bar, not runtime fail-closed behavior); unchanged
+  unless the user says otherwise.
+  [change 4](changes/archive/resilience-change-4.md)
   [sweep](changes/fail-closed-sweep.md)
 - P2 | Process-loss and sleep recovery testing | User request (2026-09-26),
   not urgent: test how the system recovers when components are killed or
@@ -663,6 +657,14 @@ Existing work:
   leave tiling working. A reduced no-native tier (script, Planner, tray;
   no borders or drag oracle) is possible but unverified.
   [research](research/distribution-package-feasibility/feasibility.md)
+  OBS research (2026-09-27): partial fit - builds rpm/deb/Arch and rebuilds
+  on dependency change, but eventually, not before the distro's KWin update
+  lands; Ubuntu 24.04 KWin is Plasma 5 and 26.04 ECM is below our 6.26;
+  neon/Kubuntu backports need separate sources. POC proposal: unpublished
+  Tumbleweed effect RPM, then Fedora, measuring rebuild latency. Needs the
+  user: OBS account/project, Fedora release, neon/Kubuntu pursuit, whether
+  the effect may be absent during KWin upgrades, OBS pacman repo vs AUR.
+  [OBS](research/distribution-package-feasibility/obs.md)
 - P3 | Dev build alongside a stable install | User direction (2026-09-26),
   no solution needed yet: find the cleanest, most effective way to run a dev
   build on a machine that also has the stable version installed (D-Bus names,
