@@ -3,7 +3,7 @@ set -euo pipefail
 
 readonly REPO_ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)"
 readonly HARNESS="$REPO_ROOT/scripts/custom-tile-acceptance.sh"
-readonly WORK="$(mktemp -d "$REPO_ROOT/.custom-tile-acceptance.XXXXXX")"
+readonly WORK="$(mktemp -d "$HOME/.custom-tile-acceptance.XXXXXX")"
 readonly FAKE_BIN="$WORK/fake-bin"
 readonly PROC_FIXTURE_ROOT="$WORK/proc-fixture"
 readonly HOME_ROOT="$WORK/home"
@@ -19,6 +19,8 @@ readonly REAL_PYTHON_BIN="$(command -v python3)"
 readonly REAL_READLINK_BIN="$(command -v readlink)"
 readonly REAL_STAT_BIN="$(command -v stat)"
 readonly REAL_TR_BIN="$(command -v tr)"
+readonly FIXTURE_UID="$(id -u)"
+readonly FIXTURE_OTHER_UID="$((FIXTURE_UID + 1))"
 PASS=0
 FAILURES=0
 EXIT_STATUS=0
@@ -36,7 +38,7 @@ assert_absent() { if "$GREP_BIN" -Fq -- "$1" "$2"; then fail_test "$2 contains b
 
 make_proc_fixture() {
   mkdir -p "$PROC_FIXTURE_ROOT"
-  printf 'Name:\tfixture\nState:\tS (sleeping)\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nGroups:\t1000\nNStgid:\t12345\nNSpid:\t12345\nThreads:\t1\n' > "$PROC_FIXTURE_ROOT/status"
+  printf 'Name:\tfixture\nState:\tS (sleeping)\nUid:\t%s\t%s\t%s\t%s\nGid:\t%s\t%s\t%s\t%s\nGroups:\t%s\nNStgid:\t12345\nNSpid:\t12345\nThreads:\t1\n' "$FIXTURE_UID" "$FIXTURE_UID" "$FIXTURE_UID" "$FIXTURE_UID" "$FIXTURE_UID" "$FIXTURE_UID" "$FIXTURE_UID" "$FIXTURE_UID" "$FIXTURE_UID" > "$PROC_FIXTURE_ROOT/status"
 }
 
 make_fake_bus() {
@@ -45,7 +47,7 @@ make_fake_bus() {
 set -euo pipefail
 trace() { local args; printf -v args ' %q' "$@"; printf 'busctl%s\n' "$args" >> "${CALLS:?}"; }
 bad_shape() { trace "$@"; exit 2; }
-[[ "$#" -ge 7 && "$1" == '--address=unix:path=/run/user/1000/bus' && "$2" == '--json=short' && "$3" == call ]] || bad_shape "$@"
+[[ "$#" -ge 7 && "$1" == "--address=unix:path=/run/user/${FIXTURE_UID:?}/bus" && "$2" == '--json=short' && "$3" == call ]] || bad_shape "$@"
 trace "$@"
 case "$7" in
   ListNames) [[ "$#" -eq 7 && "$4" == org.freedesktop.DBus && "$5" == /org/freedesktop/DBus && "$6" == org.freedesktop.DBus ]] || bad_shape "$@"
@@ -78,7 +80,7 @@ case "$7" in
          esac ;;
     esac ;;
   GetConnectionUnixUser) [[ "$#" -eq 9 && "$4" == org.freedesktop.DBus && "$5" == /org/freedesktop/DBus && "$6" == org.freedesktop.DBus && "$8" == s && "$9" =~ ^:[0-9]+\.[0-9]+$ ]] || bad_shape "$@"
-    case "${FAKE_MODE:-}" in uid-mismatch) printf '{"type":"u","data":[1001]}\n' ;; *) printf '{"type":"u","data":[1000]}\n' ;; esac ;;
+    case "${FAKE_MODE:-}" in uid-mismatch) printf '{"type":"u","data":[%s]}\n' "$FIXTURE_OTHER_UID" ;; *) printf '{"type":"u","data":[%s]}\n' "$FIXTURE_UID" ;; esac ;;
   allComponents) [[ "$#" -eq 7 && "$4" == org.kde.kglobalaccel && "$5" == /kglobalaccel && "$6" == org.kde.KGlobalAccel ]] || bad_shape "$@"
     case "${FAKE_MODE:-success}" in
       malformed-components) printf '{"type":"ao","data":[["/component/kwin"]],"unknown":1}\n' ;;
@@ -118,24 +120,24 @@ case "$1" in
     [[ "$#" -eq 3 && "$2" == --no-legend && "$3" == --no-pager ]] || { trace "$@"; exit 2; }
     trace "$@"
     case "${FAKE_MODE:-success}" in
-      real-order) printf '2 1000 user seat0\n3 1000 user seat1\n' ;;
-      wrong-session) printf '42 1000 user seat0\n' ;;
-      ambiguous-session) printf '42 1000 user seat0\n43 1000 user seat1\n' ;;
-      *) printf '42 1000 user seat0\n' ;;
+      real-order) printf '2 %s user seat0\n3 %s user seat1\n' "$FIXTURE_UID" "$FIXTURE_UID" ;;
+      wrong-session) printf '42 %s user seat0\n' "$FIXTURE_UID" ;;
+      ambiguous-session) printf '42 %s user seat0\n43 %s user seat1\n' "$FIXTURE_UID" "$FIXTURE_UID" ;;
+      *) printf '42 %s user seat0\n' "$FIXTURE_UID" ;;
     esac ;;
   show-session)
     [[ "$#" -eq 15 && "$2" =~ ^(2|3|42|43)$ && "$3" == -p && "$4" == User && "$5" == -p && "$6" == Type && "$7" == -p && "$8" == Class && "$9" == -p && "${10}" == State && "${11}" == -p && "${12}" == Desktop && "${13}" == -p && "${14}" == Leader && "${15}" == --no-pager ]] || { trace "$@"; exit 2; }
     trace "$@"
     case "${FAKE_MODE:-success}" in
-      malformed-session) printf 'User=1000\nType=wayland\nClass=user\nState=active\nDesktop=KDE\n' ;;
+      malformed-session) printf 'User=%s\nType=wayland\nClass=user\nState=active\nDesktop=KDE\n' "$FIXTURE_UID" ;;
       real-order)
         if [[ "$2" == 3 ]]; then
-          printf 'User=1000\nDesktop=\nLeader=1819\nType=unspecified\nClass=manager\nState=active\n'
+          printf 'User=%s\nDesktop=\nLeader=1819\nType=unspecified\nClass=manager\nState=active\n' "$FIXTURE_UID"
         else
-          printf 'User=1000\nDesktop=KDE\nLeader=1792\nType=wayland\nClass=user\nState=active\n'
+          printf 'User=%s\nDesktop=KDE\nLeader=1792\nType=wayland\nClass=user\nState=active\n' "$FIXTURE_UID"
         fi ;;
-      wrong-session) printf 'User=1000\nType=tty\nClass=user\nState=active\nDesktop=KDE\nLeader=9000\n' ;;
-      *) printf 'User=1000\nType=wayland\nClass=user\nState=active\nDesktop=KDE\nLeader=9000\n' ;;
+      wrong-session) printf 'User=%s\nType=tty\nClass=user\nState=active\nDesktop=KDE\nLeader=9000\n' "$FIXTURE_UID" ;;
+      *) printf 'User=%s\nType=wayland\nClass=user\nState=active\nDesktop=KDE\nLeader=9000\n' "$FIXTURE_UID" ;;
     esac ;;
   *) trace "$@"; exit 2 ;;
 esac
@@ -159,7 +161,7 @@ trace python3-read-proc "$3"
 case "$3" in
   */status)
     if [[ "${FAKE_MODE:-}" == proc-uid-mismatch ]]; then
-      printf 'Name:\tfixture\nUid:\t1001\t1001\t1001\t1001\nThreads:\t1\n'
+      printf 'Name:\tfixture\nUid:\t%s\t%s\t%s\t%s\nThreads:\t1\n' "$FIXTURE_OTHER_UID" "$FIXTURE_OTHER_UID" "$FIXTURE_OTHER_UID" "$FIXTURE_OTHER_UID"
     else
       while IFS= read -r line; do printf '%s\n' "$line"; done < "$PROC_FIXTURE_ROOT/status"
     fi ;;
@@ -170,7 +172,7 @@ case "$3" in
   */cmdline)
     printf '%s\0--session\0' "$FAKE_BIN/kwin_wayland" ;;
   */cgroup)
-    if [[ "${FAKE_MODE:-}" == real-order ]]; then printf '0::/user.slice/user-1000.slice/session-2.scope\n'; else printf '0::/user.slice/user-1000.slice/session-42.scope\n'; fi ;;
+    if [[ "${FAKE_MODE:-}" == real-order ]]; then printf '0::/user.slice/user-%s.slice/session-2.scope\n' "$FIXTURE_UID"; else printf '0::/user.slice/user-%s.slice/session-42.scope\n' "$FIXTURE_UID"; fi ;;
 esac
 EOF
   chmod +x "$FAKE_BIN/python3"
@@ -303,7 +305,7 @@ make_fake_readlink
 make_fake_stat
 make_fake_tr
 make_fake_jq
-export FAKE_SHORTCUTS="$WORK/shortcuts.json" FAKE_OWNER_COUNT="$WORK/owner-count" FAKE_SHORTCUT_COUNT JQ_BIN REAL_JQ_BIN CALLS HOME_ROOT PROC_FIXTURE_ROOT REAL_PYTHON_BIN REAL_READLINK_BIN REAL_STAT_BIN REAL_TR_BIN FAKE_BIN
+export FAKE_SHORTCUTS="$WORK/shortcuts.json" FAKE_OWNER_COUNT="$WORK/owner-count" FAKE_SHORTCUT_COUNT JQ_BIN REAL_JQ_BIN CALLS HOME_ROOT PROC_FIXTURE_ROOT REAL_PYTHON_BIN REAL_READLINK_BIN REAL_STAT_BIN REAL_TR_BIN FAKE_BIN FIXTURE_UID FIXTURE_OTHER_UID
 
 assert_true bash -n "$HARNESS"
 assert_true bash -n "$BASH_SOURCE"
@@ -330,7 +332,7 @@ done
 
 run_case success
 expect_status 0
-assert_true "$JQ_BIN" -e '.schema_version == "custom-tile-acceptance-preflight-v2" and .live_acceptance == false and .authoritative_ready == false and .setup_ready == true and .journey_ready == false and .readiness_blocker == "controller_checkout_identity unavailable: no supported authoritative read-only interface binds the loaded controller/script to this checkout" and .command_allowlist == ["busctl","jq","loginctl","python3","readlink","stat","tr"] and (.current_host_discovery.services | length) == 2 and .current_host_discovery.session.id == "42" and .current_host_discovery.session.bus_address == "unix:path=/run/user/1000/bus" and .current_host_discovery.kwin_service_identity.pre and .current_host_discovery.controller_checkout_identity.status == "blocked" and .current_host_discovery.controller_checkout_identity.authoritative == false and .current_host_discovery.controller_checkout_identity.blocker == "no-supported-authoritative-read-only-binding-to-this-checkout" and .current_host_discovery.kglobalaccel.status == "verified" and (.current_host_discovery.kglobalaccel.exact_tuples | length) == 27 and .current_host_discovery.kwin_service_identity.pre.pid != .current_host_discovery.kglobalaccel.pre.pid and .current_host_discovery.kglobalaccel.pre.pid == .current_host_discovery.kglobalaccel.post.pid and (.current_host_discovery.kglobalaccel.pre | has("executable") | not) and .gates.controller_identity == "not-established" and .gates.kwin_service_identity == "verified-session-scoped-service-owner" and .gates.controller_checkout_identity == "blocked" and .gates.readiness == "blocked-controller-checkout-identity" and .gates.shortcut_ownership_collision == "verified" and .prospective_future_plan.manual_input.currently_allowed == false' "$OUTPUT"
+assert_true "$JQ_BIN" -e --arg uid "$FIXTURE_UID" '.schema_version == "custom-tile-acceptance-preflight-v2" and .live_acceptance == false and .authoritative_ready == false and .setup_ready == true and .journey_ready == false and .readiness_blocker == "controller_checkout_identity unavailable: no supported authoritative read-only interface binds the loaded controller/script to this checkout" and .command_allowlist == ["busctl","jq","loginctl","python3","readlink","stat","tr"] and (.current_host_discovery.services | length) == 2 and .current_host_discovery.session.id == "42" and .current_host_discovery.session.bus_address == ("unix:path=/run/user/" + $uid + "/bus") and .current_host_discovery.kwin_service_identity.pre and .current_host_discovery.controller_checkout_identity.status == "blocked" and .current_host_discovery.controller_checkout_identity.authoritative == false and .current_host_discovery.controller_checkout_identity.blocker == "no-supported-authoritative-read-only-binding-to-this-checkout" and .current_host_discovery.kglobalaccel.status == "verified" and (.current_host_discovery.kglobalaccel.exact_tuples | length) == 27 and .current_host_discovery.kwin_service_identity.pre.pid != .current_host_discovery.kglobalaccel.pre.pid and .current_host_discovery.kglobalaccel.pre.pid == .current_host_discovery.kglobalaccel.post.pid and (.current_host_discovery.kglobalaccel.pre | has("executable") | not) and .gates.controller_identity == "not-established" and .gates.kwin_service_identity == "verified-session-scoped-service-owner" and .gates.controller_checkout_identity == "blocked" and .gates.readiness == "blocked-controller-checkout-identity" and .gates.shortcut_ownership_collision == "verified" and .prospective_future_plan.manual_input.currently_allowed == false' "$OUTPUT"
 assert_true "$JQ_BIN" -e '.prospective_future_plan.scope.reuse_persistent_scope == false and .prospective_future_plan.scope.resolved_private_root.mode == "0700 exactly" and .prospective_future_plan.prestate.config.exact_path == (env.HOME_ROOT + "/.config/kwinrc") and .prospective_future_plan.prestate.config.kwinrc.before.mtime_ns and .prospective_future_plan.journal.format == "atomic journal with sequence, operation, exact owned resource identity and expected pre/post state" and .prospective_future_plan.interruption.cleanup == "never remove resources not owned by this run" and (.prospective_future_plan.evidence.raw_host_policy | contains("persists no raw host evidence"))' "$OUTPUT"
 if [[ "$(wc -l < "$OUTPUT")" -eq 1 ]]; then pass; else fail_test 'successful preflight did not emit one document'; fi
 assert_absent '/private/wrong-bus' "$CALLS"

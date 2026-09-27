@@ -22,6 +22,8 @@ jobs:
         run: nix profile add github:cachix/devenv/v2.4.0
       - name: Install KWin dependencies
         run: devenv shell --impure -- npm ci --prefix kwin
+      - name: Build Rust Planner fixture for KWin tests
+        run: devenv shell --impure -- cargo build --locked -p tiler-protocol --example planner_eval
       - name: KWin tests
         run: devenv shell --impure -- npm test --prefix kwin
       - name: KWin typecheck
@@ -64,6 +66,9 @@ jobs:
         run: |
           devenv shell --impure -- bash -euo pipefail -c '
             for suite in scripts/*.test.sh; do
-              TRAY_05B_BINARY="$PWD/target/debug/plasma-auto-tiler" bash "$suite"
+              if ! TRAY_05B_BINARY="$PWD/target/debug/plasma-auto-tiler" bash "$suite"; then
+                echo "::error::${suite} failed"
+                exit 1
+              fi
             done
           '
