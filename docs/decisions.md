@@ -1038,17 +1038,26 @@ the corresponding item ships; each such entry names its replacement.
   are available; only an unavailable binding source uses and logs the KWin
   source default. The unified effect and existing oracle endpoint retain
   their identities.
-- User-approved interim move-drop rule, 2026-09-24: a tiled window moved
+- Superseded interim move-drop rule, 2026-09-24: a tiled window moved
   interactively suppresses ordinary reconcile during the gesture, then
   converges to its retained layout on drop through one correlated, coalesced
   restore marker, with no failed-dispatch retry. Floating moves remain
-  native-only. Drag-and-drop reorganisation is a separate later backlog item.
+  native-only. Replaced by the 2026-09-27 option A rule below.
+- User decision 2026-09-27, option A (shipped offline, live check pending):
+  tiled move drops use the existing Rust core drop resolver as-is through the
+  synchronous `drag-drop` Plan route (window edge split, group edge
+  first/last or wrap, group interior insert; center or unresolved snaps back
+  through the existing restore marker). Finish pointer capture, single-flight
+  dispatch, Started-bound source-domain guard, and marker convergence per
+  `docs/dev-loop.md`; no live preview, no native return transfer. The
+  cross-domain product choice (snap back to source vs accept in the new
+  domain) is held for the user; no implementation is selected.
 - The drag oracle hosted in the disabled-by-default unified
   `plasma-auto-tiler-active-border` native effect records final drag geometry;
   after that effect's explicit enable, the production script pulls its
   read-only session D-Bus verdict. A non-cancelled resize can route grabbed
-  edges through `pointer-resize` shares; a tiled move instead restores its
-  retained layout on drop, while a floating move stays native-only. A
+  edges through `pointer-resize` shares; a tiled move uses the option A
+  `drag-drop` placement rule above, while a floating move stays native-only. A
   cancelled or no-change verdict makes no pointer-resize plan. No stock-KWin
   parity or atomic native geometry-write claim is selected. AR8 closed on
   2026-09-24 at the user's request with the shipped oracle integration kept,

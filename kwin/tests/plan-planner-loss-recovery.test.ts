@@ -456,7 +456,10 @@ describe("plan planner-loss recovery", () => {
         const base = mocks.dbusCalls.length;
         adapter.requestMove("left");
         assert.equal(mocks.dbusCalls[base]?.method, PLAN_HAS_OWNER_METHOD);
-        adapter.noteMoveDropped("drag-1", "win-a", "out-1", "ws-1");
+        // Arm the restore marker through a drag-correlated pointer refusal
+        // while the move flight holds the slot (replaces the retired
+        // move-drop-only arming with the surviving refusal route).
+        adapter.requestPointerResize("win-a", "sideways", 0, undefined, undefined, "drag-1");
         assert.ok(mocks.logs.some((l) => l.includes("drag-reconcile") && l.includes("correlation=drag-1") && l.includes("dispatch=deferred")));
         mocks.callbacks[base]?.(true);
         mocks.callbacks[base + 1]?.(":1.5");

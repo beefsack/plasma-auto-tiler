@@ -304,7 +304,7 @@ verdict line. Trace also records its route entry:
 
 The `outcome=dispatch` form is trace-only; the terminal form is ordinary.
 
-where `<op>` is one of `admit|remove|move|focus|resize|reconcile|pointer-resize|toggle-float`,
+where `<op>` is one of `admit|remove|move|focus|resize|reconcile|pointer-resize|toggle-float|drag-drop`,
 `<correlation>` is `<generation>-p<seq>` (production: `plan-1-p<seq>`), `<N>`
 is the observed window count, and terminal outcomes are `planned-applied`,
 `rejected`, or the local fail-closed values `timer-failed`, `dbus-failed`,
@@ -419,7 +419,8 @@ shortcut and pointer-route refusal carries its own fixed token):
 - `plasma-auto-tiler:plan:sticky-refused-fullscreen|maximize|untracked|attempted window=<id> resource_class=<class>`
 - `plasma-auto-tiler:plan:maximize-refused-disabled|observe`
 - `plasma-auto-tiler:plan:maximize-refused-fullscreen|attempted window=<id> resource_class=<class>`
-- `plasma-auto-tiler:plan:busy-refused kind=<focus|move|resize|toggle-float|toggle-sticky|toggle-maximize>` (shortcut dropped while a flight is in flight)
+- `plasma-auto-tiler:plan:drag-drop-refused-disabled|identity|coords|observe|absent|fullscreen|maximize|floating|cross-domain` (one per tiled move-drop refusal cause; `coords` covers a missing or out-of-range finish pointer capture)
+- `plasma-auto-tiler:plan:busy-refused kind=<focus|move|resize|toggle-float|toggle-sticky|toggle-maximize|drag-drop>` (shortcuts refuse busy; a move drop refuses during an R4 flight, otherwise defers behind an ordinary flight)
 - `plasma-auto-tiler:plan:reconcile-accepted windows=<count> cause=stable-drift recovery=accept-client-rect` (bounded reassertions exhausted; exact per-window geometry accepted)
  - `plasma-auto-tiler:plan:stale-replan` (pre-write stale reply replanned once against fresh complete observation)
 - `plasma-auto-tiler:plan:shortcut-failed action=<action> sequence=<sequence>` (per failed shortcut registration)
@@ -452,11 +453,13 @@ KWin cannot provide one. `<class>` is KWin's non-sensitive resource class, or
 - `plasma-auto-tiler:plan:observe-excluded reason=<active-normal-window|normal-window|output-missing|output-mismatch|desktop-mismatch|frame-rect-missing|frame-rect-coordinate-invalid|frame-rect-size-invalid|frame-rect-coordinate-out-of-range|frame-rect-size-out-of-range> window=<id> resource_class=<class>`
 
 Trace only: normal drag pull and verdict lines. Ordinary output retains the
-failure tokens below; the pointer route's adapter emits the exact
-`pointer-refused-*` token above per cause, never a catch-all line:
+failure tokens below plus the `drag-drop-refused-*` tokens above; the pointer
+route's adapter emits the exact `pointer-refused-*` token above per cause:
 
 - `plasma-auto-tiler:route-diag:drag-pull action=dispatch`
 - `plasma-auto-tiler:route-diag:drag-verdict cancelled=<true|false> correlation=<drag-N> reason=<reason>`
+- `plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=<drag-N> accepted=<true|false>` (tiled move finish routed to `kind=drag-drop`; `accepted=true` means the intent entered or deferred into the single flight, not that geometry applied; `false` means refused or failed before entering it, with a cause token and drag-rejection marker)
+- `plasma-auto-tiler:route-diag:drag-drop-thrown correlation=<drag-N>` (synchronous routing exception, fail-closed)
 - `plasma-auto-tiler:route-diag:drag-call-missing` (pull with no call binding)
 - `plasma-auto-tiler:route-diag:drag-call-thrown` (pull whose D-Bus call threw)
 - `plasma-auto-tiler:route-diag:drag-reply-invalid` (any malformed or unparseable reply)
@@ -485,11 +488,27 @@ Drag-oracle entry startup refusal (exactly one token per refused
 - `plasma-auto-tiler:route-diag:drag-entry-added-invalid` (missing or non-connectable windowAdded signal)
 - `plasma-auto-tiler:route-diag:drag-entry-added-connect-failed` (windowAdded attach returned null or threw)
 
+Tiled move-drop lifecycle (option A): the finish context captures
+`workspace.cursorPos` synchronously at FINISH before the async oracle pull;
+the verdict carries no pointer and the route never reads the cursor at
+reply. The entry calls `adapter.requestDragDrop` with that captured point
+plus the verdict window identity through the shared single flight (deferred
+when busy, never concurrent). The adapter compares the Started source domain
+to the fresh foreground domain; a mismatch refuses `cross-domain` without
+planning the destination and scopes the restore marker to the Started source.
+When no valid Started binding is supplied, retained `appliedById` evidence
+provides the guard; stale applied evidence never overrides a valid Started
+binding. No native output/workspace write or return transfer is attempted;
+a refused or failed drop converges through the existing coalesced one-shot
+marker reconcile.
+
 Map each journey step above to one Plan command: add -> `kind=admit`, close ->
 `kind=remove`, directional focus -> `kind=focus`, directional move ->
 `kind=move`, resize -> `kind=resize`, intentional float toggle ->
-`kind=toggle-float`. Ordinary output emits its terminal outcome; trace also
-emits its dispatch line. Pointer focus change alone emits no command line. A
+`kind=toggle-float`, tiled move drop -> `kind=drag-drop` (ordinary terminal
+plus trace dispatch, same fences as other ops). Ordinary output emits its
+terminal outcome; trace also emits its dispatch line. Pointer focus change
+alone emits no command line. A
 rejection still emits its ordinary terminal and rejection-kind lines, then
 recovers on the next fresh observation; the adapter never disables itself after
 a reply.

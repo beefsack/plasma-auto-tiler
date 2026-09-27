@@ -87,7 +87,7 @@ const LOG_PREFIX = "plasma-auto-tiler:plan";
 export type PlanDirection = "left" | "right" | "up" | "down";
 export type PlanResizeMode = "inwards" | "outwards";
 export type PlanSignal = "added" | "removed" | "activated" | "geometry" | "scope" | "fullscreen" | "maximize" | "desktops";
-export type PlanOp = "admit" | "remove" | "move" | "focus" | "resize" | "reconcile" | "update-gaps" | "pointer-resize" | "toggle-float";
+export type PlanOp = "admit" | "remove" | "move" | "focus" | "resize" | "reconcile" | "update-gaps" | "pointer-resize" | "toggle-float" | "drag-drop";
 export type NativeStateWriteOutcome = "invoked" | "missing" | "threw";
 export type MaximizeClearOutcome = NativeStateWriteOutcome;
 export type KeepAboveWriteOutcome = NativeStateWriteOutcome | "refused";
@@ -1512,10 +1512,12 @@ interface PendingFlight {
     readonly removed: string | null;
     readonly windowCount: number;
     readonly pointerSource: string | null;
-    // Drop-intent correlation: set only on pointer-resize flights dispatched
-    // from a non-cancelled oracle drop (drag-N). Rejection or terminal
-    // failure of such a flight feeds the coalesced per-domain restore
-    // marker below, never a per-drag queue.
+    // Drop-intent correlation: set on pointer-resize and drag-drop flights
+    // dispatched from a non-cancelled oracle drop (drag-N). Rejection or
+    // terminal failure of such a flight feeds the coalesced per-domain
+    // restore marker below, never a per-drag queue. pointerSource carries
+    // the dragged window for both families (edge target for pointer-resize,
+    // drop window for drag-drop).
     readonly dragSource?: string | null;
     // Domain key of the restore marker this reconcile was dispatched for.
     // Never a drag correlation: satisfaction and failure terminals resolve
@@ -1636,6 +1638,7 @@ const DRAG_RESTORE_SATISFYING_OPS: ReadonlySet<PlanOp> = new Set([
     "reconcile",
     "update-gaps",
     "pointer-resize",
+    "drag-drop",
 ]);
 
 function snapshotsEqualAllowingAdmissionMaximize(
@@ -3135,9 +3138,161 @@ export class PlanAdapter {
         return true;
     }
 
+    // Oracle route: one drag-drop intent from the finish-captured script
+    // pointer (workspace.cursorPos at FINISH, carried in the finish context,
+    // never read at reply) plus the verdict window identity. Strict decoding
+    // only; fail-closed false when the window or pointer cannot be safely
+    // bound. Defers through the single pending slot when a flight is active,
+    // never bypasses it, retries, or guesses. No focus is forced: an
+    // unfocused source is dispatched as observed and the Planner refuses it
+    // (focus-mismatch), which converges through the marker like any refusal.
+    // Drop-intent callers pass their drag-N correlation as optional entry
+    // metadata (4th arg) plus the Started source domain binding (5th arg).
+    // A drag-correlated refusal or terminal failure feeds
+    // the coalesced per-domain restore marker, which converges once through
+    // a single existing-route reconcile (or through any superseding applied
+    // plan for the same domain). Calls without a drag correlation behave
+    // exactly like pointer-resize without one (no marker, no follow-up).
+    requestDragDrop(windowId: unknown, x: unknown, y: unknown, dragCorrelation?: unknown, sourceDomain?: unknown): boolean {
+        const drag = isDragCorrelation(dragCorrelation) ? (dragCorrelation as string) : null;
+        const refuseDrag = (reason: string, output?: string, workspace?: string): false => {
+            if (drag !== null) {
+                this.noteDragRejected(drag, reason, typeof windowId === "string" ? windowId : null, output, workspace);
+            }
+            return false;
+        };
+        if (!this.enabled) {
+            this.logToken(`${LOG_PREFIX}:drag-drop-refused-disabled`);
+            return refuseDrag("disabled");
+        }
+        if (!isOpaqueId(windowId)) {
+            this.logToken(`${LOG_PREFIX}:drag-drop-refused-identity`);
+            return refuseDrag("identity");
+        }
+        if (!isFiniteInt(x) || !isFiniteInt(y) || (x as number) < -16384 || (x as number) > 16384 || (y as number) < -16384 || (y as number) > 16384) {
+            this.logToken(`${LOG_PREFIX}:drag-drop-refused-coords`);
+            return refuseDrag("coords");
+        }
+        if (this.r4Flight !== null) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=drag-drop`);
+            return refuseDrag("busy");
+        }
+        const observed = this.freshObserved();
+        if (observed === null) {
+            this.logToken(`${LOG_PREFIX}:drag-drop-refused-observe`);
+            return refuseDrag("observe");
+        }
+        let target: PlanObservedWindow | undefined = undefined;
+        for (const entry of observed.windows) {
+            if (entry.id === (windowId as string)) {
+                target = entry;
+                break;
+            }
+        }
+        if (target === undefined) {
+            this.logToken(`${LOG_PREFIX}:drag-drop-refused-absent`);
+            return refuseDrag("absent", observed.domainOutput, observed.domainWorkspace);
+        }
+        if (target.fullscreen) {
+            this.logToken(`${LOG_PREFIX}:drag-drop-refused-fullscreen`);
+            return refuseDrag("fullscreen", observed.domainOutput, observed.domainWorkspace);
+        }
+        if (target.maximized) {
+            this.logToken(`${LOG_PREFIX}:drag-drop-refused-maximize`);
+            return refuseDrag("maximize", observed.domainOutput, observed.domainWorkspace);
+        }
+        if (target.floating === true || target.sticky === true) {
+            this.logToken(`${LOG_PREFIX}:drag-drop-refused-floating`);
+            return refuseDrag("floating", observed.domainOutput, observed.domainWorkspace);
+        }
+        // Started source binding is authoritative when valid; retained
+        // per-id evidence applies only without one (direct callers).
+        // Never dispatch on refusal; scope the marker to the known source.
+        let explicitSource: { output: string; workspace: string } | null = null;
+        try {
+            if (isRecord(sourceDomain)) {
+                const srcOutput = sourceDomain["output"];
+                const srcWorkspace = sourceDomain["workspace"];
+                if (isOpaqueId(srcOutput) && isOpaqueId(srcWorkspace)) {
+                    explicitSource = { output: srcOutput as string, workspace: srcWorkspace as string };
+                    if (
+                        target !== undefined &&
+                        (observed.domainOutput !== srcOutput || observed.domainWorkspace !== srcWorkspace)
+                    ) {
+                        this.logToken(`${LOG_PREFIX}:drag-drop-refused-cross-domain`);
+                        return refuseDrag("cross-domain", srcOutput as string, srcWorkspace as string);
+                    }
+                }
+            }
+        } catch (error) {
+            void error;
+        }
+        if (explicitSource === null) {
+            try {
+                const evidence = this.appliedById.get(windowId as string);
+                if (
+                    evidence !== undefined &&
+                    (evidence.output !== observed.domainOutput || evidence.workspace !== observed.domainWorkspace)
+                ) {
+                    this.logToken(`${LOG_PREFIX}:drag-drop-refused-cross-domain`);
+                    return refuseDrag("cross-domain", evidence.output, evidence.workspace);
+                }
+            } catch (error) {
+                void error;
+            }
+        }
+        const snapshot = this.carriedSnapshot(observed);
+        this.noteObservation(snapshot.fingerprint);
+        const intent: AutoIntent = {
+            op: "drag-drop",
+            snapshot,
+            removed: null,
+            body: { op: "drag-drop", window: windowId as string, x, y },
+            pointerSource: windowId as string,
+            ...(drag !== null ? { dragSource: drag } : {}),
+        };
+        // A final-geometry drop route is selected ahead of the ordinary
+        // finish resync. Do not let that resync restore the old split first.
+        // A deferred drag intent superseded here never dispatched: fold its
+        // drop into the restore marker instead of losing it. The marker (not
+        // the slot) owns convergence, so ordinary slot clearing below is
+        // unchanged.
+        this.clearDebounce();
+        this.absorbDeferredDragIntent(this.deferredAuto, false);
+        if (this.deferredAuto?.op === "reconcile" && this.deferredAuto.workAreaReprojection !== true) {
+            this.deferredAuto = null;
+        }
+        this.discardInteractiveReconcile();
+        if (this.inFlight) {
+            this.deferredAuto = intent;
+            return true;
+        }
+        this.dispatch(intent);
+        const flight = this.pending;
+        const ours =
+            flight !== null &&
+            flight.op === "drag-drop" &&
+            flight.pointerSource === (windowId as string) &&
+            (drag === null ? flight.dragSource == null : this.dragSourceOf(flight) === drag);
+        if (!ours) {
+            // Dispatch never installed our drop flight (interactive guard or
+            // synchronous transport failure): the dispatch failure paths
+            // already fed the marker when they ran (deduped below), so just
+            // report refusal. A synchronous failure that already dispatched
+            // the marker must not report accepted. A deferred drop would have
+            // returned true above, so this is not the deferral path.
+            if (drag !== null) {
+                this.noteDragRejected(drag, "dispatch-failed", typeof windowId === "string" ? windowId : null, snapshot.domainOutput, snapshot.domainWorkspace);
+            }
+            return false;
+        }
+        return true;
+    }
+
     // Drop-intent correlation reader: validated drag-N only, never titles,
-    // ids, or payload bytes. A pointer flight carries dragSource (the drop
-    // that dispatched it); marker reconciles carry a domain key instead.
+    // ids, or payload bytes. A pointer-resize or drag-drop flight carries
+    // dragSource (the drop that dispatched it); marker reconciles carry a
+    // domain key instead.
     private dragSourceOf(flightState: PendingFlight): string | null {
         const drag = flightState.dragSource;
         return typeof drag === "string" && isDragCorrelation(drag) ? drag : null;
@@ -3264,33 +3419,20 @@ export class PlanAdapter {
         }
     }
 
-    // Tiled move-drop convergence: records the correlated drop in its domain
-    // marker through the existing coalesced one-shot route (one dispatch, no
-    // retry, per-drag terminal). Floating moves never reach here; cancelled
-    // and null verdicts never reach here either (they converge through the
-    // ordinary debounced resync without a marker and without inventing a
-    // terminal).
-    public noteMoveDropped(dragCorrelation: unknown, windowId: string | null = null, output?: string, workspace?: string): void {
-        try {
-            this.noteDragRejected(dragCorrelation, "move-dropped", windowId, output, workspace, true);
-        } catch (error) {
-            void error;
-        }
-    }
-
     // Fold a deferred intent being superseded or cleared into the marker
-    // map: a deferred drag pointer never dispatched, so its drop joins the
-    // marker instead of vanishing. A queued marker reconcile never exists
-    // (markers dispatch straight through), so nothing else needs carrying.
-    // When `dispatchNow` is false the caller installs a superseding intent
-    // right after, which will satisfy or fail the marker on its own.
+    // map: a deferred drag pointer or drag-drop never dispatched, so its
+    // drop joins the marker instead of vanishing. A queued marker reconcile
+    // never exists (markers dispatch straight through), so nothing else
+    // needs carrying. When `dispatchNow` is false the caller installs a
+    // superseding intent right after, which will satisfy or fail the marker
+    // on its own.
     private absorbDeferredDragIntent(intent: AutoIntent | null, dispatchNow: boolean): void {
         if (intent === null) {
             return;
         }
         try {
             if (
-                intent.op === "pointer-resize" &&
+                (intent.op === "pointer-resize" || intent.op === "drag-drop") &&
                 typeof intent.dragSource === "string" &&
                 isDragCorrelation(intent.dragSource)
             ) {
@@ -4916,8 +5058,13 @@ export class PlanAdapter {
             void error;
             // Unbuildable payload: no plan correlation was created, so bind
             // the exact marker failure now with an honest `plan=none`, plus
-            // one correlated refusal line so the drop is never silent.
+            // one correlated refusal line so the drop is never silent. A
+            // never-sent drop joins its marker (persisting for a later free
+            // moment) the same way.
             this.logToken(`${LOG_PREFIX}:request-refused correlation=${correlation} reason=request-invalid`);
+            if (typeof intent.dragSource === "string" && isDragCorrelation(intent.dragSource)) {
+                this.noteDragRejected(intent.dragSource, "dispatch-failed", intent.pointerSource ?? null, intent.snapshot.domainOutput, intent.snapshot.domainWorkspace);
+            }
             this.failMarkerDispatch(intent, "dispatch-failed", null);
             return;
         }
@@ -4926,7 +5073,12 @@ export class PlanAdapter {
             // marker failure now with an honest `plan=none`, plus one
             // correlated refusal line so the drop is never silent. The
             // allocated correlation never left the adapter and names nothing.
+            // A never-sent drop joins its marker (persisting for a later free
+            // moment) the same way.
             this.logToken(`${LOG_PREFIX}:request-refused correlation=${correlation} reason=request-over-cap`);
+            if (typeof intent.dragSource === "string" && isDragCorrelation(intent.dragSource)) {
+                this.noteDragRejected(intent.dragSource, "dispatch-failed", intent.pointerSource ?? null, intent.snapshot.domainOutput, intent.snapshot.domainWorkspace);
+            }
             this.failMarkerDispatch(intent, "dispatch-failed", null);
             return;
         }
@@ -6155,6 +6307,36 @@ export class PlanAdapter {
             this.writeGeometries(planned, flightState, fresh);
             return;
         }
+        if (flightState.op === "drag-drop") {
+            const source = flightState.pointerSource;
+            if (source === null) {
+                this.lifecycleDiag(flightState, "observe", "observe", "mismatched", "stale-scope", this.ordinaryRevision(planned, flightState));
+                this.ordinaryTerminal(flightState, planned, "uncertain", "observe");
+                this.failFlight(flightState, "stale-scope");
+                return;
+            }
+            const freshSnapshot = this.carriedSnapshot(fresh);
+            // The drop window's moved frame may sit out of area (native drop
+            // position) while every other member must match exactly: the
+            // pointer-resize exception comparator pattern. Identity, scope,
+            // and floating evidence stay exact, and a scope drift still gets
+            // exactly one prewrite replan below.
+            if (
+                !rectsEqualExceptSource(freshSnapshot, flightState.snapshot, source) ||
+                unexpectedFloatingSkewed(flightState, freshSnapshot)
+            ) {
+                this.lifecycleDiag(flightState, "observe", "observe", "mismatched", "stale-scope", this.ordinaryRevision(planned, flightState));
+                this.ordinaryTerminal(flightState, planned, "uncertain", "observe");
+                if (this.maybeReplanStalePrewrite(flightState, freshSnapshot)) {
+                    return;
+                }
+                this.failFlight(flightState, "stale-scope");
+                return;
+            }
+            this.lifecycleDiag(flightState, "observe", "observe", "matched", "-", this.ordinaryRevision(planned, flightState));
+            this.writeGeometries(planned, flightState, fresh);
+            return;
+        }
         if (flightState.op === "toggle-float") {
             const freshSnapshot = this.carriedSnapshot(fresh);
             // The native flip lands at write time, so any pre-apply skew is
@@ -7285,17 +7467,19 @@ export class PlanAdapter {
         // qualify, plus a foreground auto reconcile that changed tiled
         // membership or floating/sticky flags; focus, equal-reflow
         // reconcile, pointer-resize, and toggle-float never refresh here
-        // (focus already re-queries via its signal). Stale, rejected, error,
-        // and unfinished boundaries return through failFlight or earlier
-        // exits and never reach this edge. The callback is best-effort and
-        // non-blocking: it must not delay the deferred foreground command
-        // below.
+        // (focus already re-queries via its signal). A drag-drop changes
+        // tiling topology like move, so it refreshes too. Stale, rejected,
+        // error, and unfinished boundaries return through failFlight or
+        // earlier exits and never reach this edge. The callback is
+        // best-effort and non-blocking: it must not delay the deferred
+        // foreground command below.
         if (
             flightState.background !== true &&
             (flightState.op === "admit" ||
                 flightState.op === "move" ||
                 flightState.op === "remove" ||
                 flightState.op === "resize" ||
+                flightState.op === "drag-drop" ||
                 (flightState.op === "reconcile" && autoMembershipChanged))
         ) {
             try {

@@ -388,8 +388,8 @@ describe("drag press end-to-end trace corners", () => {
             stop();
         }
         // Move gesture start: the press never classifies thirds. A tiled
-        // move restores its retained domain once through the coalesced
-        // marker; a floating move stays native-only and ignored.
+        // move dispatches one drag-drop with the finish pointer; a floating
+        // move stays native-only and ignored.
         {
             const world = pressWorld(start, cursor);
             (world.wins["win-a"] as Record<string, unknown>)["move"] = true;
@@ -402,9 +402,13 @@ describe("drag press end-to-end trace corners", () => {
             );
             runDebounce(mocks);
             assert.equal(pointerCommands(mocks).length, 0);
-            assert.ok(mocks.logs.some((line) => line.includes("drag-move-restore") && line.includes("correlation=drag-42")));
-            assert.ok(mocks.logs.some((line) => line.includes("drag-rejected") && line.includes("correlation=drag-42") && line.includes("reason=move-dropped")));
-            assert.ok(mocks.logs.some((line) => line.includes("drag-reconcile") && line.includes("correlation=drag-42") && line.includes("dispatch=dispatched")));
+            const drops = mocks.planCalls
+                .map((call) => JSON.parse(call.payload) as Record<string, unknown>)
+                .filter((payload) => (payload["command"] as Record<string, unknown>)?.["op"] === "drag-drop")
+                .map((payload) => payload["command"] as Record<string, unknown>);
+            assert.equal(drops.length, 1);
+            assert.deepEqual(drops[0], { op: "drag-drop", window: "win-a", x: cursor.x, y: cursor.y });
+            assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-42 accepted=true"));
             assert.ok(!mocks.logs.some((line) => line.includes("correlation=drag-42") && line.includes("grabbed=")), "press never classifies a move");
             assert.ok(!mocks.logs.some((line) => line.includes("drag-move-ignored") && line.includes("correlation=drag-42")));
             stop();

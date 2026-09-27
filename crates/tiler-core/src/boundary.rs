@@ -17,8 +17,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::active_group::{ActiveGroupMember, describe_active_group};
 use crate::contract::{
-    DivergenceKind, FocusOperation, LifecycleOperation, LifecyclePrecondition, ResizeMode,
-    ResizeOperation,
+    DivergenceKind, FocusOperation, LIFECYCLE_POLICY_VERSION, LifecycleOperation,
+    LifecyclePrecondition, ResizeMode, ResizeOperation,
 };
 use crate::directional::{
     Capability, CrossOutputTarget, Direction, MoveOperation, NodeId, OutputId, Precondition, Rule,
@@ -28,12 +28,13 @@ use crate::geometry::Rect;
 use crate::ids::{CorrelationId, GenerationId, OwnerId};
 use crate::seed::EngineWindow;
 use crate::session::{
-    DesiredGeometry, DomainKey, OutputDomain, Session, SessionFocusPlan, SessionMovePlan,
-    SessionPlan, SessionResizePlan,
+    DesiredGeometry, DomainKey, OutputDomain, Session, SessionDragPlan, SessionFocusPlan,
+    SessionMovePlan, SessionPlan, SessionResizePlan,
 };
 
-/// Typed command for all 9 wire ops: reconcile, update-gaps, active-group,
-/// move, focus, resize, pointer-resize, toggle-float, and `send-to-workspace`.
+/// Typed command for all 10 wire ops: reconcile, update-gaps, active-group,
+/// move, focus, resize, pointer-resize, toggle-float, `send-to-workspace`,
+/// and `drag-drop`.
 /// Payloads are already-decoded clones; fallible wire vocabularies
 /// (direction/mode) cross opaquely so this conversion stays total
 /// and handler precedence is untouched.
@@ -78,6 +79,11 @@ pub enum CoreCommand {
         target_output: String,
         target_workspace: String,
     },
+    DragDrop {
+        window: String,
+        x: i32,
+        y: i32,
+    },
 }
 
 impl CoreCommand {
@@ -94,6 +100,7 @@ impl CoreCommand {
             Self::PointerResize { .. } => "pointer-resize",
             Self::ToggleFloat { .. } => "toggle-float",
             Self::SendToWorkspace { .. } => "send-to-workspace",
+            Self::DragDrop { .. } => "drag-drop",
         }
     }
 }
@@ -137,6 +144,7 @@ pub enum TiledKind {
     ToggleFloat,
     SendToWorkspace,
     DirectionalMove,
+    DragDrop,
 }
 
 impl TiledKind {
@@ -154,6 +162,7 @@ impl TiledKind {
             Self::ToggleFloat => "toggle-float",
             Self::SendToWorkspace => "send-to-workspace",
             Self::DirectionalMove => "directional-move",
+            Self::DragDrop => "drag-drop",
         }
     }
 
@@ -171,6 +180,7 @@ impl TiledKind {
             Self::PointerResize => Some("pointer-resize"),
             Self::ToggleFloat => Some("intentional-float"),
             Self::SendToWorkspace => Some("move-tiled"),
+            Self::DragDrop => Some("place-tiled"),
             Self::Reconcile | Self::UpdateGaps | Self::Move | Self::DirectionalMove => None,
         }
     }
@@ -224,6 +234,25 @@ impl TiledPlan {
             tiled.float_rect = Some(rect);
         }
         tiled
+    }
+
+    /// Typed construction for the synchronous drag-drop route from an
+    /// authoritative [`SessionDragPlan`]: carries base revision, the shared
+    /// lifecycle policy version, full desired geometry, and focus preserved
+    /// on the moved window. Never validates; the session policy owns
+    /// placement.
+    #[must_use]
+    pub fn from_drag(plan: &SessionDragPlan) -> Self {
+        Self {
+            base_revision: plan.dispatch.base_revision,
+            policy_version: LIFECYCLE_POLICY_VERSION,
+            kind: TiledKind::DragDrop,
+            geometry: plan.desired_geometry.clone(),
+            focus_domain: Some(plan.desired_focus_domain.clone()),
+            focus_leaf: Some(plan.desired_focus_leaf.clone()),
+            float_window: None,
+            float_rect: None,
+        }
     }
 }
 
@@ -542,7 +571,7 @@ pub enum ActiveGroupResolution {
     },
 }
 
-/// Typed reply across all 9 ops plus every rejection shape. Success variants
+/// Typed reply across all 10 ops plus every rejection shape. Success variants
 /// carry core plans; rejection variants carry the closed
 /// `&'static str` kind/message/detail vocabulary (single sources live in
 /// [`crate::session`]/[`crate::contract`] and the protocol `MSG_*`
@@ -888,7 +917,7 @@ mod tests {
     }
 
     #[test]
-    fn all_nine_ops_have_distinct_wire_tokens() {
+    fn all_ten_ops_have_distinct_wire_tokens() {
         use std::collections::HashSet;
         let commands = vec![
             CoreCommand::Reconcile,
@@ -926,12 +955,20 @@ mod tests {
                 target_output: "o".to_owned(),
                 target_workspace: "s".to_owned(),
             },
+            CoreCommand::DragDrop {
+                window: "w".to_owned(),
+                x: 0,
+                y: 0,
+            },
         ];
-        assert_eq!(commands.len(), 9);
+        assert_eq!(commands.len(), 10);
         let tokens: HashSet<&'static str> = commands.iter().map(|c| c.op()).collect();
-        assert_eq!(tokens.len(), 9);
+        assert_eq!(tokens.len(), 10);
         assert!(tokens.contains("reconcile"));
         assert!(tokens.contains("send-to-workspace"));
+        assert!(tokens.contains("drag-drop"));
+        assert_eq!(TiledKind::DragDrop.kind_str(), "drag-drop");
+        assert_eq!(TiledKind::DragDrop.capability_str(), Some("place-tiled"));
     }
 
     #[test]

@@ -17,9 +17,10 @@ use crate::boundary::{
 };
 use crate::bounds::{is_gap, is_opaque_id};
 use crate::contract::{
-    AckOutcome, AdapterAck, DivergenceKind, FocusCapabilities, FocusPostObservation,
-    LIFECYCLE_POLICY_VERSION, LifecycleCapabilities, LifecyclePostObservation, Observation,
-    PostObservation, ResizeCapabilities, ResizeMode, ResizePostObservation,
+    AckOutcome, AdapterAck, DivergenceKind, DragCapabilities, DragPostObservation,
+    FocusCapabilities, FocusPostObservation, LIFECYCLE_POLICY_VERSION, LifecycleCapabilities,
+    LifecyclePostObservation, Observation, PostObservation, ResizeCapabilities, ResizeMode,
+    ResizePostObservation,
 };
 use crate::directional::{Capabilities, Direction, MoveOperation, OutputId, WindowId, WorkspaceId};
 use crate::geometry::Rect;
@@ -28,7 +29,7 @@ use crate::policy::{LayoutPolicy, default_policy};
 use crate::seed::EngineWindow;
 use crate::session::{
     CanonicalPairError, DomainKey, ExceptionFlags, OutputDomain, ProposeError, RefusalKind,
-    Session, SessionCommand, SessionObservation,
+    Session, SessionCommand, SessionDragPlan, SessionObservation,
 };
 
 /// Wire `kind`/`message` for the Session internal pending fence.
@@ -660,6 +661,12 @@ impl Engine {
                 match self.converge_for_single_domain(event, "pointer-resize") {
                     ConvergeOutcome::Rejected(reply) => *reply,
                     _ => self.pointer_resize_request(event),
+                }
+            }
+            CoreCommand::DragDrop { .. } => {
+                match self.converge_for_single_domain(event, "drag-drop") {
+                    ConvergeOutcome::Rejected(reply) => *reply,
+                    _ => self.drag_drop_request(event),
                 }
             }
         }
@@ -2765,6 +2772,163 @@ impl Engine {
             plan.dispatch.secondary_operation.clone(),
         );
         session.verify_resize(&post).is_ok()
+    }
+
+    /// Synchronous drag-drop request: one `begin_drag` then `drop_drag` pair
+    /// on the same complete observation with immediate acknowledge/verify.
+    ///
+    /// Single-domain only, no preview, no reseed, no relocation, no seeding:
+    /// an absent, unusable, empty, or domain-mismatched slot refuses
+    /// fail-closed without mutation. The pre-request convergence in
+    /// [`Engine::handle`] already converged membership on window ids (never
+    /// rects), so a moved source frame is never a departure; the same
+    /// complete carried observation binds both begin and drop. Begin refusals
+    /// (unfocused, unknown, cross-domain, partial) map to their exact
+    /// `Rejected` kinds. Drop snap-backs (self, outside work area, no-op,
+    /// stale) map to bounded `unchanged` rejection so KWin restores; center
+    /// maps to `unsupported-capability`. Planned drops commit synchronously
+    /// and reply the full desired geometry as `drag-drop`/`place-tiled`.
+    /// Refusals keep canonical topology with no pending drag (the working
+    /// clone is discarded; the retained slot is untouched).
+    fn drag_drop_request(&mut self, event: &CoreEvent) -> CoreReply {
+        use crate::boundary::TiledPlan;
+        let CoreCommand::DragDrop { window, x, y } = &event.command else {
+            return CoreReply::Rejected {
+                kind: "unknown-value",
+                message: "request contains an unknown value",
+            };
+        };
+        if !is_opaque_id(window) {
+            return CoreReply::SnapshotInvalid {
+                message: OPAQUE_ID_MESSAGE,
+                detail: "drag-drop-window-invalid",
+            };
+        }
+        let Some(session) = self.session(&event.domain_key).cloned() else {
+            return CoreReply::Rejected {
+                kind: RefusalKind::UnknownDomain.as_str(),
+                message: RefusalKind::UnknownDomain.message(),
+            };
+        };
+        if let Some(reason) = session.divergence() {
+            return CoreReply::Rejected {
+                kind: reason.as_str(),
+                message: reason.message(),
+            };
+        }
+        if session.has_pending() || session.has_pending_desired() || session.has_drag() {
+            return CoreReply::Rejected {
+                kind: PENDING_EXISTS_KIND,
+                message: PENDING_EXISTS_MESSAGE,
+            };
+        }
+        let retained_matches = session
+            .domains()
+            .iter()
+            .find(|d| d.key() == event.domain_key)
+            .is_some_and(|d| d.bounds == event.domain.bounds && d.gap == event.domain.gap);
+        if !retained_matches {
+            return CoreReply::Rejected {
+                kind: RefusalKind::UnknownDomain.as_str(),
+                message: RefusalKind::UnknownDomain.message(),
+            };
+        }
+        if self.outer_gap_ref(&event.domain_key).copied() != Some(event.outer_gap) {
+            return CoreReply::Rejected {
+                kind: "domain-mismatch",
+                message: "domain outer gap does not match retained state",
+            };
+        }
+        if committed_session_is_empty(&session) {
+            return CoreReply::Rejected {
+                kind: RefusalKind::UnknownDomain.as_str(),
+                message: RefusalKind::UnknownDomain.message(),
+            };
+        }
+        let mut working = session;
+        let base = working.accepted_revision();
+        let observation = crate::seed::session_observation_for(
+            &event.owner,
+            &event.generation,
+            base,
+            event.fingerprint,
+            &event.windows,
+        );
+        let _ = working.sync_focus_from_window(&event.domain_key, &event.focused_window);
+        let window_id = WindowId(window.clone());
+        if let Err(error) = working.begin_drag(&window_id, &observation) {
+            return match error {
+                ProposeError::Diverged(reason) => CoreReply::Diverged(reason),
+                ProposeError::PendingExists => CoreReply::Rejected {
+                    kind: PENDING_EXISTS_KIND,
+                    message: PENDING_EXISTS_MESSAGE,
+                },
+                ProposeError::Refused(kind) => CoreReply::Rejected {
+                    kind: kind.as_str(),
+                    message: kind.message(),
+                },
+            };
+        }
+        let (x, y) = (*x, *y);
+        match working.drop_drag(
+            x,
+            y,
+            &observation,
+            &event.correlation,
+            &DragCapabilities::full(),
+        ) {
+            Ok(crate::session::DragRelease::Planned(plan)) => {
+                let typed = CoreReply::Tiled(TiledPlan::from_drag(&plan));
+                if Self::commit_drag(&mut working, event, &plan, base) {
+                    self.store_committed(event.domain_key.clone(), working, event.outer_gap);
+                    return typed;
+                }
+                self.remove(&event.domain_key);
+                CoreReply::SnapshotInvalid {
+                    message: OBSERVATION_MESSAGE,
+                    detail: "commit-rejected",
+                }
+            }
+            Ok(crate::session::DragRelease::SnapBack(_)) => CoreReply::Rejected {
+                kind: RefusalKind::Unchanged.as_str(),
+                message: RefusalKind::Unchanged.message(),
+            },
+            Err(ProposeError::Diverged(reason)) => CoreReply::Diverged(reason),
+            Err(ProposeError::PendingExists) => CoreReply::Rejected {
+                kind: PENDING_EXISTS_KIND,
+                message: PENDING_EXISTS_MESSAGE,
+            },
+            Err(ProposeError::Refused(kind)) => CoreReply::Rejected {
+                kind: kind.as_str(),
+                message: kind.message(),
+            },
+        }
+    }
+
+    /// Synchronous acknowledge plus `verify_drag` commit for one retained
+    /// drag plan. Mirrors the other synchronous commit helpers exactly.
+    fn commit_drag(
+        session: &mut Session,
+        event: &CoreEvent,
+        plan: &SessionDragPlan,
+        base: u64,
+    ) -> bool {
+        if !engine_acknowledge(session, event, base) {
+            return false;
+        }
+        let post = DragPostObservation::new(
+            Observation::new(
+                event.owner.clone(),
+                event.generation.clone(),
+                base,
+                event.fingerprint,
+            ),
+            event.correlation.clone(),
+            true,
+            plan.dispatch.preconditions.clone(),
+            plan.dispatch.operation.clone(),
+        );
+        session.verify_drag(&post).is_ok()
     }
 
     /// Portable output relocation: when no usable session exists for the

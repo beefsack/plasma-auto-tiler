@@ -38,14 +38,33 @@ decisions of 2026-09-24 are recorded under
   Meta+left move snap-back, Esc/zero-move, size-increment client, and the
   unexplained `p13` 36 px bottom-edge shortfall in
   `/run/user/1000/plasma-auto-tiler-dev.LVkQv5.log`. AR8 remains separate.
-- P2 | Drag-and-drop reorganisation | User-approved as a later item
-  (2026-09-24). Wire move drops to the existing core placement policy
-  (`crates/tiler-core/src/session/ops/drag.rs`: split edges, group interiors,
-  snap-back) instead of the interim snap-back. Needs product decisions on drop
-  targets and preview before implementation.
-- P2 | Hintless drag preview | AR12's preview has no observation and therefore
-  projects without size hints; a hinted drop can land at a different rectangle.
-  Align preview with drop evidence when drag-preview work is taken up.
+- P2 | Drag-and-drop reorganisation | Shipped offline pending live check
+  (user option A, 2026-09-27): tiled move drops use the existing core policy
+  (window edge split, group edge insert/wrap, group interior insert; center
+  or unresolved snap-back). No preview. KWin 773 tests + typecheck; Rust
+  workspace 617 tests, format and strict clippy pass. The current route
+  refuses a destination-scoped drop against the Started source domain.
+  [change](changes/archive/drag-drop-reorganisation.md)
+- P1 | Cross-output drag drops at the drop point | User decision (2026-09-27,
+  option 3, "a pretty critical feature"): a tiled window dragged to another
+  output joins that output's tiling at the drop point, resolved by the same
+  core drop policy in the destination domain; not snap-back, not normal
+  placement. Removes the source domain membership; must not fight the
+  source-scoped restore marker. Overlaps the live preview work (a preview
+  must resolve in whichever domain is under the pointer).
+- P1 | Live drop preview (option B) | User decision (2026-09-27, option 1):
+  during a tiled move drag, a separate native-effect overlay draws a filled
+  translucent rectangle of the target slot ON TOP of windows; hidden for
+  center/snap-back targets; cleared on drop, cancel or refusal; independent
+  of the Meta-held group outline. Route (research in the drag-drop change
+  note): throttled script pointer samples -> read-only Planner preview on a
+  fresh observation with size hints, using the same resolver as the drop;
+  carry sticky group-edge hover prior into later samples and the final drop
+  so preview and drop agree (Orchestrator: keeps current policy); resolve in
+  the domain under the pointer. Build together with cross-output drops at
+  the drop point. Est. 400-600+ production lines. User note: the same overlay
+  approach should inform the group highlight redesign, which renders beneath
+  windows whereas the drop preview renders above them.
 - P2 | Live sibling reflow while dragging | User request, not high priority.
   Research: no project per-step sibling writer found in history; the
   remembered behavior is likely KWin Custom Tile native reflow (hypothesis).
@@ -156,11 +175,19 @@ decisions of 2026-09-24 are recorded under
   (`5fe0eb5`) and C4 (`8191c0d`). No live verification. Live checks when
   convenient: group outline after a config change and window close/reopen;
   native endpoint `stage=failed`/`available=1` transitions; tray status stays
-  current. The sweep's settings launch-gate question: Orchestrator view is no
-  conflict (a launch quality bar, not runtime fail-closed behavior); unchanged
-  unless the user says otherwise.
+  current. The sweep's settings launch-gate question: user confirmed
+  (2026-09-27) the Orchestrator view - no conflict (a launch quality bar, not
+  runtime fail-closed behavior); the rule stays unchanged.
   [change 4](changes/archive/resilience-change-4.md)
   [sweep](changes/fail-closed-sweep.md)
+- P1 | CI with GitHub Actions | User go-ahead (2026-09-27): run KWin tests and
+  typecheck, Rust workspace tests, fmt and clippy, and shell suites on push
+  and PR; native effect build/CTest later if practical. Motivation: native
+  CTest broke unnoticed after `e69739f`.
+- P2 | Recovery audit (offline) | User go-ahead (2026-09-27): read-only audit
+  of recovery when Planner, tray, KWin script, native effect or KWin restart,
+  and around sleep/resume; produce a precise live test plan and fix ordinary
+  gaps. Feeds the item below.
 - P2 | Process-loss and sleep recovery testing | User request (2026-09-26),
   not urgent: test how the system recovers when components are killed or
   stopped (Planner, tray, KWin script reload, native effect reload, KWin
@@ -174,7 +201,10 @@ decisions of 2026-09-24 are recorded under
   learned size limits (decision A option 4, user-approved direction): treat a
   client-held size unexplained by hints as a learned min/max/step for that
   window and replan neighbours around it, expiring when the client changes.
-  Design work; scope with the user before implementation.
+  Design work; scope with the user before implementation. User decision
+  (2026-09-27): a Lead writes a design draft (options and recommended scope,
+  no code) after the cross-output drop/preview change, CI and the recovery
+  audit.
 - P3 | AR6 Logical workspace model in core | 7.10. Deferred 2026-09-24 until a
   non-KWin host needs it. The current KWin implementation is the "native
   workspaces" mode of a future native/custom choice.

@@ -3772,7 +3772,7 @@ function startPlanAdapterEntryOnce(
     // is <= that finish token; an old reply faced with a newer start fails
     // closed and never clears the newer start. Cancelled verdicts never reach
     // the pointer route and never change a share.
-    interface OracleStart { id: string; rect: { x: number; y: number; w: number; h: number }; move: boolean; resize: boolean; epoch: number; grabbed: OracleGrabbed | null; grabSource: OracleGrabSource | "missing"; pointerStart: { x: number; y: number } | null; floatingStart: boolean }
+    interface OracleStart { id: string; rect: { x: number; y: number; w: number; h: number }; move: boolean; resize: boolean; epoch: number; grabbed: OracleGrabbed | null; grabSource: OracleGrabSource | "missing"; pointerStart: { x: number; y: number } | null; floatingStart: boolean; domainOutput: string; domainWorkspace: string }
     const oracleStarts = new Map<object, OracleStart>();
     const interactiveResizeRefs = new Set<object>();
     // Tiled-move suppression mirrors the resize hold: while a tiled member is
@@ -3841,7 +3841,7 @@ function startPlanAdapterEntryOnce(
                     } catch (error) {
                         void error;
                     }
-                    oracleStarts.set(ref, { id: entry.id, rect, move: state.move, resize: state.resize, epoch: (oracleEpoch += 1), grabbed, grabSource, pointerStart, floatingStart: (entry as { floating?: unknown }).floating === true });
+                    oracleStarts.set(ref, { id: entry.id, rect, move: state.move, resize: state.resize, epoch: (oracleEpoch += 1), grabbed, grabSource, pointerStart, floatingStart: (entry as { floating?: unknown }).floating === true, domainOutput: observed.domainOutput, domainWorkspace: observed.domainWorkspace });
                     if (state.move === false && state.resize === true) {
                         if (!interactiveResizeRefs.has(ref)) {
                             interactiveResizeRefs.add(ref);
@@ -3972,7 +3972,19 @@ function startPlanAdapterEntryOnce(
     };
     const makeOracleFinishContext = (ref: object): DragOracleFinishContext => {
         oracleEpoch += 1;
-        return { ref, finishEpoch: oracleEpoch };
+        // Finish-time script pointer capture for the tiled move-drop route:
+        // the native verdict carries no pointer, so workspace.cursorPos at
+        // FINISH is captured here synchronously before the async oracle pull
+        // and carried in the context. The route must never read cursorPos at
+        // reply time. Fail-closed null, never throws.
+        let pointerFinish: { x: number; y: number } | null = null;
+        try {
+            pointerFinish = readMeasurePointer(liveWorkspace);
+        } catch (error) {
+            void error;
+            pointerFinish = null;
+        }
+        return { ref, finishEpoch: oracleEpoch, pointerFinish };
     };
     // Token-guarded consumption: delete the finish's own captured start only
     // when it predates the finish token. A newer Started (larger epoch) that
@@ -4484,18 +4496,23 @@ function startPlanAdapterEntryOnce(
                 return;
             }
             if (start.move === true) {
-                // Tiled move-drop restore: only a move that STARTS tiled and
-                // FINISHES tiled converges its retained domain once through
-                // the existing coalesced one-shot marker (one dispatch, no
-                // retry, per-drag terminal naming the satisfying plan).
-                // Anything touching floating stays native-only with the
-                // historical ignored line and no marker: floating-at-start
+                // Tiled move-drop route: only a move that STARTS tiled and
+                // FINISHES tiled dispatches one drag-drop intent through the
+                // shared single-flight (never two concurrent requests), with
+                // the finish-captured script pointer and the verdict window
+                // identity. Anything touching floating stays native-only with
+                // the historical ignored line and no marker: floating-at-start
                 // never entered the hold, and tiled-at-finish after a
                 // floating start must not restore. A start/finish mismatch
                 // logs one bounded line (closed-vocabulary tokens only, no
                 // ids or coordinates) so the decision stays observable.
                 // Cancelled verdicts never reach this route (the pull settles
-                // them directly), so this branch only sees ok-moved drops.
+                // them directly), so this branch only sees ok-moved drops. A
+                // refused or failed drop arms the existing one-shot restore
+                // marker through the adapter, so failed drops never break
+                // tiling. No focus is forced: an unfocused source dispatches
+                // as observed and the Planner refuses it, converging through
+                // the marker like any refusal.
                 let floatingFinish = false;
                 try {
                     for (const entry of observed.windows) {
@@ -4570,11 +4587,35 @@ function startPlanAdapterEntryOnce(
                     void error;
                 }
                 try { interactiveMoveRefs.delete(ctx.ref); } catch (error) { void error; }
-                try { log(`plasma-auto-tiler:route-diag:drag-move-restore correlation=${verdict.correlation}`); } catch (error) { void error; }
+                // The native verdict carries no pointer: the drop point is
+                // the finish-captured script pointer in the finish context
+                // (read synchronously at FINISH before the async pull, never
+                // at reply). A missing capture still routes: the adapter
+                // refuses the coords into the restore marker fail-closed.
+                // The dispatch outcome is logged with the drag correlation:
+                // accepted means one intent entered the single flight
+                // (dispatched or deferred); refused means the adapter's exact
+                // refusal token (logged alongside by the adapter) rejected it
+                // and the marker owns convergence. Completion
+                // (planned/applied/rejected) is logged by the adapter under
+                // its own plan correlation.
                 try {
-                    adapter.noteMoveDropped(verdict.correlation, verdict.windowIdentity, observed.domainOutput, observed.domainWorkspace);
+                    const pointer = ctx.pointerFinish ?? null;
+                    const accepted = adapter.requestDragDrop(
+                        verdict.windowIdentity,
+                        pointer === null ? undefined : pointer.x,
+                        pointer === null ? undefined : pointer.y,
+                        verdict.correlation,
+                        { output: start.domainOutput, workspace: start.domainWorkspace },
+                    );
+                    try {
+                        log(`plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=${verdict.correlation} accepted=${accepted === true ? "true" : "false"}`);
+                    } catch (error) {
+                        void error;
+                    }
                 } catch (error) {
                     void error;
+                    try { log(`plasma-auto-tiler:route-diag:drag-drop-thrown correlation=${verdict.correlation}`); } catch (_ignored) { /* fail-closed */ }
                 }
                 return;
             }

@@ -251,12 +251,17 @@ describe("slice 2 plan adapter pointer route", () => {
         assert.ok(src.includes("pointer-resize"));
         assert.ok(src.includes("rectsEqualExceptSource"));
         assert.ok(src.includes("pointerEcho"));
+        assert.ok(src.includes("requestDragDrop"));
+        assert.ok(src.includes("drag-drop-refused-coords"));
         assert.ok(!src.includes("fallback"));
         const entry = readFileSync("src/plan-adapter-entry.ts", "utf8");
         assert.ok(entry.includes("drag-context-invalid"));
         assert.ok(entry.includes("drag-unknown-window"));
         assert.ok(entry.includes("drag-scope-invalid"));
         assert.ok(entry.includes("drag-move-ignored"));
+        assert.ok(entry.includes("drag-drop-dispatched"));
+        assert.ok(entry.includes("pointerFinish"));
+        assert.ok(!entry.includes("drag-move-restore"), "interim move-drop-only restore is gone");
         assert.ok(entry.includes("drag-ref-mismatch"));
         assert.ok(entry.includes("drag-start-missing"));
         assert.ok(entry.includes("drag-start-invalid"));
@@ -844,7 +849,7 @@ describe("slice 2 entry finish consumes the captured start", () => {
         stop();
     });
 
-    it("restores a tiled move-gesture drop once with no pointer dispatch", () => {
+    it("routes a tiled move-gesture drop as one drag-drop with the finish pointer", () => {
         const world = oracleWorld({ move: { "win-a": true } });
         const { stop, mocks } = startOracleEntry(world);
         fireAll(world.signals["startedA"]);
@@ -852,12 +857,15 @@ describe("slice 2 entry finish consumes the captured start", () => {
         assert.equal(mocks.oracleCalls.length, 1);
         (mocks.oracleCalls[0] as (reply: unknown) => void)(movedWinA("drag-1"));
         assert.equal(mocks.planCalls.length, 1);
-        assert.deepEqual((JSON.parse(mocks.planCalls[0]?.payload as string) as Record<string, unknown>)["command"], { op: "reconcile" });
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-move-restore correlation=drag-1"));
-        assert.ok(mocks.logs.some((line) => line.includes("drag-rejected") && line.includes("correlation=drag-1") && line.includes("reason=move-dropped")));
+        assert.deepEqual((JSON.parse(mocks.planCalls[0]?.payload as string) as Record<string, unknown>)["command"], { op: "drag-drop", window: "win-a", x: 600, y: 400 });
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-1 accepted=true"));
         assert.ok(
             mocks.planCalls.every((call) => !(call.payload.includes("pointer-resize"))),
             "tiled move never dispatches a pointer plan",
+        );
+        assert.ok(
+            !mocks.logs.some((line) => line.includes("drag-rejected") && line.includes("correlation=drag-1")),
+            "accepted drop arms no restore marker",
         );
         stop();
     });

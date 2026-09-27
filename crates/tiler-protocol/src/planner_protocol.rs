@@ -649,6 +649,8 @@ const PLANNER_SNAPSHOT_DETAILS: &[&str] = &[
     "active-group-op-invalid",
     "toggle-float-op-invalid",
     "toggle-float-window-invalid",
+    "drag-drop-op-invalid",
+    "drag-drop-window-invalid",
     "float-rect-invalid",
 ];
 
@@ -1933,9 +1935,10 @@ impl Planner {
         // check on this production path. The string guard preserves exact
         // unknown/missing/non-string `unknown-value` behavior without a typed
         // parse.
-        // Move/focus/resize/pointer-resize/toggle-float parse `SyncCommand`
-        // once in place inside their handlers (see `SyncCommand` docs for the
-        // exact probe/ordering reasons), so these arms dispatch by op string.
+        // Move/focus/resize/pointer-resize/toggle-float/drag-drop parse
+        // `SyncCommand` once in place inside their handlers (see `SyncCommand`
+        // docs for the exact probe/ordering reasons), so these arms dispatch
+        // by op string.
         match validated_op(&ctx).as_str() {
             "reconcile" | "update-gaps" | "active-group" => {
                 match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
@@ -1967,6 +1970,7 @@ impl Planner {
             "resize" => self.evaluate_resize_retained(&ctx),
             "pointer-resize" => self.evaluate_pointer_resize_retained(&ctx),
             "toggle-float" => self.evaluate_toggle_float_retained(&ctx),
+            "drag-drop" => self.evaluate_drag_drop_retained(&ctx),
             _ => rejected(
                 valid_correlation_echo(&ctx.raw),
                 "unknown-value",
@@ -2378,6 +2382,59 @@ impl Planner {
             direction2: direction2_raw,
             boundary2,
         };
+        let event = core_event(ctx, &core_command);
+        self.handle_and_serialize(ctx, &event)
+    }
+
+    /// Synchronous drag-drop: one `begin_drag` then `drop_drag` pair on the
+    /// same complete observation with immediate acknowledge/verify.
+    ///
+    /// Strict tagged decode in place (see `SyncCommand`): a present-but-wrong
+    /// op maps to `drag-drop-op-invalid`, all other decode errors keep
+    /// `classify_parse_error` behavior. The dragged window id must be opaque
+    /// (`drag-drop-window-invalid`); pointer `x`/`y` cross as decoded with no
+    /// extra authorization (outside work-area points refuse in the Engine as
+    /// bounded `unchanged` so KWin restores). Single-domain only: a carried
+    /// `domains` payload already refused at validation. Engine owns
+    /// convergence, focus sync, begin/drop, sync commit, and store with no
+    /// reseed on invalid drops; serialization funnels through the typed
+    /// choke point as `drag-drop`/`place-tiled`.
+    fn evaluate_drag_drop_retained(&mut self, ctx: &Validated) -> String {
+        let (window_raw, x, y) =
+            match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+                Ok(SyncCommand::DragDrop { window, x, y }) => (window, x, y),
+                Ok(_) => {
+                    return snapshot_invalid(
+                        ctx.request.correlation_id.clone(),
+                        MSG_OPAQUE_ID,
+                        "drag-drop-op-invalid",
+                    );
+                }
+                Err(error) => {
+                    if is_unknown_variant(&error) {
+                        return snapshot_invalid(
+                            ctx.request.correlation_id.clone(),
+                            MSG_OPAQUE_ID,
+                            "drag-drop-op-invalid",
+                        );
+                    }
+                    let (kind, message) = classify_parse_error(&error);
+                    return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+                }
+            };
+        if !is_opaque_id(&window_raw) {
+            return snapshot_invalid(
+                ctx.request.correlation_id.clone(),
+                MSG_OPAQUE_ID,
+                "drag-drop-window-invalid",
+            );
+        }
+        let core_command = core_command_from_sync(&SyncCommand::DragDrop {
+            window: window_raw,
+            x,
+            y,
+        })
+        .expect("drag-drop sync op converts");
         let event = core_event(ctx, &core_command);
         self.handle_and_serialize(ctx, &event)
     }
@@ -2878,9 +2935,10 @@ struct ActiveGroupCommand {
 
 /// Typed synchronous command codec (narrow).
 ///
-/// Internally tagged on `op` with `deny_unknown_fields` for all nine
+/// Internally tagged on `op` with `deny_unknown_fields` for all ten
 /// synchronous command ops: reconcile, update-gaps, active-group, move,
-/// focus, resize, pointer-resize, toggle-float, and `send-to-workspace`.
+/// focus, resize, pointer-resize, toggle-float, `send-to-workspace`, and
+/// `drag-drop`.
 /// Sync handlers parse
 /// [`SyncCommand`] once in place after the existing dispatch boundaries
 /// (validation, send dispatch, binding sync): the production `evaluate`
@@ -2951,6 +3009,8 @@ enum SyncCommand {
         target_output: String,
         target_workspace: String,
     },
+    #[serde(rename = "drag-drop")]
+    DragDrop { window: String, x: i32, y: i32 },
 }
 
 /// Legacy op-mismatch mapping for converted handlers (see [`SyncCommand`]):
@@ -3038,6 +3098,11 @@ fn core_command_from_sync(command: &SyncCommand) -> Option<tiler_core::boundary:
             window: window.clone(),
             target_output: target_output.clone(),
             target_workspace: target_workspace.clone(),
+        }),
+        SyncCommand::DragDrop { window, x, y } => Some(CoreCommand::DragDrop {
+            window: window.clone(),
+            x: *x,
+            y: *y,
         }),
     }
 }
@@ -4913,8 +4978,8 @@ mod tests {
         );
     }
     #[test]
-    fn typed_sync_codec_covers_all_nine_ops_total() {
-        // Fence proof for the boundary conversion: all nine synchronous wire
+    fn typed_sync_codec_covers_all_ten_ops_total() {
+        // Fence proof for the boundary conversion: all ten synchronous wire
         // ops decode once via `SyncCommand`, then convert into `CoreCommand`
         // with the identical `op` token. Fallible vocabularies
         // (direction/mode) cross opaquely. The eight retired wire ops
@@ -4929,8 +4994,9 @@ mod tests {
             serde_json::json!({"op": "pointer-resize", "window": "win-1", "direction": "left", "boundary": 10}),
             serde_json::json!({"op": "toggle-float", "window": "win-1"}),
             serde_json::json!({"op": "send-to-workspace", "window": "win-1", "target_output": "out-1", "target_workspace": "ws-2"}),
+            serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 610, "y": 400}),
         ];
-        assert_eq!(commands.len(), 9);
+        assert_eq!(commands.len(), 10);
         let mut ops = std::collections::HashSet::new();
         for command in &commands {
             let decoded: SyncCommand =
@@ -4940,7 +5006,7 @@ mod tests {
             assert_eq!(converted.op(), expected);
             ops.insert(converted.op());
         }
-        assert_eq!(ops.len(), 9);
+        assert_eq!(ops.len(), 10);
         // Opaque crossing: an unknown direction string converts without
         // validation; handlers own precedence.
         let decoded: SyncCommand = serde_json::from_value(
@@ -5450,6 +5516,198 @@ mod tests {
             "{\"v\":1,\"correlation_id\":\"gold-float-3\",\"outcome\":\"rejected\",\"kind\":\"not-tiled\",\"message\":\"focused window is not a tiled window\"}",
         );
     }
+
+    #[test]
+    fn drag_drop_edge_plans_geometry_then_refusals_stay_usable() {
+        // Synchronous drag-drop: one seeded two-window domain, an edge drop
+        // plans full geometry as `drag-drop`/`place-tiled`, while center,
+        // outside-work-area, and unfocused drops refuse bounded `rejected`
+        // (never terminal) with canonical topology kept and no pending drag:
+        // each refusal is followed by a usable request that still plans.
+        let seed = || {
+            let mut planner = Planner::new();
+            for (cid, focused, windows, command) in [
+                (
+                    "dd-s1",
+                    "win-1",
+                    vec![("win-1", 0, 0, 100, 80)],
+                    serde_json::json!({"op": "reconcile"}),
+                ),
+                (
+                    "dd-s2",
+                    "win-1",
+                    vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                    serde_json::json!({"op": "reconcile"}),
+                ),
+            ] {
+                let reply = parse_reply(&planner.evaluate(&retained_request(
+                    cid, "owner-1", "gen-1", focused, &windows, command,
+                )));
+                assert_eq!(reply["outcome"], "planned", "{reply}");
+            }
+            planner
+        };
+        let two = vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)];
+        // Edge accepted: focused win-1 dropped on the top edge of the
+        // projected win-2 tile wraps the column vertically.
+        let mut planner = seed();
+        let edge = parse_reply(&planner.evaluate(&retained_request(
+            "dd-edge-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 900, "y": 5}),
+        )));
+        assert_eq!(edge["outcome"], "planned", "{edge}");
+        assert_eq!(edge["detail"]["kind"], "drag-drop", "{edge}");
+        assert_eq!(edge["detail"]["capability"], "place-tiled", "{edge}");
+        assert_eq!(edge["base_revision"], 2, "{edge}");
+        let geometry = edge["desired_geometry"].as_array().expect("geometry");
+        assert_eq!(geometry.len(), 2, "{edge}");
+        let mut rects: Vec<(String, i32, i32, i32, i32)> = geometry
+            .iter()
+            .map(|g| {
+                (
+                    g["window"].as_str().unwrap_or_default().to_owned(),
+                    g["rect"]["x"].as_i64().unwrap_or(-1) as i32,
+                    g["rect"]["y"].as_i64().unwrap_or(-1) as i32,
+                    g["rect"]["w"].as_i64().unwrap_or(-1) as i32,
+                    g["rect"]["h"].as_i64().unwrap_or(-1) as i32,
+                )
+            })
+            .collect();
+        rects.sort();
+        assert_eq!(
+            rects,
+            vec![
+                ("win-1".to_owned(), 0, 0, 1200, 400),
+                ("win-2".to_owned(), 0, 400, 1200, 400),
+            ],
+            "{edge}",
+        );
+        assert_eq!(edge["desired_focus"]["leaf"], "leaf-win-1", "{edge}");
+
+        // Center (stack fact) refuses as bounded rejected.
+        let mut planner = seed();
+        let center = parse_reply(&planner.evaluate(&retained_request(
+            "dd-center-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 900, "y": 400}),
+        )));
+        assert_eq!(center["outcome"], "rejected", "{center}");
+        assert_eq!(center["kind"], "unsupported-capability", "{center}");
+        // Still usable: the same edge drop plans afterwards.
+        let after_center = parse_reply(&planner.evaluate(&retained_request(
+            "dd-center-2",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 900, "y": 5}),
+        )));
+        assert_eq!(after_center["outcome"], "planned", "{after_center}");
+        assert_eq!(
+            after_center["detail"]["kind"], "drag-drop",
+            "{after_center}"
+        );
+
+        // Outside the work area refuses as bounded rejected (snap-back).
+        let mut planner = seed();
+        let outside = parse_reply(&planner.evaluate(&retained_request(
+            "dd-out-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 2000, "y": 2000}),
+        )));
+        assert_eq!(outside["outcome"], "rejected", "{outside}");
+        // A plain reconcile still projects the retained pair afterwards.
+        let after_outside = parse_reply(&planner.evaluate(&retained_request(
+            "dd-out-2",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(after_outside["outcome"], "planned", "{after_outside}");
+        assert_eq!(
+            after_outside["desired_geometry"].as_array().map(Vec::len),
+            Some(2),
+            "{after_outside}"
+        );
+
+        // Unfocused dragged window refuses as bounded rejected.
+        let mut planner = seed();
+        let unfocused = parse_reply(&planner.evaluate(&retained_request(
+            "dd-unf-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "drag-drop", "window": "win-2", "x": 5, "y": 400}),
+        )));
+        assert_eq!(unfocused["outcome"], "rejected", "{unfocused}");
+        assert_eq!(unfocused["kind"], "focus-mismatch", "{unfocused}");
+        // Still usable: the focused edge drop plans afterwards.
+        let after_unfocused = parse_reply(&planner.evaluate(&retained_request(
+            "dd-unf-2",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 900, "y": 5}),
+        )));
+        assert_eq!(after_unfocused["outcome"], "planned", "{after_unfocused}");
+    }
+
+    #[test]
+    fn drag_drop_op_shape_refuses_fail_closed() {
+        // Wire-shape fences stay in protocol at their exact positions: a
+        // present-but-wrong op, an opaque-id violation, and unknown fields
+        // refuse without touching retained state.
+        let mut planner = Planner::new();
+        let wrong_op = parse_reply(&planner.evaluate(&retained_request(
+            "dd-shape-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 1}),
+        )));
+        assert_eq!(wrong_op["outcome"], "rejected", "{wrong_op}");
+        assert_eq!(wrong_op["kind"], "request-malformed", "{wrong_op}");
+        let bad_window = parse_reply(&planner.evaluate(&retained_request(
+            "dd-shape-2",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "drag-drop", "window": "", "x": 10, "y": 10}),
+        )));
+        assert_eq!(bad_window["outcome"], "rejected", "{bad_window}");
+        assert_eq!(bad_window["kind"], "snapshot-invalid", "{bad_window}");
+        assert_eq!(
+            bad_window["detail"], "drag-drop-window-invalid",
+            "{bad_window}"
+        );
+        let extra = parse_reply(&planner.evaluate(&retained_request(
+            "dd-shape-3",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 10, "y": 10, "bogus": 1}),
+        )));
+        assert_eq!(extra["outcome"], "rejected", "{extra}");
+        assert_eq!(extra["kind"], "unknown-field", "{extra}");
+        assert_eq!(planner.retained_domains(), 0);
+    }
     #[test]
     fn untracked_floating_toggle_float_rect_precedence_and_fresh_unfloat() {
         // Probe precedence covers an invalid `float_rect` too: an untracked
@@ -5520,7 +5778,7 @@ mod tests {
             );
             assert!(seen.insert(*token), "duplicate token: {token}");
         }
-        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 49, "closed registry size");
+        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 51, "closed registry size");
     }
 
     fn geometry_by_window(
