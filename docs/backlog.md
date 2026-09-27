@@ -226,7 +226,8 @@ decisions of 2026-09-24 are recorded under
   Design work; scope with the user before implementation. User decision
   (2026-09-27): a Lead writes a design draft (options and recommended scope,
   no code) after the cross-output drop/preview change, CI and the recovery
-  audit.
+  audit. [design draft](changes/robust-difference-reconciliation.md) - awaiting
+  user scope decision.
 - P3 | AR6 Logical workspace model in core | 7.10. Deferred 2026-09-24 until a
   non-KWin host needs it. The current KWin implementation is the "native
   workspaces" mode of a future native/custom choice.
