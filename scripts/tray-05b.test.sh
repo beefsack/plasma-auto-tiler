@@ -84,6 +84,9 @@ printf '%s\n' \
   'WATCHER_PID=""' \
   'FIRST_PID=""' \
   'LATE_PID=""' \
+  'has_owner() {' \
+  '  [[ "$("$BUSCTL" --address="$DBUS_SESSION_BUS_ADDRESS" call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s "$1" 2>/dev/null)" == "b true" ]]' \
+  '}' \
   'cleanup_processes() {' \
   '  [[ -z "$FIRST_PID" ]] || { kill -TERM "$FIRST_PID" 2>/dev/null || true; wait "$FIRST_PID" 2>/dev/null || true; }' \
   '  [[ -z "$LATE_PID" ]] || { kill -TERM "$LATE_PID" 2>/dev/null || true; wait "$LATE_PID" 2>/dev/null || true; }' \
@@ -94,7 +97,7 @@ printf '%s\n' \
   'WATCHER_PID=$!' \
   'watcher_ready=0' \
   'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
-  '  if "$BUSCTL" --user status org.kde.StatusNotifierWatcher > /dev/null 2>&1; then watcher_ready=1; break; fi' \
+  '  if has_owner org.kde.StatusNotifierWatcher; then watcher_ready=1; break; fi' \
   '  sleep 0.01' \
   'done' \
   '[[ "$watcher_ready" == 1 ]] || { cat "$WORK/watcher.out" >&2; exit 1; }' \
@@ -103,7 +106,7 @@ printf '%s\n' \
   'FIRST_PID=$!' \
   'tray_ready=0' \
   'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
-  '  if "$BUSCTL" --user status org.plasmaautotiler.Tray > /dev/null 2>&1; then tray_ready=1; break; fi' \
+  '  if has_owner org.plasmaautotiler.Tray; then tray_ready=1; break; fi' \
   '  if ! kill -0 "$FIRST_PID" 2>/dev/null; then cat "$WORK/endpoint.out" >&2; exit 1; fi' \
   '  sleep 0.01' \
   'done' \
@@ -132,14 +135,14 @@ printf '%s\n' \
   'pass' \
   'kill -0 "$FIRST_PID" 2>/dev/null || { echo "first tray died after second invocation" >&2; exit 1; }' \
   'pass' \
-  '"$BUSCTL" --user status org.plasmaautotiler.Tray > /dev/null 2>&1 || { echo "tray name lost after second invocation" >&2; exit 1; }' \
+  'has_owner org.plasmaautotiler.Tray || { echo "tray name lost after second invocation" >&2; exit 1; }' \
   'pass' \
   'kill -TERM "$WATCHER_PID"' \
   'WATCHER_PID=""' \
   'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
-  '  if "$BUSCTL" --user status org.kde.StatusNotifierWatcher > /dev/null 2>&1; then sleep 0.01; else break; fi' \
+  '  if has_owner org.kde.StatusNotifierWatcher; then sleep 0.01; else break; fi' \
   'done' \
-  '"$BUSCTL" --user status org.kde.StatusNotifierWatcher > /dev/null 2>&1 && { echo "watcher name still owned after kill" >&2; exit 1; } || true' \
+  'has_owner org.kde.StatusNotifierWatcher && { echo "watcher name still owned after kill" >&2; exit 1; } || true' \
   'stay_alive=1' \
   'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
   '  if ! kill -0 "$FIRST_PID" 2>/dev/null; then stay_alive=0; break; fi' \
@@ -147,13 +150,13 @@ printf '%s\n' \
   'done' \
   '[[ "$stay_alive" == 1 ]] || { echo "first tray died on watcher loss, expected stay-alive unregistered" >&2; exit 1; }' \
   'pass' \
-  '"$BUSCTL" --user status org.plasmaautotiler.Tray > /dev/null 2>&1 || { echo "tray name lost on watcher loss" >&2; exit 1; }' \
+  'has_owner org.plasmaautotiler.Tray || { echo "tray name lost on watcher loss" >&2; exit 1; }' \
   'pass' \
   '"$DBUS_TEST_TOOL" echo --session --name=org.kde.StatusNotifierWatcher > "$WORK/watcher2.out" 2>&1 &' \
   'WATCHER_PID=$!' \
   'watcher_ready=0' \
   'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
-  '  if "$BUSCTL" --user status org.kde.StatusNotifierWatcher > /dev/null 2>&1; then watcher_ready=1; break; fi' \
+  '  if has_owner org.kde.StatusNotifierWatcher; then watcher_ready=1; break; fi' \
   '  sleep 0.01' \
   'done' \
   '[[ "$watcher_ready" == 1 ]] || { cat "$WORK/watcher2.out" >&2; exit 1; }' \
@@ -166,13 +169,13 @@ printf '%s\n' \
   'pass' \
   'kill -0 "$FIRST_PID" 2>/dev/null || { echo "first tray died on watcher return" >&2; exit 1; }' \
   'pass' \
-  '"$BUSCTL" --user status org.plasmaautotiler.Tray > /dev/null 2>&1 || { echo "tray name lost on watcher return" >&2; exit 1; }' \
+  'has_owner org.plasmaautotiler.Tray || { echo "tray name lost on watcher return" >&2; exit 1; }' \
   'pass' \
   'kill -TERM "$FIRST_PID" 2>/dev/null || true' \
   'wait "$FIRST_PID" 2>/dev/null || true' \
   'FIRST_PID=""' \
   'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
-  '  if "$BUSCTL" --user status org.plasmaautotiler.Tray > /dev/null 2>&1; then sleep 0.01; else break; fi' \
+  '  if has_owner org.plasmaautotiler.Tray; then sleep 0.01; else break; fi' \
   'done' \
   '[[ ! -e "$DATA_ROOT/plasma-auto-tiler" ]]' \
   'pass' \
@@ -186,13 +189,13 @@ printf '%s\n' \
   'wait "$WATCHER_PID" 2>/dev/null || true' \
   'WATCHER_PID=""' \
   'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
-  '  if "$BUSCTL" --user status org.kde.StatusNotifierWatcher > /dev/null 2>&1; then sleep 0.01; else break; fi' \
+  '  if has_owner org.kde.StatusNotifierWatcher; then sleep 0.01; else break; fi' \
   'done' \
   '"$tray_binary" tray > "$WORK/no-watcher.out" 2>&1 &' \
   'LATE_PID=$!' \
   'late_ready=0' \
   'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
-  '  if "$BUSCTL" --user status org.plasmaautotiler.Tray > /dev/null 2>&1; then late_ready=1; break; fi' \
+  '  if has_owner org.plasmaautotiler.Tray; then late_ready=1; break; fi' \
   '  if ! kill -0 "$LATE_PID" 2>/dev/null; then cat "$WORK/no-watcher.out" >&2; exit 1; fi' \
   '  sleep 0.01' \
   'done' \
@@ -218,7 +221,7 @@ printf '%s\n' \
   'WATCHER_PID=$!' \
   'watcher_ready=0' \
   'for ((attempt = 0; attempt < 300; attempt += 1)); do' \
-  '  if "$BUSCTL" --user status org.kde.StatusNotifierWatcher > /dev/null 2>&1; then watcher_ready=1; break; fi' \
+  '  if has_owner org.kde.StatusNotifierWatcher; then watcher_ready=1; break; fi' \
   '  sleep 0.01' \
   'done' \
   '[[ "$watcher_ready" == 1 ]] || { cat "$WORK/watcher3.out" >&2; exit 1; }' \
@@ -231,7 +234,7 @@ printf '%s\n' \
   'pass' \
   'kill -0 "$LATE_PID" 2>/dev/null || { echo "tray died on late watcher return" >&2; exit 1; }' \
   'pass' \
-  '"$BUSCTL" --user status org.plasmaautotiler.Tray > /dev/null 2>&1 || { echo "tray name lost on late watcher return" >&2; exit 1; }' \
+  'has_owner org.plasmaautotiler.Tray || { echo "tray name lost on late watcher return" >&2; exit 1; }' \
   'pass' \
   'kill -TERM "$LATE_PID" 2>/dev/null || true' \
   'wait "$LATE_PID" 2>/dev/null || true' \

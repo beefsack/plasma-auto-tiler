@@ -65,10 +65,16 @@ jobs:
       - name: Headless shell suites
         run: |
           devenv shell --impure -- bash -euo pipefail -c '
+            log="$(mktemp)"
             for suite in scripts/*.test.sh; do
-              if ! TRAY_05B_BINARY="$PWD/target/debug/plasma-auto-tiler" bash "$suite"; then
+              if ! TRAY_05B_BINARY="$PWD/target/debug/plasma-auto-tiler" bash "$suite" 2>&1 | tee "$log"; then
                 echo "::error::${suite} failed"
+                while IFS= read -r line; do
+                  echo "::error::${line//%/%25}"
+                done < <(tail -n 40 "$log")
+                rm -f -- "$log"
                 exit 1
               fi
             done
+            rm -f -- "$log"
           '
