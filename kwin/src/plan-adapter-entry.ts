@@ -5540,9 +5540,9 @@ function startPlanAdapterEntryOnce(
 // workspace routes, oracle, and the highlight bridge all register exactly
 // once, on the succeeding attempt. Retry rides only on signals that need
 // neither a windowList read nor an enabled adapter (workspace windowAdded,
-// Options configChanged); both are attached here with the shared connector,
-// so no timer exists to cancel or leak. A missing windowList function, an
-// invalid owner/generation, or no attachable retry edge at all stays
+// workspace screensChanged, Options configChanged); all use the shared
+// connector, so no timer exists to cancel or leak. A missing windowList
+// function, invalid owner/generation, or no attachable retry edge stays
 // terminal null exactly as before, and every terminal path stays silent.
 // An unexpected throw (as opposed to a clean enable refusal returning
 // null) may leave a partially attached attempt behind, so it stays terminal
@@ -5678,6 +5678,14 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         const addedDetach = connectSignal(readSignal(surface, "windowAdded"), onNativeEvent);
         if (addedDetach !== null) {
             detaches.push(addedDetach);
+        }
+    } catch (error) {
+        void error;
+    }
+    try {
+        const screensDetach = connectSignal(readSignal(surface, "screensChanged"), onNativeEvent);
+        if (screensDetach !== null) {
+            detaches.push(screensDetach);
         }
     } catch (error) {
         void error;

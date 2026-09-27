@@ -4694,6 +4694,48 @@ describe("plan entry startup attach recovery", () => {
         handle?.stop();
     });
 
+    it("recovers on screensChanged alone after a refused startup without duplicating hooks", () => {
+        const fireScreens = (screens: FakeSignal): void => {
+            for (const handler of [...screens.handlers]) (handler as () => void)();
+        };
+        const world = fakeWorld();
+        const screens = fakeSignal();
+        world.workspace["screensChanged"] = screens.signal;
+        let failLister = true;
+        const wins = world.wins;
+        world.workspace["windowList"] = (): unknown[] => {
+            if (failLister) throw new Error("transient-list");
+            return [...wins];
+        };
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "transient enable failure waits instead of terminal null");
+        assert.equal(mocks.logs.filter((line) => line.startsWith(FAILED_PREFIX)).length, 1, "one bounded failed line");
+        assert.equal(mocks.shortcuts.length, 0, "no shortcut registration while unavailable");
+        failLister = false;
+        fireScreens(screens);
+        assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "screensChanged alone recovers");
+        assert.ok(mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")), "ready line after screens recovery");
+        assert.equal(mocks.shortcuts.length, 62, "shortcuts register exactly once on screens recovery");
+        fireScreens(screens);
+        assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "no duplicate recovery on later screen change");
+        assert.equal(mocks.shortcuts.length, 62, "no duplicate shortcut registration on later screen change");
+        assert.equal(mocks.logs.filter((line) => line.startsWith(FAILED_PREFIX)).length, 1, "no duplicate failed line");
+        handle?.stop();
+        const pendingWorld = fakeWorld();
+        const pendingScreens = fakeSignal();
+        pendingWorld.workspace["screensChanged"] = pendingScreens.signal;
+        pendingWorld.workspace["windowList"] = (): unknown[] => {
+            throw new Error("persistent-list");
+        };
+        const pending = startEntry(pendingWorld);
+        assert.ok(pending.handle !== null, "persistent failure still waits while pending");
+        pending.handle?.stop();
+        fireScreens(pendingScreens);
+        assert.ok(!pending.mocks.logs.some((line) => line === RECOVERED), "no recovery after stop");
+        assert.equal(pendingScreens.handlers.length, 0, "screens wait detaches on stop");
+        assert.equal(pendingWorld.added.handlers.length, 0, "windowAdded wait detaches on stop");
+    });
+
     it("stays terminal null when windowList is entirely missing", () => {
         const world = fakeWorld();
         delete (world.workspace as Record<string, unknown>)["windowList"];

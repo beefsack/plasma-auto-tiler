@@ -200,16 +200,22 @@ decisions of 2026-09-24 are recorded under
   using a different KWin would not test the ABI that broke after `e69739f`.
   Offline commands pass; first GitHub run awaits Orchestrator push.
   [change](changes/archive/github-actions-ci.md)
-- P2 | Recovery audit (offline) | User go-ahead (2026-09-27): read-only audit
-  of recovery when Planner, tray, KWin script, native effect or KWin restart,
-  and around sleep/resume; produce a precise live test plan and fix ordinary
-  gaps. Feeds the item below.
+- Done | Recovery audit (offline) | Current-source component/process-loss,
+  KWin restart, and sleep/hotplug audit with file:line evidence and user-run
+  live plan completed; a screen-only wake now retries a refused script attach
+  on `screensChanged`. Offline KWin 789 tests/typecheck, Rust workspace
+  tests/fmt/strict Clippy pass; no live result claimed.
+  [audit and plan](changes/archive/recovery-process-sleep-audit.md)
 - P2 | Process-loss and sleep recovery testing | User request (2026-09-26),
-  not urgent: test how the system recovers when components are killed or
-  stopped (Planner, tray, KWin script reload, native effect reload, KWin
-  restart) and around sleep/resume, and make recovery graceful for the user.
-  Overlaps the Wake transport recovery live acceptance below. Follow
-  docs/live-kwin-testing.md; any live mutation needs explicit authorization.
+  not urgent: user runs the per-component and sleep/hotplug cases in the
+  [live plan](changes/archive/recovery-process-sleep-audit.md#live-test-plan)
+  on the single-output laptop and multi-output PC; record owner/PID, frames,
+  output/desktop identities, correlated logs and restoration. Includes wake
+  transport recovery acceptance below. Tray crash restart policy (manual
+  relaunch/next login), currently hardcoded Passive tray status, and KWin-only
+  retained Planner generation semantics remain user decisions. Follow
+  docs/live-kwin-testing.md; agents do not run
+  these live cases.
 - P2 | Robust difference reconciliation | User direction (2026-09-26, with
   decision I): find a way to make the implementation more robust and able to
   reconcile differences between expected and observed state where they
@@ -548,6 +554,7 @@ Existing work:
   live acceptance remains pending and no live result is claimed;
   uncertain-send recovery remains a separate, unselected protocol change.
   [investigation](changes/reliability-condition-investigation.md)
+  [live plan](changes/archive/recovery-process-sleep-audit.md#live-test-plan)
 - P1 | All settings live application (launch blocker) | Before launch, every
   user-facing setting must apply live, including tiling, workspace, shortcut,
   and effect settings. Overall liveness is PARTIAL: saving gaps from the script
