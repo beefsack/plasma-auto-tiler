@@ -192,55 +192,14 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
 
     m_groupDbusObject = new GroupHighlightObject(this, this);
     group_highlight_state_init(&m_groupState);
-    // Fail closed with no false endpoint expectation and no live retry: the
-    // group stays unavailable/clear unless both the well-known service and
-    // object register. Visibility and apply paths gate on this flag.
-    bool groupRegistered = false;
-    QDBusConnection bus = QDBusConnection::sessionBus();
-    if (bus.isConnected()) {
-        const bool serviceOk = bus.registerService(QStringLiteral("org.plasmaautotiler.ActiveBorder"));
-        const bool objectOk = bus.registerObject(
-            QStringLiteral("/org/plasmaautotiler/ActiveBorder"), m_groupDbusObject, QDBusConnection::ExportScriptableContents);
-        groupRegistered = serviceOk && objectOk;
-        if (!groupRegistered) {
-            bus.unregisterObject(QStringLiteral("/org/plasmaautotiler/ActiveBorder"));
-            bus.unregisterService(QStringLiteral("org.plasmaautotiler.ActiveBorder"));
-        }
-    }
-    m_groupDbusAvailable = groupRegistered;
+    // Fail closed with no false endpoint expectation: the group stays
+    // unavailable/clear unless both the well-known service and object
+    // register. Visibility and apply paths gate on this flag. A transient
+    // failure retries on later activation/reconfigure events, never by timer.
+    m_oracleDbusObject = new LastVerdictObject(this);
+    ensureEndpointsRegistered();
     if (!m_groupDbusAvailable) {
         group_highlight_clear(&m_groupState);
-    }
-    // Transition diagnostic only: endpoint availability once, after
-    // registration. Never affects gate, visibility, or repaint decisions.
-    emitActiveBorderEndpoint();
-
-    // Drag oracle endpoint: registered independently of the
-    // ActiveBorder endpoint outcome, so one registration failure never hides
-    // the other service. No retry, no polling.
-    m_oracleDbusObject = new LastVerdictObject(this);
-    if (bus.isConnected()) {
-        const bool oracleServiceOk = bus.registerService(QStringLiteral("org.plasmaautotiler.DragOracle"));
-        const bool oracleObjectOk = bus.registerObject(QStringLiteral("/org/plasmaautotiler/DragOracle"), m_oracleDbusObject,
-            QDBusConnection::ExportScriptableContents);
-        if (!(oracleServiceOk && oracleObjectOk)) {
-            bus.unregisterObject(QStringLiteral("/org/plasmaautotiler/DragOracle"));
-            bus.unregisterService(QStringLiteral("org.plasmaautotiler.DragOracle"));
-        }
-    }
-
-    // Passive press capture for the drag oracle: a public InputEventSpy
-    // observes pointer presses without grabbing or intercepting. Fail closed
-    // when input redirection is unavailable: drags then simply carry no press
-    // evidence and the existing verdict contract is unchanged. Deleting the
-    // spy uninstalls it automatically; the destructor deletes it explicitly.
-    m_oraclePressSpy = new OraclePressSpy(this);
-    if (input() != nullptr) {
-        input()->installInputEventSpy(m_oraclePressSpy);
-    } else {
-        delete m_oraclePressSpy;
-        m_oraclePressSpy = nullptr;
-        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:drag-oracle:press-spy available=0"));
     }
 
     // Oracle observation is independent of rendering. Keep this one shared
@@ -281,6 +240,22 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
         subscribeMaximize(window);
         attachOracleWindow(window);
     });
+    // Activation recovery runs even when OpenGL rendering is off: the oracle
+    // endpoint and press spy stay useful without a visible border. Rendering
+    // below stays OpenGL-gated; focus-clear ordering is preserved.
+    connect(effects, &EffectsHandler::windowActivated, this, [this](EffectWindow *) {
+        ensureEndpointsRegistered();
+        if (!m_isOpenGL) {
+            return;
+        }
+        // Focus activation clears the old group immediately before any
+        // asynchronous script refresh, so no stale group renders under the
+        // new active focus while Meta is held.
+        clearGroupHighlight();
+        setTrackedWindow(effects->activeWindow());
+        updateBorder();
+        updateGroupVisibility();
+    });
 
     if (!m_isOpenGL) {
         return;
@@ -292,15 +267,6 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
     m_groupItem.setParentItem(effects->scene()->overlayItem());
     m_groupItem.setVisible(false);
 
-    connect(effects, &EffectsHandler::windowActivated, this, [this](EffectWindow *) {
-        // Focus activation clears the old group immediately before any
-        // asynchronous script refresh, so no stale group renders under the
-        // new active focus while Meta is held.
-        clearGroupHighlight();
-        setTrackedWindow(effects->activeWindow());
-        updateBorder();
-        updateGroupVisibility();
-    });
     connect(effects, &EffectsHandler::mouseChanged, this, &ActiveWindowBorderEffect::onMouseChanged);
 
     setTrackedWindow(effects->activeWindow());
@@ -312,15 +278,22 @@ ActiveWindowBorderEffect::~ActiveWindowBorderEffect()
 {
     delete m_oraclePressSpy;
     m_oraclePressSpy = nullptr;
+    // Release only endpoints this effect registered, never an endpoint owned
+    // elsewhere after a failed or partial registration.
     QDBusConnection bus = QDBusConnection::sessionBus();
-    bus.unregisterObject(QStringLiteral("/org/plasmaautotiler/DragOracle"));
-    bus.unregisterService(QStringLiteral("org.plasmaautotiler.DragOracle"));
-    bus.unregisterObject(QStringLiteral("/org/plasmaautotiler/ActiveBorder"));
-    bus.unregisterService(QStringLiteral("org.plasmaautotiler.ActiveBorder"));
+    if (m_oracleDbusAvailable) {
+        bus.unregisterObject(QStringLiteral("/org/plasmaautotiler/DragOracle"));
+        bus.unregisterService(QStringLiteral("org.plasmaautotiler.DragOracle"));
+    }
+    if (m_groupDbusAvailable) {
+        bus.unregisterObject(QStringLiteral("/org/plasmaautotiler/ActiveBorder"));
+        bus.unregisterService(QStringLiteral("org.plasmaautotiler.ActiveBorder"));
+    }
 }
 
 void ActiveWindowBorderEffect::reconfigure(ReconfigureFlags)
 {
+    ensureEndpointsRegistered();
     ActiveBorderConfig::self()->read();
     updateOutline();
     updateBorder();
@@ -636,6 +609,116 @@ void ActiveWindowBorderEffect::emitActiveBorderEndpoint()
                 .arg(m_groupDbusAvailable ? 1 : 0));
     } catch (...) {
     }
+}
+
+void ActiveWindowBorderEffect::emitOracleEndpoint()
+{
+    try {
+        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:drag-oracle:endpoint available=%1")
+                .arg(m_oracleDbusAvailable ? 1 : 0));
+    } catch (...) {
+    }
+}
+
+bool ActiveWindowBorderEffect::ensureDbusEndpoint(
+    const QString &service, const QString &path, QObject *object, bool *serviceOkOut, bool *objectOkOut)
+{
+    bool serviceOk = false;
+    bool objectOk = false;
+    QDBusConnection bus = QDBusConnection::sessionBus();
+    if (bus.isConnected() && object != nullptr) {
+        serviceOk = bus.registerService(service);
+        objectOk = bus.registerObject(path, object, QDBusConnection::ExportScriptableContents);
+        if (serviceOk && objectOk) {
+            if (serviceOkOut != nullptr) {
+                *serviceOkOut = true;
+            }
+            if (objectOkOut != nullptr) {
+                *objectOkOut = true;
+            }
+            return true;
+        }
+        // Partial success rolls back only what this attempt acquired, so an
+        // endpoint owned elsewhere is never unregistered here.
+        if (objectOk) {
+            bus.unregisterObject(path);
+        }
+        if (serviceOk) {
+            bus.unregisterService(service);
+        }
+    }
+    if (serviceOkOut != nullptr) {
+        *serviceOkOut = serviceOk;
+    }
+    if (objectOkOut != nullptr) {
+        *objectOkOut = objectOk;
+    }
+    return false;
+}
+
+void ActiveWindowBorderEffect::ensureOraclePressSpy()
+{
+    // Late install when input redirection was null at construction. Passive
+    // observer only: never grabs, consumes, or modifies events.
+    if (m_oraclePressSpy != nullptr) {
+        return;
+    }
+    if (input() == nullptr) {
+        return;
+    }
+    m_oraclePressSpy = new OraclePressSpy(this);
+    input()->installInputEventSpy(m_oraclePressSpy);
+    if (m_pressSpyFailedLogged) {
+        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:drag-oracle:press-spy available=1"));
+    }
+}
+
+void ActiveWindowBorderEffect::ensureEndpointsRegistered()
+{
+    // Idempotent: never re-registers while healthy, never polls. Called from
+    // construction plus the existing activation and reconfigure events.
+    if (!m_groupDbusAvailable) {
+        bool serviceOk = false;
+        bool objectOk = false;
+        if (ensureDbusEndpoint(QStringLiteral("org.plasmaautotiler.ActiveBorder"),
+                QStringLiteral("/org/plasmaautotiler/ActiveBorder"), m_groupDbusObject, &serviceOk, &objectOk)) {
+            m_groupDbusAvailable = true;
+            // Transition diagnostic only: initial success or recovery once.
+            // Never affects gate, visibility, or repaint decisions.
+            emitActiveBorderEndpoint();
+        } else if (!m_groupEndpointFailedLogged) {
+            m_groupEndpointFailedLogged = true;
+            logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:active-border:endpoint stage=failed service=%1 object=%2")
+                    .arg(serviceOk ? 1 : 0)
+                    .arg(objectOk ? 1 : 0));
+            emitActiveBorderEndpoint();
+        }
+    }
+    // Drag oracle endpoint stays independent of the ActiveBorder outcome, so
+    // one failure never hides the other service.
+    if (!m_oracleDbusAvailable) {
+        bool serviceOk = false;
+        bool objectOk = false;
+        if (ensureDbusEndpoint(QStringLiteral("org.plasmaautotiler.DragOracle"),
+                QStringLiteral("/org/plasmaautotiler/DragOracle"), m_oracleDbusObject, &serviceOk, &objectOk)) {
+            m_oracleDbusAvailable = true;
+            emitOracleEndpoint();
+        } else if (!m_oracleEndpointFailedLogged) {
+            m_oracleEndpointFailedLogged = true;
+            logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:drag-oracle:endpoint stage=failed service=%1 object=%2")
+                    .arg(serviceOk ? 1 : 0)
+                    .arg(objectOk ? 1 : 0));
+            emitOracleEndpoint();
+        }
+    }
+    if (m_oraclePressSpy == nullptr && input() == nullptr) {
+        if (!m_pressSpyFailedLogged) {
+            m_pressSpyFailedLogged = true;
+            logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:drag-oracle:press-spy available=0"));
+        }
+        return;
+    }
+    ensureOraclePressSpy();
 }
 
 void ActiveWindowBorderEffect::emitActiveBorderVisible(bool visible, const char *reason)

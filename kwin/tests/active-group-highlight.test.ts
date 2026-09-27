@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 
 import {
     ACTIVE_GROUP_MAX_REQUEST_BYTES,
+    ACTIVE_GROUP_MAX_SEQ,
     ActiveGroupHighlight,
     ActiveGroupHighlightEnv,
     ActiveGroupObserved,
@@ -429,6 +430,95 @@ describe("active-group highlight bridge behavior", () => {
         }
         assert.equal(sets.length, 11);
         assert.ok(!logs.some((line) => line === "plasma-auto-tiler:group-highlight:dropped reason=out-of-order"));
+    });
+
+    it("rotates past ACTIVE_GROUP_MAX_SEQ with an epoch and keeps boundary order", () => {
+        const payloads: string[] = [];
+        const replies: Array<(reply: unknown) => void> = [];
+        const sets: string[] = [];
+        const logs: string[] = [];
+        let clears = 0;
+        const bridge = new ActiveGroupHighlight({
+            callDescribePlan: (payload, callback) => {
+                payloads.push(payload);
+                replies.push(callback);
+            },
+            setHighlight: (payload) => {
+                sets.push(payload);
+            },
+            clearHighlight: () => {
+                clears += 1;
+            },
+            observe: observed,
+            subscribe: () => () => {},
+            log: (message) => {
+                logs.push(message);
+            },
+            owner: OWNER,
+            generation: GENERATION,
+        });
+        const atRevision = (correlation: string, revision: number): string => {
+            const body = JSON.parse(activeGroupReply(correlation)) as Record<string, unknown>;
+            body["base_revision"] = revision;
+            return JSON.stringify(body);
+        };
+        // Bounded controlled state: start one slot before the rotation point
+        // instead of issuing a million refreshes.
+        (bridge as unknown as { seq: number }).seq = ACTIVE_GROUP_MAX_SEQ - 1;
+        bridge.refresh();
+        assert.equal(payloads.length, 1);
+        const first = replies[0];
+        assert.ok(first !== undefined);
+        first(atRevision(`${GENERATION}-g${String(ACTIVE_GROUP_MAX_SEQ - 1)}`, 7));
+        assert.equal(sets.length, 1);
+        // Same-revision boundary orders numerically: g1000000 accepts after
+        // g999999.
+        bridge.refresh();
+        const second = replies[1];
+        assert.ok(second !== undefined);
+        second(atRevision(`${GENERATION}-g${String(ACTIVE_GROUP_MAX_SEQ)}`, 7));
+        assert.equal(sets.length, 2);
+        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:group-highlight:dropped reason=out-of-order"));
+        // The post-cap flight rotates to epoch one (`g1r0`) instead of
+        // refusing seq-exhausted. Supersede it, then prove its late reply
+        // drops via the pending/epoch fence without clearing, while the newer
+        // epoch flight still displays at the same revision.
+        bridge.refresh();
+        assert.equal(payloads.length, 3);
+        bridge.refresh();
+        assert.equal(payloads.length, 4);
+        const correlations = payloads.map((entry) => (JSON.parse(entry) as Record<string, unknown>)["correlation_id"]);
+        assert.deepEqual(correlations, [
+            `${GENERATION}-g${String(ACTIVE_GROUP_MAX_SEQ - 1)}`,
+            `${GENERATION}-g${String(ACTIVE_GROUP_MAX_SEQ)}`,
+            `${GENERATION}-g1r0`,
+            `${GENERATION}-g1r1`,
+        ]);
+        assert.ok(!logs.some((line) => line.indexOf("seq-exhausted") >= 0));
+        const superseded = replies[2];
+        assert.ok(superseded !== undefined);
+        superseded(atRevision(`${GENERATION}-g1r0`, 7));
+        assert.equal(sets.length, 2);
+        assert.equal(clears, 0);
+        assert.ok(logs.some((line) => line === "plasma-auto-tiler:group-highlight:dropped reason=stale-dropped"));
+        // Rolled-over epoch orders after the old epoch at the same revision.
+        const current = replies[3];
+        assert.ok(current !== undefined);
+        current(atRevision(`${GENERATION}-g1r1`, 7));
+        assert.equal(sets.length, 3);
+        assert.ok(!logs.some((line) => line.indexOf("seq-exhausted") >= 0));
+        // A forged late old-epoch flight at the same revision cannot erase
+        // the newer epoch display: it drops as out-of-order without clearing.
+        (bridge as unknown as { seq: number; seqEpoch: number }).seq = ACTIVE_GROUP_MAX_SEQ;
+        (bridge as unknown as { seq: number; seqEpoch: number }).seqEpoch = 0;
+        bridge.refresh();
+        assert.equal(payloads.length, 5);
+        const forged = replies[4];
+        assert.ok(forged !== undefined);
+        forged(atRevision(`${GENERATION}-g${String(ACTIVE_GROUP_MAX_SEQ)}`, 7));
+        assert.equal(sets.length, 3);
+        assert.equal(clears, 0);
+        assert.ok(logs.some((line) => line === "plasma-auto-tiler:group-highlight:dropped reason=out-of-order"));
     });
 
     it("clears when observation is invalid and when the transport throws", () => {

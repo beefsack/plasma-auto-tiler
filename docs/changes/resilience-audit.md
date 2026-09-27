@@ -48,6 +48,25 @@ Priority order (highest first; letters identify rows): **H, I, J, O, B, A, G, E,
 
 Batch-1 follow-up: a move Started without Finished now has a bounded Started-keyed hold expiry and ordinary resync, with no fabricated drag terminal. See [Change 2 note](archive/resilience-change-2.md). No live verification is claimed. The original finding descriptions and recovery columns above remain historical citations at `9549721`.
 
+## Change 3a status (offline, 2026-09-27)
+
+| Row | Status | Evidence and remaining boundary |
+| --- | --- | --- |
+| D | Fixed offline | Existing topology signals trigger independent validated full desktop-ID and output-name reads. A successful list missing a marker domain settles its drags `outcome=unavailable plan=none`; failed/malformed reads prune nothing. An incarnation fence prevents a late flight settling a recreated marker after replug. No count cap, timer or inferred window departure. |
+| T | Fixed offline | Bounded sequence rotates into ordered group correlation epochs in script and effect FFI; later Plan-applied/config events retry a null bridge attach and log failure/recovery once. No guessed geometry or timer. |
+| L | Fixed offline | Interned IDs track exact native-ref owners; native removal evicts only IDs still owned by that ref even before an applied plan or with incomplete observation. No removed-object property reads. |
+
+See [Change 3a note](archive/resilience-change-3a.md). Tests are offline; no live KWin/Plasma verification is claimed. Change 2 rows above are historical status at that change's completion.
+
+## Change 3 status (offline, 2026-09-27)
+
+| Row | Status | Evidence and remaining boundary |
+| --- | --- | --- |
+| R | Fixed offline | On activation or reconfigure after construction failure, retry group name/object registration; only confirmed complete registration opens the group gate. Failed attempts undo only their acquired registrations; unavailable/recovery transitions are logged once. |
+| S | Fixed offline | The independent drag-oracle name/object retries on the same events with partial-attempt rollback; a missing press spy installs when input redirection becomes available. Both log unavailable/recovery once. |
+
+See [Change 3 note](archive/resilience-change-3.md). Host-matched native build and full CTest 29/29 passed; effect-level D-Bus/input recovery and visual behavior are not live-verified. The finding descriptions above remain historical citations at `9549721`.
+
 ## Acceptable or bounded states
 
 | Location | Trigger, recovery, and why acceptable |

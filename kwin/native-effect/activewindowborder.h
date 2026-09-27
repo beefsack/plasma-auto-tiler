@@ -101,11 +101,26 @@ private:
     GroupHighlightState m_groupState{};
     void logActiveBorderDiag(const QString &message);
     void emitActiveBorderEndpoint();
+    void emitOracleEndpoint();
+    // Shared idempotent D-Bus registration: only reports success when both
+    // the service name and the object path register; on partial success
+    // rolls back only what this attempt acquired. Never unregisters an
+    // endpoint owned elsewhere. No timers or polling.
+    bool ensureDbusEndpoint(const QString &service, const QString &path, QObject *object, bool *serviceOkOut, bool *objectOkOut);
+    void ensureOraclePressSpy();
+    void ensureEndpointsRegistered();
     void emitActiveBorderVisible(bool visible, const char *reason);
     bool m_groupVisible = false;
     bool m_metaHeld = false;
     bool m_firstMouseSeen = false;
     bool m_groupDbusAvailable = false;
+    bool m_oracleDbusAvailable = false;
+    // Once-each redacted transition state: first partial/unavailable log per
+    // endpoint and press spy, plus a single recovery log on each recovery.
+    // No repeated registration while healthy, no repeated logging while ill.
+    bool m_groupEndpointFailedLogged = false;
+    bool m_oracleEndpointFailedLogged = false;
+    bool m_pressSpyFailedLogged = false;
     // Bounded visibility diagnostic edge state only (two scalars, no ledger):
     // whether the first updateBorder() evaluation was emitted, and the last
     // emitted visibility. updateBorder() emits exactly on first evaluation

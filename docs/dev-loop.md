@@ -270,12 +270,31 @@ payloads. No line carries a caption or title. Window-bearing trace lines carry
 the stable `resource_class` application identifier as well as the opaque id; it
 is not a caption and cannot contain document or page content.
 
+Native effect endpoint transitions (one initial state and, after initial
+failure, one recovery on a later activation/reconfigure; no retry spam):
+
+- `plasma-auto-tiler:active-border:endpoint stage=failed service=<0|1> object=<0|1>` (first failed registration, including partial success before rollback)
+- `plasma-auto-tiler:active-border:endpoint available=<0|1>` (initial availability, then recovery if initially unavailable)
+- `plasma-auto-tiler:drag-oracle:endpoint stage=failed service=<0|1> object=<0|1>` (first failed registration, including partial success before rollback)
+- `plasma-auto-tiler:drag-oracle:endpoint available=<0|1>` (initial availability, then recovery if initially unavailable)
+- `plasma-auto-tiler:drag-oracle:press-spy available=<0|1>` (only if input was initially unavailable; late installation reports `1` once)
+
+The name and object scalars describe that registration attempt only; `available=1`
+requires both to succeed. These lines contain no native identities or payloads.
+
 Startup context (exactly one line per successful plan entry start, using the
 existing owner/generation provenance plus the compiled-in source revision;
 `<source-rev>` is the installed build's bounded git revision, else
 `local-dev`):
 
 - `plasma-auto-tiler:plan:ready owner=<owner> generation=<generation> source=<source-rev>`
+
+When a complete startup signal attachment fails, the entry remains inert and
+retries on a later `windowAdded` or `Options.configChanged` event (one attempt
+per event, no timer or attempt cap). Only transitions are logged:
+
+- `plasma-auto-tiler:plan:entry-attach stage=failed cause=<added|removed|activated|geometry|scope|maximize|enable-refused> recovery=retry-on-native-event`
+- `plasma-auto-tiler:plan:entry-attach stage=recovered`
 
 Per dispatched `DescribePlan` flight, ordinary output retains one terminal
 verdict line. Trace also records its route entry:
@@ -402,9 +421,22 @@ shortcut and pointer-route refusal carries its own fixed token):
 - `plasma-auto-tiler:plan:maximize-refused-fullscreen|attempted window=<id> resource_class=<class>`
 - `plasma-auto-tiler:plan:busy-refused kind=<focus|move|resize|toggle-float|toggle-sticky|toggle-maximize>` (shortcut dropped while a flight is in flight)
 - `plasma-auto-tiler:plan:reconcile-accepted windows=<count> cause=stable-drift recovery=accept-client-rect` (bounded reassertions exhausted; exact per-window geometry accepted)
-- `plasma-auto-tiler:plan:stale-replan` (pre-write stale reply replanned once against fresh complete observation)
+ - `plasma-auto-tiler:plan:stale-replan` (pre-write stale reply replanned once against fresh complete observation)
 - `plasma-auto-tiler:plan:shortcut-failed action=<action> sequence=<sequence>` (per failed shortcut registration)
 - `plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=<action> sequence=<sequence> holder_component=<component> holder_action=<action>`
+
+Additional ordinary lifecycle terminals and transitions:
+
+- `plasma-auto-tiler:plan:drag-reconcile-settled correlation=<drag-N> outcome=unavailable plan=none` (no observed domain or proven workspace/output removal from a complete topology list; never an applied claim)
+- `plasma-auto-tiler:plan:highlight-attach stage=failed reason=bridge-unavailable` (group bridge startup failed; logged once until recovery)
+- `plasma-auto-tiler:plan:highlight-attach stage=recovered` (later Plan-applied/config event reattached the group bridge; logged once)
+
+Rust owner-monitor and tray startup diagnostics use fixed, redacted records:
+
+- `plasma-auto-tiler:route-diag component=planner stage=owner event=signal outcome=<malformed-signal|invalid-args>` (one malformed signal skipped; a later valid signal is processed)
+- `plasma-auto-tiler:route-diag component=tray-endpoint stage=owner event=startup outcome=query-failed` (startup KWin owner unknown; later authenticated live-owner publish can recover)
+- `plasma-auto-tiler:route-diag component=tray-endpoint stage=watcher event=query outcome=query-failed` (startup or later query failed; the watcher retry remains active)
+- `plasma-auto-tiler:route-diag component=tray-endpoint stage=watcher event=register outcome=registered` (live-confirmed watcher recovery)
 
 Intentional-float Planner snapshot-invalid details:
 

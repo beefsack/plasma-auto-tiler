@@ -118,14 +118,29 @@ decisions of 2026-09-24 are recorded under
   exact client-held rectangle after the existing bounded reassertions; any
   other drift, or that window changing size, reconciles normally; explicit
   commands never blocked. Learned limits (option 4) are deferred to Robust
-  difference reconciliation. M - option 2 (user, 2026-09-26): the tray
+  difference reconciliation. C4 - option 2 (user, 2026-09-27): a
+  lower-revision tray publication (each is a complete snapshot) is rejected
+  and logged without clearing the trusted current snapshot. D - option 2
+  (user, 2026-09-26, Orchestrator
+  proposal): settle a drag-restore marker honestly as unavailable when its
+  workspace or output no longer exists based on independently validated full
+  topology lists on existing signals; failed/malformed reads prune nothing;
+  no count cap or timer. T and L
+  are ordinary (Orchestrator, user agreed): T ordered epoch rotation plus
+  entry-owned bridge reattach on later Plan-applied/config events, no timer;
+  L exact ID-to-ref ownership evicted on native removal. Change 2 shipped
+  A, G, I, F, K `07fb520`; change 3a D, T, L fixed offline (D uses exact
+  topology-list absence, with no marker count cap).
+  M - option 2 (user, 2026-09-26): the tray
   stays alive when no watcher exists or the watcher is lost, and registers
   whenever a watcher owner appears; it still exits on loss of its own name or
   connection. R/S - option 2 (user, 2026-09-26): while the group or drag
   oracle endpoint is unregistered, retry registration on events the effect
   already receives (window activation, reconfigure); no timer; log the
   transition once. The press spy installs late on the same events when input
-  redirection was unavailable at construction (ordinary).
+  redirection was unavailable at construction (ordinary). R/S fixed offline
+  in change 3; host-matched native CTest 29/29 passes. Live recovery remains
+  unverified. [change](changes/archive/resilience-change-3.md)
 - P1 | Tray icon not appearing | User report (2026-09-26): the tray icon has
   not been seen for some time, across many rebuilds and restarts. Cause
   (read-only investigation): nothing starts the tray - `just dev` and dogfood
@@ -142,6 +157,14 @@ decisions of 2026-09-24 are recorded under
   decision. Unsafe-write fences that refuse one operation and let the next
   observation converge are consistent with the rule.
   [principles](principles.md#resilience)
+- P1 | Resilience change 4 offline status | C1 startup KWin attachment now
+  retries on window-added/config events; C2 tray startup owner-query failure
+  stays alive with live-confirmed owner recovery; C3 Planner skips malformed
+  owner signals with bounded logs. KWin 766 tests/typecheck, Rust workspace
+  tests, and diff check pass. No live verification. C4 tray ordering and the
+  settings launch gate await user decisions.
+  [change](changes/archive/resilience-change-4.md)
+  [sweep](changes/fail-closed-sweep.md)
 - P2 | Process-loss and sleep recovery testing | User request (2026-09-26),
   not urgent: test how the system recovers when components are killed or
   stopped (Planner, tray, KWin script reload, native effect reload, KWin

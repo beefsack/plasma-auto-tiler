@@ -54,12 +54,14 @@
 //   imposes a stale high-water mark forever.
 // - Within one stream, revision is monotonic: greater accepts, lesser
 //   ignores (display preserved). Same-revision ties break on correlation:
-//   exact replays ignore; otherwise the trailing numeric sequence of the
-//   bridge `${generation}-g<seq>` correlation compares numerically, so a
-//   valid successive same-revision update g9->g10 passes while an older
-//   same-revision sequence (e.g. g10 offered after g10 displayed, or g9
-//   replayed after g10) cannot erase the newer display. Correlations
-//   without a shared numeric tail fall back to byte-lexicographic order.
+//   exact replays ignore; otherwise the epoch-rotated bridge order compares
+//   numerically (epoch, then sequence) within one head, so a valid successive
+//   same-revision update g9->g10 passes, the rollover g1000000->g1r0 passes,
+//   and an older same-revision sequence or older epoch (e.g. g10 offered
+//   after g10 displayed, g9 replayed after g10, or g1000000 replayed after
+//   g1r0) cannot erase the newer display. Correlations without a shared
+//   `-g` order tail fall back to trailing-sequence then byte-lexicographic
+//   order.
 // - Only accepted payloads advance the order. Parse failures, focus
 //   mismatches, and explicit clears fail closed on the display but preserve
 //   (never reset, never advance) the order within the stream.
@@ -295,11 +297,81 @@ fn trailing_seq(value: &[u8]) -> Option<(&[u8], u64)> {
     Some((&value[..end], seq))
 }
 
-// Same-revision tie-break modeling the `${generation}-g<seq>` bridge
-// correlations: shared numeric tails compare numerically so g10 orders after
-// g9. Anything else falls back to byte-lexicographic order. Exact equality
-// is handled by the caller (replay ignores).
+// Same-revision tie-break modeling the epoch-rotated bridge correlations:
+// epoch zero keeps the legacy `${generation}-g<seq>` shape, later epochs use
+// `${generation}-g<epoch>r<seq>`. The last `-g` delimits the order tail;
+// epoch then sequence compare numerically within one head, so a rolled-over
+// epoch always orders after the old epoch and late old-epoch payloads cannot
+// erase the newer display. Epoch/sequence are bounded to the JSON-safe
+// integer range (matching the script `Number.isSafeInteger` gate) with
+// checked u64 arithmetic, and the 128-byte wire cap bounds the digit runs;
+// anything else falls back to the legacy trailing-sequence order and then
+// byte-lexicographic order. Exact equality is handled by the caller (replay
+// ignores).
+fn correlation_parts(value: &[u8]) -> Option<(&[u8], u64, u64)> {
+    let mut mark: Option<usize> = None;
+    let mut index = 0usize;
+    while index + 1 < value.len() {
+        if value[index] == b'-' && value[index + 1] == b'g' {
+            mark = Some(index);
+        }
+        index += 1;
+    }
+    let tail = &value[mark? + 2..];
+    if tail.is_empty() {
+        return None;
+    }
+    let (epoch, seq) = if let Some(rpos) = tail.iter().position(|&b| b == b'r') {
+        let (epoch_digits, rest) = tail.split_at(rpos);
+        let seq_digits = &rest[1..];
+        if epoch_digits.is_empty() || seq_digits.is_empty() {
+            return None;
+        }
+        if !epoch_digits.iter().all(|b| b.is_ascii_digit())
+            || !seq_digits.iter().all(|b| b.is_ascii_digit())
+        {
+            return None;
+        }
+        let mut epoch: u64 = 0;
+        for b in epoch_digits {
+            epoch = epoch.checked_mul(10)?.checked_add((b - b'0') as u64)?;
+        }
+        let mut seq: u64 = 0;
+        for b in seq_digits {
+            seq = seq.checked_mul(10)?.checked_add((b - b'0') as u64)?;
+        }
+        (epoch, seq)
+    } else {
+        if !tail.iter().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let mut seq: u64 = 0;
+        for b in tail {
+            seq = seq.checked_mul(10)?.checked_add((b - b'0') as u64)?;
+        }
+        (0, seq)
+    };
+    if epoch > GROUP_HIGHLIGHT_MAX_REVISION || seq > GROUP_HIGHLIGHT_MAX_REVISION {
+        return None;
+    }
+    Some((&value[..mark.unwrap_or(0)], epoch, seq))
+}
+
 fn correlation_is_newer(new_corr: &[u8], old_corr: &[u8]) -> bool {
+    match (correlation_parts(new_corr), correlation_parts(old_corr)) {
+        (Some((new_head, new_epoch, new_seq)), Some((old_head, old_epoch, old_seq)))
+            if new_head == old_head =>
+        {
+            if new_epoch != old_epoch {
+                return new_epoch > old_epoch;
+            }
+            if new_seq != old_seq {
+                return new_seq > old_seq;
+            }
+            return new_corr > old_corr;
+        }
+        _ => {}
+    }
     match (trailing_seq(new_corr), trailing_seq(old_corr)) {
         (Some((new_head, new_seq)), Some((old_head, old_seq))) if new_head == old_head => {
             if new_seq != old_seq {
@@ -840,6 +912,28 @@ mod tests {
         assert_eq!(apply(&mut state, "gen-1-g10", 3), 1);
         assert_eq!(state.last_revision, 3);
         assert_eq!(state.correlation_bytes(), b"gen-1-g10");
+    }
+
+    #[test]
+    fn epoch_rollover_accepts_and_old_epoch_refuses() {
+        let mut state = GroupHighlightState::zero();
+        assert_eq!(apply(&mut state, "gen-1-g999999", 7), 1);
+        assert_eq!(apply(&mut state, "gen-1-g1000000", 7), 1);
+        // Rolled-over epoch orders after the old epoch at the same revision.
+        assert_eq!(apply(&mut state, "gen-1-g1r0", 7), 1);
+        assert_eq!(apply(&mut state, "gen-1-g1r1", 7), 1);
+        assert_eq!(state.correlation_bytes(), b"gen-1-g1r1");
+        // Late old-epoch payloads at the same revision cannot erase it.
+        assert_eq!(apply(&mut state, "gen-1-g1000000", 7), 2);
+        assert_eq!(apply(&mut state, "gen-1-g999999", 7), 2);
+        assert_eq!(apply(&mut state, "gen-1-g1r1", 7), 2);
+        assert_eq!(state.has_group, 1);
+        assert_eq!(state.correlation_bytes(), b"gen-1-g1r1");
+        // A higher epoch still passes from the same revision.
+        assert_eq!(apply(&mut state, "gen-1-g2r0", 7), 1);
+        // An over-long epoch tail exceeds the 128-byte wire cap and rejects.
+        let long = format!("gen-1-g{}r0", "9".repeat(120));
+        assert!(!parse_ok(&payload(&long, 7)));
     }
 
     #[test]

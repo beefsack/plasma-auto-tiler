@@ -4544,6 +4544,273 @@ describe("plan entry live observation and shortcuts", () => {
         assert.equal(activeGroupCalls(), 2, "rejected boundaries never refresh");
         handle?.stop();
     });
+
+    it("retries a failed highlight attach on later applied/config events, logging once per transition", () => {
+        const FAILED = "plasma-auto-tiler:plan:highlight-attach stage=failed reason=bridge-unavailable";
+        const RECOVERED = "plasma-auto-tiler:plan:highlight-attach stage=recovered";
+        const countActiveGroup = (mocks: EntryMocks): number =>
+            mocks.dbusCalls.filter((call) => {
+                try {
+                    const command = (JSON.parse(call.payload) as Record<string, unknown>)["command"] as Record<string, unknown>;
+                    return command["op"] === "active-group";
+                } catch (error) {
+                    void error;
+                    return false;
+                }
+            }).length;
+        // Flaky screensChanged: the adapter scope subscription (first
+        // connect) succeeds so the entry starts, while the later highlight
+        // domain subscription fails at startup and succeeds after recovery.
+        const installFlakyScreens = (world: FakeWorld): { setFail: (fail: boolean) => void } => {
+            const handlers: Array<() => void> = [];
+            let connects = 0;
+            let fail = true;
+            world.workspace["screensChanged"] = {
+                connect: (handler: () => void): void => {
+                    connects += 1;
+                    if (fail && connects > 1) throw new Error("screensChanged-unavailable");
+                    handlers.push(handler);
+                },
+                disconnect: (handler: () => void): void => {
+                    const index = handlers.indexOf(handler);
+                    if (index >= 0) handlers.splice(index, 1);
+                },
+            };
+            return { setFail: (next: boolean): void => { fail = next; } };
+        };
+        const fire = (signal: FakeSignal): void => {
+            for (const handler of [...signal.handlers]) (handler as () => void)();
+        };
+        const succeedMove = (handle: ReturnType<typeof startPlanAdapterEntry>, mocks: EntryMocks): void => {
+            handle?.requestMove("right");
+            const moveIndex = mocks.dbusCalls.length - 1;
+            const moveCorr = (JSON.parse(mocks.dbusCalls[moveIndex]?.payload as string) as Record<string, unknown>)["correlation_id"] as string;
+            mocks.callbacks[moveIndex]?.(
+                JSON.stringify({
+                    v: 1,
+                    correlation_id: moveCorr,
+                    outcome: "planned",
+                    desired_geometry: [
+                        { window: "win-a", leaf: "win-a-leaf", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                        { window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                    ],
+                    desired_focus: { domain_output: "out-1", domain_workspace: "ws-1", leaf: "win-a-leaf" },
+                }),
+            );
+            assert.ok(mocks.logs.some((line) => line.includes("kind=move") && line.includes("outcome=planned-applied")));
+        };
+        // Applied-edge recovery.
+        const worldA = fakeWorld();
+        const flakyA = installFlakyScreens(worldA);
+        const entryA = startEntry(worldA, { highlightCallDbus: (): void => {} });
+        assert.ok(entryA.handle !== null, "entry starts while the highlight stays detached");
+        assert.equal(countActiveGroup(entryA.mocks), 0, "no startup query after subscription failure");
+        assert.equal(entryA.mocks.logs.filter((line) => line === FAILED).length, 1, "startup failure logged once");
+        flakyA.setFail(false);
+        succeedMove(entryA.handle, entryA.mocks);
+        assert.equal(countActiveGroup(entryA.mocks), 1, "applied event reattaches the bridge");
+        assert.equal(entryA.mocks.logs.filter((line) => line === RECOVERED).length, 1, "recovery logged once");
+        succeedMove(entryA.handle, entryA.mocks);
+        assert.equal(countActiveGroup(entryA.mocks), 2, "later applied only refreshes, never reattaches");
+        assert.equal(entryA.mocks.logs.filter((line) => line === FAILED).length, 1, "no duplicate failure log");
+        assert.equal(entryA.mocks.logs.filter((line) => line === RECOVERED).length, 1, "no duplicate recovery log");
+        entryA.handle?.stop();
+        // Config-edge recovery.
+        const worldB = fakeWorld();
+        const flakyB = installFlakyScreens(worldB);
+        const configB = fakeSignal();
+        const entryB = startEntry(worldB, {
+            highlightCallDbus: (): void => {},
+            options: { configChanged: configB.signal },
+        });
+        assert.ok(entryB.handle !== null);
+        assert.equal(countActiveGroup(entryB.mocks), 0, "no startup query after subscription failure");
+        assert.equal(entryB.mocks.logs.filter((line) => line === FAILED).length, 1, "startup failure logged once");
+        fire(configB);
+        assert.equal(entryB.mocks.logs.filter((line) => line === FAILED).length, 1, "still-failed retry stays quiet");
+        assert.equal(countActiveGroup(entryB.mocks), 0, "still-failed retry sends nothing");
+        flakyB.setFail(false);
+        fire(configB);
+        assert.equal(countActiveGroup(entryB.mocks), 1, "config event reattaches the bridge");
+        assert.equal(entryB.mocks.logs.filter((line) => line === RECOVERED).length, 1, "recovery logged once");
+        fire(configB);
+        assert.equal(entryB.mocks.logs.filter((line) => line === RECOVERED).length, 1, "healthy config event stays quiet");
+        assert.equal(countActiveGroup(entryB.mocks), 1, "healthy config event never reattaches");
+        entryB.handle?.stop();
+        // No retry after stop.
+        const worldC = fakeWorld();
+        const flakyC = installFlakyScreens(worldC);
+        const configC = fakeSignal();
+        const entryC = startEntry(worldC, {
+            highlightCallDbus: (): void => {},
+            options: { configChanged: configC.signal },
+        });
+        assert.ok(entryC.handle !== null);
+        assert.equal(entryC.mocks.logs.filter((line) => line === FAILED).length, 1);
+        entryC.handle?.stop();
+        flakyC.setFail(false);
+        fire(configC);
+        assert.ok(!entryC.mocks.logs.some((line) => line === RECOVERED), "no recovery after stop");
+        assert.equal(countActiveGroup(entryC.mocks), 0, "no attach after stop");
+    });
+});
+
+describe("plan entry startup attach recovery", () => {
+    const FAILED_PREFIX = "plasma-auto-tiler:plan:entry-attach stage=failed";
+    const RECOVERED = "plasma-auto-tiler:plan:entry-attach stage=recovered";
+    const fireAdded = (world: FakeWorld): void => {
+        for (const handler of [...world.added.handlers]) (handler as () => void)();
+    };
+
+    it("recovers a transient startup lister throw on the next windowAdded without duplicating hooks", () => {
+        const world = fakeWorld();
+        let failLister = true;
+        const wins = world.wins;
+        world.workspace["windowList"] = (): unknown[] => {
+            if (failLister) throw new Error("transient-list");
+            return [...wins];
+        };
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "transient enable failure waits instead of terminal null");
+        const failed = mocks.logs.filter((line) => line.startsWith(FAILED_PREFIX));
+        assert.equal(failed.length, 1, "one bounded failed line");
+        assert.ok(failed[0]?.includes("cause=geometry"), "failed line names the refused subscribe kind");
+        assert.ok(!mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")), "no ready line while unavailable");
+        assert.equal(mocks.shortcuts.length, 0, "no shortcut registration while unavailable");
+        handle?.requestFocus("left");
+        assert.equal(mocks.dbusCalls.length, 0, "no actuation while unavailable");
+        failLister = false;
+        fireAdded(world);
+        assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "one bounded recovery line");
+        assert.ok(mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")), "ready line after recovery");
+        assert.equal(mocks.shortcuts.length, 62, "shortcuts register exactly once on recovery");
+        handle?.requestFocus("left");
+        assert.equal(mocks.dbusCalls.length, 1, "actuation resumes after recovery");
+        assert.equal(mocks.dbusCalls[0]?.method, "DescribePlan");
+        fireAdded(world);
+        assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "no duplicate recovery line");
+        assert.equal(mocks.shortcuts.length, 62, "no duplicate shortcut registration");
+        assert.equal(mocks.logs.filter((line) => line.startsWith(FAILED_PREFIX)).length, 1, "no duplicate failed line");
+        handle?.stop();
+    });
+
+    it("stays terminal null when windowList is entirely missing", () => {
+        const world = fakeWorld();
+        delete (world.workspace as Record<string, unknown>)["windowList"];
+        const { handle, mocks } = startEntry(world);
+        assert.equal(handle, null, "genuinely missing lister stays terminal");
+        assert.ok(!mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:entry-attach")), "terminal path stays silent");
+    });
+
+    it("stays terminal silent when native callDBus is missing and no override supplies it", () => {
+        const world = fakeWorld();
+        const logs: string[] = [];
+        const handle = startPlanAdapterEntry({
+            workspace: world.workspace,
+            log: (message): void => {
+                logs.push(message);
+            },
+            owner: "owner-1",
+            generation: "gen-1",
+            scheduleOnce: (_delayMs, _callback): (() => void) => (): void => {},
+            registerShortcutFn: (): boolean => true,
+            readProfileFn: (): string => "cosmic",
+        });
+        assert.equal(handle, null, "missing transport stays terminal");
+        assert.ok(!logs.some((line) => line.includes("plasma-auto-tiler:plan:entry-attach")), "missing transport never logs attach");
+        for (const handler of [...world.added.handlers]) (handler as () => void)();
+        assert.ok(!logs.some((line) => line.includes("plasma-auto-tiler:plan:entry-attach")), "missing transport never retries");
+    });
+
+    it("stays terminal silent when native QTimer is missing and no override supplies it", () => {
+        const world = fakeWorld();
+        const logs: string[] = [];
+        const handle = startPlanAdapterEntry({
+            workspace: world.workspace,
+            callDbus: (_service, _path, _iface, _method, _payload, callback): void => {
+                callback(true);
+            },
+            log: (message): void => {
+                logs.push(message);
+            },
+            owner: "owner-1",
+            generation: "gen-1",
+            registerShortcutFn: (): boolean => true,
+            readProfileFn: (): string => "cosmic",
+        });
+        assert.equal(handle, null, "missing timer stays terminal");
+        assert.ok(!logs.some((line) => line.includes("plasma-auto-tiler:plan:entry-attach")), "missing timer never logs attach");
+        for (const handler of [...world.added.handlers]) (handler as () => void)();
+        assert.ok(!logs.some((line) => line.includes("plasma-auto-tiler:plan:entry-attach")), "missing timer never retries");
+    });
+
+    it("recovers a transient scope-signal failure and names the scope kind", () => {
+        const world = fakeWorld();
+        const saved = world.workspace["screensChanged"];
+        delete (world.workspace as Record<string, unknown>)["screensChanged"];
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "transient scope failure waits instead of terminal null");
+        const failed = mocks.logs.filter((line) => line.startsWith(FAILED_PREFIX));
+        assert.equal(failed.length, 1, "one bounded failed line");
+        assert.ok(failed[0]?.includes("cause=scope"), "failed line names the scope kind");
+        world.workspace["screensChanged"] = saved;
+        fireAdded(world);
+        assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "one bounded recovery line");
+        handle?.stop();
+    });
+
+    it("keeps invalid auth terminal null without retry tokens", () => {
+        const world = fakeWorld();
+        const bad = startEntry(world, { owner: "OWNER BANG", generation: "gen-1" });
+        assert.equal(bad.handle, null);
+        assert.ok(!bad.mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:entry-attach")), "auth refusal stays silent");
+    });
+
+    it("recovers after more than five failed events with bounded transition logs", () => {
+        const world = fakeWorld();
+        let failLister = true;
+        world.workspace["windowList"] = (): unknown[] => {
+            if (failLister) throw new Error("persistent-list");
+            return [...world.wins];
+        };
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "persistent failure waits instead of terminal null");
+        for (let index = 0; index < 10; index += 1) {
+            fireAdded(world);
+        }
+        assert.ok(!mocks.logs.some((line) => line === RECOVERED), "no recovery while still failing");
+        assert.equal(mocks.logs.filter((line) => line.startsWith(FAILED_PREFIX)).length, 1, "no repeated failed line");
+        assert.ok(!mocks.logs.some((line) => line.includes("stage=exhausted")), "no exhaustion give-up");
+        assert.equal(mocks.dbusCalls.length, 0, "no actuation while unavailable");
+        failLister = false;
+        fireAdded(world);
+        assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "one bounded recovery line");
+        assert.ok(mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")), "ready line after recovery");
+        assert.equal(mocks.shortcuts.length, 62, "shortcuts register exactly once on recovery");
+        handle?.requestFocus("left");
+        assert.equal(mocks.dbusCalls.length, 1, "actuation resumes after recovery");
+        fireAdded(world);
+        assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "no duplicate recovery line");
+        assert.equal(mocks.shortcuts.length, 62, "no duplicate shortcut registration");
+        handle?.stop();
+    });
+
+    it("stop prevents any later retry", () => {
+        const world = fakeWorld();
+        let failLister = true;
+        world.workspace["windowList"] = (): unknown[] => {
+            if (failLister) throw new Error("persistent-list");
+            return [...world.wins];
+        };
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null, "persistent failure still waits while pending");
+        handle?.stop();
+        failLister = false;
+        fireAdded(world);
+        assert.ok(!mocks.logs.some((line) => line === RECOVERED), "no recovery after stop");
+        assert.equal(mocks.dbusCalls.length, 0, "no actuation after stop");
+        assert.ok(!mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")), "no ready line after stop");
+    });
 });
 
 describe("plan adapter destroyed-window reply boundary", () => {
@@ -4821,6 +5088,131 @@ describe("plan native identity sharing and string-keyed cache", () => {
         assert.ok(!src.includes("captured.revalidate"), "no retained revalidation call");
         assert.ok(!src.includes("observed: previous"), "no retained previous observed");
         assert.ok(!src.includes("observed: fresh"), "no retained fresh observed");
+    });
+});
+
+describe("plan native id ownership on exact removal", () => {
+    const exclusionCount = (mocks: EntryMocks, id: string): number =>
+        mocks.logs.filter(
+            (line) => line.includes("plasma-auto-tiler:plan:observe-excluded") && line.includes(`window=${id}`),
+        ).length;
+    const windowsOf = (payload: string): string =>
+        JSON.stringify((JSON.parse(payload) as Record<string, unknown>)["windows"] ?? payload);
+    const focusLeft = (mocks: EntryMocks): (() => void) =>
+        (mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-focus-left") as { callback: () => void })
+            .callback;
+
+    it("evicts a pre-apply id on exact removal without reading the removed object", () => {
+        const world = fakeWorld();
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        assert.equal(mocks.dbusCalls.length, 0, "startup interns without an applied plan");
+        const winB = world.wins[1] as Record<string, unknown>;
+        world.wins.splice(1, 1);
+        Object.defineProperty(winB, "internalId", {
+            configurable: true,
+            get(): unknown {
+                throw new Error("removed-object-unreadable");
+            },
+        });
+        for (const handler of [...world.removed.handlers]) {
+            (handler as (target?: unknown) => void)(winB);
+        }
+        // Re-admit a new live ref under a fresh id: the entry keeps working
+        // and the exact removal never needed the removed object's properties.
+        const winC = {
+            normalWindow: true,
+            internalId: "win-c",
+            resourceClass: "test-app",
+            output: world.output,
+            desktops: [world.desktop],
+            frameGeometry: { x: 600, y: 0, width: 600, height: 800 },
+            frameGeometryChanged: fakeSignal().signal,
+            moveResizedChanged: fakeSignal().signal,
+            fullScreenChanged: fakeSignal().signal,
+            fullScreen: false,
+            maximizedChanged: fakeSignal().signal,
+            maximizeMode: 0,
+            desktopsChanged: fakeSignal().signal,
+            onAllDesktops: false,
+            keepAbove: false,
+            keepBelow: false,
+        };
+        world.wins.push(winC);
+        for (const handler of [...world.added.handlers]) {
+            (handler as (target?: unknown) => void)(winC);
+        }
+        focusLeft(mocks)();
+        assert.ok(mocks.dbusCalls.length > 0, "entry dispatches after exact removal");
+        const last = mocks.dbusCalls[mocks.dbusCalls.length - 1]?.payload as string;
+        assert.ok(windowsOf(last).includes("win-a") && windowsOf(last).includes("win-c"), "survivors carried");
+        assert.ok(!windowsOf(last).includes("win-b"), "removed id not carried");
+        handle?.stop();
+    });
+
+    it("never infers departure from an unreadable domain, then honors exact removal and stale reuse", () => {
+        const world = fakeWorld();
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        const winB = world.wins[1] as Record<string, unknown>;
+        // Unreadable member frame quarantines the domain: no partial dispatch
+        // carrying only the survivors, hence no inferred departure.
+        winB["frameGeometry"] = null;
+        const before = mocks.dbusCalls.length;
+        focusLeft(mocks)();
+        const fresh = mocks.dbusCalls.slice(before);
+        assert.ok(
+            fresh.length === 0 ||
+                fresh.every((call) => windowsOf(call.payload).includes("win-a") && windowsOf(call.payload).includes("win-b")),
+            "quarantine: incomplete observation never infers a departure",
+        );
+        assert.equal(exclusionCount(mocks, "win-b"), 1, "unreadable member reported once");
+        // Exact removal while unreadable: evict by owner ref without reading
+        // the removed object's properties.
+        world.wins.splice(1, 1);
+        Object.defineProperty(winB, "internalId", {
+            configurable: true,
+            get(): unknown {
+                throw new Error("removed-object-unreadable");
+            },
+        });
+        for (const handler of [...world.removed.handlers]) {
+            (handler as (target?: unknown) => void)(winB);
+        }
+        // Reuse the id under a new live ref and make it unreadable again: the
+        // eviction above cleared the exclusion dedup, so it reports once more.
+        const winB2 = {
+            normalWindow: true,
+            internalId: "win-b",
+            resourceClass: "test-app",
+            output: world.output,
+            desktops: [world.desktop],
+            frameGeometry: null,
+            frameGeometryChanged: fakeSignal().signal,
+            moveResizedChanged: fakeSignal().signal,
+            fullScreenChanged: fakeSignal().signal,
+            fullScreen: false,
+            maximizedChanged: fakeSignal().signal,
+            maximizeMode: 0,
+            desktopsChanged: fakeSignal().signal,
+            onAllDesktops: false,
+            keepAbove: false,
+            keepBelow: false,
+        };
+        world.wins.push(winB2);
+        for (const handler of [...world.added.handlers]) {
+            (handler as (target?: unknown) => void)(winB2);
+        }
+        focusLeft(mocks)();
+        assert.equal(exclusionCount(mocks, "win-b"), 2, "eviction cleared the removed id");
+        // Stale removal under the old ref is a no-op: the reused id stays
+        // owned by the new ref, so its exclusion dedup survives.
+        for (const handler of [...world.removed.handlers]) {
+            (handler as (target?: unknown) => void)(winB);
+        }
+        focusLeft(mocks)();
+        assert.equal(exclusionCount(mocks, "win-b"), 2, "stale removal never evicts the new owner");
+        handle?.stop();
     });
 });
 

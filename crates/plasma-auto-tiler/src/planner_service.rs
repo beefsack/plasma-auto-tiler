@@ -16,6 +16,7 @@
 //! Rust returns domain rejections in-band; the KWin adapter journals the
 //! bounded command and rejection lines after it receives each reply.
 
+use std::io::Write;
 use std::sync::Arc;
 
 use zbus::blocking::{Connection, MessageIterator};
@@ -311,6 +312,39 @@ fn serving_connection_lost_error() -> zbus::Error {
     zbus::Error::Failure("planner serving connection was lost".to_owned())
 }
 
+fn owner_signal_malformed_line() -> &'static str {
+    "plasma-auto-tiler:route-diag component=planner stage=owner event=signal outcome=malformed-signal"
+}
+
+fn owner_signal_args_invalid_line() -> &'static str {
+    "plasma-auto-tiler:route-diag component=planner stage=owner event=signal outcome=invalid-args"
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum OwnerSignalDecision {
+    SkippedMalformed,
+    SkippedInvalidArgs,
+    Handled,
+}
+
+fn decide_owner_signal(
+    message: zbus::message::Message,
+    registered_unique: &mut Option<String>,
+    our_unique: Option<&str>,
+) -> zbus::Result<OwnerSignalDecision> {
+    let Some(signal) = NameOwnerChanged::from_message(message) else {
+        return Ok(OwnerSignalDecision::SkippedMalformed);
+    };
+    let args = match signal.args() {
+        Ok(args) => args,
+        Err(_) => return Ok(OwnerSignalDecision::SkippedInvalidArgs),
+    };
+    let name = args.name().to_string();
+    let new_owner = args.new_owner().as_ref().map(ToString::to_string);
+    handle_name_owner_changed(registered_unique, &name, new_owner, our_unique)?;
+    Ok(OwnerSignalDecision::Handled)
+}
+
 fn owner_monitor_ended_error() -> zbus::Error {
     zbus::Error::Failure("planner owner monitor ended unexpectedly".to_owned())
 }
@@ -392,18 +426,17 @@ fn serve(endpoint: PlannerEndpoint) -> zbus::Result<()> {
             return Err(owner_monitor_ended_error());
         }
         let message = message?;
-        let signal = NameOwnerChanged::from_message(message).ok_or_else(|| {
-            zbus::Error::Failure("owner-change iterator yielded a non-owner signal".to_owned())
-        })?;
-        let args = signal.args()?;
-        let name = args.name().to_string();
-        let new_owner = args.new_owner().as_ref().map(ToString::to_string);
-        handle_name_owner_changed(
-            &mut registered_unique,
-            &name,
-            new_owner,
-            our_unique.as_deref(),
-        )?;
+        match decide_owner_signal(message, &mut registered_unique, our_unique.as_deref())? {
+            OwnerSignalDecision::SkippedMalformed => {
+                let _ = writeln!(std::io::stderr(), "{}", owner_signal_malformed_line());
+                continue;
+            }
+            OwnerSignalDecision::SkippedInvalidArgs => {
+                let _ = writeln!(std::io::stderr(), "{}", owner_signal_args_invalid_line());
+                continue;
+            }
+            OwnerSignalDecision::Handled => {}
+        };
     }
     Err(owner_monitor_ended_error())
 }
@@ -762,5 +795,103 @@ mod tests {
             assert!(!line.contains("owner"), "{line}");
             assert!(!line.contains("payload"), "{line}");
         }
+    }
+
+    fn malformed_owner_message() -> zbus::message::Message {
+        zbus::message::Message::method_call(OBJECT, PLAN_METHOD)
+            .unwrap()
+            .destination(SERVICE)
+            .unwrap()
+            .interface(INTERFACE)
+            .unwrap()
+            .build(&("arg",))
+            .unwrap()
+    }
+
+    fn owner_signal_message(
+        name: &str,
+        old_owner: &str,
+        new_owner: &str,
+    ) -> zbus::message::Message {
+        zbus::message::Message::signal(
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "NameOwnerChanged",
+        )
+        .unwrap()
+        .sender("org.freedesktop.DBus")
+        .unwrap()
+        .build(&(name, old_owner, new_owner))
+        .unwrap()
+    }
+
+    fn invalid_owner_args_message() -> zbus::message::Message {
+        zbus::message::Message::signal(
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "NameOwnerChanged",
+        )
+        .unwrap()
+        .sender("org.freedesktop.DBus")
+        .unwrap()
+        .build(&("only-one-field",))
+        .unwrap()
+    }
+
+    #[test]
+    fn malformed_owner_signal_skips_and_later_valid_signal_applies() {
+        let our = ":1.7";
+        let mut registered = Some(our.to_owned());
+        let decision = super::decide_owner_signal(malformed_owner_message(), &mut registered, Some(our))
+            .expect("malformed signal never fails");
+        assert_eq!(decision, super::OwnerSignalDecision::SkippedMalformed);
+        assert_eq!(registered, Some(our.to_owned()), "skip preserves owner pin");
+        let line = super::owner_signal_malformed_line();
+        assert!(line.contains("outcome=malformed-signal"), "{line}");
+        assert!(line.contains("component=planner"), "{line}");
+        assert!(!line.contains(":1."), "{line}");
+        assert!(!line.contains('\n'), "{line}");
+
+        let decision = super::decide_owner_signal(
+            owner_signal_message(KWIN_SERVICE, "", ":1.9"),
+            &mut registered,
+            Some(our),
+        )
+        .expect("unrelated valid signal never fails");
+        assert_eq!(decision, super::OwnerSignalDecision::Handled);
+        assert_eq!(registered, Some(our.to_owned()), "unrelated signal keeps pin");
+    }
+
+    #[test]
+    fn invalid_owner_args_skip_and_later_valid_signal_applies() {
+        let our = ":1.7";
+        let mut registered = Some(our.to_owned());
+        let decision =
+            super::decide_owner_signal(invalid_owner_args_message(), &mut registered, Some(our))
+                .expect("invalid args never fail");
+        assert_eq!(decision, super::OwnerSignalDecision::SkippedInvalidArgs);
+        assert_eq!(registered, Some(our.to_owned()), "skip preserves owner pin");
+        let line = super::owner_signal_args_invalid_line();
+        assert!(line.contains("outcome=invalid-args"), "{line}");
+        assert!(line.contains("component=planner"), "{line}");
+        assert!(!line.contains(":1."), "{line}");
+        assert!(!line.contains('\n'), "{line}");
+
+        let decision = super::decide_owner_signal(
+            owner_signal_message(SERVICE, our, our),
+            &mut registered,
+            Some(our),
+        )
+        .expect("later valid signal never fails");
+        assert_eq!(decision, super::OwnerSignalDecision::Handled);
+        assert_eq!(registered, Some(our.to_owned()));
+
+        let loss = super::decide_owner_signal(
+            owner_signal_message(SERVICE, our, ""),
+            &mut registered,
+            Some(our),
+        );
+        assert!(loss.is_err(), "real name loss stays terminal");
+        assert_eq!(registered, None);
     }
 }

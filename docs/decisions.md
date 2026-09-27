@@ -517,7 +517,7 @@ the corresponding item ships; each such entry names its replacement.
   a recorded overlay state over the original layer, not a distinct topology or
   managed layer, so the engine deliberately carries no horizontal/vertical
   maximize concept.
-- Complete automatic per-domain observations, not an applied membership
+ - Complete automatic per-domain observations, not an applied membership
    baseline, drive `reconcile` for foreground and hidden tiling. The Engine
    converges departures, arrivals, and floating transitions before projecting
    surviving topology; explicit complete hidden empties may retire a domain.
@@ -531,6 +531,13 @@ the corresponding item ships; each such entry names its replacement.
    update-gaps are gone; relocated but previously unconverged sources still
    require exact membership and atomic rollback. Other operation and reply
     fences remain where needed for changed scope or uncertain state.
+ - User decision D, option 2 (2026-09-26): on existing topology-change
+   signals, a successfully validated complete desktop-ID or output-name list
+   proves a drag-restore marker's workspace or output removed if absent from
+   that list. Settle each such drag `outcome=unavailable plan=none` and drop
+   its marker; a failed or malformed list proves nothing for that axis. No
+   timer, count cap, inferred per-window departure or fabricated applied plan.
+   Ordinary later observations remain usable.
 - USER-APPROVED recoverability, 2026-09-21: "log and continue rather than hard
   fail." A failed native geometry operation or client geometry discrepancy is
   an operation failure, not a permanently disabled window or domain. Later
@@ -929,6 +936,14 @@ the corresponding item ships; each such entry names its replacement.
   offline contract are verified; KWin Script argument demarshalling, service
   ownership, modifier delivery, rendering, and performance remain
   live-unverified. Autonomous mode remains off.
+- User decision R/S, option 2 (2026-09-26): if the native group-highlight or
+  drag-oracle D-Bus endpoint fails to register at construction, retry on the
+  effect's existing window-activation and reconfigure events, with no timer or
+  polling. Require both name and object registration before advertising the
+  endpoint; roll back only registrations acquired by a partial attempt. When
+  input redirection was absent at construction, install the passive oracle
+  press spy on those same events. Log unavailability and recovery once per
+  endpoint or spy; neither failure disables the other endpoint.
 
 ## Nested Placement Affordance
 

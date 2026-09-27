@@ -199,6 +199,18 @@ impl TrayState {
             let line = self.collect_early_refusal("missing-sender", snapshot.revision);
             return (Err(TrayError::UnauthorizedPublisher), line);
         };
+        // C2 startup recovery: a `None` cache means unknown (startup query
+        // failure) or authoritative absence, never a stale epoch. When the
+        // live query equals the sender (valid unique name), adopt it as the
+        // cached epoch before authorization, so a healthy static KWin
+        // recovers on its next authenticated publish without requiring a new
+        // owner-changed signal. A `Some` cache never auto-moves (fail-closed:
+        // epoch moves only via `owner_changed` on live-re-resolved signals);
+        // a mismatched live/publisher never resyncs. No queued payload is
+        // trusted: `live_owner` is a fresh bus query passed by the caller.
+        if self.owner.is_none() && sender_is_current_kwin_owner(publisher, live_owner) {
+            self.owner = live_owner.map(str::to_owned);
+        }
         if !authorized_publisher(self.owner.as_deref(), live_owner, Some(publisher)) {
             let line = self.collect_early_refusal("not-current-KWin-owner", snapshot.revision);
             return (Err(TrayError::UnauthorizedPublisher), line);
@@ -439,6 +451,16 @@ fn owner_outcome_line(changed: bool, before_present: bool, after_present: bool) 
     ))
 }
 
+/// Bounded startup owner-query failure record. Query failure is unknown,
+/// never authoritative: the tray stays alive unregistered/unowned and
+/// recovers via live-confirmed signals or an authenticated publish. Only
+/// fixed labels are carried, never the queried identity or transport detail.
+fn kwin_startup_query_failed_line() -> String {
+    format!(
+        "{TRAY_DIAG_PREFIX} component={TRAY_DIAG_COMPONENT} stage=owner event=startup outcome=query-failed"
+    )
+}
+
 /// Maps an `InvalidSnapshot` message to a bounded refusal reason. Exact match
 /// on the two internal literals; anything else degrades to the transition
 /// label so refusal text is never echoed.
@@ -608,6 +630,18 @@ fn query_name_owner(connection: &Connection, service: &str) -> zbus::Result<Opti
         Ok(owner) => Ok(Some(owner.to_string())),
         Err(zbus::fdo::Error::NameHasNoOwner(_)) => Ok(None),
         Err(error) => Err(error.into()),
+    }
+}
+
+/// C2 startup owner outcome. Maps the existing live owner-query boundary
+/// (`query_name_owner`, which covers both `DBusProxy` construction and the
+/// owner query) to unknown: `Err` (proxy/transport failure) becomes
+/// `(None, true)` so the caller stays alive unregistered/unowned with one
+/// bounded record. `Ok` passes through with `false`. Never logs.
+fn startup_owner_outcome(query: zbus::Result<Option<String>>) -> (Option<String>, bool) {
+    match query {
+        Ok(owner) => (owner, false),
+        Err(_) => (None, true),
     }
 }
 
@@ -917,23 +951,33 @@ pub fn run() -> zbus::Result<()> {
     // one racing change.
     let monitor = Connection::session()?;
     let owner_changes = monitor_owner_changes(&monitor)?;
-    let dbus = DBusProxy::new(&connection)?;
-    let watcher_owner = reconcile_initial_owner(
-        || dbus.name_has_owner(STATUS_NOTIFIER_WATCHER_SERVICE.try_into().unwrap()),
-        || {
-            dbus.get_name_owner(STATUS_NOTIFIER_WATCHER_SERVICE.try_into().unwrap())
-                .map(|owner| owner.to_string())
-        },
-    )?;
-    let initial_owner = reconcile_initial_owner(
-        || dbus.name_has_owner(KWIN_SERVICE.try_into().unwrap()),
-        || {
-            dbus.get_name_owner(KWIN_SERVICE.try_into().unwrap())
-                .map(|owner| owner.to_string())
-        },
-    )?;
+    // C2: startup owner queries are never terminal. Failure is unknown, never
+    // authoritative: the tray stays alive, the watcher retries via the
+    // existing watchdog/signal poll, and KWin recovers via live-re-resolved
+    // owner signals plus the live-confirmed publication resync in
+    // `publish_snapshot_from`, so a healthy static KWin needs no new owner
+    // signal. Only our own service name/connection loss below stays terminal.
+    // `query_name_owner` covers both `DBusProxy` construction and the owner
+    // query, so a transient proxy failure takes the same unknown path.
+    let (watcher_owner, watcher_startup_query_failed) = startup_owner_outcome(query_name_owner(
+        &connection,
+        STATUS_NOTIFIER_WATCHER_SERVICE,
+    ));
+    let (initial_owner, kwin_startup_query_failed) =
+        startup_owner_outcome(query_name_owner(&connection, KWIN_SERVICE));
 
     let endpoint = TrayEndpoint::new(initial_owner.as_deref());
+    if kwin_startup_query_failed {
+        // One bounded redacted record per episode, armed in the existing
+        // change-driven tracker so recovery (accepted change or owner change)
+        // re-arms it. Emission happens after the state mutex releases.
+        let line = lock_tray_state(&endpoint.state)
+            .diag
+            .failure_line(kwin_startup_query_failed_line());
+        if let Some(line) = line {
+            emit_tray_diag(&line);
+        }
+    }
     let projection = endpoint.projection();
     connection.object_server().at(OBJECT, endpoint.clone())?;
     connection.object_server().at(
@@ -960,7 +1004,17 @@ pub fn run() -> zbus::Result<()> {
     // never block recovery. Diagnostics are bounded, redacted, and
     // change-driven (no per-tick spam); emission happens after lock release.
     let registered_watcher_owner = Arc::new(Mutex::new(WatcherState::default()));
-    if watcher_owner.is_none() {
+    if watcher_startup_query_failed {
+        // Startup query failure is unknown, never authoritative: stay alive
+        // unregistered with one bounded record; the existing watchdog/signal
+        // poll retries while the live owner remains. Armed in the tracker so
+        // a failing watchdog tick stays silent until recovery re-arms.
+        let pending = lock_watcher_state(&registered_watcher_owner)
+            .failure_line(watcher_query_failed_line());
+        if let Some(line) = pending {
+            emit_tray_diag(&line);
+        }
+    } else if watcher_owner.is_none() {
         emit_tray_diag(&watcher_absent_line());
     }
     {
@@ -1395,29 +1449,8 @@ where
     Err(last_error.expect("watcher registration attempts are non-empty"))
 }
 
-fn reconcile_initial_owner<Observed, Resolved>(
-    observe_owner: Observed,
-    resolve_owner: Resolved,
-) -> zbus::fdo::Result<Option<String>>
-where
-    Observed: FnOnce() -> zbus::fdo::Result<bool>,
-    Resolved: FnOnce() -> zbus::fdo::Result<String>,
-{
-    if observe_owner()? {
-        match resolve_owner() {
-            Ok(owner) => Ok(Some(owner)),
-            Err(zbus::fdo::Error::NameHasNoOwner(_)) => Ok(None),
-            Err(error) => Err(error),
-        }
-    } else {
-        Ok(None)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-    use std::rc::Rc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Barrier};
     use std::thread;
@@ -1427,13 +1460,14 @@ mod tests {
         KWIN_SERVICE, REGISTER_STATUS_NOTIFIER_ITEM, SERVICE, STATUS_NOTIFIER_WATCHER_INTERFACE,
         STATUS_NOTIFIER_WATCHER_OBJECT, STATUS_NOTIFIER_WATCHER_SERVICE, WatcherState,
         authorized_publisher, classify_name_reply, handle_watcher_owner_change,
-        invalid_snapshot_reason, note_watcher_query_failure, owner_changes_match_rule,
-        owner_outcome_line, owner_signal_args_invalid_line, owner_signal_malformed_line,
-        poll_watcher_once, publish_early_refusal_line, publish_outcome_line,
-        reconcile_initial_owner, retry_registration, sender_is_current_kwin_owner,
-        service_name_acquired_line, service_name_lost_line, service_name_taken_line,
-        status_projected_line, tray_name_lost, watcher_lost_line, watcher_query_failed_line,
-        watcher_registered_line, watcher_registration_failed_line,
+        invalid_snapshot_reason, kwin_startup_query_failed_line, note_watcher_query_failure,
+        owner_changes_match_rule, owner_outcome_line, owner_signal_args_invalid_line,
+        owner_signal_malformed_line, poll_watcher_once, publish_early_refusal_line,
+        publish_outcome_line, retry_registration,
+        sender_is_current_kwin_owner, service_name_acquired_line, service_name_lost_line,
+        service_name_taken_line, startup_owner_outcome, status_projected_line, tray_name_lost,
+        watcher_lost_line, watcher_query_failed_line, watcher_registered_line,
+        watcher_registration_failed_line,
     };
 
     #[test]
@@ -2382,24 +2416,104 @@ mod tests {
     }
 
     #[test]
-    fn owner_loss_during_startup_reconciliation_begins_empty() {
-        let calls = Rc::new(RefCell::new(Vec::new()));
-        let observed_calls = Rc::clone(&calls);
-        let resolved_calls = Rc::clone(&calls);
-        let initial_owner = reconcile_initial_owner(
-            || {
-                observed_calls.borrow_mut().push("observe");
-                Ok(true)
-            },
-            || {
-                resolved_calls.borrow_mut().push("resolve");
-                Err(zbus::fdo::Error::NameHasNoOwner(KWIN_SERVICE.to_owned()))
-            },
-        )
-        .unwrap();
+    fn startup_kwin_query_failure_recovers_on_authenticated_publish_without_new_signal() {
+        // C2: startup KWin query failure is unknown, never terminal. The cache
+        // starts empty with one bounded query-failed record; a healthy static
+        // KWin recovers on its next live-confirmed publish with no new owner
+        // signal, while a mismatched sender never resyncs and stays refused.
+        let failure = kwin_startup_query_failed_line();
+        assert_eq!(
+            failure,
+            "plasma-auto-tiler:route-diag component=tray-endpoint stage=owner event=startup outcome=query-failed"
+        );
+        assert!(!failure.contains(":1."));
+        assert!(!failure.contains('\n'));
+        let mut state = super::TrayState::default();
+        assert_eq!(
+            state.diag.failure_line(failure.clone()),
+            Some(failure.clone())
+        );
+        assert_eq!(state.diag.failure_line(failure.clone()), None);
+        let snapshot = |revision| super::Snapshot {
+            generation: "alpha".to_owned(),
+            revision,
+            enabled: true,
+        };
+        // Unauthorized sender while unknown: refused, no resync.
+        let (result, _) =
+            state.publish_snapshot_from(Some(":1.9"), Some(":1.7"), 1, snapshot(0), 0);
+        assert_eq!(result.unwrap_err(), super::TrayError::UnauthorizedPublisher);
+        assert_eq!(state.owner, None);
+        // Live owner missing: refused, no resync.
+        let (result, _) =
+            state.publish_snapshot_from(Some(":1.7"), None, 1, snapshot(0), 1);
+        assert_eq!(result.unwrap_err(), super::TrayError::UnauthorizedPublisher);
+        assert_eq!(state.owner, None);
+        // Authenticated publish from the current KWin owner: live-confirmed
+        // resync plus accept, with the accepted record as recovery evidence.
+        let (result, line) =
+            state.publish_snapshot_from(Some(":1.7"), Some(":1.7"), 1, snapshot(0), 2);
+        assert!(result.is_ok());
+        assert_eq!(state.owner.as_deref(), Some(":1.7"));
+        assert!(
+            line.as_deref().is_some_and(|line| line
+                .contains("outcome=accepted generation=alpha revision=0 enabled=true")),
+            "recovery record missing: {line:?}"
+        );
+        assert!(state.view(2).current);
+        // Stale epoch never auto-moves: cached Some(old) with live/publisher
+        // new stays fail-closed until an owner-changed signal resyncs.
+        let (result, _) =
+            state.publish_snapshot_from(Some(":1.8"), Some(":1.8"), 1, snapshot(0), 3);
+        assert_eq!(result.unwrap_err(), super::TrayError::UnauthorizedPublisher);
+        assert_eq!(state.owner.as_deref(), Some(":1.7"));
+    }
 
-        assert_eq!(*calls.borrow(), ["observe", "resolve"]);
-        assert_eq!(initial_owner, None);
+    #[test]
+    fn startup_watcher_query_failure_stays_retryable_and_recovers() {
+        // C2: startup watcher query failure is unknown, never terminal. The
+        // carrier stays alive unregistered with one bounded record; the
+        // existing watchdog/signal poll retries while the live owner remains.
+        let mut state = WatcherState::default();
+        let line = poll_watcher_once(
+            &mut state,
+            || Err(zbus::Error::Failure("boom".to_owned())),
+            |_| Ok(()),
+        );
+        assert_eq!(line, Some(watcher_query_failed_line()));
+        assert_eq!(state.registered, None);
+        // Identical repeat stays silent.
+        let line = poll_watcher_once(
+            &mut state,
+            || Err(zbus::Error::Failure("boom".to_owned())),
+            |_| panic!("must not register without a live owner"),
+        );
+        assert_eq!(line, None);
+        assert_eq!(state.registered, None);
+        // Later live owner appears: the same poll registers once (recovery).
+        let line = poll_watcher_once(
+            &mut state,
+            || Ok(Some(":watcher".to_owned())),
+            |_| Ok(()),
+        );
+        assert_eq!(line, Some(watcher_registered_line()));
+        assert_eq!(state.registered.as_deref(), Some(":watcher"));
+    }
+
+    #[test]
+    fn startup_proxy_transport_error_is_nonterminal_unknown() {
+        // Proxy/transport failure class (what `DBusProxy::new` yields) takes
+        // the same unknown path as an owner-query error: no owner, failed
+        // flag set, existing startup/watchdog recovery owns the retry.
+        let (owner, failed) = startup_owner_outcome(Err(zbus::Error::Failure("boom".to_owned())));
+        assert_eq!(owner, None);
+        assert!(failed);
+        let (owner, failed) = startup_owner_outcome(Ok(Some(":1.7".to_owned())));
+        assert_eq!(owner.as_deref(), Some(":1.7"));
+        assert!(!failed);
+        let (owner, failed) = startup_owner_outcome(Ok(None));
+        assert_eq!(owner, None);
+        assert!(!failed);
     }
 
     #[test]

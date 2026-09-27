@@ -128,6 +128,13 @@ export interface PlanShortcutRow {
 const MAX_LIST = 1024;
 const MAX_DESKTOPS = 32;
 const MAX_ID_LEN = 128;
+// C1 startup attach recovery: no fixed attempt budget. Each future native
+// event that needs neither a windowList read nor an enabled adapter
+// (workspace windowAdded, Options configChanged) runs one fresh full attach
+// until success or stop; a session that can still make progress emits one of
+// those edges, and a session that emits nothing has nothing to tile yet.
+// stop() cancels the wait. Only transitions are logged: one failed line at
+// wait start, one recovered line on success; re-attempts stay silent.
 
 function readProp(value: object, property: string): unknown {
     try {
@@ -487,6 +494,7 @@ export function observeSendTarget(
     targetWorkspace: string,
     floatingIds: ReadonlySet<string>,
     pinnedSourceWorkspace?: string,
+    owners?: Map<string, object>,
 ): WorkspaceSendObserved | null {
     try {
         if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
@@ -787,7 +795,7 @@ export function observeSendTarget(
             if (native === null) {
                 return null;
             }
-            const id = internNativeId(cache, native);
+            const id = internNativeId(cache, native, ref, owners);
             const membership = decodeList(readProp(ref, "desktops"), MAX_DESKTOPS);
             if (membership === null) {
                 return null;
@@ -850,7 +858,7 @@ export function observeSendTarget(
                 return null;
             }
             if (activeNative !== null) {
-                const activeId = internNativeId(cache, activeNative);
+                const activeId = internNativeId(cache, activeNative, activeRef, owners);
                 for (const entry of sourceWindows) {
                     if (entry.id === activeId) {
                         // Tiled-only mover; exceptions keep "" / null and refuse downstream.
@@ -971,6 +979,7 @@ export function observeHiddenDomains(
     floatingIds: ReadonlySet<string>,
     gaps: DomainGaps,
     reportEligibility?: (ref: object, reason: string | null) => void,
+    owners?: Map<string, object>,
 ): ReadonlyArray<PlanObserved> {
     try {
         if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
@@ -1189,7 +1198,7 @@ export function observeHiddenDomains(
                     if (!candidate.sticky && candidate.members.indexOf(desktop.ref) < 0) {
                         continue;
                     }
-                    const id = internNativeId(cache, candidate.native);
+                    const id = internNativeId(cache, candidate.native, candidate.ref, owners);
                     if (seen.has(id)) {
                         duplicate = true;
                         break;
@@ -1245,7 +1254,7 @@ export function observeHiddenDomains(
                         fingerprint: emptyExpected,
                         revalidate: () => {
                             try {
-                                const fresh = observeHiddenDomains(liveWorkspace, cache, floatingIds, gaps);
+                                const fresh = observeHiddenDomains(liveWorkspace, cache, floatingIds, gaps, undefined, owners);
                                 for (const candidate of fresh) {
                                     if (
                                         candidate.domainOutput !== screen.name ||
@@ -1343,7 +1352,7 @@ export function observeHiddenDomains(
                     fingerprint: expected,
                     revalidate: () => {
                         try {
-                            const fresh = observeHiddenDomains(liveWorkspace, cache, floatingIds, gaps);
+                            const fresh = observeHiddenDomains(liveWorkspace, cache, floatingIds, gaps, undefined, owners);
                             for (const candidate of fresh) {
                                 if (
                                     candidate.domainOutput !== screen.name ||
@@ -1422,7 +1431,21 @@ export function observeHiddenDomains(
     }
 }
 
-function internNativeId(cache: Map<string, string>, native: string): string {
+function internNativeId(
+    cache: Map<string, string>,
+    native: string,
+    ref?: object,
+    owners?: Map<string, object>,
+): string {
+    if (ref !== undefined && owners !== undefined) {
+        try {
+            if (owners.get(native) !== ref) {
+                owners.set(native, ref);
+            }
+        } catch (error) {
+            void error;
+        }
+    }
     const known = cache.get(native);
     if (known !== undefined) {
         return known;
@@ -1455,6 +1478,7 @@ function observeNative(
     floatingIds: ReadonlySet<string>,
     gaps: DomainGaps,
     reportEligibility?: EligibilityReporter,
+    owners?: Map<string, object>,
 ): PlanObserved | null {
     try {
         if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
@@ -1612,7 +1636,7 @@ function observeNative(
             if (native === null) {
                 return null;
             }
-            const id = internNativeId(cache, native);
+            const id = internNativeId(cache, native, ref, owners);
             if (seen.has(id)) {
                 return null;
             }
@@ -1660,7 +1684,7 @@ function observeNative(
         if (activeNative === null) {
             return null;
         }
-        const activeNativeId = internNativeId(cache, activeNative);
+        const activeNativeId = internNativeId(cache, activeNative, activeRef, owners);
         const activeExcluded = floatingIds.has(activeNativeId) || readProp(activeRef, "onAllDesktops") === true;
         let activeId: string | null = null;
         for (const entry of entries) {
@@ -1705,7 +1729,7 @@ function observeNative(
             fingerprint: expected,
             revalidate: () => {
                 try {
-                    const fresh = observeNative(liveWorkspace, cache, floatingIds, gaps, reportEligibility);
+                    const fresh = observeNative(liveWorkspace, cache, floatingIds, gaps, reportEligibility, owners);
                     if (
                         fresh === null ||
                         fresh.fingerprint !== expected ||
@@ -1782,6 +1806,7 @@ export function observeDirectionalDomain(
     gaps: DomainGaps,
     direction: string,
     reportEligibility?: EligibilityReporter,
+    owners?: Map<string, object>,
 ): DirectionalObservation {
     const invalid: DirectionalObservation = { status: "invalid", observed: null };
     const noTarget: DirectionalObservation = { status: "no-target", observed: null };
@@ -1789,7 +1814,7 @@ export function observeDirectionalDomain(
         if (direction !== "left" && direction !== "right") {
             return invalid;
         }
-        const source = observeNative(liveWorkspace, cache, floatingIds, gaps, reportEligibility);
+        const source = observeNative(liveWorkspace, cache, floatingIds, gaps, reportEligibility, owners);
         if (source === null || source.windows.length === 0) {
             // No readable source: delegate to the single-domain path, which
             // reports the observation failure accurately.
@@ -1985,7 +2010,7 @@ export function observeDirectionalDomain(
             if (native === null) {
                 return invalid;
             }
-            const id = internNativeId(cache, native);
+            const id = internNativeId(cache, native, ref, owners);
             if (seen.has(id)) {
                 return invalid;
             }
@@ -2103,6 +2128,7 @@ export function observeDirectionalDomain(
                         gaps,
                         direction,
                         reportEligibility,
+                        owners,
                     );
                     if (fresh.status !== "ready" || fresh.observed === null) {
                         return false;
@@ -2165,10 +2191,17 @@ export function observeDirectionalDomain(
 }
 
 // Explicit production activation; called once by src/entry.ts and directly
-// by focused tests with overrides. Returns a stop handle on success, null
-// fail-closed (silently: only the adapter's two bounded line shapes may be
-// logged anywhere on this path).
-export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanEntryHandle | null {
+// by focused tests with overrides. The single attempt below returns a stop
+// handle on success, null fail-closed (silently: only the adapter's two
+// bounded line shapes may be logged anywhere on this path). The exported
+// startPlanAdapterEntry wrapper retries a transient enable failure on later
+// native events (see below); this single attempt never retries itself. The
+// optional enable-cause callback reports the actual failed subscription
+// stage kind from this attempt's enable loop (no second windowList probe).
+function startPlanAdapterEntryOnce(
+    overrides: PlanEntryOverrides = {},
+    reportEnableCause?: (cause: string) => void,
+): PlanEntryHandle | null {
     const liveWorkspace: unknown =
         overrides.workspace !== undefined ? overrides.workspace : resolveLexicalWorkspace();
     const log = overrides.log ?? ((message: string): void => {
@@ -2556,7 +2589,13 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // String-keyed native identity cache: normalized internalId to stable
     // plan id (the same normalized string, interned). Never keyed by Window.
     // Eviction is explicit when the adapter identifies a removed string id.
+    // Exact-ref ownership parallels the cache: every interned id records the
+    // live ref observed with it, so the exact native removal signal evicts
+    // only ids still owned by that ref. Incomplete observations still record
+    // ownership at intern time but never infer departure.
     const nativeIds = new Map<string, string>();
+    const nativeOwners = new Map<string, object>();
+    const sendNativeIds = new Map<string, string>();
     const floatingIds = new Set<string>();
     // Deliberate tiler reload gap configuration: resolved at startup, then
     // re-read only on the KWin Options `configChanged` signal. That signal is
@@ -2611,10 +2650,16 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // Entry-owned highlight refresh edge: set once the highlight bridge
     // starts, invoked exactly once per successful geometry-plan boundary.
     let highlightRefresh: (() => void) | null = null;
+    // Entry-owned reattach for a startup subscription failure: retried only
+    // on later existing Plan-applied or Options configChanged events.
+    let retryHighlightAttach: () => void = () => {};
     // Send flights never block Plan. Terminal send settlement arrives
     // through the send adapter's single `onSettled` edge below, which
     // forces a one-shot complete source AND target reconcile through
     // Plan's existing single-flight foreground+hidden chain.
+    // Actual failed subscription stage kind from this attempt's enable
+    // loop, reported once via reportEnableCause when enable refuses.
+    let failedSubscribeKind: string | null = null;
     const adapter = new PlanAdapter({
         callDbus,
         scheduleOnce,
@@ -2626,11 +2671,16 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             } catch (error) {
                 void error;
             }
+            try {
+                retryHighlightAttach();
+            } catch (error) {
+                void error;
+            }
         },
-        observe: () => observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility),
-        observeHidden: () => observeHiddenDomains(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility),
+        observe: () => observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility, nativeOwners),
+        observeHidden: () => observeHiddenDomains(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility, nativeOwners),
         observeDirectional: (direction) =>
-            observeDirectionalDomain(liveWorkspace, nativeIds, floatingIds, domainGaps, direction, reportEligibility),
+            observeDirectionalDomain(liveWorkspace, nativeIds, floatingIds, domainGaps, direction, reportEligibility, nativeOwners),
         clearMaximize: (target) => {
             try {
                 const method = readProp(target, "setMaximize");
@@ -2917,6 +2967,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             if (kind === "geometry") {
                 const detach = subWindowGeometry(handler);
                 if (detach === null) {
+                    failedSubscribeKind = "geometry";
                     throw new Error("plan-entry-signal-failed");
                 }
                 return detach;
@@ -2932,6 +2983,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                             void error;
                         }
                     }
+                    failedSubscribeKind = "scope";
                     throw new Error("plan-entry-signal-failed");
                 }
                 return (): void => {
@@ -2968,6 +3020,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                     } catch (error) {
                         void error;
                     }
+                    failedSubscribeKind = "maximize";
                     throw new Error("plan-entry-maximize-signal-failed");
                 }
                 return detach;
@@ -2987,6 +3040,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                       : "windowActivated";
             const detach = sub(name, handler);
             if (detach === null) {
+                failedSubscribeKind = typeof kind === "string" ? kind : "enable-refused";
                 throw new Error("plan-entry-signal-failed");
             }
             return detach;
@@ -2994,7 +3048,23 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         noteRemoved: (id) => {
             try {
                 nativeIds.delete(id);
+                sendNativeIds.delete(id);
+                nativeOwners.delete(id);
                 eligibilityReasons.delete(id);
+            } catch (error) {
+                void error;
+            }
+        },
+        noteNativeRemoved: (ref) => {
+            try {
+                for (const [id, owner] of [...nativeOwners]) {
+                    if (owner === ref) {
+                        nativeOwners.delete(id);
+                        nativeIds.delete(id);
+                        sendNativeIds.delete(id);
+                        eligibilityReasons.delete(id);
+                    }
+                }
             } catch (error) {
                 void error;
             }
@@ -3002,10 +3072,15 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     });
     const enabled = adapter.enable({ owner: overrides.owner, generation: overrides.generation });
     if (!enabled) {
+        try {
+            reportEnableCause?.(failedSubscribeKind ?? "enable-refused");
+        } catch (error) {
+            void error;
+        }
         return null;
     }
-    const initial = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility);
-    const initialHidden = observeHiddenDomains(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility);
+    const initial = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility, nativeOwners);
+    const initialHidden = observeHiddenDomains(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility, nativeOwners);
     // Distinguish a foreground/hidden eligible startup from an empty one for
     // diagnostics. Both retain the enabled observer for later observations.
     let hasEligibleHidden = false;
@@ -3155,7 +3230,6 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         log,
     });
     workspaceNative.enable();
-    const sendNativeIds = new Map<string, string>();
     const emitNativeFollow = (
         diagnostic: WorkspaceFollowNativeDiagnostic,
         event: string,
@@ -3204,7 +3278,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         scheduleOnce,
         log,
         observe: (targetWorkspace, pinnedSourceWorkspace?) =>
-            observeSendTarget(liveWorkspace, sendNativeIds, targetWorkspace, floatingIds, pinnedSourceWorkspace),
+            observeSendTarget(liveWorkspace, sendNativeIds, targetWorkspace, floatingIds, pinnedSourceWorkspace, nativeOwners),
         // Single terminal-send edge: every settled flight (arrival, failed
         // native write, stale/rejected reply, missing callback, deadline,
         // closed mover, disable with a live flight) forces one complete
@@ -3570,9 +3644,66 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             void error;
         }
     };
-    trackWorkspaceDetach(sub("desktopsChanged", () => workspaceNative.handleTopologySignal()));
+    const readTopologyIdsForPrune = (
+        property: string,
+        idKey: string,
+        maxLength: number,
+    ): ReadonlyArray<string> | null => {
+        try {
+            const raw = readProp(surface, property);
+            const list = decodeList(raw, maxLength);
+            if (list === null || list.length === 0) {
+                return null;
+            }
+            const out: string[] = [];
+            const seen = new Set<string>();
+            for (const item of list) {
+                if (typeof item !== "object" || item === null) {
+                    return null;
+                }
+                const idRaw = readProp(item as object, idKey);
+                if (!isOpaqueId(idRaw)) {
+                    return null;
+                }
+                const id = idRaw as string;
+                if (seen.has(id)) {
+                    return null;
+                }
+                seen.add(id);
+                out.push(id);
+            }
+            return out.length === 0 ? null : out;
+        } catch (error) {
+            void error;
+            return null;
+        }
+    };
+    const pruneDragRestoreForTopologySignal = (): void => {
+        try {
+            const workspaceIds = readTopologyIdsForPrune("desktops", "id", MAX_DESKTOPS);
+            const outputNames = readTopologyIdsForPrune("screens", "name", MAX_LIST);
+            try {
+                adapter.pruneDragRestoreForTopology(workspaceIds, outputNames);
+            } catch (error) {
+                void error;
+            }
+        } catch (error) {
+            void error;
+        }
+    };
+    trackWorkspaceDetach(
+        sub("desktopsChanged", () => {
+            pruneDragRestoreForTopologySignal();
+            workspaceNative.handleTopologySignal();
+        }),
+    );
     trackWorkspaceDetach(sub("currentDesktopChanged", () => workspaceNative.handleTopologySignal()));
-    trackWorkspaceDetach(sub("screensChanged", () => workspaceNative.handleTopologySignal()));
+    trackWorkspaceDetach(
+        sub("screensChanged", () => {
+            pruneDragRestoreForTopologySignal();
+            workspaceNative.handleTopologySignal();
+        }),
+    );
     trackWorkspaceDetach(sub("windowAdded", () => workspaceNative.handleTopologySignal()));
     trackWorkspaceDetach(sub("windowRemoved", () => workspaceNative.handleTopologySignal()));
     try {
@@ -3681,7 +3812,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     };
     const captureOracleStart = (ref: object): void => {
         try {
-            const observed = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility);
+            const observed = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility, nativeOwners);
             if (observed === null) return;
             for (const entry of observed.windows) {
                 if (entry.ref === ref) {
@@ -4326,7 +4457,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 try { log(`plasma-auto-tiler:route-diag:drag-context-invalid correlation=${verdict.correlation}`); } catch (error) { void error; }
                 return;
             }
-            const observed = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility);
+            const observed = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility, nativeOwners);
             if (observed === null) {
                 takeOwnStart(ctx);
                 try { log(`plasma-auto-tiler:route-diag:drag-scope-invalid correlation=${verdict.correlation}`); } catch (error) { void error; }
@@ -4744,106 +4875,140 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // transport, no topology derivation, no /Effects. Every script error,
     // no-group, service loss, or lifecycle invalidation clears fail-closed.
     let highlightStop: (() => void) | null = null;
-    try {
-        const ownerRaw = overrides.owner;
-        const generationRaw = overrides.generation;
-        if (typeof ownerRaw === "string" && typeof generationRaw === "string") {
-            let effectCall = overrides.highlightCallDbus;
-            if (effectCall === undefined) {
-                try {
-                    const native: unknown = callDBus;
-                    if (typeof native === "function") {
-                        const bound = native as (...args: ReadonlyArray<unknown>) => void;
-                        effectCall = (service, path, iface, method, ...args) => {
-                            bound(service, path, iface, method, ...args);
-                        };
-                    }
-                } catch (error) {
-                    void error;
-                }
-            }
-            if (effectCall !== undefined) {
-                const effect = effectCall;
-                const highlight = startActiveGroupHighlight({
-                    callDescribePlan: (payload, callback) => {
-                        callDbus(PLAN_SERVICE, PLAN_OBJECT, PLAN_INTERFACE, PLAN_METHOD, payload, callback);
-                    },
-                    setHighlight: (payload) => {
-                        effect(GROUP_HIGHLIGHT_SERVICE, GROUP_HIGHLIGHT_OBJECT, GROUP_HIGHLIGHT_INTERFACE, GROUP_HIGHLIGHT_SET_METHOD, payload);
-                    },
-                    clearHighlight: () => {
-                        effect(GROUP_HIGHLIGHT_SERVICE, GROUP_HIGHLIGHT_OBJECT, GROUP_HIGHLIGHT_INTERFACE, GROUP_HIGHLIGHT_CLEAR_METHOD);
-                    },
-                    observe: (): ActiveGroupObserved | null => {
-                        let seen: PlanObserved | null = null;
-                        try {
-                            seen = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility);
-                        } catch (error) {
-                            void error;
-                            return null;
-                        }
-                        if (seen === null) {
-                            return null;
-                        }
-                        try {
-                            return {
-                                domainOutput: seen.domainOutput,
-                                domainWorkspace: seen.domainWorkspace,
-                                domainBounds: {
-                                    x: seen.domainBounds.x,
-                                    y: seen.domainBounds.y,
-                                    w: seen.domainBounds.w,
-                                    h: seen.domainBounds.h,
-                                },
-                                domainGap: seen.domainGap,
-                                domainOuterGap: seen.domainOuterGap,
-                                focusedId: seen.focusedId,
-                                windows: seen.windows.map((entry) => ({
-                                    id: entry.id,
-                                    output: entry.output,
-                                    workspace: entry.workspace,
-                                    rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
-                                    // Script-only lifecycle validity; never
-                                    // serialized into the DescribePlan request.
-                                    fullscreen: entry.fullscreen,
-                                })),
+    let highlightAttachFailed = false;
+    let entryStopped = false;
+    const attachHighlightBridge = (): void => {
+        if (entryStopped) {
+            return;
+        }
+        if (highlightStop !== null) {
+            return;
+        }
+        try {
+            const ownerRaw = overrides.owner;
+            const generationRaw = overrides.generation;
+            if (typeof ownerRaw === "string" && typeof generationRaw === "string") {
+                let effectCall = overrides.highlightCallDbus;
+                if (effectCall === undefined) {
+                    try {
+                        const native: unknown = callDBus;
+                        if (typeof native === "function") {
+                            const bound = native as (...args: ReadonlyArray<unknown>) => void;
+                            effectCall = (service, path, iface, method, ...args) => {
+                                bound(service, path, iface, method, ...args);
                             };
-                        } catch (error) {
-                            void error;
-                            return null;
                         }
-                    },
-                    subscribe: (kind, handler) => {
-                        if (kind === "focus") {
-                            const detach = sub("windowActivated", handler);
-                            if (detach === null) {
-                                throw new Error("plan-entry-highlight-signal-failed");
-                            }
-                            return detach;
-                        }
-                        if (kind === "fullscreen") {
-                            // Best-effort per-window fullscreen state: uses the
-                            // existing documented fullScreenChanged seam. Never
-                            // fails enable; effect-side eligibility still hides
-                            // when the source is unavailable.
+                    } catch (error) {
+                        void error;
+                    }
+                }
+                if (effectCall !== undefined) {
+                    const effect = effectCall;
+                    const highlight = startActiveGroupHighlight({
+                        callDescribePlan: (payload, callback) => {
+                            callDbus(PLAN_SERVICE, PLAN_OBJECT, PLAN_INTERFACE, PLAN_METHOD, payload, callback);
+                        },
+                        setHighlight: (payload) => {
+                            effect(GROUP_HIGHLIGHT_SERVICE, GROUP_HIGHLIGHT_OBJECT, GROUP_HIGHLIGHT_INTERFACE, GROUP_HIGHLIGHT_SET_METHOD, payload);
+                        },
+                        clearHighlight: () => {
+                            effect(GROUP_HIGHLIGHT_SERVICE, GROUP_HIGHLIGHT_OBJECT, GROUP_HIGHLIGHT_INTERFACE, GROUP_HIGHLIGHT_CLEAR_METHOD);
+                        },
+                        observe: (): ActiveGroupObserved | null => {
+                            let seen: PlanObserved | null = null;
                             try {
-                                const detach = subWindowFullscreen(handler);
-                                if (detach === null) {
-                                    return (): void => {};
-                                }
-                                return detach;
+                                seen = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility, nativeOwners);
                             } catch (error) {
                                 void error;
-                                return (): void => {};
+                                return null;
                             }
-                        }
-                        if (kind === "domain") {
-                            const first = sub("screensChanged", handler);
-                            const second = sub("currentDesktopChanged", handler);
-                            if (first === null || second === null) {
-                                if (first !== null) {
+                            if (seen === null) {
+                                return null;
+                            }
+                            try {
+                                return {
+                                    domainOutput: seen.domainOutput,
+                                    domainWorkspace: seen.domainWorkspace,
+                                    domainBounds: {
+                                        x: seen.domainBounds.x,
+                                        y: seen.domainBounds.y,
+                                        w: seen.domainBounds.w,
+                                        h: seen.domainBounds.h,
+                                    },
+                                    domainGap: seen.domainGap,
+                                    domainOuterGap: seen.domainOuterGap,
+                                    focusedId: seen.focusedId,
+                                    windows: seen.windows.map((entry) => ({
+                                        id: entry.id,
+                                        output: entry.output,
+                                        workspace: entry.workspace,
+                                        rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
+                                        // Script-only lifecycle validity; never
+                                        // serialized into the DescribePlan request.
+                                        fullscreen: entry.fullscreen,
+                                    })),
+                                };
+                            } catch (error) {
+                                void error;
+                                return null;
+                            }
+                        },
+                        subscribe: (kind, handler) => {
+                            if (kind === "focus") {
+                                const detach = sub("windowActivated", handler);
+                                if (detach === null) {
+                                    throw new Error("plan-entry-highlight-signal-failed");
+                                }
+                                return detach;
+                            }
+                            if (kind === "fullscreen") {
+                                // Best-effort per-window fullscreen state: uses the
+                                // existing documented fullScreenChanged seam. Never
+                                // fails enable; effect-side eligibility still hides
+                                // when the source is unavailable.
+                                try {
+                                    const detach = subWindowFullscreen(handler);
+                                    if (detach === null) {
+                                        return (): void => {};
+                                    }
+                                    return detach;
+                                } catch (error) {
+                                    void error;
+                                    return (): void => {};
+                                }
+                            }
+                            if (kind === "domain") {
+                                const first = sub("screensChanged", handler);
+                                const second = sub("currentDesktopChanged", handler);
+                                if (first === null || second === null) {
+                                    if (first !== null) {
+                                        try {
+                                            first();
+                                        } catch (error) {
+                                            void error;
+                                        }
+                                    }
+                                    throw new Error("plan-entry-highlight-signal-failed");
+                                }
+                                return (): void => {
                                     try {
                                         first();
+                                    } catch (error) {
+                                        void error;
+                                    }
+                                    try {
+                                        second();
+                                    } catch (error) {
+                                        void error;
+                                    }
+                                };
+                            }
+                            const added = sub("windowAdded", handler);
+                            const removed = sub("windowRemoved", handler);
+                            if (added === null || removed === null) {
+                                if (added !== null) {
+                                    try {
+                                        added();
                                     } catch (error) {
                                         void error;
                                     }
@@ -4852,73 +5017,93 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                             }
                             return (): void => {
                                 try {
-                                    first();
-                                } catch (error) {
-                                    void error;
-                                }
-                                try {
-                                    second();
-                                } catch (error) {
-                                    void error;
-                                }
-                            };
-                        }
-                        const added = sub("windowAdded", handler);
-                        const removed = sub("windowRemoved", handler);
-                        if (added === null || removed === null) {
-                            if (added !== null) {
-                                try {
                                     added();
                                 } catch (error) {
                                     void error;
                                 }
-                            }
-                            throw new Error("plan-entry-highlight-signal-failed");
-                        }
-                        return (): void => {
+                                try {
+                                    removed();
+                                } catch (error) {
+                                    void error;
+                                }
+                            };
+                        },
+                        log,
+                        owner: ownerRaw,
+                        generation: generationRaw,
+                    });
+                    if (highlight !== null) {
+                        // Single observational refresh after each successful
+                        // geometry-plan boundary, even when focus is unchanged.
+                        // Geometry writes emit no highlight lifecycle signal, so
+                        // this edge is the only post-plan refresh: no timers,
+                        // no polling, no geometry subscription.
+                        highlightRefresh = (): void => {
                             try {
-                                added();
-                            } catch (error) {
-                                void error;
-                            }
-                            try {
-                                removed();
+                                highlight.refresh();
                             } catch (error) {
                                 void error;
                             }
                         };
-                    },
-                    log,
-                    owner: ownerRaw,
-                    generation: generationRaw,
-                });
-                if (highlight !== null) {
-                    // Single observational refresh after each successful
-                    // geometry-plan boundary, even when focus is unchanged.
-                    // Geometry writes emit no highlight lifecycle signal, so
-                    // this edge is the only post-plan refresh: no retries,
-                    // no polling, no geometry subscription.
-                    highlightRefresh = (): void => {
+                        highlightStop = () => {
+                            highlightRefresh = null;
+                            try {
+                                highlight.stop();
+                            } catch (error) {
+                                void error;
+                            }
+                        };
+                        if (highlightAttachFailed) {
+                            highlightAttachFailed = false;
+                            try {
+                                log("plasma-auto-tiler:plan:highlight-attach stage=recovered");
+                            } catch (error) {
+                                void error;
+                            }
+                        }
+                    } else if (!highlightAttachFailed) {
+                        highlightAttachFailed = true;
                         try {
-                            highlight.refresh();
+                            log("plasma-auto-tiler:plan:highlight-attach stage=failed reason=bridge-unavailable");
                         } catch (error) {
                             void error;
                         }
-                    };
-                    highlightStop = () => {
-                        highlightRefresh = null;
-                        try {
-                            highlight.stop();
-                        } catch (error) {
-                            void error;
-                        }
-                    };
+                    }
+                }
+            }
+        } catch (error) {
+            if (!highlightAttachFailed && highlightStop === null && !entryStopped) {
+                let bridgeExpected = false;
+                try {
+                    bridgeExpected =
+                        typeof overrides.owner === "string" &&
+                        typeof overrides.generation === "string" &&
+                        (typeof overrides.highlightCallDbus === "function" || typeof callDBus === "function");
+                } catch (expectedError) {
+                    void expectedError;
+                }
+                if (bridgeExpected) {
+                    highlightAttachFailed = true;
+                    try {
+                        log("plasma-auto-tiler:plan:highlight-attach stage=failed reason=bridge-unavailable");
+                    } catch (logError) {
+                        void logError;
+                    }
                 }
             }
         }
-    } catch (error) {
-        void error;
-    }
+    };
+    retryHighlightAttach = (): void => {
+        if (!highlightAttachFailed) {
+            return;
+        }
+        try {
+            attachHighlightBridge();
+        } catch (error) {
+            void error;
+        }
+    };
+    attachHighlightBridge();
     let optionsConfigDetach: (() => void) | null = null;
     try {
         const optionsGlobal: unknown =
@@ -4927,6 +5112,11 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             optionsConfigDetach = connectSignal(
                 readSignal(optionsGlobal as object, "configChanged"),
                 () => {
+                    try {
+                        retryHighlightAttach();
+                    } catch (error) {
+                        void error;
+                    }
                     // Startup-consumed drift note first: workspaceMode and
                     // shortcutProfile never re-read for behavior here. Drift
                     // is restart-required, never adopted.
@@ -4999,6 +5189,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     }
     return {
         stop: () => {
+            entryStopped = true;
             try {
                 adapter.disable();
             } catch (error) {
@@ -5108,6 +5299,228 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             } catch (error) {
                 void error;
             }
+        },
+    };
+}
+
+// C1 startup attach recovery: a transient enable refusal at startup must
+// not keep a null handle for the whole session. The single attempt above
+// leaves nothing attached when enable refuses (the adapter releases its
+// partial subscriptions before returning false, and no handle is returned),
+// so a later native edge can safely run one fresh full attempt: shortcuts,
+// workspace routes, oracle, and the highlight bridge all register exactly
+// once, on the succeeding attempt. Retry rides only on signals that need
+// neither a windowList read nor an enabled adapter (workspace windowAdded,
+// Options configChanged); both are attached here with the shared connector,
+// so no timer exists to cancel or leak. A missing windowList function, an
+// invalid owner/generation, or no attachable retry edge at all stays
+// terminal null exactly as before, and every terminal path stays silent.
+// An unexpected throw (as opposed to a clean enable refusal returning
+// null) may leave a partially attached attempt behind, so it stays terminal
+// and never retries: the first-attempt throw returns null, and a
+// retry-attempt throw detaches the wait and stays inert, keeping exactly
+// one bounded failed line. While pending, the handle actuates nothing:
+// every request is a no-op until the succeeding attempt adopts the real
+// handle. stop() detaches the wait and forwards to the adopted handle when
+// one exists. One bounded failed line at wait start, one recovered line on
+// success; re-attempts themselves stay silent, with no attempt budget and
+// no exhaustion. A hard-missing KWin transport/timer (native callDBus or
+// QTimer absent with no override) returns null before adapter.enable and
+// stays terminal silent with no attach, log, or retry; only a refused
+// enable retries. The failed line names the actual refused subscribe kind
+// from the single attempt's enable loop (no second windowList probe).
+function isEntryGeneration(value: unknown): boolean {
+    if (typeof value !== "string" || value.length === 0 || value.length > 64) {
+        return false;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+        const code = value.charCodeAt(index);
+        const ok = (code >= 97 && code <= 122) || (code >= 48 && code <= 57) || code === 45;
+        if (!ok) {
+            return false;
+        }
+    }
+    return true;
+}
+
+export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanEntryHandle | null {
+    let first: PlanEntryHandle | null = null;
+    let firstCause: string | null = null;
+    try {
+        first = startPlanAdapterEntryOnce(overrides, (cause) => {
+            firstCause = cause;
+        });
+    } catch (error) {
+        void error;
+        return null;
+    }
+    if (first !== null) {
+        return first;
+    }
+    const liveWorkspace: unknown =
+        overrides.workspace !== undefined ? overrides.workspace : resolveLexicalWorkspace();
+    if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
+        return null;
+    }
+    const surface = liveWorkspace as Record<string, unknown>;
+    if (!isOpaqueId(overrides.owner) || !isEntryGeneration(overrides.generation)) {
+        return null;
+    }
+    if (typeof readProp(surface, "windowList") !== "function") {
+        return null;
+    }
+    // Hard-missing KWin transport/timer is terminal: the single attempt
+    // above already returned null before adapter.enable, so never attach,
+    // log, or retry. Mirrors the override/native resolution in
+    // startPlanAdapterEntryOnce: only a missing native matters when no
+    // override supplies it.
+    if (overrides.callDbus === undefined) {
+        try {
+            const native: unknown = callDBus;
+            if (typeof native !== "function") {
+                return null;
+            }
+        } catch (error) {
+            void error;
+            return null;
+        }
+    }
+    if (overrides.scheduleOnce === undefined) {
+        try {
+            const ctor: unknown = QTimer;
+            if (typeof ctor !== "function") {
+                return null;
+            }
+        } catch (error) {
+            void error;
+            return null;
+        }
+    }
+    const log = overrides.log ?? ((message: string): void => {
+        try {
+            console.log(message);
+        } catch (error) {
+            void error;
+        }
+    });
+    const detaches: Array<() => void> = [];
+    const detachWait = (): void => {
+        for (const detach of detaches.splice(0)) {
+            try {
+                detach();
+            } catch (error) {
+                void error;
+            }
+        }
+    };
+    let stopped = false;
+    let current: PlanEntryHandle | null = null;
+    const attemptRecovery = (): void => {
+        if (stopped || current !== null) {
+            return;
+        }
+        let next: PlanEntryHandle | null = null;
+        try {
+            next = startPlanAdapterEntryOnce(overrides);
+        } catch (error) {
+            void error;
+            detachWait();
+            return;
+        }
+        if (next === null) {
+            return;
+        }
+        current = next;
+        detachWait();
+        try {
+            log("plasma-auto-tiler:plan:entry-attach stage=recovered");
+        } catch (error) {
+            void error;
+        }
+    };
+    const onNativeEvent = (): void => {
+        try {
+            attemptRecovery();
+        } catch (error) {
+            void error;
+        }
+    };
+    try {
+        const addedDetach = connectSignal(readSignal(surface, "windowAdded"), onNativeEvent);
+        if (addedDetach !== null) {
+            detaches.push(addedDetach);
+        }
+    } catch (error) {
+        void error;
+    }
+    try {
+        const optionsGlobal: unknown =
+            overrides.options !== undefined ? overrides.options : resolveLexicalOptions();
+        if (typeof optionsGlobal === "object" && optionsGlobal !== null) {
+            const configDetach = connectSignal(readSignal(optionsGlobal as object, "configChanged"), onNativeEvent);
+            if (configDetach !== null) {
+                detaches.push(configDetach);
+            }
+        }
+    } catch (error) {
+        void error;
+    }
+    if (detaches.length === 0) {
+        return null;
+    }
+    const failedCause = firstCause ?? "enable-refused";
+    try {
+        log(`plasma-auto-tiler:plan:entry-attach stage=failed cause=${failedCause} recovery=retry-on-native-event`);
+    } catch (error) {
+        void error;
+    }
+    const delegate = (action: (target: PlanEntryHandle) => void): void => {
+        try {
+            if (current !== null) {
+                action(current);
+            }
+        } catch (error) {
+            void error;
+        }
+    };
+    return {
+        stop: () => {
+            stopped = true;
+            detachWait();
+            try {
+                if (current !== null) {
+                    current.stop();
+                }
+            } catch (error) {
+                void error;
+            }
+        },
+        requestFocus: (direction) => {
+            delegate((target) => target.requestFocus(direction));
+        },
+        requestMove: (direction) => {
+            delegate((target) => target.requestMove(direction));
+        },
+        requestResize: (direction, mode) => {
+            delegate((target) => target.requestResize(direction, mode));
+        },
+        requestFloat: () => {
+            delegate((target) => target.requestFloat());
+        },
+        requestSticky: () => {
+            delegate((target) => target.requestSticky());
+        },
+        requestMaximize: () => {
+            delegate((target) => target.requestMaximize());
+        },
+        requestFullscreen: () => {
+            delegate((target) => target.requestFullscreen());
+        },
+        requestWorkspaceSelect: (index) => {
+            delegate((target) => target.requestWorkspaceSelect(index));
+        },
+        requestWorkspaceMove: (index) => {
+            delegate((target) => target.requestWorkspaceMove(index));
         },
     };
 }

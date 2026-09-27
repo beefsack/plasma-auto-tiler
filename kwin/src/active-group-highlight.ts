@@ -190,7 +190,32 @@ function isGenerationId(value: unknown): value is string {
     return true;
 }
 
+function parseCorrelationOrder(value: string): { head: string; epoch: number; seq: number } | null {
+    const match = /^(.*)-g(?:(\d+)r)?(\d+)$/.exec(value);
+    if (match === null) {
+        return null;
+    }
+    const head = match[1] as string;
+    const epoch = match[2] === undefined ? 0 : Number(match[2]);
+    const seq = Number(match[3]);
+    if (!Number.isSafeInteger(epoch) || !Number.isSafeInteger(seq) || epoch < 0 || seq < 0) {
+        return null;
+    }
+    return { head, epoch, seq };
+}
+
 function correlationIsNewer(next: string, previous: string): boolean {
+    const nextOrder = parseCorrelationOrder(next);
+    const previousOrder = parseCorrelationOrder(previous);
+    if (nextOrder !== null && previousOrder !== null && nextOrder.head === previousOrder.head) {
+        if (nextOrder.epoch !== previousOrder.epoch) {
+            return nextOrder.epoch > previousOrder.epoch;
+        }
+        if (nextOrder.seq !== previousOrder.seq) {
+            return nextOrder.seq > previousOrder.seq;
+        }
+        return next > previous;
+    }
     const nextMatch = /^(.*?)(\d+)$/.exec(next);
     const previousMatch = /^(.*?)(\d+)$/.exec(previous);
     if (nextMatch !== null && previousMatch !== null && nextMatch[1] === previousMatch[1]) {
@@ -632,6 +657,7 @@ interface PendingHighlightFlight {
 export class ActiveGroupHighlight {
     private epoch = 0;
     private seq = 0;
+    private seqEpoch = 0;
     private pending: PendingHighlightFlight | null = null;
     private lastRevision: number | null = null;
     private lastCorrelation: string | null = null;
@@ -653,11 +679,40 @@ export class ActiveGroupHighlight {
             this.clearFlight(`${LOG_PREFIX}:cleared reason=observe-invalid`);
             return;
         }
-        if (this.seq < 0 || this.seq > ACTIVE_GROUP_MAX_SEQ) {
+        // Correlation sequence epochs rotate at ACTIVE_GROUP_MAX_SEQ: seq
+        // wraps to 0 and the epoch increments, keeping every correlation
+        // unique. Epoch zero keeps the existing `${generation}-g<seq>` shape;
+        // later epochs use `${generation}-g<epoch>r<seq>`. Both shapes stay in
+        // the opaque-id alphabet and, for any safe-integer epoch, inside the
+        // 128-byte wire cap even with the longest generation, so only an
+        // unreachable non-safe-integer counter clears fail-closed.
+        // correlationIsNewer compares epoch then sequence numerically within
+        // one head, so a rolled-over epoch always orders after the old epoch
+        // and late old-epoch payloads cannot erase the newer display.
+        // Superseded flights still reject via the pending correlation/epoch
+        // fences. A negative counter normalizes to zero and continues.
+        if (!Number.isInteger(this.seq) || this.seq < 0) {
+            this.seq = 0;
+        }
+        if (!Number.isInteger(this.seqEpoch) || this.seqEpoch < 0) {
+            this.seqEpoch = 0;
+        }
+        if (!Number.isSafeInteger(this.seq) || !Number.isSafeInteger(this.seqEpoch)) {
             this.clearFlight(`${LOG_PREFIX}:cleared reason=seq-exhausted`);
             return;
         }
-        const correlation = `${this.env.generation}-g${String(this.seq)}`;
+        if (this.seq > ACTIVE_GROUP_MAX_SEQ) {
+            this.seq = 0;
+            this.seqEpoch += 1;
+            if (!Number.isSafeInteger(this.seqEpoch)) {
+                this.clearFlight(`${LOG_PREFIX}:cleared reason=seq-exhausted`);
+                return;
+            }
+        }
+        const correlation =
+            this.seqEpoch === 0
+                ? `${this.env.generation}-g${String(this.seq)}`
+                : `${this.env.generation}-g${String(this.seqEpoch)}r${String(this.seq)}`;
         this.seq += 1;
         if (!isOpaqueId(correlation, ACTIVE_GROUP_MAX_CORRELATION_LEN, false)) {
             this.clearFlight(`${LOG_PREFIX}:cleared reason=correlation-invalid`);

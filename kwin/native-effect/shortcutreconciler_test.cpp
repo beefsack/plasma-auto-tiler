@@ -353,13 +353,13 @@ public:
             failNextWrite = false;
             // Transport failure after the daemon may still have changed;
             // record the attempt so recovery can be tested, but report failure.
-            writeLog.append({component, action, keys});
+            writeLog.append({component, action, keys, componentFriendly, friendly});
             if (error) {
                 *error = QStringLiteral("setShortcutKeys call failed for action");
             }
             return false;
         }
-        writeLog.append({component, action, keys});
+        writeLog.append({component, action, keys, componentFriendly, friendly});
         if (driftAfterNextWrite) {
             driftAfterNextWrite = false;
             owner = QStringLiteral(":1.99");
@@ -3026,7 +3026,7 @@ void defaultAndForeignTransportSeam()
         store.writeLog.clear();
         store.foreignWriteLog.clear();
         for (int i = 0; i < 63; ++i) {
-            store.writeLog.append({QStringLiteral("kwin"), QStringLiteral("x"), QList<int>{}});
+            store.writeLog.append({QStringLiteral("kwin"), QStringLiteral("x"), QList<int>{}, QString(), QString()});
         }
         CHECK(store.setForeignShortcutKeys(QStringLiteral("org.example"), QStringLiteral("arbitrary-action"),
                                            QStringLiteral("Example"), QStringLiteral("Arbitrary"),
@@ -3738,8 +3738,8 @@ void clearedStoreRoundtrip()
     // Persistence shape is IDs only: Components+Actions present, no
     // cosmetic ComponentFriendlies/Friendlies keys written.
     {
-        KConfig check(path, KConfig::SimpleConfig);
-        const KConfigGroup group = check.group(QStringLiteral("ClearedActions"));
+        KConfig stored(path, KConfig::SimpleConfig);
+        const KConfigGroup group = stored.group(QStringLiteral("ClearedActions"));
         CHECK(group.hasKey(QStringLiteral("Components")));
         CHECK(group.hasKey(QStringLiteral("Actions")));
         CHECK(!group.hasKey(QStringLiteral("ComponentFriendlies")));

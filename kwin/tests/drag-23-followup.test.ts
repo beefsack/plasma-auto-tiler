@@ -846,20 +846,58 @@ describe("drag restore marker scope", () => {
         assert.equal(w.sent.length, 0, "no retry after the bound terminal");
     });
 
-    it("markers retain beyond sixteen domains without eviction", () => {
+    it("an output removal prunes while a recreated same-key marker survives its stale flight", () => {
         const w = restoreWorld();
-        for (let i = 1; i <= 20; i += 1) {
-            w.setDomain(`out-${i}`, "ws-1");
-            assert.equal(w.adapter.requestPointerResize("win-a", "sideways", 1000, undefined, undefined, `drag-${90 + i}`), false);
-        }
-        const markers = (w.adapter as unknown as { dragRestore: Map<string, { drags: string[] }> }).dragRestore;
-        assert.equal(markers.size, 20, "no domain-count gate on drag markers");
-        // A 21st domain is retained as well: no overflow terminal and no
-        // eviction of the existing markers.
-        w.setDomain("out-21", "ws-1");
-        assert.equal(w.adapter.requestPointerResize("win-a", "sideways", 1000, undefined, undefined, "drag-99"), false);
-        assert.equal(markers.size, 21, "new domains never evict a retained marker");
-        assert.ok(!w.logs.some((line) => line.includes("correlation=drag-99") && line.includes("outcome=unavailable")), "no overflow terminal");
+        assert.equal(w.adapter.requestPointerResize("win-a", "sideways", 1000, undefined, undefined, "drag-910"), false);
+        assert.equal(w.sent.length, 1, "old marker reconcile in flight");
+        const settled = (drag: string): number =>
+            w.logs.filter((line) => line.includes("drag-reconcile-settled") && line.includes(`correlation=${drag}`)).length;
+        w.adapter.pruneDragRestoreForTopology(["ws-1"], ["out-2"]);
+        assert.ok(
+            w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-910") && line.includes("outcome=unavailable") && line.includes("plan=none")),
+            "absent output settles honestly while the workspace axis succeeds",
+        );
+        assert.equal(settled("drag-910"), 1, "exactly one terminal for the pruned drag");
+        assert.equal(w.adapter.requestPointerResize("win-a", "sideways", 1000, undefined, undefined, "drag-911"), false);
+        assert.equal(settled("drag-911"), 0, "recreated drag pending with no terminal");
+        assert.equal(w.sent.length, 1, "recreated marker defers behind the stale flight");
+        const flying = w.sent[0] as { payload: string; callback: (reply: unknown) => void };
+        const correlation = (JSON.parse(flying.payload) as Record<string, unknown>)["correlation_id"] as string;
+        flying.callback(
+            JSON.stringify({
+                v: 1,
+                correlation_id: correlation,
+                outcome: "planned",
+                base_revision: 2,
+                detail: { kind: "reconcile" },
+                desired_geometry: [
+                    { window: "win-a", leaf: "win-a-leaf", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+            }),
+        );
+        assert.equal(settled("drag-910"), 1, "stale reply cannot re-settle the pruned drag");
+        assert.equal(settled("drag-911"), 0, "stale flight settles no terminal for the recreated drag");
+        assert.equal(w.sent.length, 2, "recreated marker dispatches once the slot frees");
+        const follow = (JSON.parse((w.sent[1] as { payload: string }).payload) as Record<string, unknown>)["correlation_id"] as string;
+        (w.sent[1] as { payload: string; callback: (reply: unknown) => void }).callback(
+            JSON.stringify({
+                v: 1,
+                correlation_id: follow,
+                outcome: "planned",
+                base_revision: 2,
+                detail: { kind: "reconcile" },
+                desired_geometry: [
+                    { window: "win-a", leaf: "win-a-leaf", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+            }),
+        );
+        assert.ok(
+            w.logs.some((line) => line.includes("drag-reconcile-settled") && line.includes("correlation=drag-911") && line.includes("outcome=applied") && line.includes(`plan=${follow}`)),
+            "recreated marker still converges with its own plan",
+        );
+        assert.equal(settled("drag-910"), 1, "old drag never re-settles");
     });
 });
 

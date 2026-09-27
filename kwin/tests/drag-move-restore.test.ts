@@ -35,6 +35,7 @@ interface MoveWorld {
     readonly startedB: FireSignal;
     readonly finishedB: FireSignal;
     readonly geometry: FireSignal;
+    readonly topology: FireSignal;
 }
 function moveWorld(): MoveWorld {
     const output: Record<string, unknown> = { name: "out-1" };
@@ -44,6 +45,7 @@ function moveWorld(): MoveWorld {
     const startedB = fireSignal();
     const finishedB = fireSignal();
     const geometry = fireSignal();
+    const topology = fireSignal();
     const added = fireSignal();
     const removed = fireSignal();
     const other = fireSignal();
@@ -83,9 +85,10 @@ function moveWorld(): MoveWorld {
         windowRemoved: removed.signal,
         windowActivated: other.signal,
         screensChanged: other.signal,
+        desktopsChanged: topology.signal,
         currentDesktopChanged: other.signal,
     };
-    return { workspace, wins, startedA, finishedA, startedB, finishedB, geometry };
+    return { workspace, wins, startedA, finishedA, startedB, finishedB, geometry, topology };
 }
 interface MoveMocks {
     readonly planCalls: Array<{ method: string; payload: string; callback: (reply: unknown) => void }>;
@@ -664,6 +667,66 @@ describe("tiled move-drop restore (Kate drags 29-31)", () => {
         assert.ok(
             !mocks.logs.some((l) => l.includes("drag-move-restore") && l.includes("move-start-")),
             "no fabricated restore for the expiry",
+        );
+        stop();
+    });
+
+    it("entry desktopsChanged prunes a rejected drag once; malformed reads prune nothing", () => {
+        const world = moveWorld();
+        const { stop, mocks } = startMoveEntry(world);
+        baselineConverge(world, mocks);
+        const settled = (drag: string): number =>
+            mocks.logs.filter((l) => l.includes("drag-reconcile-settled") && l.includes(`correlation=${drag}`)).length;
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = true;
+        fireAll(world.startedA);
+        fireAll(world.finishedA);
+        assert.equal(mocks.oracleCalls.length, 1);
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = false;
+        const callsAtDrop = mocks.planCalls.length;
+        (mocks.oracleCalls[0] as (reply: unknown) => void)(moveVerdict({ x: 40, y: 0, w: 600, h: 800 }, "win-a", "drag-70"));
+        assert.ok(mocks.logs.some((l) => l.includes("drag-rejected") && l.includes("correlation=drag-70")));
+        assert.equal(mocks.planCalls.length - callsAtDrop, 1, "rejected drop dispatches its marker");
+        const markerCall = mocks.planCalls[mocks.planCalls.length - 1] as { payload: string; callback: (reply: unknown) => void };
+        const markerCorr = planCorrelation(JSON.parse(markerCall.payload) as Record<string, unknown>);
+        // Successful desktop list without the marker workspace; failing
+        // screens axis proves nothing on its own. The same entry
+        // desktopsChanged handler also runs workspaceNative.handleTopologySignal.
+        world.workspace["desktops"] = [{ id: "ws-2" }];
+        Object.defineProperty(world.workspace, "screens", {
+            get(): unknown {
+                throw new Error("screens-unreadable");
+            },
+            configurable: true,
+        });
+        fireAll(world.topology);
+        assert.ok(
+            mocks.logs.some((l) => l.includes("drag-reconcile-settled") && l.includes("correlation=drag-70") && l.includes("outcome=unavailable") && l.includes("plan=none")),
+            "absent workspace settles honestly with a failed screens axis",
+        );
+        assert.equal(settled("drag-70"), 1, "exactly one terminal");
+        assert.equal(mocks.planCalls.length - callsAtDrop, 1, "prune dispatches nothing");
+        markerCall.callback(markerReply(markerCorr));
+        assert.equal(settled("drag-70"), 1, "late old plan reply does not re-settle");
+        assert.equal(mocks.planCalls.length - callsAtDrop, 1, "no follow-up for a pruned marker");
+        // Malformed/failed reads of both lists prune nothing: the next
+        // rejected drop stays pending and still converges.
+        (world.wins["win-b"] as Record<string, unknown>)["move"] = true;
+        fireAll(world.startedB);
+        fireAll(world.finishedB);
+        (world.wins["win-b"] as Record<string, unknown>)["move"] = false;
+        (mocks.oracleCalls[1] as (reply: unknown) => void)(moveVerdict({ x: 560, y: 0, w: 600, h: 800 }, "win-b", "drag-71"));
+        const callsAtSecond = mocks.planCalls.length;
+        assert.equal(callsAtSecond - callsAtDrop, 2, "second drop dispatches its own marker");
+        const markerCall2 = mocks.planCalls[mocks.planCalls.length - 1] as { payload: string; callback: (reply: unknown) => void };
+        world.workspace["desktops"] = [123];
+        fireAll(world.topology);
+        assert.equal(settled("drag-71"), 0, "failed reads of both lists prove nothing");
+        assert.equal(mocks.planCalls.length, callsAtSecond, "no-op prune dispatches nothing");
+        const markerCorr2 = planCorrelation(JSON.parse(markerCall2.payload) as Record<string, unknown>);
+        markerCall2.callback(markerReply(markerCorr2));
+        assert.ok(
+            mocks.logs.some((l) => l.includes("drag-reconcile-settled") && l.includes("correlation=drag-71") && l.includes("outcome=applied") && l.includes(`plan=${markerCorr2}`)),
+            "preserved marker still converges after the no-op prune",
         );
         stop();
     });

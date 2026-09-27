@@ -584,6 +584,11 @@ export interface PlanAdapterEnv {
     readonly subscribeWindowGeometry?: (ref: object, handler: () => void) => (() => void) | null;
     readonly subscribe: (kind: PlanSignal, handler: (target?: object) => void) => () => void;
     readonly noteRemoved?: (id: string) => void;
+    // Exact-ref removal hook: the entry evicts only ids still owned by this
+    // live ref, without reading any removed-object properties. Covers
+    // pre-apply ids with no applied slot; incomplete observations never infer
+    // departure.
+    readonly noteNativeRemoved?: (ref: object) => void;
     // Retired workspace-send coordination hook, ignored. Send flights never
     // block Plan: terminal send settlement arrives via `notifySendSettled`,
     // which forces a one-shot complete source AND target reconcile through
@@ -1507,7 +1512,11 @@ interface PendingFlight {
     // Domain key of the restore marker this reconcile was dispatched for.
     // Never a drag correlation: satisfaction and failure terminals resolve
     // through the marker map, so overlapping drops share one dispatch.
+    // restoreMarkerSeq fences the marker incarnation: an evicted marker
+    // settled unavailable must never let its late flight settle a recreated
+    // marker under the same domain key.
     readonly restoreMarker?: string | null;
+    readonly restoreMarkerSeq?: number | null;
     readonly workAreaReprojection: boolean;
     readonly admissionMaximizeClears: ReadonlyArray<string>;
     readonly floatTarget: { readonly window: string; readonly floating: boolean } | null;
@@ -1572,8 +1581,10 @@ interface AutoIntent {
     readonly dragSource?: string | null;
     // Domain key of the restore marker this reconcile converges. Set only
     // on marker reconciles built by maybeDispatchDragRestore; never queued
-    // through superseding intents.
+    // through superseding intents. restoreMarkerSeq carries the marker
+    // incarnation (see PendingFlight).
     readonly restoreMarker?: string | null;
+    readonly restoreMarkerSeq?: number | null;
     readonly workAreaReprojection?: boolean;
     readonly admissionMaximizeClears?: ReadonlyArray<string>;
     readonly floatTarget?: { readonly window: string; readonly floating: boolean } | null;
@@ -1598,6 +1609,7 @@ interface DragRestoreMarker {
     readonly output: string;
     readonly workspace: string;
     readonly drags: string[];
+    readonly seq: number;
     dispatched: boolean;
 }
 
@@ -1798,6 +1810,7 @@ export class PlanAdapter {
     // terminal per drag and never retries. Keyed by domain
     // output/workspace.
     private dragRestore = new Map<string, DragRestoreMarker>();
+    private dragRestoreSeq = 0;
 
     constructor(private readonly env: PlanAdapterEnv) {}
 
@@ -3207,10 +3220,12 @@ export class PlanAdapter {
             const key = this.dragRestoreKey(domain.output, domain.workspace);
             let marker = this.dragRestore.get(key);
             if (marker === undefined) {
+                this.dragRestoreSeq += 1;
                 marker = {
                     output: domain.output,
                     workspace: domain.workspace,
                     drags: [],
+                    seq: this.dragRestoreSeq,
                     dispatched: false,
                 };
                 this.dragRestore.set(key, marker);
@@ -3355,6 +3370,7 @@ export class PlanAdapter {
                 removed: null,
                 body: { op: "reconcile" },
                 restoreMarker: key,
+                restoreMarkerSeq: marker.seq,
             };
             marker.dispatched = true;
             this.dispatch(intent);
@@ -3414,6 +3430,9 @@ export class PlanAdapter {
             const key = this.dragRestoreKey(domainOutput, domainWorkspace);
             const marker = this.dragRestore.get(key);
             if (marker === undefined) {
+                return;
+            }
+            if (typeof flightState.restoreMarker === "string" && typeof flightState.restoreMarkerSeq === "number" && marker.seq !== flightState.restoreMarkerSeq) {
                 return;
             }
             const wanted: string[] = [];
@@ -3517,6 +3536,9 @@ export class PlanAdapter {
             if (marker === undefined) {
                 return;
             }
+            if (typeof intent.restoreMarkerSeq === "number" && marker.seq !== intent.restoreMarkerSeq) {
+                return;
+            }
             this.dragRestore.delete(key);
             const cause = sanitizeKind(outcome);
             const planToken = typeof plan === "string" && isCorrelationId(plan) ? plan : "none";
@@ -3557,6 +3579,38 @@ export class PlanAdapter {
         this.dragRestore.clear();
     }
 
+    // Lists are independently validated by the entry; null proves nothing.
+    // Keep the incarnation fence: an output name may return after replug
+    // before an old marker flight replies.
+    public pruneDragRestoreForTopology(
+        workspaceIds: ReadonlyArray<string> | null | undefined,
+        outputNames: ReadonlyArray<string> | null | undefined,
+    ): void {
+        const workspaces =
+            Array.isArray(workspaceIds) && workspaceIds.length > 0 ? new Set(workspaceIds) : null;
+        const outputs =
+            Array.isArray(outputNames) && outputNames.length > 0 ? new Set(outputNames) : null;
+        if (workspaces === null && outputs === null) {
+            return;
+        }
+        for (const [key, marker] of [...this.dragRestore.entries()]) {
+            const workspaceDead = workspaces !== null && !workspaces.has(marker.workspace);
+            const outputDead = outputs !== null && !outputs.has(marker.output);
+            if (!workspaceDead && !outputDead) {
+                continue;
+            }
+            if (this.dragRestore.get(key) !== marker) {
+                continue;
+            }
+            this.dragRestore.delete(key);
+            for (const drag of marker.drags) {
+                this.logToken(
+                    `${LOG_PREFIX}:drag-reconcile-settled correlation=${drag} outcome=unavailable plan=none`,
+                );
+            }
+        }
+    }
+
     // Terminal for a dispatched marker reconcile that itself failed: one
     // correlated terminal per drag naming the failed plan correlation, then
     // the marker clears with no retry. Ordinary flight failures leave
@@ -3569,6 +3623,9 @@ export class PlanAdapter {
             }
             const marker = this.dragRestore.get(key);
             if (marker === undefined) {
+                return;
+            }
+            if (typeof flightState.restoreMarkerSeq === "number" && marker.seq !== flightState.restoreMarkerSeq) {
                 return;
             }
             this.dragRestore.delete(key);
@@ -3808,6 +3865,9 @@ export class PlanAdapter {
             if (typeof key === "string") {
                 const marker = this.dragRestore.get(key);
                 if (marker !== undefined) {
+                    if (typeof flight.restoreMarkerSeq === "number" && marker.seq !== flight.restoreMarkerSeq) {
+                        return;
+                    }
                     marker.dispatched = false;
                     for (const drag of marker.drags) {
                         try {
@@ -3834,6 +3894,11 @@ export class PlanAdapter {
         // survivors carry a different live ref and keep their markers.
         if (kind === "removed" && typeof target === "object" && target !== null) {
             this.stickyAttempts.delete(target);
+            try {
+                this.env.noteNativeRemoved?.(target);
+            } catch (error) {
+                void error;
+            }
             for (const [id, ref] of [...this.heldInitialFullscreen]) {
                 if (ref === target) {
                     this.heldInitialFullscreen.delete(id);
@@ -4874,6 +4939,7 @@ export class PlanAdapter {
             pointerSource: intent.pointerSource ?? null,
             dragSource: intent.dragSource ?? null,
             restoreMarker: intent.restoreMarker ?? null,
+            restoreMarkerSeq: intent.restoreMarkerSeq ?? null,
             workAreaReprojection: intent.workAreaReprojection === true,
             admissionMaximizeClears: intent.admissionMaximizeClears ?? Object.freeze([]),
             floatTarget: intent.floatTarget ?? null,
@@ -5978,6 +6044,7 @@ export class PlanAdapter {
             pointerSource: flightState.pointerSource,
             dragSource: flightState.dragSource ?? null,
             restoreMarker: flightState.restoreMarker ?? null,
+            restoreMarkerSeq: flightState.restoreMarkerSeq ?? null,
             workAreaReprojection: flightState.workAreaReprojection,
             admissionMaximizeClears: flightState.admissionMaximizeClears,
             floatTarget: flightState.floatTarget,
