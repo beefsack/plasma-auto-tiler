@@ -345,6 +345,16 @@ struct PlanReply {
     preconditions: Option<Vec<&'static str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     operation: Option<serde_json::Value>,
+    /// Read-only drag-preview proposed source rectangle (present only on the
+    /// `preview` outcome; absent elsewhere so existing replies stay
+    /// byte-identical).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview_rect: Option<RectDto>,
+    /// Read-only drag-preview carried hover state for the next preview or
+    /// the final drop (present only on the `preview` outcome; shared JSON
+    /// detail riding the existing reply).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hover_prior: Option<serde_json::Value>,
 }
 
 fn serialize_bounded(reply: &PlanReply) -> String {
@@ -579,6 +589,8 @@ fn rejected(correlation_id: String, kind: &str, message: &str) -> String {
         float_geometry: None,
         preconditions: None,
         operation: None,
+        preview_rect: None,
+        hover_prior: None,
     })
 }
 
@@ -597,6 +609,8 @@ fn snapshot_invalid(correlation_id: String, message: &str, detail: &'static str)
         float_geometry: None,
         preconditions: None,
         operation: None,
+        preview_rect: None,
+        hover_prior: None,
     })
 }
 
@@ -651,6 +665,7 @@ const PLANNER_SNAPSHOT_DETAILS: &[&str] = &[
     "toggle-float-window-invalid",
     "drag-drop-op-invalid",
     "drag-drop-window-invalid",
+    "drag-preview-op-invalid",
     "float-rect-invalid",
 ];
 
@@ -1134,6 +1149,19 @@ fn validate_request_with_engine(
             })
             .collect()
     });
+    // KWin native interactive move carries the dragged frame with the
+    // pointer: during `drag-preview`/`drag-drop` the moved source's valid
+    // carried rect may straddle or sit outside the destination usable bounds
+    // (drop policy uses the pointer, not the frame). Exempt only the moved
+    // source's containment; survivors and all other ops keep it, and the
+    // valid-rect, homing, focus, and membership fences stay exact.
+    let drag_source_window: Option<&str> = match op_str {
+        "drag-drop" | "drag-preview" => request
+            .command
+            .get("window")
+            .and_then(serde_json::Value::as_str),
+        _ => None,
+    };
     for entry in &request.windows {
         if !valid_carried_rect(entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h) {
             return Err(snapshot_invalid(
@@ -1172,8 +1200,10 @@ fn validate_request_with_engine(
                 ));
             }
         } else {
+            let is_dragged_source = drag_source_window.is_some_and(|window| window == entry.window);
             if !fresh_reconcile
                 && !entry.floating
+                && !is_dragged_source
                 && !rect_contained(
                     Rect {
                         x: entry.rect.x,
@@ -1392,6 +1422,8 @@ fn cross_focus_planned_reply(
         float_geometry: None,
         preconditions: Some(preconditions),
         operation: Some(operation_value),
+        preview_rect: None,
+        hover_prior: None,
     })
 }
 
@@ -1430,6 +1462,8 @@ fn planned_reply(
         float_geometry: None,
         preconditions: None,
         operation: None,
+        preview_rect: None,
+        hover_prior: None,
     })
 }
 
@@ -1521,6 +1555,8 @@ fn planned_float_reply(correlation_id: &str, plan: &tiler_core::boundary::TiledP
         },
         preconditions: None,
         operation: None,
+        preview_rect: None,
+        hover_prior: None,
     })
 }
 
@@ -1587,6 +1623,8 @@ fn serialize_move_reply(
         float_geometry: None,
         preconditions: Some(preconditions),
         operation: Some(operation_value),
+        preview_rect: None,
+        hover_prior: None,
     })
 }
 
@@ -1767,6 +1805,68 @@ fn serialize_send_workspace_reply(
         float_geometry: None,
         preconditions: Some(preconditions),
         operation: Some(operation_value),
+        preview_rect: None,
+        hover_prior: None,
+    })
+}
+
+/// Byte-exact read-only drag-preview serializer driven by a
+/// [`tiler_core::boundary::DragPreviewPlan`] (single source). Outcome
+/// `preview` with kind `drag-preview`: the proposed source rectangle plus the
+/// carried hover state for the next preview or the final drop. No geometry
+/// commit, no focus change, no preconditions/operation: the adapter routes
+/// this to the translucent overlay and forwards `hover_prior` verbatim.
+fn serialize_drag_preview_reply(
+    correlation_id: &str,
+    plan: &tiler_core::boundary::DragPreviewPlan,
+) -> String {
+    let preview = &plan.preview;
+    serialize_bounded(&PlanReply {
+        v: PLAN_CONTRACT_VERSION,
+        correlation_id: correlation_id.to_owned(),
+        outcome: "preview",
+        kind: Some("drag-preview".to_owned()),
+        message: None,
+        base_revision: Some(plan.base_revision),
+        detail: Some(serde_json::json!({
+            "kind": "drag-preview",
+            "capability": "place-tiled",
+            "side": preview.side.as_str(),
+            "axis": match preview.axis {
+                tiler_core::directional::Axis::Horizontal => "horizontal",
+                tiler_core::directional::Axis::Vertical => "vertical",
+            },
+            "before": preview.before,
+            "wrap": preview.wrap,
+            "target_group": preview.target_group.0,
+            "insertion_index": preview.insertion_index,
+            "target_leaf": preview.target_leaf.0,
+            "target_window": preview.target_window.0,
+            "source_leaf": preview.source_leaf.0,
+            "source_window": preview.source_window.0,
+        })),
+        desired_geometry: None,
+        desired_focus: None,
+        float_geometry: None,
+        preconditions: None,
+        operation: None,
+        preview_rect: Some(RectDto {
+            x: preview.proposed_rect.x,
+            y: preview.proposed_rect.y,
+            w: preview.proposed_rect.w,
+            h: preview.proposed_rect.h,
+        }),
+        hover_prior: Some(serde_json::json!({
+            "domain_output": preview.domain.output.0,
+            "domain_workspace": preview.domain.workspace.0,
+            "source_leaf": preview.source_leaf.0,
+            "source_window": preview.source_window.0,
+            "revision": preview.revision,
+            "prior": preview.prior.as_ref().map(|prior| serde_json::json!({
+                "group": prior.group.0,
+                "edge": prior.edge.as_str(),
+            })).unwrap_or(serde_json::Value::Null),
+        })),
     })
 }
 
@@ -1786,6 +1886,7 @@ fn serialize_core_reply(ctx: &Validated, reply: &tiler_core::boundary::CoreReply
         CoreReply::FocusDirectional(plan) => serialize_focus_reply(&cid, plan),
         CoreReply::Resize(plan) => serialize_resize_reply(&cid, plan),
         CoreReply::ActiveGroup(found) => serialize_active_group_found(ctx, found),
+        CoreReply::DragPreview(plan) => serialize_drag_preview_reply(&cid, plan),
         CoreReply::NoGroup {
             base_revision,
             reason,
@@ -1857,6 +1958,8 @@ fn diverged_reply(correlation_id: &str, reason: tiler_core::contract::Divergence
         float_geometry: None,
         preconditions: None,
         operation: None,
+        preview_rect: None,
+        hover_prior: None,
     })
 }
 
@@ -1935,8 +2038,8 @@ impl Planner {
         // check on this production path. The string guard preserves exact
         // unknown/missing/non-string `unknown-value` behavior without a typed
         // parse.
-        // Move/focus/resize/pointer-resize/toggle-float/drag-drop parse
-        // `SyncCommand` once in place inside their handlers (see `SyncCommand`
+        // Move/focus/resize/pointer-resize/toggle-float/drag-drop/drag-preview
+        // parse `SyncCommand` once in place inside their handlers (see `SyncCommand`
         // docs for the exact probe/ordering reasons), so these arms dispatch
         // by op string.
         match validated_op(&ctx).as_str() {
@@ -1970,7 +2073,8 @@ impl Planner {
             "resize" => self.evaluate_resize_retained(&ctx),
             "pointer-resize" => self.evaluate_pointer_resize_retained(&ctx),
             "toggle-float" => self.evaluate_toggle_float_retained(&ctx),
-            "drag-drop" => self.evaluate_drag_drop_retained(&ctx),
+            "drag-drop" => self.evaluate_drag_retained(&ctx, false),
+            "drag-preview" => self.evaluate_drag_retained(&ctx, true),
             _ => rejected(
                 valid_correlation_echo(&ctx.raw),
                 "unknown-value",
@@ -2386,55 +2490,56 @@ impl Planner {
         self.handle_and_serialize(ctx, &event)
     }
 
-    /// Synchronous drag-drop: one `begin_drag` then `drop_drag` pair on the
-    /// same complete observation with immediate acknowledge/verify.
-    ///
-    /// Strict tagged decode in place (see `SyncCommand`): a present-but-wrong
-    /// op maps to `drag-drop-op-invalid`, all other decode errors keep
-    /// `classify_parse_error` behavior. The dragged window id must be opaque
-    /// (`drag-drop-window-invalid`); pointer `x`/`y` cross as decoded with no
-    /// extra authorization (outside work-area points refuse in the Engine as
-    /// bounded `unchanged` so KWin restores). Single-domain only: a carried
-    /// `domains` payload already refused at validation. Engine owns
-    /// convergence, focus sync, begin/drop, sync commit, and store with no
-    /// reseed on invalid drops; serialization funnels through the typed
-    /// choke point as `drag-drop`/`place-tiled`.
-    fn evaluate_drag_drop_retained(&mut self, ctx: &Validated) -> String {
-        let (window_raw, x, y) =
-            match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
-                Ok(SyncCommand::DragDrop { window, x, y }) => (window, x, y),
-                Ok(_) => {
+    /// Shared drag-drop/preview body (option B): one `begin_drag` over the same
+    /// complete observation (including size hints); preview runs it on a
+    /// discarded working clone and replies read-only, drop commits with
+    /// immediate acknowledge/verify. Strict tagged decode keeps distinct
+    /// `drag-drop-op-invalid` / `drag-preview-op-invalid` tokens; the Engine
+    /// window fence keeps the shared `drag-drop-window-invalid` detail; wire-shape
+    /// violations keep `classify_parse_error` behavior. Pointer `x`/`y` cross
+    /// as decoded (outside points refuse in the Engine as bounded `unchanged`);
+    /// an invalid hover carry or source binding degrades advisory-style.
+    /// Preview alone refuses a carried workspace-send target
+    /// (`cross-domain-mismatch`); a carried `domains` payload already refused
+    /// at validation for both.
+    fn evaluate_drag_retained(&mut self, ctx: &Validated, is_preview: bool) -> String {
+        if is_preview
+            && (!ctx.request.target_windows.is_empty() || ctx.request.target_domain.is_some())
+        {
+            return rejected(
+                ctx.request.correlation_id.clone(),
+                "cross-domain-mismatch",
+                MSG_CROSS_DOMAIN,
+            );
+        }
+        let op_invalid = if is_preview {
+            "drag-preview-op-invalid"
+        } else {
+            "drag-drop-op-invalid"
+        };
+        let command = match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
+            Ok(command @ SyncCommand::DragDrop(_)) if !is_preview => command,
+            Ok(command @ SyncCommand::DragPreview(_)) if is_preview => command,
+            Ok(_) => {
+                return snapshot_invalid(
+                    ctx.request.correlation_id.clone(),
+                    MSG_OPAQUE_ID,
+                    op_invalid,
+                );
+            }
+            Err(error) => {
+                if is_unknown_variant(&error) {
                     return snapshot_invalid(
                         ctx.request.correlation_id.clone(),
                         MSG_OPAQUE_ID,
-                        "drag-drop-op-invalid",
+                        op_invalid,
                     );
                 }
-                Err(error) => {
-                    if is_unknown_variant(&error) {
-                        return snapshot_invalid(
-                            ctx.request.correlation_id.clone(),
-                            MSG_OPAQUE_ID,
-                            "drag-drop-op-invalid",
-                        );
-                    }
-                    let (kind, message) = classify_parse_error(&error);
-                    return rejected(valid_correlation_echo(&ctx.raw), kind, message);
-                }
-            };
-        if !is_opaque_id(&window_raw) {
-            return snapshot_invalid(
-                ctx.request.correlation_id.clone(),
-                MSG_OPAQUE_ID,
-                "drag-drop-window-invalid",
-            );
-        }
-        let core_command = core_command_from_sync(&SyncCommand::DragDrop {
-            window: window_raw,
-            x,
-            y,
-        })
-        .expect("drag-drop sync op converts");
+                let (kind, message) = classify_parse_error(&error);
+                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+            }
+        };
+        let core_command = core_command_from_sync(&command).expect("drag sync op converts");
         let event = core_event(ctx, &core_command);
         self.handle_and_serialize(ctx, &event)
     }
@@ -2933,12 +3038,153 @@ struct ActiveGroupCommand {
     op: String,
 }
 
+/// Wire stored next hover for the carried sticky group-edge prior: the group
+/// id plus the edge direction (`left`/`right`/`top`/`bottom`; `center` never
+/// carries stickiness). Strict shape via `deny_unknown_fields`; semantic
+/// validity (group id, edge token) is judged at conversion, where invalid
+/// values degrade to ignoring the whole carry (never refused, never enabling
+/// arbitrary hover).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DragPriorDto {
+    group: String,
+    edge: String,
+}
+
+/// Wire sticky hover carry for `drag-drop`/`drag-preview`: the exact drag
+/// source identity plus the capture revision and the stored next hover
+/// (`prior` null/absent when the last hover was not a group edge). Strict
+/// shape via `deny_unknown_fields`; semantic validity (opaque ids, revision
+/// bound, prior edge) is judged at conversion, where any invalid value
+/// degrades to ignoring the whole carry advisory-style.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DragHoverPriorDto {
+    domain_output: String,
+    domain_workspace: String,
+    source_leaf: String,
+    source_window: String,
+    revision: u64,
+    #[serde(default)]
+    prior: Option<DragPriorDto>,
+}
+
+/// Convert a decoded hover carry into the portable core value. Returns `None`
+/// when the carry is absent or semantically invalid (non-opaque ids, revision
+/// over the bound, non-edge or unknown prior edge/group): the caller then
+/// proceeds without a carry so an invalid prior can neither enable arbitrary
+/// hover nor clear valid sticky state. Wire-shape violations never reach here
+/// (they already refused via the tagged decode).
+fn convert_hover_prior(
+    dto: Option<&DragHoverPriorDto>,
+) -> Option<tiler_core::session::DragHoverPrior> {
+    let dto = dto.as_ref()?;
+    if !is_opaque_id(&dto.domain_output)
+        || !is_opaque_id(&dto.domain_workspace)
+        || !is_opaque_id(&dto.source_leaf)
+        || !is_opaque_id(&dto.source_window)
+        || dto.revision > PLAN_MAX_REVISION
+    {
+        return None;
+    }
+    let prior = match &dto.prior {
+        None => None,
+        Some(prior) => {
+            if !is_opaque_id(&prior.group) {
+                return None;
+            }
+            let edge = match prior.edge.as_str() {
+                "left" => tiler_core::contract::DragSide::Left,
+                "right" => tiler_core::contract::DragSide::Right,
+                "top" => tiler_core::contract::DragSide::Top,
+                "bottom" => tiler_core::contract::DragSide::Bottom,
+                _ => return None,
+            };
+            Some(tiler_core::policy::PriorGroupEdge {
+                group: NodeId::from(prior.group.as_str()),
+                edge,
+            })
+        }
+    };
+    Some(tiler_core::session::DragHoverPrior {
+        domain: DomainKey {
+            output: OutputId(dto.domain_output.clone()),
+            workspace: WorkspaceId(dto.domain_workspace.clone()),
+        },
+        source_leaf: NodeId::from(dto.source_leaf.as_str()),
+        source_window: WindowId(dto.source_window.clone()),
+        revision: dto.revision,
+        prior,
+    })
+}
+
+/// Shared drag [`tiler_core::boundary::CoreCommand`] construction over one
+/// [`DragPayload`]: advisory hover carry plus Started source binding plus the
+/// pointer. Single source so drop and preview cannot drift; `preview` selects
+/// the read-only variant. Invalid carry/binding degrades to no carry /
+/// same-output (never refused, never enabling arbitrary hover).
+fn drag_core_command(payload: &DragPayload, preview: bool) -> tiler_core::boundary::CoreCommand {
+    use tiler_core::boundary::CoreCommand;
+    let source = match (&payload.source_output, &payload.source_workspace) {
+        (Some(output), Some(workspace)) if is_opaque_id(output) && is_opaque_id(workspace) => {
+            Some(DomainKey {
+                output: OutputId(output.clone()),
+                workspace: WorkspaceId(workspace.clone()),
+            })
+        }
+        _ => None,
+    };
+    let hover_prior = convert_hover_prior(payload.hover_prior.as_ref());
+    if preview {
+        CoreCommand::DragPreview {
+            window: payload.window.clone(),
+            x: payload.x,
+            y: payload.y,
+            hover_prior,
+            source,
+        }
+    } else {
+        CoreCommand::DragDrop {
+            window: payload.window.clone(),
+            x: payload.x,
+            y: payload.y,
+            hover_prior,
+            source,
+        }
+    }
+}
+
+/// Shared `drag-drop`/`drag-preview` request shape (option B): pointer `x`/`y`,
+/// an advisory sticky hover carry, and an advisory Started cross-output source
+/// binding. Single source so both `SyncCommand` variants stay wire-identical;
+/// distinct `op` tokens and the read-only preview reply stay distinct. Unknown
+/// fields still refuse via `deny_unknown_fields`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DragPayload {
+    window: String,
+    x: i32,
+    y: i32,
+    /// Optional carried sticky hover prior, applied advisory-style between
+    /// begin and drop/preview. Absent preserves legacy behavior.
+    #[serde(default)]
+    hover_prior: Option<DragHoverPriorDto>,
+    /// Optional Started cross-output source binding (source output). Absent
+    /// preserves same-output behavior; paired with `source_workspace`,
+    /// validated opaque, cross-output only.
+    #[serde(default)]
+    source_output: Option<String>,
+    /// Optional Started cross-output source binding (source workspace).
+    #[serde(default)]
+    source_workspace: Option<String>,
+}
+
 /// Typed synchronous command codec (narrow).
 ///
-/// Internally tagged on `op` with `deny_unknown_fields` for all ten
+/// Internally tagged on `op` with `deny_unknown_fields` for all eleven
 /// synchronous command ops: reconcile, update-gaps, active-group, move,
-/// focus, resize, pointer-resize, toggle-float, `send-to-workspace`, and
-/// `drag-drop`.
+/// focus, resize, pointer-resize, toggle-float, `send-to-workspace`,
+/// `drag-drop`, and read-only `drag-preview`.
 /// Sync handlers parse
 /// [`SyncCommand`] once in place after the existing dispatch boundaries
 /// (validation, send dispatch, binding sync): the production `evaluate`
@@ -3010,7 +3256,9 @@ enum SyncCommand {
         target_workspace: String,
     },
     #[serde(rename = "drag-drop")]
-    DragDrop { window: String, x: i32, y: i32 },
+    DragDrop(DragPayload),
+    #[serde(rename = "drag-preview")]
+    DragPreview(DragPayload),
 }
 
 /// Legacy op-mismatch mapping for converted handlers (see [`SyncCommand`]):
@@ -3099,11 +3347,8 @@ fn core_command_from_sync(command: &SyncCommand) -> Option<tiler_core::boundary:
             target_output: target_output.clone(),
             target_workspace: target_workspace.clone(),
         }),
-        SyncCommand::DragDrop { window, x, y } => Some(CoreCommand::DragDrop {
-            window: window.clone(),
-            x: *x,
-            y: *y,
-        }),
+        SyncCommand::DragDrop(payload) => Some(drag_core_command(payload, false)),
+        SyncCommand::DragPreview(payload) => Some(drag_core_command(payload, true)),
     }
 }
 
@@ -3196,6 +3441,8 @@ fn no_group_reply(ctx: &Validated, base_revision: Option<u64>, reason: &'static 
         float_geometry: None,
         preconditions: None,
         operation: None,
+        preview_rect: None,
+        hover_prior: None,
     })
 }
 
@@ -3259,6 +3506,8 @@ fn serialize_active_group_found(
         float_geometry: None,
         preconditions: None,
         operation: None,
+        preview_rect: None,
+        hover_prior: None,
     })
 }
 
@@ -4978,8 +5227,8 @@ mod tests {
         );
     }
     #[test]
-    fn typed_sync_codec_covers_all_ten_ops_total() {
-        // Fence proof for the boundary conversion: all ten synchronous wire
+    fn typed_sync_codec_covers_all_eleven_ops_total() {
+        // Fence proof for the boundary conversion: all eleven synchronous wire
         // ops decode once via `SyncCommand`, then convert into `CoreCommand`
         // with the identical `op` token. Fallible vocabularies
         // (direction/mode) cross opaquely. The eight retired wire ops
@@ -4995,8 +5244,9 @@ mod tests {
             serde_json::json!({"op": "toggle-float", "window": "win-1"}),
             serde_json::json!({"op": "send-to-workspace", "window": "win-1", "target_output": "out-1", "target_workspace": "ws-2"}),
             serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 610, "y": 400}),
+            serde_json::json!({"op": "drag-preview", "window": "win-1", "x": 610, "y": 400}),
         ];
-        assert_eq!(commands.len(), 10);
+        assert_eq!(commands.len(), 11);
         let mut ops = std::collections::HashSet::new();
         for command in &commands {
             let decoded: SyncCommand =
@@ -5006,7 +5256,7 @@ mod tests {
             assert_eq!(converted.op(), expected);
             ops.insert(converted.op());
         }
-        assert_eq!(ops.len(), 10);
+        assert_eq!(ops.len(), 11);
         // Opaque crossing: an unknown direction string converts without
         // validation; handlers own precedence.
         let decoded: SyncCommand = serde_json::from_value(
@@ -5708,6 +5958,429 @@ mod tests {
         assert_eq!(extra["kind"], "unknown-field", "{extra}");
         assert_eq!(planner.retained_domains(), 0);
     }
+
+    #[test]
+    fn drag_preview_is_read_only_and_matches_drop_geometry() {
+        // Read-only preview over the DescribePlan boundary: same complete
+        // observation as drag-drop, proposed rect plus carried hover state,
+        // no commit, no revision change, no seeding. The follow-up drop at
+        // the same point plans the same target, and a follow-up reconcile
+        // projects the untouched retained pair.
+        let two = vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)];
+        let mut planner = seed_two_window_planner();
+        let preview = parse_reply(&planner.evaluate(&retained_request(
+            "pv-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "drag-preview", "window": "win-1", "x": 900, "y": 5}),
+        )));
+        assert_eq!(preview["outcome"], "preview", "{preview}");
+        assert_eq!(preview["kind"], "drag-preview", "{preview}");
+        assert_eq!(preview["base_revision"], 2, "{preview}");
+        assert_eq!(preview["detail"]["kind"], "drag-preview", "{preview}");
+        assert_eq!(preview["detail"]["capability"], "place-tiled", "{preview}");
+        let rect = &preview["preview_rect"];
+        assert_eq!(
+            rect,
+            &serde_json::json!({"x": 0, "y": 0, "w": 1200, "h": 400}),
+            "{preview}"
+        );
+        let hover = &preview["hover_prior"];
+        assert_eq!(hover["domain_output"], "out-1", "{preview}");
+        assert_eq!(hover["domain_workspace"], "ws-1", "{preview}");
+        assert_eq!(hover["source_leaf"], "leaf-win-1", "{preview}");
+        assert_eq!(hover["source_window"], "win-1", "{preview}");
+        assert_eq!(hover["revision"], 2, "{preview}");
+        assert_eq!(planner.retained_domains(), 1);
+        // Read-only: a reconcile afterwards still projects the retained pair.
+        let after = parse_reply(&planner.evaluate(&retained_request(
+            "pv-2",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(after["outcome"], "planned", "{after}");
+        assert_eq!(after["detail"]["kind"], "reconcile", "{after}");
+        assert_geometry_covers(&after, &["win-1", "win-2"]);
+        // The follow-up drop at the same point plans the same target slot.
+        let drop = parse_reply(&planner.evaluate(&retained_request(
+            "pv-3",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 900, "y": 5}),
+        )));
+        assert_eq!(drop["outcome"], "planned", "{drop}");
+        assert_eq!(drop["detail"]["kind"], "drag-drop", "{drop}");
+        assert_eq!(
+            drop["base_revision"], preview["base_revision"],
+            "{drop} vs {preview}: preview must not advance the revision"
+        );
+        let geometry = drop["desired_geometry"].as_array().expect("geometry");
+        let moved = geometry
+            .iter()
+            .find(|g| g["window"] == "win-1")
+            .expect("moved geometry");
+        assert_eq!(
+            moved["rect"],
+            serde_json::json!({"x": 0, "y": 0, "w": 1200, "h": 400}),
+            "{drop} vs {preview}"
+        );
+    }
+
+    #[test]
+    fn drag_preview_op_shape_and_size_hints_match_drop() {
+        // Wire-shape fences mirror drag-drop (wrong op, bad window, unknown
+        // fields, unknown prior fields). Fresh size hints shape the proposed
+        // rect exactly like the drop's final geometry.
+        let mut planner = Planner::new();
+        let wrong_op = parse_reply(&planner.evaluate(&retained_request(
+            "pv-shape-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "drag-preview", "window": "win-1", "x": 1}),
+        )));
+        assert_eq!(wrong_op["outcome"], "rejected", "{wrong_op}");
+        assert_eq!(wrong_op["kind"], "request-malformed", "{wrong_op}");
+        let extra = parse_reply(&planner.evaluate(&retained_request(
+            "pv-shape-2",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "drag-preview", "window": "win-1", "x": 10, "y": 10, "bogus": 1}),
+        )));
+        assert_eq!(extra["outcome"], "rejected", "{extra}");
+        assert_eq!(extra["kind"], "unknown-field", "{extra}");
+        let bad_prior = parse_reply(&planner.evaluate(&retained_request(
+            "pv-shape-3",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "drag-preview", "window": "win-1", "x": 10, "y": 10, "hover_prior": {"bogus": 1}}),
+        )));
+        assert_eq!(bad_prior["outcome"], "rejected", "{bad_prior}");
+        assert_eq!(bad_prior["kind"], "unknown-field", "{bad_prior}");
+        // Size hints: seed a pair, then preview/drop with a min_w hint on the
+        // sibling. Both must agree on the narrowed proposed rect.
+        let mut planner = seed_two_window_planner();
+        let two = vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)];
+        let mut hints = std::collections::BTreeMap::new();
+        hints.insert("win-2", (Some((800, 100)), None));
+        let preview = parse_reply(&planner.evaluate(&retained_request_with_hints(
+            "pv-hint-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            &hints,
+            serde_json::json!({"op": "drag-preview", "window": "win-1", "x": 900, "y": 5}),
+        )));
+        assert_eq!(preview["outcome"], "preview", "{preview}");
+        let drop = parse_reply(&planner.evaluate(&retained_request_with_hints(
+            "pv-hint-2",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            &hints,
+            serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 900, "y": 5}),
+        )));
+        assert_eq!(drop["outcome"], "planned", "{drop}");
+        let moved = drop["desired_geometry"]
+            .as_array()
+            .expect("geometry")
+            .iter()
+            .find(|g| g["window"] == "win-1")
+            .expect("moved geometry");
+        assert_eq!(
+            moved["rect"], preview["preview_rect"],
+            "{drop} vs {preview}"
+        );
+    }
+
+    #[test]
+    fn drag_hover_prior_carries_sticky_edge_and_invalid_prior_is_ignored() {
+        // The preview's hover_prior forwards verbatim into the next preview
+        // and the final drop. A semantically invalid carry (wrong revision)
+        // is ignored advisory-style: the request still resolves without
+        // enabling arbitrary hover.
+        let mut planner = seed_two_window_planner();
+        let two = vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)];
+        let first = parse_reply(&planner.evaluate(&retained_request(
+            "hp-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            serde_json::json!({"op": "drag-preview", "window": "win-1", "x": 900, "y": 5}),
+        )));
+        assert_eq!(first["outcome"], "preview", "{first}");
+        let hover = first["hover_prior"].clone();
+        assert_eq!(hover["source_window"], "win-1", "{first}");
+        // Forward the exact carry into the next preview: still resolves with
+        // the same proposed rect.
+        let mut command =
+            serde_json::json!({"op": "drag-preview", "window": "win-1", "x": 900, "y": 5});
+        command["hover_prior"] = hover.clone();
+        let second = parse_reply(&planner.evaluate(&retained_request(
+            "hp-2", "owner-1", "gen-1", "win-1", &two, command,
+        )));
+        assert_eq!(second["outcome"], "preview", "{second}");
+        assert_eq!(
+            second["preview_rect"], first["preview_rect"],
+            "{second} vs {first}"
+        );
+        // Invalid carry (wrong revision) is ignored: still previews the same
+        // slot. Checked before any committing drop so the retained topology
+        // still matches the preview point.
+        let mut bad = hover.clone();
+        bad["revision"] = serde_json::json!(999_999);
+        let mut bad_command =
+            serde_json::json!({"op": "drag-preview", "window": "win-1", "x": 900, "y": 5});
+        bad_command["hover_prior"] = bad.clone();
+        let bad_preview = parse_reply(&planner.evaluate(&retained_request(
+            "hp-4",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            bad_command,
+        )));
+        assert_eq!(bad_preview["outcome"], "preview", "{bad_preview}");
+        assert_eq!(
+            bad_preview["preview_rect"], first["preview_rect"],
+            "{bad_preview} vs {first}"
+        );
+        // Forward the exact carry into the final drop: plans the same slot.
+        let mut drop_command =
+            serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 900, "y": 5});
+        drop_command["hover_prior"] = hover.clone();
+        let drop = parse_reply(&planner.evaluate(&retained_request(
+            "hp-3",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            drop_command,
+        )));
+        assert_eq!(drop["outcome"], "planned", "{drop}");
+        let moved = drop["desired_geometry"]
+            .as_array()
+            .expect("geometry")
+            .iter()
+            .find(|g| g["window"] == "win-1")
+            .expect("moved geometry");
+        assert_eq!(moved["rect"], first["preview_rect"], "{drop} vs {first}");
+        // Invalid prior edge token is also ignored, never arbitrary.
+        let mut bad_edge = hover.clone();
+        bad_edge["prior"] = serde_json::json!({"group": "grp-x", "edge": "center"});
+        let mut bad_edge_command =
+            serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 900, "y": 5});
+        bad_edge_command["hover_prior"] = bad_edge;
+        // Fresh planner so the drop commits from the seeded revision.
+        let mut fresh = seed_two_window_planner();
+        let bad_drop = parse_reply(&fresh.evaluate(&retained_request(
+            "hp-5",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &two,
+            bad_edge_command,
+        )));
+        assert_eq!(bad_drop["outcome"], "planned", "{bad_drop}");
+    }
+    #[test]
+    fn drag_singleton_source_binding_gates_cross_output_admit() {
+        // Singleton snap-back stays `unchanged` without a source binding, with
+        // a same-output binding, or with an invalid binding. Only an explicit
+        // validated Started source on a different output admits, for both
+        // drop and preview. Invalid bindings degrade advisory-style (no
+        // refusal of the shape, just no singleton admit).
+        let seed_singleton = || {
+            let mut planner = Planner::new();
+            let reply = parse_reply(&planner.evaluate(&retained_request(
+                "sg-seed-1",
+                "owner-1",
+                "gen-1",
+                "win-1",
+                &[("win-1", 0, 0, 100, 80)],
+                serde_json::json!({"op": "reconcile"}),
+            )));
+            assert_eq!(reply["outcome"], "planned", "{reply}");
+            planner
+        };
+        let one = vec![("win-1", 0, 0, 100, 80)];
+        // Same-output drop (no source) snaps back.
+        let mut planner = seed_singleton();
+        let same = parse_reply(&planner.evaluate(&retained_request(
+            "sg-drop-same",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &one,
+            serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 600, "y": 400}),
+        )));
+        assert_eq!(same["outcome"], "rejected", "{same}");
+        assert_eq!(same["kind"], "unchanged", "{same}");
+        // Same-output binding also snaps back (no fabricated target).
+        let same_bound = parse_reply(&planner.evaluate(&retained_request(
+            "sg-drop-same-bound",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &one,
+            serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 600, "y": 400, "source_output": "out-1", "source_workspace": "ws-1"}),
+        )));
+        assert_eq!(same_bound["outcome"], "rejected", "{same_bound}");
+        assert_eq!(same_bound["kind"], "unchanged", "{same_bound}");
+        // Invalid binding degrades to same-output (no admit, no shape refusal).
+        let invalid = parse_reply(&planner.evaluate(&retained_request(
+            "sg-drop-invalid",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &one,
+            serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 600, "y": 400, "source_output": "!!!", "source_workspace": "ws-1"}),
+        )));
+        assert_eq!(invalid["outcome"], "rejected", "{invalid}");
+        assert_eq!(invalid["kind"], "unchanged", "{invalid}");
+        // Cross-output binding admits the singleton placement.
+        let cross = parse_reply(&planner.evaluate(&retained_request(
+            "sg-drop-cross",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &one,
+            serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 600, "y": 400, "source_output": "out-2", "source_workspace": "ws-1"}),
+        )));
+        assert_eq!(cross["outcome"], "planned", "{cross}");
+        assert_eq!(cross["detail"]["kind"], "drag-drop", "{cross}");
+        // Preview mirrors drop: same-output snaps back, cross-output previews.
+        let mut preview_planner = seed_singleton();
+        let pv_same = parse_reply(&preview_planner.evaluate(&retained_request(
+            "sg-pv-same",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &one,
+            serde_json::json!({"op": "drag-preview", "window": "win-1", "x": 600, "y": 400}),
+        )));
+        assert_eq!(pv_same["outcome"], "rejected", "{pv_same}");
+        assert_eq!(pv_same["kind"], "unchanged", "{pv_same}");
+        let pv_cross = parse_reply(&preview_planner.evaluate(&retained_request(
+            "sg-pv-cross",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &one,
+            serde_json::json!({"op": "drag-preview", "window": "win-1", "x": 600, "y": 400, "source_output": "out-2", "source_workspace": "ws-1"}),
+        )));
+        assert_eq!(pv_cross["outcome"], "preview", "{pv_cross}");
+        assert_eq!(pv_cross["kind"], "drag-preview", "{pv_cross}");
+    }
+    #[test]
+    fn drag_moved_source_may_straddle_while_survivor_stays_contained() {
+        // KWin native interactive move carries the dragged frame with the
+        // pointer: a valid moved-source rect may straddle or sit outside the
+        // destination usable bounds while the drop pointer stays inside (drop
+        // policy uses the pointer, not the frame). Only the moved source is
+        // exempt; survivors and all other ops keep containment, and invalid
+        // rects still refuse.
+        let straddling = vec![("win-1", 1100, 0, 200, 80), ("win-2", 200, 0, 100, 80)];
+        let mut planner = seed_two_window_planner();
+        let preview = parse_reply(&planner.evaluate(&retained_request(
+            "drag-straddle-pv",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &straddling,
+            serde_json::json!({"op": "drag-preview", "window": "win-1", "x": 900, "y": 5}),
+        )));
+        assert_eq!(preview["outcome"], "preview", "{preview}");
+        assert_eq!(preview["kind"], "drag-preview", "{preview}");
+        let drop = parse_reply(&planner.evaluate(&retained_request(
+            "drag-straddle-drop",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &straddling,
+            serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 900, "y": 5}),
+        )));
+        assert_eq!(drop["outcome"], "planned", "{drop}");
+        assert_eq!(drop["detail"]["kind"], "drag-drop", "{drop}");
+        // Fully outside-but-valid source rect is also accepted while the
+        // pointer stays inside the work area.
+        let mut planner = seed_two_window_planner();
+        let outside_source = vec![("win-1", 1300, 100, 100, 80), ("win-2", 200, 0, 100, 80)];
+        let preview_out = parse_reply(&planner.evaluate(&retained_request(
+            "drag-outsider-src-pv",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &outside_source,
+            serde_json::json!({"op": "drag-preview", "window": "win-1", "x": 900, "y": 5}),
+        )));
+        assert_eq!(preview_out["outcome"], "preview", "{preview_out}");
+        // Destination survivor outside the usable bounds still refuses, for
+        // both drag ops and for reconcile.
+        let outsider_survivor = vec![("win-1", 0, 0, 100, 80), ("win-2", 1300, 0, 100, 80)];
+        let mut planner = seed_two_window_planner();
+        for ((cid, command), (outcome, kind, detail)) in [
+            (
+                (
+                    "drag-survivor-pv",
+                    serde_json::json!({"op": "drag-preview", "window": "win-1", "x": 900, "y": 5}),
+                ),
+                ("rejected", "snapshot-invalid", "window-out-of-bounds"),
+            ),
+            (
+                (
+                    "drag-survivor-drop",
+                    serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 900, "y": 5}),
+                ),
+                ("rejected", "snapshot-invalid", "window-out-of-bounds"),
+            ),
+            (
+                ("drag-survivor-rec", serde_json::json!({"op": "reconcile"})),
+                ("rejected", "snapshot-invalid", "window-out-of-bounds"),
+            ),
+        ] {
+            let reply = parse_reply(&planner.evaluate(&retained_request(
+                cid,
+                "owner-1",
+                "gen-1",
+                "win-1",
+                &outsider_survivor,
+                command,
+            )));
+            assert_eq!(reply["outcome"], outcome, "{reply}");
+            assert_eq!(reply["kind"], kind, "{reply}");
+            assert_eq!(reply["detail"], detail, "{reply}");
+        }
+        // Invalid moved-source rects still fence, even for drag ops.
+        let mut planner = seed_two_window_planner();
+        let invalid_source = vec![("win-1", 0, 0, 0, 80), ("win-2", 200, 0, 100, 80)];
+        let invalid = parse_reply(&planner.evaluate(&retained_request(
+            "drag-invalid-src-pv",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &invalid_source,
+            serde_json::json!({"op": "drag-preview", "window": "win-1", "x": 900, "y": 5}),
+        )));
+        assert_eq!(invalid["outcome"], "rejected", "{invalid}");
+        assert_eq!(invalid["kind"], "snapshot-invalid", "{invalid}");
+        assert_eq!(invalid["detail"], "window-rect-invalid", "{invalid}");
+    }
     #[test]
     fn untracked_floating_toggle_float_rect_precedence_and_fresh_unfloat() {
         // Probe precedence covers an invalid `float_rect` too: an untracked
@@ -5778,7 +6451,7 @@ mod tests {
             );
             assert!(seen.insert(*token), "duplicate token: {token}");
         }
-        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 51, "closed registry size");
+        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 52, "closed registry size");
     }
 
     fn geometry_by_window(

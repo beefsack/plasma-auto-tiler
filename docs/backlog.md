@@ -50,8 +50,10 @@ decisions of 2026-09-24 are recorded under
   output joins that output's tiling at the drop point, resolved by the same
   core drop policy in the destination domain; not snap-back, not normal
   placement. Removes the source domain membership; must not fight the
-  source-scoped restore marker. Overlaps the live preview work (a preview
-  must resolve in whichever domain is under the pointer).
+  source-scoped restore marker. Shipped offline pending live check together
+  with preview: KWin 788 tests/typecheck, Rust workspace 628 tests/fmt/strict
+  clippy, native build and CTest 29/29; no visual or host transfer result yet.
+  [change](changes/archive/cross-output-drag-preview.md)
 - P1 | Live drop preview (option B) | User decision (2026-09-27, option 1):
   during a tiled move drag, a separate native-effect overlay draws a filled
   translucent rectangle of the target slot ON TOP of windows; hidden for
@@ -61,10 +63,19 @@ decisions of 2026-09-24 are recorded under
   fresh observation with size hints, using the same resolver as the drop;
   carry sticky group-edge hover prior into later samples and the final drop
   so preview and drop agree (Orchestrator: keeps current policy); resolve in
-  the domain under the pointer. Build together with cross-output drops at
-  the drop point. Est. 400-600+ production lines. User note: the same overlay
+  the domain under the pointer. Shipped offline pending live check with the
+  cross-output drop (same 788 KWin, 628 Rust and 29 native test evidence);
+  production net +1,558 across both items after simplification, with the
+  remaining chunks justified in the
+  [change](changes/archive/cross-output-drag-preview.md). User note: the same overlay
   approach should inform the group highlight redesign, which renders beneath
   windows whereas the drop preview renders above them.
+- P2 | Simplify drag preview and cross-output drop code | Orchestrator
+  (2026-09-28): +1,558 net production exceeds the ~600-900 target. After the
+  live check confirms behavior, cut defensive duplication: script-side
+  `hover_prior` shape validation that Rust already treats as advisory,
+  lag-only overlay fences that the existing verify path covers, and verbose
+  comments restating code; target net deletion without behavior change.
 - P2 | Live sibling reflow while dragging | User request, not high priority.
   Research: no project per-step sibling writer found in history; the
   remembered behavior is likely KWin Custom Tile native reflow (hypothesis).

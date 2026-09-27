@@ -28,13 +28,13 @@ use crate::geometry::Rect;
 use crate::ids::{CorrelationId, GenerationId, OwnerId};
 use crate::seed::EngineWindow;
 use crate::session::{
-    DesiredGeometry, DomainKey, OutputDomain, Session, SessionDragPlan, SessionFocusPlan,
-    SessionMovePlan, SessionPlan, SessionResizePlan,
+    DesiredGeometry, DomainKey, DragHoverPrior, DragPreview, OutputDomain, Session,
+    SessionDragPlan, SessionFocusPlan, SessionMovePlan, SessionPlan, SessionResizePlan,
 };
 
-/// Typed command for all 10 wire ops: reconcile, update-gaps, active-group,
+/// Typed command for all 11 wire ops: reconcile, update-gaps, active-group,
 /// move, focus, resize, pointer-resize, toggle-float, `send-to-workspace`,
-/// and `drag-drop`.
+/// `drag-drop`, and read-only `drag-preview`.
 /// Payloads are already-decoded clones; fallible wire vocabularies
 /// (direction/mode) cross opaquely so this conversion stays total
 /// and handler precedence is untouched.
@@ -83,6 +83,26 @@ pub enum CoreCommand {
         window: String,
         x: i32,
         y: i32,
+        /// Optional carried sticky hover prior, applied advisory-style between
+        /// begin and drop via `Session::carry_drag_prior`. `None` preserves
+        /// legacy behavior; mismatched carries are ignored, never refused.
+        hover_prior: Option<DragHoverPrior>,
+        /// Optional validated Started cross-output source binding (source
+        /// domain key). `None` preserves same-output behavior; singleton
+        /// success requires `Some` with a different output from the request
+        /// destination (validated opaque, cross-output only).
+        source: Option<DomainKey>,
+    },
+    DragPreview {
+        window: String,
+        x: i32,
+        y: i32,
+        /// Optional carried sticky hover prior, applied advisory-style between
+        /// begin and preview via `Session::carry_drag_prior`.
+        hover_prior: Option<DragHoverPrior>,
+        /// Optional validated Started cross-output source binding, mirroring
+        /// `DragDrop.source`.
+        source: Option<DomainKey>,
     },
 }
 
@@ -101,6 +121,7 @@ impl CoreCommand {
             Self::ToggleFloat { .. } => "toggle-float",
             Self::SendToWorkspace { .. } => "send-to-workspace",
             Self::DragDrop { .. } => "drag-drop",
+            Self::DragPreview { .. } => "drag-preview",
         }
     }
 }
@@ -571,7 +592,17 @@ pub enum ActiveGroupResolution {
     },
 }
 
-/// Typed reply across all 10 ops plus every rejection shape. Success variants
+/// Read-only drag-preview success plan: the retained base revision plus the
+/// authoritative [`DragPreview`] from a discarded working clone. Carries the
+/// proposed rect and the carried hover state (`preview.hover_prior()`); never
+/// commits, never advances the revision, never seeds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DragPreviewPlan {
+    pub base_revision: u64,
+    pub preview: DragPreview,
+}
+
+/// Typed reply across all 11 ops plus every rejection shape. Success variants
 /// carry core plans; rejection variants carry the closed
 /// `&'static str` kind/message/detail vocabulary (single sources live in
 /// [`crate::session`]/[`crate::contract`] and the protocol `MSG_*`
@@ -589,6 +620,7 @@ pub enum CoreReply {
         base_revision: Option<u64>,
         reason: NoGroupReason,
     },
+    DragPreview(DragPreviewPlan),
     Rejected {
         kind: &'static str,
         message: &'static str,
@@ -917,7 +949,7 @@ mod tests {
     }
 
     #[test]
-    fn all_ten_ops_have_distinct_wire_tokens() {
+    fn all_eleven_ops_have_distinct_wire_tokens() {
         use std::collections::HashSet;
         let commands = vec![
             CoreCommand::Reconcile,
@@ -959,14 +991,24 @@ mod tests {
                 window: "w".to_owned(),
                 x: 0,
                 y: 0,
+                hover_prior: None,
+                source: None,
+            },
+            CoreCommand::DragPreview {
+                window: "w".to_owned(),
+                x: 0,
+                y: 0,
+                hover_prior: None,
+                source: None,
             },
         ];
-        assert_eq!(commands.len(), 10);
+        assert_eq!(commands.len(), 11);
         let tokens: HashSet<&'static str> = commands.iter().map(|c| c.op()).collect();
-        assert_eq!(tokens.len(), 10);
+        assert_eq!(tokens.len(), 11);
         assert!(tokens.contains("reconcile"));
         assert!(tokens.contains("send-to-workspace"));
         assert!(tokens.contains("drag-drop"));
+        assert!(tokens.contains("drag-preview"));
         assert_eq!(TiledKind::DragDrop.kind_str(), "drag-drop");
         assert_eq!(TiledKind::DragDrop.capability_str(), Some("place-tiled"));
     }

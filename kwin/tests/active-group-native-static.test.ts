@@ -19,11 +19,13 @@ function countMatches(body: string, pattern: RegExp): number {
 
 describe("active-group native static contract", () => {
     it("exposes setter, clear, and a read-only status query through the effect-owned endpoint", () => {
-        assert.equal(countMatches(effectImpl, /Q_SCRIPTABLE/g), 4);
+        assert.equal(countMatches(effectImpl, /Q_SCRIPTABLE/g), 6);
         assert.match(effectImpl, /SetGroupHighlight/);
         assert.match(effectImpl, /ClearGroupHighlight/);
         assert.match(effectImpl, /GetGroupHighlightStatus/);
         assert.match(effectImpl, /LastVerdict/);
+        assert.match(effectImpl, /SetDragTargetPreview/);
+        assert.match(effectImpl, /ClearDragTargetPreview/);
         // No script maximize handoff: observation seeds directly from the
         // native committed maximizeMode().
         assert.doesNotMatch(effectImpl, /SetInitialMaximizeState/);

@@ -88,6 +88,14 @@ export type PlanDirection = "left" | "right" | "up" | "down";
 export type PlanResizeMode = "inwards" | "outwards";
 export type PlanSignal = "added" | "removed" | "activated" | "geometry" | "scope" | "fullscreen" | "maximize" | "desktops";
 export type PlanOp = "admit" | "remove" | "move" | "focus" | "resize" | "reconcile" | "update-gaps" | "pointer-resize" | "toggle-float" | "drag-drop";
+
+// Read-only drag preview result for the overlay sender: the proposed source
+// rectangle plus the verbatim carried hover state for the next preview or the
+// final drop. `hoverPrior` is the exact Rust `hover_prior` wire value.
+export interface PlanDragPreviewResult {
+    readonly rect: PlanRect;
+    readonly hoverPrior: unknown;
+}
 export type NativeStateWriteOutcome = "invoked" | "missing" | "threw";
 export type MaximizeClearOutcome = NativeStateWriteOutcome;
 export type KeepAboveWriteOutcome = NativeStateWriteOutcome | "refused";
@@ -477,6 +485,34 @@ function unexpectedFloatingSkewed(flight: PendingFlight, fresh: PlanSnapshot): b
     return false;
 }
 
+// Shared lag overlay fence: floating/sticky (with the toggle-float target
+// tolerance above) plus fullscreen/maximized exactness. `rectsEqualExceptSource`
+// compares membership/rect only, so a survivor flipping fullscreen/maximize
+// would otherwise pass both the pre-transfer projection check and the
+// post-transfer actual-destination check and apply wrong planned geometry.
+// Used only by the two lag checks; all other fences keep their behavior.
+function unexpectedOverlaySkewed(flight: PendingFlight, fresh: PlanSnapshot): boolean {
+    if (unexpectedFloatingSkewed(flight, fresh)) {
+        return true;
+    }
+    const freshById = new Map<string, PlanSnapshotWindow>();
+    for (const entry of fresh.windows) {
+        if (!freshById.has(entry.id)) {
+            freshById.set(entry.id, entry);
+        }
+    }
+    for (const entry of flight.snapshot.windows) {
+        const current = freshById.get(entry.id);
+        if (current === undefined) {
+            continue;
+        }
+        if (entry.fullscreen !== current.fullscreen || entry.maximized !== current.maximized) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Pointer-only tolerance: identical to snapshotsEqual except the drag
 // source rectangle may drift (final native echo before the D-Bus reply).
 function rectsEqualExceptSource(a: PlanSnapshot, b: PlanSnapshot, sourceId: string): boolean {
@@ -797,6 +833,57 @@ function isCorrelationId(value: unknown): value is string {
 // only (drag-<digits>), never titles, ids, or payload bytes.
 function isDragCorrelation(value: unknown): value is string {
     return typeof value === "string" && value.length > 0 && value.length <= PLAN_MAX_CORRELATION_LEN && /^drag-[0-9]+$/.test(value);
+}
+
+// Rust `hover_prior` wire shape (read-only drag preview carry): exact drag
+// source identity plus capture revision and the stored next hover (`prior`
+// null/absent when the last hover was not a group edge). Validated here so
+// only well-shaped carries ride the next preview or the final drop verbatim;
+// semantic validity beyond shape stays advisory in Rust (invalid carries are
+// ignored there, never refused).
+function isValidHoverPrior(value: unknown): boolean {
+    if (!isRecord(value)) {
+        return false;
+    }
+    const keys = Object.keys(value);
+    if (keys.length < 5 || keys.length > 6) {
+        return false;
+    }
+    for (const key of ["domain_output", "domain_workspace", "source_leaf", "source_window", "revision"]) {
+        if (!Object.prototype.hasOwnProperty.call(value, key)) {
+            return false;
+        }
+    }
+    if (
+        !isOpaqueId(value["domain_output"]) ||
+        !isOpaqueId(value["domain_workspace"]) ||
+        !isOpaqueId(value["source_leaf"]) ||
+        !isOpaqueId(value["source_window"])
+    ) {
+        return false;
+    }
+    const revision = value["revision"];
+    if (!isFiniteInt(revision) || (revision as number) < 0 || (revision as number) > PLAN_MAX_SEQ) {
+        return false;
+    }
+    if (!Object.prototype.hasOwnProperty.call(value, "prior")) {
+        return keys.length === 5;
+    }
+    if (keys.length !== 6) {
+        return false;
+    }
+    const prior = value["prior"];
+    if (prior === null || prior === undefined) {
+        return true;
+    }
+    if (!isRecord(prior) || !hasExactKeys(prior, ["group", "edge"])) {
+        return false;
+    }
+    if (!isOpaqueId(prior["group"])) {
+        return false;
+    }
+    const edge = prior["edge"];
+    return edge === "left" || edge === "right" || edge === "top" || edge === "bottom";
 }
 
 function isDirection(value: unknown): value is PlanDirection {
@@ -1822,6 +1909,26 @@ export class PlanAdapter {
     // output/workspace.
     private dragRestore = new Map<string, DragRestoreMarker>();
     private dragRestoreSeq = 0;
+    // Bounded read-only drag preview state (no timers, no caps, no queue):
+    // one entry per drag-N correlation carrying the last validated
+    // `hover_prior` plus the one live reply fence (sequence, scope,
+    // owner/generation, callback). Entry-driven clearing; terminals consume.
+    private dragPreviewSeq = 0;
+    private dragPreview = new Map<
+        string,
+        {
+            prior?: unknown;
+            live?: {
+                seq: number;
+                scope: string;
+                owner: string;
+                generation: string;
+                window: string;
+                correlation: string;
+                callback: (result: PlanDragPreviewResult | null) => void;
+            };
+        }
+    >();
 
     constructor(private readonly env: PlanAdapterEnv) {}
 
@@ -1908,6 +2015,7 @@ export class PlanAdapter {
         this.activeProbe = 0;
         this.clearProbeTimer();
         this.r4WriteDepth = 0;
+        this.dragPreview.clear();
         this.clearRepeat();
         return true;
     }
@@ -1948,6 +2056,7 @@ export class PlanAdapter {
         this.activeProbe = 0;
         this.clearProbeTimer();
         this.r4WriteDepth = 0;
+        this.dragPreview.clear();
         this.clearRepeat();
         this.clearTimer();
         this.clearR4ArrivalTimer();
@@ -3138,6 +3247,102 @@ export class PlanAdapter {
         return true;
     }
 
+    // Pointer-domain observation for preview (read-only) and drop (dispatch):
+    // domain under the pointer, not the mover's native domain. A single
+    // hidden domain containing the pointer supplies the destination with the
+    // mover projected there for planning only (exact mover ref, no native
+    // assignment). Ambiguous/unreadable hidden evidence fails closed as
+    // `outside`; zero matches fall back to the source observation (preview
+    // refuses, drop dispatches from source). Started source binding is parsed
+    // here; cross/output authority stays with the callers. Emits no logs.
+    private buildPointerDomainObservation(
+        windowId: string,
+        px: number,
+        py: number,
+        sourceDomain: unknown,
+    ):
+        | {
+              ok: true;
+              sourceObserved: PlanObserved;
+              effectiveObserved: PlanObserved;
+              mover: PlanObservedWindow;
+              explicitSource: { output: string; workspace: string } | null;
+              pointerInSource: boolean;
+              projected: boolean;
+          }
+        | { ok: false; reason: "observe" | "absent" | "outside"; output?: string; workspace?: string } {
+        const observed = this.freshObserved();
+        if (observed === null) {
+            return { ok: false, reason: "observe" };
+        }
+        const mover = observed.windows.find((entry) => entry.id === windowId);
+        if (mover === undefined) {
+            return { ok: false, reason: "absent", output: observed.domainOutput, workspace: observed.domainWorkspace };
+        }
+        // Started binding is closed-vocabulary; parsing never throws.
+        const srcRecord = isRecord(sourceDomain) ? sourceDomain : null;
+        const srcOutput = srcRecord !== null ? srcRecord["output"] : undefined;
+        const srcWorkspace = srcRecord !== null ? srcRecord["workspace"] : undefined;
+        const explicitSource =
+            isOpaqueId(srcOutput) && isOpaqueId(srcWorkspace) ? { output: srcOutput, workspace: srcWorkspace } : null;
+        const outside = { ok: false as const, reason: "outside" as const, output: observed.domainOutput, workspace: observed.domainWorkspace };
+        const inBounds = (bounds: PlanRect): boolean =>
+            px >= bounds.x && py >= bounds.y && px < bounds.x + bounds.w && py < bounds.y + bounds.h;
+        if (inBounds(observed.domainBounds)) {
+            return { ok: true, sourceObserved: observed, effectiveObserved: observed, mover, explicitSource, pointerInSource: true, projected: false };
+        }
+        // One hidden read: throw/non-array is unreadable (fail closed).
+        let hidden: ReadonlyArray<PlanObserved> | null = null;
+        try {
+            hidden = this.env.observeHidden?.() ?? null;
+        } catch (error) {
+            void error;
+        }
+        if (!Array.isArray(hidden)) {
+            return outside;
+        }
+        const matches = hidden.filter(
+            (candidate) =>
+                typeof candidate === "object" &&
+                candidate !== null &&
+                isTargetRect(candidate.domainBounds) &&
+                inBounds(candidate.domainBounds),
+        );
+        if (matches.length > 1) {
+            return outside;
+        }
+        if (matches.length === 0) {
+            return { ok: true, sourceObserved: observed, effectiveObserved: observed, mover, explicitSource, pointerInSource: false, projected: false };
+        }
+        const dest = matches[0] as PlanObserved;
+        if (dest.windows.some((entry) => entry.id === windowId)) {
+            return { ok: true, sourceObserved: observed, effectiveObserved: dest, mover, explicitSource, pointerInSource: false, projected: false };
+        }
+        // Project the source-native mover for planning only (exact mover ref
+        // keeps size hints; no native assignment).
+        const projectedWindow: PlanObservedWindow = {
+            ...mover,
+            rect: { ...mover.rect },
+            output: dest.domainOutput,
+            workspace: dest.domainWorkspace,
+        };
+        const combined = [...dest.windows, projectedWindow];
+        const fp = String(planFingerprint(dest.domainOutput, dest.domainWorkspace, mover.id, combined.map((entry) => entry.id).sort()));
+        const effective: PlanObserved = {
+            domainOutput: dest.domainOutput,
+            domainWorkspace: dest.domainWorkspace,
+            domainBounds: dest.domainBounds,
+            domainGap: dest.domainGap,
+            domainOuterGap: dest.domainOuterGap,
+            focusedId: mover.id,
+            windows: combined,
+            activeRef: mover.ref,
+            fingerprint: fp,
+            revalidate: () => false,
+        };
+        return { ok: true, sourceObserved: observed, effectiveObserved: effective, mover, explicitSource, pointerInSource: false, projected: true };
+    }
+
     // Oracle route: one drag-drop intent from the finish-captured script
     // pointer (workspace.cursorPos at FINISH, carried in the finish context,
     // never read at reply) plus the verdict window identity. Strict decoding
@@ -3153,9 +3358,19 @@ export class PlanAdapter {
     // a single existing-route reconcile (or through any superseding applied
     // plan for the same domain). Calls without a drag correlation behave
     // exactly like pointer-resize without one (no marker, no follow-up).
-    requestDragDrop(windowId: unknown, x: unknown, y: unknown, dragCorrelation?: unknown, sourceDomain?: unknown): boolean {
+    // The optional 6th arg carries the entry's local preview correlation
+    // (`drag-<Started epoch>`, validated like any drag-N token): the native
+    // verdict correlation is only known at Finish, so stepped previews run
+    // under the local key. When present, its last validated `hover_prior`
+    // rides the drop verbatim (preview key first, then drag key) and the
+    // preview live slot is consumed so late preview replies fence out.
+    requestDragDrop(windowId: unknown, x: unknown, y: unknown, dragCorrelation?: unknown, sourceDomain?: unknown, previewCorrelation?: unknown): boolean {
         const drag = isDragCorrelation(dragCorrelation) ? (dragCorrelation as string) : null;
+        const previewKey = isDragCorrelation(previewCorrelation) ? (previewCorrelation as string) : null;
         const refuseDrag = (reason: string, output?: string, workspace?: string): false => {
+            if (previewKey !== null) {
+                this.dragPreview.delete(previewKey);
+            }
             if (drag !== null) {
                 this.noteDragRejected(drag, reason, typeof windowId === "string" ? windowId : null, output, workspace);
             }
@@ -3177,22 +3392,15 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:busy-refused kind=drag-drop`);
             return refuseDrag("busy");
         }
-        const observed = this.freshObserved();
-        if (observed === null) {
-            this.logToken(`${LOG_PREFIX}:drag-drop-refused-observe`);
-            return refuseDrag("observe");
+        const pointer = this.buildPointerDomainObservation(windowId as string, x as number, y as number, sourceDomain);
+        if (pointer.ok === false) {
+            this.logToken(`${LOG_PREFIX}:drag-drop-refused-${pointer.reason}`);
+            return refuseDrag(pointer.reason, pointer.output, pointer.workspace);
         }
-        let target: PlanObservedWindow | undefined = undefined;
-        for (const entry of observed.windows) {
-            if (entry.id === (windowId as string)) {
-                target = entry;
-                break;
-            }
-        }
-        if (target === undefined) {
-            this.logToken(`${LOG_PREFIX}:drag-drop-refused-absent`);
-            return refuseDrag("absent", observed.domainOutput, observed.domainWorkspace);
-        }
+        const observed = pointer.sourceObserved;
+        const effectiveObserved = pointer.effectiveObserved;
+        const target = pointer.mover;
+        const explicitSource = pointer.explicitSource;
         if (target.fullscreen) {
             this.logToken(`${LOG_PREFIX}:drag-drop-refused-fullscreen`);
             return refuseDrag("fullscreen", observed.domainOutput, observed.domainWorkspace);
@@ -3207,47 +3415,72 @@ export class PlanAdapter {
         }
         // Started source binding is authoritative when valid; retained
         // per-id evidence applies only without one (direct callers).
-        // Never dispatch on refusal; scope the marker to the known source.
-        let explicitSource: { output: string; workspace: string } | null = null;
-        try {
-            if (isRecord(sourceDomain)) {
-                const srcOutput = sourceDomain["output"];
-                const srcWorkspace = sourceDomain["workspace"];
-                if (isOpaqueId(srcOutput) && isOpaqueId(srcWorkspace)) {
-                    explicitSource = { output: srcOutput as string, workspace: srcWorkspace as string };
-                    if (
-                        target !== undefined &&
-                        (observed.domainOutput !== srcOutput || observed.domainWorkspace !== srcWorkspace)
-                    ) {
-                        this.logToken(`${LOG_PREFIX}:drag-drop-refused-cross-domain`);
-                        return refuseDrag("cross-domain", srcOutput as string, srcWorkspace as string);
-                    }
+        // An authorized cross-output tiled drag (Started source differs from
+        // the pointer destination, including lag native-on-source) joins
+        // destination tiling at the pointer: the destination snapshot below
+        // binds the flight while the Started binding rides the immutable
+        // body for terminal diagnostics and source forcing after apply. No
+        // source-scoped marker is armed here. Direct callers without a
+        // Started binding stay fail-closed below.
+        let crossSource: { output: string; workspace: string } | null = null;
+        if (explicitSource !== null) {
+            if (
+                effectiveObserved.domainOutput !== explicitSource.output ||
+                effectiveObserved.domainWorkspace !== explicitSource.workspace
+            ) {
+                // Authorized cross-output: destination dispatch, not a
+                // refusal. Failures converge through the destination-scoped
+                // marker via the ordinary failFlight path.
+                crossSource = { output: explicitSource.output, workspace: explicitSource.workspace };
+                if (drag !== null) {
+                    this.logToken(
+                        `${LOG_PREFIX}:drag-drop-cross-output correlation=${drag} source=cross-output dest=destination`,
+                    );
                 }
             }
-        } catch (error) {
-            void error;
-        }
-        if (explicitSource === null) {
-            try {
-                const evidence = this.appliedById.get(windowId as string);
-                if (
-                    evidence !== undefined &&
-                    (evidence.output !== observed.domainOutput || evidence.workspace !== observed.domainWorkspace)
-                ) {
-                    this.logToken(`${LOG_PREFIX}:drag-drop-refused-cross-domain`);
-                    return refuseDrag("cross-domain", evidence.output, evidence.workspace);
-                }
-            } catch (error) {
-                void error;
+        } else {
+            // Direct caller without a Started binding: a pointer-domain
+            // destination differing from the native source stays fail-closed
+            // (no authority to join destination tiling).
+            if (
+                effectiveObserved.domainOutput !== observed.domainOutput ||
+                effectiveObserved.domainWorkspace !== observed.domainWorkspace
+            ) {
+                this.logToken(`${LOG_PREFIX}:drag-drop-refused-cross-domain`);
+                return refuseDrag("cross-domain", observed.domainOutput, observed.domainWorkspace);
+            }
+            const evidence = this.appliedById.get(windowId as string);
+            if (
+                evidence !== undefined &&
+                (evidence.output !== observed.domainOutput || evidence.workspace !== observed.domainWorkspace)
+            ) {
+                this.logToken(`${LOG_PREFIX}:drag-drop-refused-cross-domain`);
+                return refuseDrag("cross-domain", evidence.output, evidence.workspace);
             }
         }
-        const snapshot = this.carriedSnapshot(observed);
+        const snapshot = this.carriedSnapshot(effectiveObserved);
         this.noteObservation(snapshot.fingerprint);
+        // The final drop forwards the last validated preview `hover_prior`
+        // verbatim (local preview key first, then the native drag-N key).
+        const dropPrior =
+            (previewKey !== null ? this.dragPreview.get(previewKey)?.prior : undefined) ??
+            (drag !== null ? this.dragPreview.get(drag)?.prior : undefined);
+        // Consume the preview entry so late replies fence out; the prior above already rides the wire.
+        if (previewKey !== null) {
+            this.dragPreview.delete(previewKey);
+        }
         const intent: AutoIntent = {
             op: "drag-drop",
             snapshot,
             removed: null,
-            body: { op: "drag-drop", window: windowId as string, x, y },
+            body: {
+                op: "drag-drop",
+                window: windowId as string,
+                x,
+                y,
+                ...(dropPrior !== undefined ? { hover_prior: dropPrior } : {}),
+                ...(crossSource !== null ? { source_output: crossSource.output, source_workspace: crossSource.workspace } : {}),
+            },
             pointerSource: windowId as string,
             ...(drag !== null ? { dragSource: drag } : {}),
         };
@@ -3276,19 +3509,254 @@ export class PlanAdapter {
             (drag === null ? flight.dragSource == null : this.dragSourceOf(flight) === drag);
         if (!ours) {
             // Dispatch never installed our drop flight (interactive guard or
-            // synchronous transport failure): the dispatch failure paths
-            // already fed the marker when they ran (deduped below), so just
-            // report refusal. A synchronous failure that already dispatched
-            // the marker must not report accepted. A deferred drop would have
-            // returned true above, so this is not the deferral path.
+            // synchronous transport failure already fed the marker): report
+            // refusal only. A deferred drop returned true above.
             if (drag !== null) {
                 this.noteDragRejected(drag, "dispatch-failed", typeof windowId === "string" ? windowId : null, snapshot.domainOutput, snapshot.domainWorkspace);
+                if (crossSource !== null) this.logToken(`${LOG_PREFIX}:drag-drop-cross-refused correlation=${drag} reason=dispatch-failed`);
             }
             return false;
         }
         return true;
     }
 
+    // Bounded read-only drag preview: one direct DescribePlan `drag-preview`
+    // request from a fresh destination observation (hints included) with
+    // pointer x/y, the Started source binding, and the last validated prior
+    // as `hover_prior`. Backs off when the single-flight is busy: never
+    // queues, never defers, never delays the drop. Late replies are fenced by
+    // sequence, scope, and owner/generation; refusal clears the prior and
+    // reports null. Entry-driven clearing. No timers, no caps, no retries.
+    requestDragPreview(
+        windowId: unknown,
+        x: unknown,
+        y: unknown,
+        dragCorrelation?: unknown,
+        sourceDomain?: unknown,
+        onPreview?: (result: PlanDragPreviewResult | null) => void,
+    ): boolean {
+        const callback = typeof onPreview === "function" ? onPreview : null;
+        const drag = isDragCorrelation(dragCorrelation) ? (dragCorrelation as string) : null;
+        const refuse = (reason: string): false => {
+            this.logToken(
+                drag !== null
+                    ? `${LOG_PREFIX}:drag-preview-refused correlation=${drag} reason=${sanitizeKind(reason)}`
+                    : `${LOG_PREFIX}:drag-preview-refused reason=${sanitizeKind(reason)}`,
+            );
+            if (drag !== null) {
+                this.dragPreview.delete(drag);
+            }
+            try {
+                callback?.(null);
+            } catch (error) {
+                void error;
+            }
+            return false;
+        };
+        if (!this.enabled) {
+            return refuse("disabled");
+        }
+        if (drag === null || !isOpaqueId(windowId)) {
+            return refuse("identity");
+        }
+        if (!isFiniteInt(x) || !isFiniteInt(y) || (x as number) < -16384 || (x as number) > 16384 || (y as number) < -16384 || (y as number) > 16384) {
+            return refuse("coords");
+        }
+        // Single-flight busy: back off immediately, never queue anything the drop must wait for.
+        if (this.r4Flight !== null || this.inFlight) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=drag-preview`);
+            this.logToken(`${LOG_PREFIX}:drag-preview-backed-off correlation=${drag} reason=busy`);
+            return false;
+        }
+        const pointer = this.buildPointerDomainObservation(windowId as string, x as number, y as number, sourceDomain);
+        if (pointer.ok === false) {
+            return refuse(pointer.reason);
+        }
+        // Outside every known work area refuses with no overlay; a resolved
+        // hidden destination proceeds with its own effective observation.
+        if (pointer.pointerInSource === false && pointer.effectiveObserved === pointer.sourceObserved) {
+            return refuse("outside");
+        }
+        if (pointer.mover.floating === true || pointer.mover.sticky === true || pointer.mover.fullscreen || pointer.mover.maximized) {
+            return refuse("floating");
+        }
+        const previewSource = pointer.explicitSource;
+        const snapshot = this.carriedSnapshot(pointer.effectiveObserved);
+        this.noteObservation(snapshot.fingerprint);
+        const prior = this.dragPreview.get(drag)?.prior;
+        const command: Record<string, unknown> = {
+            op: "drag-preview",
+            window: windowId as string,
+            x,
+            y,
+            ...(prior !== undefined ? { hover_prior: prior } : {}),
+            ...(previewSource !== null ? { source_output: previewSource.output, source_workspace: previewSource.workspace } : {}),
+        };
+        const seq = ++this.dragPreviewSeq;
+        // Locally built from the validated generation plus "-v<seq>": always correlation-shaped.
+        const correlation = `${this.generation}-v${String(seq)}`;
+        const encoded = this.buildRequestPayload(snapshot, command, correlation);
+        if (encoded.ok === false) {
+            return refuse(encoded.reason);
+        }
+        const payload = encoded.payload;
+        const entry = this.dragPreview.get(drag) ?? {};
+        entry.live = {
+            seq,
+            scope: this.domainKey(snapshot),
+            owner: this.owner,
+            generation: this.generation,
+            window: windowId as string,
+            correlation,
+            callback: callback ?? ((): void => {}),
+        };
+        this.dragPreview.set(drag, entry);
+        const target = isUniqueOwner(this.pinnedOwner) ? (this.pinnedOwner as string) : PLAN_SERVICE;
+        try {
+            this.env.callDbus(target, PLAN_OBJECT, PLAN_INTERFACE, PLAN_METHOD, payload, (reply) =>
+                this.onDragPreviewReply(reply, drag, seq),
+            );
+        } catch (error) {
+            void error;
+            return refuse("dbus-failed");
+        }
+        return true;
+    }
+
+    // Entry-driven preview clearing: forget the carried prior and any fenced
+    // late reply for one drag (or every drag when called without a valid
+    // correlation). Never touches the ordinary single-flight.
+    clearDragPreview(dragCorrelation?: unknown): void {
+        if (isDragCorrelation(dragCorrelation)) {
+            this.dragPreview.delete(dragCorrelation as string);
+            return;
+        }
+        if (dragCorrelation === undefined) {
+            this.dragPreview.clear();
+        }
+    }
+
+    // Finish-edge fence: forget only the pending reply slot while preserving
+    // the completed hover prior for the verdict transfer, so a late reply
+    // after Finish cannot update it. Never touches the single-flight.
+    invalidateDragPreviewReply(dragCorrelation?: unknown): void {
+        if (isDragCorrelation(dragCorrelation)) {
+            this.clearPreviewLive(dragCorrelation as string);
+            return;
+        }
+        if (dragCorrelation === undefined) {
+            for (const key of [...this.dragPreview.keys()]) {
+                this.clearPreviewLive(key);
+            }
+        }
+    }
+
+    private clearPreviewLive(drag: string): void {
+        const entry = this.dragPreview.get(drag);
+        if (entry === undefined) {
+            return;
+        }
+        delete entry.live;
+        if (entry.prior === undefined) {
+            this.dragPreview.delete(drag);
+        }
+    }
+
+    // Destination scope fence: the destination domain must still be observed
+    // with the dragged window. Cross-output previews dispatch from a hidden
+    // destination while the mover is still native on the source: accept when
+    // that destination is still observed and the mover is still on source.
+    private isPreviewScopeLive(scope: string, windowId: string): boolean {
+        try {
+            const fresh = this.freshObserved();
+            const moverStillSource = fresh !== null && fresh.windows.some((entry) => entry.id === windowId);
+            if (fresh !== null && this.domainKey(snapshotOf(fresh)) === scope) {
+                return moverStillSource;
+            }
+            let destStillObserved = false;
+            try {
+                for (const candidate of this.env.observeHidden?.() ?? []) {
+                    try {
+                        if (this.domainKey(snapshotOf(candidate)) === scope) {
+                            destStillObserved = true;
+                            break;
+                        }
+                    } catch (error) {
+                        void error;
+                    }
+                }
+            } catch (error) {
+                void error;
+            }
+            return destStillObserved && moverStillSource;
+        } catch (error) {
+            void error;
+            return false;
+        }
+    }
+
+    private onDragPreviewReply(reply: unknown, drag: string, seq: number): void {
+        const entry = this.dragPreview.get(drag);
+        const live = entry?.live;
+        if (entry === undefined || live === undefined || live.seq !== seq) {
+            return;
+        }
+        const done = (result: PlanDragPreviewResult | null, outcome: string, reason: string): void => {
+            if (result === null) {
+                this.dragPreview.delete(drag);
+            } else {
+                this.clearPreviewLive(drag);
+            }
+            this.logToken(
+                `${LOG_PREFIX}:drag-preview-settled correlation=${drag} outcome=${sanitizeKind(outcome)} reason=${sanitizeKind(reason)}`,
+            );
+            try {
+                live.callback(result);
+            } catch (error) {
+                void error;
+            }
+        };
+        // Fence by current owner/generation before parsing.
+        if (!this.enabled || this.owner !== live.owner || this.generation !== live.generation) {
+            done(null, "stale", "stale-owner");
+            return;
+        }
+        if (typeof reply !== "string" || reply.length > PLAN_MAX_REPLY_BYTES) {
+            done(null, "refused", "service-fault");
+            return;
+        }
+        let parsed: unknown = null;
+        try {
+            parsed = JSON.parse(reply);
+        } catch (error) {
+            void error;
+            done(null, "refused", "service-fault");
+            return;
+        }
+        if (!isRecord(parsed) || parsed["v"] !== PLAN_CONTRACT_VERSION || parsed["correlation_id"] !== live.correlation) {
+            done(null, "stale", "stale-dropped");
+            return;
+        }
+        const outcome = parsed["outcome"];
+        if (outcome !== "preview") {
+            const kind = outcome === "rejected" || outcome === "diverged" ? sanitizeKind(parsed["kind"]) : "service-fault";
+            done(null, "refused", kind);
+            return;
+        }
+        if (!this.isPreviewScopeLive(live.scope, live.window)) {
+            done(null, "stale", "stale-scope");
+            return;
+        }
+        const rectRaw: unknown = parsed["preview_rect"];
+        const priorRaw: unknown = parsed["hover_prior"];
+        if (!isTargetRect(rectRaw) || !isValidHoverPrior(priorRaw)) {
+            done(null, "refused", "precondition-mismatch");
+            return;
+        }
+        const rect = rectRaw as PlanRect;
+        entry.prior = priorRaw;
+        done({ rect, hoverPrior: priorRaw }, "applied", "preview");
+    }
     // Drop-intent correlation reader: validated drag-N only, never titles,
     // ids, or payload bytes. A pointer-resize or drag-drop flight carries
     // dragSource (the drop that dispatched it); marker reconciles carry a
@@ -3296,6 +3764,70 @@ export class PlanAdapter {
     private dragSourceOf(flightState: PendingFlight): string | null {
         const drag = flightState.dragSource;
         return typeof drag === "string" && isDragCorrelation(drag) ? drag : null;
+    }
+
+    // Validated Started source from the immutable flight body: the
+    // dispatch-time cross-output binding when it names a cross domain for a
+    // drag-correlated drag-drop flight. Rides deferred and stale-replan
+    // dispatches unchanged, so terminals need no per-drag map.
+    private crossDragSourceOf(flightState: PendingFlight): { output: string; workspace: string } | null {
+        if (flightState.op !== "drag-drop" || this.dragSourceOf(flightState) === null) {
+            return null;
+        }
+        const body = flightState.body as Record<string, unknown>;
+        const output = body["source_output"];
+        const workspace = body["source_workspace"];
+        if (!isOpaqueId(output) || !isOpaqueId(workspace)) {
+            return null;
+        }
+        if (output === flightState.snapshot.domainOutput && workspace === flightState.snapshot.domainWorkspace) {
+            return null;
+        }
+        return { output: output as string, workspace: workspace as string };
+    }
+
+    // Correlated cross-output refusal: the caller owns destination-marker
+    // convergence; only the generic cross diagnostic logs here.
+    private logCrossDragRefused(flightState: PendingFlight, reason: string): void {
+        const drag = this.dragSourceOf(flightState);
+        if (drag === null || this.crossDragSourceOf(flightState) === null) {
+            return;
+        }
+        this.logToken(`${LOG_PREFIX}:drag-drop-cross-refused correlation=${drag} reason=${sanitizeKind(reason)}`);
+    }
+
+    // Correlated cross-output success: generic applied diagnostic plus one
+    // forced complete source reconcile through the existing send chain. The
+    // destination plan satisfies only destination markers via the caller.
+    private noteCrossDragApplied(flightState: PendingFlight): void {
+        const drag = this.dragSourceOf(flightState);
+        const source = this.crossDragSourceOf(flightState);
+        if (drag === null || source === null) {
+            return;
+        }
+        this.logToken(`${LOG_PREFIX}:drag-drop-cross-applied correlation=${drag} plan=${flightState.correlation}`);
+        try {
+            this.sendForcedDomains.add(this.dragRestoreKey(source.output, source.workspace));
+        } catch (error) {
+            void error;
+        }
+        this.dragPreview.delete(drag);
+    }
+
+    // Shared drag-pointer terminal: pointer flights feed the
+    // destination-scoped marker (plus the cross refusal for cross-output
+    // drops); marker reconciles bind their own terminal naming the plan.
+    private settleDragTerminal(flightState: PendingFlight, reason: string, markerOutcome?: string): void {
+        const drag = this.dragSourceOf(flightState);
+        if (drag !== null) {
+            this.noteDragRejected(drag, reason, flightState.pointerSource, flightState.snapshot.domainOutput, flightState.snapshot.domainWorkspace);
+            if (flightState.op === "drag-drop") {
+                this.logCrossDragRefused(flightState, reason);
+                this.dragPreview.delete(drag);
+            }
+            return;
+        }
+        this.failDragRestore(flightState, markerOutcome ?? reason);
     }
 
     private dragRestoreKey(output: string, workspace: string): string {
@@ -4927,6 +5459,90 @@ export class PlanAdapter {
         this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
     }
 
+    // Shared validated DescribePlan encoder for the ordinary single-flight
+    // and the read-only drag preview (which never enters the single-flight).
+    // Hints ride the snapshot, prior rides the command.
+    private buildRequestPayload(
+        snapshot: PlanSnapshot,
+        command: Record<string, unknown>,
+        correlation: string,
+    ): { ok: true; payload: string } | { ok: false; reason: "request-invalid" | "request-over-cap" } {
+        const sortedIds = snapshot.windows.map((entry) => entry.id).sort();
+        const windows = snapshot.windows.map((entry) => ({
+            window: entry.id,
+            output: entry.output,
+            workspace: entry.workspace,
+            rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
+            ...(entry.floating === true ? { floating: true } : {}),
+            ...(entry.floating === true || entry.sticky === true || entry.fullscreen || entry.maximized ? { fit_excluded: true } : {}),
+            ...(entry.minSize === undefined ? {} : { min_size: { w: entry.minSize.w, h: entry.minSize.h } }),
+            ...(entry.maxSize === undefined ? {} : { max_size: { w: entry.maxSize.w, h: entry.maxSize.h } }),
+        }));
+        const op = command["op"];
+        const directionalDomains =
+            (op === "focus" || op === "move") &&
+            snapshot.domains !== undefined &&
+            snapshot.domains.length === 2
+                ? snapshot.domains.map((entry) => ({
+                      output: entry.output,
+                      workspace: entry.workspace,
+                      bounds: { x: entry.bounds.x, y: entry.bounds.y, w: entry.bounds.w, h: entry.bounds.h },
+                      gap: entry.gap,
+                      outer_gap: entry.outerGap,
+                      adjacent: { ...(entry.adjacent as Record<string, string>) },
+                  }))
+                : undefined;
+        const fingerprint =
+            directionalDomains === undefined
+                ? planFingerprint(snapshot.domainOutput, snapshot.domainWorkspace, snapshot.focusedId, sortedIds)
+                : planDirectionalFingerprint(
+                      snapshot.domains as ReadonlyArray<PlanDomain>,
+                      snapshot.focusedId,
+                      windows.map((entry) => ({
+                          window: entry.window as string,
+                          output: entry.output as string,
+                          workspace: entry.workspace as string,
+                          rect: entry.rect as PlanRect,
+                          floating: (entry as Record<string, unknown>)["floating"] === true,
+                          fitExcluded: (entry as Record<string, unknown>)["fit_excluded"] === true,
+                      })),
+                  );
+        let payload = "";
+        try {
+            payload = JSON.stringify({
+                v: PLAN_CONTRACT_VERSION,
+                correlation_id: correlation,
+                owner: this.owner,
+                generation: this.generation,
+                revision: 0,
+                fingerprint,
+                domain: {
+                    output: snapshot.domainOutput,
+                    workspace: snapshot.domainWorkspace,
+                    bounds: {
+                        x: snapshot.domainBounds.x,
+                        y: snapshot.domainBounds.y,
+                        w: snapshot.domainBounds.w,
+                        h: snapshot.domainBounds.h,
+                    },
+                    gap: snapshot.domainGap,
+                    outer_gap: snapshot.domainOuterGap,
+                },
+                ...(directionalDomains === undefined ? {} : { domains: directionalDomains }),
+                focused_window: snapshot.focusedId,
+                windows,
+                command,
+            });
+        } catch (error) {
+            void error;
+            return { ok: false, reason: "request-invalid" };
+        }
+        if (payload.length > PLAN_MAX_REQUEST_BYTES) {
+            return { ok: false, reason: "request-over-cap" };
+        }
+        return { ok: true, payload };
+    }
+
     private dispatch(intent: AutoIntent): void {
         if (!this.enabled || this.inFlight) {
             return;
@@ -4972,116 +5588,16 @@ export class PlanAdapter {
             return;
         }
         const snapshot = intent.snapshot;
-        const sortedIds = snapshot.windows.map((entry) => entry.id).sort();
-        const windows = snapshot.windows.map((entry) => ({
-            window: entry.id,
-            output: entry.output,
-            workspace: entry.workspace,
-            rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
-            ...(entry.floating === true ? { floating: true } : {}),
-            // Internal fit opt-out for any floating, sticky, fullscreen, or
-            // maximized member. Rust declines fitting when any entry sets it;
-            // normal seed/reflow exception behavior is unchanged.
-            ...(entry.floating === true || entry.sticky === true || entry.fullscreen || entry.maximized ? { fit_excluded: true } : {}),
-            // AR12 client size hints captured freshly at observation time.
-            // Absent when the host reports no hint there.
-            ...(entry.minSize === undefined ? {} : { min_size: { w: entry.minSize.w, h: entry.minSize.h } }),
-            ...(entry.maxSize === undefined ? {} : { max_size: { w: entry.maxSize.w, h: entry.maxSize.h } }),
-        }));
-        // Directional domains payload: only focus/move may carry it, and
-        // only when the snapshot holds two validated domains. The source
-        // `domain` stays for compatibility; `domains` binds the full
-        // source+target observation so stale targets fail closed.
-        const directionalDomains =
-            (intent.op === "focus" || intent.op === "move") &&
-            snapshot.domains !== undefined &&
-            snapshot.domains.length === 2
-                ? snapshot.domains.map((entry) => ({
-                      output: entry.output,
-                      workspace: entry.workspace,
-                      bounds: { x: entry.bounds.x, y: entry.bounds.y, w: entry.bounds.w, h: entry.bounds.h },
-                      gap: entry.gap,
-                      outer_gap: entry.outerGap,
-                      adjacent: { ...(entry.adjacent as Record<string, string>) },
-                  }))
-                : undefined;
-        // Directional requests bind the full two-domain evidence in the
-        // fingerprint (Rust re-derives and validates it); legacy requests
-        // keep the historical plan fingerprint scheme unchanged.
-        const fingerprint =
-            directionalDomains === undefined
-                ? planFingerprint(
-                      snapshot.domainOutput,
-                      snapshot.domainWorkspace,
-                      snapshot.focusedId,
-                      sortedIds,
-                  )
-                : planDirectionalFingerprint(
-                      snapshot.domains as ReadonlyArray<PlanDomain>,
-                      snapshot.focusedId,
-                      windows.map((entry) => ({
-                          window: entry.window as string,
-                          output: entry.output as string,
-                          workspace: entry.workspace as string,
-                          rect: entry.rect as PlanRect,
-                          floating: (entry as Record<string, unknown>)["floating"] === true,
-                          fitExcluded: (entry as Record<string, unknown>)["fit_excluded"] === true,
-                      })),
-                  );
-        let payload = "";
-        try {
-            payload = JSON.stringify({
-                v: PLAN_CONTRACT_VERSION,
-                correlation_id: correlation,
-                owner: this.owner,
-                generation: this.generation,
-                revision: 0,
-                fingerprint,
-                domain: {
-                    output: snapshot.domainOutput,
-                    workspace: snapshot.domainWorkspace,
-                    bounds: {
-                        x: snapshot.domainBounds.x,
-                        y: snapshot.domainBounds.y,
-                        w: snapshot.domainBounds.w,
-                        h: snapshot.domainBounds.h,
-                    },
-                    gap: snapshot.domainGap,
-                    outer_gap: snapshot.domainOuterGap,
-                },
-                ...(directionalDomains === undefined ? {} : { domains: directionalDomains }),
-                focused_window: snapshot.focusedId,
-                windows,
-                command: intent.body,
-            });
-        } catch (error) {
-            void error;
-            // Unbuildable payload: no plan correlation was created, so bind
-            // the exact marker failure now with an honest `plan=none`, plus
-            // one correlated refusal line so the drop is never silent. A
-            // never-sent drop joins its marker (persisting for a later free
-            // moment) the same way.
-            this.logToken(`${LOG_PREFIX}:request-refused correlation=${correlation} reason=request-invalid`);
+        const encoded = this.buildRequestPayload(snapshot, intent.body, correlation);
+        if (encoded.ok === false) {
+            this.logToken(`${LOG_PREFIX}:request-refused correlation=${correlation} reason=${encoded.reason}`);
             if (typeof intent.dragSource === "string" && isDragCorrelation(intent.dragSource)) {
                 this.noteDragRejected(intent.dragSource, "dispatch-failed", intent.pointerSource ?? null, intent.snapshot.domainOutput, intent.snapshot.domainWorkspace);
             }
             this.failMarkerDispatch(intent, "dispatch-failed", null);
             return;
         }
-        if (payload.length > PLAN_MAX_REQUEST_BYTES) {
-            // Oversize payload: no flight was created, so bind the exact
-            // marker failure now with an honest `plan=none`, plus one
-            // correlated refusal line so the drop is never silent. The
-            // allocated correlation never left the adapter and names nothing.
-            // A never-sent drop joins its marker (persisting for a later free
-            // moment) the same way.
-            this.logToken(`${LOG_PREFIX}:request-refused correlation=${correlation} reason=request-over-cap`);
-            if (typeof intent.dragSource === "string" && isDragCorrelation(intent.dragSource)) {
-                this.noteDragRejected(intent.dragSource, "dispatch-failed", intent.pointerSource ?? null, intent.snapshot.domainOutput, intent.snapshot.domainWorkspace);
-            }
-            this.failMarkerDispatch(intent, "dispatch-failed", null);
-            return;
-        }
+        const payload = encoded.payload;
         const isRecovery = this.nextIsRecovery;
         this.nextIsRecovery = false;
         this.inFlight = true;
@@ -5092,7 +5608,7 @@ export class PlanAdapter {
             plannerSession: this.plannerSession,
             snapshot,
             removed: intent.removed,
-            windowCount: sortedIds.length,
+            windowCount: snapshot.windows.length,
             pointerSource: intent.pointerSource ?? null,
             dragSource: intent.dragSource ?? null,
             restoreMarker: intent.restoreMarker ?? null,
@@ -5132,7 +5648,7 @@ export class PlanAdapter {
             this.inFlight = false;
             this.pending = null;
             this.activationStep = 0;
-            this.diag(intent.op, correlation, sortedIds.length, "timer-failed");
+            this.diag(intent.op, correlation, snapshot.windows.length, "timer-failed");
             if (intent.background === true) {
                 this.noteBackgroundTerminal(intent.snapshot);
             } else {
@@ -5175,7 +5691,7 @@ export class PlanAdapter {
             this.inFlight = false;
             this.pending = null;
             this.activationStep = 0;
-            this.diag(intent.op, correlation, sortedIds.length, "dbus-failed");
+            this.diag(intent.op, correlation, snapshot.windows.length, "dbus-failed");
             if (intent.background === true) {
                 this.noteBackgroundTerminal(intent.snapshot);
             } else {
@@ -5603,6 +6119,7 @@ export class PlanAdapter {
         for (const marker of this.dragRestore.values()) {
             marker.dispatched = false;
         }
+        this.dragPreview.clear();
         this.nextIsRecovery = true;
         try {
             this.refreshNow();
@@ -5661,14 +6178,7 @@ export class PlanAdapter {
             } else {
                 this.noteReconcileTerminal(lost.op, lost.workAreaReprojection);
             }
-            // A timed-out pointer feeds its marker; a timed-out marker
-            // reconcile gets one terminal per drag naming this plan.
-            const dragPointer = this.dragSourceOf(lost);
-            if (dragPointer !== null) {
-                this.noteDragRejected(dragPointer, "timeout", lost.pointerSource, lost.snapshot.domainOutput, lost.snapshot.domainWorkspace);
-            } else {
-                this.failDragRestore(lost, "timeout");
-            }
+            this.settleDragTerminal(lost, "timeout");
             this.maybeProbeAfterTerminal(lost);
             this.forceR4SettleFromPending(lost);
             this.finishFlight();
@@ -5760,15 +6270,7 @@ export class PlanAdapter {
             } else {
                 this.noteAutoReconcileTerminal(flightState);
             }
-            // A Planner-rejected drag pointer feeds its domain marker for one
-            // bounded converge; a rejected marker reconcile itself only logs
-            // its correlated terminal naming this plan (no retry/loop).
-            const dragPointer = this.dragSourceOf(flightState);
-            if (dragPointer !== null) {
-                this.noteDragRejected(dragPointer, kind, flightState.pointerSource, flightState.snapshot.domainOutput, flightState.snapshot.domainWorkspace);
-            } else {
-                this.failDragRestore(flightState, "rejected");
-            }
+            this.settleDragTerminal(flightState, kind, "rejected");
             // R4-shape rejections force both domains even on equal evidence.
             this.forceR4SettleFromPending(flightState);
             // Correlated gap-mismatch retry: an automatic reconcile refused
@@ -5837,14 +6339,7 @@ export class PlanAdapter {
             } else {
                 this.noteAutoReconcileTerminal(flightState);
             }
-            // A stale drag pointer feeds its marker; a stale marker
-            // reconcile gets one terminal per drag naming this plan.
-            const dragPointer = this.dragSourceOf(flightState);
-            if (dragPointer !== null) {
-                this.noteDragRejected(dragPointer, "stale-dropped", flightState.pointerSource, flightState.snapshot.domainOutput, flightState.snapshot.domainWorkspace);
-            } else {
-                this.failDragRestore(flightState, "stale-dropped");
-            }
+            this.settleDragTerminal(flightState, "stale-dropped");
             // R4-shape stale replies force both domains even on equal evidence.
             this.forceR4SettleFromPending(flightState);
             this.finishFlight();
@@ -6313,6 +6808,14 @@ export class PlanAdapter {
                 this.lifecycleDiag(flightState, "observe", "observe", "mismatched", "stale-scope", this.ordinaryRevision(planned, flightState));
                 this.ordinaryTerminal(flightState, planned, "uncertain", "observe");
                 this.failFlight(flightState, "stale-scope");
+                return;
+            }
+            // Lag: mover projected onto the destination while native is still
+            // source. Reuse the R4 transfer order plus arrival readback; a
+            // miss falls through so the ordinary fence below decides.
+            const lagReady = this.crossDragLagPrewrite(flightState, fresh);
+            if (lagReady !== undefined) {
+                this.applyCrossDragLagTransfer(planned, flightState, lagReady);
                 return;
             }
             const freshSnapshot = this.carriedSnapshot(fresh);
@@ -7456,6 +7959,7 @@ export class PlanAdapter {
         this.pinnedOwner = null;
         this.activationStep = 0;
         this.diag(flightState.op, flightState.correlation, flightState.windowCount, "planned-applied");
+        this.noteCrossDragApplied(flightState);
         // Marker satisfaction through actual application only: the first
         // subsequent plan that applies this domain's full geometry clears
         // the marker with one terminal per drag naming this plan.
@@ -7655,6 +8159,244 @@ export class PlanAdapter {
             }
         }
         return moverFound;
+    }
+
+    // Lag prewrite: shared destination projection plus the pointer
+    // exception comparators. Ready plus live mover ref when native is still
+    // source and the projection matches the flight; undefined otherwise so
+    // the ordinary drag-drop fence decides. No terminal/timer/retry here.
+    private crossDragLagPrewrite(
+        flightState: PendingFlight,
+        fresh: PlanObserved,
+    ):
+        | { readonly moverId: string; readonly moverRef: object; readonly targetOutput: string; readonly targetWorkspace: string }
+        | undefined {
+        if (flightState.op !== "drag-drop" || flightState.background === true) {
+            return undefined;
+        }
+        const moverId = flightState.pointerSource;
+        if (moverId === null) {
+            return undefined;
+        }
+        const source = this.crossDragSourceOf(flightState);
+        if (source === null) {
+            return undefined;
+        }
+        const targetOutput = flightState.snapshot.domainOutput;
+        const targetWorkspace = flightState.snapshot.domainWorkspace;
+        if (fresh.domainOutput !== source.output || fresh.domainWorkspace !== source.workspace) {
+            return undefined;
+        }
+        const rawX: unknown = (flightState.body as Record<string, unknown>)["x"];
+        const rawY: unknown = (flightState.body as Record<string, unknown>)["y"];
+        if (!isFiniteInt(rawX) || !isFiniteInt(rawY)) {
+            return undefined;
+        }
+        const freshMover = fresh.windows.find((entry) => entry.id === moverId);
+        if (
+            freshMover === undefined ||
+            freshMover.output !== source.output ||
+            freshMover.workspace !== source.workspace ||
+            freshMover.fullscreen ||
+            freshMover.maximized ||
+            freshMover.floating === true ||
+            freshMover.sticky === true
+        ) {
+            return undefined;
+        }
+        const moverRef = freshMover.ref;
+        // Builder never throws (single guarded hidden read; pure predicates
+        // elsewhere), so no try/catch is needed here.
+        const pointer = this.buildPointerDomainObservation(moverId, rawX as number, rawY as number, { output: source.output, workspace: source.workspace });
+        if (pointer.ok === false || pointer.projected !== true) {
+            return undefined;
+        }
+        if (
+            pointer.effectiveObserved.domainOutput !== targetOutput ||
+            pointer.effectiveObserved.domainWorkspace !== targetWorkspace ||
+            pointer.mover.ref !== moverRef
+        ) {
+            return undefined;
+        }
+        let effectiveSnapshot: PlanSnapshot;
+        try {
+            effectiveSnapshot = this.carriedSnapshot(pointer.effectiveObserved);
+        } catch (error) {
+            void error;
+            return undefined;
+        }
+        if (
+            !rectsEqualExceptSource(effectiveSnapshot, flightState.snapshot, moverId) ||
+            unexpectedOverlaySkewed(flightState, effectiveSnapshot)
+        ) {
+            return undefined;
+        }
+        return { moverId, moverRef, targetOutput, targetWorkspace };
+    }
+
+    // Lag actuation in R4 order (sendClientToScreen, setDesktops, actual
+    // dest observation, writeGeometries). Membership verified twice
+    // (native readback, then actual observation fenced by the pointer
+    // comparators plus exact mover ref). Failures use failFlight
+    // (destination marker, no source fight). No timers/retries.
+    private applyCrossDragLagTransfer(
+        planned: PlannedReply,
+        flightState: PendingFlight,
+        lag: { readonly moverId: string; readonly moverRef: object; readonly targetOutput: string; readonly targetWorkspace: string },
+    ): void {
+        const moverRef = lag.moverRef;
+        const failSetter = (cause: string, outcome: string): void => {
+            this.lifecycleDiag(flightState, "apply", "setters", "write-failed", cause, this.ordinaryRevision(planned, flightState));
+            this.ordinaryTerminal(flightState, planned, "uncertain", "setters");
+            this.failFlight(flightState, outcome);
+        };
+        const failObserve = (): void => {
+            this.lifecycleDiag(flightState, "observe", "observe", "mismatched", "stale-scope", this.ordinaryRevision(planned, flightState));
+            this.ordinaryTerminal(flightState, planned, "uncertain", "observe");
+            this.failFlight(flightState, "stale-scope");
+        };
+        if (!crossOutputTransferSupported(this.env)) {
+            failSetter("precondition-mismatch", "precondition-mismatch");
+            return;
+        }
+        if (!isUniqueOwner(this.pinnedOwner)) {
+            failSetter("owner-loss", "owner-loss");
+            return;
+        }
+        if (flightState.correlation !== planned.correlationId) {
+            failSetter("correlation-mismatch", "correlation-mismatch");
+            return;
+        }
+        if (!this.inFlight || this.pending !== flightState || flightState.plannerSession !== this.plannerSession || flightState.epoch !== this.epoch) {
+            failSetter("stale-scope", "stale-scope");
+            return;
+        }
+        let targetOutputRef: object | null = null;
+        let targetDesktopRef: object | null = null;
+        try {
+            targetOutputRef = this.env.resolveOutput?.(lag.targetOutput) ?? null;
+            targetDesktopRef = this.env.resolveDesktop?.(lag.targetWorkspace) ?? null;
+        } catch (error) {
+            void error;
+            targetOutputRef = null;
+            targetDesktopRef = null;
+        }
+        if (targetOutputRef === null || targetDesktopRef === null) {
+            failSetter("stale-scope", "stale-scope");
+            return;
+        }
+        this.r4WriteDepth += 1;
+        try {
+            let transferred = false;
+            try {
+                transferred = this.env.sendClientToScreen?.(moverRef, targetOutputRef) === true;
+            } catch (error) {
+                void error;
+                transferred = false;
+            }
+            if (!transferred) {
+                failSetter("write-failed", "write-failed");
+                return;
+            }
+            if (!this.inFlight || this.pending !== flightState || flightState.plannerSession !== this.plannerSession || flightState.epoch !== this.epoch) {
+                failSetter("stale-scope", "stale-scope");
+                return;
+            }
+            let membershipWritten = false;
+            try {
+                membershipWritten = this.env.setDesktops?.(moverRef, [targetDesktopRef]) === true;
+            } catch (error) {
+                void error;
+                membershipWritten = false;
+            }
+            if (!membershipWritten) {
+                failSetter("write-failed", "write-failed");
+                return;
+            }
+        } finally {
+            this.r4WriteDepth = Math.max(0, this.r4WriteDepth - 1);
+        }
+        let nativeOutput: string | null = null;
+        let nativeIds: ReadonlyArray<string> | null = null;
+        try {
+            nativeOutput = this.env.readOutputName?.(moverRef) ?? null;
+            nativeIds = this.env.readDesktopIds?.(moverRef) ?? null;
+        } catch (error) {
+            void error;
+            nativeOutput = null;
+            nativeIds = null;
+        }
+        if (nativeOutput !== lag.targetOutput || nativeIds === null || nativeIds.length !== 1 || nativeIds[0] !== lag.targetWorkspace) {
+            failObserve();
+            return;
+        }
+        // Post-transfer proof must be an actual fresh complete destination
+        // observation (hidden, or the foreground when it already shows the
+        // destination). Never fabricate: absence fails without applied claim.
+        let actual: PlanObserved | null = null;
+        try {
+            actual = this.freshHiddenFor({ domainOutput: lag.targetOutput, domainWorkspace: lag.targetWorkspace });
+            if (actual === null) {
+                const foreground = this.freshObserved();
+                if (
+                    foreground !== null &&
+                    foreground.domainOutput === lag.targetOutput &&
+                    foreground.domainWorkspace === lag.targetWorkspace
+                ) {
+                    actual = foreground;
+                }
+            }
+        } catch (error) {
+            void error;
+            actual = null;
+        }
+        if (actual === null || actual.domainOutput !== lag.targetOutput || actual.domainWorkspace !== lag.targetWorkspace) {
+            failObserve();
+            return;
+        }
+        const movers = actual.windows.filter((entry) => entry.id === lag.moverId);
+        if (movers.length !== 1) {
+            failObserve();
+            return;
+        }
+        const mover = movers[0] as PlanObservedWindow;
+        if (
+            mover.ref !== moverRef ||
+            mover.output !== lag.targetOutput ||
+            mover.workspace !== lag.targetWorkspace ||
+            mover.fullscreen ||
+            mover.maximized ||
+            mover.floating === true ||
+            mover.sticky === true
+        ) {
+            failObserve();
+            return;
+        }
+        let actualSnapshot: PlanSnapshot;
+        try {
+            actualSnapshot = this.carriedSnapshot(actual);
+        } catch (error) {
+            void error;
+            failObserve();
+            return;
+        }
+        // Focus/fingerprint are arrival-transparent (the destination keeps
+        // its own focus): fence survivors/membership only, like the
+        // prewrite, by binding the comparison to the flight focus print.
+        const comparable: PlanSnapshot = {
+            ...actualSnapshot,
+            focusedId: flightState.snapshot.focusedId,
+            fingerprint: flightState.snapshot.fingerprint,
+        };
+        if (
+            !rectsEqualExceptSource(comparable, flightState.snapshot, lag.moverId) ||
+            unexpectedOverlaySkewed(flightState, comparable)
+        ) {
+            failObserve();
+            return;
+        }
+        this.lifecycleDiag(flightState, "observe", "observe", "matched", "-", this.ordinaryRevision(planned, flightState));
+        this.writeGeometries(planned, flightState, actual);
     }
 
     // Fresh observed mover proof for follow: exact scope identity plus mover
@@ -8046,16 +8788,7 @@ export class PlanAdapter {
         } else {
             this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
         }
-        // Drop-intent converge for every terminal failure class, not just
-        // Planner rejection (diverged/malformed/stale/timeout/fault): a
-        // failed pointer feeds its marker, while a failed marker reconcile
-        // gets one terminal per drag naming this plan (no retry).
-        const dragPointer = this.dragSourceOf(flightState);
-        if (dragPointer !== null) {
-            this.noteDragRejected(dragPointer, outcome, flightState.pointerSource, flightState.snapshot.domainOutput, flightState.snapshot.domainWorkspace);
-        } else {
-            this.failDragRestore(flightState, outcome);
-        }
+        this.settleDragTerminal(flightState, outcome);
         // Ambiguous terminal failures (timeout already probed via onTimeout;
         // service-fault, correlation mismatch, precondition mismatch, stale
         // scope, write failure, owner loss) may lead to one bounded identity

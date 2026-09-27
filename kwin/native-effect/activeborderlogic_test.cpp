@@ -221,6 +221,29 @@ void pressBindingNameIsClosedVocabulary()
     CHECK(std::strcmp(KWin::oraclePressBindingName(false), "default") == 0);
 }
 
+void dragPreviewAcceptsCarriedGeometryBounds()
+{
+    CHECK(KWin::dragPreviewRectValid(0, 0, 1, 1));
+    CHECK(KWin::dragPreviewRectValid(0, 0, 1200, 800));
+    CHECK(KWin::dragPreviewRectValid(-16384, -16384, 16384, 16384));
+    CHECK(KWin::dragPreviewRectValid(16384, 16384, 1, 1));
+    CHECK(!KWin::dragPreviewRectValid(0, 0, 0, 1));
+    CHECK(!KWin::dragPreviewRectValid(0, 0, 1, 0));
+    CHECK(!KWin::dragPreviewRectValid(0, 0, 16385, 1));
+    CHECK(!KWin::dragPreviewRectValid(0, 0, 1, 16385));
+    CHECK(!KWin::dragPreviewRectValid(16385, 0, 10, 10));
+    CHECK(!KWin::dragPreviewRectValid(0, -16385, 10, 10));
+    CHECK(!KWin::dragPreviewRectValid(-16385, 0, 10, 10));
+}
+
+void dragPreviewDefaultIsTranslucentSelectionBlue()
+{
+    const QColor fill = KWin::dragPreviewFillColor();
+    CHECK(fill.isValid());
+    CHECK(fill.red() == 0x2a && fill.green() == 0x82 && fill.blue() == 0xda);
+    CHECK(fill.alpha() == 64);
+}
+
 } // namespace
 
 int main()
@@ -247,6 +270,8 @@ int main()
     pressDefaultBindingIsAltRight();
     pressAgeGateBoundsTwoSecondsMonotonic();
     pressBindingNameIsClosedVocabulary();
+    dragPreviewAcceptsCarriedGeometryBounds();
+    dragPreviewDefaultIsTranslucentSelectionBlue();
 
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);

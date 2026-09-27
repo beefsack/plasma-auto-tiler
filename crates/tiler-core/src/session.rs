@@ -434,12 +434,16 @@ pub struct DragCapture {
 /// (`wrap` with `target_group`/`insertion_index`). `proposed_rect` is the
 /// deterministic projected desired source rectangle after applying the
 /// placement (subregion of the work area for the moved source leaf), not the
-/// target current rectangle alone. No native rendering or effects.
+/// target current rectangle alone. `revision` binds the preview to the exact
+/// accepted revision of its capture; `prior` carries the stored next hover
+/// (Some only for a resolved GroupEdge) so single-shot clones can forward it.
+/// No native rendering or effects.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DragPreview {
     pub domain: DomainKey,
     pub source_leaf: NodeId,
     pub source_window: WindowId,
+    pub revision: u64,
     pub source_rect: Rect,
     pub target_leaf: NodeId,
     pub target_window: WindowId,
@@ -451,6 +455,37 @@ pub struct DragPreview {
     pub wrap: bool,
     pub target_group: NodeId,
     pub insertion_index: usize,
+    pub prior: Option<crate::policy::PriorGroupEdge>,
+}
+
+impl DragPreview {
+    /// Portable hover carry for the next preview or the final drop: the exact
+    /// source identity plus the capture revision and the stored next hover.
+    /// [`Session::carry_drag_prior`] validates it against the live capture and
+    /// ignores mismatches advisory-style (no refusal, no divergence).
+    #[must_use]
+    pub fn hover_prior(&self) -> DragHoverPrior {
+        DragHoverPrior {
+            domain: self.domain.clone(),
+            source_leaf: self.source_leaf.clone(),
+            source_window: self.source_window.clone(),
+            revision: self.revision,
+            prior: self.prior.clone(),
+        }
+    }
+}
+
+/// Portable sticky group-edge hover carry: the exact drag source identity plus
+/// the capture revision and the stored next hover (`None` when the last hover
+/// was not a group edge). Applied via [`Session::carry_drag_prior`] before the
+/// next preview or the final drop; mismatched carries are ignored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DragHoverPrior {
+    pub domain: DomainKey,
+    pub source_leaf: NodeId,
+    pub source_window: WindowId,
+    pub revision: u64,
+    pub prior: Option<crate::policy::PriorGroupEdge>,
 }
 
 /// Portable no-structure snap-back intent: the accepted source rectangle the
@@ -3214,7 +3249,7 @@ mod tests {
         let mut session = session_two();
         let capture = begin_focused(&mut session, "win-2");
         assert_eq!(capture.source_rect.w, 60);
-        let left = session.preview_drag(5, 40).expect("left preview");
+        let left = session.preview_drag(5, 40, &[]).expect("left preview");
         assert_eq!(left.target_leaf, leaf("leaf-win-1"));
         assert_eq!(left.side, DragSide::Left);
         assert_eq!(left.axis, Axis::Horizontal);
@@ -3224,7 +3259,7 @@ mod tests {
         // Nested three: leaf-win-1 (0-60) right edge zone inserts after.
         let mut session = session_three();
         begin_focused(&mut session, "win-3");
-        let right = session.preview_drag(55, 40).expect("right preview");
+        let right = session.preview_drag(55, 40, &[]).expect("right preview");
         assert_eq!(right.target_leaf, leaf("leaf-win-1"));
         assert_eq!(right.side, DragSide::Right);
         assert_eq!(right.axis, Axis::Horizontal);
@@ -3235,13 +3270,13 @@ mod tests {
         // after inside the surviving V parent (no wrap).
         let mut session = session_deep();
         begin_focused(&mut session, "win-4");
-        let top = session.preview_drag(90, 5).expect("top preview");
+        let top = session.preview_drag(90, 5, &[]).expect("top preview");
         assert_eq!(top.target_leaf, leaf("leaf-win-2"));
         assert_eq!(top.side, DragSide::Top);
         assert_eq!(top.axis, Axis::Vertical);
         assert!(top.before);
         assert!(!top.wrap);
-        let bottom = session.preview_drag(90, 35).expect("bottom preview");
+        let bottom = session.preview_drag(90, 35, &[]).expect("bottom preview");
         assert_eq!(bottom.target_leaf, leaf("leaf-win-2"));
         assert_eq!(bottom.side, DragSide::Bottom);
         assert_eq!(bottom.axis, Axis::Vertical);
@@ -3254,7 +3289,7 @@ mod tests {
         // H[1,2,3] focus win-3 left onto leaf-win-1 -> H[3,1,2].
         let mut session = session_three();
         begin_focused(&mut session, "win-3");
-        let preview = session.preview_drag(5, 40).expect("preview");
+        let preview = session.preview_drag(5, 40, &[]).expect("preview");
         assert!(!preview.wrap);
         assert_eq!(preview.insertion_index, 0);
         let plan = drop_planned(&mut session, 5, 40, "corr-drag-1");
@@ -3283,7 +3318,7 @@ mod tests {
         assert_eq!(leaves_of(&session).len(), 3);
         begin_focused(&mut session, "win-3");
         // Middle column (x in [13,27)) top third: perpendicular Top wrap.
-        let preview = session.preview_drag(20, 5).expect("preview");
+        let preview = session.preview_drag(20, 5, &[]).expect("preview");
         assert!(preview.wrap);
         assert_eq!(preview.axis, Axis::Vertical);
         assert!(preview.before);
@@ -3356,7 +3391,7 @@ mod tests {
         // remove 4 -> V[2,3], wrap leaf-win-2 in H[4,2] at V index 0.
         let mut session = session_deep();
         begin_focused(&mut session, "win-4");
-        let preview = session.preview_drag(65, 13).expect("preview");
+        let preview = session.preview_drag(65, 13, &[]).expect("preview");
         assert!(preview.wrap);
         assert_eq!(preview.target_leaf, leaf("leaf-win-2"));
         assert_eq!(preview.axis, Axis::Horizontal);
@@ -3459,7 +3494,7 @@ mod tests {
     fn drag_preview_drop_structural_and_geometry_agreement() {
         let mut session = session_three();
         let capture = begin_focused(&mut session, "win-3");
-        let preview = session.preview_drag(5, 40).expect("preview");
+        let preview = session.preview_drag(5, 40, &[]).expect("preview");
         // Preview exposes the accepted source rect for the snap-back path.
         assert_eq!(preview.source_rect, capture.source_rect);
         let plan = drop_planned(&mut session, 5, 40, "corr-drag-1");
@@ -3587,29 +3622,29 @@ mod tests {
         let mut session = session_two();
         // No active drag.
         assert_eq!(
-            session.preview_drag(10, 10),
+            session.preview_drag(10, 10, &[]),
             Err(ProposeError::Refused(RefusalKind::MalformedInput))
         );
         let before = session.snapshot();
         begin_focused(&mut session, "win-2");
         // Self drop carries no structural meaning.
         assert_eq!(
-            session.preview_drag(90, 40),
+            session.preview_drag(90, 40, &[]),
             Err(ProposeError::Refused(RefusalKind::Unchanged))
         );
         // Target center is the source stack fact with no portable topology:
         // preview fails closed as explicit unsupported stack behavior.
         assert_eq!(
-            session.preview_drag(30, 40),
+            session.preview_drag(30, 40, &[]),
             Err(ProposeError::Refused(RefusalKind::UnsupportedCapability))
         );
         // Outside the work area is cross-domain.
         assert_eq!(
-            session.preview_drag(200, 40),
+            session.preview_drag(200, 40, &[]),
             Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch))
         );
         assert_eq!(
-            session.preview_drag(-1, 40),
+            session.preview_drag(-1, 40, &[]),
             Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch))
         );
         // Refusals stage nothing and mutate nothing.
@@ -3627,7 +3662,7 @@ mod tests {
         let before = session.snapshot();
         begin_focused(&mut session, "win-3");
         assert_eq!(
-            session.preview_drag(75, 40),
+            session.preview_drag(75, 40, &[]),
             Err(ProposeError::Refused(RefusalKind::UnsupportedCapability))
         );
         // Preview stages nothing and keeps the transient drag.
@@ -3954,7 +3989,7 @@ mod tests {
         let replay = || {
             let mut session = session_three();
             begin_focused(&mut session, "win-3");
-            let preview = session.preview_drag(5, 40).expect("preview");
+            let preview = session.preview_drag(5, 40, &[]).expect("preview");
             let release = session
                 .drop_drag(
                     5,
@@ -3985,7 +4020,7 @@ mod tests {
         let mut refused = 0u32;
         for x in (0..120).step_by(10) {
             for y in (0..80).step_by(10) {
-                match session.preview_drag(x, y) {
+                match session.preview_drag(x, y, &[]) {
                     Ok(preview) => {
                         ok += 1;
                         assert_eq!(preview.domain, capture.domain);
@@ -4187,12 +4222,12 @@ mod tests {
         let mut session = session_three();
         let preview_ok = {
             begin_focused(&mut session, "win-3");
-            session.preview_drag(5, 40).expect("preview")
+            session.preview_drag(5, 40, &[]).expect("preview")
         };
         assert!(preview_ok.proposed_rect.w > 0);
         session.focused_leaf = Some(leaf("leaf-win-1"));
         assert_eq!(
-            session.preview_drag(5, 40),
+            session.preview_drag(5, 40, &[]),
             Err(ProposeError::Refused(RefusalKind::MalformedTopology))
         );
         match session
@@ -4213,11 +4248,11 @@ mod tests {
         // Generation drift stales the capture the same way.
         let mut session = session_three();
         begin_focused(&mut session, "win-3");
-        session.preview_drag(5, 40).expect("preview");
+        session.preview_drag(5, 40, &[]).expect("preview");
         session.drag.as_mut().expect("drag").generation =
             crate::ids::GenerationId::parse("gen-2").expect("valid");
         assert_eq!(
-            session.preview_drag(5, 40),
+            session.preview_drag(5, 40, &[]),
             Err(ProposeError::Refused(RefusalKind::MalformedTopology))
         );
         match session
@@ -4239,7 +4274,7 @@ mod tests {
         begin_focused(&mut session, "win-3");
         session.drag.as_mut().expect("drag").revision += 100;
         assert_eq!(
-            session.preview_drag(5, 40),
+            session.preview_drag(5, 40, &[]),
             Err(ProposeError::Refused(RefusalKind::MalformedTopology))
         );
         // Exception-set drift stales the capture.
@@ -4256,7 +4291,7 @@ mod tests {
             },
         );
         assert_eq!(
-            session.preview_drag(5, 40),
+            session.preview_drag(5, 40, &[]),
             Err(ProposeError::Refused(RefusalKind::MalformedTopology))
         );
         session.cancel_drag();
@@ -4266,7 +4301,7 @@ mod tests {
     fn drag_preview_proposed_rect_matches_final_geometry() {
         let mut session = session_three();
         let capture = begin_focused(&mut session, "win-3");
-        let preview = session.preview_drag(5, 40).expect("preview");
+        let preview = session.preview_drag(5, 40, &[]).expect("preview");
         // The proposed rect is the projected desired source rect, not a claim
         // that the target current rect alone is the preview.
         assert!(preview.proposed_rect.w > 0 && preview.proposed_rect.h > 0);
@@ -4288,6 +4323,146 @@ mod tests {
             plan.dispatch.operation.insertion_index
         );
         commit_drag(&mut session, &plan, "corr-drag-1");
+    }
+
+    #[test]
+    fn drag_preview_uses_observed_size_hints_like_drop() {
+        // Two-wide H[win-1, win-2] 120x80 shares [1,1]: plain halves are 60.
+        // A min_w 80 hint on win-1 takes sibling slack, so the moved source
+        // (win-2) previews at 40 wide with hints and 60 without.
+        let mut session = session_two();
+        let capture = begin_focused(&mut session, "win-2");
+        let plain = session.preview_drag(5, 40, &[]).expect("plain preview");
+        assert_eq!(plain.proposed_rect.w, 60);
+        let mut hinted_windows = obs_windows(&session);
+        for entry in hinted_windows.iter_mut() {
+            if entry.window.0 == "win-1" {
+                entry.hints = crate::size_hints::WindowSizeHints {
+                    min_w: Some(80),
+                    ..crate::size_hints::WindowSizeHints::none()
+                };
+            }
+        }
+        let hinted = session
+            .preview_drag(5, 40, &hinted_windows)
+            .expect("hinted preview");
+        assert_eq!(hinted.target_leaf, plain.target_leaf);
+        assert_eq!(hinted.side, plain.side);
+        assert_eq!(hinted.proposed_rect.w, 40);
+        assert_ne!(hinted.proposed_rect, plain.proposed_rect);
+        // Same hints through drop agree structurally and geometrically.
+        let mut observation = obs_for(&session);
+        observation.windows = hinted_windows;
+        match session
+            .drop_drag(
+                5,
+                40,
+                &observation,
+                &corr("corr-drag-hints"),
+                &DragCapabilities::full(),
+            )
+            .expect("hinted drop")
+        {
+            DragRelease::Planned(plan) => {
+                assert_eq!(hinted.target_leaf, plan.dispatch.operation.target_leaf);
+                assert_eq!(hinted.side, plan.dispatch.operation.side);
+                assert_eq!(hinted.wrap, plan.dispatch.operation.wrap);
+                assert_eq!(
+                    hinted.insertion_index,
+                    plan.dispatch.operation.insertion_index
+                );
+                let Some(final_rect) = plan
+                    .desired_geometry
+                    .iter()
+                    .find(|g| g.leaf == capture.source_leaf)
+                    .map(|g| g.rect)
+                else {
+                    panic!("final geometry must cover the source");
+                };
+                assert_eq!(hinted.proposed_rect, final_rect);
+                assert_eq!(final_rect.w, 40);
+            }
+            DragRelease::SnapBack(_) => panic!("hinted drop must plan"),
+        }
+    }
+
+    #[test]
+    fn drag_prior_carry_restores_sticky_edge_across_clones() {
+        // Inner V group gap row: (gx, gy) is GroupEdge Left; sticky_x 50px in
+        // is Left only with the Left prior (normal 32px depth misses it).
+        let mut session = gap_session_nested();
+        let (inner, leaf_map) = inner_v_layout(&session);
+        let cx = inner.rect.x + inner.rect.w / 2;
+        let mut gy_opt = None;
+        for y in inner.rect.y..inner.rect.y + inner.rect.h {
+            if !leaf_map.values().any(|r| contains_point(r, cx, y))
+                && y - inner.rect.y >= 32
+                && inner.rect.y + inner.rect.h - y > 32
+            {
+                gy_opt = Some(y);
+                break;
+            }
+        }
+        let gy = gy_opt.expect("inner interior gap point");
+        let gx = inner.rect.x + 5;
+        let sticky_x = inner.rect.x + 50;
+        assert!(!leaf_map.values().any(|r| contains_point(r, gx, gy)));
+        assert!(!leaf_map.values().any(|r| contains_point(r, sticky_x, gy)));
+        let _capture = begin_focused(&mut session, "win-1");
+        let edge = session.preview_drag(gx, gy, &[]).expect("edge preview");
+        assert_eq!(edge.side, DragSide::Left);
+        assert!(edge.prior.is_some());
+        let carried = edge.hover_prior();
+        // Simulate single-shot clone loss: clear the stored hover.
+        session.drag.as_mut().expect("drag").prior = None;
+        // Without the carry the sticky probe misses the Left edge.
+        let missed = session.preview_drag(sticky_x, gy, &[]);
+        assert!(
+            !matches!(
+                missed,
+                Ok(ref preview) if preview.side == DragSide::Left
+                    && preview.target_leaf == inner.id
+            ),
+            "cleared prior must not resolve via sticky 80"
+        );
+        // A mismatched carry (wrong revision) is ignored advisory-style.
+        let mut bad = carried.clone();
+        bad.revision += 1;
+        assert!(!session.carry_drag_prior(&bad));
+        // The exact carry restores the sticky edge for preview and drop.
+        assert!(session.carry_drag_prior(&carried));
+        let sticky = session
+            .preview_drag(sticky_x, gy, &[])
+            .expect("sticky preview");
+        assert_eq!(sticky.side, DragSide::Left);
+        assert_eq!(sticky.target_leaf, inner.id);
+        let plan = drop_planned(&mut session, sticky_x, gy, "corr-sticky-carry");
+        assert_eq!(sticky.target_leaf, plan.dispatch.operation.target_leaf);
+        assert_eq!(sticky.side, plan.dispatch.operation.side);
+        commit_drag(&mut session, &plan, "corr-sticky-carry");
+    }
+
+    #[test]
+    fn drag_prior_carry_validates_source_and_needs_no_drag() {
+        let mut session = session_two();
+        // No active drag: carry is ignored.
+        let dummy = DragHoverPrior {
+            domain: domain_key(),
+            source_leaf: leaf("leaf-win-2"),
+            source_window: WindowId("win-2".to_owned()),
+            revision: session.accepted_revision(),
+            prior: None,
+        };
+        assert!(!session.carry_drag_prior(&dummy));
+        // Wrong source leaf is ignored without mutation.
+        let _capture = begin_focused(&mut session, "win-2");
+        let edge = session.preview_drag(5, 40, &[]).expect("preview");
+        let mut wrong_leaf = edge.hover_prior();
+        wrong_leaf.source_leaf = leaf("leaf-win-1");
+        assert!(!session.carry_drag_prior(&wrong_leaf));
+        // Exact carry applies (here a window-edge hover carries None).
+        assert!(session.carry_drag_prior(&edge.hover_prior()));
+        session.cancel_drag();
     }
 
     #[test]
@@ -4567,7 +4742,7 @@ mod tests {
         let gx = cx;
         let _capture = begin_focused(&mut session, "win-1");
         let preview = session
-            .preview_drag(gx, gy)
+            .preview_drag(gx, gy, &[])
             .expect("group interior preview");
         assert_eq!(preview.axis, Axis::Vertical);
         assert!(!preview.wrap);
@@ -4628,7 +4803,9 @@ mod tests {
             "left-strip gap point must be group-only"
         );
         let _capture = begin_focused(&mut session, "win-1");
-        let preview = session.preview_drag(gx, gy).expect("group edge preview");
+        let preview = session
+            .preview_drag(gx, gy, &[])
+            .expect("group edge preview");
         assert_eq!(preview.side, DragSide::Left);
         assert_eq!(preview.axis, Axis::Horizontal);
         assert!(preview.wrap);
@@ -4638,7 +4815,7 @@ mod tests {
         // now (Left), so a top-strip check is not applicable; instead verify
         // the prior persists by re-hitting the same edge further along the row.
         let sticky = session
-            .preview_drag(gx, gy + 2)
+            .preview_drag(gx, gy + 2, &[])
             .expect("sticky edge preview");
         assert_eq!(sticky.side, DragSide::Left);
         assert_eq!(sticky.target_leaf, preview.target_leaf);
@@ -4743,7 +4920,7 @@ mod tests {
         // Stale focus drift fails closed: preview refuses, drop snaps back.
         session.focused_leaf = Some(NodeId("leaf-win-1".to_owned()));
         assert_eq!(
-            session.preview_drag(400, 300),
+            session.preview_drag(400, 300, &[]),
             Err(ProposeError::Refused(RefusalKind::MalformedTopology))
         );
         match session
@@ -4769,7 +4946,7 @@ mod tests {
         let cy = first.y + first.h / 2;
         // Center of win-1 (non-source) names the stack fact.
         assert_eq!(
-            session.preview_drag(cx, cy),
+            session.preview_drag(cx, cy, &[]),
             Err(ProposeError::Refused(RefusalKind::UnsupportedCapability))
         );
         assert!(!session.has_pending());
@@ -4801,7 +4978,9 @@ mod tests {
             "left-strip gap point must be group-only"
         );
         let _capture = begin_focused(&mut session, "win-1");
-        let edge = session.preview_drag(gx, gy).expect("group edge preview");
+        let edge = session
+            .preview_drag(gx, gy, &[])
+            .expect("group edge preview");
         assert_eq!(edge.side, DragSide::Left);
         assert_eq!(edge.target_leaf, inner.id);
         let rects = leaf_rects_of(&session);
@@ -4818,7 +4997,7 @@ mod tests {
         let center_x = target_rect.x + target_rect.w / 2;
         let center_y = target_rect.y + target_rect.h / 2;
         assert_eq!(
-            session.preview_drag(center_x, center_y),
+            session.preview_drag(center_x, center_y, &[]),
             Err(ProposeError::Refused(RefusalKind::UnsupportedCapability))
         );
         let sticky_x = inner.rect.x + 50;
@@ -4847,7 +5026,7 @@ mod tests {
             crate::cosmic_v1::classify_group_point(&inner.rect, &inner.id, sticky_x, gy, None),
             Some(DragSide::Left)
         );
-        match session.preview_drag(sticky_x, gy) {
+        match session.preview_drag(sticky_x, gy, &[]) {
             Ok(preview) => assert_ne!(
                 preview.side,
                 DragSide::Left,

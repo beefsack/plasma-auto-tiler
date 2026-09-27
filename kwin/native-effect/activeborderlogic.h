@@ -51,4 +51,25 @@ inline ActiveBorderState activeBorderState(bool hasWindow, const QRectF &frameGe
     return {true, frameGeometry};
 }
 
+// Independent drag-target preview policy (screen-space, window-agnostic):
+// valid only for carried-geometry bounds (x/y in -16384..16384,
+// w/h in 1..16384, matching the group-highlight carried bound). Invalid
+// rects fail closed (never display). Visibility is solely "set versus
+// explicitly cleared": never gated on Meta, focus, or the group outline.
+inline bool dragPreviewRectValid(int x, int y, int w, int h)
+{
+    constexpr int coordBound = 16384;
+    if (w < 1 || h < 1 || w > coordBound || h > coordBound) {
+        return false;
+    }
+    return x >= -coordBound && x <= coordBound && y >= -coordBound && y <= coordBound;
+}
+
+// Default filled-translucent preview color: Plasma selection blue
+// (#2A82DA, matching the active-border fallback) at alpha 64 (~25%).
+inline QColor dragPreviewFillColor()
+{
+    return QColor(0x2a, 0x82, 0xda, 64);
+}
+
 } // namespace KWin

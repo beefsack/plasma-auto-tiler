@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { PLAN_DEBOUNCE_MS } from "../src/plan-adapter";
+import { PLAN_DEBOUNCE_MS, PLAN_TIMEOUT_MS } from "../src/plan-adapter";
 import { DRAG_MEASURE_VERDICT_TIMEOUT_MS } from "../src/drag-measure";
 import { startPlanAdapterEntry } from "../src/plan-adapter-entry";
 
@@ -149,6 +149,14 @@ function runMoveTimeout(mocks: DropMocks): void {
     mocks.timers.length = 0;
     for (const timer of pending) {
         if (!timer.cancelled && timer.delayMs === DRAG_MEASURE_VERDICT_TIMEOUT_MS) timer.callback();
+        else if (!timer.cancelled) mocks.timers.push(timer);
+    }
+}
+function runPlanTimeout(mocks: DropMocks): void {
+    const pending = [...mocks.timers];
+    mocks.timers.length = 0;
+    for (const timer of pending) {
+        if (!timer.cancelled && timer.delayMs === PLAN_TIMEOUT_MS) timer.callback();
         else if (!timer.cancelled) mocks.timers.push(timer);
     }
 }
@@ -872,13 +880,15 @@ describe("tiled drag-drop through the Planner", () => {
         stop();
     });
 
-    it("cross-output native move refuses without planning the destination; ordinary observation stays usable", () => {
+    it("cross-output tiled drag joins destination at pointer; source forcing without source-marker fight", () => {
         const world = dropWorld();
         const { stop, mocks } = startDropEntry(world);
         baselineConverge(world, mocks);
         const callsAtStart = mocks.planCalls.length;
         // Tiled move starts on the retained source (out-1/ws-1); native
-        // assignment leaves the source mid-drag before FINISH.
+        // assignment leaves the source mid-drag before FINISH. The Started
+        // source binding (identity enforced in the entry) authorizes the
+        // destination dispatch through the same core drag-drop resolver.
         (world.wins["win-a"] as Record<string, unknown>)["move"] = true;
         fireAll(world.startedA);
         (world.wins["win-a"] as Record<string, unknown>)["output"] = { name: "out-2" };
@@ -889,41 +899,77 @@ describe("tiled drag-drop through the Planner", () => {
             moveVerdict({ x: 900, y: 5, w: 600, h: 800 }, "win-a", "drag-91"),
         );
         assert.ok(
-            mocks.logs.some((l) => l === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-91 accepted=false"),
-            "cross-domain drop reports refusal, never accepted",
+            mocks.logs.some((l) => l === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-91 accepted=true"),
+            "cross-output drop dispatches accepted through the destination",
         );
         assert.ok(
-            mocks.logs.some((l) => l.includes("drag-drop-refused-cross-domain")),
-            "narrow source-domain guard names the refusal",
+            mocks.logs.some((l) => l.includes("drag-drop-cross-output") && l.includes("correlation=drag-91") && l.includes("source=cross-output") && l.includes("dest=destination")),
+            "correlated cross-output diagnostic names generic source and destination kinds only",
+        );
+        assert.ok(mocks.logs.every((l) => !l.includes("drag-drop-cross-output") || (!l.includes("out-1") && !l.includes("out-2") && !l.includes("ws-1"))), "no raw source or destination ids in normal logs");
+        assert.ok(!mocks.logs.some((l) => l.includes("drag-drop-refused-cross-domain")), "authorized cross-output refuses nothing");
+        assert.equal(mocks.planCalls.length - callsAtStart, 1, "exactly one destination drag-drop dispatch");
+        const dropCall = mocks.planCalls[mocks.planCalls.length - 1] as { payload: string; callback: (reply: unknown) => void };
+        const dropPayload = JSON.parse(dropCall.payload) as Record<string, unknown>;
+        assert.deepEqual(dropPayload["command"], { op: "drag-drop", window: "win-a", x: 900, y: 5, source_output: "out-1", source_workspace: "ws-1" });
+        assert.ok(!mocks.logs.some((l) => l.includes("drag-rejected") && l.includes("correlation=drag-91")), "no source-scoped marker fights the authorized placement");
+        const dropCorr = planCorrelation(dropPayload);
+        // Destination plan: the moved window joins out-2/ws-1 at the pointer
+        // through the same resolver. Single-member destination covers wanted.
+        dropCall.callback(
+            JSON.stringify({
+                v: 1,
+                correlation_id: dropCorr,
+                outcome: "planned",
+                base_revision: 2,
+                detail: { kind: "drag-drop", capability: "place-tiled" },
+                desired_geometry: [
+                    { window: "win-a", leaf: "win-a-leaf", output: "out-2", workspace: "ws-1", rect: { x: 800, y: 0, w: 800, h: 1000 } },
+                ],
+                desired_focus: { domain_output: "out-2", domain_workspace: "ws-1", leaf: "win-a-leaf" },
+            }),
+        );
+        assert.deepEqual(
+            (world.wins["win-a"] as Record<string, unknown>)["frameGeometry"],
+            { x: 800, y: 0, width: 800, height: 1000 },
+            "destination geometry applies to the moved window",
         );
         assert.ok(
-            mocks.logs.some((l) => l.includes("drag-rejected") && l.includes("correlation=drag-91") && l.includes("reason=cross-domain")),
-            "restore marker scopes to the retained source",
+            mocks.logs.some((l) => l.includes("drag-drop-cross-applied") && l.includes("correlation=drag-91") && l.includes(`plan=${dropCorr}`)),
+            "correlated cross-output applied names the satisfying plan",
         );
-        assert.equal(mocks.planCalls.length, callsAtStart, "destination is never planned: no dispatch");
         assert.ok(
-            !payloads(mocks).some((p) => (p["command"] as Record<string, unknown>)?.["op"] === "drag-drop"),
-            "no drag-drop intent is sent after the cross-domain refusal",
+            mocks.logs.some((l) => l.includes(`cmd=${dropCorr}`) && l.includes("kind=drag-drop") && l.includes("outcome=planned-applied")),
+            "terminal names the satisfying plan correlation",
         );
-        // Ordinary observation remains usable: later drift in the visible
-        // destination domain still converges through the ordinary route.
-        (world.wins["win-a"] as Record<string, unknown>)["frameGeometry"] = { x: 10, y: 0, width: 600, height: 800 };
+        assert.ok(!mocks.logs.some((l) => l.includes("drag-reconcile") && l.includes("correlation=drag-91")), "applied destination satisfies no marker");
+        // No retry: further debounces dispatch nothing more.
+        const callsAfterApply = mocks.planCalls.length;
         fireAll(world.geometry);
         runDebounce(mocks);
-        assert.equal(mocks.planCalls.length - callsAtStart, 1, "ordinary resync still dispatches");
-        assert.deepEqual(
-            (JSON.parse(mocks.planCalls[mocks.planCalls.length - 1]?.payload as string) as Record<string, unknown>)["command"],
-            { op: "reconcile" },
-            "follow-up is ordinary, never a drag restore",
+        assert.equal(mocks.planCalls.length, callsAfterApply, "no retry after applied cross-output drop");
+        // Source membership removed: the next Started-bound same-domain drop
+        // in the destination dispatches ordinarily (stale source evidence
+        // refuses nothing).
+        const callsBeforeSecond = mocks.planCalls.length;
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = true;
+        fireAll(world.startedA);
+        world.workspace["cursorPos"] = { x: 850, y: 10 };
+        fireAll(world.finishedA);
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = false;
+        (mocks.oracleCalls[mocks.oracleCalls.length - 1] as (reply: unknown) => void)(
+            moveVerdict({ x: 850, y: 10, w: 800, h: 1000 }, "win-a", "drag-95"),
         );
+        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-95 accepted=true"));
+        assert.equal(mocks.planCalls.length - callsBeforeSecond, 1, "destination same-domain drop dispatches after source removal");
         stop();
     });
 
-    it("cross-domain without retained evidence refuses via the start source; ordinary observation stays usable", () => {
+    it("cross-output refusal converges through the destination marker; ordinary observation stays usable", () => {
         const world = dropWorld();
         const { stop, mocks } = startDropEntry(world);
         // No baseline converge: appliedById holds no evidence for win-a, so
-        // only the Started source binding can refuse the cross-domain drop.
+        // only the Started source binding authorizes the destination dispatch.
         const callsAtStart = mocks.planCalls.length;
         (world.wins["win-a"] as Record<string, unknown>)["move"] = true;
         fireAll(world.startedA);
@@ -935,31 +981,48 @@ describe("tiled drag-drop through the Planner", () => {
             moveVerdict({ x: 900, y: 5, w: 600, h: 800 }, "win-a", "drag-92"),
         );
         assert.ok(
-            mocks.logs.some((l) => l === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-92 accepted=false"),
-            "cross-domain drop without retained evidence reports refusal, never accepted",
+            mocks.logs.some((l) => l === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-92 accepted=true"),
+            "cross-output drop without retained evidence still dispatches the destination",
         );
         assert.ok(
-            mocks.logs.some((l) => l.includes("drag-drop-refused-cross-domain")),
-            "start-source guard names the refusal without retained evidence",
+            mocks.logs.some((l) => l.includes("drag-drop-cross-output") && l.includes("correlation=drag-92") && l.includes("source=cross-output") && l.includes("dest=destination")),
+            "Started source binding authorizes without retained evidence and logs generic kinds only",
+        );
+        assert.equal(mocks.planCalls.length - callsAtStart, 1, "destination dispatches before any refusal");
+        const dropCall = mocks.planCalls[mocks.planCalls.length - 1] as { payload: string; callback: (reply: unknown) => void };
+        const dropCorr = planCorrelation(JSON.parse(dropCall.payload) as Record<string, unknown>);
+        // Planner refuses the destination (center/unsupported): the failure
+        // converges through the destination-scoped marker, never a
+        // source-scoped restore that would fight.
+        dropCall.callback(rejectedReply(dropCorr, "unsupported-capability"));
+        assert.ok(mocks.logs.some((l) => l.includes("drag-drop-cross-refused") && l.includes("correlation=drag-92") && l.includes("reason=unsupported-capability")));
+        assert.ok(mocks.logs.some((l) => l.includes("drag-rejected") && l.includes("correlation=drag-92") && l.includes("reason=unsupported-capability")));
+        assert.equal(mocks.planCalls.length - callsAtStart, 2, "refusal dispatches exactly one destination marker reconcile");
+        const markerCommand = (JSON.parse(mocks.planCalls[mocks.planCalls.length - 1]?.payload as string) as Record<string, unknown>)["command"];
+        assert.deepEqual(markerCommand, { op: "reconcile" });
+        const markerCall = mocks.planCalls[mocks.planCalls.length - 1] as { payload: string; callback: (reply: unknown) => void };
+        const markerCorr = planCorrelation(JSON.parse(markerCall.payload) as Record<string, unknown>);
+        markerCall.callback(
+            JSON.stringify({
+                v: 1,
+                correlation_id: markerCorr,
+                outcome: "planned",
+                base_revision: 2,
+                detail: { kind: "reconcile" },
+                desired_geometry: [
+                    { window: "win-a", leaf: "win-a-leaf", output: "out-2", workspace: "ws-1", rect: { x: 900, y: 5, w: 600, h: 800 } },
+                ],
+            }),
         );
         assert.ok(
-            mocks.logs.some((l) => l.includes("drag-rejected") && l.includes("correlation=drag-92") && l.includes("reason=cross-domain")),
-            "restore marker scopes to the known start source",
-        );
-        assert.equal(mocks.planCalls.length, callsAtStart, "destination is never planned: no dispatch");
-        assert.ok(
-            !payloads(mocks).some((p) => (p["command"] as Record<string, unknown>)?.["op"] === "drag-drop"),
-            "no drag-drop intent is sent after the start-source refusal",
+            mocks.logs.some((l) => l.includes("drag-reconcile-settled") && l.includes("correlation=drag-92") && l.includes("outcome=applied") && l.includes(`plan=${markerCorr}`) && l.includes("covered=1/1")),
+            "per-drag applied terminal names the destination restoring plan with full coverage",
         );
         (world.wins["win-a"] as Record<string, unknown>)["frameGeometry"] = { x: 10, y: 0, width: 600, height: 800 };
         fireAll(world.geometry);
         runDebounce(mocks);
-        assert.equal(mocks.planCalls.length - callsAtStart, 1, "ordinary resync still dispatches");
-        assert.deepEqual(
-            (JSON.parse(mocks.planCalls[mocks.planCalls.length - 1]?.payload as string) as Record<string, unknown>)["command"],
-            { op: "reconcile" },
-            "follow-up is ordinary, never a drag restore",
-        );
+        const lastCommand = (JSON.parse(mocks.planCalls[mocks.planCalls.length - 1]?.payload as string) as Record<string, unknown>)["command"];
+        assert.deepEqual(lastCommand, { op: "reconcile" }, "follow-up is ordinary, never a second drag restore");
         stop();
     });
 
@@ -999,6 +1062,82 @@ describe("tiled drag-drop through the Planner", () => {
             (JSON.parse(mocks.planCalls[mocks.planCalls.length - 1]?.payload as string) as Record<string, unknown>)["command"],
             { op: "drag-drop", window: "win-a", x: 900, y: 5 },
         );
+        stop();
+    });
+
+    it("timed-out cross-output drop refuses through the destination marker", () => {
+        const world = dropWorld();
+        const { stop, mocks } = startDropEntry(world);
+        const callsAtStart = mocks.planCalls.length;
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = true;
+        fireAll(world.startedA);
+        (world.wins["win-a"] as Record<string, unknown>)["output"] = { name: "out-2" };
+        world.workspace["cursorPos"] = { x: 900, y: 5 };
+        fireAll(world.finishedA);
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = false;
+        (mocks.oracleCalls[mocks.oracleCalls.length - 1] as (reply: unknown) => void)(
+            moveVerdict({ x: 900, y: 5, w: 600, h: 800 }, "win-a", "drag-96"),
+        );
+        assert.equal(mocks.planCalls.length - callsAtStart, 1, "destination dispatches before the timeout");
+        runPlanTimeout(mocks);
+        assert.ok(mocks.logs.some((l) => l.includes("drag-drop-cross-refused") && l.includes("correlation=drag-96") && l.includes("reason=timeout")));
+        assert.ok(mocks.logs.some((l) => l.includes("drag-rejected") && l.includes("correlation=drag-96") && l.includes("reason=timeout")));
+        assert.equal(mocks.planCalls.length - callsAtStart, 2, "timeout dispatches exactly one destination marker");
+        assert.deepEqual(
+            (JSON.parse(mocks.planCalls[mocks.planCalls.length - 1]?.payload as string) as Record<string, unknown>)["command"],
+            { op: "reconcile" },
+        );
+        stop();
+    });
+
+    it("deferred cross-output drop keeps source binding and applies after the busy flight", () => {
+        const world = dropWorld();
+        const { stop, mocks } = startDropEntry(world);
+        baselineConverge(world, mocks);
+        const callsAtStart = mocks.planCalls.length;
+        (world.wins["win-b"] as Record<string, unknown>)["move"] = true;
+        fireAll(world.startedB);
+        world.workspace["cursorPos"] = { x: 100, y: 100 };
+        fireAll(world.finishedB);
+        (world.wins["win-b"] as Record<string, unknown>)["move"] = false;
+        (mocks.oracleCalls[mocks.oracleCalls.length - 1] as (reply: unknown) => void)(
+            moveVerdict({ x: 100, y: 100, w: 600, h: 800 }, "win-b", "drag-97"),
+        );
+        assert.equal(mocks.planCalls.length - callsAtStart, 1, "first same-domain drop dispatches");
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = true;
+        fireAll(world.startedA);
+        (world.wins["win-a"] as Record<string, unknown>)["output"] = { name: "out-2" };
+        world.workspace["cursorPos"] = { x: 900, y: 5 };
+        fireAll(world.finishedA);
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = false;
+        (mocks.oracleCalls[mocks.oracleCalls.length - 1] as (reply: unknown) => void)(
+            moveVerdict({ x: 900, y: 5, w: 600, h: 800 }, "win-a", "drag-98"),
+        );
+        assert.equal(mocks.planCalls.length - callsAtStart, 1, "overlapping cross drop defers without dispatching");
+        assert.ok(!mocks.logs.some((l) => l.includes("drag-rejected") && l.includes("correlation=drag-98")), "deferred drop is not a refusal");
+        const firstCall = mocks.planCalls[mocks.planCalls.length - 1] as { payload: string; callback: (reply: unknown) => void };
+        const firstCorr = planCorrelation(JSON.parse(firstCall.payload) as Record<string, unknown>);
+        firstCall.callback(rejectedReply(firstCorr, "unsupported-capability"));
+        assert.equal(mocks.planCalls.length - callsAtStart, 2, "deferred cross drop dispatches after the refusal");
+        const dropPayload = JSON.parse(mocks.planCalls[mocks.planCalls.length - 1]?.payload as string) as Record<string, unknown>;
+        assert.deepEqual(dropPayload["command"], { op: "drag-drop", window: "win-a", x: 900, y: 5, source_output: "out-1", source_workspace: "ws-1" });
+        const dropCorr = planCorrelation(dropPayload);
+        const dropCall = mocks.planCalls[mocks.planCalls.length - 1] as { payload: string; callback: (reply: unknown) => void };
+        dropCall.callback(
+            JSON.stringify({
+                v: 1,
+                correlation_id: dropCorr,
+                outcome: "planned",
+                base_revision: 2,
+                detail: { kind: "drag-drop", capability: "place-tiled" },
+                desired_geometry: [
+                    { window: "win-a", leaf: "win-a-leaf", output: "out-2", workspace: "ws-1", rect: { x: 800, y: 0, w: 800, h: 1000 } },
+                ],
+                desired_focus: { domain_output: "out-2", domain_workspace: "ws-1", leaf: "win-a-leaf" },
+            }),
+        );
+        assert.ok(mocks.logs.some((l) => l.includes("drag-drop-cross-applied") && l.includes("correlation=drag-98") && l.includes(`plan=${dropCorr}`)));
+        assert.ok(!mocks.logs.some((l) => l.includes("drag-reconcile") && l.includes("correlation=drag-98")), "applied destination satisfies no marker");
         stop();
     });
 });

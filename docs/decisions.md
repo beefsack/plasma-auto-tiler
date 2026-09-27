@@ -1047,11 +1047,27 @@ the corresponding item ships; each such entry names its replacement.
   tiled move drops use the existing Rust core drop resolver as-is through the
   synchronous `drag-drop` Plan route (window edge split, group edge
   first/last or wrap, group interior insert; center or unresolved snaps back
-  through the existing restore marker). Finish pointer capture, single-flight
-  dispatch, Started-bound source-domain guard, and marker convergence per
-  `docs/dev-loop.md`; no live preview, no native return transfer. The
-  cross-domain product choice (snap back to source vs accept in the new
-  domain) is held for the user; no implementation is selected.
+  through the existing restore marker). Finish pointer capture and single-flight
+  dispatch remain; the 2026-09-27 cross-output and preview decisions below
+  replace option A's cross-domain refusal and no-preview restrictions.
+- User decisions 2026-09-27 (shipped offline, live check pending): a
+  tiled move to another output joins that output's tiling AT THE DROP POINT
+  through the same destination-domain core resolver, removing source-domain
+  membership. Do not snap back to the source, admit at ordinary placement or
+  let a source-scoped restore marker fight the placement. During a tiled move,
+  a separate native-effect filled translucent target-slot rectangle appears
+  above windows, hidden for center/snap-back targets and cleared at drop,
+  cancellation or refusal. Its lifetime is independent of the Meta-held group
+  outline. Orchestrator choices: carry the existing exact 80px sticky group-edge
+  hover prior across preview samples into drop and derive preview from fresh
+  complete observations with size hints using the same resolver. The default
+  preview fill is #2A82DA at alpha 64. Orchestrator clarification: destination
+  means the output under the pointer at Finish even if KWin's native mover
+  output still names the source. If needed, send the mover to that output
+  before planned geometry and verify current destination membership using
+  existing observation/reconciliation; no new arrival timer or retry. Offline
+  verification and the remaining-size rationale are in
+  `changes/archive/cross-output-drag-preview.md`.
 - The drag oracle hosted in the disabled-by-default unified
   `plasma-auto-tiler-active-border` native effect records final drag geometry;
   after that effect's explicit enable, the production script pulls its

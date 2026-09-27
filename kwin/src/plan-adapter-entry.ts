@@ -46,7 +46,7 @@ import {
     GROUP_HIGHLIGHT_SET_METHOD,
     startActiveGroupHighlight,
 } from "./active-group-highlight";
-import { PLAN_DBUS_SERVICE, PLAN_INTERFACE, PLAN_METHOD, PLAN_OBJECT, PLAN_SERVICE, PLAN_START_FLAGS, PLAN_START_METHOD, PlanAdapter, PlanDirection, PlanDomain, PlanObserved, PlanResizeMode, DirectionalObservation, PlanWindowConstraints, planDirectionalFingerprint, planFingerprint } from "./plan-adapter";
+import { PLAN_DBUS_SERVICE, PLAN_INTERFACE, PLAN_METHOD, PLAN_OBJECT, PLAN_SERVICE, PLAN_START_FLAGS, PLAN_START_METHOD, PlanAdapter, PlanDirection, PlanDomain, PlanDragPreviewResult, PlanObserved, PlanResizeMode, DirectionalObservation, PlanWindowConstraints, planDirectionalFingerprint, planFingerprint } from "./plan-adapter";
 import { PLAN_SOURCE_REV } from "./source-rev";
 import { connectSignal, readSignal } from "./signal-capability";
 import { KWIN_TRACE_ENABLED } from "./trace";
@@ -3796,6 +3796,100 @@ function startPlanAdapterEntryOnce(
     // removal cancels it. Expiry releases only this move hold through the
     // ordinary resync, never a drag terminal.
     const moveStartGuardCancels = new Map<object, { epoch: number; cancel: () => void }>();
+    // One move-drag preview session per tiled move Started: local
+    // `drag-<epoch>` correlation, one outstanding preview plus latest-pointer
+    // coalescing. Finish fences late replies but keeps the prior for the
+    // verdict transfer; settle/timeout/removal/stop drop the session. Preview
+    // never touches group highlight.
+    const DRAG_PREVIEW_SET_METHOD = "SetDragTargetPreview";
+    const DRAG_PREVIEW_CLEAR_METHOD = "ClearDragTargetPreview";
+    interface MovePreviewSession {
+        correlation: string;
+        epoch: number;
+        id: string;
+        busy: boolean;
+        pending: { x: number; y: number } | null;
+        finished: boolean;
+        overlay: boolean;
+    }
+    const movePreviewSessions = new Map<object, MovePreviewSession>();
+    const overlayCall = (method: string, ...args: ReadonlyArray<unknown>): boolean => {
+        try {
+            const call =
+                typeof overrides.highlightCallDbus === "function"
+                    ? (overrides.highlightCallDbus as (...callArgs: ReadonlyArray<unknown>) => void)
+                    : typeof callDBus === "function"
+                      ? (callDBus as (...callArgs: ReadonlyArray<unknown>) => void)
+                      : null;
+            if (call === null) {
+                return false;
+            }
+            (call as (service: string, path: string, iface: string, method: string, ...rest: ReadonlyArray<unknown>) => void)(
+                GROUP_HIGHLIGHT_SERVICE,
+                GROUP_HIGHLIGHT_OBJECT,
+                GROUP_HIGHLIGHT_INTERFACE,
+                method,
+                ...args,
+            );
+            return true;
+        } catch (error) {
+            void error;
+            return false;
+        }
+    };
+    const clearMovePreviewFull = (ref: object): void => {
+        try {
+            const session = movePreviewSessions.get(ref);
+            if (session !== undefined) {
+                if (session.overlay) {
+                    log(`plasma-auto-tiler:route-diag:drag-preview-cleared correlation=${session.correlation} reason=terminal`);
+                }
+                movePreviewSessions.delete(ref);
+                adapter.clearDragPreview(session.correlation);
+            }
+            overlayCall(DRAG_PREVIEW_CLEAR_METHOD);
+        } catch (error) {
+            void error;
+        }
+    };
+    const settleMovePreview = (ctx: DragOracleFinishContext): void => {
+        const session = movePreviewSessions.get(ctx.ref);
+        if (session === undefined || session.epoch > ctx.finishEpoch) {
+            return;
+        }
+        clearMovePreviewFull(ctx.ref);
+    };
+    const finishMovePreview = (ref: object): void => {
+        try {
+            const session = movePreviewSessions.get(ref);
+            if (session === undefined) {
+                return;
+            }
+            if (session.overlay) {
+                log(`plasma-auto-tiler:route-diag:drag-preview-cleared correlation=${session.correlation} reason=finish`);
+            }
+            session.finished = true;
+            session.pending = null;
+            session.overlay = false;
+            adapter.invalidateDragPreviewReply(session.correlation);
+            overlayCall(DRAG_PREVIEW_CLEAR_METHOD);
+        } catch (error) {
+            void error;
+        }
+    };
+    const validMovePreview = (ref: object, session: MovePreviewSession): OracleStart | null => {
+        if (movePreviewSessions.get(ref) !== session || session.finished) {
+            return null;
+        }
+        const start = oracleStarts.get(ref);
+        if (start === undefined || start.epoch !== session.epoch || start.id !== session.id) {
+            return null;
+        }
+        if (!interactiveMoveRefs.has(ref) || start.move !== true || start.floatingStart) {
+            return null;
+        }
+        return start;
+    };
     let oracleEpoch = 0;
     const readLiveState = (target: object): { move: boolean; resize: boolean } | null => {
         try {
@@ -3811,12 +3905,16 @@ function startPlanAdapterEntryOnce(
     const captureOracleStart = (ref: object): void => {
         try {
             const observed = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility, nativeOwners);
-            if (observed === null) return;
+            if (observed === null) {
+                clearMovePreviewFull(ref);
+                return;
+            }
             for (const entry of observed.windows) {
                 if (entry.ref === ref) {
                     const state = readLiveState(ref);
                     if (state === null) {
                         oracleStarts.delete(ref);
+                        clearMovePreviewFull(ref);
                         return;
                     }
                     // Route-owned start pointer capture: always read, never
@@ -3827,7 +3925,6 @@ function startPlanAdapterEntryOnce(
                         pointerStart = readMeasurePointer(liveWorkspace);
                     } catch (error) {
                         void error;
-                        pointerStart = null;
                     }
                     const rect = { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h };
                     let grabbed: OracleGrabbed | null = null;
@@ -3843,6 +3940,7 @@ function startPlanAdapterEntryOnce(
                     }
                     oracleStarts.set(ref, { id: entry.id, rect, move: state.move, resize: state.resize, epoch: (oracleEpoch += 1), grabbed, grabSource, pointerStart, floatingStart: (entry as { floating?: unknown }).floating === true, domainOutput: observed.domainOutput, domainWorkspace: observed.domainWorkspace });
                     if (state.move === false && state.resize === true) {
+                        clearMovePreviewFull(ref);
                         if (!interactiveResizeRefs.has(ref)) {
                             interactiveResizeRefs.add(ref);
                             adapter.setInteractiveResizeActive(true);
@@ -3949,6 +4047,7 @@ function startPlanAdapterEntryOnce(
                                         if (had && interactiveMoveRefs.size === 0 && interactiveResizeRefs.size === 0) {
                                             try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
                                         }
+                                        clearMovePreviewFull(ref);
                                         try { log(`plasma-auto-tiler:route-diag:drag-move-timeout generation=${String(overrides.generation)} correlation=move-start-${armedEpoch} cause=missing-finished recovery=move-hold-released`); } catch (error) { void error; }
                                     } catch (error) {
                                         void error;
@@ -3960,14 +4059,22 @@ function startPlanAdapterEntryOnce(
                             } catch (error) {
                                 void error;
                             }
+                            const started = oracleStarts.get(ref);
+                            if (started !== undefined) {
+                                armMovePreview(ref, started);
+                            }
+                        } else {
+                            clearMovePreviewFull(ref);
                         }
                     }
                     return;
                 }
             }
             oracleStarts.delete(ref);
+            clearMovePreviewFull(ref);
         } catch (error) {
             void error;
+            clearMovePreviewFull(ref);
         }
     };
     const makeOracleFinishContext = (ref: object): DragOracleFinishContext => {
@@ -3982,7 +4089,6 @@ function startPlanAdapterEntryOnce(
             pointerFinish = readMeasurePointer(liveWorkspace);
         } catch (error) {
             void error;
-            pointerFinish = null;
         }
         return { ref, finishEpoch: oracleEpoch, pointerFinish };
     };
@@ -4001,6 +4107,114 @@ function startPlanAdapterEntryOnce(
         } catch (error) {
             void error;
             return null;
+        }
+    };
+    const onMovePreviewReply = (ref: object, session: MovePreviewSession, result: PlanDragPreviewResult | null): void => {
+        try {
+            session.busy = false;
+            const start = validMovePreview(ref, session);
+            if (start === null) {
+                return;
+            }
+            if (result === null) {
+                if (session.overlay) {
+                    session.overlay = false;
+                    log(`plasma-auto-tiler:route-diag:drag-preview-cleared correlation=${session.correlation} reason=refused`);
+                    overlayCall(DRAG_PREVIEW_CLEAR_METHOD);
+                }
+            } else if (overlayCall(DRAG_PREVIEW_SET_METHOD, result.rect.x, result.rect.y, result.rect.w, result.rect.h)) {
+                if (!session.overlay) {
+                    log(`plasma-auto-tiler:route-diag:drag-preview-shown correlation=${session.correlation}`);
+                }
+                session.overlay = true;
+            }
+            const next = session.pending;
+            if (next !== null && !session.finished) {
+                session.pending = null;
+                dispatchMovePreview(ref, session, next);
+            }
+        } catch (error) {
+            void error;
+        }
+    };
+    const dispatchMovePreview = (
+        ref: object,
+        session: MovePreviewSession,
+        pointer: { x: number; y: number },
+    ): void => {
+        try {
+            const start = validMovePreview(ref, session);
+            if (start === null) {
+                return;
+            }
+            session.busy = true;
+            let ok = false;
+            try {
+                ok = adapter.requestDragPreview(
+                    start.id,
+                    pointer.x,
+                    pointer.y,
+                    session.correlation,
+                    { output: start.domainOutput, workspace: start.domainWorkspace },
+                    (result) => {
+                        onMovePreviewReply(ref, session, result);
+                    },
+                );
+            } catch (error) {
+                void error;
+            }
+            if (!ok && session.busy) {
+                session.busy = false;
+            }
+        } catch (error) {
+            void error;
+            session.busy = false;
+        }
+    };
+    const handleMoveStepped = (ref: object): void => {
+        try {
+            const session = movePreviewSessions.get(ref);
+            if (session === undefined) {
+                return;
+            }
+            const start = validMovePreview(ref, session);
+            if (start === null) {
+                return;
+            }
+            const pointer = readMeasurePointer(liveWorkspace);
+            if (pointer === null) {
+                return;
+            }
+            if (session.busy) {
+                session.pending = { x: pointer.x, y: pointer.y };
+                return;
+            }
+            dispatchMovePreview(ref, session, pointer);
+        } catch (error) {
+            void error;
+        }
+    };
+    const armMovePreview = (ref: object, start: OracleStart): void => {
+        try {
+            if (start.move !== true || start.floatingStart) {
+                clearMovePreviewFull(ref);
+                return;
+            }
+            const previous = movePreviewSessions.get(ref);
+            if (previous !== undefined && previous.epoch !== start.epoch) {
+                clearMovePreviewFull(ref);
+            }
+            movePreviewSessions.set(ref, {
+                correlation: `drag-${String(start.epoch)}`,
+                epoch: start.epoch,
+                id: start.id,
+                busy: false,
+                pending: null,
+                finished: false,
+                overlay: false,
+            });
+        } catch (error) {
+            void error;
         }
     };
     // AR8 offline drag measurement (trace-only, read-only): one bounded
@@ -4356,11 +4570,12 @@ function startPlanAdapterEntryOnce(
                         if (start !== undefined && start.epoch > ctx.finishEpoch) {
                             return;
                         }
-                        try { takeOwnStart(ctx); } catch (error) { void error; }
+                        takeOwnStart(ctx);
                         const had = interactiveMoveRefs.delete(ref);
                         if (had && interactiveMoveRefs.size === 0 && interactiveResizeRefs.size === 0) {
                             try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
                         }
+                        clearMovePreviewFull(ref);
                         try { log(`plasma-auto-tiler:route-diag:drag-move-timeout correlation=none`); } catch (error) { void error; }
                     } catch (error) {
                         void error;
@@ -4395,63 +4610,42 @@ function startPlanAdapterEntryOnce(
             void error;
         }
     };
-    // Finish-token completion: runs after every parsed verdict (including
-    // cancelled) and for invalid/unavailable replies (null). Consumes only
-    // its own finish's associated start without routing, logging, or
-    // touching DescribePlan. For a held tiled move that did not already
-    // restore through the route, this releases the hold once through the
-    // ordinary resync: cancelled, null, and route failure paths converge
-    // without a marker and without inventing a drag terminal. A successful
-    // move restore already cleared the hold silently, so this is a no-op
-    // then. A newer Started (larger epoch) is never cleared.
     const settleOracleVerdict = (verdict: DragOracleVerdict | null, ctx: DragOracleFinishContext | undefined): void => {
         try {
             void verdict;
             if (ctx !== undefined) {
-                try {
-                    const cancel = moveGuardCancels.get(ctx);
-                    if (cancel !== undefined) {
-                        moveGuardCancels.delete(ctx);
-                        try { cancel(); } catch (error) { void error; }
-                    }
-                } catch (error) {
-                    void error;
+                const cancel = moveGuardCancels.get(ctx);
+                if (cancel !== undefined) {
+                    moveGuardCancels.delete(ctx);
+                    try { cancel(); } catch (error) { void error; }
                 }
                 if (interactiveMoveRefs.has(ctx.ref)) {
-                    let owned = true;
-                    try {
-                        const start = oracleStarts.get(ctx.ref);
-                        if (start !== undefined && start.epoch > ctx.finishEpoch) {
-                            owned = false;
-                        }
-                    } catch (error) {
-                        void error;
-                        owned = true;
-                    }
-                    if (owned) {
-                        try { takeOwnStart(ctx); } catch (error) { void error; }
-                        try {
-                            const startGuard = moveStartGuardCancels.get(ctx.ref);
-                            if (startGuard !== undefined && startGuard.epoch <= ctx.finishEpoch) {
-                                moveStartGuardCancels.delete(ctx.ref);
-                                try { startGuard.cancel(); } catch (error) { void error; }
-                            }
-                        } catch (error) {
-                            void error;
-                        }
-                        const had = interactiveMoveRefs.delete(ctx.ref);
-                        if (had && interactiveMoveRefs.size === 0 && interactiveResizeRefs.size === 0) {
-                            try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
-                        }
+                    const start = oracleStarts.get(ctx.ref);
+                    if (start !== undefined && start.epoch > ctx.finishEpoch) {
+                        takeOwnStart(ctx);
+                        settleMovePreview(ctx);
                         feedMeasureVerdict(ctx, verdict);
                         return;
                     }
                     takeOwnStart(ctx);
+                    const startGuard = moveStartGuardCancels.get(ctx.ref);
+                    if (startGuard !== undefined && startGuard.epoch <= ctx.finishEpoch) {
+                        moveStartGuardCancels.delete(ctx.ref);
+                        try { startGuard.cancel(); } catch (error) { void error; }
+                    }
+                    const had = interactiveMoveRefs.delete(ctx.ref);
+                    if (had && interactiveMoveRefs.size === 0 && interactiveResizeRefs.size === 0) {
+                        try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
+                    }
+                    settleMovePreview(ctx);
                     feedMeasureVerdict(ctx, verdict);
                     return;
                 }
             }
             takeOwnStart(ctx);
+            if (ctx !== undefined) {
+                settleMovePreview(ctx);
+            }
             feedMeasureVerdict(ctx, verdict);
         } catch (error) {
             void error;
@@ -4530,40 +4724,19 @@ function startPlanAdapterEntryOnce(
                     try { log(`plasma-auto-tiler:route-diag:drag-move-floating-mismatch correlation=${verdict.correlation} start=${floatingStart ? "floating" : "tiled"} finish=${floatingFinish ? "floating" : "tiled"}`); } catch (error) { void error; }
                 }
                 if (floatingFinish || floatingStart) {
-                    // Single-use release without a marker: cancel this
-                    // finish's bounded timer and drop the hold when present.
-                    // A tiled-at-start hold converges through the ordinary
-                    // resync below; a floating-at-start move never held, so
-                    // this is a no-op beyond the ignored line. Settle finds
-                    // no guard afterwards and only feeds measurement.
-                    // The Started-keyed guard is already cancelled at Finish;
-                    // cancel defensively only when it predates this finish so
-                    // a newer Started survives.
-                    try {
-                        const cancel = moveGuardCancels.get(ctx);
-                        if (cancel !== undefined) {
-                            moveGuardCancels.delete(ctx);
-                            try { cancel(); } catch (error) { void error; }
-                        }
-                    } catch (error) {
-                        void error;
+                    const cancel = moveGuardCancels.get(ctx);
+                    if (cancel !== undefined) {
+                        moveGuardCancels.delete(ctx);
+                        try { cancel(); } catch (error) { void error; }
                     }
-                    try {
-                        const startGuard = moveStartGuardCancels.get(ctx.ref);
-                        if (startGuard !== undefined && startGuard.epoch <= ctx.finishEpoch) {
-                            moveStartGuardCancels.delete(ctx.ref);
-                            try { startGuard.cancel(); } catch (error) { void error; }
-                        }
-                    } catch (error) {
-                        void error;
+                    const startGuard = moveStartGuardCancels.get(ctx.ref);
+                    if (startGuard !== undefined && startGuard.epoch <= ctx.finishEpoch) {
+                        moveStartGuardCancels.delete(ctx.ref);
+                        try { startGuard.cancel(); } catch (error) { void error; }
                     }
-                    try {
-                        const had = interactiveMoveRefs.delete(ctx.ref);
-                        if (had && interactiveMoveRefs.size === 0 && interactiveResizeRefs.size === 0) {
-                            try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
-                        }
-                    } catch (error) {
-                        void error;
+                    const had = interactiveMoveRefs.delete(ctx.ref);
+                    if (had && interactiveMoveRefs.size === 0 && interactiveResizeRefs.size === 0) {
+                        try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
                     }
                     try { log(`plasma-auto-tiler:route-diag:drag-move-ignored correlation=${verdict.correlation}`); } catch (error) { void error; }
                     return;
@@ -4587,27 +4760,28 @@ function startPlanAdapterEntryOnce(
                     void error;
                 }
                 try { interactiveMoveRefs.delete(ctx.ref); } catch (error) { void error; }
-                // The native verdict carries no pointer: the drop point is
-                // the finish-captured script pointer in the finish context
-                // (read synchronously at FINISH before the async pull, never
-                // at reply). A missing capture still routes: the adapter
-                // refuses the coords into the restore marker fail-closed.
-                // The dispatch outcome is logged with the drag correlation:
-                // accepted means one intent entered the single flight
-                // (dispatched or deferred); refused means the adapter's exact
-                // refusal token (logged alongside by the adapter) rejected it
-                // and the marker owns convergence. Completion
-                // (planned/applied/rejected) is logged by the adapter under
-                // its own plan correlation.
                 try {
                     const pointer = ctx.pointerFinish ?? null;
+                    const session = movePreviewSessions.get(ctx.ref);
+                    const previewArg =
+                        session !== undefined &&
+                        session.epoch === start.epoch &&
+                        session.id === start.id &&
+                        session.id === verdict.windowIdentity
+                            ? session.correlation
+                            : undefined;
                     const accepted = adapter.requestDragDrop(
                         verdict.windowIdentity,
                         pointer === null ? undefined : pointer.x,
                         pointer === null ? undefined : pointer.y,
                         verdict.correlation,
                         { output: start.domainOutput, workspace: start.domainWorkspace },
+                        previewArg,
                     );
+                    movePreviewSessions.delete(ctx.ref);
+                    if (accepted !== true && previewArg !== undefined) {
+                        adapter.clearDragPreview(previewArg);
+                    }
                     try {
                         log(`plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=${verdict.correlation} accepted=${accepted === true ? "true" : "false"}`);
                     } catch (error) {
@@ -4758,6 +4932,7 @@ function startPlanAdapterEntryOnce(
             measureStarts.delete(ref);
             measureStandaloneClaimed.delete(ref);
             completeMeasureRemoval(ref);
+            clearMovePreviewFull(ref);
             try {
                 const guard = resizeGuardCancels.get(ref);
                 if (guard !== undefined) {
@@ -4813,6 +4988,7 @@ function startPlanAdapterEntryOnce(
             });
             if (startedDetach === null) return;
             finishedDetach = connectSignal(finished, () => {
+                finishMovePreview(ref);
                 try {
                     if (interactiveResizeRefs.delete(ref)) {
                         try {
@@ -4866,6 +5042,17 @@ function startPlanAdapterEntryOnce(
         oracleSeen.add(ref);
         trackOracleDetach(ref, startedDetach);
         trackOracleDetach(ref, finishedDetach);
+        // Stepped preview sampling is best-effort: a missing
+        // interactiveMoveResizeStepped surface disables move previews for
+        // this window without affecting Started/Finished routing.
+        try {
+            const steppedDetach = connectSignal(readSignal(ref, "interactiveMoveResizeStepped"), () => {
+                try { handleMoveStepped(ref); } catch (error) { void error; }
+            });
+            if (steppedDetach !== null) {
+                trackOracleDetach(ref, steppedDetach);
+            }
+        } catch (error) { void error; }
     };
     const attachOracleStartAll = (): void => {
         try {
@@ -5229,6 +5416,9 @@ function startPlanAdapterEntryOnce(
     return {
         stop: () => {
             entryStopped = true;
+            for (const ref of [...movePreviewSessions.keys()]) {
+                clearMovePreviewFull(ref);
+            }
             try {
                 adapter.disable();
             } catch (error) {

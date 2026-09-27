@@ -180,22 +180,45 @@ impl super::super::Session {
         })
     }
 
+    /// Apply a carried sticky group-edge hover prior from a previous
+    /// [`DragPreview::hover_prior`] before the next preview or the final drop.
+    /// Contract (source/revision binding, advisory `false` on mismatch, stale
+    /// carries degrade to the normal 32px edge depth) lives on
+    /// [`DragHoverPrior`]; never touches topology, pending, or reconciler
+    /// state. Returns `true` when the stored prior was replaced.
+    pub fn carry_drag_prior(&mut self, carried: &DragHoverPrior) -> bool {
+        let Some(drag) = self.drag.as_mut() else {
+            return false;
+        };
+        if drag.domain != carried.domain
+            || drag.source_leaf != carried.source_leaf
+            || drag.source_window != carried.source_window
+            || drag.revision != carried.revision
+        {
+            return false;
+        }
+        drag.prior = carried.prior.clone();
+        true
+    }
+
     /// Drag preview for the active capture at logical pointer coordinates
-    /// `(x, y)`.
+    /// `(x, y)` with fresh observed size hints.
     ///
-    /// Uses the shared portable resolver identically to [`Session::drop_drag`]:
-    /// group nodes classify via source `classify_group_point` with the stored
-    /// portable prior hover (sticky 80/32; smallest `PriorGroupEdge` in
-    /// `DragState` only), leaf nodes via source `classify_window_point`.
-    /// GroupEdge resolves same-axis N-ary first/last or perpendicular wrapping;
-    /// GroupInterior resolves the source predecessor plus `min(len, idx+1)`;
-    /// window edges retain source split semantics; center (stack fact) fails
-    /// as explicit unsupported with no preview. Self refuses as Unchanged;
-    /// out-of-area refuses as CrossDomainMismatch. On a resolved target the
-    /// stored prior updates (GroupEdge sets it, all other targets clear it);
-    /// stale captures refuse as MalformedTopology. Stages nothing and touches
-    /// no reconciler state.
-    pub fn preview_drag(&mut self, x: i32, y: i32) -> Result<DragPreview, ProposeError> {
+    /// Shares the portable resolver and failure taxonomy with
+    /// [`Session::drop_drag`] (classification detail lives on
+    /// `resolve_drag_shared`): same sticky prior hover (kept in `DragState`,
+    /// forwarded across single-shot clones via [`Session::carry_drag_prior`]),
+    /// same refusal kinds. On a resolved target the stored prior updates
+    /// (GroupEdge sets it, all other targets clear it); refusals clear it.
+    /// The desired projection uses `hints_from_observed(observed)` exactly
+    /// like the drop (advisory only: never validated, never refused for hints
+    /// alone). Stages nothing and touches no reconciler state.
+    pub fn preview_drag(
+        &mut self,
+        x: i32,
+        y: i32,
+        observed: &[ObservedWindow],
+    ) -> Result<DragPreview, ProposeError> {
         if let Some(reason) = self.reconciler.divergence() {
             return Err(ProposeError::Diverged(reason));
         }
@@ -256,9 +279,9 @@ impl super::super::Session {
             &desired_trees,
             &self.windows,
             std::slice::from_ref(&capture_snapshot.domain),
-            // Preview-only projection over retained state (no observation in
-            // scope): hints stay empty, exactly as before.
-            &BTreeMap::new(),
+            // Shared hints with drop: fresh observed size hints shape the
+            // desired projection; empty observes project exactly as before.
+            &hints_from_observed(observed),
         )
         .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
         let Some(proposed_rect) = desired_geometry
@@ -272,6 +295,7 @@ impl super::super::Session {
             domain: capture_snapshot.domain.clone(),
             source_leaf: capture_snapshot.source_leaf.clone(),
             source_window: capture_snapshot.source_window.clone(),
+            revision: capture_snapshot.revision,
             source_rect: capture_snapshot.source_rect,
             target_leaf: resolved.target_leaf,
             target_window: resolved.target_window,
@@ -283,6 +307,7 @@ impl super::super::Session {
             wrap: placement.wrap,
             target_group: placement.target_group,
             insertion_index: placement.insertion_index,
+            prior: resolved.next_prior.clone(),
         })
     }
 
@@ -290,7 +315,7 @@ impl super::super::Session {
     ///
     /// Recomputes the same deterministic result as [`Session::preview_drag`]
     /// through the shared resolver (group rects/child starts, sticky prior
-    /// hover, GroupEdge first/last or wrapping, GroupInterior predecessor
+    /// hover set live or via [`Session::carry_drag_prior`], GroupEdge first/last or wrapping, GroupInterior predecessor
     /// plus `min(len, idx+1)`, window split semantics, center unsupported),
     /// then freshly validates the begin capture plus the supplied observation
     /// (source/target/domain/membership/projected geometry/revision) and the

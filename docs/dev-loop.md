@@ -420,7 +420,7 @@ shortcut and pointer-route refusal carries its own fixed token):
 - `plasma-auto-tiler:plan:maximize-refused-disabled|observe`
 - `plasma-auto-tiler:plan:maximize-refused-fullscreen|attempted window=<id> resource_class=<class>`
 - `plasma-auto-tiler:plan:drag-drop-refused-disabled|identity|coords|observe|absent|fullscreen|maximize|floating|cross-domain` (one per tiled move-drop refusal cause; `coords` covers a missing or out-of-range finish pointer capture)
-- `plasma-auto-tiler:plan:busy-refused kind=<focus|move|resize|toggle-float|toggle-sticky|toggle-maximize|drag-drop>` (shortcuts refuse busy; a move drop refuses during an R4 flight, otherwise defers behind an ordinary flight)
+- `plasma-auto-tiler:plan:busy-refused kind=<focus|move|resize|toggle-float|toggle-sticky|toggle-maximize|drag-drop|drag-preview>` (shortcuts refuse busy; a move drop refuses during an R4 flight, otherwise defers behind an ordinary flight; preview backs off without queuing)
 - `plasma-auto-tiler:plan:reconcile-accepted windows=<count> cause=stable-drift recovery=accept-client-rect` (bounded reassertions exhausted; exact per-window geometry accepted)
  - `plasma-auto-tiler:plan:stale-replan` (pre-write stale reply replanned once against fresh complete observation)
 - `plasma-auto-tiler:plan:shortcut-failed action=<action> sequence=<sequence>` (per failed shortcut registration)
@@ -459,6 +459,10 @@ route's adapter emits the exact `pointer-refused-*` token above per cause:
 - `plasma-auto-tiler:route-diag:drag-pull action=dispatch`
 - `plasma-auto-tiler:route-diag:drag-verdict cancelled=<true|false> correlation=<drag-N> reason=<reason>`
 - `plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=<drag-N> accepted=<true|false>` (tiled move finish routed to `kind=drag-drop`; `accepted=true` means the intent entered or deferred into the single flight, not that geometry applied; `false` means refused or failed before entering it, with a cause token and drag-rejection marker)
+- `plasma-auto-tiler:plan:drag-preview-backed-off correlation=<drag-N> reason=busy` (a sampled read-only preview yielded to the command flight; no queued request)
+- `plasma-auto-tiler:plan:drag-preview-settled correlation=<drag-N> outcome=<applied|refused|stale> reason=<token>` (only `applied` supplies a slot; refusal hides it)
+- `plasma-auto-tiler:route-diag:drag-preview-shown correlation=<drag-N>` / `drag-preview-cleared correlation=<drag-N> reason=<finish|refused|terminal>` (edge-only native setter/clear requests; no visual-delivery claim)
+- `plasma-auto-tiler:plan:drag-drop-cross-output correlation=<drag-N> source=cross-output dest=destination` / `drag-drop-cross-applied correlation=<drag-N> plan=<plan-id>` / `drag-drop-cross-refused correlation=<drag-N> reason=<token>` (cross-output destination dispatch, actual applied plan or terminal failure; no raw output or workspace IDs)
 - `plasma-auto-tiler:route-diag:drag-drop-thrown correlation=<drag-N>` (synchronous routing exception, fail-closed)
 - `plasma-auto-tiler:route-diag:drag-call-missing` (pull with no call binding)
 - `plasma-auto-tiler:route-diag:drag-call-thrown` (pull whose D-Bus call threw)
@@ -488,19 +492,30 @@ Drag-oracle entry startup refusal (exactly one token per refused
 - `plasma-auto-tiler:route-diag:drag-entry-added-invalid` (missing or non-connectable windowAdded signal)
 - `plasma-auto-tiler:route-diag:drag-entry-added-connect-failed` (windowAdded attach returned null or threw)
 
-Tiled move-drop lifecycle (option A): the finish context captures
+Tiled move-drop lifecycle (shipped offline, live check pending): the finish context captures
 `workspace.cursorPos` synchronously at FINISH before the async oracle pull;
 the verdict carries no pointer and the route never reads the cursor at
 reply. The entry calls `adapter.requestDragDrop` with that captured point
 plus the verdict window identity through the shared single flight (deferred
-when busy, never concurrent). The adapter compares the Started source domain
-to the fresh foreground domain; a mismatch refuses `cross-domain` without
-planning the destination and scopes the restore marker to the Started source.
-When no valid Started binding is supplied, retained `appliedById` evidence
-provides the guard; stale applied evidence never overrides a valid Started
-binding. No native output/workspace write or return transfer is attempted;
-a refused or failed drop converges through the existing coalesced one-shot
-marker reconcile.
+when busy, never concurrent). Stepped tiled moves sample the pointer into
+read-only Planner `drag-preview` requests on fresh, size-hinted destination
+observations; one sample is outstanding at a time and a later step coalesces.
+The pointer selects the preview domain, with a read-only prospective mover
+insertion when native reassignment has not yet arrived. The preview result
+and its exact hover prior are scoped to the Started identity/revision;
+Finish clears the independent native overlay and fences late replies while
+preserving the last completed prior for the final drop. The native setter
+accepts a translucent filled target rect above windows; center, refusal and
+cancellation leave it hidden. A valid Started source-output mismatch dispatches
+to the destination and successful application forces complete source-domain
+reconciliation; the destination restore marker cannot fight the source.
+Without a Started binding, retained `appliedById` evidence still guards
+cross-domain direct callers. If native output has not yet reassigned at Finish,
+the adapter uses the pointer's destination snapshot, sends the mover to that
+output, sets its target desktop, and checks fresh complete destination
+membership before applying planned geometry; refusal takes the existing
+destination marker path. See the offline verification and remaining-size
+rationale in `changes/archive/cross-output-drag-preview.md`.
 
 Map each journey step above to one Plan command: add -> `kind=admit`, close ->
 `kind=remove`, directional focus -> `kind=focus`, directional move ->

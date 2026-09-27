@@ -5,6 +5,7 @@
 
 #include <effect/effect.h>
 #include <effect/effectwindow.h>
+#include <scene/imageitem.h>
 #include <scene/outlinedborderitem.h>
 
 #include <QByteArray>
@@ -36,6 +37,12 @@ public:
     void applyGroupHighlight(const QString &payload);
     void clearGroupHighlight();
     QString groupHighlightStatus() const;
+    // Independent drag-target preview: screen-space filled rectangle above
+    // windows, window-agnostic (no EffectWindow retained). Visible only
+    // between a valid set and an explicit clear; never gated on Meta, focus,
+    // or the group outline.
+    void setDragTargetPreview(int x, int y, int w, int h);
+    void clearDragTargetPreview();
 
 private:
     friend class OraclePressSpy;
@@ -60,6 +67,7 @@ private:
     void updateMaximizedState(EffectWindow *window, bool maximized);
     void updateBorder();
     void updateOutline();
+    void updateDragPreview();
     void paintScreen(const RenderTarget &renderTarget, const RenderViewport &viewport, int mask, const Region &deviceRegion, LogicalOutput *screen) override;
     void updateGroupVisibility();
     void onMouseChanged(const QPointF &pos, const QPointF &oldPos, Qt::MouseButtons buttons, Qt::MouseButtons oldButtons,
@@ -69,6 +77,12 @@ private:
     const bool m_isOpenGL;
     OutlinedBorderItem m_borderItem;
     OutlinedBorderItem m_groupItem;
+    // Filled-translucent preview above windows (ImageItem with a 1x1 solid
+    // default-color image scaled to the stored rect). Value member for
+    // auto-lifetime with the effect; visual parent is the scene overlay.
+    ImageItem m_dragPreviewItem;
+    QRect m_dragPreviewRect;
+    bool m_dragPreviewVisible = false;
     QPointer<EffectWindow> m_trackedWindow;
     QSet<EffectWindow *> m_maximizedWindows;
     QSet<EffectWindow *> m_maximizeSubscribed;

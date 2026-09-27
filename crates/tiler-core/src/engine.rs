@@ -669,6 +669,7 @@ impl Engine {
                     _ => self.drag_drop_request(event),
                 }
             }
+            CoreCommand::DragPreview { .. } => self.drag_preview_request(event),
         }
     }
 
@@ -2774,53 +2775,79 @@ impl Engine {
         session.verify_resize(&post).is_ok()
     }
 
-    /// Synchronous drag-drop request: one `begin_drag` then `drop_drag` pair
-    /// on the same complete observation with immediate acknowledge/verify.
+    /// Shared drag resolver for preview and drop: same complete observation,
+    /// convergence, source binding, prior, resolve, and ordinary projection.
     ///
-    /// Single-domain only, no preview, no reseed, no relocation, no seeding:
-    /// an absent, unusable, empty, or domain-mismatched slot refuses
-    /// fail-closed without mutation. The pre-request convergence in
-    /// [`Engine::handle`] already converged membership on window ids (never
-    /// rects), so a moved source frame is never a departure; the same
-    /// complete carried observation binds both begin and drop. Begin refusals
-    /// (unfocused, unknown, cross-domain, partial) map to their exact
-    /// `Rejected` kinds. Drop snap-backs (self, outside work area, no-op,
-    /// stale) map to bounded `unchanged` rejection so KWin restores; center
-    /// maps to `unsupported-capability`. Planned drops commit synchronously
-    /// and reply the full desired geometry as `drag-drop`/`place-tiled`.
-    /// Refusals keep canonical topology with no pending drag (the working
-    /// clone is discarded; the retained slot is untouched).
+    /// Retained drops reuse the pre-request convergence in [`Engine::handle`];
+    /// retained previews converge the discarded clone on the same complete
+    /// observation so a new arrival previews where the drop resolves. Absent
+    /// destinations seed fresh from the complete observation and converge once
+    /// (never relocating the source). Preview never commits or stores; drop
+    /// commits once. Empty/singleton cross-output falls back to the ordinary
+    /// retained projection; same-output singletons snap back.
     fn drag_drop_request(&mut self, event: &CoreEvent) -> CoreReply {
-        use crate::boundary::TiledPlan;
-        let CoreCommand::DragDrop { window, x, y } = &event.command else {
-            return CoreReply::Rejected {
-                kind: "unknown-value",
-                message: "request contains an unknown value",
-            };
-        };
-        if !is_opaque_id(window) {
-            return CoreReply::SnapshotInvalid {
-                message: OPAQUE_ID_MESSAGE,
-                detail: "drag-drop-window-invalid",
-            };
+        self.drag_resolve(event, false)
+    }
+
+    fn drag_preview_request(&mut self, event: &CoreEvent) -> CoreReply {
+        self.drag_resolve(event, true)
+    }
+
+    /// Build the working session plus freshness flag, or the fence reply.
+    ///
+    /// Fresh seeds from the complete destination observation and converges
+    /// once; retained applies the fences and clones. Never stores.
+    fn drag_working(&self, event: &CoreEvent) -> Result<(Session, bool), Box<CoreReply>> {
+        if !self.contains(&event.domain_key) {
+            if !is_gap(event.outer_gap) || !is_gap(event.domain.gap) {
+                return Err(Box::new(CoreReply::Rejected {
+                    kind: "domain-mismatch",
+                    message: "domain outer gap does not match retained state",
+                }));
+            }
+            let mut fresh = Session::new(
+                event.owner.clone(),
+                event.generation.clone(),
+                0,
+                event.fingerprint,
+                vec![event.domain.clone()],
+            )
+            .map_err(|_| {
+                Box::new(CoreReply::SnapshotInvalid {
+                    message: OBSERVATION_MESSAGE,
+                    detail: "seed-failed",
+                })
+            })?;
+            fresh.set_policy(self.policy.clone());
+            let observation = drag_observation_for(event, fresh.accepted_revision());
+            fresh
+                .converge_observation(&observation, drag_focus_for(event))
+                .map_err(|error| Box::new(drag_propose_reply(error)))?;
+            if committed_session_is_empty(&fresh) {
+                return Err(Box::new(CoreReply::Rejected {
+                    kind: RefusalKind::UnknownDomain.as_str(),
+                    message: RefusalKind::UnknownDomain.message(),
+                }));
+            }
+            return Ok((fresh, true));
         }
         let Some(session) = self.session(&event.domain_key).cloned() else {
-            return CoreReply::Rejected {
+            return Err(Box::new(CoreReply::Rejected {
                 kind: RefusalKind::UnknownDomain.as_str(),
                 message: RefusalKind::UnknownDomain.message(),
-            };
+            }));
         };
         if let Some(reason) = session.divergence() {
-            return CoreReply::Rejected {
+            return Err(Box::new(CoreReply::Rejected {
                 kind: reason.as_str(),
                 message: reason.message(),
-            };
+            }));
         }
         if session.has_pending() || session.has_pending_desired() || session.has_drag() {
-            return CoreReply::Rejected {
+            return Err(Box::new(CoreReply::Rejected {
                 kind: PENDING_EXISTS_KIND,
                 message: PENDING_EXISTS_MESSAGE,
-            };
+            }));
         }
         let retained_matches = session
             .domains()
@@ -2828,80 +2855,212 @@ impl Engine {
             .find(|d| d.key() == event.domain_key)
             .is_some_and(|d| d.bounds == event.domain.bounds && d.gap == event.domain.gap);
         if !retained_matches {
-            return CoreReply::Rejected {
+            return Err(Box::new(CoreReply::Rejected {
                 kind: RefusalKind::UnknownDomain.as_str(),
                 message: RefusalKind::UnknownDomain.message(),
-            };
+            }));
         }
         if self.outer_gap_ref(&event.domain_key).copied() != Some(event.outer_gap) {
-            return CoreReply::Rejected {
+            return Err(Box::new(CoreReply::Rejected {
                 kind: "domain-mismatch",
                 message: "domain outer gap does not match retained state",
-            };
+            }));
         }
-        if committed_session_is_empty(&session) {
-            return CoreReply::Rejected {
-                kind: RefusalKind::UnknownDomain.as_str(),
-                message: RefusalKind::UnknownDomain.message(),
-            };
+        Ok((session, false))
+    }
+
+    /// Ordinary singleton projection for a cross-output single mover; `None`
+    /// for same-output or multi-window sessions.
+    fn drag_singleton_project(
+        working: &Session,
+        event: &CoreEvent,
+        mover: &WindowId,
+        source: &Option<DomainKey>,
+    ) -> Option<(
+        crate::boundary::ProjectionPlan,
+        crate::directional::NodeId,
+        Rect,
+    )> {
+        let binding = source.as_ref()?;
+        if !is_opaque_id(binding.output.0.as_str())
+            || !is_opaque_id(binding.workspace.0.as_str())
+            || binding.output == event.domain_key.output
+        {
+            return None;
         }
-        let mut working = session;
-        let base = working.accepted_revision();
-        let observation = crate::seed::session_observation_for(
-            &event.owner,
-            &event.generation,
-            base,
-            event.fingerprint,
+        let snapshot = working.snapshot();
+        if snapshot.windows.len() != 1 {
+            return None;
+        }
+        let link = snapshot.windows.into_iter().next()?;
+        if link.window != *mover {
+            return None;
+        }
+        let hints = event
+            .windows
+            .iter()
+            .map(|entry| (entry.window.clone(), entry.hints))
+            .collect::<BTreeMap<_, _>>();
+        let plan = project_retained_tiled_geometry(
+            working,
+            &event.domain_key,
+            event.domain.bounds,
+            event.domain.gap,
+            Some((event.domain_key.clone(), link.leaf.clone())),
+            ProjectionKind::Reconcile,
+            &hints,
             &event.windows,
-        );
-        let _ = working.sync_focus_from_window(&event.domain_key, &event.focused_window);
-        let window_id = WindowId(window.clone());
-        if let Err(error) = working.begin_drag(&window_id, &observation) {
-            return match error {
-                ProposeError::Diverged(reason) => CoreReply::Diverged(reason),
-                ProposeError::PendingExists => CoreReply::Rejected {
-                    kind: PENDING_EXISTS_KIND,
-                    message: PENDING_EXISTS_MESSAGE,
-                },
-                ProposeError::Refused(kind) => CoreReply::Rejected {
-                    kind: kind.as_str(),
-                    message: kind.message(),
-                },
+        )?;
+        let rect = plan
+            .geometry
+            .iter()
+            .find(|g| g.window == *mover)
+            .map(|g| g.rect)?;
+        let leaf = plan.focus_leaf.clone().unwrap_or(link.leaf.clone());
+        Some((plan, leaf, rect))
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn drag_resolve(&mut self, event: &CoreEvent, is_preview: bool) -> CoreReply {
+        use crate::boundary::{DragPreviewPlan, TiledPlan};
+        let (window, x, y, hover_prior, source) = match &event.command {
+            CoreCommand::DragDrop {
+                window,
+                x,
+                y,
+                hover_prior,
+                source,
+            }
+            | CoreCommand::DragPreview {
+                window,
+                x,
+                y,
+                hover_prior,
+                source,
+            } => (window, *x, *y, hover_prior, source),
+            _ => {
+                return CoreReply::Rejected {
+                    kind: "unknown-value",
+                    message: "request contains an unknown value",
+                };
+            }
+        };
+        if !is_opaque_id(window) {
+            return CoreReply::SnapshotInvalid {
+                message: OPAQUE_ID_MESSAGE,
+                detail: "drag-drop-window-invalid",
             };
         }
-        let (x, y) = (*x, *y);
-        match working.drop_drag(
-            x,
-            y,
-            &observation,
-            &event.correlation,
-            &DragCapabilities::full(),
-        ) {
-            Ok(crate::session::DragRelease::Planned(plan)) => {
-                let typed = CoreReply::Tiled(TiledPlan::from_drag(&plan));
-                if Self::commit_drag(&mut working, event, &plan, base) {
-                    self.store_committed(event.domain_key.clone(), working, event.outer_gap);
-                    return typed;
-                }
-                self.remove(&event.domain_key);
-                CoreReply::SnapshotInvalid {
-                    message: OBSERVATION_MESSAGE,
-                    detail: "commit-rejected",
-                }
+        let mover = WindowId(window.to_owned());
+        let (mut working, is_fresh) = match self.drag_working(event) {
+            Ok(pair) => pair,
+            Err(reply) => return *reply,
+        };
+        if is_preview && !is_fresh {
+            let observation = drag_observation_for(event, working.accepted_revision());
+            if let Err(error) = working.converge_observation(&observation, drag_focus_for(event)) {
+                return drag_propose_reply(error);
             }
-            Ok(crate::session::DragRelease::SnapBack(_)) => CoreReply::Rejected {
-                kind: RefusalKind::Unchanged.as_str(),
-                message: RefusalKind::Unchanged.message(),
-            },
-            Err(ProposeError::Diverged(reason)) => CoreReply::Diverged(reason),
-            Err(ProposeError::PendingExists) => CoreReply::Rejected {
-                kind: PENDING_EXISTS_KIND,
-                message: PENDING_EXISTS_MESSAGE,
-            },
-            Err(ProposeError::Refused(kind)) => CoreReply::Rejected {
-                kind: kind.as_str(),
-                message: kind.message(),
-            },
+        } else if !is_preview && is_fresh {
+            self.converged_this_op = true;
+        }
+        if committed_session_is_empty(&working) {
+            return drag_propose_reply(ProposeError::Refused(RefusalKind::UnknownDomain));
+        }
+        let base = working.accepted_revision();
+        let observation = drag_observation_for(event, base);
+        if is_fresh {
+            let _ = working.sync_focus_from_window(&event.domain_key, &mover);
+        } else {
+            let _ = working.sync_focus_from_window(&event.domain_key, &event.focused_window);
+        }
+        if let Err(error) = working.begin_drag(&mover, &observation) {
+            return drag_propose_reply(error);
+        }
+        if let Some(carried) = hover_prior {
+            let _ = working.carry_drag_prior(carried);
+        }
+        if is_preview {
+            match working.preview_drag(x, y, &observation.windows) {
+                Ok(preview) => CoreReply::DragPreview(DragPreviewPlan {
+                    base_revision: base,
+                    preview,
+                }),
+                Err(ProposeError::Refused(RefusalKind::Unchanged)) => {
+                    let Some((_, leaf, rect)) =
+                        Self::drag_singleton_project(&working, event, &mover, source)
+                    else {
+                        return drag_propose_reply(ProposeError::Refused(RefusalKind::Unchanged));
+                    };
+                    CoreReply::DragPreview(DragPreviewPlan {
+                        base_revision: base,
+                        preview: crate::session::DragPreview {
+                            domain: event.domain_key.clone(),
+                            source_leaf: leaf.clone(),
+                            source_window: mover.clone(),
+                            revision: base,
+                            source_rect: rect,
+                            target_leaf: leaf.clone(),
+                            target_window: mover.clone(),
+                            target_rect: rect,
+                            proposed_rect: rect,
+                            side: crate::contract::DragSide::Left,
+                            axis: crate::directional::Axis::Horizontal,
+                            before: true,
+                            wrap: false,
+                            target_group: leaf,
+                            insertion_index: 0,
+                            prior: None,
+                        },
+                    })
+                }
+                Err(error) => drag_propose_reply(error),
+            }
+        } else {
+            match working.drop_drag(
+                x,
+                y,
+                &observation,
+                &event.correlation,
+                &DragCapabilities::full(),
+            ) {
+                Ok(crate::session::DragRelease::Planned(plan)) => {
+                    let typed = CoreReply::Tiled(TiledPlan::from_drag(&plan));
+                    if Self::commit_drag(&mut working, event, &plan, base) {
+                        self.store_committed(event.domain_key.clone(), working, event.outer_gap);
+                        return typed;
+                    }
+                    if !is_fresh {
+                        self.remove(&event.domain_key);
+                    }
+                    CoreReply::SnapshotInvalid {
+                        message: OBSERVATION_MESSAGE,
+                        detail: "commit-rejected",
+                    }
+                }
+                Ok(crate::session::DragRelease::SnapBack(_)) => {
+                    let Some((plan, leaf, _)) =
+                        Self::drag_singleton_project(&working, event, &mover, source)
+                    else {
+                        return drag_propose_reply(ProposeError::Refused(RefusalKind::Unchanged));
+                    };
+                    let reply = CoreReply::Tiled(TiledPlan {
+                        base_revision: plan.base_revision,
+                        policy_version: LIFECYCLE_POLICY_VERSION,
+                        kind: crate::boundary::TiledKind::DragDrop,
+                        geometry: plan.geometry,
+                        focus_domain: Some(event.domain_key.clone()),
+                        focus_leaf: Some(leaf),
+                        float_window: None,
+                        float_rect: None,
+                    });
+                    if is_fresh {
+                        self.store_committed(event.domain_key.clone(), working, event.outer_gap);
+                    }
+                    reply
+                }
+                Err(error) => drag_propose_reply(error),
+            }
         }
     }
 
@@ -2996,6 +3155,38 @@ impl Engine {
         };
         session.reproject_domain(key, bounds);
         true
+    }
+}
+
+/// Shared drag observation at `base` from the complete carried window set.
+fn drag_observation_for(event: &CoreEvent, base: u64) -> SessionObservation {
+    crate::seed::session_observation_for(
+        &event.owner,
+        &event.generation,
+        base,
+        event.fingerprint,
+        &event.windows,
+    )
+}
+
+/// Shared carried focus (`None` when the event carries no focused window).
+fn drag_focus_for(event: &CoreEvent) -> Option<&WindowId> {
+    if event.focused_window.0.is_empty() {
+        None
+    } else {
+        Some(&event.focused_window)
+    }
+}
+
+/// Shared drag [`ProposeError`] mapping: divergences stay terminal, everything
+/// else is a rejection with the exact kind/message.
+fn drag_propose_reply(error: ProposeError) -> CoreReply {
+    match error {
+        ProposeError::Diverged(reason) => CoreReply::Diverged(reason),
+        _ => CoreReply::Rejected {
+            kind: error.kind(),
+            message: error.message(),
+        },
     }
 }
 
@@ -4099,5 +4290,355 @@ mod tests {
             next
         );
         assert!(!engine.reproject_retained(&domain("missing", "ws").key(), next));
+    }
+
+    fn engine_window(window: &str, output: &str, workspace: &str) -> crate::seed::EngineWindow {
+        crate::seed::EngineWindow {
+            window: WindowId(window.to_owned()),
+            output: OutputId(output.to_owned()),
+            workspace: WorkspaceId(workspace.to_owned()),
+            rect: Rect {
+                x: 0,
+                y: 0,
+                w: 10,
+                h: 10,
+            },
+            floating: false,
+            fit_excluded: false,
+            hints: crate::size_hints::WindowSizeHints::none(),
+        }
+    }
+
+    fn drag_event(
+        owner: &OwnerId,
+        gen_id: &GenerationId,
+        domain: &OutputDomain,
+        focused: &str,
+        windows: Vec<crate::seed::EngineWindow>,
+        command: crate::boundary::CoreCommand,
+        correlation: &str,
+    ) -> crate::boundary::CoreEvent {
+        crate::boundary::CoreEvent {
+            owner: owner.clone(),
+            generation: gen_id.clone(),
+            correlation: crate::ids::CorrelationId::parse(correlation).expect("valid"),
+            revision: 0,
+            fingerprint: 7,
+            domain: domain.clone(),
+            domain_key: domain.key(),
+            outer_gap: 0,
+            focused_window: WindowId(focused.to_owned()),
+            windows,
+            directional: None,
+            directional_target_outer_gap: None,
+            target_domain: None,
+            target_windows: vec![],
+            command,
+        }
+    }
+
+    fn cross_source(output: &str, workspace: &str) -> DomainKey {
+        DomainKey {
+            output: OutputId(output.to_owned()),
+            workspace: WorkspaceId(workspace.to_owned()),
+        }
+    }
+
+    fn hinted_window(
+        window: &str,
+        output: &str,
+        workspace: &str,
+        min_w: Option<i32>,
+    ) -> crate::seed::EngineWindow {
+        let mut entry = engine_window(window, output, workspace);
+        entry.hints = crate::size_hints::WindowSizeHints {
+            min_w,
+            min_h: None,
+            max_w: None,
+            max_h: None,
+        };
+        entry
+    }
+
+    #[test]
+    fn drag_empty_singleton_cross_output_admits_without_relocating_source() {
+        use crate::boundary::{CoreCommand, CoreEvent, CoreReply};
+        use crate::ids::CorrelationId;
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let source_domain = domain("out-1", "ws-1");
+        let source_key = source_domain.key();
+        let source = crate::seed::seed_session(
+            &owner,
+            &gen_id,
+            7,
+            &source_domain,
+            &[
+                engine_window("win-a", "out-1", "ws-1"),
+                engine_window("win-b", "out-1", "ws-1"),
+            ],
+        )
+        .expect("seeds source");
+        engine.store_committed(source_key.clone(), source, 0);
+        let dest_domain = domain("out-2", "ws-1");
+        let dest_key = dest_domain.key();
+        let event = |command, correlation: &str| CoreEvent {
+            owner: owner.clone(),
+            generation: gen_id.clone(),
+            correlation: CorrelationId::parse(correlation).expect("valid"),
+            revision: 0,
+            fingerprint: 7,
+            domain: dest_domain.clone(),
+            domain_key: dest_key.clone(),
+            outer_gap: 0,
+            focused_window: WindowId("win-a".to_owned()),
+            windows: vec![engine_window("win-a", "out-2", "ws-1")],
+            directional: None,
+            directional_target_outer_gap: None,
+            target_domain: None,
+            target_windows: vec![],
+            command,
+        };
+        let same_drop = event(
+            CoreCommand::DragDrop {
+                window: "win-a".to_owned(),
+                x: 400,
+                y: 300,
+                hover_prior: None,
+                source: None,
+            },
+            "corr-drag-empty-same",
+        );
+        match engine.handle(&same_drop) {
+            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "unchanged"),
+            other => panic!("same-output singleton must snap back, got {other:?}"),
+        }
+        assert!(!engine.contains(&dest_key));
+        let same_preview = event(
+            CoreCommand::DragPreview {
+                window: "win-a".to_owned(),
+                x: 400,
+                y: 300,
+                hover_prior: None,
+                source: None,
+            },
+            "corr-drag-empty-pv-same",
+        );
+        match engine.handle(&same_preview) {
+            CoreReply::Rejected { kind, .. } => assert_eq!(kind, "unchanged"),
+            other => panic!("same-output preview must snap back, got {other:?}"),
+        }
+        let preview = event(
+            CoreCommand::DragPreview {
+                window: "win-a".to_owned(),
+                x: 400,
+                y: 300,
+                hover_prior: None,
+                source: Some(cross_source("out-1", "ws-1")),
+            },
+            "corr-drag-empty-pv",
+        );
+        let rect = match engine.handle(&preview) {
+            CoreReply::DragPreview(plan) => plan.preview.proposed_rect,
+            other => panic!("cross-output preview must project, got {other:?}"),
+        };
+        assert!(!engine.contains(&dest_key), "preview must not store");
+        let drop = event(
+            CoreCommand::DragDrop {
+                window: "win-a".to_owned(),
+                x: 400,
+                y: 300,
+                hover_prior: None,
+                source: Some(cross_source("out-1", "ws-1")),
+            },
+            "corr-drag-empty",
+        );
+        match engine.handle(&drop) {
+            CoreReply::Tiled(plan) => {
+                assert_eq!(plan.kind, crate::boundary::TiledKind::DragDrop);
+                assert_eq!(plan.geometry.len(), 1);
+                assert_eq!(plan.geometry[0].rect, rect);
+                assert_eq!(plan.geometry[0].rect, dest_domain.bounds);
+            }
+            other => panic!("empty drop must admit singleton, got {other:?}"),
+        }
+        assert!(engine.contains(&dest_key));
+        let kept = engine.session(&source_key).expect("source kept");
+        assert!(
+            kept.snapshot()
+                .windows
+                .iter()
+                .any(|l| l.window.0 == "win-a")
+        );
+        assert!(
+            kept.snapshot()
+                .windows
+                .iter()
+                .any(|l| l.window.0 == "win-b")
+        );
+    }
+
+    #[test]
+    fn drag_retained_empty_arrival_preview_matches_drop() {
+        use crate::boundary::{CoreCommand, CoreReply};
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let generation = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &generation);
+        let dest = domain("out-2", "ws-1");
+        let empty = Session::new(owner.clone(), generation.clone(), 0, 7, vec![dest.clone()])
+            .expect("valid empty domain");
+        engine.insert_raw(dest.key(), empty, 0);
+        let event = |command| {
+            drag_event(
+                &owner,
+                &generation,
+                &dest,
+                "win-a",
+                vec![engine_window("win-a", "out-2", "ws-1")],
+                command,
+                "corr-empty",
+            )
+        };
+        let preview = event(CoreCommand::DragPreview {
+            window: "win-a".to_owned(),
+            x: 400,
+            y: 300,
+            hover_prior: None,
+            source: Some(cross_source("out-1", "ws-1")),
+        });
+        let rect = match engine.handle(&preview) {
+            CoreReply::DragPreview(plan) => plan.preview.proposed_rect,
+            other => panic!("retained empty preview must project arrival: {other:?}"),
+        };
+        assert!(
+            engine
+                .session(&dest.key())
+                .expect("kept")
+                .snapshot()
+                .windows
+                .is_empty()
+        );
+        let drop = event(CoreCommand::DragDrop {
+            window: "win-a".to_owned(),
+            x: 400,
+            y: 300,
+            hover_prior: None,
+            source: Some(cross_source("out-1", "ws-1")),
+        });
+        match engine.handle(&drop) {
+            CoreReply::Tiled(plan) => assert_eq!(plan.geometry[0].rect, rect),
+            other => panic!("retained empty drop must match preview: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn drag_preview_drop_parity_with_hints_and_prior() {
+        use crate::boundary::{CoreCommand, CoreReply};
+        let mut engine = Engine::new();
+        let owner = OwnerId::parse("owner-a").expect("valid");
+        let gen_id = GenerationId::parse("gen-1").expect("valid");
+        engine.sync_binding(&owner, &gen_id);
+        let dest_domain = domain("out-2", "ws-1");
+        let dest_key = dest_domain.key();
+        let seeded = crate::seed::seed_session(
+            &owner,
+            &gen_id,
+            7,
+            &dest_domain,
+            std::slice::from_ref(&engine_window("win-a", "out-2", "ws-1")),
+        )
+        .expect("seeds retained destination");
+        engine.store_committed(dest_key.clone(), seeded, 0);
+        let windows = vec![
+            hinted_window("win-a", "out-2", "ws-1", Some(200)),
+            hinted_window("win-m", "out-2", "ws-1", Some(200)),
+        ];
+        let preview_event = drag_event(
+            &owner,
+            &gen_id,
+            &dest_domain,
+            "win-m",
+            windows.clone(),
+            CoreCommand::DragPreview {
+                window: "win-m".to_owned(),
+                x: 5,
+                y: 300,
+                hover_prior: None,
+                source: Some(cross_source("out-1", "ws-1")),
+            },
+            "corr-drag-hint-pv",
+        );
+        let (proposed, prior) = match engine.handle(&preview_event) {
+            CoreReply::DragPreview(plan) => {
+                (plan.preview.proposed_rect, plan.preview.hover_prior())
+            }
+            other => panic!("hinted preview must project, got {other:?}"),
+        };
+        assert!(
+            engine
+                .session(&dest_key)
+                .expect("retained")
+                .snapshot()
+                .windows
+                .iter()
+                .all(|l| l.window.0 != "win-m")
+        );
+        let preview_prior = drag_event(
+            &owner,
+            &gen_id,
+            &dest_domain,
+            "win-m",
+            windows.clone(),
+            CoreCommand::DragPreview {
+                window: "win-m".to_owned(),
+                x: 5,
+                y: 300,
+                hover_prior: Some(prior.clone()),
+                source: Some(cross_source("out-1", "ws-1")),
+            },
+            "corr-drag-hint-pv-prior",
+        );
+        match engine.handle(&preview_prior) {
+            CoreReply::DragPreview(_) => {}
+            other => panic!("carried prior preview must project, got {other:?}"),
+        }
+        let drop_event = drag_event(
+            &owner,
+            &gen_id,
+            &dest_domain,
+            "win-m",
+            windows,
+            CoreCommand::DragDrop {
+                window: "win-m".to_owned(),
+                x: 5,
+                y: 300,
+                hover_prior: Some(prior),
+                source: Some(cross_source("out-1", "ws-1")),
+            },
+            "corr-drag-hint-drop",
+        );
+        match engine.handle(&drop_event) {
+            CoreReply::Tiled(plan) => {
+                let moved = plan
+                    .geometry
+                    .iter()
+                    .find(|g| g.window.0 == "win-m")
+                    .expect("mover geometry");
+                assert_eq!(moved.rect, proposed, "hinted drop must match preview");
+            }
+            other => panic!("hinted drop must plan, got {other:?}"),
+        }
+        assert!(
+            engine
+                .session(&dest_key)
+                .expect("stored")
+                .snapshot()
+                .windows
+                .iter()
+                .any(|l| l.window.0 == "win-m")
+        );
     }
 }

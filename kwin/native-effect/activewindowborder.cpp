@@ -20,6 +20,7 @@
 #include <QByteArray>
 #include <QColor>
 #include <QDBusConnection>
+#include <QImage>
 #include <QLoggingCategory>
 #include <QPalette>
 #include <QUuid>
@@ -60,6 +61,18 @@ public Q_SLOTS:
     {
         if (m_effect) {
             m_effect->clearGroupHighlight();
+        }
+    }
+    Q_SCRIPTABLE void SetDragTargetPreview(int x, int y, int w, int h)
+    {
+        if (m_effect) {
+            m_effect->setDragTargetPreview(x, y, w, h);
+        }
+    }
+    Q_SCRIPTABLE void ClearDragTargetPreview()
+    {
+        if (m_effect) {
+            m_effect->clearDragTargetPreview();
         }
     }
     Q_SCRIPTABLE QString GetGroupHighlightStatus()
@@ -267,6 +280,18 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
     m_groupItem.setParentItem(effects->scene()->overlayItem());
     m_groupItem.setVisible(false);
 
+    // Independent drag-target preview above windows: filled translucent
+    // rectangle (1x1 solid default-color image scaled to the stored rect).
+    // Shown only between a valid set and an explicit clear; never gated on
+    // Meta, focus, or the group outline. Z=10 keeps it above the group
+    // outline (z=0) within the overlay.
+    QImage previewImage(1, 1, QImage::Format_ARGB32);
+    previewImage.fill(dragPreviewFillColor());
+    m_dragPreviewItem.setImage(previewImage);
+    m_dragPreviewItem.setParentItem(effects->scene()->overlayItem());
+    m_dragPreviewItem.setZ(10);
+    m_dragPreviewItem.setVisible(false);
+
     connect(effects, &EffectsHandler::mouseChanged, this, &ActiveWindowBorderEffect::onMouseChanged);
 
     setTrackedWindow(effects->activeWindow());
@@ -298,6 +323,7 @@ void ActiveWindowBorderEffect::reconfigure(ReconfigureFlags)
     updateOutline();
     updateBorder();
     updateGroupVisibility();
+    updateDragPreview();
 }
 
 void ActiveWindowBorderEffect::updateOutline()
@@ -820,6 +846,48 @@ void ActiveWindowBorderEffect::clearGroupHighlight()
     if (hadGroup == 1 && m_isOpenGL) {
         effects->addRepaintFull();
     }
+}
+
+void ActiveWindowBorderEffect::setDragTargetPreview(int x, int y, int w, int h)
+{
+    // Fail closed while the shared ActiveBorder endpoint is unavailable.
+    if (!m_groupDbusAvailable) {
+        clearDragTargetPreview();
+        return;
+    }
+    if (!dragPreviewRectValid(x, y, w, h)) {
+        clearDragTargetPreview();
+        return;
+    }
+    m_dragPreviewRect = QRect(x, y, w, h);
+    m_dragPreviewVisible = true;
+    updateDragPreview();
+    if (m_isOpenGL) {
+        effects->addRepaintFull();
+    }
+}
+
+void ActiveWindowBorderEffect::clearDragTargetPreview()
+{
+    const bool wasVisible = m_dragPreviewVisible;
+    m_dragPreviewVisible = false;
+    m_dragPreviewRect = QRect();
+    updateDragPreview();
+    if (wasVisible && m_isOpenGL) {
+        effects->addRepaintFull();
+    }
+}
+
+void ActiveWindowBorderEffect::updateDragPreview()
+{
+    if (!m_isOpenGL) {
+        return;
+    }
+    if (m_dragPreviewVisible) {
+        m_dragPreviewItem.setPosition(QPointF(static_cast<qreal>(m_dragPreviewRect.x()), static_cast<qreal>(m_dragPreviewRect.y())));
+        m_dragPreviewItem.setSize(QSizeF(static_cast<qreal>(m_dragPreviewRect.width()), static_cast<qreal>(m_dragPreviewRect.height())));
+    }
+    m_dragPreviewItem.setVisible(m_dragPreviewVisible);
 }
 
 QString ActiveWindowBorderEffect::groupHighlightStatus() const
