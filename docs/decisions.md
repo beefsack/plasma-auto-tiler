@@ -10,28 +10,29 @@ User-approved 2026-09-24 from the
 elsewhere in this file that conflict remain accurate for shipped code until
 the corresponding item ships; each such entry names its replacement.
 
-- Observed-membership convergence (steps 1-2 shipped offline, live acceptance pending;
-  [change note](changes/archive/observation-convergence.md)):
-  per the user's 2026-09-25 decision, each complete per-domain observation
-  controls portable membership and floating state before ordinary Engine
-  operations. One Session convergence preserves surviving topology, removes
-  absent members, normally admits newcomers and adopts floating transitions;
-  the requested operation then runs at the converged revision. No sequence,
-  world index, fingerprint extension, tombstone, retention marker, or
-  wholesale reseed is added. Per the Orchestrator's 2026-09-25 scope decisions,
-  only the existing wire `floating` and advisory `fit_excluded` are in scope;
-  sticky/all-desktops uses KWin's existing floating mapping, while fullscreen
-  and maximized members keep their tiled allocations as native overlays.
-  KWin carries current post-removal observations and quarantines incomplete
-  foreground frames. Per the user's 2026-09-25 step-2 go-ahead, automatic
-  foreground and hidden tiling now send complete observations through
+- Observed-membership convergence (user decision 2026-09-25; Orchestrator scope
+  2026-09-25; step-2 go-ahead 2026-09-25; steps 1-2 shipped offline, live
+  acceptance pending; evidence in
+  [observation-convergence](changes/archive/observation-convergence.md)):
+  each complete per-domain observation controls portable membership and
+  floating state before ordinary Engine operations. One Session convergence
+  preserves surviving topology, removes absent members, normally admits
+  newcomers and adopts floating transitions; the requested operation then runs
+  at the converged revision. No sequence, world index, fingerprint extension,
+  tombstone, retention marker, or wholesale reseed is added. Only the existing
+  wire `floating` and advisory `fit_excluded` are in scope; sticky/all-desktops
+  uses KWin's existing floating mapping, while fullscreen and maximized members
+  keep their tiled allocations as native overlays. KWin carries current
+  post-removal observations and quarantines incomplete foreground frames.
+  Automatic foreground and hidden tiling send complete observations through
   `reconcile`; the applied membership baseline and public admit/remove wire
   commands are retired. Fresh observations keep deterministic fitting and
-  admission placement. Orchestrator step-2 rule: a unique same-workspace source relocates only
-  when the new observation shares a retained tiled or floating-exception id;
-  disjoint and ambiguous sources seed fresh. Exact overlapping relocation
-  retains its skew/rollback fence. Step 3 retired the former pending-pair
-  fresh-domain delay and send/R4 verification protocol.
+  admission placement. Step-2 relocation rule (Orchestrator): a unique
+  same-workspace source relocates only when the new observation shares a
+  retained tiled or floating-exception id; disjoint and ambiguous sources seed
+  fresh. Exact overlapping relocation retains its skew/rollback fence. Step 3
+  retired the former pending-pair fresh-domain delay and send/R4 verification
+  protocol.
 - Target shape (review section 6): a portable `tiler-core` Engine with
   world/domain state behind a `LayoutPolicy` seam; `tiler-protocol` as a thin
   codec; a Linux service crate; the KWin script as observer and actuator; the
@@ -57,17 +58,16 @@ the corresponding item ships; each such entry names its replacement.
 - Size caps (AR16, shipped offline): the 64-window and 16-domain count caps are
   retired. The codec rejects requests above 1 MiB; the KWin adapter mirrors
   this bound before dispatch. Separate reply, native/FFI, and field bounds remain.
-- Workspace send (step 3, user decision 2026-09-25, shipped offline): Engine
-  immediately commits planned topology after complete source/target observation;
-  KWin writes native geometry then membership, follows on fresh exact arrival,
-  and forces complete source/target reconciliation on every terminal flight.
-  Per the Orchestrator's portable-flag scope, both send observations retain
-  flagged source/target survivors; only `floating` and `fit_excluded` cross the
-  wire, while fullscreen/maximized remain local retained-tile overlays. A
-  flag-only change in either domain stales the reply before native writes.
-  No pending transaction, native verified-success claim, Plan block or setter
-  replay. The earlier option-B abandon path is superseded. Live acceptance
-  remains pending.
+- Workspace send (step 3, user decision 2026-09-25, shipped offline; live
+  acceptance pending): Engine immediately commits planned topology after
+  complete source/target observation; KWin writes native geometry then
+  membership, follows on fresh exact arrival, and forces complete
+  source/target reconciliation on every terminal flight. Per the
+  Orchestrator's portable-flag scope, both send observations retain flagged
+  source/target survivors; only `floating` and `fit_excluded` cross the wire,
+  while fullscreen/maximized remain local retained-tile overlays. A flag-only
+  change in either domain stales the reply before native writes. No pending
+  transaction, native verified-success claim, Plan block, or setter replay.
 - Settings (AR15, shipped offline): tiling settings (`workspaceMode`, gaps)
   are configured from the KWin script's own Configure page, backed by a small
   host-built native script KCM. Saving changed gaps requests KWin reconfigure
@@ -118,12 +118,11 @@ the corresponding item ships; each such entry names its replacement.
   while maximized: neither outline may be visible.
 - Effect observation seeds every window on load and addition from its committed
   native maximize mode; any maximize axis or fullscreen suppresses both
-  outlines. Native transition signals remain authoritative. Orchestrator
-  decision applying the user-approved AR9: a Wayland maximize configure not
-  yet acknowledged leaves the window rendered normal, so the committed normal
-  seed reflects that geometry; acknowledgement emits the observed maximize
-  signal. Requested mode could hide a normally rendered border indefinitely
-  if the client never acknowledges. No polling, timers, or geometry heuristics.
+  outlines, and native transition signals remain authoritative (Orchestrator
+  decision applying user-approved AR9: an unacknowledged Wayland maximize
+  configure still renders normal, so the committed normal seed reflects that
+  geometry; acknowledgement emits the observed maximize signal. Requested mode
+  is never guessed; no polling, timers, or geometry heuristics).
 - Approved 2026-09-21: the Slice 1 drag oracle is folded into the surviving
   `plasma-auto-tiler-active-border` effect plugin (one exported effect hosting
   active border, group overlay, and drag oracle); no second
@@ -132,15 +131,17 @@ the corresponding item ships; each such entry names its replacement.
   decoration-driven rounded corners remain the selected corner solution.
 - The shipped border uses two effect-owned automatic-lifetime
   `KWin::OutlinedBorderItem`s (active border and temporary group outline),
-  without texture changes or clipping. The native integration boundary above
-  governs further capabilities, including input, rather than a category ban.
+  without texture changes or clipping.
 
 ## Native Integration Boundary
 
-- User decision (2026-09-24): keep OS/DE-agnostic logic and policy in or near
-  the Rust core wherever possible. Supply needed OS/DE capabilities through
-  the smallest reliable native integration; no capability, including input,
-  is excluded merely for being native.
+- User decision (2026-09-24; governing statement under Architecture Direction):
+  keep OS/DE-agnostic logic and policy in or near the Rust core wherever
+  possible. Supply needed OS/DE capabilities through the smallest reliable
+  native integration; no capability, including input, is excluded merely for
+  being native. Reliability is part of the test for any needed native
+  capability (Orchestrator interpretation): private KWin APIs are not
+  categorically forbidden, but their ABI churn weighs against their use.
 
 - The shipped drag oracle uses a C++/moc KWin-effect shim and POD-only C ABI.
   Rust owns verdict policy; no Qt or KWin type crosses the ABI, and every Rust
@@ -156,35 +157,30 @@ the corresponding item ships; each such entry names its replacement.
   binding atomically with final geometry, cancellation, and correlation.
   AR8 closed on 2026-09-24 at the user's request with the shipped integration
   kept, following the Lead's recommendation; this selects no endpoint rewrite.
-- Orchestrator interpretation of the 2026-09-24 user decision: reliability is
-  part of the test for any needed native capability. Private KWin APIs are not
-  categorically forbidden, but their ABI churn weighs against their use. Put
-  portable policy in Rust where possible and keep native integration as small
-  and reliable as the capability permits.
 
 ## Settings And Distribution
 
 - The script Configure page owns `workspaceMode` and both gaps through a native
   script KCM; the effect-scoped KCM retains border and shortcut-override
-  settings. Existing script groups, keys, values, and
-  defaults remain unchanged. Saving changed gaps queues the existing KWin
-  reconfigure path automatically; the controller re-reads gaps on
-  `Options.configChanged` and requests a debounced retained `update-gaps`.
-  The queued D-Bus send is unconfirmed, and a session restart guarantees pickup
-  if it cannot converge. Changing `workspaceMode` on the page still requires
-  a session restart. The ineffective `tilingAlgorithm`,
-  `automaticSplitTarget`, and `dropOutlinePreview` controls remain removed;
-  existing values are neither read nor rewritten. Shortcut re-registration
-  remains unselected: the pinned scripting surface offers no unregister
-  operation, and foreign records change only through explicit effect KCM
-  Apply/Revert. Existing live border updates remain live. Before launch, every
-  user-facing setting must apply live; this remains a mandatory launch blocker.
-  User exceptions (2026-09-25): `workspaceMode` stays startup-only for MVP and
-  the Configure page states the restart requirement clearly; `shortcutProfile`
-  is hidden until distinct profiles exist (post-MVP). Lead implementation
-  choice: preserve the existing script startup read (and its unchanged single
-  COSMIC-style catalog); the script KCM does not read, modify, migrate, delete,
-  or create any saved `kwinrc` `shortcutProfile` value.
+  settings. Existing script groups, keys, values, and defaults remain
+  unchanged. Saving changed gaps queues the existing KWin reconfigure path
+  automatically; the queued send is unconfirmed, so the controller re-reads
+  gaps on `Options.configChanged` and requests a debounced retained
+  `update-gaps`, and a session restart guarantees pickup if it cannot converge.
+  Changing `workspaceMode` on the page still requires a session restart. The
+  ineffective `tilingAlgorithm`, `automaticSplitTarget`, and `dropOutlinePreview`
+  controls remain removed; existing values are neither read nor rewritten.
+  Shortcut re-registration remains unselected: the pinned scripting surface
+  offers no unregister operation, and foreign records change only through
+  explicit effect KCM Apply/Revert. Existing live border updates remain live.
+  Before launch, every user-facing setting must apply live; this remains a
+  mandatory launch blocker. User exceptions (2026-09-25): `workspaceMode`
+  stays startup-only for MVP and the Configure page states the restart
+  requirement clearly; `shortcutProfile` is hidden until distinct profiles
+  exist (post-MVP). Lead implementation choice: preserve the existing script
+  startup read (and its unchanged single COSMIC-style catalog); the script KCM
+  does not read, modify, migrate, delete, or create any saved `kwinrc`
+  `shortcutProfile` value.
 - The core distribution remains the script KPackage for KDE Store and an
   identical GitHub Release artifact. Platform-native packages for the native
   effect and KCM are permitted; their formats and publication are unselected.
@@ -239,7 +235,7 @@ the corresponding item ships; each such entry names its replacement.
   legacy pinned CMake dirs never drive or leak. `just build-native-effect`
   and dogfood `effect-install` route through that builder with
   identity-keyed build dirs and fail closed on missing provenance. The former
-  shared `e554fab72f81915600f3f449b786fd9af40439a5` dev pin remains only
+  shared `e554fab72f81915600f3f449b786fd9af40439a5` dev pin is only
   portable/interim compatibility, no longer native authority.
 
 ## Linux Planner Activation
@@ -261,20 +257,18 @@ the corresponding item ships; each such entry names its replacement.
   restart/rebind loop. A subsequent idle command may request a fresh D-Bus
   activation. User-manager session teardown stops the service; D-Bus
   connection/name loss also ends the Planner without durable recovery state.
-- Selected 2026-09-16: on CONFIRMED Planner
-  loss, establish one bounded fresh Planner session automatically. This
-  on-demand activation is distinct from a systemd restart loop. It starts from
-  current eligible windows only, with no durable layout snapshot or journal
-  and no inference of the old session's internal history. The old in-flight
-  transaction remains terminal with old-generation replies rejected; this does
-  not replay interrupted commands, recover uncertain native mutation, apply
-   stale old-session replies, or infer commit for an unresolved workspace send,
-   and stays unavailable while a workspace send blocks Plan. Normal Plan
-  transport pins a unique owner via strict `NameHasOwner` plus one bounded
-  `StartServiceByName(..., 0)` accepting only `PrimaryOwner`/`AlreadyOwner`
-  then `GetNameOwner`; ambiguous terminals may run one bounded identity probe
-  and only absence or a changed owner recovers. A failed recovery stays
-  bounded without loops.
+- Selected 2026-09-16: on CONFIRMED Planner loss, establish one bounded fresh
+  Planner session automatically. This on-demand activation is distinct from a
+  systemd restart loop. It starts from current eligible windows only, with no
+  durable layout snapshot or journal and no inference of the old session's
+  internal history. The old in-flight transaction remains terminal with
+  old-generation replies rejected; this does not replay interrupted commands,
+  recover uncertain native mutation, apply stale old-session replies, or infer
+  commit for an unresolved workspace send. Normal Plan transport pins a unique owner via
+  strict `NameHasOwner` plus one bounded `StartServiceByName(..., 0)`
+  accepting only `PrimaryOwner`/`AlreadyOwner` then `GetNameOwner`; ambiguous
+  terminals may run one bounded identity probe and only absence or a changed
+  owner recovers. A failed recovery stays bounded without loops.
   If the Planner survives sleep, retain its current in-memory layouts rather
   than rebuild them.
 - Selected Rust KWin commands first resolve the Planner name. An absent name
@@ -283,8 +277,8 @@ the corresponding item ships; each such entry names its replacement.
   before any planner method. Activation, identity, owner, stale, loss, and
   timeout failures refuse the selected Rust route with no Legacy fallback; a
   pending plan never rebinds after a restarted owner. Session activation
-   improves immutable delivery but public KWin scripting still cannot attest the
-   initially resolved same-UID Planner binary.
+  improves immutable delivery but public KWin scripting still cannot attest the
+  initially resolved same-UID Planner binary.
 - Planner caller authorization is a single fail-closed session-bus check:
   `org.freedesktop.DBus.GetConnectionUnixUser` for the caller's unique name
   must equal the Planner process UID. A malformed name, failed lookup, unknown
@@ -298,11 +292,11 @@ the corresponding item ships; each such entry names its replacement.
   includes ordered N-ary `cosmic_v1` admission/removal, same-output send,
   restored backing-desktop/numbered workspace routes, bounded reconciliation,
   and the selected initial first-startup fitting direction below. General
-   general historical-layout reconstruction remains unselected; complete
-   observed membership is now incrementally adopted into retained domains as
-   described under Architecture Direction.
-  Before launch, this and every other user-facing setting must apply live; that
-  is a mandatory launch blocker, and the gap-only reload does not satisfy it.
+  historical-layout reconstruction remains unselected; complete observed
+  membership is now incrementally adopted into retained domains as described
+  under Architecture Direction. Before launch, this and every other
+  user-facing setting must apply live; that is a mandatory launch blocker, and
+  the gap-only reload does not satisfy it.
 - Approved 2026-09-16: when the first startup domain has no usable retained
   session, Rust may use a versioned, best-effort near-layout fitting heuristic
   to minimize unnecessary initial window movement. It must be simple,
@@ -316,11 +310,11 @@ the corresponding item ships; each such entry names its replacement.
   normal deterministic seed/reflow. The same attempt is selected for a
   post-CONFIRMED-loss fresh session only, from CURRENT eligible windows.
   Fresh-loss fitting may change grouping and does not reconstruct the old
-  topology. It selects no
-  park/unmanaged fallback or broader activation lifecycle. Existing floating,
-  sticky, fullscreen, maximize, and configured-gap behavior remains
-  authoritative; preserving it at the current eligibility or pure input boundary
-  is implementation work, not an unselected product behavior.
+  topology. It selects no park/unmanaged fallback or broader activation
+  lifecycle. Existing floating, sticky, fullscreen, maximize, and
+  configured-gap behavior remains authoritative; preserving it at the current
+  eligibility or pure input boundary is implementation work, not an unselected
+  product behavior.
 
 ## Live KWin/Plasma Boundary
 
@@ -337,13 +331,13 @@ the corresponding item ships; each such entry names its replacement.
   no broad cleanup, window closure, system path, dotfile, NixOS, Home Manager,
   sudo, session-boundary, irreversible, unrelated-host action, or preserved
   residue handling is authorized. Stop on ownership, parser, diagnostic,
-  baseline, source, or restoration ambiguity.
-- This covers project builds; native-effect staging/removal; the project's
-  `plasma-workspace/env` script and same-name legacy migration; KWin `/Effects`
-  load/unload and read-only queries; KWin script install, enable, disable, and
-  reconfigure; bounded `/Scripting` load/unload; project tray-helper lifecycle,
-  session-D-Bus operations, and journal/status reads; and disposable
-  project-owned Custom Tile tests when exact restoration is verified.
+  baseline, source, or restoration ambiguity. This covers project builds;
+  native-effect staging/removal; the project's `plasma-workspace/env` script
+  and same-name legacy migration; KWin `/Effects` load/unload and read-only
+  queries; KWin script install, enable, disable, and reconfigure; bounded
+  `/Scripting` load/unload; project tray-helper lifecycle, session-D-Bus
+  operations, and journal/status reads; and disposable project-owned Custom
+  Tile tests when exact restoration is verified.
 - Physical or manual observations and every logout, login, or new-session
   boundary require user action. No `sudo`, system-path mutation,
   external-dotfiles mutation, unrelated host mutation, irreversible cleanup,
@@ -360,8 +354,8 @@ the corresponding item ships; each such entry names its replacement.
   later authorized run only.
 - The inert checkout carrier does not change the `authoritative_ready` verdict:
   current public KWin APIs provide no direct evaluated-memory source proof for
-  the checkout controller, so `authoritative_ready` remains false.
-- No preflight readiness phase authorizes a Custom Tile lifecycle, live journey,
+  the checkout controller, so `authoritative_ready` remains false. No
+  preflight readiness phase authorizes a Custom Tile lifecycle, live journey,
   or user physical or manual action on its own; `journey_ready` and
   `authoritative_ready` remain false until the applicable acceptance gates are
   established; carrier setup is limited to its bounded operational binding.
@@ -375,9 +369,9 @@ the corresponding item ships; each such entry names its replacement.
   before mutation. This authorization does not broaden access to non-project
   resources.
 - Before any further troubleshooting or product development, current project
-  processes and Rust-path IPC must emit bounded, structured, correlated lifecycle
-  and terminal logs to their existing visible KWin console, stdout, or
-  stderr/journal sinks. `just dev verbose` keeps those summaries while
+  processes and Rust-path IPC must emit bounded, structured, correlated
+  lifecycle and terminal logs to their existing visible KWin console, stdout,
+  or stderr/journal sinks. `just dev verbose` keeps those summaries while
   `just dev trace` opt-in enables redacted high-volume per-window, hook, and
   bounded structural request/reply detail, never raw native D-Bus payloads.
   Future troubleshooting checks those logs first. The shared
@@ -388,7 +382,9 @@ the corresponding item ships; each such entry names its replacement.
   steps. Log failures cannot change product behavior or fail operations.
 - The unidentified prior `plasma-auto-tiler-advisory-*` runtime-directory
   residue is preserved untouched. Do not search for, enumerate, inspect,
-  identify heuristically, modify, or delete it. After the resource-order
+  identify heuristically, modify, or delete it. No stale POC2/POC3 harness
+  or checkpoint retry is authorized; recovery requires explicit user
+  authorization and exact identity or hash verification. After the resource-order
   correction, the standing authorization above resumes only for fresh bounded
   attempts that stop before resource creation or prove exact restoration with
   no new ambiguity.
@@ -447,14 +443,6 @@ the corresponding item ships; each such entry names its replacement.
   `keepAbove=false`) before unfloat, fresh tiled admission, or controller
   disable; a pre-existing keep-above setting remains untouched. A missing,
   refused, or unverifiable native write fails the transition without a retry.
-- The selected fresh-admission behavior follows `pop-os/cosmic-comp`
-  `81cd5fdbaa41c3973369ae85bccf829137836e20` source content:
-  `data/keybindings.ron:83-92` binds Super+G to `ToggleWindowFloating`;
-  `src/shell/workspace.rs:1485-1498` unmaps a tiled window to floating and
-  maps a floating window back through `tiling_layer.map`; and
-  `src/shell/layout/tiling/mod.rs:396-435` routes that map through
-  `map_to_tree`. The supplied checkout has no Git metadata, so the exact commit
-  identity could not be independently verified there.
 - Maximize (`Meta+M`) is workspace-local. Fullscreen (`Meta+F11`) is separate:
   the focused observed window toggles KWin's public `Window.fullScreen`
   property, while KWin keeps cover-and-restore ownership. The member retains
@@ -487,14 +475,9 @@ the corresponding item ships; each such entry names its replacement.
   restored window normally. It never retries the write. A later maximize of a
   retained member keeps the existing isolation behavior: the leaf/share remain,
   geometry writes are skipped, and unmaximize restores the retained allocation.
-  Fullscreen remains untouched and takes precedence. This is not COSMIC parity:
-  cosmic-comp `Shell::maximize_request` `src/shell/mod.rs:4393-4431` records
-  `MaximizedState` with `original_layer`, retaining `ManagedLayer::Tiling` for
-  a tiled window; `Workspace::unmaximize_request`
-  `src/shell/workspace.rs:996-1036` returns that member to tiling ("should
-  still be mapped in tiling"). The product choice makes KWin session-restored
-   maximized applications tile on admission while preserving the selected
-   post-admission behavior.
+  Fullscreen remains untouched and takes precedence. KWin session-restored
+  maximized applications therefore tile on admission while preserving the
+  selected post-admission behavior.
 - `Meta+M` toggles KWin maximize through `Window.setMaximize(bool, bool)`, never
   `maximizeMode`. Fullscreen refuses first. Post-admission maximize retains its
   tile slot and skips geometry writes; unmaximize restores its retained
@@ -503,20 +486,9 @@ the corresponding item ships; each such entry names its replacement.
   clearing. Current read-only enumeration found `kwin/KrohnkiteMonocleLayout`
   on `Meta+M`; registration preserves that record and emits the shadowed-
   delivery diagnostic until the user applies the exact reversible KCM override.
-- H/V maximize is deliberately not modeled in the engine. Source:
-  `pop-os/cosmic-comp` `81cd5fdbaa41c3973369ae85bccf829137836e20`
-  `Shell::maximize_request` `src/shell/mod.rs:4393-4431` records
-  `MaximizedState { original_geometry, original_layer, original_snapped }`
-  where `original_layer` retains `ManagedLayer::Tiling` for a tiled window, so
-  the maximized window keeps its tiling node; `unmaximize_request`
-  `src/shell/workspace.rs:996-1036` returns `ManagedLayer::Tiling` members to
-  the tiling layer ("should still be mapped in tiling") and others to the
-  floating layer; the `ManagedLayer` enum
-  `src/shell/workspace.rs:243-248` is only
-  `Fullscreen, Tiling, Floating, Sticky`, with no maximize variant. Maximize is
-  a recorded overlay state over the original layer, not a distinct topology or
-  managed layer, so the engine deliberately carries no horizontal/vertical
-  maximize concept.
+- H/V maximize is deliberately not modeled in the engine. Maximize is a
+  recorded overlay state over the original layer, not a distinct topology or
+  managed layer, so the engine carries no horizontal/vertical maximize concept.
  - Complete automatic per-domain observations, not an applied membership
    baseline, drive `reconcile` for foreground and hidden tiling. The Engine
    converges departures, arrivals, and floating transitions before projecting
@@ -544,9 +516,13 @@ the corresponding item ships; each such entry names its replacement.
   valid commands and fresh observations remain usable while the adapter retains
    confirmed canonical topology where available. User decision A (2026-09-26,
    interim): after three bounded reassertions, automatic reconciliation accepts
-   each exact client-held rectangle as per-window applied geometry evidence,
-   rather than parking the domain; other or later drift still reconciles. This
-   does not fabricate a native write or change canonical Rust topology. Learned
+   each exact client-held rectangle as per-window applied geometry evidence
+   without disabling the domain; other or later drift still reconciles. This
+   does not fabricate a native write or change canonical Rust topology. The
+   retained allocation owns topology over same-scope client drift: strict
+   `DescribePlan {"op":"reconcile"}` never derives sibling shares from a
+   client's actual rectangle. Three attempts are a KWin anti-fighting policy,
+   not a COSMIC threshold or KWin acknowledgement. Learned
    size limits and neighbour replans are deferred. Later explicit commands
    remain usable; no infinite retries, fabricated acknowledgement, stale
    geometry or uncertain cross-output transfer recovery is authorized.
@@ -566,7 +542,9 @@ the corresponding item ships; each such entry names its replacement.
   synchronously commits the planned send or exhausted horizontal R4 topology
   into canonical per-domain sessions, returning both-domain geometry and the
   native assignment. No pair survives the call and no send/R4 pending
-  ack/verify/status/cancel/abandon remains. KWin keeps a short flight-local
+  ack/verify/status/cancel/abandon remains. The retired scope is the cross-call
+  public transaction protocol only; the synchronous in-call
+  propose/acknowledge/verify commit is unchanged. KWin keeps a short flight-local
   source/target pin, including a newly allocated trailing target, and separate
   unanswered-request and arrival deadlines. Owner/generation/correlation/flight/
   snapshot fences discard stale replies before any setter. Send writes geometry
@@ -579,58 +557,6 @@ the corresponding item ships; each such entry names its replacement.
   domains and never uses `blocksPlan`. No wire ack or native verified-success is
   emitted for send/R4. Current Rust+KWin behavior is offline-verified only; no
   live verification claimed. See `changes/archive/observation-convergence.md`.
-- SUPERSEDED 2026-09-25, historical only - USER-APPROVED incremental direction, 2026-09-25: full AR11 and AR4 were parked and Section A of the incremental-send-recovery note shipped offline as the single-operation abandon path with option-B orphan retirement. Retired by the step-3 decision above; abandon/orphan/unconfirmed details below are not current.
-- SUPERSEDED 2026-09-25, historical only - USER-APPROVED
-  transaction-model direction, 2026-09-23: AR 7.8 observation-authority direction prototyped on workspace send first. Retired by the step-3 decision above; its pending/verified-success framing is not current.
-- SUPERSEDED 2026-09-25, historical only - pending-transaction status, 2026-09-22: the retired
-  same-UID-authorized `DescribePlan` route exposed only
-  `send-to-workspace-status` and `directional-move-status` for an exact pending
-  transaction. With the normal owner, generation, correlation, revision,
-  domain, bounds, and complete-observation fences, the read-only replies are
-  `post-unacked`, `post-acked`, `unresolved`, `stale`, `diverged`, or
-  `no-pending-unknown`. They expose no native/window data beyond the caller's
-  correlation and a retained pending base revision. A *status* reply of
-  `no-pending-unknown` alone never means committed or safe to unblock; the
-  distinct correlated abandon reply below does unblock. Status cannot
-  acknowledge, verify, clear, rebind, advance, write native state, release adapter blocks, retain
-  pre-observation, keep receipts, cancel, settle, retry, discard, reseed, or
-  recover. Exact pre-state and lost-commit classification remain unselected.
-- SUPERSEDED 2026-09-25, historical only - pre-actuation cancellation, 2026-09-22: one automatic bounded
-  cancellation attempt could withdraw a workspace-send or directional R4 pending
-  transaction only before its KWin flight has bound a plan or dispatched a
-  geometry, membership, or follow setter. The same-UID KWin caller attests
-  zero dispatch for its exact generation, flight, and correlation; Rust treats
-  that as a trusted protocol input, not native-history proof. Before the fresh
-  pre-state observation, KWin arms cancellation so old replies, timers, echo
-  completion, setters, and new commands remain inert until the cancellation
-  reply. Rust retains a bounded normalized dispatch-time pre-image and original
-  request revision only for the pending lifetime, and requires those plus exact
-  owner, generation, correlation, route scope, `PendingUnacked`, and no
-  divergence. Success clears only that pending/reconciler slot and staged desired
-  state, preserving canonical topology, focus, shares, exceptions, revision,
-  and unrelated domains; it replies `cancelled`, never success for the original
-  transaction. Workspace-send cancellation failures and ineligible uncertain
-  sends now proceed to correlated abandon; directional R4 retains its prior
-  terminal behavior. Status remains read-only. Cancellation itself never
-  settles acked, post-actuation, unresolved, stale, diverged, absent, or
-  lost-commit cases and introduces no receipt, replay, rollback write,
-  reset, reseed, polling, or retry loop.
-- SUPERSEDED 2026-09-25, historical only - correlated pending observability, 2026-09-22: authorized Planner
-  `DescribePlan` status/cancel requests and replies emit bounded normal-level
-  `plasma-auto-tiler:plan-summary` records on Planner stderr; opt-in trace adds
-  only a bounded structural request/reply shape. Workspace send uses the
-  existing `plasma-auto-tiler:route-diag` schema and directional R4 retains its
-  `plasma-auto-tiler:plan:cmd` prefix while adding component, route, stage,
-  correlation, generation, known revision, event, outcome, and original cause
-  for cancellation lifecycle and subsequent dispatch. Successful cancellation
-  records the validated reply before local release. Fixed uncorrelated Planner
-  early-exit summaries cover busy, closed, oversize, and unauthorized without
-  parsing rejected input. Records use only bounded/allowlisted values and
-  exclude native/window identity, geometry, domains, owners, payloads, and
-  foreign error text. Logging is best-effort. The R4 direct-`diverged` skip is
-  a correction enforcing the already selected no-divergence cancellation fence;
-  no new recovery or retry behavior is selected. This slice does not claim
-  observability for other routes. Retired by step 3; no send/R4 pending, ack, verify, status, cancel, or abandon path remains.
 - Permissive admission, authorized 2026-09-14: an observed normal window's
   incoming frame rectangle never decides whether it may join a tiled domain.
   Admission assigns a new complete geometry for every member and may reflow
@@ -644,71 +570,70 @@ the corresponding item ships; each such entry names its replacement.
   global virtual-desktop pool is not a native COSMIC workspace-set mapping.
   `per-output-local` and `global-unique` assign distinct backing desktops to
   output domains; `shared` selects the same backing desktop on every output.
-  The adapter keeps one structurally trailing empty backing desktop per relevant
-  domain, reusing it for `Meta+0` and `Meta+Shift+0` before creating one. Once
-   invisible on every output, an empty non-final managed backing desktop may be
-   removed. Management includes preexisting desktops adopted into the current
-   logical mapping; it is distinct from lifetime ownership, so disable/teardown
-   never treats an adopted desktop as disposable. The literal native-order trailing
-   empty is retained. Every live local or global-unique output domain, and the
-   shared domain, keeps at least two logical workspaces. Unmapped desktops remain
-   outside management.
+  Keeps one structurally trailing empty backing desktop per relevant domain,
+  reused for `Meta+0` and `Meta+Shift+0` before creating one; an empty
+  non-final managed backing desktop is removable once invisible on every
+  output. The literal native-order trailing empty is retained. Management
+  includes adopted preexisting desktops, distinct from lifetime ownership, so
+  disable/teardown never disposes an adopted desktop. Every live
+  local/global-unique output domain, and the shared domain, keeps at least
+  two logical workspaces. Unmapped desktops remain outside management.
   Occupied (including floating, fullscreen, and maximized), visible,
   flight-pinned, displaced, and unmapped desktops remain protected; sticky
   all-desktops windows do not occupy every backing desktop. Mapping and output
-  identity are session-local. The initial disconnected-output policy preserves its displaced
-  layout in separate workspace(s), rather than merging it into a new top-level
-  split of the remaining visible layout. If the active window was on the
-  disconnected monitor, show its relocated workspace and retain focus on that
-  window. If the active window was on a surviving monitor, preserve its current
-  visible workspace and focus; displaced workspaces remain accessible through
-  normal workspace switching. If there is no active window, preserve the
-  surviving monitor view. On reconnection, displaced workspaces automatically
-  return to their original monitor with their then-current contents and layout,
-  not a saved snapshot: split edits, closed and new windows remain reflected.
-  Workspace relocation is the unit: a window explicitly moved out stays at its
-  destination and is never individually pulled back, while a window moved into
-  a displaced workspace returns with it. User-configurable handling is deferred.
-  Destination among multiple surviving outputs uses the nearest surviving
-  monitor from geometry already available while handling disconnect, with no
-  added historical state. If that would require old output geometry/history or
-  an extra tracking mechanism, use the current primary surviving monitor; if
-  that is not identifiable, use existing available output ordering as the
-  deterministic fallback. Availability and lifetime of removed-output geometry
-  are implementation source-check details, not a claim that nearest is always
-  feasible. The current adapter does not retain removed geometry so it falls
-  back to primary/ordering and never uses post-disconnect window frame
-  geometry as a proxy. This destination choice is distinct from the selected displacement
-  association required for automatic workspace return. On original-output
-  reconnect, if the active window is in a returning workspace, show that
-  workspace on the reconnected monitor and retain focus on that window. If the
-  active window remains on a surviving output, preserve its view and focus with
-  no focus stealing. Other workspace selection follows ordinary behavior, with
-  no prior-view tracking or new state/history. The initial scope is
-  session-local with no restart-persistent mapping or return guarantee.
+  identity are session-local. Initial disconnected-output policy: displaced
+  layout preserved in separate workspace(s), never merged into a new
+  top-level split of remaining visible layout. Active-focus survivor choice:
+  disconnected-monitor active window shows its relocated workspace with focus
+  retained; surviving-monitor active window preserves current visible
+  workspace and focus with displaced workspaces reachable by normal
+  switching; no active window preserves surviving monitor view. On
+  reconnection, displaced workspaces return automatically to their original
+  monitor with then-current contents/layout, not a saved snapshot (split
+  edits, closed/new windows reflected). Relocation is the unit: an
+  explicitly moved-out window stays at its destination, never individually
+  pulled back, while a window moved into a displaced workspace returns with
+  it. User-configurable handling is deferred. Multiple-survivor destination:
+  nearest surviving monitor from already-available disconnect-time geometry,
+  no added history; fallback current primary surviving monitor then existing
+  output ordering; retains no removed geometry and never uses post-disconnect
+  frame geometry as proxy; distinct from the displacement association for
+  automatic return. Reconnect focus: active window in a returning workspace
+  shows that workspace on the reconnected monitor with focus retained;
+  active window on a surviving output preserves view/focus with no stealing;
+  other selection ordinary, no prior-view tracking or new state/history.
+  Initial scope session-local, no restart-persistent mapping or return
+  guarantee.
 - `Meta+1..9` select an existing 1-based logical workspace without creation.
   `Meta+Shift+1..9` send only the focused tiled window to an existing
   same-output workspace through the Rust `MoveToWorkspace` route. `0` reuses or
-  creates the trailing empty target. Step 3 (current, USER decision 2026-09-25, offline only, no live verification claimed): Rust commits the planned send topology immediately into the canonical per-domain sessions after complete source-plus-target convergence and returns source/target geometry plus the mover desktop assignment; there is no send pending, ack, verify, status, cancel, or abandon. KWin holds a short flight-local source/target pin (including a newly allocated trailing target until dispatch/follow observation finishes) with separate unanswered-request and arrival deadlines, plus owner/generation/correlation/flight/snapshot fences that discard a stale reply before any setter. Native writes are source/target geometry then the mover desktop setter. One fresh exact mover-absent-from-source/present-in-target proof switches to the target and focuses the mover promptly, without waiting for unrelated geometry; switch before focus, no retry, replay, or fabricated rollback. Setter returns and signal delivery alone are not proof. Stale, ambiguous, missing, no-op, wrong-target, owner, scope, and hook failures do not follow. Every terminal flight forces complete source AND target Plan reconcile even when applied evidence matches, quarantines unreadable domains, uses no `blocksPlan`, and never claims native-verified success. KWin geometry and
-  membership are non-atomic and asynchronous: waiting for whole-layout
-  settlement before this confirmed native follow can strand the user after the
-  move, so unrelated layout settling must not gate it. The standard US shifted aliases `Meta+!`
+  creates the trailing empty target. Step 3 (current, USER decision
+  2026-09-25, offline only, no live verification claimed): per the step-3
+  rule above, under its pin, separate deadlines, and
+  owner/generation/correlation/flight/snapshot fences; send specifics only:
+  pin includes a newly allocated trailing target until dispatch/follow
+  observation finishes; native order source/target geometry then mover
+  desktop setter; exact follow is one fresh
+  mover-absent-from-source/present-in-target proof, switch-before-focus
+  without waiting unrelated geometry, no retry/replay/fabricated rollback;
+  setter returns and signal delivery alone are not proof; stale, ambiguous,
+  missing, no-op, wrong-target, owner, scope, and hook failures do not
+  follow; unrelated async layout settling never gates confirmed follow. KWin
+  geometry and membership are non-atomic and asynchronous. The standard US
+  shifted aliases `Meta+!`
   through `Meta+)` are registered alongside the digit sends; registration
   preserves foreign shortcut records and does not establish physical delivery.
-- USER VISUAL/MANUAL acceptance: "The issue appears to be fixed, I spam moved a window between many workspaces and it never failed. ... reinforces ... graceful handling ... actually feel really good even when spamming." This accepts move/follow usability and repeated same-session use across many workspaces. The supplied `/run/user/1000/plasma-auto-tiler-dev.E2E0QJ.log` is NOT ANALYZED and supplies no machine protocol, rendered-visibility, latency, recovery, or native-cause claim. The durable product preference is graceful, unsurprising handling of confirmed partial successes and responsiveness during rapid use; it does not authorize ignored errors, retries, queue resets, or an architecture or uncertain-recovery change.
-- SUPERSEDED 2026-09-25, historical only - planned-send ack/verify/abandon path, 2026-09-25: a planned send that reached its pre-ack deadline settled from a fresh complete post-observation through the retired ack/verify transaction, with fenced `send-to-workspace-abandon`, option-B orphan retirement, bounded unconfirmed handoff, and a Plan block during the wait. Retired by the USER step-3 decision above; no send pending, ack, verify, abandon, orphan, unconfirmed, or Plan block remains. Directional R4 uncertainty was out of scope there; R4 is covered by the current step-3 entry below. No live acceptance is claimed.
+- USER VISUAL/MANUAL acceptance (rapid multi-workspace move/follow use): accepted for move/follow usability and repeated same-session use across many workspaces. The supplied dev log was not analyzed and supplies no machine protocol, rendered-visibility, latency, recovery, or native-cause claim. The durable product preference is graceful, unsurprising handling of confirmed partial successes and responsiveness during rapid use; it does not authorize ignored errors, retries, queue resets, or an architecture or uncertain-recovery change.
 
 ## Shortcuts
 
-- Approved 2026-09-21: clear Grid View's `Meta+G` and Krohnkite Monocle's
-  `Meta+M` through reversible Apply/Revert overrides. The user grants standing
-  authorization, until revoked, to clear other exact project-required shortcut
-  conflicts. The "recorded preimage" and "does not authorize relocation
-  chords" limitations are superseded by the current Force/Revert contract
-  below (durable cleared-ID list; Lock Session `Meta+L` to `Meta+Esc`
-  relocation). This still does not authorize broad
-  shortcut deletion, unverified actions, changes to ownership/readback
-  requirements, or startup mutation.
+- Approved 2026-09-21, standing until revoked: clear Grid View's `Meta+G`
+  and Krohnkite Monocle's `Meta+M` through reversible Apply/Revert overrides,
+  plus other exact project-required shortcut conflicts. The "recorded preimage"
+  and "does not authorize relocation chords" limitations are superseded by the
+  current Force/Revert contract below (durable cleared-ID list; Lock Session
+  `Meta+L` to `Meta+Esc` relocation). No broad shortcut deletion, unverified
+  actions, ownership/readback changes, or startup mutation.
 - The initial release supports standard US keyboards and preserves hardcoded
   shifted aliases. Layout detection, omission, opt-in configuration, migration,
   and KGlobalAccel reconciliation are deferred.
@@ -725,7 +650,7 @@ the corresponding item ships; each such entry names its replacement.
   `cleanUp()` path exists.
 - Current Force/Revert contract, Orchestrator decision 2026-09-26 applying the
   user's 2026-09-26 Delivery 2 direction (see
-  `docs/changes/multi-output-failures.md`): Force may clear ANY holder of a
+  `changes/archive/multi-output-failures.md`): Force may clear ANY holder of a
   project-required chord after listing and confirmation, not only exact
   compiled foreign rows. The preview lists every active holder with its found
   keys, the exact required keys removed, and the unrelated keys kept,
@@ -740,7 +665,6 @@ the corresponding item ships; each such entry names its replacement.
   before its foreign setter and aborts on active drift with zero further
   KGlobalAccel writes; the persisted union is retained as an
   interruption-safe superset, so Revert may restore an action never cleared.
-  Clearing removes only the required keys and preserves unrelated keys.
   Minimal durable cleared component/action ID list (IDs only, no cosmetic
   labels; Components+Actions in config; union by ID) at
   `~/.config/plasma-auto-tiler/shortcut-clearedrc` is union-persisted
@@ -763,15 +687,6 @@ the corresponding item ships; each such entry names its replacement.
   (`shortcut-override-journalrc`, including the kcmshell6 legacy path) are
   ignored and untouched; no migration, Finish Apply, or Restore path
   remains.
-- SUPERSEDED 2026-09-26, historical only: the closed compiled-in allowlist as
-  the only conflict source, exact foreign preimages, the private project
-  journal (host-independent path, kcmshell6 legacy migration, three/five-row
-  resumability, Finish/Restore recovery), Force limited to exact compiled
-  clear-row mismatches with preimage adoption, Revert restoring adopted
-  preimages or only still-owned bindings, and the 2026-09-21 "does not
-  authorize relocation chords" limitation (Lock Session `Meta+L` to `Meta+Esc`
-  relocation is current behavior above). Historical attribution preserved;
-  none of the superseded machinery is current.
 - Shortcut operations emit bounded structured diagnostics on
   `plasmaautotiler.shortcut` (operation, stage, outcome, allowlisted
   identity, key images, cleared count/writes only; foreign occupants
@@ -798,10 +713,10 @@ the corresponding item ships; each such entry names its replacement.
   reconciliation. Thin platform adapters own native observation, actuation,
   lifecycle, permissions, and effects. On KWin, direct geometry is the
   structural actuator; Custom Tiles are not a second topology authority.
-- The existing Custom Tile runtime remains a bounded legacy behavior while
-  migration slices are opt-in. A promoted replacement has no legacy fallback,
-  but the whole runtime is not switched at once. Tabs, stacks, shared tiles,
-  and compositor group behavior remain unselected.
+- Production uses the single `DescribePlan` engine with direct geometry and no
+  Custom Tile topology authority or Legacy fallback. Disposable Custom Tile
+  acceptance remains a separately gated test; tabs, stacks, shared tiles, and
+  compositor group behavior remain unselected.
 - Grouping here means nested split-tree structure and placement. `H[H[1 2] 3]`
   is distinct from `H[1 H[2 3]]`; tabs, stacked/shared groups, and compositor
   group behavior are excluded.
@@ -811,25 +726,18 @@ the corresponding item ships; each such entry names its replacement.
   other lifecycle operation contracts remain independent. Logical domains are
   keyed by the opaque `(output, workspace)` pair, so one logical output may
   retain independent workspace trees without inventing native workspace
-  semantics. Corrected source-evidenced `cosmic_v1` semantics, authorized
-  2026-09-09: `pop-os/cosmic-comp` `81cd5fdbaa41c3973369ae85bccf829137836e20`
-  `map_to_tree`, `Data::{new_group,add_window,remove_window}`, resize, and drag
-  paths govern focused-cell binary admission, physical-axis selection, equal
-  new splits, proportional ordered-N-ary share adaptation, physical-pixel
-  resize, and drag zones. The prior input-bounds tie, unit-share, `1/16`,
-  32px/16,384 pointer-bound, and edge-only-center-snap-back shortcuts are not
-  retained. The portable split-tree representation fails closed for COSMIC
-  center stack drops because stacks are unselected and compositor-owned; it
-  names that source fact without emitting a false structural plan. Recursive
-  collapse is source-evidenced. On a focused tiled removal, `cosmic_v1`
+  semantics. Source-evidenced `cosmic_v1` semantics govern focused-cell binary
+  admission, physical-axis selection, equal new splits, proportional
+  ordered-N-ary share adaptation, physical-pixel resize, and drag zones.
+  The portable split-tree representation fails closed for COSMIC
+  center stack drops because stacks are unselected and compositor-owned.
+  Recursive collapse is retained. On a focused tiled removal, `cosmic_v1`
   removes the leaf from its source-domain MRU focus stack and selects that
   stack's remaining top; an unfocused removal preserves focus. Send with
   `direction=None` leaves focus in the source rather than focusing the target.
   The portable tiled model clears focus when no source tiled stack entry
-  remains. COSMIC's mapped-element and fullscreen fallback is not represented:
-  floating, fullscreen, maximized, and sticky flags remain explicit observed
-  exceptions; only deferred tracking/removal is selected while tiled exception
-  behavior remains fail-closed and deferred.
+  remains. Floating and sticky exceptions and fullscreen/maximize tile overlays
+  follow the current Window And Workspace Behavior rules.
 - Durable policy-mode direction, authorized 2026-09-09: selected policy modes
   target strong source-evidenced behavioral parity. `cosmic_v1` may deviate
   only for an explicit, reviewable infeasible platform capability; a missing
@@ -845,18 +753,14 @@ the corresponding item ships; each such entry names its replacement.
   version/config switching details, coupled-only versus independently
   overridable shortcut UI, or hot-switch semantics. Keyboard-layout
   localization remains separate and initial US-keyboard support is unchanged.
-- COSMIC geometry parity, established 2026-09-13, closed 2026-09-16: the raw default theme gaps
-  are `(outer, inner) = (0, 8)`, but source leaf-edge insets make the rendered
-  work-area edge margin 8px. Native KCM-owned `innerGap` and `outerGap` default
-  to `(8, 8)` for that effective edge margin and sibling spacing;
-  `outerGap` is not the raw COSMIC theme outer value. Source N-ary pixel-size
-  rounding differs: over 8px, COSMIC allocates `[3,3,2]` while the portable
-  share projector allocates `[2,2,4]`. Both conserve width and return `[4,4]`
-  after removal; no visual consequence or cumulative resize drift is
-  established. Retain shares without claiming exact COSMIC parity. Revisit only
-  for a reproduced N-ary/deep-layout visual discrepancy or a required
-  source-exact fixture that fails under shares. No pixel-authority migration,
-  projector correction, numerical-policy change, or code/test work is selected.
+- COSMIC geometry parity, established 2026-09-13, closed 2026-09-16:
+  Native KCM-owned `innerGap` and `outerGap` default to `(8, 8)` for the
+  effective 8px work-area edge margin and sibling spacing; `outerGap` is not
+  the raw COSMIC theme outer value. Retain shares without claiming exact
+  COSMIC parity. Revisit only for a reproduced N-ary/deep-layout visual
+  discrepancy or a required source-exact fixture that fails under shares. No
+  pixel-authority migration, projector correction, numerical-policy change, or
+  code/test work is selected.
 - COSMIC send-to-workspace is a portable same-output, distinct-workspace
   lifecycle operation. It moves only the focused tiled window, recursively
   collapses its source tree, and focuses it in the target. A validated
@@ -873,12 +777,12 @@ the corresponding item ships; each such entry names its replacement.
   membership writes. R4 uses KWin 6.7.5 public
   `workspace.sendClientToScreen(window, output)` and exact desktop assignment,
   with native write order output, then desktop membership, then source/target geometry (respecting overconstrained members). KWin keeps a short flight-local source/target pin with separate unanswered-request and arrival deadlines, stale-reply discard before any setter, prompt follow once on fresh exact mover-on-target proof, forced complete both-domain reconcile even on equal applied evidence with unreadable quarantine, and no `blocksPlan`. Timeout, stale scope, wrong output,
-  failed write, identity loss, or partial proof converge on the next complete observations without replay, phantom, or verified-success claim. No live KWin output-switch acceptance is claimed.
+  failed write, identity loss, or partial proof converge on the next complete observations without replay, phantom, or verified-success claim.
 - The portable world Engine owns independent per-domain Sessions, outer gaps,
   seeding, and relocation behind
   typed events and replies. Do not merge per-domain revisions, fingerprints,
   divergence, or node identities into one permanent Session.
-  Send/R4 assemble a transient canonical pair only for the synchronous planned-topology commit; no workspace/R4 pending pair state remains. USER step-3 decision 2026-09-25 retired the pending-pair and transaction semantics; the prior pending-pair/AR11 wording is historical.
+  Send/R4 assemble a transient canonical pair only for the synchronous planned-topology commit; no workspace/R4 pending pair state remains.
 - A KWin fork or patch is rejected. The project must operate within existing
   KDE/Plasma/KWin. The Rust-engine/direct-geometry direction above is the
   selected replacement architecture; the bounded adapter remains active only
@@ -888,11 +792,9 @@ the corresponding item ships; each such entry names its replacement.
   controls, or bindings are selected.
 - Active-group highlighting: Meta-held observation is the user-approved
   selected lifetime. One-second accepted/applied open/move/close behavior is
-  an alternative fallback only if Meta-held proves unavailable or impractical,
-  never automatic when Meta is not held. `I permit the modifier observation.`
-  The shipped route observes passive public `EffectsHandler::mouseChanged(...)`.
-  No public initial modifiers snapshot is asserted; `startMousePolling` is
-  stale documentation (no such API exists). KWin Script workspace exposes
+  a fallback only if Meta-held proves unavailable or impractical,
+  never automatic when Meta is not held. The shipped route observes passive
+  public `EffectsHandler::mouseChanged(...)`. KWin Script workspace exposes
   only cursor position, so Script alone cannot observe Meta hold. Additional
   native input capability follows the Native Integration Boundary.
 - On a recognized Meta press, show the current valid active immediate group;
@@ -916,9 +818,7 @@ the corresponding item ships; each such entry names its replacement.
   later-stacked windows therefore occlude it through the normal item-tree and
   workspace stacking passes. The temporary group outline remains a
   screen-wide overlay because it is not tied to one window. No custom
-  scene/rendering mechanism is selected. COSMIC renders group backdrops through
-  its compositor-owned `BackdropShader` render-element path (source-content
-  comparison only, no parity claim).
+  scene/rendering mechanism is selected.
 - Active-group highlighting is statically delivered. Rust resolves the focused
   leaf's immediate parent split group and recursively projected members from
   its retained focused-domain tree; the script forwards only the engine union
@@ -932,10 +832,10 @@ the corresponding item ships; each such entry names its replacement.
   `org.plasmaautotiler.ActiveBorder` at
   `/org/plasmaautotiler/ActiveBorder` with interface
   `org.plasmaautotiler.ActiveBorder1`: bounded `SetGroupHighlight(QString)`
-  and `ClearGroupHighlight()`. It is not a `/Effects` method. Its source and
-  offline contract are verified; KWin Script argument demarshalling, service
-  ownership, modifier delivery, rendering, and performance remain
-  live-unverified. Autonomous mode remains off.
+  and `ClearGroupHighlight()`. It is not a `/Effects` method. Its offline
+  contract is verified; KWin Script demarshalling, service ownership, modifier
+  delivery, rendering, and performance remain live-unverified. Autonomous mode
+  remains off.
 - User decision R/S, option 2 (2026-09-26): if the native group-highlight or
   drag-oracle D-Bus endpoint fails to register at construction, retry on the
   effect's existing window-activation and reconfigure events, with no timer or
@@ -997,13 +897,12 @@ the corresponding item ships; each such entry names its replacement.
   queried with `journalctl --user -g "plasma-auto-tiler:route-diag component=tray-endpoint"`.
 - The tray MVP provides basic status and Settings only. It has no direct tiling
   controls and no expansion of the helper boundary.
-- No KWin snapshot authority is claimed from tray live runs. Tray live runs
-  claim no visual panel behavior, no watcher-ordering/login-autostart delivery,
-  no native ABI/plugin load, no baseline-restoration proof, and no KWin Script1
-  identity or cleanup.
-- The repaired candidate claimed no panel visual behavior or session boundary.
-  No KWin-origin authoritative snapshot, watcher-ordering/login-autostart, or
-  update/rollback generation claim is made from tray live runs.
+- Tray live runs claim no KWin snapshot authority, panel visual behavior,
+  session boundary, watcher-ordering/login-autostart delivery, native
+  ABI/plugin load, baseline-restoration proof, KWin Script1 identity or
+  cleanup, or update/rollback generation. Full evidence is in
+  `changes/archive/tray-carrier.md` and
+  `changes/archive/tray-managed-live-acceptance.md`.
 
 ## Production Interactive Edge Drag
 
@@ -1028,21 +927,14 @@ the corresponding item ships; each such entry names its replacement.
   rule.
 - User-approved 2026-09-24: the unified native effect passively observes
   the configured modifier-resize button press without grabbing or consuming
-  input. The passive input spy captures a candidate press first; the effect
-  matches it to the same window and identity at drag start and carries it
-  atomically with the final-geometry verdict. At reply, the script validates
-  the finish identity and resize start before a usable press selects KWin
-  6.7.5 thirds regardless of the 64 px interior gate; absent/unusable press
-  evidence falls back to the Started-pointer classifier, with a bounded
-  fallback log. The effective binding is read from KWin when public options
-  are available; only an unavailable binding source uses and logs the KWin
-  source default. The unified effect and existing oracle endpoint retain
-  their identities.
-- Superseded interim move-drop rule, 2026-09-24: a tiled window moved
-  interactively suppresses ordinary reconcile during the gesture, then
-  converges to its retained layout on drop through one correlated, coalesced
-  restore marker, with no failed-dispatch retry. Floating moves remain
-  native-only. Replaced by the 2026-09-27 option A rule below.
+  input, matching it to the same window and identity at drag start and
+  carrying it atomically with the final-geometry verdict. A usable press
+  selects KWin 6.7.5 thirds regardless of the 64 px interior gate;
+  absent/unusable press evidence falls back to the Started-pointer
+  classifier, with a bounded fallback log. The effective binding is read
+  from KWin when public options are available; only an unavailable binding
+  source uses and logs the KWin source default. The unified effect and
+  existing oracle endpoint retain their identities.
 - User decision 2026-09-27, option A (shipped offline, live check pending):
   tiled move drops use the existing Rust core drop resolver as-is through the
   synchronous `drag-drop` Plan route (window edge split, group edge
@@ -1071,10 +963,9 @@ the corresponding item ships; each such entry names its replacement.
 - The drag oracle hosted in the disabled-by-default unified
   `plasma-auto-tiler-active-border` native effect records final drag geometry;
   after that effect's explicit enable, the production script pulls its
-  read-only session D-Bus verdict. A non-cancelled resize can route grabbed
-  edges through `pointer-resize` shares; a tiled move uses the option A
-  `drag-drop` placement rule above, while a floating move stays native-only. A
-  cancelled or no-change verdict makes no pointer-resize plan. No stock-KWin
+  read-only session D-Bus verdict. Resize and move verdicts route as ruled
+  above, while a floating move stays native-only; a cancelled or no-change
+  verdict makes no plan. No stock-KWin
   parity or atomic native geometry-write claim is selected. AR8 closed on
   2026-09-24 at the user's request with the shipped oracle integration kept,
   following the Lead's recommendation; trace-only measurement remains for
@@ -1082,104 +973,27 @@ the corresponding item ships; each such entry names its replacement.
 
 ## Deferred Scope
 
-- Session D-Bus is selected for the initial Rust/KWin migration transport only:
-  one bounded read-only KWin snapshot request to the Rust planner and one
-  advisory reply. It selects neither a generic cross-platform IPC abstraction
-  nor a permanent topology for other platform adapters. The KWin client
-  resolves the planner well-known name then targets the pinned unique owner;
-  the Rust service verifies only that the D-Bus sender's unique name has the
-  Planner's Unix UID, failing closed if the UID cannot be obtained or differs.
-  Public KWin scripting exposes no service credential API, so this cannot
-  prove the initially resolved same-UID planner service binary against a
-  hostile same-UID owner. The reviewed standalone advisory entry, builder,
-  and namespaced loader may coexist with the loaded production plugin only
-  because their checked route has no topology authority, actuation, shortcuts,
-  Custom Tile, controller, or production-startup path. The first host read-only
-  round trip, including stale and service-loss evidence, remains unestablished.
-- Rust is the selected engine language and owns the durable portable model.
-  The migration starts incrementally through opt-in, shadow, and diagnostic
-  modes; it does not claim stock-KWin parity, atomic geometry, or Windows/macOS
-  delivery details.
-- The durable direction is a platform-neutral Rust deterministic core for
-  logical tiling, ordered split-tree grouping, navigation, movement policy,
-  capability-gated plans, and reconciliation. Platform adapters retain native
-  window/output/workspace observation, identity, permissions, geometry/focus
-  actuation, event ordering, acknowledgement, recovery, effects, UI, and
-  delivery authority. This selects neither an IPC/service/FFI topology nor a
-  Windows/macOS runtime or packaging model. The core does not promise uniform
-  workspace, group, atomicity, or geometry semantics where public platform APIs
-   cannot provide them; unsupported capability paths fail closed.
+- The current KWin adapter uses one session-D-Bus `DescribePlan` route to a
+  pinned unique Planner owner, with same-UID caller checks. This does not
+  select a generic cross-platform IPC abstraction or prove the initially
+  resolved same-UID Planner binary against a hostile same-UID owner.
+- Rust is the selected engine language and owns the durable portable model:
+  platform-neutral deterministic core for logical tiling, ordered split-tree
+  grouping, navigation, movement policy, capability-gated plans, and
+  reconciliation. Platform adapters retain native window/output/workspace
+  observation, identity, permissions, geometry/focus actuation, event
+  ordering, acknowledgement, recovery, effects, UI, and delivery authority.
+  The core promises no uniform workspace, group, atomicity, or geometry
+  semantics where public platform APIs cannot provide them; unsupported paths
+  fail closed. The migration starts incrementally through opt-in, shadow, and
+  diagnostic modes and claims no stock-KWin parity, atomic geometry,
+  Windows/macOS delivery, IPC/service/FFI topology, runtime, or packaging
+  model. A KWin fork or patch remains rejected.
 - Durable validation prioritizes product-shaped Rust unit/integration/property
-  coverage and focused adapter contracts. Do not add lifecycle automation just
-  for assertion count; use the reviewed bounded host sequencer where useful,
-  otherwise stop at the smallest user-assisted manual journey.
-- KWin direct geometry remains sequential and non-atomic. The adapter must be
-  signal-driven, not poll pointer resize, minimize visible intermediate frames,
-  and record applied-versus-acknowledged divergence without claiming atomicity.
-  A KWin fork or patch remains rejected.
-- The authorized Stage 2 transport-free contract is complete: it has one
-  pending plan at most, binds owner/generation/correlation/base revision plus
-  complete semantic intent/operation/capability/preconditions, and commits only
-  after an exact accepted acknowledgement and matching verified
-  post-observation. Stale, partial, mismatched, refused, or lost adapter
-  results are terminal divergence. This selects no platform adapter, runtime,
-  IPC/FFI, packaging, rollback, or atomicity emulation.
-- The authorized Stage 3 offline trace contract is complete: bounded redacted
-  JSON v1 fixtures replay ordered request, emitted-plan, acknowledgement,
-  verification, and adapter-loss events through that same planner and
-  reconciler. It permits only opaque session identifiers and structural policy
-  data, rejects sensitive/platform fields by schema, and locks checked-in
-  fixture bytes plus independently asserted replay results. The byte lock is
-  repository-fixture stability only, not a serializer-ordering or cross-platform
-  byte-portability claim. It selects no recorder, adapter, runtime, live trace
-  collection, IPC/FFI, packaging, or native operation.
-- POC2 extends that POC only with a manually started session-D-Bus planner
-  service (`org.plasmaautotiler.Planner`, `/org/plasmaautotiler/Planner`,
-  `org.plasmaautotiler.Planner1`) and a separately built/manual KWin one-shot
-  shadow probe. Its bounded JSON v1 contract is advisory-only. The probe reads
-  one active horizontal two-leaf scope, declares only `swap-neighbor`, freshly
-  revalidates native identity and preconditions, and logs only. It has no
-  actuation, tray, autostart, package, KCM, persistence, shortcut, or ordinary
-  KWin-startup route. Same-session planner-name spoofing remains out of scope;
-  no captions, geometry, handles, or execution commands cross the boundary.
-- POC2 is static-only until an exact authorized protected-runtime recovery,
-  baseline, and restoration procedure permits a current-session read-only
-  proof. It proves neither native actuation nor stock-KWin parity.
-- POC3 was a separate, disposable, manually invoked actuation experiment. Rust
-  owns a non-persistent single-output/single-workspace logical three-window
-  model and emits non-atomic complete geometry/focus intents; the KWin adapter
-  owns exact identity observation, eligibility, scope revalidation, sequential
-  application, observed completion, divergence, and cleanup. It is disabled by
-  default and refuses to coexist with the production plugin. It enrolls only
-  three user-supplied public `String(Window.internalId)` values for newly
-  opened disposable normal untiled windows. Its only live cleanup model is an
-  explicitly selected `close-disposable` directive for those exact windows.
-  It has no Custom Tile, shortcut, autostart, persistence, tray, KCM, workspace,
-  output, package, or normal-startup route. Its final host evidence and limits
-  are retained in [the archived record](changes/archive/poc3-disposable-rust-actuation.md).
-  It establishes no KWin parity, production replacement, atomicity, configure
-  acknowledgement, or hostile same-uid service-authentication claim.
-- Its bounded host-only pilot used temporary production suspend/resume authority
-  that was pragmatic only:
-  `isScriptLoaded("plasma-auto-tiler-kwin")`, exact plugin-ID unload/reload,
-  one accepted active Nix-store package/source resolution, exact KWin
-  owner/PID/start-tick/canonical-executable pinning, and observable behavior.
-  The pilot remained disabled by default and had no session boundary, config,
-  dotfile, rebuild, shortcut, Custom Tile, or production-delivery change.
-- A host-only systemd fallback accepts only a D-Bus KWin owner whose PPid is
-  exactly `plasma-kwin_wayland.service` MainPID, with matching owner/PID,
-  `/proc` tick, boot ID, and Nix-store `ExecStart` identity. A readable
-  `/proc/exe` must agree; cgroup `/` is insufficient by itself and no deeper
-  descendant is accepted. Historical attempt detail is retained in the archived
-  POC record.
+  coverage and focused adapter contracts over lifecycle automation for
+  assertion count. KWin direct geometry remains sequential and non-atomic:
+  the adapter is signal-driven, minimizes visible intermediate frames, and
+  records applied-versus-acknowledged divergence without claiming atomicity.
 - Retain JavaScript for discrete window add/remove management. Group behavior,
   inactive borders, Steam-specific handling, and complete keyboard-layout
   support remain deferred.
-- Production self-resize reconciliation, authorized 2026-09-13 and updated by
-  user decision A on 2026-09-26: retained Rust session allocation owns the
-  topology over same-scope client geometry drift. The KWin plan adapter sends
-  strict `DescribePlan` `{ "op": "reconcile" }` and never derives sibling shares
-  from an actual client rectangle. After three terminal reassertions, it
-  accepts the exact client-held rectangle as per-window applied evidence;
-  other drift in the domain still reconciles normally. This bounded policy
-  is not a COSMIC threshold or KWin acknowledgement claim.

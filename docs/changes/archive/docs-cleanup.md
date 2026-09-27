@@ -1,0 +1,11 @@
+# Documentation cleanup
+
+Goal: keep the backlog open-only, decisions current, active change notes active-only, and dev-loop links/commands accurate. Preserve governing decisions, attribution, dates, and uncertain items; no code or protected-document edits.
+
+Plan: (1) classify and archive completed/abandoned change notes in bounded batches, correcting references; (2) condense decisions in section batches with code/history checks; (3) rebuild prioritized backlog with machine-grouped live checks and open decisions; (4) reconcile references and dev-loop, check links and diff. Workers operate sequentially, with Lead review between units.
+
+Acceptance: no lost active work or governing decision; all relative links in docs/*.md resolve; git diff --check; no code changes. No live tests or commit.
+
+Outcome: baseline main b980ca2, clean. The repository had 32 top-level change notes (not 35); 16 completed, abandoned, or superseded notes moved intact into archive, and this cleanup note archived on completion. Sixteen pre-existing notes remain active or uncertain. Backlog now lists open work, machine-grouped live checks, pending user decisions and current risks. Decisions retain governing rules, attribution and dates; superseded transaction and shortcut-journal narratives were removed. Dev-loop commands match the justfile and required no edit. An independent review caught and restored the client-drift share-derivation ban and the group bridge's live-proof boundary. Relative Markdown links in docs root and changes were checked and repaired after relocation; no code, protected guidance or research changed. `git diff --check` and staged diff check passed; no live tests, commits or pushes.
+
+Open questions kept: tray crash restart policy (current no-auto-restart, audit proposes supervised recovery), Passive tray status, surviving-Planner generation after KWin restart, four robust reconciliation choices, OBS POC inputs, gap-0 drag anchor, group-highlight redesign and maximized navigation. Borderless fullscreen remains explicitly unselected by current policy. Historical Rust-first edge-drag route is retained because its investigation's closure status is unclear; floor-ratio feasibility likewise remains pending proof. No conflicting still-active decisions established.

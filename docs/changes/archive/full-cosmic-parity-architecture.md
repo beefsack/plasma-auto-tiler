@@ -53,8 +53,8 @@ foundation; it does not replace the KWin runtime or select other platforms.
   reparenting without KWin mutation, but direct geometry projection does not
   make those operations durable or compositor-atomic.
 - The existing adapter and archive accurately record bounded parity only:
-  [conformance](../cosmic-move-conformance.md#kwin-production-adaptations-and-named-gaps)
-  and [archive](archive/cosmic-directional-movement.md#outcome-and-evidence).
+  [conformance](../../cosmic-move-conformance.md)
+  and [archive](cosmic-directional-movement.md#outcome-and-evidence).
 
 ## Preserved Behavior And Evidence Gates
 

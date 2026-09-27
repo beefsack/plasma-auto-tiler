@@ -1,7 +1,7 @@
 # Incremental send recovery and admission batching
 
 Status: section A shipped offline 2026-09-25, superseded by
-[observation-convergence step 3](archive/observation-convergence.md) on
+[observation-convergence step 3](observation-convergence.md) on
 2026-09-26. Its pending ack/verify/abandon and Plan-block paths are retired.
 Section B's former previous-snapshot removal premise was retired by complete
 observation reconcile in steps 1-2; any further batching remains a proposal.

@@ -2,7 +2,7 @@
 
 ## Goal and scope
 
-- Implement ordinary recovery findings C1-C3 from [the fail-closed sweep](../fail-closed-sweep.md): KWin entry attachment retry, tray startup owner-query recovery, and Planner malformed owner-signal handling.
+- Implement ordinary recovery findings C1-C3 from [the fail-closed sweep](fail-closed-sweep.md): KWin entry attachment retry, tray startup owner-query recovery, and Planner malformed owner-signal handling.
 - Preserve exact authorization, identity, geometry and partial-write fences. C4 tray ordering and the live-settings launch gate require separate user decisions and are out of scope. No live KWin testing, commits or pushes. Preserve the already accepted uncommitted Changes 3a and 3.
 
 ## Acceptance and bounded units

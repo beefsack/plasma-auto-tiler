@@ -2,7 +2,7 @@
 
 Obsolete historical design: parked 2026-09-25 by user direction. Complete
 observation convergence and automatic reconcile shipped through
-[observation convergence](archive/observation-convergence.md); the former
+[observation convergence](observation-convergence.md); the former
 previous-snapshot batching proposal is reconciled with step 2 in the
 [incremental note](incremental-send-recovery-and-admission-batching.md).
 Retained for reference.

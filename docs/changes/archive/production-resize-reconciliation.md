@@ -49,7 +49,7 @@
 - The former scripting-only route remains historical reference at
   `wip/production-edge-drag-scripting-route` commit
   `5a760a09666c16ef36a70484446c4c6d96d9a1b6`. Runtime behavior remains pending
-  the user-owned checks in [edge-drag-share-adjustment.md](edge-drag-share-adjustment.md).
+  the user-owned checks in [edge-drag-share-adjustment.md](../edge-drag-share-adjustment.md).
 
 ## COSMIC Reference
 
@@ -73,6 +73,6 @@
 ## User-Owned Rebuild And Live Check
 
 - Follow the separate Slice 1 and Slice 2 user-owned checks in
-  [edge-drag-share-adjustment.md](edge-drag-share-adjustment.md). Applying a new
+  [edge-drag-share-adjustment.md](../edge-drag-share-adjustment.md). Applying a new
   bundle/effect to an already loaded session remains a user-owned lifecycle
   action; no agent lifecycle action occurred.
