@@ -373,21 +373,45 @@ function snapshotsEqual(a: PlanSnapshot, b: PlanSnapshot): boolean {
     return true;
 }
 
-function sameScope(a: PlanSnapshot, b: PlanSnapshot): boolean {
-    if (
-        a.domainOutput !== b.domainOutput ||
-        a.domainWorkspace !== b.domainWorkspace ||
-        a.domainGap !== b.domainGap ||
-        a.domainOuterGap !== b.domainOuterGap ||
-        a.domainBounds.x !== b.domainBounds.x ||
-        a.domainBounds.y !== b.domainBounds.y ||
-        a.domainBounds.w !== b.domainBounds.w ||
-        a.domainBounds.h !== b.domainBounds.h ||
-        a.windows.length !== b.windows.length
-    ) {
+// Structural scope identity shared by PlanSnapshot and PlanObserved (the R4
+// fences compare a fresh PlanObserved against the dispatch PlanSnapshot).
+// Windows contribute identity only (id/output/workspace); rects, flags,
+// focus, and fingerprint are never scope.
+interface ScopeIdentity {
+    readonly domainOutput: string;
+    readonly domainWorkspace: string;
+    readonly domainGap: number;
+    readonly domainOuterGap: number;
+    readonly domainBounds: PlanRect;
+    readonly domains?: ReadonlyArray<PlanDomain> | undefined;
+    readonly windows: ReadonlyArray<{ readonly id: string; readonly output: string; readonly workspace: string }>;
+}
+
+function sameDomainScalars(a: ScopeIdentity, b: ScopeIdentity): boolean {
+    return (
+        a.domainOutput === b.domainOutput &&
+        a.domainWorkspace === b.domainWorkspace &&
+        a.domainGap === b.domainGap &&
+        a.domainOuterGap === b.domainOuterGap
+    );
+}
+
+function sameDomainBounds(a: ScopeIdentity, b: ScopeIdentity): boolean {
+    return (
+        a.domainBounds.x === b.domainBounds.x &&
+        a.domainBounds.y === b.domainBounds.y &&
+        a.domainBounds.w === b.domainBounds.w &&
+        a.domainBounds.h === b.domainBounds.h
+    );
+}
+
+// Complete window-set identity ignoring rects: same length with identical
+// per-id output/workspace membership.
+function sameWindowMembership(a: ScopeIdentity, b: ScopeIdentity): boolean {
+    if (a.windows.length !== b.windows.length) {
         return false;
     }
-    const byId = new Map<string, PlanSnapshotWindow>();
+    const byId = new Map<string, { readonly output: string; readonly workspace: string }>();
     for (const entry of a.windows) {
         byId.set(entry.id, entry);
     }
@@ -398,43 +422,27 @@ function sameScope(a: PlanSnapshot, b: PlanSnapshot): boolean {
         }
     }
     return true;
+}
+
+function sameScope(a: PlanSnapshot, b: PlanSnapshot): boolean {
+    if (!sameDomainScalars(a, b) || !sameDomainBounds(a, b)) {
+        return false;
+    }
+    return sameWindowMembership(a, b);
 }
 
 // Work-area reprojection is valid only when the logical domain and complete
 // window set are unchanged. Client rectangles are deliberately ignored here:
 // they are drift inputs, never a source of retained shares.
 function sameDomainAndWindowSet(a: PlanSnapshot, b: PlanSnapshot): boolean {
-    if (
-        a.domainOutput !== b.domainOutput ||
-        a.domainWorkspace !== b.domainWorkspace ||
-        a.domainGap !== b.domainGap ||
-        a.domainOuterGap !== b.domainOuterGap ||
-        a.windows.length !== b.windows.length ||
-        !domainsEqual(a.domains, b.domains)
-    ) {
+    if (!sameDomainScalars(a, b) || !domainsEqual(a.domains, b.domains)) {
         return false;
     }
-    const byId = new Map<string, PlanSnapshotWindow>();
-    for (const entry of a.windows) {
-        byId.set(entry.id, entry);
-    }
-    for (const entry of b.windows) {
-        const other = byId.get(entry.id);
-        if (other === undefined || other.output !== entry.output || other.workspace !== entry.workspace) {
-            return false;
-        }
-    }
-    return true;
+    return sameWindowMembership(a, b);
 }
 
 function sameReprojectionScope(a: PlanSnapshot, b: PlanSnapshot): boolean {
-    return (
-        sameDomainAndWindowSet(a, b) &&
-        a.domainBounds.x === b.domainBounds.x &&
-        a.domainBounds.y === b.domainBounds.y &&
-        a.domainBounds.w === b.domainBounds.w &&
-        a.domainBounds.h === b.domainBounds.h
-    );
+    return sameDomainAndWindowSet(a, b) && sameDomainBounds(a, b);
 }
 
 // Reply-boundary flag-exactness: like floatingSkewed, but tolerates a
@@ -2096,10 +2104,7 @@ export class PlanAdapter {
         let changed = false;
         const windows = observed.windows.map((entry) => {
             if (!entry.fullscreen) {
-                const seenRef = this.seenNonFullscreen.get(entry.id);
-                if (seenRef === undefined || seenRef !== entry.ref) {
-                    this.seenNonFullscreen.set(entry.id, entry.ref);
-                }
+                this.seenNonFullscreen.set(entry.id, entry.ref);
                 const heldRef = this.heldInitialFullscreen.get(entry.id);
                 if (heldRef !== undefined) {
                     this.heldInitialFullscreen.delete(entry.id);
@@ -3798,7 +3803,7 @@ export class PlanAdapter {
             accepted += 1;
         }
         if (hidden) {
-            this.backgroundAttempts.delete(this.domainKey(snapshot));
+            this.clearBackgroundReconcile(snapshot);
         } else {
             this.reconcileAttempts = 0;
         }
@@ -3899,12 +3904,12 @@ export class PlanAdapter {
             } catch (error) {
                 void error;
             }
-            for (const [id, ref] of [...this.heldInitialFullscreen]) {
+            for (const [id, ref] of this.heldInitialFullscreen) {
                 if (ref === target) {
                     this.heldInitialFullscreen.delete(id);
                 }
             }
-            for (const [id, ref] of [...this.seenNonFullscreen]) {
+            for (const [id, ref] of this.seenNonFullscreen) {
                 if (ref === target) {
                     this.seenNonFullscreen.delete(id);
                 }
@@ -6022,10 +6027,7 @@ export class PlanAdapter {
         if (!isUniqueOwner(this.pinnedOwner) || !isGeneration(this.generation)) {
             return false;
         }
-        if (
-            !sameScope(freshSnapshot, flightState.snapshot) ||
-            !domainsEqual(freshSnapshot.domains, flightState.snapshot.domains)
-        ) {
+        if (!sameReprojectionScope(freshSnapshot, flightState.snapshot)) {
             return false;
         }
         const oldCorrelation = flightState.correlation;
@@ -7214,32 +7216,22 @@ export class PlanAdapter {
                 this.logToken(`${LOG_PREFIX}:echo-fence-armed`);
             }
             if (flightState.op === "reconcile") {
+                const fullyExplained = honoredAr12Skips > 0 && pendingWrites === 0;
+                const membershipConverges = !hasAppliedBefore || autoMembershipChanged;
                 if (flightState.background === true) {
-                    if (flightState.workAreaReprojection === true) {
-                        this.clearBackgroundReconcile(flightState.snapshot);
-                    } else if (autoMembershipChanged) {
-                        // A membership/flag-changing hidden reconcile applies
-                        // like the retired admit/remove: converge, never count.
-                        this.clearBackgroundReconcile(flightState.snapshot);
-                    } else if (honoredAr12Skips > 0 && pendingWrites === 0) {
-                        // Fully explained drift converges: every difference
-                        // was covered by a honored client-clamped or
-                        // overconstrained skip, so no genuine reassert ran
-                        // and background acceptance must not advance.
+                    if (
+                        flightState.workAreaReprojection === true ||
+                        autoMembershipChanged ||
+                        fullyExplained
+                    ) {
+                        // Membership/flag-changing, work-area, and fully
+                        // explained AR12 applies converge without advancing
+                        // background acceptance.
                         this.clearBackgroundReconcile(flightState.snapshot);
                     } else {
                         this.noteBackgroundTerminal(flightState.snapshot);
                     }
-                } else if (honoredAr12Skips > 0 && pendingWrites === 0) {
-                    // Fully explained drift converges: every difference was
-                    // covered by an honored client-clamped or overconstrained
-                    // skip, so no genuine reassert ran and acceptance must not
-                    // advance. A mixed apply that also wrote genuine drift
-                    // keeps the existing bounded increment below.
-                    this.reconcileAttempts = 0;
-                } else if (!hasAppliedBefore || autoMembershipChanged) {
-                    // A membership/flag-changing auto reconcile applies like
-                    // the retired admit/remove: converge, never accept.
+                } else if (fullyExplained || membershipConverges) {
                     this.reconcileAttempts = 0;
                 } else {
                     this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
@@ -7428,18 +7420,10 @@ export class PlanAdapter {
             return false;
         }
         const flightSnapshot = flightState.snapshot;
-        if (!domainsEqual(fresh.domains, flightSnapshot.domains)) {
-            return false;
-        }
         if (
-            fresh.domainOutput !== flightSnapshot.domainOutput ||
-            fresh.domainWorkspace !== flightSnapshot.domainWorkspace ||
-            fresh.domainBounds.x !== flightSnapshot.domainBounds.x ||
-            fresh.domainBounds.y !== flightSnapshot.domainBounds.y ||
-            fresh.domainBounds.w !== flightSnapshot.domainBounds.w ||
-            fresh.domainBounds.h !== flightSnapshot.domainBounds.h ||
-            fresh.domainGap !== flightSnapshot.domainGap ||
-            fresh.domainOuterGap !== flightSnapshot.domainOuterGap
+            !domainsEqual(fresh.domains, flightSnapshot.domains) ||
+            !sameDomainScalars(fresh, flightSnapshot) ||
+            !sameDomainBounds(fresh, flightSnapshot)
         ) {
             return false;
         }
@@ -7515,18 +7499,10 @@ export class PlanAdapter {
         if (target.output !== r4.targetOutput || target.workspace !== r4.targetWorkspace) {
             return false;
         }
-        if (!domainsEqual(fresh.domains, flightSnapshot.domains)) {
-            return false;
-        }
         if (
-            fresh.domainOutput !== flightSnapshot.domainOutput ||
-            fresh.domainWorkspace !== flightSnapshot.domainWorkspace ||
-            fresh.domainBounds.x !== flightSnapshot.domainBounds.x ||
-            fresh.domainBounds.y !== flightSnapshot.domainBounds.y ||
-            fresh.domainBounds.w !== flightSnapshot.domainBounds.w ||
-            fresh.domainBounds.h !== flightSnapshot.domainBounds.h ||
-            fresh.domainGap !== flightSnapshot.domainGap ||
-            fresh.domainOuterGap !== flightSnapshot.domainOuterGap
+            !domainsEqual(fresh.domains, flightSnapshot.domains) ||
+            !sameDomainScalars(fresh, flightSnapshot) ||
+            !sameDomainBounds(fresh, flightSnapshot)
         ) {
             return false;
         }

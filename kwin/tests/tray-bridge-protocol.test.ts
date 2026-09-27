@@ -138,6 +138,11 @@ function applyPublish(state: State, route: Route, args: unknown[], now: number, 
     return;
   }
 
+  // A stale publication must not revoke a newer trusted snapshot.
+  if (state.generation === snapshot.generation &&
+      state.revision !== null && snapshot.revision < state.revision) {
+    return;
+  }
   if (!state.retiredGenerations.includes(snapshot.generation) &&
       !state.quarantinedGenerations.includes(snapshot.generation)) {
     state.snapshot = null;

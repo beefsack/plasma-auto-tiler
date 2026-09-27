@@ -142,6 +142,7 @@ decisions of 2026-09-24 are recorded under
   redirection was unavailable at construction (ordinary). R/S fixed offline
   in change 3; host-matched native CTest 29/29 passes. Live recovery remains
   unverified. [change](changes/archive/resilience-change-3.md)
+- Done | Resilience simplicity pass: production net -26 lines; KWin 766, Rust workspace tests, typecheck and fmt pass. [change](changes/archive/resilience-simplicity-pass.md)
 - P1 | Tray icon not appearing | User report (2026-09-26): the tray icon has
   not been seen for some time, across many rebuilds and restarts. Cause
   (read-only investigation): nothing starts the tray - `just dev` and dogfood

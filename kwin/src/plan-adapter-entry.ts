@@ -1439,9 +1439,7 @@ function internNativeId(
 ): string {
     if (ref !== undefined && owners !== undefined) {
         try {
-            if (owners.get(native) !== ref) {
-                owners.set(native, ref);
-            }
+            owners.set(native, ref);
         } catch (error) {
             void error;
         }
@@ -2647,6 +2645,12 @@ function startPlanAdapterEntryOnce(
             void error;
         }
     };
+    const forgetNativeId = (id: string): void => {
+        nativeIds.delete(id);
+        sendNativeIds.delete(id);
+        nativeOwners.delete(id);
+        eligibilityReasons.delete(id);
+    };
     // Entry-owned highlight refresh edge: set once the highlight bridge
     // starts, invoked exactly once per successful geometry-plan boundary.
     let highlightRefresh: (() => void) | null = null;
@@ -3047,22 +3051,16 @@ function startPlanAdapterEntryOnce(
         },
         noteRemoved: (id) => {
             try {
-                nativeIds.delete(id);
-                sendNativeIds.delete(id);
-                nativeOwners.delete(id);
-                eligibilityReasons.delete(id);
+                forgetNativeId(id);
             } catch (error) {
                 void error;
             }
         },
         noteNativeRemoved: (ref) => {
             try {
-                for (const [id, owner] of [...nativeOwners]) {
+                for (const [id, owner] of nativeOwners) {
                     if (owner === ref) {
-                        nativeOwners.delete(id);
-                        nativeIds.delete(id);
-                        sendNativeIds.delete(id);
-                        eligibilityReasons.delete(id);
+                        forgetNativeId(id);
                     }
                 }
             } catch (error) {
