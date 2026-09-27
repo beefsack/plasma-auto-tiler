@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  kwin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v17
+        with:
+          name: devenv
+      - name: Install devenv
+        run: nix profile add github:cachix/devenv/v2.4.0
+      - name: Install KWin dependencies
+        run: devenv shell --impure -- npm ci --prefix kwin
+      - name: KWin tests
+        run: devenv shell --impure -- npm test --prefix kwin
+      - name: KWin typecheck
+        run: devenv shell --impure -- npm run typecheck --prefix kwin
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v17
+        with:
+          name: devenv
+      - name: Install devenv
+        run: nix profile add github:cachix/devenv/v2.4.0
+      - name: Rust workspace tests
+        run: devenv shell --impure -- cargo test --workspace
+      - name: Rust format
+        run: devenv shell --impure -- cargo fmt --all -- --check
+      - name: Rust strict Clippy
+        run: devenv shell --impure -- cargo clippy --workspace --all-targets -- -D warnings
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v17
+        with:
+          name: devenv
+      - name: Install devenv
+        run: nix profile add github:cachix/devenv/v2.4.0
+      - name: Install KWin dependencies for shell fixtures
+        run: devenv shell --impure -- npm ci --prefix kwin
+      - name: Build KWin fixture bundle
+        run: devenv shell --impure -- npm run build --prefix kwin
+      - name: Build tray fixture binary
+        run: devenv shell --impure -- just build-rust
+      - name: Headless shell suites
+        run: |
+          devenv shell --impure -- bash -euo pipefail -c '
+            for suite in scripts/*.test.sh; do
+              TRAY_05B_BINARY="$PWD/target/debug/plasma-auto-tiler" bash "$suite"
+            done
+          '

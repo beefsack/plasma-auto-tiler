@@ -191,10 +191,15 @@ decisions of 2026-09-24 are recorded under
   runtime fail-closed behavior); the rule stays unchanged.
   [change 4](changes/archive/resilience-change-4.md)
   [sweep](changes/fail-closed-sweep.md)
-- P1 | CI with GitHub Actions | User go-ahead (2026-09-27): run KWin tests and
-  typecheck, Rust workspace tests, fmt and clippy, and shell suites on push
-  and PR; native effect build/CTest later if practical. Motivation: native
-  CTest broke unnoticed after `e69739f`.
+- Done | CI with GitHub Actions | Three jobs on push and PR to main: KWin
+  tests/typecheck, Rust workspace tests/fmt/strict all-targets Clippy, and all
+  nine headless shell suites (including tray on a private D-Bus with a
+  worktree binary). Native effect build/CTest is excluded: the host-matched
+  builder requires the running NixOS KWin derivation at
+  `/run/current-system/sw/bin/kwin_wayland`, absent on Ubuntu GitHub runners;
+  using a different KWin would not test the ABI that broke after `e69739f`.
+  Offline commands pass; first GitHub run awaits Orchestrator push.
+  [change](changes/archive/github-actions-ci.md)
 - P2 | Recovery audit (offline) | User go-ahead (2026-09-27): read-only audit
   of recovery when Planner, tray, KWin script, native effect or KWin restart,
   and around sleep/resume; produce a precise live test plan and fix ordinary

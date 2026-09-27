@@ -7,9 +7,12 @@
 
   packages = with pkgs; [
     clang-tools
+    dbus
     jq
     just
     python3
+    systemd
+    unzip
     zip
     kdePackages.kpackage
     weston
