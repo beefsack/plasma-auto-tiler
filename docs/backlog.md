@@ -129,12 +129,12 @@ All items below shipped offline with no live result claimed.
 - Tray icon and login/autostart: confirm panel presence and the worktree tray
   lifecycle under `just dev`; no tray launcher existed in the earlier report.
   [audit](changes/archive/resilience-audit.md)
-- Tray systemd unit + Active status (after `home-manager switch`): login
-  starts one tray showing Active; snapshot loss shows NeedsAttention; killing
-  the tray restarts it; a second invocation exits cleanly; logout stops it
-  without a loop; `just dev` preserves the packaged owner; tray diagnostics
-  appear once each in `journalctl --user` (native journald submission
-  removed).
+- Tray Active status under `just dev` (worktree tray): healthy shows Active,
+  snapshot loss shows NeedsAttention. Systemd unit checks need a packaged
+  Home Manager install: login starts one tray; killing it restarts it; a
+  second invocation exits cleanly; logout stops it without a loop; `just dev`
+  preserves the packaged owner; tray diagnostics appear once each in
+  `journalctl --user` (native journald submission removed).
   [change](changes/archive/tray-and-restart-followups.md)
 - Process-loss and sleep recovery cases on the laptop.
   [live plan](changes/archive/recovery-process-sleep-audit.md#live-test-plan)

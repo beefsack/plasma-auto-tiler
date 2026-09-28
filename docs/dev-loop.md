@@ -119,7 +119,7 @@ exact unload.
 
 ## Manual Fallback
 
-This avoids a dotfiles-nix rebuild. It uses the existing explicit `/Scripting`
+This avoids a system rebuild. It uses the existing explicit `/Scripting`
 loader. Tray systemd user delivery remains unchanged.
 
 ### Loop
