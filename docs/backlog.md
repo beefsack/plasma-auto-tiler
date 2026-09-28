@@ -22,22 +22,6 @@ decisions of 2026-09-24 are under
   [settings research](research/live-settings-after-ar15.md)
   [unified page](changes/archive/unified-settings-page.md)
   [gaps record](changes/archive/window-gap-configurability.md)
-- P1 | Drag + workspace-send breaks tiling | User repro (laptop,
-  2026-09-28): workspace 1 with 3 windows; Meta+drag a window until a drop
-  target shows; without releasing, Meta+Shift+2 sends it to workspace 2;
-  release; tiling fails. User hypothesis: recalculate the drop target when
-  the dragged window changes workspace. Trace
-  `~/Downloads/plasma-auto-tiler-dev.1t4fJa.log`.
-- P1 | Group underlay redesign (user decision 2026-09-28) | Replace the
-  active-group highlight with a rectangle beneath the group's windows,
-  extending one extra border width beyond the outer edge of the window
-  borders; colour and size configurable on the unified settings page.
-  [record](changes/archive/active-group-highlight-design.md)
-- P1 | Drop preview colour setting | Drop overlay colour configurable,
-  including transparency, on the unified settings page.
-- P1 | Group underlay slides with workspace transitions | Make the group
-  visual move with the workspace slide like the active border now does
-  (believed to be due to a lower layer than windows; unverified).
 - P1 | Ghostty/local native alignment | The ~56 px shortfall is unexplained
   (source-only baseline fix is in; needs a fresh `just dev trace` local-move
   plus follow-on command trace), and one requested `2032x1092` became
@@ -132,6 +116,26 @@ decisions of 2026-09-24 are under
 All items below shipped offline with no live result claimed.
 
 ### Single-output laptop
+
+- Unified settings page: tray Settings, KWin Scripts Configure and Desktop
+  Effects Configure open the same page; each tiling gap Save re-spaces
+  existing tiles without restart (`config-reloaded stage=re-read-queued`,
+  then `kind=update-gaps ... outcome=applied`); border and shortcut buttons
+  unchanged.
+  [change](changes/archive/unified-settings-page.md)
+- Group underlay and colours (needs a fresh Plasma session for the rebuilt
+  effect): Meta-held group shows a fill beneath all members, one border width
+  beyond the border outer edge by default; underlay colour/extension and drop
+  preview colour (with alpha) apply live; underlay slides with workspace
+  transitions; fullscreen/maximise still hides it.
+  [change](changes/archive/group-underlay-and-preview-colors.md)
+- Mid-drag workspace send: repro (3 tiles, Meta+drag to a preview,
+  Meta+Shift+2 while held, release) logs `drag-drop-refused-stale-workspace`
+  and both workspaces keep tiling; a plain drag released partly off the work
+  area no longer causes repeated `snapshot-invalid
+  detail=window-out-of-bounds`. May also resolve the multi-output
+  `window-out-of-bounds` risk (unconfirmed).
+  [change](changes/archive/mid-drag-workspace-recovery.md)
 
 - Quiet refresh logs: compare `stage=refresh terminal=quiet` under normal
   and trace logging; non-quiet terminals stay visible in both. (Unfloat
@@ -281,6 +285,10 @@ All items below shipped offline with no live result claimed.
 - PID 3568836 SIGABRT (`QKeySequence` D-Bus abort) unattributed; needs
   sender, method, and fault-stack evidence.
   [record](changes/archive/kwin-qkeysequence-dbus-abort.md)
+- Whole-snapshot `window-out-of-bounds` rejection removed offline
+  (2026-09-29); observed out-of-work-area frames are now tolerated drift.
+  Watch for any regression where a genuinely foreign window is tiled.
+  [change](changes/archive/mid-drag-workspace-recovery.md)
 - Ghostty-class shortfalls (~56 px) have no proven native cause; interim
   acceptance can leave a visible gap or reassert the accepted rect when a
   neighbour drifts.
