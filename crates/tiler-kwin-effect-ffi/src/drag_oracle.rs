@@ -264,6 +264,8 @@ pub extern "C" fn drag_oracle_last_copy(out: *mut u8, capacity: usize) -> usize 
 mod tests {
     use super::*;
 
+    static LAST_TEST_LOCK: Mutex<()> = Mutex::new(());
+
     fn id(text: &str) -> Vec<u8> {
         text.as_bytes().to_vec()
     }
@@ -692,6 +694,7 @@ mod tests {
 
     #[test]
     fn ffi_record_and_last_round_trip_without_unwind() {
+        let _guard = LAST_TEST_LOCK.lock().unwrap();
         let start = DragRect {
             x: 0,
             y: 0,
@@ -718,6 +721,7 @@ mod tests {
 
     #[test]
     fn poisoned_storage_fails_closed_then_recovers_on_fresh_record() {
+        let _guard = LAST_TEST_LOCK.lock().unwrap();
         // Row Q: poisoned verdict storage never serves the stale verdict;
         // poisoned reads fail closed and reset storage, and the next fresh
         // record round-trips. FFI panic containment (no unwind, null/0 on
@@ -784,6 +788,7 @@ mod tests {
 
     #[test]
     fn ffi_record_with_press_round_trips_evidence_without_unwind() {
+        let _guard = LAST_TEST_LOCK.lock().unwrap();
         let start = DragRect {
             x: 0,
             y: 0,
@@ -818,6 +823,7 @@ mod tests {
 
     #[test]
     fn ffi_null_identity_reports_empty_identity_reason() {
+        let _guard = LAST_TEST_LOCK.lock().unwrap();
         let r = DragRect {
             x: 0,
             y: 0,
@@ -842,11 +848,13 @@ mod tests {
 
     #[test]
     fn ffi_null_out_len_is_null_without_unwind() {
+        let _guard = LAST_TEST_LOCK.lock().unwrap();
         assert!(drag_oracle_last(std::ptr::null_mut()).is_null());
     }
 
     #[test]
     fn ffi_copy_out_matches_borrowed_view_without_unwind() {
+        let _guard = LAST_TEST_LOCK.lock().unwrap();
         let start = DragRect {
             x: 0,
             y: 0,
