@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>ActiveBorderConfig</class>
-  <widget class="QWidget" name="ActiveBorderConfig">
+ <class>UnifiedSettings</class>
+  <widget class="QWidget" name="UnifiedSettings">
    <layout class="QVBoxLayout" name="verticalLayout">
     <item>
      <widget class="QGroupBox" name="borderSettings">
@@ -101,8 +101,8 @@
        <item row="5" column="0" colspan="2">
         <widget class="QLabel" name="borderDescription">
          <property name="text">
-               <string>When enabled, the border uses the current theme highlight color when available and the configured color is the fallback. When disabled, the configured color is always used. Border changes apply immediately through the KWin effect reconfigure. Script settings (workspace mode, tiling gaps) live in the Plasma Auto Tiler script settings.</string>
-        </property>
+               <string>When enabled, the border uses the current theme highlight color when available and the configured color is the fallback. When disabled, the configured color is always used. Border changes apply immediately through the KWin effect reconfigure. Tiling gaps and workspace mode are on this page.</string>
+         </property>
         <property name="wordWrap">
          <bool>true</bool>
         </property>
@@ -192,6 +192,109 @@
       </layout>
      </widget>
     </item>
+    <item>
+     <widget class="QGroupBox" name="scriptSettings">
+      <property name="title">
+       <string>Plasma Auto Tiler</string>
+      </property>
+      <layout class="QFormLayout" name="scriptFormLayout">
+       <item row="0" column="0">
+        <widget class="QLabel" name="label_workspaceMode">
+         <property name="buddy">
+          <cstring>workspaceModeCombo</cstring>
+         </property>
+        <property name="text">
+         <string>The multi-output workspace model (requires session restart):</string>
+        </property>
+       </widget>
+      </item>
+       <item row="0" column="1">
+       <widget class="QComboBox" name="workspaceModeCombo"/>
+      </item>
+       <item row="1" column="0">
+        <widget class="QLabel" name="label_innerGap">
+         <property name="buddy">
+          <cstring>innerGapSpinBox</cstring>
+         </property>
+        <property name="text">
+         <string>Gap between tiled windows:</string>
+        </property>
+       </widget>
+      </item>
+       <item row="1" column="1">
+       <widget class="QSpinBox" name="innerGapSpinBox">
+        <property name="minimum">
+         <number>0</number>
+        </property>
+        <property name="maximum">
+         <number>64</number>
+        </property>
+        <property name="value">
+         <number>8</number>
+        </property>
+        <property name="suffix">
+         <string> px</string>
+        </property>
+       </widget>
+      </item>
+       <item row="2" column="0">
+        <widget class="QLabel" name="label_outerGap">
+         <property name="buddy">
+          <cstring>outerGapSpinBox</cstring>
+         </property>
+        <property name="text">
+         <string>Gap between tiled windows and the work area edge:</string>
+        </property>
+       </widget>
+      </item>
+       <item row="2" column="1">
+       <widget class="QSpinBox" name="outerGapSpinBox">
+        <property name="minimum">
+         <number>0</number>
+        </property>
+        <property name="maximum">
+         <number>64</number>
+        </property>
+        <property name="value">
+         <number>8</number>
+        </property>
+        <property name="suffix">
+         <string> px</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="scriptStatusGroup">
+     <property name="title">
+      <string>Status</string>
+     </property>
+     <layout class="QVBoxLayout" name="scriptStatusLayout">
+      <item>
+       <widget class="QLabel" name="scriptStatusLabel">
+        <property name="text">
+         <string>No pending script setting in this dialog.</string>
+        </property>
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="scriptStatusDescription">
+        <property name="text">
+         <string>Gap settings are saved to kwinrc. Saving changed gaps sends one typed KWin reconfigure request; the send is unconfirmed and never claims the running tiler applied the settings. Session restart is the guaranteed pickup mechanism for gaps and the startup setting. Workspace mode requires a session restart: it is consumed at startup.</string>
+        </property>
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
    </layout>
   </widget>
  <customwidgets>

@@ -408,17 +408,16 @@ void useThemeColorOnlyHotApplyRetry()
     CHECK(!module.needsSave());
 }
 
-void scriptControlsAreAbsent()
+void unifiedControlsArePresent()
 {
     KWin::ActiveBorderConfigModule module(nullptr, KPluginMetaData());
     module.load();
-    CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("scriptSettings")) == nullptr);
-    CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("tilerReloadGroup")) == nullptr);
-    CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("workspaceModeCombo")) == nullptr);
-    CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("shortcutProfileCombo")) == nullptr);
-    CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("innerGapSpinBox")) == nullptr);
-    CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("outerGapSpinBox")) == nullptr);
-    CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("tilerReloadButton")) == nullptr);
+    CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("workspaceModeCombo")) != nullptr);
+    CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("innerGapSpinBox")) != nullptr);
+    CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("outerGapSpinBox")) != nullptr);
+    CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("scriptStatusLabel")) != nullptr);
+    CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("kcfg_BorderWidth")) != nullptr);
+    CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("shortcutApplyButton")) != nullptr);
 }
 
 } // namespace
@@ -463,7 +462,7 @@ int main(int argc, char **argv)
         useThemeColorDefaultsReset();
         useThemeColorToggleMarksDirty();
         useThemeColorOnlyHotApplyRetry();
-        scriptControlsAreAbsent();
+        unifiedControlsArePresent();
     } else if (scenario == QStringLiteral("config")) {
         effectConfigReloadReflectsStoredValues();
     } else {

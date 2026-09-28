@@ -52,12 +52,12 @@ kcmshell6 kwin/effects/configs/plasma-auto-tiler-active-border_config
 (`kwin/native-effect/shortcutreconciler.cpp:defaultClearedActionsPath`).
 Inspect only; do not create, edit, or delete it.
 - Ordinary Settings Apply never changes shortcuts
-(`kwin/native-effect/activeborderconfig.ui:shortcutDescription`).
+(`kwin/native-effect/unifiedsettings.ui:shortcutDescription`).
 
 ## Apply
 
 - Click `Apply Shortcuts` and confirm only the dialog titled
-`Apply Shortcuts` (`kwin/native-effect/activeborderconfig_module.cpp:runShortcutApply`).
+`Apply Shortcuts` (`kwin/native-effect/unifiedsettings_module.cpp:runShortcutApply`).
 It assigns focus-right to `Meta+L` and moves Lock Session to `Meta+Esc`,
 plus `Meta+Alt+K`, `Meta+Alt+L`, `Meta+Alt+Left`, `Meta+Alt+Down`,
 `Meta+Alt+Up`, `Meta+Alt+Right`, `Meta+G`, `Meta+M`,
@@ -72,17 +72,17 @@ Capture the resulting status verbatim.
 
 - When Apply refuses on holders, the KCM offers a preview with `Force Apply`
 and `Cancel` visible only for that pending preview
-(`activeborderconfig_module.cpp:updateShortcutPresentation`).
+(`unifiedsettings_module.cpp:updateShortcutPresentation`).
 - Require the preview to list every active holder with component/action,
 found keys, exact required keys removed, and unrelated keys kept
-(`activeborderconfig_module.cpp:buildForcePreviewText`).
+(`unifiedsettings_module.cpp:buildForcePreviewText`).
 This includes unknown and legacy `kwin/plasma-auto-tiler-*` IDs.
 Exempt only: project actions, Lock Session, and the authorized System Monitor
 `Meta+Esc` holder. A `.desktop`-default-only claimant with nothing to clear
 blocks Force until unbound manually.
 - Press `Cancel` (or decline either confirmation) and verify no change:
 `Cancel` discards the preview without writes
-(`activeborderconfig_module.cpp:requestShortcutForceCancel`).
+(`unifiedsettings_module.cpp:requestShortcutForceCancel`).
 Confirmed Force revalidates owner, project/lock images, and the full holder
 snapshot after confirmation; stale state aborts with zero writes, including
 zero cleared-list writes if it changed before the new snapshot. If a holder
@@ -99,7 +99,7 @@ The union of cleared component/action IDs is persisted to
 ## Revert (Defaults, Not Preimages)
 
 - Click `Revert Shortcuts` and confirm only the dialog titled
-`Revert Shortcuts` (`activeborderconfig_module.cpp:runShortcutRevert`).
+`Revert Shortcuts` (`unifiedsettings_module.cpp:runShortcutRevert`).
 It names the recorded cleared count and states custom cleared bindings are lost.
 - Revert restores KDE defaults for every non-project cleared entry via
 `defaultShortcutKeys` / `setForeignShortcutKeys`; project-owned IDs stay

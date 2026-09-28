@@ -117,18 +117,21 @@ target_link_libraries(plasma-auto-tiler-active-border PRIVATE
 )
 target_compile_options(plasma-auto-tiler-active-border PRIVATE -Wall -Wextra -Werror)
 
-set(kcm_SOURCES
-    activeborderconfig_module.cpp
-    activeborderconfig_module.h
+set(unified_kcm_SOURCES
+    unifiedsettings_module.cpp
+    unifiedsettings_module.h
     shortcutreconciler.cpp
     shortcutreconciler.h
     ${config_SOURCES}
 )
-ki18n_wrap_ui(kcm_SOURCES activeborderconfig.ui)
+ki18n_wrap_ui(unified_kcm_SOURCES unifiedsettings.ui)
 
 kcoreaddons_add_plugin(plasma-auto-tiler-active-border_config
     INSTALL_NAMESPACE "kwin/effects/configs"
-    SOURCES ${kcm_SOURCES}
+    SOURCES
+        activeborderconfig_module.cpp
+        activeborderconfig_module.h
+        ${unified_kcm_SOURCES}
 )
 target_compile_definitions(plasma-auto-tiler-active-border_config PRIVATE -DTRANSLATION_DOMAIN="kwin")
 target_link_libraries(plasma-auto-tiler-active-border_config PRIVATE
@@ -144,29 +147,25 @@ target_link_libraries(plasma-auto-tiler-active-border_config PRIVATE
 )
 target_compile_options(plasma-auto-tiler-active-border_config PRIVATE -Wall -Wextra -Werror)
 
-# AR15 script settings: a small independent native QWidget script KCM owning
-# workspaceMode, innerGap, and outerGap from the existing
-# Script-plasma-auto-tiler-kwin group (the hidden shortcutProfile key is never
-# read or written here). Discovered through the script
-# package metadata X-KDE-ConfigModule qualified reference
-# (kwin/scripts/configs/plasma-auto-tiler-kwin_config) via the KWin scripts
-# KCM configure path; no effect enablement required.
-set(script_kcm_SOURCES
-    scriptconfig_module.cpp
-    scriptconfig_module.h
-)
-ki18n_wrap_ui(script_kcm_SOURCES scriptconfig.ui)
-
+# Unified settings page: both existing plugin IDs/namespace entries display
+# the identical shared QWidget page via two thin factories. Script settings
+# (workspace mode, tiling gaps) live on the same page; no separate script
+# page internals remain.
 kcoreaddons_add_plugin(plasma-auto-tiler-kwin_config
     INSTALL_NAMESPACE "kwin/scripts/configs"
-    SOURCES ${script_kcm_SOURCES}
+    SOURCES
+        scriptconfig_module.cpp
+        scriptconfig_module.h
+        ${unified_kcm_SOURCES}
 )
 target_compile_definitions(plasma-auto-tiler-kwin_config PRIVATE -DTRANSLATION_DOMAIN="kwin")
 target_link_libraries(plasma-auto-tiler-kwin_config PRIVATE
     KF6::CoreAddons
     KF6::ConfigCore
+    KF6::ConfigGui
     KF6::I18n
     KF6::KCMUtils
+    KF6::WidgetsAddons
     Qt6::Core
     Qt6::DBus
     Qt6::Widgets
@@ -204,10 +203,11 @@ if(BUILD_TESTING)
     set(kcm_config_test_SOURCES
         activeborderconfig_module_test.cpp
         activeborderconfig_module.cpp
+        unifiedsettings_module.cpp
         shortcutreconciler.cpp
         ${config_SOURCES}
     )
-    ki18n_wrap_ui(kcm_config_test_SOURCES activeborderconfig.ui)
+    ki18n_wrap_ui(kcm_config_test_SOURCES unifiedsettings.ui)
     add_executable(plasma-auto-tiler-active-border-kcm-config-test
         ${kcm_config_test_SOURCES}
     )
@@ -247,10 +247,11 @@ if(BUILD_TESTING)
     set(kcm_shortcut_test_SOURCES
         activeborderconfig_shortcut_test.cpp
         activeborderconfig_module.cpp
+        unifiedsettings_module.cpp
         shortcutreconciler.cpp
         ${config_SOURCES}
     )
-    ki18n_wrap_ui(kcm_shortcut_test_SOURCES activeborderconfig.ui)
+    ki18n_wrap_ui(kcm_shortcut_test_SOURCES unifiedsettings.ui)
     add_executable(plasma-auto-tiler-active-border-kcm-shortcut-test
         ${kcm_shortcut_test_SOURCES}
     )
@@ -296,16 +297,21 @@ if(BUILD_TESTING)
     set(script_config_test_SOURCES
         scriptconfig_module_test.cpp
         scriptconfig_module.cpp
+        unifiedsettings_module.cpp
+        shortcutreconciler.cpp
+        ${config_SOURCES}
     )
-    ki18n_wrap_ui(script_config_test_SOURCES scriptconfig.ui)
+    ki18n_wrap_ui(script_config_test_SOURCES unifiedsettings.ui)
     add_executable(plasma-auto-tiler-script-config-test
         ${script_config_test_SOURCES}
     )
     target_link_libraries(plasma-auto-tiler-script-config-test PRIVATE
         KF6::CoreAddons
         KF6::ConfigCore
+        KF6::ConfigGui
         KF6::I18n
         KF6::KCMUtils
+        KF6::WidgetsAddons
         Qt6::Core
         Qt6::DBus
         Qt6::Widgets

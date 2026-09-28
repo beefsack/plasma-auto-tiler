@@ -7,6 +7,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QLabel>
 #include <QMessageLogContext>
 #include <QMimeData>
@@ -37,6 +38,11 @@ KConfigGroup scriptGroup()
     return KConfigGroup(KSharedConfig::openConfig(QStringLiteral("kwinrc")), QStringLiteral("Script-plasma-auto-tiler-kwin"));
 }
 
+KConfigGroup borderGroup()
+{
+    return KConfigGroup(KSharedConfig::openConfig(QStringLiteral("kwinrc")), QStringLiteral("Effect-plasma-auto-tiler-active-border"));
+}
+
 QComboBox *workspaceModeCombo(KWin::ScriptConfigModule &module)
 {
     return module.widget()->findChild<QComboBox *>(QStringLiteral("workspaceModeCombo"));
@@ -55,6 +61,11 @@ QSpinBox *innerGapSpinBox(KWin::ScriptConfigModule &module)
 QSpinBox *outerGapSpinBox(KWin::ScriptConfigModule &module)
 {
     return module.widget()->findChild<QSpinBox *>(QStringLiteral("outerGapSpinBox"));
+}
+
+QDoubleSpinBox *borderWidthSpinBox(KWin::ScriptConfigModule &module)
+{
+    return module.widget()->findChild<QDoubleSpinBox *>(QStringLiteral("kcfg_BorderWidth"));
 }
 
 QLabel *scriptStatusLabel(KWin::ScriptConfigModule &module)
@@ -118,6 +129,26 @@ public:
     }
     int scriptCalls = 0;
     bool scriptSucceed = false;
+};
+
+class CombinedReconfigureModule : public KWin::ScriptConfigModule
+{
+public:
+    using KWin::ScriptConfigModule::ScriptConfigModule;
+    bool requestScriptReconfigure() override
+    {
+        ++scriptCalls;
+        return scriptSucceed;
+    }
+    bool requestEffectReconfigure() override
+    {
+        ++effectCalls;
+        return effectSucceed;
+    }
+    int scriptCalls = 0;
+    bool scriptSucceed = false;
+    int effectCalls = 0;
+    bool effectSucceed = false;
 };
 
 void gapContractNormalizesBoundsAndPersists()
@@ -605,6 +636,72 @@ void combinedGapAndStartupSendFailureKeepsResidualRestart()
     CHECK(!module.needsSave());
 }
 
+void combinedEffectAndScriptSavePreservesScriptOnEffectFailure()
+{
+    // Focused unified-page regression: one save carrying both a managed
+    // border change and script gap/workspace changes persists the script
+    // keys even when the effect reconfigure is disabled/missing, and keeps
+    // the effect retry plus Apply enabled without disturbing script state.
+    CombinedReconfigureModule module(nullptr, KPluginMetaData());
+    module.load();
+    QComboBox *mode = workspaceModeCombo(module);
+    QSpinBox *inner = innerGapSpinBox(module);
+    QDoubleSpinBox *border = borderWidthSpinBox(module);
+    CHECK(mode != nullptr);
+    CHECK(inner != nullptr);
+    CHECK(border != nullptr);
+    if (!mode || !inner || !border) {
+        return;
+    }
+    const QString modeTarget = otherWorkspaceMode(storedWorkspaceMode());
+    const int modeIndex = mode->findData(modeTarget);
+    CHECK(modeIndex >= 0);
+    const int gapTarget = (inner->value() == 12) ? 20 : 12;
+    const double borderTarget = (border->value() == 7.5) ? 6.5 : 7.5;
+    mode->setCurrentIndex(modeIndex);
+    inner->setValue(gapTarget);
+    border->setValue(borderTarget);
+    CHECK(module.needsSave());
+    module.scriptSucceed = true;
+    module.effectSucceed = false;
+    module.save();
+    CHECK(scriptGroup().readEntry(QStringLiteral("workspaceMode"), QString()) == modeTarget);
+    CHECK(scriptGroup().readEntry(QStringLiteral("innerGap"), -1) == gapTarget);
+    CHECK(borderGroup().readEntry(QStringLiteral("BorderWidth"), 0.0) == borderTarget);
+    CHECK(module.scriptCalls == 1);
+    CHECK(module.effectCalls == 1);
+    CHECK(module.isScriptRestartRequired());
+    CHECK(!module.isGapReconfigurePending());
+    CHECK(module.scriptStatusText().contains(QStringLiteral("unconfirmed")));
+    CHECK(module.scriptStatusText().contains(QStringLiteral("workspace mode")));
+    CHECK(containsRestartRequirement(module.scriptStatusText()));
+    CHECK(!containsAppliedClaim(module.scriptStatusText()));
+    // Failed effect hot-apply keeps Apply enabled for the retry.
+    CHECK(module.needsSave());
+    // An unchanged save retries only the effect: script stays persisted with
+    // no resend, restart residual and Apply preserved.
+    module.save();
+    CHECK(module.effectCalls == 2);
+    CHECK(module.scriptCalls == 1);
+    CHECK(scriptGroup().readEntry(QStringLiteral("workspaceMode"), QString()) == modeTarget);
+    CHECK(scriptGroup().readEntry(QStringLiteral("innerGap"), -1) == gapTarget);
+    CHECK(borderGroup().readEntry(QStringLiteral("BorderWidth"), 0.0) == borderTarget);
+    CHECK(module.isScriptRestartRequired());
+    CHECK(!module.isGapReconfigurePending());
+    CHECK(module.needsSave());
+    // Effect recovery clears Apply while keeping persisted script state and
+    // the standing workspace-mode restart.
+    module.effectSucceed = true;
+    module.save();
+    CHECK(module.effectCalls == 3);
+    CHECK(module.scriptCalls == 1);
+    CHECK(scriptGroup().readEntry(QStringLiteral("workspaceMode"), QString()) == modeTarget);
+    CHECK(scriptGroup().readEntry(QStringLiteral("innerGap"), -1) == gapTarget);
+    CHECK(module.isScriptRestartRequired());
+    CHECK(!module.isGapReconfigurePending());
+    CHECK(!module.needsSave());
+}
+
 void poisonedBusScriptSendFailsClosed()
 {
     KWin::ScriptConfigModule module(nullptr, KPluginMetaData());
@@ -693,6 +790,7 @@ int main(int argc, char **argv)
         hiddenShortcutProfileIsAbsentAndPreservedUntouched();
         combinedGapAndStartupSaveSendsWithResidualRestart();
         combinedGapAndStartupSendFailureKeepsResidualRestart();
+        combinedEffectAndScriptSavePreservesScriptOnEffectFailure();
     } else {
         std::fprintf(stderr, "unknown scenario: %s\n", argv[1]);
         return EXIT_FAILURE;

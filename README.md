@@ -81,9 +81,11 @@ tray systemd user unit (`plasma-auto-tiler-tray.service`, bound to
 `graphical-session.target` with `Restart=on-failure`), whose `ExecStart`
 points to the Nix store.
 The tray provides basic status and the fixed Settings action
-`kcmshell6 kwin/effects/configs/plasma-auto-tiler-active-border_config`; it has
-no direct tiling controls or shortcut mutation. Its static bridge contract
-includes authenticated snapshots, freshness and ordering/generation checks,
+`kcmshell6 kwin/effects/configs/plasma-auto-tiler-active-border_config`; this
+opens the unified border, shortcut, gap and workspace settings page also shown
+by both Configure entries. The tray has no direct tiling controls or shortcut
+mutation. Its static bridge contract includes authenticated snapshots, freshness
+and ordering/generation checks,
 idempotent notifications, and bounded watcher retry/fail-closed behavior;
 watcher ordering and tray login/systemd delivery remain pending live evidence.
 
@@ -329,7 +331,7 @@ appear in the registered shortcut set below.
 | plasma-auto-tiler-move-workspace-append | Meta+Shift+0 |
 
 Plasma's default Quick Tile actions occupy `Meta+Arrows` and its next/previous
-screen actions occupy `Meta+Shift+Right/Left`. The effect KCM's explicit
+screen actions occupy `Meta+Shift+Right/Left`. The unified KCM's explicit
 reversible shortcut override clears those defaults for the project focus and
 move aliases; ordinary settings Apply does not change global shortcuts.
 
@@ -408,13 +410,13 @@ bash scripts/dogfood-install.sh uninstall
 ### Native effect (dogfood)
 
 `scripts/dogfood-install.sh` also builds and stages the experimental,
-disabled-by-default native `plasma-auto-tiler-active-border` effect, its
-effect-scoped QWidget KCM, and the native script settings KCM
-(`kwin/scripts/configs/plasma-auto-tiler-kwin_config`, the owner of the
-workspace mode and tiling gap settings). The KWin script
-uses its project-owned native script KCM without migrating existing values; it is opened from
-the script's Configure entry, while the effect KCM is opened from
-Desktop Effects. These commands describe the intended user-local lifecycle;
+disabled-by-default native `plasma-auto-tiler-active-border` effect and two
+namespaced KCM plugins. The script's Configure entry
+(`kwin/scripts/configs/plasma-auto-tiler-kwin_config`), Desktop Effects
+Configure, and tray Settings all open the same page, with border, shortcuts,
+tiling gaps and workspace mode. The page uses the existing groups and values;
+the script settings work without enabling the effect. These commands describe
+the intended user-local lifecycle;
 current-host integration, KWin/session load or reload, and session-boundary
 results remain pending live evidence.
 

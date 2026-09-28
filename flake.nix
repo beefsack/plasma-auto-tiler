@@ -54,7 +54,9 @@
           ./kwin/native-effect/activeborderconfig_module.json
           ./kwin/native-effect/activeborderconfig_module.h
           ./kwin/native-effect/activeborderconfig_module.cpp
-          ./kwin/native-effect/activeborderconfig.ui
+          ./kwin/native-effect/unifiedsettings_module.h
+          ./kwin/native-effect/unifiedsettings_module.cpp
+          ./kwin/native-effect/unifiedsettings.ui
           ./kwin/native-effect/activeborderconfig.kcfg
           ./kwin/native-effect/activeborderconfig.kcfgc
           ./kwin/native-effect/shortcutreconciler.h
@@ -63,7 +65,6 @@
           ./kwin/native-effect/scriptconfig_module.json
           ./kwin/native-effect/scriptconfig_module.h
           ./kwin/native-effect/scriptconfig_module.cpp
-          ./kwin/native-effect/scriptconfig.ui
           ./kwin/native-effect/scriptconfig_module_test.cpp
           ./kwin/native-effect/validate-scriptconfig.cmake
           ./kwin/native-effect/validate-unified-lifecycle.cmake

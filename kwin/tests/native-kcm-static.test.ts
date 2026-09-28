@@ -19,13 +19,15 @@ const scriptKcmMetadata = JSON.parse(read("native-effect/scriptconfig_module.jso
 };
 const cmake = read("native-effect/CMakeLists.txt").replace(/\s+/g, " ");
 const kcfg = read("native-effect/activeborderconfig.kcfg");
-const module = read("native-effect/activeborderconfig_module.cpp");
-const scriptModule = read("native-effect/scriptconfig_module.cpp");
-const scriptHeader = read("native-effect/scriptconfig_module.h");
+const effectFactory = read("native-effect/activeborderconfig_module.cpp");
+const effectFactoryHeader = read("native-effect/activeborderconfig_module.h");
+const scriptFactory = read("native-effect/scriptconfig_module.cpp");
+const scriptFactoryHeader = read("native-effect/scriptconfig_module.h");
+const unified = read("native-effect/unifiedsettings_module.cpp");
+const unifiedHeader = read("native-effect/unifiedsettings_module.h");
+const unifiedUi = read("native-effect/unifiedsettings.ui");
 const effect = read("native-effect/activewindowborder.cpp");
 const logic = read("native-effect/activeborderlogic.h");
-const ui = read("native-effect/activeborderconfig.ui");
-const scriptUi = read("native-effect/scriptconfig.ui");
 
 const SCRIPT_SETTINGS = {
     workspaceMode: { type: "Enum", defaultValue: "per-output-local" },
@@ -57,7 +59,7 @@ function schemaEntries(): Record<string, { type: string; defaultValue: string }>
 }
 
 describe("native KCM static contract", () => {
-    it("discovers the native effect and installs its effect and KCM plugins in KWin namespaces", () => {
+    it("discovers the native effect and installs both KCM plugins in KWin namespaces", () => {
         assert.equal(nativeMetadata.KPlugin.Id, "plasma-auto-tiler-active-border");
         assert.equal(nativeMetadata.KPlugin.EnabledByDefault, false);
         assert.equal(
@@ -68,7 +70,7 @@ describe("native KCM static contract", () => {
         for (const field of ["Name", "Description", "Icon", "License"] as const) {
             assert.notEqual(kcmMetadata.KPlugin[field], "");
         }
-        assert.match(module, /K_PLUGIN_CLASS_WITH_JSON\(KWin::ActiveBorderConfigModule, "activeborderconfig_module\.json"\)/);
+        assert.match(effectFactory, /K_PLUGIN_CLASS_WITH_JSON\(KWin::ActiveBorderConfigModule, "activeborderconfig_module\.json"\)/);
         assert.match(
             cmake,
             /kcoreaddons_add_plugin\(plasma-auto-tiler-active-border INSTALL_NAMESPACE "kwin\/effects\/plugins"/,
@@ -83,7 +85,7 @@ describe("native KCM static contract", () => {
             cmake,
             /kcoreaddons_add_plugin\(plasma-auto-tiler-kwin_config INSTALL_NAMESPACE "kwin\/scripts\/configs"/,
         );
-        assert.match(scriptModule, /K_PLUGIN_CLASS_WITH_JSON\(KWin::ScriptConfigModule, "scriptconfig_module\.json"\)/);
+        assert.match(scriptFactory, /K_PLUGIN_CLASS_WITH_JSON\(KWin::ScriptConfigModule, "scriptconfig_module\.json"\)/);
         assert.equal(scriptKcmMetadata.KPlugin.Id, "plasma-auto-tiler-kwin_config");
         for (const field of ["Name", "Description", "Icon", "License"] as const) {
             assert.notEqual(scriptKcmMetadata.KPlugin[field], "");
@@ -93,6 +95,51 @@ describe("native KCM static contract", () => {
         assert.ok(cmake.includes("-P ${CMAKE_CURRENT_SOURCE_DIR}/validate-metadata.cmake"));
         assert.ok(cmake.includes("add_test(NAME native-effect-unified-lifecycle"));
         assert.ok(cmake.includes("validate-unified-lifecycle.cmake"));
+    });
+
+    it("shares one unified page through both existing factories and discovery routes", () => {
+        assert.equal(
+            scriptMetadata["X-KDE-ConfigModule"],
+            "kwin/scripts/configs/plasma-auto-tiler-kwin_config",
+        );
+        assert.doesNotMatch(read("metadata.json"), /kcm_kwin4_genericscripted/);
+        assert.ok(nativeMetadata["X-KDE-ConfigModule"]);
+        for (const header of [effectFactoryHeader, scriptFactoryHeader]) {
+            assert.match(header, /#include "unifiedsettings_module\.h"/);
+        }
+        assert.match(effectFactoryHeader, /class ActiveBorderConfigModule : public UnifiedSettingsModule/);
+        assert.match(scriptFactoryHeader, /class ScriptConfigModule : public UnifiedSettingsModule/);
+        assert.match(unifiedHeader, /class UnifiedSettingsModule : public KCModule/);
+        assert.match(unifiedHeader, /#include "ui_unifiedsettings\.h"/);
+        assert.match(unifiedHeader, /::Ui::UnifiedSettings m_ui/);
+        // Thin factories carry no widget or reconfigure internals.
+        for (const factory of [effectFactory, scriptFactory]) {
+            assert.doesNotMatch(factory, /workspaceModeCombo|innerGapSpinBox|outerGapSpinBox/);
+            assert.doesNotMatch(factory, /requestEffectReconfigure|requestScriptReconfigure/);
+            assert.doesNotMatch(factory, /Script-plasma-auto-tiler-kwin/);
+        }
+        // Single unified sourceset feeds both plugins and every KCM test binary.
+        assert.match(cmake, /unifiedsettings_module\.cpp/);
+        assert.match(cmake, /unifiedsettings_module\.h/);
+        assert.match(cmake, /ki18n_wrap_ui\(unified_kcm_SOURCES unifiedsettings\.ui\)/);
+        assert.doesNotMatch(cmake, /activeborderconfig\.ui/);
+        assert.doesNotMatch(cmake, /scriptconfig\.ui/);
+        assert.ok(cmake.includes("add_test(NAME native-script-config-discovery-validation"));
+        assert.ok(cmake.includes("-P ${CMAKE_CURRENT_SOURCE_DIR}/validate-scriptconfig.cmake"));
+        // Unified page hosts border, shortcut, script, and status groups together.
+        for (const token of [
+            "kcfg_BorderColor",
+            "kcfg_BorderWidth",
+            "workspaceModeCombo",
+            "innerGapSpinBox",
+            "outerGapSpinBox",
+            "shortcutApplyButton",
+            "scriptStatusLabel",
+        ]) {
+            assert.match(unifiedUi, new RegExp(token));
+        }
+        assert.match(unified, /QString UnifiedSettingsModule::effectService\(\)/);
+        assert.match(unified, /QString UnifiedSettingsModule::scriptService\(\)/);
     });
 
     it("brands the surviving effect Plasma Auto Tiler and keeps exactly one effect plugin", () => {
@@ -130,7 +177,7 @@ describe("native KCM static contract", () => {
         }
     });
 
-    it("keeps the four supported script keys and defaults identical between schema and native script KCM", () => {
+    it("keeps the four supported script keys and defaults identical between schema and the unified script KCM", () => {
         assert.deepEqual(schemaEntries(), SCRIPT_SETTINGS);
         assert.match(kcfg, /<group name="Effect-plasma-auto-tiler-active-border">/);
 
@@ -140,39 +187,41 @@ describe("native KCM static contract", () => {
             }
             const defaultExpression = `QStringLiteral("${setting.defaultValue}")`;
             assert.match(
-                scriptModule,
+                unified,
                 new RegExp(
                     `readEntry\\(QStringLiteral\\("${key}"\\), ${defaultExpression.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`,
                 ),
             );
-            assert.match(scriptModule, new RegExp(`writeEntry\\(QStringLiteral\\("${key}"\\)`));
+            assert.match(unified, new RegExp(`writeEntry\\(QStringLiteral\\("${key}"\\)`));
         }
         for (const key of ["innerGap", "outerGap"]) {
-            assert.match(scriptModule, new RegExp(`readBoundedGap\\(group, QStringLiteral\\("${key}"\\)\\)`));
-            assert.match(scriptModule, new RegExp(`isBoundedGapRawValid\\(group, QStringLiteral\\("${key}"\\)\\)`));
-            assert.match(scriptModule, new RegExp(`writeEntry\\(QStringLiteral\\("${key}"\\)`));
-            assert.match(scriptModule, new RegExp(`${key}SpinBox->setValue\\((8|kGapDefault)\\)`));
-            assert.match(scriptModule, new RegExp(`${key}SpinBox->value\\(\\)`));
+            assert.match(unified, new RegExp(`readBoundedGap\\(group, QStringLiteral\\("${key}"\\)\\)`));
+            assert.match(unified, new RegExp(`isBoundedGapRawValid\\(group, QStringLiteral\\("${key}"\\)\\)`));
+            assert.match(unified, new RegExp(`writeEntry\\(QStringLiteral\\("${key}"\\)`));
+            assert.match(unified, new RegExp(`${key}SpinBox->setValue\\((8|kGapDefault)\\)`));
+            assert.match(unified, new RegExp(`${key}SpinBox->value\\(\\)`));
         }
 
-        assert.match(scriptModule, /workspaceModeCombo->findData\(QStringLiteral\("per-output-local"\)\)/);
-        assert.doesNotMatch(scriptModule, /shortcutProfileCombo/);
-        assert.doesNotMatch(scriptModule, /readEntry\(QStringLiteral\("shortcutProfile"\)/);
-        assert.doesNotMatch(scriptModule, /writeEntry\(QStringLiteral\("shortcutProfile"\)/);
-        assert.doesNotMatch(scriptModule, /engineAuthorityModeCombo/);
-        assert.doesNotMatch(scriptModule, /tilingAlgorithm|automaticSplitTarget|dropOutlinePreview/);
-        assert.match(scriptModule, /innerGapSpinBox->setValue\((8|kGapDefault)\)/);
-        assert.match(scriptModule, /outerGapSpinBox->setValue\((8|kGapDefault)\)/);
-        assert.doesNotMatch(module, /workspaceModeCombo|shortcutProfileCombo|innerGapSpinBox|outerGapSpinBox/);
-        assert.doesNotMatch(module, /Script-plasma-auto-tiler-kwin/);
+        assert.match(unified, /workspaceModeCombo->findData\(QStringLiteral\("per-output-local"\)\)/);
+        assert.doesNotMatch(unified, /shortcutProfileCombo/);
+        assert.doesNotMatch(unified, /readEntry\(QStringLiteral\("shortcutProfile"\)/);
+        assert.doesNotMatch(unified, /writeEntry\(QStringLiteral\("shortcutProfile"\)/);
+        assert.doesNotMatch(unified, /engineAuthorityModeCombo/);
+        assert.doesNotMatch(unified, /tilingAlgorithm|automaticSplitTarget|dropOutlinePreview/);
+        assert.match(unified, /innerGapSpinBox->setValue\((8|kGapDefault)\)/);
+        assert.match(unified, /outerGapSpinBox->setValue\((8|kGapDefault)\)/);
+        for (const factory of [effectFactory, scriptFactory]) {
+            assert.doesNotMatch(factory, /workspaceModeCombo|shortcutProfileCombo|innerGapSpinBox|outerGapSpinBox/);
+            assert.doesNotMatch(factory, /Script-plasma-auto-tiler-kwin/);
+        }
     });
 
     it("reads and writes supported script settings only through the script config group", () => {
-        assert.equal((scriptModule.match(/Script-plasma-auto-tiler-kwin/g) ?? []).length, 2);
-        assert.doesNotMatch(scriptModule, /Effect-plasma-auto-tiler-kwin/);
-        assert.match(scriptModule, /const QString workspaceMode = group\.readEntry\(QStringLiteral\("workspaceMode"\), QStringLiteral\("per-output-local"\)\)/);
-        assert.match(scriptModule, /select\(m_ui\.workspaceModeCombo, workspaceMode, QStringLiteral\("per-output-local"\)\)/);
-        assert.doesNotMatch(scriptModule, /tilingAlgorithm|automaticSplitTarget|dropOutlinePreview/);
+        assert.equal((unified.match(/Script-plasma-auto-tiler-kwin/g) ?? []).length, 2);
+        assert.doesNotMatch(unified, /Effect-plasma-auto-tiler-kwin/);
+        assert.match(unified, /const QString workspaceMode = group\.readEntry\(QStringLiteral\("workspaceMode"\), QStringLiteral\("per-output-local"\)\)/);
+        assert.match(unified, /select\(m_ui\.workspaceModeCombo, workspaceMode, QStringLiteral\("per-output-local"\)\)/);
+        assert.doesNotMatch(unified, /tilingAlgorithm|automaticSplitTarget|dropOutlinePreview/);
     });
 
     it("does not expose global shortcut mutation APIs", () => {
@@ -183,28 +232,31 @@ describe("native KCM static contract", () => {
             /unregisterGlobalShortcut/,
             /setGlobalShortcut/,
         ]) {
-            assert.doesNotMatch(module, forbidden);
+            assert.doesNotMatch(unified, forbidden);
+            assert.doesNotMatch(unifiedHeader, forbidden);
         }
     });
 
     it("keeps border settings in the native group and hot-applies through the native effect", () => {
         assert.match(kcfg, /<group name="Effect-plasma-auto-tiler-active-border">/);
         assert.match(kcfg, /<entry name="UseThemeColor" type="Bool">[\s\S]*?<default>true<\/default>/);
-        assert.match(module, /ActiveBorderConfig::instance\(QStringLiteral\("kwinrc"\)\)/);
-        assert.match(module, /QString ActiveBorderConfigModule::effectService\(\)[\s\S]*?QStringLiteral\("org\.kde\.KWin"\)/);
-        assert.match(module, /QString ActiveBorderConfigModule::effectPath\(\)[\s\S]*?QStringLiteral\("\/Effects"\)/);
-        assert.match(module, /QString ActiveBorderConfigModule::effectInterface\(\)[\s\S]*?QStringLiteral\("org\.kde\.kwin\.Effects"\)/);
-        assert.match(module, /QString ActiveBorderConfigModule::effectMethod\(\)[\s\S]*?QStringLiteral\("reconfigureEffect"\)/);
-        assert.match(module, /QString ActiveBorderConfigModule::effectName\(\)[\s\S]*?QStringLiteral\("plasma-auto-tiler-active-border"\)/);
-        assert.match(module, /QDBusInterface interface\(effectService\(\), effectPath\(\), effectInterface\(\)/);
-        assert.match(module, /interface\.call\(effectMethod\(\), effectName\(\)\)/);
-        assert.match(module, /requestEffectReconfigure\(\)/);
+        assert.match(unified, /ActiveBorderConfig::instance\(QStringLiteral\("kwinrc"\)\)/);
+        assert.match(unified, /QString UnifiedSettingsModule::effectService\(\)[\s\S]*?QStringLiteral\("org\.kde\.KWin"\)/);
+        assert.match(unified, /QString UnifiedSettingsModule::effectPath\(\)[\s\S]*?QStringLiteral\("\/Effects"\)/);
+        assert.match(unified, /QString UnifiedSettingsModule::effectInterface\(\)[\s\S]*?QStringLiteral\("org\.kde\.kwin\.Effects"\)/);
+        assert.match(unified, /QString UnifiedSettingsModule::effectMethod\(\)[\s\S]*?QStringLiteral\("reconfigureEffect"\)/);
+        assert.match(unified, /QString UnifiedSettingsModule::effectName\(\)[\s\S]*?QStringLiteral\("plasma-auto-tiler-active-border"\)/);
+        assert.match(unified, /QDBusInterface interface\(effectService\(\), effectPath\(\), effectInterface\(\)/);
+        assert.match(unified, /interface\.call\(effectMethod\(\), effectName\(\)\)/);
+        assert.match(unified, /requestEffectReconfigure\(\)/);
+        assert.match(unified, /m_effectReconfigurePending/);
+        assert.match(unified, /markAsChanged\(\)/);
         assert.match(effect, /void ActiveWindowBorderEffect::reconfigure\(ReconfigureFlags\)/);
         assert.match(effect, /ActiveBorderConfig::self\(\)->read\(\);[\s\S]*updateOutline\(\);/);
         assert.match(effect, /ActiveBorderConfig::useThemeColor\(\)/);
         assert.match(effect, /if \(useThemeColor\)[\s\S]*?KColorScheme::isColorSetSupported/);
         assert.match(effect, /activeBorderColor\(themeColor, fallback, useThemeColor\)/);
-        assert.doesNotMatch(module, /UseThemeColor/);
+        assert.doesNotMatch(unified, /UseThemeColor/);
         assert.match(effect, /KColorScheme::isColorSetSupported\(colorConfig, KColorScheme::Selection\)/);
         assert.match(logic, /themeColor\.isValid\(\) && themeColor\.alpha\(\) > 0/);
         assert.match(logic, /activeBorderColor\(const QColor &themeColor, const QColor &fallbackColor, bool useThemeColor\)/);
@@ -218,91 +270,85 @@ describe("native KCM static contract", () => {
     });
 
     it("keeps a single engine with no authority mode switch", () => {
-        assert.doesNotMatch(module, /engineAuthorityMode/);
-        assert.doesNotMatch(module, /engineAuthorityChanged/);
-        assert.doesNotMatch(module, /rust-development/);
+        assert.doesNotMatch(unified, /engineAuthorityMode/);
+        assert.doesNotMatch(unified, /engineAuthorityChanged/);
+        assert.doesNotMatch(unified, /rust-development/);
     });
 
     it("tracks supported script controls without rewriting untouched keys", () => {
-        assert.match(scriptModule, /unmanagedWidgetChangeState\(/);
-        assert.match(scriptModule, /unmanagedWidgetDefaultState\(/);
-        assert.doesNotMatch(scriptModule, /[^n]managedWidgetChangeState\(/);
-        assert.doesNotMatch(scriptModule, /setNeedsSave\(false\)/);
-        assert.match(scriptModule, /const bool widgetsChanged =/);
-        assert.match(scriptModule, /if \(!widgetsChanged && !m_gapReconfigurePending\)/);
-        assert.match(scriptModule, /if \(!m_loadedInnerGapRawValid\s*\|\|\s*current\.value\(QStringLiteral\("innerGap"\)\) != m_loadedScriptValues/);
-        assert.match(scriptModule, /if \(!m_loadedOuterGapRawValid\s*\|\|\s*current\.value\(QStringLiteral\("outerGap"\)\) != m_loadedScriptValues/);
-        assert.match(scriptModule, /m_loadedScriptValues = \{/);
+        assert.match(unified, /unmanagedWidgetChangeState\(/);
+        assert.match(unified, /unmanagedWidgetDefaultState\(/);
+        assert.match(unified, /managedWidgetChangeState\(\)/);
+        assert.doesNotMatch(unified, /setNeedsSave\(false\)/);
+        assert.match(unified, /const bool widgetsChanged =/);
+        assert.match(unified, /const bool scriptRetryArmed = m_gapReconfigurePending/);
+        assert.match(unified, /if \(!widgetsChanged && !scriptRetryArmed\)/);
+        assert.match(unified, /if \(!m_loadedInnerGapRawValid\s*\|\|\s*current\.value\(QStringLiteral\("innerGap"\)\) != m_loadedScriptValues/);
+        assert.match(unified, /if \(!m_loadedOuterGapRawValid\s*\|\|\s*current\.value\(QStringLiteral\("outerGap"\)\) != m_loadedScriptValues/);
+        assert.match(unified, /m_loadedScriptValues = \{/);
     });
 
-    it("associates every labeled native control with its buddy", () => {
+    it("associates every labeled unified control with its buddy", () => {
         for (const [label, control] of [
             ["label_workspaceMode", "workspaceModeCombo"],
             ["label_innerGap", "innerGapSpinBox"],
             ["label_outerGap", "outerGapSpinBox"],
         ]) {
-            assert.match(scriptUi, new RegExp(`name="${label}"[\\s\\S]*?<property name="buddy">[\\s\\S]*?<cstring>${control}</cstring>`));
+            assert.match(unifiedUi, new RegExp(`name="${label}"[\\s\\S]*?<property name="buddy">[\\s\\S]*?<cstring>${control}</cstring>`));
         }
-        assert.doesNotMatch(scriptUi, /shortcutProfileCombo/);
-        assert.doesNotMatch(scriptUi, /label_shortcutProfile/);
+        assert.doesNotMatch(unifiedUi, /shortcutProfileCombo/);
+        assert.doesNotMatch(unifiedUi, /label_shortcutProfile/);
         for (const [label, control] of [
             ["label_BorderColor", "kcfg_BorderColor"],
             ["label_BorderWidth", "kcfg_BorderWidth"],
             ["label_BorderRadius", "kcfg_BorderRadius"],
             ["label_BorderGap", "kcfg_BorderGap"],
         ]) {
-            assert.match(ui, new RegExp(`name="${label}"[\\s\\S]*?<property name="buddy">[\\s\\S]*?<cstring>${control}</cstring>`));
+            assert.match(unifiedUi, new RegExp(`name="${label}"[\\s\\S]*?<property name="buddy">[\\s\\S]*?<cstring>${control}</cstring>`));
         }
     });
 
     it("manages the theme override through KConfigXT without disabling the fallback color", () => {
-        assert.match(ui, /name="kcfg_UseThemeColor"/);
-        assert.match(ui, /Use theme highlight color when available/);
-        assert.match(ui, /When disabled, the configured color is always used/);
-        assert.doesNotMatch(ui, /kcfg_BorderColor[\s\S]{0,400}?enabled[\s\S]{0,20}?false/);
+        assert.match(unifiedUi, /name="kcfg_UseThemeColor"/);
+        assert.match(unifiedUi, /Use theme highlight color when available/);
+        assert.match(unifiedUi, /When disabled, the configured color is always used/);
+        assert.doesNotMatch(unifiedUi, /kcfg_BorderColor[\s\S]{0,400}?enabled[\s\S]{0,20}?false/);
     });
 
-    it("routes script settings through the native script KCM and keeps the border dialog script-free", () => {
-        assert.equal(
-            scriptMetadata["X-KDE-ConfigModule"],
-            "kwin/scripts/configs/plasma-auto-tiler-kwin_config",
-        );
-        assert.doesNotMatch(read("metadata.json"), /kcm_kwin4_genericscripted/);
-        assert.ok(nativeMetadata["X-KDE-ConfigModule"]);
-        assert.match(scriptHeader, /requestScriptReconfigure/);
-        assert.match(scriptHeader, /isScriptRestartRequired/);
-        assert.match(scriptHeader, /isGapReconfigurePending/);
-        assert.match(scriptModule, /m_gapReconfigurePending/);
-        assert.match(scriptModule, /if \(gapChanged \|\| m_gapReconfigurePending\)/);
-        assert.match(scriptModule, /if \(!widgetsChanged\)/);
-        assert.match(scriptModule, /This retry saved nothing/);
-        assert.match(scriptModule, /Session restart remains required for workspace mode/);
-        assert.doesNotMatch(scriptModule, /startup settings/);
-        assert.match(scriptModule, /retry on the next save/);
-        assert.match(scriptModule, /startupWritten/);
-        assert.doesNotMatch(scriptModule, /"keys=workspaceMode,shortcutProfile"/);
-        assert.match(scriptModule, /lcScriptConfig/);
-        assert.match(scriptModule, /plasmaautotiler\.script-config op=/);
-        assert.match(scriptModule, /logScriptConfig\("save", "persist", "ok"/);
-        assert.match(scriptModule, /logScriptConfig\("save", "reconfigure", "sent-unconfirmed"/);
-        assert.match(scriptModule, /logScriptConfig\("save", "reconfigure", "failed"/);
-        assert.match(scriptModule, /retry-on-next-save/);
-        assert.match(scriptModule, /logScriptConfig\("save", "startup", "restart-required"/);
-        assert.doesNotMatch(ui, /engine authority/i);
-        assert.doesNotMatch(ui, /Rust is development-only/);
-        assert.doesNotMatch(ui, /clears current transient Script ambiguity/);
-        assert.doesNotMatch(ui, /engine authority[^.]*apply immediately/i);
-        assert.doesNotMatch(ui, /engine authority[^.]*takes effect immediately/i);
-        assert.doesNotMatch(ui, /workspaceModeCombo|shortcutProfileCombo|innerGapSpinBox|outerGapSpinBox/);
-        assert.doesNotMatch(ui, /tilerReloadButton|tilerReloadStatusLabel|Reload Tiler/);
-        assert.match(ui, /Script settings \(workspace mode, tiling gaps\) live in the Plasma Auto Tiler script settings\./);
-        assert.doesNotMatch(ui, /unconsumed settings have no running effect/i);
-        assert.match(scriptUi, /workspace mode requires a session restart/i);
-        assert.match(scriptUi, /requires session restart/);
-        assert.match(scriptUi, /Saving changed gaps sends one typed KWin reconfigure request/);
-        assert.match(scriptUi, /never claims the running tiler applied the settings/);
-        assert.doesNotMatch(scriptUi, /shortcut profile/i);
-        assert.doesNotMatch(scriptUi, /unconsumed settings have no running effect/i);
+    it("routes script settings through the native script KCM on the shared unified page", () => {
+        assert.match(unifiedHeader, /requestScriptReconfigure/);
+        assert.match(unifiedHeader, /isScriptRestartRequired/);
+        assert.match(unifiedHeader, /isGapReconfigurePending/);
+        assert.match(unified, /m_gapReconfigurePending/);
+        assert.match(unified, /if \(gapChanged \|\| scriptRetryArmed\)/);
+        assert.match(unified, /if \(!widgetsChanged\)/);
+        assert.match(unified, /This retry saved nothing/);
+        assert.match(unified, /Session restart remains required for workspace mode/);
+        assert.doesNotMatch(unified, /startup settings/);
+        assert.match(unified, /retry on the next save/);
+        assert.match(unified, /startupWritten/);
+        assert.doesNotMatch(unified, /"keys=workspaceMode,shortcutProfile"/);
+        assert.match(unified, /lcScriptConfig/);
+        assert.match(unified, /plasmaautotiler\.script-config op=/);
+        assert.match(unified, /logScriptConfig\("save", "persist", "ok"/);
+        assert.match(unified, /logScriptConfig\("save", "reconfigure", "sent-unconfirmed"/);
+        assert.match(unified, /logScriptConfig\("save", "reconfigure", "failed"/);
+        assert.match(unified, /retry-on-next-save/);
+        assert.match(unified, /logScriptConfig\("save", "startup", "restart-required"/);
+        assert.doesNotMatch(unifiedUi, /engine authority/i);
+        assert.doesNotMatch(unifiedUi, /Rust is development-only/);
+        assert.doesNotMatch(unifiedUi, /clears current transient Script ambiguity/);
+        assert.doesNotMatch(unifiedUi, /engine authority[^.]*apply immediately/i);
+        assert.doesNotMatch(unifiedUi, /engine authority[^.]*takes effect immediately/i);
+        assert.doesNotMatch(unifiedUi, /tilerReloadButton|tilerReloadStatusLabel|Reload Tiler/);
+        assert.match(unifiedUi, /Tiling gaps and workspace mode are on this page\./);
+        assert.doesNotMatch(unifiedUi, /unconsumed settings have no running effect/i);
+        assert.match(unifiedUi, /workspace mode requires a session restart/i);
+        assert.match(unifiedUi, /requires session restart/);
+        assert.match(unifiedUi, /Saving changed gaps sends one typed KWin reconfigure request/);
+        assert.match(unifiedUi, /never claims the running tiler applied the settings/);
+        assert.doesNotMatch(unifiedUi, /shortcut profile/i);
+        assert.doesNotMatch(unifiedUi, /unconsumed settings have no running effect/i);
         assert.doesNotMatch(read("metadata.json"), /Other script settings require a script reload or session restart\./);
     });
 });

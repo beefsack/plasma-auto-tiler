@@ -7,10 +7,9 @@ import { startPlanAdapterEntry } from "../src/plan-adapter-entry";
 
 const read = (path: string): string => readFileSync(join(process.cwd(), path), "utf8");
 
-const module = read("native-effect/scriptconfig_module.cpp");
-const header = read("native-effect/scriptconfig_module.h");
-const ui = read("native-effect/scriptconfig.ui");
-const effectUi = read("native-effect/activeborderconfig.ui");
+const module = read("native-effect/unifiedsettings_module.cpp");
+const header = read("native-effect/unifiedsettings_module.h");
+const ui = read("native-effect/unifiedsettings.ui");
 const entry = read("src/plan-adapter-entry.ts");
 const gaps = read("src/domain-gap.ts");
 const sendAdapter = read("src/workspace-send-adapter.ts");
@@ -167,14 +166,15 @@ describe("interim tiler reload contract", () => {
         assert.doesNotMatch(header, /isTilerReloadRequired/);
         assert.doesNotMatch(header, /tilerReloadStatusText/);
         assert.doesNotMatch(module, /m_scriptReconfigurePending/);
-        const reconfigureBody = functionBody(module, "bool ScriptConfigModule::requestScriptReconfigure()");
+        const reconfigureBody = functionBody(module, "bool UnifiedSettingsModule::requestScriptReconfigure()");
         assert.match(reconfigureBody, /\.send\(/);
         assert.doesNotMatch(reconfigureBody, /\.call\(/);
     });
 
     it("sends nothing on an unchanged save and requests reconfigure only for changed gaps", () => {
-        const saveBody = functionBody(module, "void ScriptConfigModule::save()");
-        assert.match(saveBody, /if \(gapChanged \|\| m_gapReconfigurePending\)/);
+        const saveBody = functionBody(module, "void UnifiedSettingsModule::save()");
+        assert.match(saveBody, /scriptRetryArmed = m_gapReconfigurePending/);
+        assert.match(saveBody, /if \(gapChanged \|\| scriptRetryArmed\)/);
         assert.match(saveBody, /requestScriptReconfigure\(\)/);
         assert.doesNotMatch(module, /setEnabled\(m_tilerReloadRequired\)/);
         assert.doesNotMatch(module, /tilerReloadButton/);
@@ -188,12 +188,11 @@ describe("interim tiler reload contract", () => {
         assert.match(module, /Session restart remains required/);
         assert.match(module, /m_gapReconfigurePending = true/);
         assert.match(module, /retry on the next save/);
-        assert.match(module, /if \(gapChanged \|\| m_gapReconfigurePending\)/);
         assert.doesNotMatch(module, /tilingAlgorithm|automaticSplitTarget|dropOutlinePreview|unconsumed settings/);
         assert.match(module, /startup gap values/);
-        assert.doesNotMatch(module, /requestEffectReconfigure\(\)/);
-        assert.doesNotMatch(module, /reconfigureEffect/);
-        const saveBody = functionBody(module, "void ScriptConfigModule::save()");
+        const saveBody = functionBody(module, "void UnifiedSettingsModule::save()");
+        assert.match(saveBody, /scriptRetryArmed = m_gapReconfigurePending/);
+        assert.match(saveBody, /if \(gapChanged \|\| scriptRetryArmed\)/);
         assert.match(saveBody, /m_scriptRestartRequired = true/);
         assert.match(saveBody, /requestScriptReconfigure\(\)/);
         assert.match(gaps, /re-resolve/);
@@ -206,7 +205,7 @@ describe("interim tiler reload contract", () => {
         assert.match(module, /restart the session to guarantee pickup/i);
         assert.match(module, /session restart remains required for workspace mode/i);
         assert.doesNotMatch(module, /No running tiler effect for unconsumed settings/);
-        const saveBody = functionBody(module, "void ScriptConfigModule::save()");
+        const saveBody = functionBody(module, "void UnifiedSettingsModule::save()");
         const saveStrings = saveBody
             .split("\n")
             .filter((line) => line.includes("QStringLiteral"));
@@ -223,8 +222,8 @@ describe("interim tiler reload contract", () => {
         }
     });
 
-    it("keeps shortcut mutation out of the script module entirely", () => {
-        const saveBody = functionBody(module, "void ScriptConfigModule::save()");
+    it("keeps shortcut mutation out of ordinary save", () => {
+        const saveBody = functionBody(module, "void UnifiedSettingsModule::save()");
         for (const forbidden of [
             /ShortcutReconciler/,
             /KGlobalAccel/,
@@ -234,11 +233,10 @@ describe("interim tiler reload contract", () => {
             /runShortcutApply/,
         ]) {
             assert.doesNotMatch(saveBody, forbidden);
-            assert.doesNotMatch(module, forbidden);
         }
     });
 
-    it("exposes gap save status with restart residual and points the border dialog at script settings", () => {
+    it("exposes gap save status with restart residual in the unified dialog", () => {
         assert.match(ui, /name="scriptStatusLabel"/);
         assert.doesNotMatch(ui, /name="tilerReloadButton"/);
         assert.match(ui, /No pending script setting in this dialog\./);
@@ -247,8 +245,8 @@ describe("interim tiler reload contract", () => {
         assert.match(ui, /Saving changed gaps sends one typed KWin reconfigure request/);
         assert.match(ui, /workspace mode requires a session restart/i);
         assert.doesNotMatch(ui, /unconsumed settings have no running effect/i);
-        assert.match(effectUi, /Border changes apply immediately through the KWin effect reconfigure\./);
-        assert.match(effectUi, /Script settings \(workspace mode, tiling gaps\) live in the Plasma Auto Tiler script settings\./);
+        assert.match(ui, /Border changes apply immediately through the KWin effect reconfigure\./);
+        assert.match(ui, /Tiling gaps and workspace mode are on this page\./);
     });
 });
 
