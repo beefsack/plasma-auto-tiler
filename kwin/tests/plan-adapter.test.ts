@@ -1778,7 +1778,13 @@ describe("plan adapter client self-resize reconcile", () => {
             runDebounce(mocks);
             assert.equal(mocks.dbusCalls.length, acceptedBefore, "stable accepted drift stays quiet");
             assert.equal(mocks.geometries.length, acceptedWrites);
-            assert.equal(mocks.logs.length, acceptedLogs, "quiet accepted drift logs nothing further");
+            const quietNew = mocks.logs.slice(acceptedLogs);
+            assert.ok(
+                quietNew.every((line) =>
+                    line.startsWith("plasma-auto-tiler:route-diag component=cosmic-plan route=plan stage=refresh event=foreground outcome=equal"),
+                ),
+                "quiet accepted drift logs only equal refresh classifications",
+            );
             mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: { "win-a": allocA, "win-b": allocB } });
             fire(mocks, "geometry");
             runDebounce(mocks);
@@ -2076,7 +2082,7 @@ describe("plan adapter bounded diagnostics", () => {
         for (const line of mocks.logs) {
             assert.match(
                 line,
-                /^plasma-auto-tiler:plan:(cmd=\S+ kind=(admit|remove|move|focus|resize|reconcile|pointer-resize) windows=\d+ outcome=\S+|cmd=(gen-1-p\d+) kind=(focus|move) windows=2 component=cosmic-plan route=plan stage=(request correlation=\3 generation=gen-1 revision=0 event=dispatch outcome=started|activate correlation=\3 generation=gen-1 revision=0 event=(presence outcome=(presence-requested|present)|resolve outcome=(resolve-requested|owner-pinned)|send outcome=(send-requested|request-sent))) cause=-|cmd=(gen-1-p\d+) kind=(focus|move) windows=2 component=cosmic-plan route=plan stage=(?:reply correlation=\10 generation=gen-1 revision=0 event=reply outcome=received cause=-|reply correlation=\10 generation=gen-1 revision=(?:0|2|unavailable) event=validate outcome=validated cause=-|reply correlation=\10 generation=gen-1 revision=0 event=validate outcome=rejected cause=snapshot-invalid|reply correlation=\10 generation=gen-1 revision=0 event=validate outcome=(?:malformed|stale) cause=(?:service-fault|precondition-mismatch|correlation-mismatch|stale-dropped)|observe correlation=\10 generation=gen-1 revision=(?:2|unavailable) event=observe outcome=(?:matched cause=-|mismatched cause=stale-scope)|apply correlation=\10 generation=gen-1 revision=(?:2|unavailable) event=apply outcome=started cause=-|apply correlation=\10 generation=gen-1 revision=(?:2|unavailable) event=setters outcome=applied cause=(?:-|skipped-fullscreen|skipped-maximized|skipped-floating|skipped-overconstrained|skipped-clamped|skipped-equal|skipped-mixed)|apply correlation=\10 generation=gen-1 revision=(?:2|unavailable) event=setters outcome=write-failed cause=(?:write-failed|precondition-mismatch)|terminal correlation=\10 generation=gen-1 revision=(?:0|2|unavailable) event=settled outcome=(?:applied cause=(?:setters|apply)|rejected cause=validate|timeout cause=reply|uncertain cause=(?:validate|observe|apply|setters)))|rejected kind=[a-z-]+( detail=[a-z-]+)?|write window=\S+ resource_class=\S+ disposition=(written|skip-fullscreen|skip-maximized|skip-floating|skip-overconstrained|skip-clamped|skip-already-equal|write-failed|float-written|float-write-failed) rect=[^ ]+|busy-refused kind=(focus|move|resize)|(focus|move|resize|pointer)-refused-[a-z-]+|maximize-refused-signal|scope-transition [^ ]+|work-area-reprojection selected=retained|echo-fence-(armed|consumed|cleared-equality|mismatched)|reconcile-parked|clamp-accepted correlation=\S+ window=\S+ resource_class=\S+ op=[a-z-]+|overconstrained-skipped correlation=\S+ window=\S+ resource_class=\S+ op=[a-z-]+|membership-skew correlation=\S+ op=[a-z-]+ reason=[a-z-]+ wanted=\d+ planned=(\d+|unknown) missing=(\d+|unknown) extra=(\d+|unknown) floating=\d+ sticky=\d+ fullscreen=\d+ maximized=\d+ retained=(known|unknown) retained-wanted=(\d+|-) retained-ids=\S+|membership-skew-member correlation=\S+ window=\S+ side=(missing|extra) floating=(true|false|unknown) sticky=(true|false|unknown) fullscreen=(true|false|unknown) maximized=(true|false|unknown) float-src=(float-set|all-desktops|none|unknown))$/,
+                /^plasma-auto-tiler:(?:plan:(cmd=\S+ kind=(admit|remove|move|focus|resize|reconcile|pointer-resize) windows=\d+ outcome=\S+|cmd=(gen-1-p\d+) kind=(focus|move) windows=2 component=cosmic-plan route=plan stage=(request correlation=\3 generation=gen-1 revision=0 event=dispatch outcome=started|activate correlation=\3 generation=gen-1 revision=0 event=(presence outcome=(presence-requested|present)|resolve outcome=(resolve-requested|owner-pinned)|send outcome=(send-requested|request-sent))) cause=-|cmd=(gen-1-p\d+) kind=(focus|move) windows=2 component=cosmic-plan route=plan stage=(?:reply correlation=\10 generation=gen-1 revision=0 event=reply outcome=received cause=-|reply correlation=\10 generation=gen-1 revision=(?:0|2|unavailable) event=validate outcome=validated cause=-|reply correlation=\10 generation=gen-1 revision=0 event=validate outcome=rejected cause=snapshot-invalid|reply correlation=\10 generation=gen-1 revision=0 event=validate outcome=(?:malformed|stale) cause=(?:service-fault|precondition-mismatch|correlation-mismatch|stale-dropped)|observe correlation=\10 generation=gen-1 revision=(?:2|unavailable) event=observe outcome=(?:matched cause=-|mismatched cause=stale-scope)|apply correlation=\10 generation=gen-1 revision=(?:2|unavailable) event=apply outcome=started cause=-|apply correlation=\10 generation=gen-1 revision=(?:2|unavailable) event=setters outcome=applied cause=(?:-|skipped-fullscreen|skipped-maximized|skipped-floating|skipped-overconstrained|skipped-clamped|skipped-equal|skipped-mixed)|apply correlation=\10 generation=gen-1 revision=(?:2|unavailable) event=setters outcome=write-failed cause=(?:write-failed|precondition-mismatch)|terminal correlation=\10 generation=gen-1 revision=(?:0|2|unavailable) event=settled outcome=(?:applied cause=(?:setters|apply)|rejected cause=validate|timeout cause=reply|uncertain cause=(?:validate|observe|apply|setters)))|rejected kind=[a-z-]+( detail=[a-z-]+)?|write window=\S+ resource_class=\S+ disposition=(written|skip-fullscreen|skip-maximized|skip-floating|skip-overconstrained|skip-clamped|skip-already-equal|write-failed|float-written|float-write-failed) rect=[^ ]+|busy-refused kind=(focus|move|resize)|(focus|move|resize|pointer)-refused-[a-z-]+|maximize-refused-signal|scope-transition [^ ]+|work-area-reprojection selected=retained|echo-fence-(armed|consumed|cleared-equality|mismatched)|reconcile-parked|clamp-accepted correlation=\S+ window=\S+ resource_class=\S+ op=[a-z-]+|overconstrained-skipped correlation=\S+ window=\S+ resource_class=\S+ op=[a-z-]+|membership-skew correlation=\S+ op=[a-z-]+ reason=[a-z-]+ wanted=\d+ planned=(\d+|unknown) missing=(\d+|unknown) extra=(\d+|unknown) floating=\d+ sticky=\d+ fullscreen=\d+ maximized=\d+ retained=(known|unknown) retained-wanted=(\d+|-) retained-ids=\S+|membership-skew-member correlation=\S+ window=\S+ side=(missing|extra) floating=(true|false|unknown) sticky=(true|false|unknown) fullscreen=(true|false|unknown) maximized=(true|false|unknown) float-src=(float-set|all-desktops|none|unknown))|route-diag component=cosmic-plan route=plan stage=refresh event=(?:foreground|hidden) outcome=(?:equal|change|uncertain) reason=[a-z-]+ terminal=[a-z-]+ correlation=\S+ generation=\S+)$/,
                 line,
             );
             assert.ok(!line.includes("owner-1"), line);
@@ -8408,5 +8414,107 @@ describe("plan sequence rotation", () => {
         }
         assert.equal(adapter.isEnabled, true);
         assert.equal((adapter as unknown as { plannerSession: number }).plannerSession, sessionBefore);
+    });
+});
+
+describe("plan adapter refresh classification", () => {
+    const allocA = { x: 0, y: 0, w: 600, h: 800 };
+    const allocB = { x: 600, y: 0, w: 600, h: 800 };
+    function baselineRefresh(mocks: Mocks, refs: { a: object; b: object; c: object }): PlanAdapter {
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: { "win-a": allocA, "win-b": allocB } });
+        const adapter = enableAdapter(mocks);
+        fire(mocks, "added");
+        runTimers(mocks);
+        const corr = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(plannedReply(corr, [{ window: "win-a", rect: allocA }, { window: "win-b", rect: allocB }], "win-a-leaf"));
+        return adapter;
+    }
+    function refreshLines(mocks: Mocks): string[] {
+        return mocks.logs.filter((line) =>
+            line.startsWith("plasma-auto-tiler:route-diag component=cosmic-plan route=plan stage=refresh event=foreground "),
+        );
+    }
+    it("quiet equal emits one bounded equal classification with no dispatch", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        baselineRefresh(mocks, refs);
+        const callsBefore = mocks.dbusCalls.length;
+        const logsBefore = refreshLines(mocks).length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsBefore, "equal observation stays quiet");
+        const fresh = refreshLines(mocks).slice(logsBefore);
+        assert.equal(fresh.length, 1, `one classification per decision, got ${JSON.stringify(fresh)}`);
+        assert.ok(
+            fresh[0] === `plasma-auto-tiler:route-diag component=cosmic-plan route=plan stage=refresh event=foreground outcome=equal reason=applied-evidence-equal terminal=quiet correlation=none generation=gen-1`,
+            fresh[0] as string,
+        );
+        for (const raw of ["win-a", "win-b", "600,800", "0,0"]) {
+            assert.ok(!(fresh[0] as string).includes(raw), `${raw} leaked in:\n${fresh[0]}`);
+        }
+    });
+    it("membership drift emits change correlated with the generated dispatch", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        baselineRefresh(mocks, refs);
+        mocks.observeImpl = () =>
+            makeObserved(refs, { focused: refs.a, rects: { "win-a": { x: 0, y: 0, w: 616, h: 800 }, "win-b": allocB } });
+        const logsBefore = refreshLines(mocks).length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        const corr = plannerPayload(mocks, mocks.dbusCalls.length - 1)["correlation_id"] as string;
+        const fresh = refreshLines(mocks).slice(logsBefore);
+        assert.equal(fresh.length, 1);
+        assert.ok(
+            (fresh[0] as string).includes("outcome=change") &&
+                (fresh[0] as string).includes("reason=drift") &&
+                (fresh[0] as string).includes("terminal=dispatch") &&
+                (fresh[0] as string).includes(`correlation=${corr}`),
+            fresh[0] as string,
+        );
+        assert.ok(!(fresh[0] as string).includes("win-a") && !(fresh[0] as string).includes("616,800"), fresh[0] as string);
+    });
+    it("work-area transition still reprojects when flags differ", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        baselineRefresh(mocks, refs);
+        const scaled = { x: 0, y: 0, w: 1800, h: 1200 };
+        mocks.observeImpl = () =>
+            makeObserved(refs, { focused: refs.a, bounds: scaled, rects: { "win-a": allocA, "win-b": allocB }, floating: { "win-a": true } });
+        const logsBefore = refreshLines(mocks).length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.ok(
+            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:scope-transition old=0,0,1200,800 new=0,0,1800,1200"),
+            "flag-differing transition still takes the window-set reprojection path",
+        );
+        const fresh = refreshLines(mocks).slice(logsBefore);
+        assert.equal(fresh.length, 1);
+        assert.ok(
+            (fresh[0] as string).includes("outcome=change") &&
+                (fresh[0] as string).includes("reason=work-area-transition") &&
+                (fresh[0] as string).includes("terminal=dispatch"),
+            fresh[0] as string,
+        );
+    });
+    it("raw retained out-of-bounds bypasses quiet with a change dispatch", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        baselineRefresh(mocks, refs);
+        const callsBefore = mocks.dbusCalls.length;
+        mocks.observeImpl = () =>
+            makeObserved(refs, { focused: refs.a, rects: { "win-a": { x: 2000, y: 0, w: 600, h: 800 }, "win-b": allocB } });
+        const logsBefore = refreshLines(mocks).length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsBefore + 1, "raw out-of-bounds must reconcile");
+        const fresh = refreshLines(mocks).slice(logsBefore);
+        assert.equal(fresh.length, 1);
+        assert.ok(
+            (fresh[0] as string).includes("outcome=change") &&
+                (fresh[0] as string).includes("reason=raw-out-of-bounds") &&
+                (fresh[0] as string).includes("terminal=dispatch"),
+            fresh[0] as string,
+        );
     });
 });

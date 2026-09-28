@@ -42,9 +42,10 @@ decisions of 2026-09-24 are under
   (2) learn size limits only from settled repeatable evidence; (3) replan
   neighbours around learned limits only, native maximum behavior unchanged;
   (4) KWin script and Rust tiling only, native effect unchanged. Added
-  complexity must deliver more value than it costs. Next: phase 1 (unified
-  event-driven comparison, net deletion), then phase 2 (learned limits).
-  [draft](changes/robust-difference-reconciliation.md)
+  complexity must deliver more value than it costs. Phase 1 (shared
+  foreground/hidden classifier, refresh classification logs) shipped offline.
+  Next: phase 2 (learned limits) after the user live-tests phase 1.
+  [record](changes/archive/robust-difference-reconciliation.md)
 - P2 | Active-group highlight redesign | Current overlay renders statically
   during slide transitions while the active border slides with its window
   (unproven). User-leaning direction (grey rect beneath windows) is thinking
@@ -136,6 +137,11 @@ All items below shipped offline with no live result claimed.
   preserves the packaged owner; tray diagnostics appear once each in
   `journalctl --user` (native journald submission removed).
   [change](changes/archive/tray-and-restart-followups.md)
+- Reconciliation phase 1 (laptop): under `just dev trace`, `stage=refresh`
+  classification logs and write counts through membership, flag, drift,
+  work-area, overlay and resize-finish transitions; no extra writes or
+  oscillation; equal/quiet log volume acceptable.
+  [record](changes/archive/robust-difference-reconciliation.md)
 - Process-loss and sleep recovery cases on the laptop.
   [live plan](changes/archive/recovery-process-sleep-audit.md#live-test-plan)
 - Native border delivery and suppression: fresh-session plugin discovery,
@@ -206,6 +212,10 @@ All items below shipped offline with no live result claimed.
   spatially per output (no ID-order rebuild), tray status recovers; script
   reload with shared IDs keeps groups/splits.
   [change](changes/archive/tray-and-restart-followups.md)
+- Reconciliation phase 1 (PC): hidden and sticky domains stay quiet without
+  ping-pong, unreadable outputs imply no departure, stale replies ignored,
+  immediate/delayed send/R4 follow and forced refresh.
+  [record](changes/archive/robust-difference-reconciliation.md)
 - Process-loss and sleep recovery cases on the PC.
   [live plan](changes/archive/recovery-process-sleep-audit.md#live-test-plan)
 - Output hotplug displacement/return: disconnect preserves layouts per
@@ -251,7 +261,7 @@ All items below shipped offline with no live result claimed.
   neighbour drifts.
   [bounds fix](changes/archive/multi-output-domain-bounds.md)
   [drag investigation](changes/window-alignment-drag-investigation.md)
-  [draft](changes/robust-difference-reconciliation.md)
+  [record](changes/archive/robust-difference-reconciliation.md)
 - Sticky pager appearance and Ghostty fullscreen-to-maximise on workspace
   return remain unconfirmed; no native cause or workaround established.
   [behavior](decisions.md#window-and-workspace-behavior)

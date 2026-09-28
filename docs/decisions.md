@@ -33,6 +33,20 @@ the corresponding item ships; each such entry names its replacement.
   fresh. Exact overlapping relocation retains its skew/rollback fence. Step 3
   retired the former pending-pair fresh-domain delay and send/R4 verification
   protocol.
+- Robust difference reconciliation (user decision 2026-09-28; phase 1
+  offline-verified): KWin compares complete foreground and hidden observations
+  against applied evidence through one event-driven classifier. Existing signals,
+  commands and terminal flights wake fresh observation; no idle polling. The
+  script retains its overlay slots, hidden sticky multi-home exception,
+  initial-fullscreen hold, explicit hidden empty and unreadable-domain fences,
+  echo/interactive suppression, send/R4 force and single-flight follow. Existing
+  Rust `reconcile`/`update-gaps` handles changes; the interim three-strike
+  acceptance remains. Phase 2 waits for user testing of phase 1: learn size
+  limits only from settled repeatable evidence, replan neighbours around learned
+  limits only, and leave native maximum behavior unchanged. Scope is KWin script
+  and Rust tiling; native effect unchanged. Added complexity must deliver more
+  value than it costs. Offline evidence in
+  [robust-difference-reconciliation](changes/archive/robust-difference-reconciliation.md).
 - Target shape (review section 6): a portable `tiler-core` Engine with
   world/domain state behind a `LayoutPolicy` seam; `tiler-protocol` as a thin
   codec; a Linux service crate; the KWin script as observer and actuator; the

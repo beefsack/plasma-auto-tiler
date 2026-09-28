@@ -1,13 +1,12 @@
-# Robust difference reconciliation - design draft (2026-09-28)
+# Robust difference reconciliation - phase 1 (2026-09-28)
 
 ## Goal and boundary
 
-Converge portable membership, flags, allocation and observed native geometry from
-complete observations, regardless of which event caused the observation. A client
-that holds an unexplained size should eventually keep that size while its tiled
-neighbours are replanned; learning expires when that client changes. Design only;
-no new runtime behavior is approved here. Preserve the existing owner, identity,
-revision, scope, reply-boundary and no-post-setter-replay fences.
+Unify event-driven complete-observation comparison for foreground and hidden
+domains without changing the existing Rust operation, native write, or reply
+fences. Size learning and neighbour replanning are phase 2, after user testing
+of phase 1. Preserve owner, identity, revision, scope, reply-boundary and
+no-post-setter-replay fences.
 
 ## Current state and failure modes
 
@@ -95,14 +94,26 @@ event* separately from idle detection. Native effect border pixels and drag
 64 px classification need separate visual/oracle tests; Plan logs alone do not
 prove them. No live claim yet.
 
-## Open decisions for the user
+## Selected decisions (user, 2026-09-28)
 
-| Decision | Options and consequences | Recommendation |
-| --- | --- | --- |
-| 1. Idle signal-less detection | A: event/next-command only - no timer or idle guarantee. B: measured periodic complete read - detects while idle, adds IPC load/wake churn and possible write fighting. | **A** for first implementation; choose B only if a reproduced user-visible idle failure justifies measured cadence. |
-| 2. Size inference threshold and fallback | A: treat one held rectangle as proven min/max/step - fast, can steal space on transient frames. B: use stable tested desired/held evidence for an effective bound, require independent pairs for step, retain no-fight acceptance for ambiguity - slower to learn, safer. | **B**; a shortfall is evidence of a held size, not its cause. Determine settled evidence by observed lifecycle, not a new arbitrary timer/count. |
-| 3. Who owns redistribution on upper limits | A: Rust projects around *learned* effective limits, preserving existing hint-max behavior unless separately approved. B: redistribute around all native maximums too - simpler single projection rule but changes AR12's approved maximum behavior (`docs/decisions.md:52-56`). | **A**; keep unrelated native-hint semantics until live evidence motivates B. |
-| 4. Native effect scope | A: KWin script/portable tiling reconciliation; effect retains its own committed-mode seed and signals. B: also redesign effect border/group/oracle reconciliation - wider native ABI/render acceptance and no proof of pixels from script state. | **A**; native renderer and press classification require separate evidence and should not block geometry convergence. |
+- Detect on existing events or the next command only; no polling. Evaluate this in live testing.
+- Learn size limits only from settled, repeatable evidence (phase 2).
+- Replan neighbours around learned limits only; native maximum behavior is unchanged (phase 2).
+- Limit implementation to the KWin script and Rust tiling; the native effect is unchanged.
+- Added complexity must deliver more value than it costs.
 
-Next action: user selects the decisions and first implementation scope; then
-write a bounded implementation change, verify offline and arrange the live gate.
+## Phase-1 work and verification
+
+- Consolidate foreground/hidden complete-observation comparison into one classifier while retaining overlay, sticky, fullscreen-hold, work-area, empty and unreadable-domain semantics.
+- Preserve native echo, interactive, flight and reply fences; route the classification through existing reconciliation/update-gaps on current refresh edges.
+- Add proportionate behavior tests, run KWin tests and typecheck, and verify any affected scripts. Record evidence and archive this note after acceptance; phase 2 waits for phase-1 user testing.
+- Implementation boundary: share per-id membership/flag/carried-rect, per-domain scope and raw out-of-bounds classification inside `plan-adapter.ts`. Keep foreground and hidden dispatch gates distinct: foreground reprojection permits same-id flag drift; hidden reprojection requires pure drift. Explicit empty, per-domain removal bookkeeping, pointer echo and the existing per-domain/global three-strike counters stay at their existing call sites.
+- First green point: shared classifier integrated; `kwin/npm test` 794 passing and `npm run typecheck` passing. Review follow-up removed redundant per-id scans and added hidden sticky/gap behavior coverage; 796 KWin tests and typecheck passed after the shared scope comparison integration.
+
+## Phase-1 outcome (offline)
+
+- `kwin/src/plan-adapter.ts` now classifies complete carried foreground and hidden observations against applied membership/flags/rect, scope and raw bounds once per refresh path. Hidden sticky multi-home forgives matching sticky homing; explicit empty requires applied evidence; fullscreen hold and overlay carried slots remain pre-classification. Existing foreground/hidden operation gates retain their distinct work-area and gap behavior. A bounded normal-level `route-diag` records equal/change/uncertain, reason, terminal and flight correlation where available, without native ids or rectangles.
+- Production `kwin/src/plan-adapter.ts`: +236/-284 = -48 lines. Tests: `kwin/tests/plan-adapter.test.ts` +110/-2 and `kwin/tests/background-empty-domain.test.ts` +166 = +274 lines. Duplicate membership/flag/rect, raw-bound and scope comparisons were removed; no wire, Rust, effect, signal, polling or interim-acceptance changes.
+- Acceptance evidence: foreground equality, drift and raw out-of-bounds dispatch and flag-differing work-area reprojection have new behavior tests. Hidden sticky multi-home quiet and one-shot gap `update-gaps` have new behavior tests. Existing KWin coverage verifies foreground/hidden arrivals, departures, flags, scope and explicit empties; unreadable quarantine and force retention; overlay and initial-fullscreen hold; interactive and pointer echoes; pending changed-scope reply rejection; post-command and terminal send/R4 source/target single-flight and once-only follow. `kwin/npm test`: 796 passed, 0 failed (790 baseline). `npm run typecheck` and `git diff --check` pass. No affected `scripts/*.test.sh`; no Rust changes.
+- Live checks for the user: laptop - compare equal/change/uncertain logs and write counts across newcomer/close, flag transition, client-held drift, work-area change, fullscreen/maximize entry/exit, interactive resize finish and a later event after a signal-less change. Multi-output PC - exercise hidden workspaces, sticky multi-home, output/work-area transitions, unreadable output quarantine, delayed/stale replies and immediate/delayed send/R4 arrival; confirm once-only follow and forced source/target refresh. Follow `docs/live-kwin-testing.md` for any later authorized live run. Phase-2 size evidence is deliberately not evaluated here.
+- Remaining risk: no native live confirmation of event delivery or client geometry behavior; signal-less idle changes remain undiscovered until the next event/command by decision. No product open question. Exact next action: none for this phase; user tests phase 1 before considering phase 2.

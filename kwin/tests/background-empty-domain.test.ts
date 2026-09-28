@@ -284,3 +284,169 @@ describe("background empty-domain retirement", () => {
         void callbacks;
     });
 });
+
+function hiddenStickyObserved(
+    workspace: string,
+    windowId: string,
+    ref: object,
+    rect: { x: number; y: number; w: number; h: number },
+): PlanObserved {
+    const windows = Object.freeze([
+        Object.freeze({
+            id: windowId, ref, rect,
+            output: "out-1", workspace,
+            fullscreen: false, maximized: false, floating: false, sticky: true, resourceClass: "unknown",
+        }),
+    ]);
+    return {
+        domainOutput: "out-1", domainWorkspace: workspace,
+        domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
+        domainGap: DOMAIN_GAP, domainOuterGap: OUTER_DOMAIN_GAP,
+        focusedId: windowId, windows, activeRef: ref, fingerprint: `fp-${workspace}`,
+        revalidate: () => true,
+    };
+}
+
+function hiddenObservedWithGap(
+    workspace: string,
+    windowId: string,
+    ref: object,
+    domainGap: number,
+): PlanObserved {
+    const windows = Object.freeze([
+        Object.freeze({
+            id: windowId, ref, rect: { x: 0, y: 0, w: 1200, h: 800 },
+            output: "out-1", workspace,
+            fullscreen: false, maximized: false, floating: false, sticky: false, resourceClass: "unknown",
+        }),
+    ]);
+    return {
+        domainOutput: "out-1", domainWorkspace: workspace,
+        domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
+        domainGap, domainOuterGap: OUTER_DOMAIN_GAP,
+        focusedId: windowId, windows, activeRef: ref, fingerprint: `fp-${workspace}`,
+        revalidate: () => true,
+    };
+}
+
+function refreshLines(logs: string[], route: "foreground" | "hidden"): string[] {
+    return logs.filter((line) =>
+        line.startsWith(
+            `plasma-auto-tiler:route-diag component=cosmic-plan route=plan stage=refresh event=${route} `,
+        ),
+    );
+}
+
+describe("background sticky multi-home quiet", () => {
+    it("shared sticky window across hidden domains converges once each, then stays quiet with no ping-pong", () => {
+        const fgA: object = {};
+        const fgB: object = {};
+        const stickyRef: object = {};
+        // One sticky id multi-homed on two hidden domains with natively
+        // owned per-domain geometry: the shared per-id slot cannot match
+        // both, so strict comparison would flap dispatches between them.
+        let hidden: ReadonlyArray<PlanObserved> = [
+            hiddenStickyObserved("ws-2", "win-s", stickyRef, { x: 0, y: 0, w: 600, h: 800 }),
+            hiddenStickyObserved("ws-3", "win-s", stickyRef, { x: 600, y: 0, w: 600, h: 800 }),
+        ];
+        const calls: Array<{ payload: string }> = [];
+        const callbacks: Array<(reply: unknown) => void> = [];
+        const timers: Array<{ delayMs: number; callback: () => void; cancelled: boolean }> = [];
+        const logs: string[] = [];
+        const subs: Sub[] = [];
+        const activeSets: Array<object> = [];
+        const env = makeEnv(() => fgObserved(fgA, fgB), () => [...hidden], calls, callbacks, timers, logs, subs, activeSets);
+        const adapter = new PlanAdapter(env);
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        const fire = (kind: string): void => {
+            for (const sub of subs) if (sub.kind === kind) sub.handler();
+        };
+        fire("added");
+        runDebounce(timers);
+        // Foreground wins the first round; hidden waits for the single slot.
+        assert.equal(calls.length, 1, "foreground takes the first flight, hidden stays single-file behind it");
+        callbacks[0]?.(plannedFor(payloadAt(calls, 0)));
+        runDebounce(timers);
+        assert.equal(calls.length, 2, "single-flight admits exactly one hidden domain per round");
+        const firstHidden = (payloadAt(calls, 1)["domain"] as Record<string, unknown>)["workspace"];
+        assert.ok(firstHidden === "ws-2" || firstHidden === "ws-3", `first hidden flight covers one domain, got ${String(firstHidden)}`);
+        callbacks[1]?.(plannedFor(payloadAt(calls, 1)));
+        runDebounce(timers);
+        assert.equal(calls.length, 3, "second round converges the other domain, still one flight");
+        const secondHidden = (payloadAt(calls, 2)["domain"] as Record<string, unknown>)["workspace"];
+        assert.deepEqual([firstHidden, secondHidden].sort(), ["ws-2", "ws-3"], "both hidden domains converge once each");
+        callbacks[2]?.(plannedFor(payloadAt(calls, 2)));
+        runDebounce(timers);
+        const settled = calls.length;
+        assert.equal(settled, 3, "chain settles with no extra flights");
+        assert.equal(activeSets.length, 0, "hidden converge never writes native focus");
+
+        // Forgiven sticky homing stays quiet across rounds: no ping-pong.
+        const logsBefore = logs.length;
+        fire("geometry");
+        runDebounce(timers);
+        fire("geometry");
+        runDebounce(timers);
+        assert.equal(calls.length, settled, "forgiven sticky multi-home dispatches nothing further");
+        const freshHidden = refreshLines(logs.slice(logsBefore), "hidden");
+        assert.equal(freshHidden.length, 4, `two quiet hidden visits per round, got ${JSON.stringify(freshHidden)}`);
+        for (const line of freshHidden) {
+            assert.ok(
+                line === "plasma-auto-tiler:route-diag component=cosmic-plan route=plan stage=refresh event=hidden outcome=equal reason=applied-evidence-equal terminal=quiet correlation=none generation=gen-1",
+                `bounded hidden equal classification, got:\n${line}`,
+            );
+            assert.ok(!line.includes("win-s"), `window id leaked in:\n${line}`);
+        }
+        assert.equal(activeSets.length, 0, "quiet hidden visits never write native focus");
+    });
+});
+
+describe("background hidden gap reload", () => {
+    it("hidden gap change dispatches one update-gaps with a single bounded classification", () => {
+        const fgA: object = {};
+        const fgB: object = {};
+        const hiddenRef: object = {};
+        let hidden: ReadonlyArray<PlanObserved> = [hiddenObserved("ws-2", "win-h", hiddenRef)];
+        const calls: Array<{ payload: string }> = [];
+        const callbacks: Array<(reply: unknown) => void> = [];
+        const timers: Array<{ delayMs: number; callback: () => void; cancelled: boolean }> = [];
+        const logs: string[] = [];
+        const subs: Sub[] = [];
+        const activeSets: Array<object> = [];
+        const env = makeEnv(() => fgObserved(fgA, fgB), () => [...hidden], calls, callbacks, timers, logs, subs, activeSets);
+        const adapter = new PlanAdapter(env);
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        const fire = (kind: string): void => {
+            for (const sub of subs) if (sub.kind === kind) sub.handler();
+        };
+        fire("added");
+        runDebounce(timers);
+        answerAll(calls, callbacks, 0);
+
+        const settled = calls.length;
+        const logsBefore = logs.length;
+        hidden = [hiddenObservedWithGap("ws-2", "win-h", hiddenRef, DOMAIN_GAP + 8)];
+        fire("geometry");
+        runDebounce(timers);
+        assert.equal(calls.length, settled + 1, "hidden gap change dispatches exactly one flight");
+        const gapCall = payloadAt(calls, settled);
+        assert.equal((gapCall["domain"] as Record<string, unknown>)["workspace"], "ws-2");
+        assert.deepEqual(gapCall["command"], { op: "update-gaps" });
+        assert.equal(activeSets.length, 0, "hidden gap reload never writes native focus");
+        const freshHidden = refreshLines(logs.slice(logsBefore), "hidden");
+        assert.equal(freshHidden.length, 1, `one classification per hidden decision, got ${JSON.stringify(freshHidden)}`);
+        const gapCorr = String(gapCall["correlation_id"]);
+        assert.ok(
+            freshHidden[0] === `plasma-auto-tiler:route-diag component=cosmic-plan route=plan stage=refresh event=hidden outcome=change reason=gap-change terminal=dispatch correlation=${gapCorr} generation=gen-1`,
+            `bounded hidden gap-change classification, got:\n${freshHidden[0]}`,
+        );
+        assert.ok(!(freshHidden[0] as string).includes("win-h"), `window id leaked in:\n${freshHidden[0]}`);
+        callbacks[settled]?.(plannedFor(gapCall));
+        runDebounce(timers);
+
+        const afterGap = calls.length;
+        fire("geometry");
+        runDebounce(timers);
+        assert.equal(calls.length, afterGap, "applied hidden gap change stays quiet afterwards");
+    });
+});
