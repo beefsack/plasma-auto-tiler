@@ -77,13 +77,15 @@ Manager modules and enable `programs.plasma-auto-tiler.tray.enable` only when
 the tray is wanted. NixOS owns the script/native-effect packages and writes
 only `[Plugins] plasma-auto-tiler-kwinEnabled=true`; it does not enable the
 border or mutate shortcuts. Home Manager owns only the optional immutable
-XDG autostart entry, whose `Exec` and `TryExec` point to the Nix store.
+tray systemd user unit (`plasma-auto-tiler-tray.service`, bound to
+`graphical-session.target` with `Restart=on-failure`), whose `ExecStart`
+points to the Nix store.
 The tray provides basic status and the fixed Settings action
 `kcmshell6 kwin/effects/configs/plasma-auto-tiler-active-border_config`; it has
 no direct tiling controls or shortcut mutation. Its static bridge contract
 includes authenticated snapshots, freshness and ordering/generation checks,
 idempotent notifications, and bounded watcher retry/fail-closed behavior;
-watcher ordering and tray login/autostart remain pending live evidence.
+watcher ordering and tray login/systemd delivery remain pending live evidence.
 
 The source lists are explicit, so package evaluation excludes generated build
 output, unrelated repository files, and external consumer state. The factory
@@ -93,7 +95,7 @@ through the nixpkgs follow above. No native-effect output is a portable
 prebuilt binary.
 
 Static flake/module checks and dogfood rollback tests pass. Current-host Nix
-integration, KWin/session load or reload, watcher ordering, login/autostart,
+integration, KWin/session load or reload, watcher ordering, login/systemd delivery,
 and install/update/rollback activation across Nix generations remain pending
 live evidence. `flake.lock` pins evaluation inputs; a Nix generation rollback
 and its effect on an already-running KWin session still require live evidence.
@@ -553,7 +555,7 @@ These observations remain pending and require the reviewed live-test protocol:
 - current-host Nix installation and exact host KWin ABI/session discovery;
 - script and native-effect load/reload in the running KWin session;
 - the required logout/login or new-session delivery boundary;
-- watcher ordering and tray login/autostart;
+- watcher ordering and tray login/systemd delivery;
 - update, rollback, and Nix generation activation behavior;
 - visual border rendering and restoration after `effect-remove`.
 

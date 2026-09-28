@@ -357,8 +357,8 @@
             ];
           };
           activation = enabledNixos.config.environment.etc."xdg/kwinrc".text;
-          autostart = enabledHome.config.home.file.".config/autostart/plasma-auto-tiler.desktop".text;
           desktopFile = ".config/autostart/plasma-auto-tiler.desktop";
+          trayUnit = enabledHome.config.systemd.user.services."plasma-auto-tiler-tray";
           descriptorTemplate = builtins.readFile ./nix/org.plasmaautotiler.Planner.service;
           expectedTemplate = "[D-BUS Service]\nName=org.plasmaautotiler.Planner\nExec=@out@/bin/plasma-auto-tiler planner-service\nSystemdService=plasma-auto-tiler-planner.service\n";
           expectedDescriptor = "[D-BUS Service]\nName=org.plasmaautotiler.Planner\nExec=${tray}/bin/plasma-auto-tiler planner-service\nSystemdService=plasma-auto-tiler-planner.service\n";
@@ -374,27 +374,17 @@
         assert builtins.elem nativeEffect enabledNixos.config.environment.systemPackages;
         assert !(builtins.elem tray enabledNixos.config.environment.systemPackages);
         assert !(builtins.hasAttr "xdg/kwinrc" disabledNixos.config.environment.etc);
-        assert nixpkgs.lib.hasInfix "Exec=/nix/store/" autostart;
-        assert nixpkgs.lib.hasInfix "/bin/plasma-auto-tiler tray\n" autostart;
-        assert !(nixpkgs.lib.hasInfix (toString ./. ) autostart);
-        assert !(nixpkgs.lib.hasInfix "Planner" autostart);
-        assert !(nixpkgs.lib.hasInfix "planner-service" autostart);
-        assert builtins.hasAttr desktopFile enabledHome.config.home.file;
+        assert !(builtins.hasAttr desktopFile enabledHome.config.home.file);
         assert !(builtins.hasAttr desktopFile disabledHome.config.home.file);
         assert !(builtins.hasAttr "activation" enabledHome.config.home);
         assert !(builtins.hasAttr ".config/autostart/plasma-auto-tiler-planner.desktop" enabledHome.config.home.file);
         assert !(builtins.hasAttr ".config/autostart/plasma-auto-tiler-planner.desktop" disabledHome.config.home.file);
-        assert autostart == ''
-          [Desktop Entry]
-          Type=Application
-          Name=Plasma Auto Tiler Tray
-          Comment=Shows Plasma Auto Tiler status in the system tray
-          Exec=${tray}/bin/plasma-auto-tiler tray
-          TryExec=${tray}/bin/plasma-auto-tiler
-          Icon=${tray}/share/icons/hicolor/scalable/apps/plasma-auto-tiler.svg
-          X-KDE-autostart-phase=1
-          X-GNOME-Autostart-enabled=true
-        '';
+        assert builtins.hasAttr "plasma-auto-tiler-tray" enabledHome.config.systemd.user.services;
+        assert !(builtins.hasAttr "plasma-auto-tiler-tray" disabledHome.config.systemd.user.services);
+        assert trayUnit.Unit.PartOf == [ "graphical-session.target" ];
+        assert trayUnit.Service.ExecStart == "${tray}/bin/plasma-auto-tiler tray";
+        assert trayUnit.Service.Restart == "on-failure";
+        assert trayUnit.Install.WantedBy == [ "graphical-session.target" ];
         assert descriptorTemplate == expectedTemplate;
         assert !(nixpkgs.lib.hasInfix "/nix/store" descriptorTemplate);
         assert builtins.replaceStrings [ "@out@" ] [ "${tray}" ] descriptorTemplate == expectedDescriptor;

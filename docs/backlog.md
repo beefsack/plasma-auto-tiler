@@ -37,8 +37,13 @@ decisions of 2026-09-24 are under
 - P2 | Live sibling reflow while dragging | Deferred, not light (est. several
   hundred to ~1,000 lines, write-fighting risk); research done.
   [research](research/drag-and-drop-reorganisation.md)
-- P2 | Robust difference reconciliation | Design draft exists; scope decision
-  with the user before any implementation (see Open user decisions below).
+- P2 | Robust difference reconciliation | Scope decided (user, 2026-09-28):
+  (1) event/next-command detection only, no polling (revisit after testing);
+  (2) learn size limits only from settled repeatable evidence; (3) replan
+  neighbours around learned limits only, native maximum behavior unchanged;
+  (4) KWin script and Rust tiling only, native effect unchanged. Added
+  complexity must deliver more value than it costs. Next: phase 1 (unified
+  event-driven comparison, net deletion), then phase 2 (learned limits).
   [draft](changes/robust-difference-reconciliation.md)
 - P2 | Active-group highlight redesign | Current overlay renders statically
   during slide transitions while the active border slides with its window
@@ -99,9 +104,10 @@ All items below shipped offline with no live result claimed.
 
 ### Single-output laptop
 
-- Same-output drag drops + preview overlay: edge/center drops, overlay above
-  windows independent of the Meta outline, Finish/Esc/cancel/no-Finished
-  clearing.
+- Same-output drag drops + preview overlay: user confirmed live at
+  `826b233` (2026-09-28) that a paused drag stays under the pointer, the
+  preview renders well and drops place correctly. Remaining: overlay
+  independent of the Meta outline, Esc/cancel/no-Finished clearing.
   [change](changes/archive/cross-output-drag-preview.md)
   [policy](changes/archive/drag-drop-reorganisation.md)
 - Drop-intent edge drag leftovers: tiled Meta+left snap-back, Esc/zero-move,
@@ -123,6 +129,13 @@ All items below shipped offline with no live result claimed.
 - Tray icon and login/autostart: confirm panel presence and the worktree tray
   lifecycle under `just dev`; no tray launcher existed in the earlier report.
   [audit](changes/archive/resilience-audit.md)
+- Tray systemd unit + Active status (after `home-manager switch`): login
+  starts one tray showing Active; snapshot loss shows NeedsAttention; killing
+  the tray restarts it; a second invocation exits cleanly; logout stops it
+  without a loop; `just dev` preserves the packaged owner; tray diagnostics
+  appear once each in `journalctl --user` (native journald submission
+  removed).
+  [change](changes/archive/tray-and-restart-followups.md)
 - Process-loss and sleep recovery cases on the laptop.
   [live plan](changes/archive/recovery-process-sleep-audit.md#live-test-plan)
 - Native border delivery and suppression: fresh-session plugin discovery,
@@ -189,6 +202,10 @@ All items below shipped offline with no live result claimed.
   group edges, center snap-back with hidden preview, wrong-output and refusal
   recovery.
   [change](changes/archive/cross-output-drag-preview.md)
+- KWin restart with surviving Planner: all-new window IDs fresh-adopt
+  spatially per output (no ID-order rebuild), tray status recovers; script
+  reload with shared IDs keeps groups/splits.
+  [change](changes/archive/tray-and-restart-followups.md)
 - Process-loss and sleep recovery cases on the PC.
   [live plan](changes/archive/recovery-process-sleep-audit.md#live-test-plan)
 - Output hotplug displacement/return: disconnect preserves layouts per
@@ -206,26 +223,6 @@ All items below shipped offline with no live result claimed.
 
 ## Open user decisions
 
-- Tray crash restart: retain manual relaunch/next-login policy or supervise
-  crash recovery with bounded, owner-checked restart. Current policy is
-  no automatic restart; the audit recommends reconsidering it.
-  [audit](changes/archive/recovery-process-sleep-audit.md#material-follow-up)
-- Robust difference reconciliation, four decisions in the
-  [draft](changes/robust-difference-reconciliation.md#open-decisions-for-the-user):
-  (1) idle signal-less detection: decided A, event/next-command only (user,
-  2026-09-28; revisit after testing); (2) size inference threshold, B stable
-  desired/held effective bound (recommended) vs A single-rectangle proof;
-  (3) redistribution ownership, A Rust projects around learned limits only
-  (recommended) vs B all native maximums; (4) native effect scope, A
-  script/portable reconciliation only (recommended) vs B effect redesign.
-- Passive tray status semantics: the publisher hardcodes disabled so a healthy
-  snapshot can project `Passive`; keep as coarse presence signal vs wire
-  status to verified adapter readiness (needs a lifecycle contract).
-  [audit](changes/archive/recovery-process-sleep-audit.md)
-- KWin restart against a surviving Planner: keep retained topology and
-  reconcile vs issue a new script-instance generation with fresh near-fit
-  (grouping can change).
-  [audit](changes/archive/recovery-process-sleep-audit.md)
 - OBS POC inputs: OBS account/project, GitHub PAT/webhook wiring, Fedora
   release, neon/Kubuntu pursuit, absent-during-upgrade policy, pacman repo
   vs AUR.

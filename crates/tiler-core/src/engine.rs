@@ -611,10 +611,29 @@ impl Engine {
         self.last_convergence = None;
         self.converged_this_op = false;
         match &event.command {
-            CoreCommand::Reconcile => match self.converge_for_single_domain(event, "reconcile") {
-                ConvergeOutcome::Rejected(reply) => *reply,
-                _ => self.reconcile_request(event),
-            },
+            CoreCommand::Reconcile => {
+                // All-new IDs need fresh spatial adoption, not arbitrary ID-order convergence.
+                let disjoint = !event.windows.is_empty()
+                    && self.sessions.get(&event.domain_key).is_some_and(|session| {
+                        if session.owner() != &event.owner
+                            || session.generation() != &event.generation
+                        {
+                            return false;
+                        }
+                        let snapshot = session.snapshot();
+                        !event.windows.iter().any(|w| {
+                            snapshot.windows.iter().any(|link| link.window == w.window)
+                                || session.is_exception(&w.window)
+                        })
+                    });
+                if disjoint {
+                    self.remove(&event.domain_key);
+                }
+                match self.converge_for_single_domain(event, "reconcile") {
+                    ConvergeOutcome::Rejected(reply) => *reply,
+                    _ => self.reconcile_request(event),
+                }
+            }
             CoreCommand::UpdateGaps => {
                 match self.converge_for_single_domain(event, "update-gaps") {
                     ConvergeOutcome::Rejected(reply) => *reply,

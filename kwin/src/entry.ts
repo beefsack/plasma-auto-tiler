@@ -12,7 +12,7 @@ import { TrayPublisher } from "./tray-publisher";
 
 const trayTimers = new Set<QTimer>();
 const trayPublisher = new TrayPublisher({
-    isEnabled: () => false,
+    isEnabled: () => true,
     log: (message) => console.log(message),
     publishSnapshot: (schema, generation, revision, enabled) => {
         callDBus(

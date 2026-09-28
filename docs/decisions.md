@@ -85,9 +85,10 @@ the corresponding item ships; each such entry names its replacement.
   The tray has no KWin executable allowlist or `/proc`/pidfd/inode binding;
   it runs single-instance by owning its D-Bus name with `DoNotQueue` and
   accepts snapshots only from the current `org.kde.KWin` owner. Home Manager
-  delivers it through XDG autostart; dev and dogfood launch it on demand with
-  `cargo run -p plasma-auto-tiler -- tray`. The Planner same-UID caller check
-  remains. Live login and watcher acceptance remain pending.
+  delivers it through a graphical-session systemd user unit; dev and dogfood
+  launch it on demand with `cargo run -p plasma-auto-tiler -- tray`. The
+  Planner same-UID caller check remains. Live login and watcher acceptance
+  remain pending.
 - Testing investment: build test fixtures that are sensible and valuable for
   the change at hand; avoid extensive custom harnesses that constrain later
   development.
@@ -201,10 +202,9 @@ the corresponding item ships; each such entry names its replacement.
 - The NixOS module owns the system KPackage/native-effect packages and writes
   only `[Plugins] plasma-auto-tiler-kwinEnabled=true` in its immutable global
   KWin profile. It does not enable the native border or mutate shortcuts. Home
-  Manager owns user-session delivery: the optional immutable tray XDG autostart
-  file running `plasma-auto-tiler tray` and the on-demand Planner D-Bus/systemd
-  activation metadata. Neither
-  writes user `kwinrc` authority.
+  Manager owns user-session delivery: the optional tray systemd user unit
+  running the immutable `plasma-auto-tiler tray` and the on-demand Planner
+  D-Bus/systemd activation metadata. Neither writes user `kwinrc` authority.
 - Flake source filesets are explicit for the KWin script, native effect/KCM,
   and tray package; build trees, generated artifacts, and unrelated repository
   files are excluded.
@@ -257,6 +257,14 @@ the corresponding item ships; each such entry names its replacement.
   restart/rebind loop. A subsequent idle command may request a fresh D-Bus
   activation. User-manager session teardown stops the service; D-Bus
   connection/name loss also ends the Planner without durable recovery state.
+- KWin restart with a surviving Planner (user decision 2026-09-28, option A):
+  keep the fixed script generation `plan-1` and retained topology for domains
+  sharing any observed window ID. KWin 6.7.5 constructs fresh per-window
+  `internalId` UUIDs after restart; a complete nonempty reconcile with no
+  shared IDs fresh-adopts that domain instead of rebuilding in arbitrary ID
+  order. An empty observation retains normal retirement/revision semantics;
+  a mismatched owner or generation still rejects rather than replacing the
+  retained session. Other domains and the Planner binding remain intact.
 - Selected 2026-09-16: on CONFIRMED Planner loss, establish one bounded fresh
   Planner session automatically. This on-demand activation is distinct from a
   systemd restart loop. It starts from current eligible windows only, with no
@@ -883,22 +891,30 @@ the corresponding item ships; each such entry names its replacement.
   or refreshing the trusted snapshot or entering conflict state. The matching
   equal-revision heartbeat may refresh it. An equal-revision different-content
   snapshot still revokes trust; owner and generation fences remain in force.
-- Home Manager autostart uses the immutable store tray binary with the `tray`
-  command; `TryExec` points to that same binary. Foreground `just dev` starts
+- Tray status (user decision 2026-09-28, option 2, for now): the production
+  KWin publisher reports `enabled=true`; a fresh authenticated snapshot shows
+  Active, while a missing or stale snapshot shows NeedsAttention. No
+  readiness-bound status.
+- Tray delivery (user decision 2026-09-28, option 2): Home Manager installs a
+  systemd user unit wanted by and bound to `graphical-session.target`, using
+  the immutable store tray binary with `Restart=on-failure`, replacing XDG
+  autostart. No project supervisor. Foreground `just dev` starts
   and owns a worktree tray, includes its stderr diagnostics in the labeled dev
   trace, and stops only its verified instance at teardown. An already-owned
   tray name is logged and preserved. Dogfood starts its worktree tray on
   demand. A second instance exits successfully when the D-Bus name is taken.
   The tray stops if its own name or connection is lost, or at session teardown;
-  it does not restart automatically after a crash.
+  the unit restarts failures but not a successful duplicate-name exit or a
+  graphical-session stop.
   Name acquisition/loss, owner transitions and changed or refused snapshots
-  emit bounded, redacted diagnostics on stderr. The queryable autostart sink
-  is best-effort native journald submission alongside retained stderr,
-  queried with `journalctl --user -g "plasma-auto-tiler:route-diag component=tray-endpoint"`.
+  emit bounded, redacted diagnostics on stderr. The user unit captures stderr
+  in the journal, queried with
+  `journalctl --user -g "plasma-auto-tiler:route-diag component=tray-endpoint"`;
+  dev logs and on-demand terminal runs retain their own stderr sinks.
 - The tray MVP provides basic status and Settings only. It has no direct tiling
   controls and no expansion of the helper boundary.
 - Tray live runs claim no KWin snapshot authority, panel visual behavior,
-  session boundary, watcher-ordering/login-autostart delivery, native
+  session boundary, watcher-ordering/login/systemd delivery, native
   ABI/plugin load, baseline-restoration proof, KWin Script1 identity or
   cleanup, or update/rollback generation. Full evidence is in
   `changes/archive/tray-carrier.md` and

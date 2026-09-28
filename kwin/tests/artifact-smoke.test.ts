@@ -106,7 +106,7 @@ describe("shipped artifact smoke execution", () => {
         // additionally emits exactly its two bounded records (lifecycle start
         // plus fire-and-forget send initiation); nothing else may log. The
         // bridge send line carries the production snapshot identity
-        // (generation token, revision 0, enabled false); the token is random
+        // (generation token, revision 0, enabled true); the token is random
         // per process, so it is matched by pattern, never by value.
         const routeDiag = stub.diagnostics.filter((entry) => entry.includes("plasma-auto-tiler:route-diag"));
         const dragDiag = routeDiag.filter((entry) => !entry.includes("component=tray "));
@@ -118,7 +118,7 @@ describe("shipped artifact smoke execution", () => {
         assert.ok(trayDiag[1] !== undefined);
         assert.match(
             trayDiag[1],
-            /^plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=[a-z0-9-]{1,32} revision=0 enabled=false$/,
+            /^plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=[a-z0-9-]{1,32} revision=0 enabled=true$/,
         );
         assert.ok(!stub.diagnostics.some((entry) => entry.includes("drag-attach")));
         assert.ok(!bundle.includes("TileController"));

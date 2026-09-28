@@ -31,17 +31,20 @@ in
 
   config = lib.mkMerge [
     (lib.mkIf trayCfg.enable {
-      home.file.".config/autostart/plasma-auto-tiler.desktop".text = ''
-        [Desktop Entry]
-        Type=Application
-        Name=Plasma Auto Tiler Tray
-        Comment=Shows Plasma Auto Tiler status in the system tray
-        Exec=${trayCfg.package}/bin/plasma-auto-tiler tray
-        TryExec=${trayCfg.package}/bin/plasma-auto-tiler
-        Icon=${trayCfg.package}/share/icons/hicolor/scalable/apps/plasma-auto-tiler.svg
-        X-KDE-autostart-phase=1
-        X-GNOME-Autostart-enabled=true
-      '';
+      systemd.user.services."plasma-auto-tiler-tray" = {
+        Unit = {
+          Description = "Plasma Auto Tiler Tray";
+          PartOf = [ "graphical-session.target" ];
+          After = [ "graphical-session.target" ];
+        };
+        Service = {
+          ExecStart = "${trayCfg.package}/bin/plasma-auto-tiler tray";
+          Restart = "on-failure";
+        };
+        Install = {
+          WantedBy = [ "graphical-session.target" ];
+        };
+      };
     })
 
     (lib.mkIf plannerCfg.enable {
