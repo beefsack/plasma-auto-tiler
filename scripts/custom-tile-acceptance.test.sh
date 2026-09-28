@@ -100,8 +100,8 @@ case "$7" in
       oversized-reply) printf '{"type":"a(ssssssaiai)","data":[[['; printf '%*s' 1100000 x; printf ']]]}\n' ;;
       duplicate-json) printf '{"type":"a(ssssssaiai)","type":"a(ssssssaiai)","data":[[]]}\n' ;;
       unknown-project) "$REAL_JQ_BIN" -c '.data[0] += [["plasma-auto-tiler-unknown", "unknown", "kwin", "KWin", "default", "Default", [99], []]]' "$FAKE_SHORTCUTS" ;;
-      missing-project) "$REAL_JQ_BIN" -c '.data[0] |= map(select(.[0] != "plasma-auto-tiler-insert-right"))' "$FAKE_SHORTCUTS" ;;
-      post-enumeration-drift) if [[ "$shortcut_count" -gt 1 ]]; then "$REAL_JQ_BIN" -c '(.data[0] | map(if .[0] == "plasma-auto-tiler-insert-right" then .[6] = [1] else . end)) as $r | {type:.type,data:[$r]}' "$FAKE_SHORTCUTS"; else "$REAL_JQ_BIN" -c . "$FAKE_SHORTCUTS"; fi ;;
+      missing-project) "$REAL_JQ_BIN" -c '.data[0] |= map(select(.[0] != "plasma-auto-tiler-focus-left"))' "$FAKE_SHORTCUTS" ;;
+      post-enumeration-drift) if [[ "$shortcut_count" -gt 1 ]]; then "$REAL_JQ_BIN" -c '(.data[0] | map(if .[0] == "plasma-auto-tiler-focus-left" then .[6] = [1] else . end)) as $r | {type:.type,data:[$r]}' "$FAKE_SHORTCUTS"; else "$REAL_JQ_BIN" -c . "$FAKE_SHORTCUTS"; fi ;;
       *) "$REAL_JQ_BIN" -c . "$FAKE_SHORTCUTS" ;;
     esac ;;
   *) bad_shape "$@" ;;
@@ -274,8 +274,6 @@ expect_status() { [[ "$EXIT_STATUS" -eq "$1" ]] || fail_test "expected status $1
 make_fixture() {
   "$JQ_BIN" -n '
     {
-      "plasma-auto-tiler-insert-right":419430420,"plasma-auto-tiler-insert-left":419430418,
-      "plasma-auto-tiler-insert-up":419430419,"plasma-auto-tiler-insert-down":419430421,
       "plasma-auto-tiler-focus-left":268435528,"plasma-auto-tiler-focus-down":268435530,
       "plasma-auto-tiler-focus-up":268435531,"plasma-auto-tiler-focus-right":268435532,
       "plasma-auto-tiler-focus-left-arrow":285212690,"plasma-auto-tiler-focus-down-arrow":285212693,
@@ -332,7 +330,7 @@ done
 
 run_case success
 expect_status 0
-assert_true "$JQ_BIN" -e --arg uid "$FIXTURE_UID" '.schema_version == "custom-tile-acceptance-preflight-v2" and .live_acceptance == false and .authoritative_ready == false and .setup_ready == true and .journey_ready == false and .readiness_blocker == "controller_checkout_identity unavailable: no supported authoritative read-only interface binds the loaded controller/script to this checkout" and .command_allowlist == ["busctl","jq","loginctl","python3","readlink","stat","tr"] and (.current_host_discovery.services | length) == 2 and .current_host_discovery.session.id == "42" and .current_host_discovery.session.bus_address == ("unix:path=/run/user/" + $uid + "/bus") and .current_host_discovery.kwin_service_identity.pre and .current_host_discovery.controller_checkout_identity.status == "blocked" and .current_host_discovery.controller_checkout_identity.authoritative == false and .current_host_discovery.controller_checkout_identity.blocker == "no-supported-authoritative-read-only-binding-to-this-checkout" and .current_host_discovery.kglobalaccel.status == "verified" and (.current_host_discovery.kglobalaccel.exact_tuples | length) == 27 and .current_host_discovery.kwin_service_identity.pre.pid != .current_host_discovery.kglobalaccel.pre.pid and .current_host_discovery.kglobalaccel.pre.pid == .current_host_discovery.kglobalaccel.post.pid and (.current_host_discovery.kglobalaccel.pre | has("executable") | not) and .gates.controller_identity == "not-established" and .gates.kwin_service_identity == "verified-session-scoped-service-owner" and .gates.controller_checkout_identity == "blocked" and .gates.readiness == "blocked-controller-checkout-identity" and .gates.shortcut_ownership_collision == "verified" and .prospective_future_plan.manual_input.currently_allowed == false' "$OUTPUT"
+assert_true "$JQ_BIN" -e --arg uid "$FIXTURE_UID" '.schema_version == "custom-tile-acceptance-preflight-v2" and .live_acceptance == false and .authoritative_ready == false and .setup_ready == true and .journey_ready == false and .readiness_blocker == "controller_checkout_identity unavailable: no supported authoritative read-only interface binds the loaded controller/script to this checkout" and .command_allowlist == ["busctl","jq","loginctl","python3","readlink","stat","tr"] and (.current_host_discovery.services | length) == 2 and .current_host_discovery.session.id == "42" and .current_host_discovery.session.bus_address == ("unix:path=/run/user/" + $uid + "/bus") and .current_host_discovery.kwin_service_identity.pre and .current_host_discovery.controller_checkout_identity.status == "blocked" and .current_host_discovery.controller_checkout_identity.authoritative == false and .current_host_discovery.controller_checkout_identity.blocker == "no-supported-authoritative-read-only-binding-to-this-checkout" and .current_host_discovery.kglobalaccel.status == "verified" and (.current_host_discovery.kglobalaccel.exact_tuples | length) == 23 and .current_host_discovery.kwin_service_identity.pre.pid != .current_host_discovery.kglobalaccel.pre.pid and .current_host_discovery.kglobalaccel.pre.pid == .current_host_discovery.kglobalaccel.post.pid and (.current_host_discovery.kglobalaccel.pre | has("executable") | not) and .gates.controller_identity == "not-established" and .gates.kwin_service_identity == "verified-session-scoped-service-owner" and .gates.controller_checkout_identity == "blocked" and .gates.readiness == "blocked-controller-checkout-identity" and .gates.shortcut_ownership_collision == "verified" and .prospective_future_plan.manual_input.currently_allowed == false' "$OUTPUT"
 assert_true "$JQ_BIN" -e '.prospective_future_plan.scope.reuse_persistent_scope == false and .prospective_future_plan.scope.resolved_private_root.mode == "0700 exactly" and .prospective_future_plan.prestate.config.exact_path == (env.HOME_ROOT + "/.config/kwinrc") and .prospective_future_plan.prestate.config.kwinrc.before.mtime_ns and .prospective_future_plan.journal.format == "atomic journal with sequence, operation, exact owned resource identity and expected pre/post state" and .prospective_future_plan.interruption.cleanup == "never remove resources not owned by this run" and (.prospective_future_plan.evidence.raw_host_policy | contains("persists no raw host evidence"))' "$OUTPUT"
 if [[ "$(wc -l < "$OUTPUT")" -eq 1 ]]; then pass; else fail_test 'successful preflight did not emit one document'; fi
 assert_absent '/private/wrong-bus' "$CALLS"
@@ -401,9 +399,9 @@ unset TEST_XDG_CONFIG_HOME
 
 for mutation in collision ownership drift-shortcut duplicate-shortcut; do
   case "$mutation" in
-    collision) "$JQ_BIN" '.data[0] += [["unrelated", "unrelated", "other", "Other", "default", "Default", [419430420], []]]' "$WORK/shortcuts.json" > "$WORK/changed.json" ;;
-    ownership) "$JQ_BIN" '(.data[0] | map(if .[0] == "plasma-auto-tiler-insert-right" then .[2] = "other" else . end)) as $r | {type:.type,data:[$r]}' "$WORK/shortcuts.json" > "$WORK/changed.json" ;;
-    drift-shortcut) "$JQ_BIN" '(.data[0] | map(if .[0] == "plasma-auto-tiler-insert-right" then .[6] = [1] else . end)) as $r | {type:.type,data:[$r]}' "$WORK/shortcuts.json" > "$WORK/changed.json" ;;
+    collision) "$JQ_BIN" '.data[0] += [["unrelated", "unrelated", "other", "Other", "default", "Default", [268435528], []]]' "$WORK/shortcuts.json" > "$WORK/changed.json" ;;
+    ownership) "$JQ_BIN" '(.data[0] | map(if .[0] == "plasma-auto-tiler-focus-left" then .[2] = "other" else . end)) as $r | {type:.type,data:[$r]}' "$WORK/shortcuts.json" > "$WORK/changed.json" ;;
+    drift-shortcut) "$JQ_BIN" '(.data[0] | map(if .[0] == "plasma-auto-tiler-focus-left" then .[6] = [1] else . end)) as $r | {type:.type,data:[$r]}' "$WORK/shortcuts.json" > "$WORK/changed.json" ;;
     duplicate-shortcut) "$JQ_BIN" '.data[0] += [.data[0][0]]' "$WORK/shortcuts.json" > "$WORK/changed.json" ;;
   esac
   export FAKE_SHORTCUTS="$WORK/changed.json"

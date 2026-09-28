@@ -182,7 +182,7 @@
         <item>
          <widget class="QLabel" name="shortcutDescription">
           <property name="text">
-            <string>Focus-right takes Meta+L; Apply moves Lock Session to Meta+Esc. Settings Apply never changes shortcuts; use these buttons with confirmation. Force Apply appears only for a pending preview that lists every holder with the exact keys removed and kept. Cancel discards the preview without writes. Revert restores KDE defaults for cleared bindings.</string>
+            <string>Focus-right takes Meta+L; Apply moves Lock Session to Meta+Esc. Grow arrows take Meta+Alt+Left/Down/Up/Right (Switch Window cleared). Settings Apply never changes shortcuts; use these buttons with confirmation. Force Apply appears only for a pending preview that lists every holder with the exact keys removed and kept. Cancel discards the preview without writes. Revert restores KDE defaults for cleared bindings.</string>
           </property>
          <property name="wordWrap">
           <bool>true</bool>

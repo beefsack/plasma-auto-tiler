@@ -230,10 +230,11 @@ changes arrive as the reply `desired_focus` applied after the writes.
    focus is restored to the moved window.
 6. Resize: focus one window, press `Meta+Alt+H/J/K/L` to grow toward that
    direction (outwards mode) or `Meta+Alt+Shift+H/J/K/L` to shrink from that
-   direction (inwards mode). The inwards/shrink family also has arrow aliases
-   `Meta+Alt+Shift+Left/Down/Up/Right`; the outwards arrow chords
-   `Meta+Alt+Left/Down/Up/Right` are the documented project insert-* chords
-   and are deliberately not registered. Repeat presses step further
+    direction (inwards mode). Grow also has arrow aliases
+    `Meta+Alt+Left/Down/Up/Right`, and shrink has
+    `Meta+Alt+Shift+Left/Down/Up/Right`. Plasma's default directional window
+    switching occupies the grow-arrow chords until their conflicts are resolved.
+    Repeat presses step further
    (`press_index` increments while focus/direction/mode/fingerprint are
    unchanged). Expected visible outcome: the focused edge moves one step,
    neighbors adjust to keep the work area covered, focus stays on the resized

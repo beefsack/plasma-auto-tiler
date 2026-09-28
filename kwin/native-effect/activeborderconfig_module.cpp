@@ -217,7 +217,11 @@ void ActiveBorderConfigModule::runShortcutApply(const char *operation)
     if (!confirmShortcutAction(QStringLiteral("Apply Shortcuts"),
                                QStringLiteral("Assign focus-right to Meta+L and move Lock Session to Meta+Esc; assign "
                                               "resize-outwards-up to Meta+Alt+K; assign resize-outwards-right to "
-                                              "Meta+Alt+L; assign toggle-float to Meta+G; assign toggle-maximize to "
+                                              "Meta+Alt+L; assign resize-outwards-left-arrow to Meta+Alt+Left; assign "
+                                              "resize-outwards-down-arrow to Meta+Alt+Down; assign "
+                                              "resize-outwards-up-arrow to Meta+Alt+Up; assign "
+                                              "resize-outwards-right-arrow to Meta+Alt+Right; assign toggle-float to "
+                                              "Meta+G; assign toggle-maximize to "
                                               "Meta+M? Conflicting bindings refuse Apply; Force lists each holder "
                                               "with the exact keys removed and kept."))) {
         return;
@@ -349,9 +353,13 @@ void ActiveBorderConfigModule::refreshShortcutState()
     const ShortcutTuple *lockCurrent = nullptr;
     const ShortcutTuple *upCurrent = nullptr;
     const ShortcutTuple *rightCurrent = nullptr;
+    const ShortcutTuple *leftArrowCurrent = nullptr;
+    const ShortcutTuple *downArrowCurrent = nullptr;
+    const ShortcutTuple *upArrowCurrent = nullptr;
+    const ShortcutTuple *rightArrowCurrent = nullptr;
     const ShortcutTuple *floatCurrent = nullptr;
     const ShortcutTuple *maximizeCurrent = nullptr;
-    int matches[6] = {0, 0, 0, 0, 0, 0};
+    int matches[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     for (const ShortcutTuple &tuple : tuples) {
         if (tuple.component == shortcutFocusComponent() && tuple.action == shortcutFocusAction()) {
             ++matches[0];
@@ -365,17 +373,35 @@ void ActiveBorderConfigModule::refreshShortcutState()
         } else if (tuple.component == shortcutResizeRightComponent() && tuple.action == shortcutResizeRightAction()) {
             ++matches[3];
             rightCurrent = &tuple;
-        } else if (tuple.component == shortcutFloatComponent() && tuple.action == shortcutFloatAction()) {
+        } else if (tuple.component == shortcutResizeLeftArrowComponent()
+            && tuple.action == shortcutResizeLeftArrowAction()) {
             ++matches[4];
+            leftArrowCurrent = &tuple;
+        } else if (tuple.component == shortcutResizeDownArrowComponent()
+            && tuple.action == shortcutResizeDownArrowAction()) {
+            ++matches[5];
+            downArrowCurrent = &tuple;
+        } else if (tuple.component == shortcutResizeUpArrowComponent()
+            && tuple.action == shortcutResizeUpArrowAction()) {
+            ++matches[6];
+            upArrowCurrent = &tuple;
+        } else if (tuple.component == shortcutResizeRightArrowComponent()
+            && tuple.action == shortcutResizeRightArrowAction()) {
+            ++matches[7];
+            rightArrowCurrent = &tuple;
+        } else if (tuple.component == shortcutFloatComponent() && tuple.action == shortcutFloatAction()) {
+            ++matches[8];
             floatCurrent = &tuple;
         } else if (tuple.component == shortcutMaximizeComponent() && tuple.action == shortcutMaximizeAction()) {
-            ++matches[5];
+            ++matches[9];
             maximizeCurrent = &tuple;
         }
     }
     if (matches[0] != 1 || matches[1] != 1 || matches[2] != 1 || matches[3] != 1 || matches[4] != 1 || matches[5] != 1
-        || focusCurrent == nullptr || lockCurrent == nullptr || upCurrent == nullptr || rightCurrent == nullptr
-        || floatCurrent == nullptr || maximizeCurrent == nullptr) {
+        || matches[6] != 1 || matches[7] != 1 || matches[8] != 1 || matches[9] != 1 || focusCurrent == nullptr
+        || lockCurrent == nullptr || upCurrent == nullptr || rightCurrent == nullptr
+        || leftArrowCurrent == nullptr || downArrowCurrent == nullptr || upArrowCurrent == nullptr
+        || rightArrowCurrent == nullptr || floatCurrent == nullptr || maximizeCurrent == nullptr) {
         m_shortcutStatus = QStringLiteral("Shortcut state unavailable: project bindings are missing.");
         updateShortcutPresentation();
         return;
@@ -412,6 +438,10 @@ void ActiveBorderConfigModule::refreshShortcutState()
     const bool lockHasMetaEsc = lockCurrent->active.contains(SHORTCUT_META_ESC);
     const bool upAtPost = upCurrent->active == ShortcutReconciler::resizeUpPostKeys();
     const bool rightAtPost = rightCurrent->active == ShortcutReconciler::resizeRightPostKeys();
+    const bool leftArrowAtPost = leftArrowCurrent->active == ShortcutReconciler::resizeLeftArrowPostKeys();
+    const bool downArrowAtPost = downArrowCurrent->active == ShortcutReconciler::resizeDownArrowPostKeys();
+    const bool upArrowAtPost = upArrowCurrent->active == ShortcutReconciler::resizeUpArrowPostKeys();
+    const bool rightArrowAtPost = rightArrowCurrent->active == ShortcutReconciler::resizeRightArrowPostKeys();
     const bool floatAtPost = floatCurrent->active == ShortcutReconciler::floatPostKeys();
     const bool maximizeAtPost = maximizeCurrent->active == ShortcutReconciler::maximizePostKeys();
     QString clearedHint;
@@ -419,17 +449,25 @@ void ActiveBorderConfigModule::refreshShortcutState()
         clearedHint = QStringLiteral(" %1 cleared binding(s) recorded; Revert restores KDE defaults.")
                           .arg(cleared.size());
     }
-    if (focusAtPost && !lockHasMetaL && lockHasMetaEsc && upAtPost && rightAtPost && floatAtPost && maximizeAtPost) {
-        m_shortcutStatus = QStringLiteral("Shortcuts applied (5 rows): focus-right owns Meta+L, Lock Session owns "
+    if (focusAtPost && !lockHasMetaL && lockHasMetaEsc && upAtPost && rightAtPost && leftArrowAtPost
+        && downArrowAtPost && upArrowAtPost && rightArrowAtPost && floatAtPost && maximizeAtPost) {
+        m_shortcutStatus = QStringLiteral("Shortcuts applied (9 rows): focus-right owns Meta+L, Lock Session owns "
                                            "Meta+Esc, resize-outwards-up owns Meta+Alt+K, resize-outwards-right owns "
-                                           "Meta+Alt+L, toggle-float owns Meta+G, toggle-maximize owns Meta+M.")
+                                           "Meta+Alt+L, resize-outwards-left-arrow owns Meta+Alt+Left, "
+                                           "resize-outwards-down-arrow owns Meta+Alt+Down, "
+                                           "resize-outwards-up-arrow owns Meta+Alt+Up, "
+                                           "resize-outwards-right-arrow owns Meta+Alt+Right, toggle-float owns "
+                                           "Meta+G, toggle-maximize owns Meta+M.")
             + clearedHint;
         updateShortcutPresentation();
         return;
     }
-    m_shortcutStatus = QStringLiteral("Ready (5 rows): Apply will assign focus-right to Meta+L and move Lock "
+    m_shortcutStatus = QStringLiteral("Ready (9 rows): Apply will assign focus-right to Meta+L and move Lock "
                                        "Session to Meta+Esc; assign resize-outwards-up to Meta+Alt+K; assign "
-                                       "resize-outwards-right to Meta+Alt+L; assign toggle-float to Meta+G; assign "
+                                       "resize-outwards-right to Meta+Alt+L; assign resize-outwards-left-arrow to "
+                                       "Meta+Alt+Left; assign resize-outwards-down-arrow to Meta+Alt+Down; assign "
+                                       "resize-outwards-up-arrow to Meta+Alt+Up; assign resize-outwards-right-arrow "
+                                       "to Meta+Alt+Right; assign toggle-float to Meta+G; assign "
                                        "toggle-maximize to Meta+M.")
         + clearedHint;
     updateShortcutPresentation();

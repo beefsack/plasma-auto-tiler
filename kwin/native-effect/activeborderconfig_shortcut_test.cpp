@@ -37,6 +37,10 @@ constexpr int META_L = 268435532;
 constexpr int META_ESC = 285212672;
 constexpr int META_ALT_K = 402653259;
 constexpr int META_ALT_L = 402653260;
+constexpr int META_ALT_LEFT = 419430418;
+constexpr int META_ALT_UP = 419430419;
+constexpr int META_ALT_RIGHT = 419430420;
+constexpr int META_ALT_DOWN = 419430421;
 constexpr int META_G = 268435527;
 constexpr int META_M = 268435533;
 
@@ -395,13 +399,21 @@ QLabel *labelByName(ActiveBorderConfigModule &module, const char *name)
 
 void seedReady(FakeShortcutStore &store)
 {
-    // Six project rows at non-post values with zero foreign holders of the
-    // six required chords, so Apply succeeds.
+    // Ten project rows at non-post values with zero foreign holders of the
+    // ten required chords, so Apply succeeds.
     store.tuples = {
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{419430420}),
         makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-up"), QList<int>{7}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-right"), QList<int>{8}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-left-arrow"),
+                  QList<int>{11}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-down-arrow"),
+                  QList<int>{12}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-up-arrow"),
+                  QList<int>{13}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-right-arrow"),
+                  QList<int>{14}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-float"), QList<int>{9}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-maximize"), QList<int>{10}),
     };
@@ -516,7 +528,7 @@ void stateAndErrorPresentation()
         module.setShortcutStores(&store, &cleared);
         module.load();
         CHECK(module.shortcutStatusText().contains(QStringLiteral("Ready")));
-        CHECK(module.shortcutStatusText().contains(QStringLiteral("5 rows")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("9 rows")));
         CHECK(module.shortcutErrorText().isEmpty());
         CHECK(buttonByName(module, "shortcutFinishApplyButton") == nullptr);
         CHECK(buttonByName(module, "shortcutRestoreButton") == nullptr);
@@ -547,7 +559,7 @@ void stateAndErrorPresentation()
         module.requestShortcutApply();
         CHECK(module.shortcutErrorText().isEmpty());
         CHECK(module.shortcutStatusText().contains(QStringLiteral("applied")));
-        CHECK(module.shortcutStatusText().contains(QStringLiteral("5 rows")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("9 rows")));
     }
     // Conflict with an unknown foreign holder.
     {
@@ -854,6 +866,33 @@ void knownForeignStatusAlignsWithApply()
     CHECK(module.isShortcutForceApplyVisible());
 }
 
+void growArrowStatusAlignsWithApply()
+{
+    // KCM status/backend alignment: a Switch Window holder on Meta+Alt+Left
+    // shows Conflict with the 9-row state, Apply refuses with zero writes,
+    // and Force preview lists the exact removal.
+    FakeShortcutStore store;
+    seedReady(store);
+    store.tuples.append(
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("Switch Window Left"), QList<int>{META_ALT_LEFT}));
+    FakeClearedStore cleared;
+    ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
+    module.setShortcutStores(&store, &cleared);
+    module.load();
+    CHECK(module.shortcutStatusText().contains(QStringLiteral("Conflict")));
+    CHECK(module.shortcutStatusText().contains(QStringLiteral("Meta+Alt+Left")));
+    CHECK(!module.shortcutStatusText().contains(QStringLiteral("Ready")));
+    module.requestShortcutApply();
+    CHECK(store.writeLog.empty());
+    CHECK(store.foreignWriteLog.empty());
+    CHECK(!module.shortcutErrorText().isEmpty());
+    CHECK(module.shortcutErrorText().contains(QStringLiteral("Switch Window Left")));
+    CHECK(module.isShortcutForceApplyVisible());
+    CHECK(module.shortcutForcePreviewText().contains(QStringLiteral("Switch Window Left")));
+    CHECK(module.shortcutForcePreviewText().contains(QStringLiteral("419430418")));
+}
+
 void terminalFailureLogIncludesReason()
 {
     FakeShortcutStore store;
@@ -933,6 +972,7 @@ int main(int argc, char **argv)
     } else if (scenario == QStringLiteral("state")) {
         stateAndErrorPresentation();
         knownForeignStatusAlignsWithApply();
+        growArrowStatusAlignsWithApply();
     } else {
         std::fprintf(stderr, "unknown scenario: %s\n", argv[1]);
         return EXIT_FAILURE;

@@ -43,6 +43,10 @@ constexpr int META_L = 268435532;
 constexpr int META_ESC = 285212672;
 constexpr int META_ALT_K = 402653259;
 constexpr int META_ALT_L = 402653260;
+constexpr int META_ALT_LEFT = 419430418;
+constexpr int META_ALT_UP = 419430419;
+constexpr int META_ALT_RIGHT = 419430420;
+constexpr int META_ALT_DOWN = 419430421;
 constexpr int META_G = 268435527;
 constexpr int META_M = 268435533;
 
@@ -489,10 +493,10 @@ QString oversizedString();
 
 void seedReady6(FakeShortcutStore &store, const QList<int> &focusPre, const QList<int> &lockPre)
 {
-    // Ten tuples: the original six plus rows 3-4. Project sides already own
-    // their chords (mirroring live duplicate active records) while Grid View
+    // Fourteen tuples: the original ten plus the four grow-arrow project
+    // rows at post with quiet Switch Window holders, while Grid View
     // and Monocle hold the exact conflicting preimages, so fresh flows
-    // clear exactly the two foreign chords.
+    // refuse on exactly the two foreign letter chords.
     store.tuples = {
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), focusPre),
         makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), lockPre),
@@ -502,6 +506,14 @@ void seedReady6(FakeShortcutStore &store, const QList<int> &focusPre, const QLis
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-right"), QList<int>{8}),
         makeTuple(QStringLiteral("KDE Keyboard Layout Switcher"), QStringLiteral("Switch to Last-Used Keyboard Layout"),
                   QList<int>{META_ALT_L}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-left-arrow"),
+                  QList<int>{META_ALT_LEFT}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-down-arrow"),
+                  QList<int>{META_ALT_DOWN}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-up-arrow"),
+                  QList<int>{META_ALT_UP}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-right-arrow"),
+                  QList<int>{META_ALT_RIGHT}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-float"), QList<int>{META_G}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("Grid View"), QList<int>{META_G}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-maximize"), QList<int>{META_M}),
@@ -525,6 +537,14 @@ void seedQuietState(FakeShortcutStore &store, const QList<int> &focusPre, const 
                   QList<int>{META_ALT_L}),
         makeTuple(QStringLiteral("KDE Keyboard Layout Switcher"), QStringLiteral("Switch to Last-Used Keyboard Layout"),
                   QList<int>{}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-left-arrow"),
+                  QList<int>{META_ALT_LEFT}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-down-arrow"),
+                  QList<int>{META_ALT_DOWN}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-up-arrow"),
+                  QList<int>{META_ALT_UP}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-right-arrow"),
+                  QList<int>{META_ALT_RIGHT}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-float"), QList<int>{META_G}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("Grid View"), QList<int>{}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-maximize"), QList<int>{META_M}),
@@ -1845,9 +1865,14 @@ void keyedReplyParsingStrict()
         QDBusMessage::ReplyMessage, QStringLiteral("a(ssssssaiai)"),
         {QVariant::fromValue(QStringLiteral("not-an-argument"))}, nullptr, &error));
     CHECK(ShortcutReconciler::relevantConflictKeys()
-          == (QList<int>{META_L, META_ESC, META_ALT_K, META_ALT_L, META_G, META_M}));
+          == (QList<int>{META_L, META_ESC, META_ALT_K, META_ALT_L, META_ALT_LEFT, META_ALT_DOWN, META_ALT_UP,
+                         META_ALT_RIGHT, META_G, META_M}));
     CHECK(ShortcutReconciler::keyDisplayName(META_L) == QStringLiteral("Meta+L"));
     CHECK(ShortcutReconciler::keyDisplayName(META_ESC) == QStringLiteral("Meta+Esc"));
+    CHECK(ShortcutReconciler::keyDisplayName(META_ALT_LEFT) == QStringLiteral("Meta+Alt+Left"));
+    CHECK(ShortcutReconciler::keyDisplayName(META_ALT_DOWN) == QStringLiteral("Meta+Alt+Down"));
+    CHECK(ShortcutReconciler::keyDisplayName(META_ALT_UP) == QStringLiteral("Meta+Alt+Up"));
+    CHECK(ShortcutReconciler::keyDisplayName(META_ALT_RIGHT) == QStringLiteral("Meta+Alt+Right"));
     CHECK(ShortcutReconciler::keyDisplayName(META_G) == QStringLiteral("Meta+G"));
     CHECK(ShortcutReconciler::keyDisplayName(META_M) == QStringLiteral("Meta+M"));
 }
@@ -3563,6 +3588,115 @@ void knownForeignHoldersAreConflicts()
     }
 }
 
+void growArrowSwitchWindowClearRows()
+{
+    // Nine project rows, ten relevant chords: the four grow-arrow actions
+    // clear exactly kwin/Switch Window Left/Down/Up/Right with no
+    // relocation, like the existing Meta+Alt+K/L clear rows.
+    CHECK(shortcutConflictTable().size() == 9);
+    CHECK(ShortcutReconciler::relevantConflictKeys().size() == 10);
+    const QList<std::pair<QString, int>> arrows = {
+        {QStringLiteral("plasma-auto-tiler-resize-outwards-left-arrow"), META_ALT_LEFT},
+        {QStringLiteral("plasma-auto-tiler-resize-outwards-down-arrow"), META_ALT_DOWN},
+        {QStringLiteral("plasma-auto-tiler-resize-outwards-up-arrow"), META_ALT_UP},
+        {QStringLiteral("plasma-auto-tiler-resize-outwards-right-arrow"), META_ALT_RIGHT},
+    };
+    const QList<std::pair<QString, int>> switches = {
+        {QStringLiteral("Switch Window Left"), META_ALT_LEFT},
+        {QStringLiteral("Switch Window Down"), META_ALT_DOWN},
+        {QStringLiteral("Switch Window Up"), META_ALT_UP},
+        {QStringLiteral("Switch Window Right"), META_ALT_RIGHT},
+    };
+    for (const auto &[projectAction, key] : arrows) {
+        CHECK(ShortcutReconciler::isProjectAction(QStringLiteral("kwin"), projectAction));
+        CHECK(ShortcutReconciler::isProjectOwned(QStringLiteral("kwin"), projectAction));
+        CHECK(ShortcutReconciler::isAllowlisted(QStringLiteral("kwin"), projectAction));
+        CHECK(ShortcutReconciler::conflictingKeys(QList<int>{key, 999}) == QList<int>{key});
+        CHECK(ShortcutReconciler::remainderAfterClear(QList<int>{key, 999}) == QList<int>{999});
+    }
+    for (const auto &[foreignAction, key] : switches) {
+        CHECK(ShortcutReconciler::isAllowlisted(QStringLiteral("kwin"), foreignAction));
+        CHECK(!ShortcutReconciler::isProjectAction(QStringLiteral("kwin"), foreignAction));
+        CHECK(!ShortcutReconciler::isHolderExempt(QStringLiteral("kwin"), foreignAction, key));
+    }
+    CHECK(ShortcutReconciler::resizeLeftArrowPostKeys() == QList<int>{META_ALT_LEFT});
+    CHECK(ShortcutReconciler::resizeDownArrowPostKeys() == QList<int>{META_ALT_DOWN});
+    CHECK(ShortcutReconciler::resizeUpArrowPostKeys() == QList<int>{META_ALT_UP});
+    CHECK(ShortcutReconciler::resizeRightArrowPostKeys() == QList<int>{META_ALT_RIGHT});
+    CHECK(ShortcutReconciler::switchLeftExpectedPre() == QList<int>{META_ALT_LEFT});
+    CHECK(ShortcutReconciler::switchDownExpectedPre() == QList<int>{META_ALT_DOWN});
+    CHECK(ShortcutReconciler::switchUpExpectedPre() == QList<int>{META_ALT_UP});
+    CHECK(ShortcutReconciler::switchRightExpectedPre() == QList<int>{META_ALT_RIGHT});
+    // Apply refuses with zero writes when a Switch Window holder claims
+    // an arrow chord; other arrow chords stay untouched.
+    {
+        FakeShortcutStore store;
+        seedQuietState(store, QList<int>{META_L}, QList<int>{META_ESC});
+        store.tuples.append(
+            makeTuple(QStringLiteral("kwin"), QStringLiteral("Switch Window Left"), QList<int>{META_ALT_LEFT}));
+        FakeClearedActions cleared;
+        const ShortcutApplyResult refused = ShortcutReconciler(&store, &cleared).apply();
+        CHECK(!refused.ok);
+        CHECK(refused.error.contains(QStringLiteral("Meta+Alt+Left")));
+        CHECK(refused.error.contains(QStringLiteral("Switch Window Left")));
+        CHECK(refused.writes == 0);
+        CHECK(store.writeCount() == 0);
+        CHECK(cleared.stored.isEmpty());
+        const ShortcutForcePreview preview = ShortcutReconciler(&store, &cleared).previewForceApply();
+        CHECK(preview.forceable);
+        CHECK(preview.mismatches.size() == 1);
+        CHECK(preview.mismatches.at(0).component == QStringLiteral("kwin"));
+        CHECK(preview.mismatches.at(0).action == QStringLiteral("Switch Window Left"));
+        CHECK(preview.mismatches.at(0).expectedPre == QList<int>{META_ALT_LEFT});
+        CHECK(preview.mismatches.at(0).post.isEmpty());
+    }
+    // Force preview/clear removes only the arrow key and keeps unrelated
+    // keys; Revert restores the KDE default for the cleared Switch Window
+    // action while the project arrow stays assigned.
+    {
+        FakeShortcutStore store;
+        seedQuietState(store, QList<int>{META_L}, QList<int>{META_ESC});
+        for (ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("plasma-auto-tiler-resize-outwards-up-arrow")) {
+                tuple.active = QList<int>{7};
+            }
+        }
+        store.tuples.append(makeTuple(QStringLiteral("kwin"), QStringLiteral("Switch Window Up"),
+                                      QList<int>{META_ALT_UP, 4242}));
+        store.defaultKeysById[QStringLiteral("kwin/Switch Window Up")] = QList<int>{META_ALT_UP};
+        FakeClearedActions cleared;
+        CHECK(!ShortcutReconciler(&store, &cleared).apply().ok);
+        const ShortcutForcePreview preview = ShortcutReconciler(&store, &cleared).previewForceApply();
+        CHECK(preview.forceable);
+        CHECK(preview.mismatches.size() == 1);
+        CHECK(preview.mismatches.at(0).expectedPre == QList<int>{META_ALT_UP});
+        CHECK(preview.mismatches.at(0).post == QList<int>{4242});
+        const ShortcutForceApplyResult forced = ShortcutReconciler(&store, &cleared).applyForced(preview);
+        CHECK(forced.ok);
+        CHECK(cleared.stored.size() == 1);
+        CHECK(cleared.stored.at(0).component == QStringLiteral("kwin"));
+        CHECK(cleared.stored.at(0).action == QStringLiteral("Switch Window Up"));
+        for (const ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("Switch Window Up")) {
+                CHECK(tuple.active == (QList<int>{4242}));
+            }
+            if (tuple.action == QStringLiteral("plasma-auto-tiler-resize-outwards-up-arrow")) {
+                CHECK(tuple.active == (QList<int>{META_ALT_UP}));
+            }
+        }
+        CHECK(ShortcutReconciler(&store, &cleared).revert().ok);
+        CHECK(cleared.stored.isEmpty());
+        for (const ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("Switch Window Up")) {
+                CHECK(tuple.active == (QList<int>{META_ALT_UP}));
+            }
+            if (tuple.action == QStringLiteral("plasma-auto-tiler-resize-outwards-up-arrow")) {
+                CHECK(tuple.active == (QList<int>{META_ALT_UP}));
+            }
+        }
+    }
+}
+
 // Lean drift-after-save fake: the cleared-list save succeeds, then a
 // concurrent holder change lands before the first foreign setter. The
 // per-holder re-read must abort with zero KGlobalAccel writes while the
@@ -3862,6 +3996,7 @@ int main(int argc, char **argv)
         forceStaleConfirmationZeroWrites();
         forceBlockedHolderNotForceable();
         knownForeignHoldersAreConflicts();
+        growArrowSwitchWindowClearRows();
         forceDriftAfterPersistAbortsWithoutForeignWrites();
     }
     if (scenario == QStringLiteral("all") || scenario == QStringLiteral("diag")) {

@@ -3564,9 +3564,9 @@ describe("plan entry live observation and shortcuts", () => {
         const world = fakeWorld();
         const { handle, mocks } = startEntry(world);
         assert.ok(handle !== null);
-        assert.equal(mocks.shortcuts.length, 62);
+        assert.equal(mocks.shortcuts.length, 66);
         const actions = mocks.shortcuts.map((row) => row.action);
-        assert.equal(new Set(actions).size, 62);
+        assert.equal(new Set(actions).size, 66);
         assert.ok(actions.includes("plasma-auto-tiler-focus-left"));
         assert.ok(actions.includes("plasma-auto-tiler-focus-right-arrow"));
         assert.ok(actions.includes("plasma-auto-tiler-move-up"));
@@ -3765,13 +3765,17 @@ describe("plan entry live observation and shortcuts", () => {
     it("maps catalog rows to parameterized focus, move, and resize commands", () => {
         for (const profile of ["cosmic", "hyprland", "bspwm", "unknown"]) {
             const catalog = planShortcutCatalog(profile);
-            assert.equal(catalog.length, 32);
+            assert.equal(catalog.length, 36);
             const byAction = new Map(catalog.map((row) => [row.action, row]));
             assert.equal(byAction.get("plasma-auto-tiler-focus-up")?.direction, "up");
             assert.equal(byAction.get("plasma-auto-tiler-focus-up")?.op, "focus");
             assert.equal(byAction.get("plasma-auto-tiler-move-down-arrow")?.direction, "down");
             assert.equal(byAction.get("plasma-auto-tiler-move-down-arrow")?.op, "move");
             assert.equal(byAction.get("plasma-auto-tiler-resize-outwards-left")?.mode, "outwards");
+            assert.equal(byAction.get("plasma-auto-tiler-resize-outwards-left-arrow")?.mode, "outwards");
+            assert.equal(byAction.get("plasma-auto-tiler-resize-outwards-left-arrow")?.op, "resize");
+            assert.equal(byAction.get("plasma-auto-tiler-resize-outwards-left-arrow")?.direction, "left");
+            assert.equal(byAction.get("plasma-auto-tiler-resize-outwards-left-arrow")?.sequence, "Meta+Alt+Left");
             assert.equal(byAction.get("plasma-auto-tiler-resize-inwards-left")?.mode, "inwards");
             assert.equal(byAction.get("plasma-auto-tiler-resize-inwards-left-arrow")?.mode, "inwards");
             assert.equal(byAction.get("plasma-auto-tiler-resize-inwards-left-arrow")?.op, "resize");
@@ -3787,7 +3791,7 @@ describe("plan entry live observation and shortcuts", () => {
         }
     });
 
-    it("adds only the non-colliding inwards arrow resize family", () => {
+    it("adds grow and shrink arrow resize families", () => {
         for (const profile of ["cosmic", "hyprland", "bspwm", "unknown"]) {
             const catalog = planShortcutCatalog(profile);
             const byAction = new Map(catalog.map((row) => [row.action, row]));
@@ -3798,22 +3802,21 @@ describe("plan entry live observation and shortcuts", () => {
                 { direction: "right", arrow: "Right" },
             ];
             for (const entry of expected) {
-                const row = byAction.get(`plasma-auto-tiler-resize-inwards-${entry.direction}-arrow`);
-                assert.ok(row !== undefined, `${profile}:${entry.direction}`);
-                assert.equal(row?.mode, "inwards");
-                assert.equal(row?.op, "resize");
-                assert.equal(row?.direction, entry.direction);
-                assert.equal(row?.sequence, `Meta+Alt+Shift+${entry.arrow}`);
-                assert.equal(
-                    byAction.has(`plasma-auto-tiler-resize-outwards-${entry.direction}-arrow`),
-                    false,
-                    `${profile}: outwards arrow must stay unregistered for documented insert-* chord ownership`,
-                );
-                assert.ok(
-                    !catalog.some((candidate) => candidate.sequence === `Meta+Alt+${entry.arrow}`),
-                    `${profile}: Meta+Alt+${entry.arrow} must stay unregistered`,
-                );
+                const shrink = byAction.get(`plasma-auto-tiler-resize-inwards-${entry.direction}-arrow`);
+                assert.ok(shrink !== undefined, `${profile}:${entry.direction}:shrink`);
+                assert.equal(shrink?.mode, "inwards");
+                assert.equal(shrink?.op, "resize");
+                assert.equal(shrink?.direction, entry.direction);
+                assert.equal(shrink?.sequence, `Meta+Alt+Shift+${entry.arrow}`);
+                const grow = byAction.get(`plasma-auto-tiler-resize-outwards-${entry.direction}-arrow`);
+                assert.ok(grow !== undefined, `${profile}:${entry.direction}:grow`);
+                assert.equal(grow?.mode, "outwards");
+                assert.equal(grow?.op, "resize");
+                assert.equal(grow?.direction, entry.direction);
+                assert.equal(grow?.sequence, `Meta+Alt+${entry.arrow}`);
             }
+            const sequences = catalog.map((row) => row.sequence);
+            assert.equal(new Set(sequences).size, catalog.length);
         }
     });
 
@@ -3832,6 +3835,27 @@ describe("plan entry live observation and shortcuts", () => {
                 window: "win-a",
                 direction,
                 mode: "inwards",
+                press_index: 0,
+            });
+            handle?.stop();
+        }
+    });
+
+    it("routes each outwards resize arrow through the existing resize adapter", () => {
+        for (const direction of ["left", "down", "up", "right"]) {
+            const { handle, mocks } = startEntry(fakeWorld());
+            assert.ok(handle !== null);
+            const shortcut = mocks.shortcuts.find(
+                (row) => row.action === `plasma-auto-tiler-resize-outwards-${direction}-arrow`,
+            ) as { callback: () => void };
+            shortcut.callback();
+            assert.equal(mocks.dbusCalls[0]?.method, "DescribePlan");
+            const payload = JSON.parse(mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>;
+            assert.deepEqual(payload["command"], {
+                op: "resize",
+                window: "win-a",
+                direction,
+                mode: "outwards",
                 press_index: 0,
             });
             handle?.stop();
@@ -3883,7 +3907,7 @@ describe("plan entry live observation and shortcuts", () => {
         const live = startEntry(fakeWorld());
         assert.ok(live.handle !== null);
         const byAction = new Map(live.mocks.shortcuts.map((row) => [row.action, row]));
-        assert.equal(live.mocks.shortcuts.length, 62);
+        assert.equal(live.mocks.shortcuts.length, 66);
         for (let index = 1; index <= 9; index += 1) {
             assert.equal(byAction.get(`plasma-auto-tiler-workspace-${String(index)}`)?.sequence, `Meta+${String(index)}`);
             assert.equal(byAction.get(`plasma-auto-tiler-move-workspace-${String(index)}`)?.sequence, `Meta+Shift+${String(index)}`);
@@ -4031,7 +4055,7 @@ describe("plan entry live observation and shortcuts", () => {
             },
         });
         assert.ok(handle !== null);
-        assert.equal(attempts.length, 62);
+        assert.equal(attempts.length, 66);
         assert.ok(attempts.includes("plasma-auto-tiler-focus-right-arrow"));
         assert.ok(attempts.includes("plasma-auto-tiler-resize-inwards-right-arrow"));
         const line = mocks.logs.find((entry) => entry.includes("shortcut-failed"));
@@ -4689,13 +4713,13 @@ describe("plan entry startup attach recovery", () => {
         fireAdded(world);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "one bounded recovery line");
         assert.ok(mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")), "ready line after recovery");
-        assert.equal(mocks.shortcuts.length, 62, "shortcuts register exactly once on recovery");
+        assert.equal(mocks.shortcuts.length, 66, "shortcuts register exactly once on recovery");
         handle?.requestFocus("left");
         assert.equal(mocks.dbusCalls.length, 1, "actuation resumes after recovery");
         assert.equal(mocks.dbusCalls[0]?.method, "DescribePlan");
         fireAdded(world);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "no duplicate recovery line");
-        assert.equal(mocks.shortcuts.length, 62, "no duplicate shortcut registration");
+        assert.equal(mocks.shortcuts.length, 66, "no duplicate shortcut registration");
         assert.equal(mocks.logs.filter((line) => line.startsWith(FAILED_PREFIX)).length, 1, "no duplicate failed line");
         handle?.stop();
     });
@@ -4721,10 +4745,10 @@ describe("plan entry startup attach recovery", () => {
         fireScreens(screens);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "screensChanged alone recovers");
         assert.ok(mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")), "ready line after screens recovery");
-        assert.equal(mocks.shortcuts.length, 62, "shortcuts register exactly once on screens recovery");
+        assert.equal(mocks.shortcuts.length, 66, "shortcuts register exactly once on screens recovery");
         fireScreens(screens);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "no duplicate recovery on later screen change");
-        assert.equal(mocks.shortcuts.length, 62, "no duplicate shortcut registration on later screen change");
+        assert.equal(mocks.shortcuts.length, 66, "no duplicate shortcut registration on later screen change");
         assert.equal(mocks.logs.filter((line) => line.startsWith(FAILED_PREFIX)).length, 1, "no duplicate failed line");
         handle?.stop();
         const pendingWorld = fakeWorld();
@@ -4834,12 +4858,12 @@ describe("plan entry startup attach recovery", () => {
         fireAdded(world);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "one bounded recovery line");
         assert.ok(mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:ready")), "ready line after recovery");
-        assert.equal(mocks.shortcuts.length, 62, "shortcuts register exactly once on recovery");
+        assert.equal(mocks.shortcuts.length, 66, "shortcuts register exactly once on recovery");
         handle?.requestFocus("left");
         assert.equal(mocks.dbusCalls.length, 1, "actuation resumes after recovery");
         fireAdded(world);
         assert.equal(mocks.logs.filter((line) => line === RECOVERED).length, 1, "no duplicate recovery line");
-        assert.equal(mocks.shortcuts.length, 62, "no duplicate shortcut registration");
+        assert.equal(mocks.shortcuts.length, 66, "no duplicate shortcut registration");
         handle?.stop();
     });
 

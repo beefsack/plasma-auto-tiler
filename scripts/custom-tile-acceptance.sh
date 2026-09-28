@@ -27,10 +27,6 @@ if len(data) > 65536:
 sys.stdout.buffer.write(data)'
 
 readonly PROJECT_SHORTCUTS_JSON='{
-  "plasma-auto-tiler-insert-right":419430420,
-  "plasma-auto-tiler-insert-left":419430418,
-  "plasma-auto-tiler-insert-up":419430419,
-  "plasma-auto-tiler-insert-down":419430421,
   "plasma-auto-tiler-focus-left":268435528,
   "plasma-auto-tiler-focus-down":268435530,
   "plasma-auto-tiler-focus-up":268435531,

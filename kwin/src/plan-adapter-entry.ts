@@ -259,13 +259,11 @@ function readWindowConstraints(ref: object): PlanWindowConstraints {
 
 // Directional shortcut catalog. All three configured profiles share one
 // directional core: focus and move on letters plus arrows, resize
-// parameterized by direction plus inwards/outwards mode. Resize also has an
-// arrow alias for the inwards/shrink family only: the outwards arrow chords
-// (Meta+Alt+Left/Down/Up/Right) are the documented project insert-* chords
-// (README catalog and custom-tile-acceptance PROJECT_SHORTCUTS_JSON), so they
-// are not registered here and stay non-colliding. The profile value is
-// validated against the configured catalog names; unknown values fall back
-// to the shared core so no unmapped input ever registers.
+// parameterized by direction plus inwards/outwards mode. Both resize families
+// have an arrow alias: shrink on Meta+Alt+Shift+arrows and grow on
+// Meta+Alt+Left/Down/Up/Right, matching the same letter-pattern rows. The
+// profile value is validated against the configured catalog names; unknown
+// values fall back to the shared core so no unmapped input ever registers.
 export function planShortcutCatalog(profile: unknown): ReadonlyArray<PlanShortcutRow> {
     void profile;
     const rows: PlanShortcutRow[] = [];
@@ -331,6 +329,14 @@ export function planShortcutCatalog(profile: unknown): ReadonlyArray<PlanShortcu
             op: "resize",
             direction: entry.direction,
             mode: "inwards",
+        });
+        rows.push({
+            action: `plasma-auto-tiler-resize-outwards-${entry.direction}-arrow`,
+            text: `Grow window towards ${entry.direction}`,
+            sequence: `Meta+Alt+${entry.arrow}`,
+            op: "resize",
+            direction: entry.direction,
+            mode: "outwards",
         });
     }
     rows.push(

@@ -291,7 +291,7 @@ case "$cmd" in
     snapshot_count=$((snapshot_count + 1))
     printf '%s\n' "$snapshot_count" > "$state/snapshot-count"
     if [[ -f "$state/shortcut-drift" && "$snapshot_count" -gt 1 ]]; then
-      printf '[["plasma-auto-tiler-insert-right","Insert","other","Other","default","Default",[1],[]]]\n'
+      printf '[["plasma-auto-tiler-focus-left","Focus","other","Other","default","Default",[1],[]]]\n'
     else
       printf '[]\n'
     fi

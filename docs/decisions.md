@@ -655,6 +655,14 @@ the corresponding item ships; each such entry names its replacement.
 
 ## Shortcuts
 
+- USER rule 2026-09-28: every HJKL directional shortcut has an arrow-key
+  alias. Grow (resize outwards) uses `Meta+Alt+Left/Down/Up/Right` alongside
+  `Meta+Alt+H/J/K/L`; the removed Custom Tile controller's legacy `insert-*`
+  reservation on those arrow chords is retired. Plasma 6.7.5 defaults those
+  chords to `kwin/Switch Window Left/Down/Up/Right`. Orchestrator decision
+  2026-09-28 under the standing 2026-09-21 approval: clear those four stock
+  bindings through the existing reversible KCM Apply/Force/Revert override;
+  do not relocate them. Project directional focus supersedes stock switching.
 - Approved 2026-09-21, standing until revoked: clear Grid View's `Meta+G`
   and Krohnkite Monocle's `Meta+M` through reversible Apply/Revert overrides,
   plus other exact project-required shortcut conflicts. The "recorded preimage"
@@ -668,9 +676,11 @@ the corresponding item ships; each such entry names its replacement.
 - Non-conflicting project shortcuts register by default. Conflicting
   Plasma-global shortcuts change only through explicit KCM Apply, Force Apply,
   and Revert. Installation/startup never mutate global shortcuts. Ordinary
-  settings Save never mutates shortcuts. The five project-required chords are
+  settings Save never mutates shortcuts. The nine project-required chords are
   `Meta+L` (focus-right, relocating `ksmserver/Lock Session` `Meta+L` to
-  `Meta+Esc`), `Meta+Alt+K`, `Meta+Alt+L`, `Meta+G`, and `Meta+M`. The sole
+  `Meta+Esc`), `Meta+Alt+K`, `Meta+Alt+L`, `Meta+G`, `Meta+M`, and
+  `Meta+Alt+Left/Down/Up/Right` (grow arrows, clearing the corresponding
+  `kwin/Switch Window Left/Down/Up/Right` defaults). The sole
   approved target-occupant exception is `Meta+Esc`: System Monitor
   `org.kde.plasma-systemmonitor.desktop` / `_launch` may hold it and is
   displaced without rebinding System Monitor itself; it is never writable by

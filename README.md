@@ -296,10 +296,10 @@ appear in the registered shortcut set below.
 
 | Identifier | Shortcut |
 |---|---|
-| plasma-auto-tiler-insert-right | Meta+Alt+Right |
-| plasma-auto-tiler-insert-left | Meta+Alt+Left |
-| plasma-auto-tiler-insert-up | Meta+Alt+Up |
-| plasma-auto-tiler-insert-down | Meta+Alt+Down |
+| plasma-auto-tiler-resize-outwards-left-arrow | Meta+Alt+Left |
+| plasma-auto-tiler-resize-outwards-down-arrow | Meta+Alt+Down |
+| plasma-auto-tiler-resize-outwards-up-arrow | Meta+Alt+Up |
+| plasma-auto-tiler-resize-outwards-right-arrow | Meta+Alt+Right |
 | plasma-auto-tiler-focus-left | Meta+H |
 | plasma-auto-tiler-focus-down | Meta+J |
 | plasma-auto-tiler-focus-up | Meta+K |

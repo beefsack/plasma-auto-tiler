@@ -59,8 +59,9 @@ Inspect only; do not create, edit, or delete it.
 - Click `Apply Shortcuts` and confirm only the dialog titled
 `Apply Shortcuts` (`kwin/native-effect/activeborderconfig_module.cpp:runShortcutApply`).
 It assigns focus-right to `Meta+L` and moves Lock Session to `Meta+Esc`,
-plus `Meta+Alt+K`, `Meta+Alt+L`, `Meta+G`, `Meta+M`.
-- Success assigns all five project chords. A preflight refusal writes nothing;
+plus `Meta+Alt+K`, `Meta+Alt+L`, `Meta+Alt+Left`, `Meta+Alt+Down`,
+`Meta+Alt+Up`, `Meta+Alt+Right`, `Meta+G`, `Meta+M`.
+- Success assigns all nine project chords. A preflight refusal writes nothing;
   preserve the reported write count if a later operation fails.
 Capture the resulting status verbatim.
 
@@ -111,6 +112,9 @@ With disposable windows, physically press each chord and confirm:
 - `Meta+L` moves focus right without locking.
 - `Meta+Esc` locks the session (System Monitor displacement is expected).
 - `Meta+Alt+K` / `Meta+Alt+L` grow the focused pane outward.
+- `Meta+Alt+Left` / `Meta+Alt+Down` / `Meta+Alt+Up` / `Meta+Alt+Right`
+  grow the focused pane outward (clearing `kwin/Switch Window
+  Left/Down/Up/Right`).
 - `Meta+G` toggles float; `Meta+M` toggles maximize.
 - Then Revert and confirm cleared non-project actions return to their KDE
   defaults. Project chords remain assigned, and old project IDs stay cleared.

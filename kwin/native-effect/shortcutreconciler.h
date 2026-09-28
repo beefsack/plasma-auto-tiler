@@ -28,9 +28,17 @@ const QDBusArgument &operator>>(const QDBusArgument &argument, QSet<QKeySequence
 //     KDE Keyboard Layout Switcher/Switch to Next Keyboard Layout cleared
 //   row 2 clear: kwin/plasma-auto-tiler-resize-outwards-right -> Meta+Alt+L;
 //     KDE Keyboard Layout Switcher/Switch to Last-Used Keyboard Layout cleared
-//   row 3 clear: kwin/plasma-auto-tiler-toggle-float -> Meta+G;
+//   row 3 clear: kwin/plasma-auto-tiler-resize-outwards-left-arrow -> Meta+Alt+Left;
+//     kwin/Switch Window Left cleared
+//   row 4 clear: kwin/plasma-auto-tiler-resize-outwards-down-arrow -> Meta+Alt+Down;
+//     kwin/Switch Window Down cleared
+//   row 5 clear: kwin/plasma-auto-tiler-resize-outwards-up-arrow -> Meta+Alt+Up;
+//     kwin/Switch Window Up cleared
+//   row 6 clear: kwin/plasma-auto-tiler-resize-outwards-right-arrow -> Meta+Alt+Right;
+//     kwin/Switch Window Right cleared
+//   row 7 clear: kwin/plasma-auto-tiler-toggle-float -> Meta+G;
 //     kwin/Grid View cleared
-//   row 4 clear: kwin/plasma-auto-tiler-toggle-maximize -> Meta+M;
+//   row 8 clear: kwin/plasma-auto-tiler-toggle-maximize -> Meta+M;
 //     kwin/KrohnkiteMonocleLayout cleared
 //
 // Uses only the KGlobalAccel D-Bus APIs proven on live Plasma 6.7.4:
@@ -51,6 +59,10 @@ inline constexpr int SHORTCUT_META_L = 268435532; // Meta+L (Qt Meta | Key_L)
 inline constexpr int SHORTCUT_META_ESC = 285212672; // Meta+Esc (Qt Meta | Key_Escape)
 inline constexpr int SHORTCUT_META_ALT_K = 402653259; // Meta+Alt+K catalog resize-outwards-up
 inline constexpr int SHORTCUT_META_ALT_L = 402653260; // Meta+Alt+L catalog resize-outwards-right
+inline constexpr int SHORTCUT_META_ALT_LEFT = 419430418; // Meta+Alt+Left catalog resize-outwards-left-arrow
+inline constexpr int SHORTCUT_META_ALT_UP = 419430419; // Meta+Alt+Up catalog resize-outwards-up-arrow
+inline constexpr int SHORTCUT_META_ALT_RIGHT = 419430420; // Meta+Alt+Right catalog resize-outwards-right-arrow
+inline constexpr int SHORTCUT_META_ALT_DOWN = 419430421; // Meta+Alt+Down catalog resize-outwards-down-arrow
 inline constexpr int SHORTCUT_META_G = 268435527; // Meta+G catalog toggle-float
 inline constexpr int SHORTCUT_META_M = 268435533; // Meta+M catalog toggle-maximize
 inline constexpr uint SHORTCUT_SET_FLAGS = 6; // SetPresent|NoAutoloading
@@ -163,6 +175,22 @@ inline const QString &shortcutSwitchNextComponent() { static const QString v = Q
 inline const QString &shortcutSwitchNextAction() { static const QString v = QStringLiteral("Switch to Next Keyboard Layout"); return v; }
 inline const QString &shortcutSwitchLastComponent() { static const QString v = QStringLiteral("KDE Keyboard Layout Switcher"); return v; }
 inline const QString &shortcutSwitchLastAction() { static const QString v = QStringLiteral("Switch to Last-Used Keyboard Layout"); return v; }
+inline const QString &shortcutResizeLeftArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutResizeLeftArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-resize-outwards-left-arrow"); return v; }
+inline const QString &shortcutSwitchLeftComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutSwitchLeftAction() { static const QString v = QStringLiteral("Switch Window Left"); return v; }
+inline const QString &shortcutResizeDownArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutResizeDownArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-resize-outwards-down-arrow"); return v; }
+inline const QString &shortcutSwitchDownComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutSwitchDownAction() { static const QString v = QStringLiteral("Switch Window Down"); return v; }
+inline const QString &shortcutResizeUpArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutResizeUpArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-resize-outwards-up-arrow"); return v; }
+inline const QString &shortcutSwitchUpComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutSwitchUpAction() { static const QString v = QStringLiteral("Switch Window Up"); return v; }
+inline const QString &shortcutResizeRightArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutResizeRightArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-resize-outwards-right-arrow"); return v; }
+inline const QString &shortcutSwitchRightComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutSwitchRightAction() { static const QString v = QStringLiteral("Switch Window Right"); return v; }
 inline const QString &shortcutFloatComponent() { static const QString v = QStringLiteral("kwin"); return v; }
 inline const QString &shortcutFloatAction() { static const QString v = QStringLiteral("plasma-auto-tiler-toggle-float"); return v; }
 inline const QString &shortcutGridViewComponent() { static const QString v = QStringLiteral("kwin"); return v; }
@@ -299,7 +327,8 @@ struct ShortcutForcePreview
     QString owner;
     uint uid = 0;
     // Project/lock actives at preview time (focus, lock, resize-up,
-    // resize-right, float, maximize, in table order). Any drift fails the
+    // resize-right, resize-left-arrow, resize-down-arrow, resize-up-arrow,
+    // resize-right-arrow, float, maximize, in table order). Any drift fails the
     // confirmation as stale with zero writes.
     QList<QList<int>> liveImages;
 };
@@ -485,7 +514,7 @@ public:
     ShortcutForceApplyResult applyForced(const ShortcutForcePreview &confirmed);
 
     static bool isAllowlisted(const QString &component, const QString &action);
-    // Current project-owned action (one of the five conflict-table project
+    // Current project-owned action (one of the nine conflict-table project
     // rows). Never cleared by Force, never restored by Revert.
     static bool isProjectAction(const QString &component, const QString &action);
     // Any own-prefix action: kwin/plasma-auto-tiler-*, covering the current
@@ -506,6 +535,14 @@ public:
     static QList<int> resizeRightPostKeys();
     static QList<int> switchNextExpectedPre();
     static QList<int> switchLastExpectedPre();
+    static QList<int> resizeLeftArrowPostKeys();
+    static QList<int> switchLeftExpectedPre();
+    static QList<int> resizeDownArrowPostKeys();
+    static QList<int> switchDownExpectedPre();
+    static QList<int> resizeUpArrowPostKeys();
+    static QList<int> switchUpExpectedPre();
+    static QList<int> resizeRightArrowPostKeys();
+    static QList<int> switchRightExpectedPre();
     static QList<int> floatPostKeys();
     static QList<int> gridViewExpectedPre();
     static QList<int> maximizePostKeys();
@@ -673,6 +710,10 @@ private:
         ShortcutTuple lock;
         ShortcutTuple resizeUp;
         ShortcutTuple resizeRight;
+        ShortcutTuple resizeLeftArrow;
+        ShortcutTuple resizeDownArrow;
+        ShortcutTuple resizeUpArrow;
+        ShortcutTuple resizeRightArrow;
         ShortcutTuple floatToggle;
         ShortcutTuple maximizeToggle;
         QList<ClearRow> rows;

@@ -157,6 +157,11 @@ All items below shipped offline with no live result claimed.
   preserves the packaged owner; tray diagnostics appear once each in
   `journalctl --user` (native journald submission removed).
   [change](changes/archive/tray-and-restart-followups.md)
+- Grow arrow shortcuts: KCM Apply/Force/Revert clears and restores
+  `kwin/Switch Window Left/Down/Up/Right` on Meta+Alt+Arrows; physical
+  Meta+Alt+Arrow grows the focused window.
+  [change](changes/archive/grow-arrow-shortcuts.md)
+  [plan](live-shortcut-override-verification.md)
 - Process-loss and sleep recovery cases on the laptop.
   [live plan](changes/archive/recovery-process-sleep-audit.md#live-test-plan)
 - Native border delivery and suppression: fresh-session plugin discovery,
