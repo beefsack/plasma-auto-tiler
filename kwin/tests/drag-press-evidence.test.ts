@@ -396,6 +396,7 @@ describe("drag press end-to-end trace corners", () => {
             (world.wins["win-a"] as Record<string, unknown>)["resize"] = false;
             const { stop, mocks } = startPressEntry(world);
             fireAll(world.startedA);
+            (world.wins["win-a"] as Record<string, unknown>)["move"] = false;
             fireAll(world.finishedA);
             (mocks.oracleCalls[0] as (reply: unknown) => void)(
                 JSON.stringify({ ...verdictBase(final, "drag-42"), press }),

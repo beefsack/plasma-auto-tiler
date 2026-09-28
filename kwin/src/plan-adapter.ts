@@ -3348,9 +3348,10 @@ export class PlanAdapter {
     // never read at reply) plus the verdict window identity. Strict decoding
     // only; fail-closed false when the window or pointer cannot be safely
     // bound. Defers through the single pending slot when a flight is active,
-    // never bypasses it, retries, or guesses. No focus is forced: an
-    // unfocused source is dispatched as observed and the Planner refuses it
-    // (focus-mismatch), which converges through the marker like any refusal.
+    // never bypasses it, retries, or guesses. Focus binds to the observed
+    // mover (mirroring the preview) so an ordinary Meta+drag without native
+    // focus agrees with the preview; refusals converge through the marker
+    // like any refusal.
     // Drop-intent callers pass their drag-N correlation as optional entry
     // metadata (4th arg) plus the Started source domain binding (5th arg).
     // A drag-correlated refusal or terminal failure feeds
@@ -3458,7 +3459,19 @@ export class PlanAdapter {
                 return refuseDrag("cross-domain", evidence.output, evidence.workspace);
             }
         }
-        const snapshot = this.carriedSnapshot(effectiveObserved);
+        // Final drop binds focus to the observed mover, mirroring the
+        // preview: the gesture owns the mover even when KWin's activeWindow
+        // lags (Meta+drag without focus). The mover is present in the
+        // effective observation, so this is observed mover focus, not
+        // fabrication; the Engine's begin_drag requires mover==focused for
+        // retained sessions. The Started source binding above stays
+        // authoritative for cross-output routing.
+        const dropMoverId = windowId as string;
+        const dropObserved =
+            effectiveObserved.focusedId === dropMoverId
+                ? effectiveObserved
+                : { ...effectiveObserved, focusedId: dropMoverId };
+        const snapshot = this.carriedSnapshot(dropObserved);
         this.noteObservation(snapshot.fingerprint);
         // The final drop forwards the last validated preview `hover_prior`
         // verbatim (local preview key first, then the native drag-N key).
@@ -3581,7 +3594,19 @@ export class PlanAdapter {
             return refuse("floating");
         }
         const previewSource = pointer.explicitSource;
-        const snapshot = this.carriedSnapshot(pointer.effectiveObserved);
+        // Interactive-move preview binds focus to the observed mover: the
+        // gesture owns the mover even when KWin's activeWindow lags (Meta+drag
+        // without focus). The mover is present in the effective observation,
+        // so this is observed mover focus, not fabrication; the Engine's
+        // begin_drag requires mover==focused for retained sessions. Mirrors
+        // the projected destination which already anchors focusedId on the
+        // mover.
+        const moverId = windowId as string;
+        const focusedObserved =
+            pointer.effectiveObserved.focusedId === moverId
+                ? pointer.effectiveObserved
+                : { ...pointer.effectiveObserved, focusedId: moverId };
+        const snapshot = this.carriedSnapshot(focusedObserved);
         this.noteObservation(snapshot.fingerprint);
         const prior = this.dragPreview.get(drag)?.prior;
         const command: Record<string, unknown> = {
@@ -6818,7 +6843,13 @@ export class PlanAdapter {
                 this.applyCrossDragLagTransfer(planned, flightState, lagReady);
                 return;
             }
-            const freshSnapshot = this.carriedSnapshot(fresh);
+            // The drop flight snapshot binds focus to the observed mover
+            // (mirroring dispatch), so normalize fresh the same way before
+            // the comparator: native activeWindow may lag the gesture, and
+            // that lag must not read as reply-boundary staleness. All other
+            // identity/scope/rect evidence stays exact.
+            const freshForDrop = fresh.focusedId === source ? fresh : { ...fresh, focusedId: source };
+            const freshSnapshot = this.carriedSnapshot(freshForDrop);
             // The drop window's moved frame may sit out of area (native drop
             // position) while every other member must match exactly: the
             // pointer-resize exception comparator pattern. Identity, scope,

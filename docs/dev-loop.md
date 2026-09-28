@@ -500,6 +500,16 @@ plus the verdict window identity through the shared single flight (deferred
 when busy, never concurrent). Stepped tiled moves sample the pointer into
 read-only Planner `drag-preview` requests on fresh, size-hinted destination
 observations; one sample is outstanding at a time and a later step coalesces.
+Both preview and final drop bind the observed mover as the logical focused
+window for drag placement, even if KWin's active window is another tile.
+The preview's `drag-N` correlation is local to Started; the final verdict's
+`drag-N` comes from the native oracle and may have a different number. The
+completed preview prior transfers across those two correlations.
+While KWin reports an interactive move or resize, ordinary reconciliation
+holds the gesture window even across pauses longer than the old missing-Finished
+bound. A missing Finished releases that hold on a subsequent observation only
+after KWin reports the gesture ended; the old Started-keyed move/resize timeout
+tokens are retired.
 The pointer selects the preview domain, with a read-only prospective mover
 insertion when native reassignment has not yet arrived. The preview result
 and its exact hover prior are scoped to the Started identity/revision;

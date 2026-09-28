@@ -581,6 +581,7 @@ describe("slice 2 entry finish consumes the captured start", () => {
         }
         assert.equal(mocks.planCalls.length, 2, "held frame changes do not dispatch ordinary reconciliation");
 
+        winA["resize"] = false;
         fireAll(world.signals["finishedA"]);
         assert.equal(mocks.oracleCalls.length, 1, "finish still performs the selected oracle pull");
         runOracleDebounce(mocks);
@@ -602,6 +603,7 @@ describe("slice 2 entry finish consumes the captured start", () => {
         fireAll(world.signals["startedA"]);
         winA["frameGeometry"] = { x: 0, y: 0, width: 1000, height: 800 };
         fireAll(world.signals["geoA"]);
+        winA["resize"] = false;
         fireAll(world.signals["finishedA"]);
         runOracleDebounce(mocks);
         assert.equal(mocks.planCalls.length, 2);
@@ -636,6 +638,7 @@ describe("slice 2 entry finish consumes the captured start", () => {
         fireAll(world.signals["startedA"]);
         winA["frameGeometry"] = { x: 0, y: 0, width: 1000, height: 800 };
         fireAll(world.signals["geoA"]);
+        winA["resize"] = false;
         fireAll(world.signals["finishedA"]);
         runOracleDebounce(mocks);
         const finish = JSON.parse(mocks.planCalls[1]?.payload as string) as Record<string, unknown>;
@@ -765,6 +768,7 @@ describe("slice 2 entry finish consumes the captured start", () => {
         const world = oracleWorld({ fullscreen: ["win-a"] });
         const { stop, mocks } = startOracleEntry(world);
         fireAll(world.signals["startedA"]);
+        (world.wins["win-a"] as Record<string, unknown>)["resize"] = false;
         fireAll(world.signals["finishedA"]);
         assert.equal(mocks.oracleCalls.length, 1);
         (mocks.oracleCalls[0] as (reply: unknown) => void)(movedWinA("drag-1"));
@@ -801,6 +805,7 @@ describe("slice 2 entry finish consumes the captured start", () => {
         const world = oracleWorld({ maximized: ["win-a"] });
         const { stop, mocks } = startOracleEntry(world);
         fireAll(world.signals["startedA"]);
+        (world.wins["win-a"] as Record<string, unknown>)["resize"] = false;
         fireAll(world.signals["finishedA"]);
         assert.equal(mocks.oracleCalls.length, 1);
         (mocks.oracleCalls[0] as (reply: unknown) => void)(movedWinA("drag-1"));
@@ -853,6 +858,7 @@ describe("slice 2 entry finish consumes the captured start", () => {
         const world = oracleWorld({ move: { "win-a": true } });
         const { stop, mocks } = startOracleEntry(world);
         fireAll(world.signals["startedA"]);
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = false;
         fireAll(world.signals["finishedA"]);
         assert.equal(mocks.oracleCalls.length, 1);
         (mocks.oracleCalls[0] as (reply: unknown) => void)(movedWinA("drag-1"));

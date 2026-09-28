@@ -294,6 +294,7 @@ describe("drag-23 terminal-class converge", () => {
         const live = world();
         const { stop, mocks } = startEntry(live);
         fireAll(live.signals["startedA"]);
+        (live.wins["win-a"] as Record<string, unknown>)["resize"] = false;
         fireAll(live.signals["finishedA"]);
         (mocks.oracleCalls[0] as (reply: unknown) => void)(verdict({ x: 0, y: 0, w: 1000, h: 800 }, "drag-40"));
         assert.equal(mocks.planCalls.length, 1);
@@ -324,6 +325,7 @@ describe("drag-23 terminal-class converge", () => {
         const live = world();
         const { stop, mocks } = startEntry(live);
         fireAll(live.signals["startedA"]);
+        (live.wins["win-a"] as Record<string, unknown>)["resize"] = false;
         fireAll(live.signals["finishedA"]);
         (mocks.oracleCalls[0] as (reply: unknown) => void)(verdict({ x: 0, y: 0, w: 1000, h: 800 }, "drag-41"));
         assert.equal(mocks.planCalls.length, 1);
@@ -366,13 +368,16 @@ describe("drag-23 terminal-class converge", () => {
         ]));
         // First drop dispatches its pointer and stays unsettled.
         fireAll(live.signals["startedA"]);
+        (live.wins["win-a"] as Record<string, unknown>)["resize"] = false;
         fireAll(live.signals["finishedA"]);
         (mocks.oracleCalls[0] as (reply: unknown) => void)(verdict({ x: 0, y: 0, w: 1000, h: 800 }, "drag-42"));
         assert.equal(mocks.planCalls.length, 2);
         assert.deepEqual(commandOf(mocks.planCalls[1])["op"], "pointer-resize");
         // A second overlapping drop must defer its pointer behind the live
         // pointer flight (a Started only discards in-flight reconciles).
+        (live.wins["win-a"] as Record<string, unknown>)["resize"] = true;
         fireAll(live.signals["startedA"]);
+        (live.wins["win-a"] as Record<string, unknown>)["resize"] = false;
         fireAll(live.signals["finishedA"]);
         (mocks.oracleCalls[1] as (reply: unknown) => void)(verdict({ x: 0, y: 0, w: 1100, h: 800 }, "drag-43"));
         assert.ok(mocks.logs.some((line) => line.includes("drag-dispatched") && line.includes("correlation=drag-43") && line.includes("accepted=true")), "pointer deferred");
@@ -465,6 +470,7 @@ describe("drag-23 rejected-drop converge", () => {
         const winA = live.wins["win-a"] as Record<string, unknown>;
         winA["fullScreen"] = true;
         fireAll(live.signals["startedA"]);
+        winA["resize"] = false;
         fireAll(live.signals["finishedA"]);
         (mocks.oracleCalls[0] as (reply: unknown) => void)(verdict({ x: 0, y: 0, w: 1000, h: 800 }, "drag-31"));
         assert.equal(mocks.planCalls.length, 2, "refused pointer still converges once");
@@ -488,6 +494,7 @@ describe("drag-23 rejected-drop converge", () => {
         const live = world();
         const { stop, mocks } = startEntry(live);
         fireAll(live.signals["startedA"]);
+        (live.wins["win-a"] as Record<string, unknown>)["resize"] = false;
         fireAll(live.signals["finishedA"]);
         (mocks.oracleCalls[0] as (reply: unknown) => void)(verdict({ x: 0, y: 0, w: 1000, h: 800 }, "drag-32"));
         assert.equal(mocks.planCalls.length, 1);
@@ -516,6 +523,7 @@ describe("drag-23 rejected-drop converge", () => {
         ]));
         // First drop dispatches its pointer and stays unsettled.
         fireAll(live.signals["startedA"]);
+        (live.wins["win-a"] as Record<string, unknown>)["resize"] = false;
         fireAll(live.signals["finishedA"]);
         (mocks.oracleCalls[0] as (reply: unknown) => void)(verdict({ x: 0, y: 0, w: 1000, h: 800 }, "drag-90"));
         assert.equal(mocks.planCalls.length, 2);
@@ -523,10 +531,14 @@ describe("drag-23 rejected-drop converge", () => {
         // join the same domain marker with no dispatch of their own.
         const winA = live.wins["win-a"] as Record<string, unknown>;
         winA["fullScreen"] = true;
+        winA["resize"] = true;
         fireAll(live.signals["startedA"]);
+        winA["resize"] = false;
         fireAll(live.signals["finishedA"]);
         (mocks.oracleCalls[1] as (reply: unknown) => void)(verdict({ x: 0, y: 0, w: 1000, h: 800 }, "drag-91"));
+        winA["resize"] = true;
         fireAll(live.signals["startedA"]);
+        winA["resize"] = false;
         fireAll(live.signals["finishedA"]);
         (mocks.oracleCalls[2] as (reply: unknown) => void)(verdict({ x: 0, y: 0, w: 1100, h: 800 }, "drag-92"));
         assert.equal(mocks.planCalls.length, 2, "refusals dispatch nothing while busy");
@@ -594,6 +606,7 @@ describe("drag-23 rejected-drop converge", () => {
         fireAll(live.signals["startedA"]);
         winA["frameGeometry"] = { x: 0, y: 0, width: 700, height: 800 };
         fireAll(live.signals["geoA"]);
+        winA["resize"] = false;
         fireAll(live.signals["finishedA"]);
         runDebounce(mocks);
         assert.equal(mocks.planCalls.length, 2, "finish reconcile in flight");
@@ -647,6 +660,7 @@ describe("drag-23 rejected-drop converge", () => {
         fireAll(live.signals["startedA"]);
         winA["frameGeometry"] = { x: 0, y: 0, width: 700, height: 800 };
         fireAll(live.signals["geoA"]);
+        winA["resize"] = false;
         fireAll(live.signals["finishedA"]);
         runDebounce(mocks);
         const before = mocks.planCalls.length;

@@ -389,33 +389,36 @@ describe("tiled drag-drop through the Planner", () => {
         stop();
     });
 
-    it("unfocused source dispatches unfocused and restores on the core focus refusal", () => {
+    it("unfocused source dispatches mover-bound and applies without forcing native focus", () => {
         const world = dropWorld();
         const { stop, mocks } = startDropEntry(world);
         baselineConverge(world, mocks);
-        // The dragged window is not the active window: the adapter must not
-        // force focus, so the Planner refuses focus-mismatch and the marker
-        // restores.
+        // The dragged window is not the active window (Meta+drag without
+        // focus): the drop binds the observed mover like the preview, so the
+        // Planner sees mover==focused and plans instead of refusing
+        // focus-mismatch. Dispatch does not change native focus.
         world.workspace["activeWindow"] = world.wins["win-b"];
         const callsAtStart = mocks.planCalls.length;
         dropWinA(world, mocks, { x: 100, y: 100 }, "drag-63");
         assert.equal(mocks.planCalls.length - callsAtStart, 1);
         const dropPayload = JSON.parse(mocks.planCalls[mocks.planCalls.length - 1]?.payload as string) as Record<string, unknown>;
         assert.deepEqual(dropPayload["command"], { op: "drag-drop", window: "win-a", x: 100, y: 100 });
-        assert.equal(dropPayload["focused_window"], "win-b");
+        assert.equal(dropPayload["focused_window"], "win-a");
         assert.equal(world.workspace["activeWindow"], world.wins["win-b"], "no focus forced onto the source");
         const dropCall = mocks.planCalls[mocks.planCalls.length - 1] as { payload: string; callback: (reply: unknown) => void };
         const dropCorr = planCorrelation(JSON.parse(dropCall.payload) as Record<string, unknown>);
-        dropCall.callback(rejectedReply(dropCorr, "focus-mismatch"));
-        assert.equal(mocks.planCalls.length - callsAtStart, 2, "focus refusal restores once through the marker");
-        const markerCall = mocks.planCalls[mocks.planCalls.length - 1] as { payload: string; callback: (reply: unknown) => void };
-        const markerCorr = planCorrelation(JSON.parse(markerCall.payload) as Record<string, unknown>);
-        markerCall.callback(retainedReply(markerCorr));
-        assert.ok(
-            mocks.logs.some((l) => l.includes("drag-reconcile-settled") && l.includes("correlation=drag-63") && l.includes("outcome=applied") && l.includes(`plan=${markerCorr}`)),
-            "per-drag terminal names the restoring plan",
+        dropCall.callback(dragDropReply(dropCorr));
+        assert.deepEqual(
+            (world.wins["win-a"] as Record<string, unknown>)["frameGeometry"],
+            { x: 0, y: 0, width: 1200, height: 400 },
+            "mover-bound drop geometry applies",
         );
-        assert.equal(world.workspace["activeWindow"], world.wins["win-b"], "restore never moves focus");
+        assert.ok(!mocks.logs.some((l) => l.includes("focus-mismatch")), "mover-bound drop draws no focus-mismatch");
+        assert.ok(!payloads(mocks).some((p) => (p["command"] as Record<string, unknown>)?.["op"] === "focus"), "no focus op dispatched");
+        assert.ok(
+            mocks.logs.some((l) => l.includes(`cmd=${dropCorr}`) && l.includes("kind=drag-drop") && l.includes("outcome=planned-applied")),
+            "terminal names the satisfying plan correlation",
+        );
         stop();
     });
 
@@ -704,7 +707,7 @@ describe("tiled drag-drop through the Planner", () => {
         stop();
     });
 
-    it("move Started with no Finished releases boundedly; stale expiry cannot clear a later Start; normal Finish cancels", () => {
+    it("held tiled move survives past the old timeout while observed moving; observed exit/finish allows reconcile", () => {
         const world = dropWorld();
         const { stop, mocks } = startDropEntry(world);
         baselineConverge(world, mocks);
@@ -717,22 +720,20 @@ describe("tiled drag-drop through the Planner", () => {
                     l.includes("recovery=move-hold-released"),
             ).length;
 
-        // Normal Finish cancels the Started expiry: the per-finish verdict
-        // path converges without a missing-Finished line.
+        // Normal Finish converges through the verdict path with no
+        // missing-Finished line: no Started timer exists to cancel.
         (world.wins["win-a"] as Record<string, unknown>)["move"] = true;
         fireAll(world.startedA);
         assert.equal(
             mocks.timers.filter((t) => !t.cancelled && t.delayMs === DRAG_MEASURE_VERDICT_TIMEOUT_MS).length,
-            1,
-            "one Start-keyed move expiry armed",
+            0,
+            "no Started-keyed move expiry armed",
         );
         fireAll(world.finishedA);
         assert.equal(mocks.oracleCalls.length, 1);
         (world.wins["win-a"] as Record<string, unknown>)["move"] = false;
-        world.workspace["cursorPos"] = { x: 900, y: 5 };
-        (mocks.oracleCalls[0] as (reply: unknown) => void)(
-            moveVerdict({ x: 40, y: 0, w: 600, h: 800 }, "win-a", "drag-80"),
-        );
+        const cancelled80 = JSON.stringify({ v: 1, cancelled: true, finalRect: { x: 0, y: 0, w: 600, h: 800 }, windowIdentity: "win-a", correlation: "drag-80", reason: "no-change" });
+        (mocks.oracleCalls[0] as (reply: unknown) => void)(cancelled80);
         runMoveTimeout(mocks);
         assert.equal(moveStartTimeouts(), 0, "finished move emits no missing-Finished timeout");
         assert.ok(
@@ -740,8 +741,10 @@ describe("tiled drag-drop through the Planner", () => {
             "no native identity in move logs",
         );
 
-        // Missing Finished on a living window: hold suppresses, then the
-        // bound releases exactly once through the ordinary resync.
+        // Paused mid-drag past the old bound: Started with no Finished, no
+        // steps, while KWin still reports move===true. The hold persists:
+        // time advancing past DRAG_MEASURE_VERDICT_TIMEOUT_MS retires
+        // nothing and dispatches no ordinary reconcile.
         const callsBeforeHold = mocks.planCalls.length;
         (world.wins["win-a"] as Record<string, unknown>)["move"] = true;
         fireAll(world.startedA);
@@ -750,92 +753,102 @@ describe("tiled drag-drop through the Planner", () => {
         runDebounce(mocks);
         assert.equal(mocks.planCalls.length, callsBeforeHold, "held move dispatches no ordinary reconcile");
         runMoveTimeout(mocks);
-        assert.equal(moveStartTimeouts(), 1, "bounded move expiry is logged once");
+        assert.equal(moveStartTimeouts(), 0, "no missing-Finished expiry while still observed moving");
         (world.wins["win-a"] as Record<string, unknown>)["frameGeometry"] = { x: 20, y: 0, width: 600, height: 800 };
         fireAll(world.geometry);
         runDebounce(mocks);
-        assert.equal(mocks.planCalls.length, callsBeforeHold + 1, "released hold resyncs ordinarily");
-        assert.deepEqual(
-            (JSON.parse(mocks.planCalls[mocks.planCalls.length - 1]?.payload as string) as Record<string, unknown>)["command"],
-            { op: "reconcile" },
-            "expiry invents no drag terminal",
-        );
+        assert.equal(mocks.planCalls.length, callsBeforeHold, "paused move past the old bound still dispatches nothing");
 
-        // Stale expiry safety: a second Start re-arms; forcing the stale
-        // timer must not clear the newer hold, the fresh timer still releases.
-        const callsBeforeStale = mocks.planCalls.length;
-        const timeoutsBeforeStale = moveStartTimeouts();
-        (world.wins["win-a"] as Record<string, unknown>)["move"] = true;
-        fireAll(world.startedA);
-        const stale = mocks.timers[mocks.timers.length - 1] as { callback: () => void; cancelled: boolean };
-        fireAll(world.startedA);
-        const fresh = mocks.timers[mocks.timers.length - 1] as { callback: () => void; cancelled: boolean };
-        assert.ok(stale.cancelled, "re-arm cancels the previous expiry");
-        stale.callback();
-        assert.equal(moveStartTimeouts(), timeoutsBeforeStale, "stale expiry is a no-op");
+        // Observed exit without Finished: KWin reports move===false, so the
+        // next ordinary observation reconciles with no drag terminal.
+        // (Regression: the removed missing-Finished timer retiled here
+        // mid-drag while the window was still observed moving.)
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = false;
         (world.wins["win-a"] as Record<string, unknown>)["frameGeometry"] = { x: 30, y: 0, width: 600, height: 800 };
         fireAll(world.geometry);
         runDebounce(mocks);
-        assert.equal(mocks.planCalls.length, callsBeforeStale, "later Start survives the stale expiry");
-        fresh.callback();
-        assert.equal(moveStartTimeouts(), timeoutsBeforeStale + 1, "fresh expiry still releases");
-        stop();
-    });
-
-    it("move Started then resize Started without move Finished: stale move timer releases only the move hold", () => {
-        const world = dropWorld();
-        const { stop, mocks } = startDropEntry(world);
-        baselineConverge(world, mocks);
-        const moveStartTimeouts = (): number =>
-            mocks.logs.filter(
-                (l) =>
-                    l.includes("drag-move-timeout") &&
-                    l.includes("correlation=move-start-") &&
-                    l.includes("cause=missing-finished") &&
-                    l.includes("recovery=move-hold-released"),
-            ).length;
-        const resizeStartTimeouts = (): number =>
-            mocks.logs.filter(
-                (l) =>
-                    l.includes("drag-resize-timeout") &&
-                    l.includes("correlation=resize-start-") &&
-                    l.includes("cause=missing-finished") &&
-                    l.includes("recovery=resize-hold-released"),
-            ).length;
-
-        // Lost move Finished: a move Start holds, then a resize Start on the
-        // same window overwrites the epoch without re-arming the move guard.
-        (world.wins["win-a"] as Record<string, unknown>)["move"] = true;
-        fireAll(world.startedA);
-        const moveTimer = mocks.timers[mocks.timers.length - 1] as { callback: () => void; cancelled: boolean };
-        (world.wins["win-a"] as Record<string, unknown>)["move"] = false;
-        (world.wins["win-a"] as Record<string, unknown>)["resize"] = true;
-        fireAll(world.startedA);
-        const resizeTimer = mocks.timers[mocks.timers.length - 1] as { callback: () => void; cancelled: boolean };
-        assert.ok(!moveTimer.cancelled, "resize Started does not cancel the older move guard");
-        const callsBeforeExpiry = mocks.planCalls.length;
-
-        // Stale move expiry releases the move hold but keeps the newer resize
-        // hold and its captured start.
-        moveTimer.callback();
-        assert.equal(moveStartTimeouts(), 1, "stale move expiry releases the move hold once");
-        (world.wins["win-a"] as Record<string, unknown>)["frameGeometry"] = { x: 30, y: 0, width: 590, height: 800 };
-        fireAll(world.geometry);
-        runDebounce(mocks);
-        assert.equal(mocks.planCalls.length, callsBeforeExpiry, "newer resize hold survives the stale move expiry");
-
-        // The newer resize hold still releases boundedly through the ordinary
-        // resync with no drag terminal.
-        resizeTimer.callback();
-        assert.equal(resizeStartTimeouts(), 1, "resize hold still releases boundedly");
-        (world.wins["win-a"] as Record<string, unknown>)["frameGeometry"] = { x: 40, y: 0, width: 580, height: 800 };
-        fireAll(world.geometry);
-        runDebounce(mocks);
-        assert.equal(mocks.planCalls.length, callsBeforeExpiry + 1, "released resize hold resyncs ordinarily");
+        assert.equal(mocks.planCalls.length, callsBeforeHold + 1, "observed exit releases the hold ordinarily");
         assert.deepEqual(
             (JSON.parse(mocks.planCalls[mocks.planCalls.length - 1]?.payload as string) as Record<string, unknown>)["command"],
             { op: "reconcile" },
-            "expiry invents no drag terminal",
+            "observed exit invents no drag terminal",
+        );
+
+        // Settle the exit reconcile, then a fresh move ending with a normal
+        // Finished + cancelled verdict converges ordinarily too.
+        {
+            const exitCall = mocks.planCalls[mocks.planCalls.length - 1] as { payload: string; callback: (reply: unknown) => void };
+            const exitPayload = JSON.parse(exitCall.payload) as Record<string, unknown>;
+            exitCall.callback(retainedReply(planCorrelation(exitPayload)));
+            fireAll(world.geometry);
+            runDebounce(mocks);
+        }
+        const callsBeforeFinish = mocks.planCalls.length;
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = true;
+        fireAll(world.startedA);
+        fireAll(world.finishedA);
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = false;
+        const cancelled81 = JSON.stringify({ v: 1, cancelled: true, finalRect: { x: 30, y: 0, w: 600, h: 800 }, windowIdentity: "win-a", correlation: "drag-81", reason: "no-change" });
+        (mocks.oracleCalls[mocks.oracleCalls.length - 1] as (reply: unknown) => void)(cancelled81);
+        (world.wins["win-a"] as Record<string, unknown>)["frameGeometry"] = { x: 40, y: 0, width: 600, height: 800 };
+        fireAll(world.geometry);
+        runDebounce(mocks);
+        assert.equal(mocks.planCalls.length, callsBeforeFinish + 1, "finish releases the hold ordinarily");
+        assert.deepEqual(
+            (JSON.parse(mocks.planCalls[mocks.planCalls.length - 1]?.payload as string) as Record<string, unknown>)["command"],
+            { op: "reconcile" },
+            "finish invents no drag terminal",
+        );
+        stop();
+    });
+
+    it("finish/verdict while still observed moving keeps the hold until delayed idle", () => {
+        const world = dropWorld();
+        const { stop, mocks } = startDropEntry(world);
+        baselineConverge(world, mocks);
+        // Anomalous finish: Finished fires and the verdict settles while
+        // KWin still reports move===true. Neither may release the hold.
+        const callsBefore = mocks.planCalls.length;
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = true;
+        fireAll(world.startedA);
+        fireAll(world.finishedA);
+        assert.equal(mocks.oracleCalls.length, 1);
+        const cancelledAnomaly = JSON.stringify({ v: 1, cancelled: true, finalRect: { x: 0, y: 0, w: 600, h: 800 }, windowIdentity: "win-a", correlation: "drag-82", reason: "no-change" });
+        (mocks.oracleCalls[mocks.oracleCalls.length - 1] as (reply: unknown) => void)(cancelledAnomaly);
+        (world.wins["win-a"] as Record<string, unknown>)["frameGeometry"] = { x: 10, y: 0, width: 600, height: 800 };
+        fireAll(world.geometry);
+        runDebounce(mocks);
+        assert.equal(mocks.planCalls.length, callsBefore, "verdict while still moving dispatches no ordinary reconcile");
+        // The bounded per-finish timer must not release a still-moving hold
+        // either: a finish with no verdict yet, then expiry while move is
+        // still true, keeps suppression.
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = true;
+        fireAll(world.startedA);
+        fireAll(world.finishedA);
+        runMoveTimeout(mocks);
+        (world.wins["win-a"] as Record<string, unknown>)["frameGeometry"] = { x: 20, y: 0, width: 600, height: 800 };
+        fireAll(world.geometry);
+        runDebounce(mocks);
+        assert.equal(mocks.planCalls.length, callsBefore, "per-finish expiry while still moving releases nothing");
+        // Even an ok-moved verdict for a premature Finished cannot bypass
+        // the hold and dispatch a geometry-writing drag-drop.
+        fireAll(world.startedA);
+        fireAll(world.finishedA);
+        (mocks.oracleCalls[mocks.oracleCalls.length - 1] as (reply: unknown) => void)(
+            moveVerdict({ x: 40, y: 0, w: 600, h: 800 }, "win-a", "drag-83"),
+        );
+        assert.equal(mocks.planCalls.length, callsBefore, "premature moved verdict writes no drop while KWin still moves");
+        // Delayed idle: once KWin reports move===false the next ordinary
+        // observation reconciles with no drag terminal.
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = false;
+        (world.wins["win-a"] as Record<string, unknown>)["frameGeometry"] = { x: 30, y: 0, width: 600, height: 800 };
+        fireAll(world.geometry);
+        runDebounce(mocks);
+        assert.equal(mocks.planCalls.length, callsBefore + 1, "delayed idle releases the hold ordinarily");
+        assert.deepEqual(
+            (JSON.parse(mocks.planCalls[mocks.planCalls.length - 1]?.payload as string) as Record<string, unknown>)["command"],
+            { op: "reconcile" },
+            "delayed idle invents no drag terminal",
         );
         stop();
     });

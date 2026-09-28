@@ -212,8 +212,8 @@ All items below shipped offline with no live result claimed.
   [audit](changes/archive/recovery-process-sleep-audit.md#material-follow-up)
 - Robust difference reconciliation, four decisions in the
   [draft](changes/robust-difference-reconciliation.md#open-decisions-for-the-user):
-  (1) idle signal-less detection, A event/next-command only (recommended) vs B
-  measured periodic read; (2) size inference threshold, B stable
+  (1) idle signal-less detection: decided A, event/next-command only (user,
+  2026-09-28; revisit after testing); (2) size inference threshold, B stable
   desired/held effective bound (recommended) vs A single-rectangle proof;
   (3) redistribution ownership, A Rust projects around learned limits only
   (recommended) vs B all native maximums; (4) native effect scope, A

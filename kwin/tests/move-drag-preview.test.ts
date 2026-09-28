@@ -375,14 +375,46 @@ describe("move-drag preview routing and native overlay", () => {
         }
     });
 
-    it("missing Finished timeout, removal, and stop clear the overlay", () => {
+    it("unfocused tiled mover previews and drops with the same mover focus", () => {
+        const world = previewWorld();
+        // Realistic non-active shape: Meta+drag of win-a while win-b is active.
+        world.workspace["activeWindow"] = world.wins["win-b"];
+        const { stop, mocks } = startPreviewEntry(world);
+        try {
+            baselineConverge(mocks);
+            beginMove(world, mocks, 900, 5);
+            assert.equal(mocks.previewCalls.length, 1, "one preview per stepped sample");
+            const previewCall = mocks.previewCalls[mocks.previewCalls.length - 1] as { payload: string; callback: (r: unknown) => void };
+            const previewPayload = JSON.parse(previewCall.payload) as Record<string, unknown>;
+            assert.equal((previewPayload["command"] as Record<string, unknown>)["window"], "win-a");
+            assert.equal(previewPayload["focused_window"], "win-a", "preview binds the observed mover, not the active window");
+            previewCall.callback(previewReply(previewCorr(previewCall)));
+            assert.ok(overlayMethods(mocks).includes("SetDragTargetPreview"), "successful preview renders the native overlay");
+            world.workspace["cursorPos"] = { x: 900, y: 5 };
+            fireAll(world.finishedA);
+            assert.equal(mocks.oracleCalls.length, 1, "finish still pulls the oracle verdict");
+            (world.wins["win-a"] as Record<string, unknown>)["move"] = false;
+            (mocks.oracleCalls[0] as (reply: unknown) => void)(moveVerdict("win-a", "drag-70"));
+            const drop = dropCommand(mocks) as Record<string, unknown> & { call: { payload: string; callback: (r: unknown) => void } };
+            assert.equal((drop["command"] as Record<string, unknown>)["op"], "drag-drop");
+            assert.equal(drop["focused_window"], "win-a", "final drop agrees with the preview mover focus");
+            assert.deepEqual((drop["command"] as Record<string, unknown>)["hover_prior"], FINISH_PRIOR, "drop keeps the Finish-captured prior");
+            assert.ok(mocks.logs.some((l) => l.includes("drag-drop-dispatched") && l.includes("correlation=drag-70")));
+            drop.call.callback(dragDropReply(drop["correlation_id"] as string));
+            assert.ok(!mocks.logs.some((l) => l.includes("focus-mismatch")), "mover-bound drop draws no focus-mismatch");
+        } finally {
+            stop();
+        }
+    });
+
+    it("observed moving survives the old timeout; removal and stop clear the overlay", () => {
         const world = previewWorld();
         const { stop, mocks } = startPreviewEntry(world);
         try {
             baselineConverge(mocks);
             beginMove(world, mocks, 900, 5);
             runTimer(mocks, DRAG_MEASURE_VERDICT_TIMEOUT_MS);
-            assert.ok(overlayMethods(mocks).includes("ClearDragTargetPreview"), "missing Finished timeout clears the overlay");
+            assert.ok(!overlayMethods(mocks).includes("ClearDragTargetPreview"), "old missing-Finished timeout no longer clears a live overlay");
             beginMove(world, mocks, 901, 6);
             const clearsBefore = clearCount(mocks);
             fireAll(world.removed, world.wins["win-a"]);

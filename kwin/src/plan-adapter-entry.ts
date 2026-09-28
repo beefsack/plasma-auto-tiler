@@ -2668,7 +2668,84 @@ function startPlanAdapterEntryOnce(
         callDbus,
         scheduleOnce,
         log,
-        isInteractiveResizeActive: () => interactiveResizeRefs.size > 0 || interactiveMoveRefs.size > 0,
+        isInteractiveResizeActive: () => {
+            try {
+                // Observed-state gate: a tiled move hold survives while KWin
+                // still reports move===true, even past the old
+                // missing-Finished bound (no Started timer exists). A hold
+                // whose observed gesture already exited without a Finished
+                // signal releases here so ordinary reconcile can proceed; a
+                // Finished-phase verdict guard keeps its hold until
+                // route/settle.
+                for (const ref of [...interactiveMoveRefs]) {
+                    let awaitingVerdict = false;
+                    try {
+                        for (const ctx of moveGuardCancels.keys()) {
+                            if (ctx.ref === ref) {
+                                awaitingVerdict = true;
+                                break;
+                            }
+                        }
+                    } catch (error) {
+                        void error;
+                        awaitingVerdict = true;
+                    }
+                    if (awaitingVerdict) {
+                        continue;
+                    }
+                    let live: { move: boolean; resize: boolean } | null = null;
+                    try {
+                        live = readLiveState(ref);
+                    } catch (error) {
+                        void error;
+                        live = null;
+                    }
+                    if (live !== null && live.move !== true) {
+                        try {
+                            interactiveMoveRefs.delete(ref);
+                        } catch (error) {
+                            void error;
+                        }
+                        try {
+                            if (oracleStarts.get(ref)?.move === true) oracleStarts.delete(ref);
+                        } catch (error) {
+                            void error;
+                        }
+                        try {
+                            clearMovePreviewFull(ref);
+                        } catch (error) {
+                            void error;
+                        }
+                    }
+                }
+                // Observed-state gate: a resize hold survives while KWin
+                // still reports resize===true (no Started timer exists). A
+                // hold whose observed gesture already exited without a
+                // Finished signal releases here so ordinary reconcile can
+                // proceed. Unreadable state keeps the hold; removal releases
+                // it separately.
+                for (const ref of [...interactiveResizeRefs]) {
+                    if (!isLiveResizeStillActive(ref)) {
+                        try {
+                            interactiveResizeRefs.delete(ref);
+                        } catch (error) {
+                            void error;
+                        }
+                        try {
+                            const start = oracleStarts.get(ref);
+                            if (start !== undefined && start.move === false && start.resize === true) {
+                                oracleStarts.delete(ref);
+                            }
+                        } catch (error) {
+                            void error;
+                        }
+                    }
+                }
+            } catch (error) {
+                void error;
+            }
+            return interactiveResizeRefs.size > 0 || interactiveMoveRefs.size > 0;
+        },
         onPlannedApplied: () => {
             try {
                 highlightRefresh?.();
@@ -3784,18 +3861,14 @@ function startPlanAdapterEntryOnce(
     // drag terminal is invented without a validated drag-N correlation.
     const interactiveMoveRefs = new Set<object>();
     const moveGuardCancels = new Map<DragOracleFinishContext, () => void>();
-    // Resize-hold expiry mirrors the move-hold guard: a missing Finished on
-    // a living window cannot suppress reconcile forever. Keyed to the
-    // particular resize Start (epoch-guarded) so a later Start survives a
-    // stale expiry; a normal Finish or removal cancels it.
-    const resizeGuardCancels = new Map<object, { epoch: number; cancel: () => void }>();
-    // Move-hold Started expiry: a move Started with no Finished must not hold
-    // automatic reconcile indefinitely. Mirrors the resize guard: re-armed
-    // per tiled move Start, epoch-guarded so a later Start survives a stale
-    // expiry; a normal Finish (per-finish guard takes over), route/settle, or
-    // removal cancels it. Expiry releases only this move hold through the
-    // ordinary resync, never a drag terminal.
-    const moveStartGuardCancels = new Map<object, { epoch: number; cancel: () => void }>();
+    // Resize-hold release: no Started-keyed expiry exists. The hold lasts
+    // from Started until Finished/removal, or until the observed-state gate
+    // above sees KWin report resize!==true without a Finished signal. A
+    // still-resizing window is never retiled mid-gesture.
+    // Tiled-move hold release: no Started-keyed expiry exists. The hold
+    // lasts from Started until Finished/route/settle/removal, or until the
+    // observed-state gate above sees KWin report move!==true without a
+    // Finished signal. A still-moving window is never retiled mid-drag.
     // One move-drag preview session per tiled move Started: local
     // `drag-<epoch>` correlation, one outstanding preview plus latest-pointer
     // coalescing. Finish fences late replies but keeps the prior for the
@@ -3902,6 +3975,29 @@ function startPlanAdapterEntryOnce(
             return null;
         }
     };
+    // Observed-state hold guard: a tiled move hold must never release while
+    // KWin still reports move===true, even for async finish/verdict
+    // anomalies. Unreadable state cannot prove that the move ended; removal
+    // releases the hold separately.
+    const isLiveMoveStillActive = (target: object): boolean => {
+        try {
+            return readLiveState(target)?.move !== false;
+        } catch (error) {
+            void error;
+            return true;
+        }
+    };
+    // Observed-state hold guard: a resize hold must never release while
+    // KWin still reports resize===true. Unreadable state cannot prove that
+    // the resize ended; removal releases the hold separately.
+    const isLiveResizeStillActive = (target: object): boolean => {
+        try {
+            return readLiveState(target)?.resize !== false;
+        } catch (error) {
+            void error;
+            return true;
+        }
+    };
     const captureOracleStart = (ref: object): void => {
         try {
             const observed = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility, nativeOwners);
@@ -3945,52 +4041,10 @@ function startPlanAdapterEntryOnce(
                             interactiveResizeRefs.add(ref);
                             adapter.setInteractiveResizeActive(true);
                         }
-                        // Bounded expiry for a missing Finished on a living
-                        // window: re-armed per Start and keyed to this Start's
-                        // epoch. Expiry releases only this hold through the
-                        // ordinary resync (never a drag terminal); a newer
-                        // Started survives a stale expiry via the epoch guard.
-                        try {
-                            const started = oracleStarts.get(ref);
-                            const armedEpoch = started !== undefined ? started.epoch : oracleEpoch;
-                            const prev = resizeGuardCancels.get(ref);
-                            if (prev !== undefined) {
-                                resizeGuardCancels.delete(ref);
-                                try { prev.cancel(); } catch (error) { void error; }
-                            }
-                            const cancel = scheduleOnce(DRAG_MEASURE_VERDICT_TIMEOUT_MS, () => {
-                                try {
-                                    const current = resizeGuardCancels.get(ref);
-                                    if (current === undefined || current.epoch !== armedEpoch) {
-                                        return;
-                                    }
-                                    resizeGuardCancels.delete(ref);
-                                    if (!interactiveResizeRefs.has(ref)) {
-                                        return;
-                                    }
-                                    try {
-                                        const start = oracleStarts.get(ref);
-                                        if (start !== undefined && start.epoch === armedEpoch) {
-                                            oracleStarts.delete(ref);
-                                        }
-                                    } catch (error) {
-                                        void error;
-                                    }
-                                    const had = interactiveResizeRefs.delete(ref);
-                                    if (had && interactiveResizeRefs.size === 0 && interactiveMoveRefs.size === 0) {
-                                        try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
-                                    }
-                                    try { log(`plasma-auto-tiler:route-diag:drag-resize-timeout generation=${String(overrides.generation)} correlation=resize-start-${armedEpoch} cause=missing-finished recovery=resize-hold-released`); } catch (error) { void error; }
-                                } catch (error) {
-                                    void error;
-                                }
-                            });
-                            if (typeof cancel === "function") {
-                                resizeGuardCancels.set(ref, { epoch: armedEpoch, cancel });
-                            }
-                        } catch (error) {
-                            void error;
-                        }
+                        // No Started-keyed expiry exists: the hold lasts until
+                        // Finished/removal, or until the observed-state gate
+                        // sees resize!==true. A still-resizing window is never
+                        // retiled mid-gesture.
                     }
                     // Tiled-move hold: any move gesture on a tiled member
                     // suppresses ordinary reconcile exactly as a resize hold.
@@ -3998,12 +4052,10 @@ function startPlanAdapterEntryOnce(
                     // never enters the hold and stays native-only. The start
                     // floating state is recorded so a move that STARTS
                     // floating stays unaffected even if tiled at finish.
-                    // A Started with no Finished cannot hold forever: the
-                    // Started-keyed bound below releases only this hold
-                    // through the ordinary resync (never a drag terminal); a
-                    // newer Started re-arms and survives a stale expiry via
-                    // the epoch guard. A normal Finish cancels this guard and
-                    // the per-finish guard takes over.
+                    // No Started-keyed expiry exists: the hold lasts until
+                    // Finished/route/settle/removal, or until the observed
+                    // state gate sees move!==true. A normal Finish hands the
+                    // hold to the per-finish guard below.
                     if (state.move === true) {
                         let floating = false;
                         try {
@@ -4016,48 +4068,6 @@ function startPlanAdapterEntryOnce(
                             if (!interactiveMoveRefs.has(ref)) {
                                 interactiveMoveRefs.add(ref);
                                 adapter.setInteractiveResizeActive(true);
-                            }
-                            try {
-                                const started = oracleStarts.get(ref);
-                                const armedEpoch = started !== undefined ? started.epoch : oracleEpoch;
-                                const prev = moveStartGuardCancels.get(ref);
-                                if (prev !== undefined) {
-                                    moveStartGuardCancels.delete(ref);
-                                    try { prev.cancel(); } catch (error) { void error; }
-                                }
-                                const cancel = scheduleOnce(DRAG_MEASURE_VERDICT_TIMEOUT_MS, () => {
-                                    try {
-                                        const current = moveStartGuardCancels.get(ref);
-                                        if (current === undefined || current.epoch !== armedEpoch) {
-                                            return;
-                                        }
-                                        moveStartGuardCancels.delete(ref);
-                                        if (!interactiveMoveRefs.has(ref)) {
-                                            return;
-                                        }
-                                        try {
-                                            const start = oracleStarts.get(ref);
-                                            if (start !== undefined && start.epoch === armedEpoch) {
-                                                oracleStarts.delete(ref);
-                                            }
-                                        } catch (error) {
-                                            void error;
-                                        }
-                                        const had = interactiveMoveRefs.delete(ref);
-                                        if (had && interactiveMoveRefs.size === 0 && interactiveResizeRefs.size === 0) {
-                                            try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
-                                        }
-                                        clearMovePreviewFull(ref);
-                                        try { log(`plasma-auto-tiler:route-diag:drag-move-timeout generation=${String(overrides.generation)} correlation=move-start-${armedEpoch} cause=missing-finished recovery=move-hold-released`); } catch (error) { void error; }
-                                    } catch (error) {
-                                        void error;
-                                    }
-                                });
-                                if (typeof cancel === "function") {
-                                    moveStartGuardCancels.set(ref, { epoch: armedEpoch, cancel });
-                                }
-                            } catch (error) {
-                                void error;
                             }
                             const started = oracleStarts.get(ref);
                             if (started !== undefined) {
@@ -4547,19 +4557,10 @@ function startPlanAdapterEntryOnce(
         // Settle cancels it; if no verdict ever settles, the timer consumes
         // only this finish's own start (newer Started stays) and releases
         // the hold once through the ordinary resync. No marker and no drag
-        // terminal is created here. The Started-keyed missing-Finished guard
-        // is cancelled here: the per-finish guard takes over from Finish on.
+        // terminal is created here. No Started-keyed guard exists: the hold
+        // lasts from Started until Finish hands it to this per-finish guard.
         try {
             if (interactiveMoveRefs.has(ref)) {
-                try {
-                    const startGuard = moveStartGuardCancels.get(ref);
-                    if (startGuard !== undefined) {
-                        moveStartGuardCancels.delete(ref);
-                        try { startGuard.cancel(); } catch (error) { void error; }
-                    }
-                } catch (error) {
-                    void error;
-                }
                 const cancel = scheduleOnce(DRAG_MEASURE_VERDICT_TIMEOUT_MS, () => {
                     try {
                         moveGuardCancels.delete(ctx);
@@ -4568,6 +4569,9 @@ function startPlanAdapterEntryOnce(
                         }
                         const start = oracleStarts.get(ctx.ref);
                         if (start !== undefined && start.epoch > ctx.finishEpoch) {
+                            return;
+                        }
+                        if (isLiveMoveStillActive(ref)) {
                             return;
                         }
                         takeOwnStart(ctx);
@@ -4627,12 +4631,12 @@ function startPlanAdapterEntryOnce(
                         feedMeasureVerdict(ctx, verdict);
                         return;
                     }
-                    takeOwnStart(ctx);
-                    const startGuard = moveStartGuardCancels.get(ctx.ref);
-                    if (startGuard !== undefined && startGuard.epoch <= ctx.finishEpoch) {
-                        moveStartGuardCancels.delete(ctx.ref);
-                        try { startGuard.cancel(); } catch (error) { void error; }
+                    if (isLiveMoveStillActive(ctx.ref)) {
+                        settleMovePreview(ctx);
+                        feedMeasureVerdict(ctx, verdict);
+                        return;
                     }
+                    takeOwnStart(ctx);
                     const had = interactiveMoveRefs.delete(ctx.ref);
                     if (had && interactiveMoveRefs.size === 0 && interactiveResizeRefs.size === 0) {
                         try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
@@ -4684,6 +4688,13 @@ function startPlanAdapterEntryOnce(
                 try { log(`plasma-auto-tiler:route-diag:drag-ref-mismatch correlation=${verdict.correlation}`); } catch (error) { void error; }
                 return;
             }
+            // A premature Finished/verdict must not turn a live native move
+            // into a geometry-writing drop. Retain the hold and Start until
+            // KWin reports idle or a later, genuine Finish arrives.
+            if (interactiveMoveRefs.has(ctx.ref) && isLiveMoveStillActive(ctx.ref)) {
+                try { log(`plasma-auto-tiler:route-diag:drag-move-ignored correlation=${verdict.correlation}`); } catch (error) { void error; }
+                return;
+            }
             const start = takeOwnStart(ctx);
             if (start === null || start.id !== verdict.windowIdentity) {
                 try { log(`plasma-auto-tiler:route-diag:drag-start-missing correlation=${verdict.correlation}`); } catch (error) { void error; }
@@ -4729,14 +4740,11 @@ function startPlanAdapterEntryOnce(
                         moveGuardCancels.delete(ctx);
                         try { cancel(); } catch (error) { void error; }
                     }
-                    const startGuard = moveStartGuardCancels.get(ctx.ref);
-                    if (startGuard !== undefined && startGuard.epoch <= ctx.finishEpoch) {
-                        moveStartGuardCancels.delete(ctx.ref);
-                        try { startGuard.cancel(); } catch (error) { void error; }
-                    }
-                    const had = interactiveMoveRefs.delete(ctx.ref);
-                    if (had && interactiveMoveRefs.size === 0 && interactiveResizeRefs.size === 0) {
-                        try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
+                    if (!isLiveMoveStillActive(ctx.ref)) {
+                        const had = interactiveMoveRefs.delete(ctx.ref);
+                        if (had && interactiveMoveRefs.size === 0 && interactiveResizeRefs.size === 0) {
+                            try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
+                        }
                     }
                     try { log(`plasma-auto-tiler:route-diag:drag-move-ignored correlation=${verdict.correlation}`); } catch (error) { void error; }
                     return;
@@ -4750,16 +4758,9 @@ function startPlanAdapterEntryOnce(
                 } catch (error) {
                     void error;
                 }
-                try {
-                    const startGuard = moveStartGuardCancels.get(ctx.ref);
-                    if (startGuard !== undefined && startGuard.epoch <= ctx.finishEpoch) {
-                        moveStartGuardCancels.delete(ctx.ref);
-                        try { startGuard.cancel(); } catch (error) { void error; }
-                    }
-                } catch (error) {
-                    void error;
+                if (!isLiveMoveStillActive(ctx.ref)) {
+                    try { interactiveMoveRefs.delete(ctx.ref); } catch (error) { void error; }
                 }
-                try { interactiveMoveRefs.delete(ctx.ref); } catch (error) { void error; }
                 try {
                     const pointer = ctx.pointerFinish ?? null;
                     const session = movePreviewSessions.get(ctx.ref);
@@ -4934,24 +4935,6 @@ function startPlanAdapterEntryOnce(
             completeMeasureRemoval(ref);
             clearMovePreviewFull(ref);
             try {
-                const guard = resizeGuardCancels.get(ref);
-                if (guard !== undefined) {
-                    resizeGuardCancels.delete(ref);
-                    try { guard.cancel(); } catch (error) { void error; }
-                }
-            } catch (error) {
-                void error;
-            }
-            try {
-                const startGuard = moveStartGuardCancels.get(ref);
-                if (startGuard !== undefined) {
-                    moveStartGuardCancels.delete(ref);
-                    try { startGuard.cancel(); } catch (error) { void error; }
-                }
-            } catch (error) {
-                void error;
-            }
-            try {
                 for (const [ctx, cancel] of [...moveGuardCancels]) {
                     if (ctx.ref === ref) {
                         moveGuardCancels.delete(ctx);
@@ -4990,16 +4973,12 @@ function startPlanAdapterEntryOnce(
             finishedDetach = connectSignal(finished, () => {
                 finishMovePreview(ref);
                 try {
-                    if (interactiveResizeRefs.delete(ref)) {
-                        try {
-                            const guard = resizeGuardCancels.get(ref);
-                            if (guard !== undefined) {
-                                resizeGuardCancels.delete(ref);
-                                try { guard.cancel(); } catch (error) { void error; }
+                    if (interactiveResizeRefs.has(ref)) {
+                        if (!isLiveResizeStillActive(ref)) {
+                            interactiveResizeRefs.delete(ref);
+                            if (interactiveResizeRefs.size === 0 && interactiveMoveRefs.size === 0) {
+                                adapter.setInteractiveResizeActive(false);
                             }
-                        } catch (error) { void error; }
-                        if (interactiveResizeRefs.size === 0 && interactiveMoveRefs.size === 0) {
-                            adapter.setInteractiveResizeActive(false);
                         }
                     } else if (interactiveMoveRefs.has(ref)) {
                         // Tiled move hold: keep suppression until the
@@ -5007,19 +4986,9 @@ function startPlanAdapterEntryOnce(
                         // bounded per-finish timer releases it. When the
                         // global pull never attached, no verdict can arrive,
                         // so release now through the ordinary resync.
-                        // The Started-keyed missing-Finished guard is done at
-                        // Finish: the per-finish guard (or the immediate
-                        // release below) takes over.
-                        try {
-                            const startGuard = moveStartGuardCancels.get(ref);
-                            if (startGuard !== undefined) {
-                                moveStartGuardCancels.delete(ref);
-                                try { startGuard.cancel(); } catch (error) { void error; }
-                            }
-                        } catch (error) { void error; }
                         let available = false;
                         try { available = measurePullAvailable === true; } catch (error) { void error; }
-                        if (!available) {
+                        if (!available && !isLiveMoveStillActive(ref)) {
                             const had = interactiveMoveRefs.delete(ref);
                             if (had && interactiveMoveRefs.size === 0 && interactiveResizeRefs.size === 0) {
                                 try { adapter.setInteractiveResizeActive(false); } catch (error) { void error; }
@@ -5441,14 +5410,6 @@ function startPlanAdapterEntryOnce(
             for (const detach of oracleDetaches) {
                 try { detach(); } catch (error) { void error; }
             }
-            for (const guard of resizeGuardCancels.values()) {
-                try { guard.cancel(); } catch (error) { void error; }
-            }
-            resizeGuardCancels.clear();
-            for (const guard of moveStartGuardCancels.values()) {
-                try { guard.cancel(); } catch (error) { void error; }
-            }
-            moveStartGuardCancels.clear();
             try {
                 for (const pending of [...measurePending.values()]) {
                     dropMeasureWindow(pending.ref);

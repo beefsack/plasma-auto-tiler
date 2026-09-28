@@ -175,18 +175,19 @@ function resizeTimeouts(mocks: ResizeMocks): number {
 }
 
 describe("resize hold expiry (row B)", () => {
-    it("missing Finished releases boundedly; stale expiry cannot clear a later Start; normal Finish cancels", () => {
+    it("held resize survives past the old timeout while observed resizing; observed exit releases ordinarily", () => {
         const world = resizeWorld();
         const { stop, mocks } = startResizeEntry(world);
         baselineConverge(world, mocks);
 
-        // Normal Finish cancels the expiry: no timeout line may follow.
+        // Normal Finish converges with no timeout line: no Started timer exists.
         (world.wins["win-a"] as Record<string, unknown>)["resize"] = true;
         fireAll(world.startedA);
-        const guardAtFinish = mocks.timers.filter(
-            (t) => !t.cancelled && t.delayMs === DRAG_MEASURE_VERDICT_TIMEOUT_MS,
-        ).length;
-        assert.equal(guardAtFinish, 1, "one Start-keyed resize expiry armed");
+        assert.equal(
+            mocks.timers.filter((t) => !t.cancelled && t.delayMs === DRAG_MEASURE_VERDICT_TIMEOUT_MS).length,
+            0,
+            "no Started-keyed resize expiry armed",
+        );
         (world.wins["win-a"] as Record<string, unknown>)["resize"] = false;
         fireAll(world.finishedA);
         runDebounce(mocks);
@@ -197,8 +198,10 @@ describe("resize hold expiry (row B)", () => {
             "no native identity in resize logs",
         );
 
-        // Missing Finished on a living window: hold suppresses, then the
-        // bound releases exactly once through the ordinary resync.
+        // Paused mid-resize past the old bound: Started with no Finished, no
+        // steps, while KWin still reports resize===true. The hold persists:
+        // time advancing past DRAG_MEASURE_VERDICT_TIMEOUT_MS retires
+        // nothing and dispatches no ordinary reconcile.
         const callsBeforeHold = mocks.planCalls.length;
         (world.wins["win-a"] as Record<string, unknown>)["resize"] = true;
         fireAll(world.startedA);
@@ -207,49 +210,40 @@ describe("resize hold expiry (row B)", () => {
         runDebounce(mocks);
         assert.equal(mocks.planCalls.length, callsBeforeHold, "held resize dispatches no ordinary reconcile");
         runResizeTimeout(mocks);
-        assert.equal(resizeTimeouts(mocks), 1, "bounded resize expiry is logged once");
+        assert.equal(resizeTimeouts(mocks), 0, "no missing-Finished expiry while still observed resizing");
         (world.wins["win-a"] as Record<string, unknown>)["frameGeometry"] = { x: 20, y: 0, width: 580, height: 800 };
         fireAll(world.geometry);
         runDebounce(mocks);
-        assert.equal(mocks.planCalls.length, callsBeforeHold + 1, "released hold resyncs ordinarily");
-        assert.deepEqual(
-            (JSON.parse(mocks.planCalls[mocks.planCalls.length - 1]?.payload as string) as Record<string, unknown>)["command"],
-            { op: "reconcile" },
-            "expiry invents no drag terminal",
-        );
+        assert.equal(mocks.planCalls.length, callsBeforeHold, "paused resize past the old bound still dispatches nothing");
 
-        // Stale expiry safety: a second Start re-arms; forcing the stale
-        // timer must not clear the newer hold, the fresh timer still releases.
-        const callsBeforeStale = mocks.planCalls.length;
-        const timeoutsBeforeStale = resizeTimeouts(mocks);
-        (world.wins["win-a"] as Record<string, unknown>)["resize"] = true;
-        fireAll(world.startedA);
-        const stale = mocks.timers[mocks.timers.length - 1] as { callback: () => void; cancelled: boolean };
-        fireAll(world.startedA);
-        const fresh = mocks.timers[mocks.timers.length - 1] as { callback: () => void; cancelled: boolean };
-        assert.ok(stale.cancelled, "re-arm cancels the previous expiry");
-        stale.callback();
-        assert.equal(resizeTimeouts(mocks), timeoutsBeforeStale, "stale expiry is a no-op");
+        // Observed exit without Finished: KWin reports resize===false, so the
+        // next ordinary observation reconciles with no drag terminal.
+        // (Regression: the removed missing-Finished timer retiled here
+        // mid-gesture while the window was still observed resizing.)
+        (world.wins["win-a"] as Record<string, unknown>)["resize"] = false;
         (world.wins["win-a"] as Record<string, unknown>)["frameGeometry"] = { x: 30, y: 0, width: 570, height: 800 };
         fireAll(world.geometry);
         runDebounce(mocks);
-        assert.equal(mocks.planCalls.length, callsBeforeStale, "later Start survives the stale expiry");
-        fresh.callback();
-        assert.equal(resizeTimeouts(mocks), timeoutsBeforeStale + 1, "fresh expiry still releases");
+        assert.equal(mocks.planCalls.length, callsBeforeHold + 1, "observed exit releases the hold ordinarily");
+        assert.deepEqual(
+            (JSON.parse(mocks.planCalls[mocks.planCalls.length - 1]?.payload as string) as Record<string, unknown>)["command"],
+            { op: "reconcile" },
+            "observed exit invents no drag terminal",
+        );
 
-        // A newer move Start has a separate hold and capture. The old resize
-        // timer must release its own hold without consuming that move Start.
+        // A newer move Start keeps its own hold. Releasing the resize hold
+        // via observed exit must not consume that move Start.
         (world.wins["win-a"] as Record<string, unknown>)["resize"] = true;
         fireAll(world.startedA);
         (world.wins["win-a"] as Record<string, unknown>)["resize"] = false;
         (world.wins["win-a"] as Record<string, unknown>)["move"] = true;
         fireAll(world.startedA);
-        const beforeMoveTimeout = resizeTimeouts(mocks);
+        const beforeMoveFinish = resizeTimeouts(mocks);
         runResizeTimeout(mocks);
-        assert.equal(resizeTimeouts(mocks), beforeMoveTimeout + 1, "new move Start does not strand the older resize hold");
+        assert.equal(resizeTimeouts(mocks), beforeMoveFinish, "new move Start introduces no resize terminal");
         (world.wins["win-a"] as Record<string, unknown>)["move"] = false;
         fireAll(world.finishedA);
-        assert.equal(resizeTimeouts(mocks), beforeMoveTimeout + 1, "move Finish does not fabricate another resize terminal");
+        assert.equal(resizeTimeouts(mocks), beforeMoveFinish, "move Finish does not fabricate another resize terminal");
         stop();
     });
 });
