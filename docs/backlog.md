@@ -157,6 +157,9 @@ All items below shipped offline with no live result claimed.
   preserves the packaged owner; tray diagnostics appear once each in
   `journalctl --user` (native journald submission removed).
   [change](changes/archive/tray-and-restart-followups.md)
+- Tray Settings under `just dev`: clicking Settings opens the KCM and the
+  trace shows `[tray] ... stage=settings event=open outcome=launched`.
+  [change](changes/archive/dev-tray-settings-launch.md)
 - Arrow shortcuts: KCM Apply/Force/Revert clears and restores
   `kwin/Switch Window Left/Down/Up/Right` (Meta+Alt+Arrows), Quick Tile
   (Meta+Arrows) and Window to Next/Previous Screen (Meta+Shift+Left/Right);

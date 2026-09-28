@@ -15,6 +15,8 @@
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
+export PLASMA_AUTO_TILER_KCMSHELL6 := `command -v kcmshell6 || true`
+
 plugin_id := "plasma-auto-tiler-kwin"
 planner_bus_name := "org.plasmaautotiler.Planner"
 planner_unit := "plasma-auto-tiler-planner.service"

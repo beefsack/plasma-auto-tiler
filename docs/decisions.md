@@ -950,6 +950,9 @@ the corresponding item ships; each such entry names its replacement.
   in the journal, queried with
   `journalctl --user -g "plasma-auto-tiler:route-diag component=tray-endpoint"`;
   dev logs and on-demand terminal runs retain their own stderr sinks.
+  Dev worktree tray builds bake the absolute `kcmshell6` path when available;
+  without it, the tray still builds and Settings reports unavailable. Settings
+  launch outcomes emit fixed, redacted tray diagnostics.
 - The tray MVP provides basic status and Settings only. It has no direct tiling
   controls and no expansion of the helper boundary.
 - Tray live runs claim no KWin snapshot authority, panel visual behavior,

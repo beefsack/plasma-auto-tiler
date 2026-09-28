@@ -33,24 +33,36 @@ enum SettingsLaunchError {
     Spawn(io::Error),
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum SettingsLaunchOutcome {
+    AlreadyOpen,
+    Launched,
+}
+
+fn settings_outcome_line(outcome: &str) -> String {
+    format!(
+        "plasma-auto-tiler:route-diag component=tray-endpoint stage=settings event=open outcome={outcome}"
+    )
+}
+
 fn launch_settings_if_idle<Process, Status, Check, Launch>(
     process: &mut Option<Process>,
     mut check: Check,
     launch: Launch,
-) -> Result<(), SettingsLaunchError>
+) -> Result<SettingsLaunchOutcome, SettingsLaunchError>
 where
     Check: FnMut(&mut Process) -> io::Result<Option<Status>>,
     Launch: FnOnce() -> io::Result<Process>,
 {
     if let Some(child) = process.as_mut() {
         if check(child).map_err(SettingsLaunchError::Check)?.is_none() {
-            return Ok(());
+            return Ok(SettingsLaunchOutcome::AlreadyOpen);
         }
         *process = None;
     }
 
     *process = Some(launch().map_err(SettingsLaunchError::Spawn)?);
-    Ok(())
+    Ok(SettingsLaunchOutcome::Launched)
 }
 
 fn settings_command_for(executable: Option<&str>) -> Option<Command> {
@@ -58,10 +70,6 @@ fn settings_command_for(executable: Option<&str>) -> Option<Command> {
     let mut command = Command::new(executable);
     command.arg(SETTINGS_MODULE);
     Some(command)
-}
-
-fn settings_command() -> Option<Command> {
-    settings_command_for(SETTINGS_EXECUTABLE)
 }
 
 pub fn icon_pixmap_bytes() -> Vec<u8> {
@@ -174,25 +182,48 @@ impl TrayProjection {
     }
 
     pub(crate) fn launch_settings(&self) -> zbus::fdo::Result<()> {
-        let mut settings = match settings_command() {
+        self.launch_settings_with(SETTINGS_EXECUTABLE, emit_tray_diag)
+    }
+
+    fn launch_settings_with(
+        &self,
+        executable: Option<&str>,
+        diag: impl FnOnce(&str),
+    ) -> zbus::fdo::Result<()> {
+        let mut settings = match settings_command_for(executable) {
             Some(command) => command,
             None => {
+                diag(&settings_outcome_line("unavailable"));
                 return Err(zbus::fdo::Error::Failed(
-                    "Settings launcher is unavailable: Nix-baked absolute kcmshell6 path is missing"
+                    "Settings launcher is unavailable: baked absolute kcmshell6 path is missing"
                         .to_owned(),
                 ));
             }
         };
-        let mut process = self.lock_settings_process();
-        launch_settings_if_idle(&mut process, |child| child.try_wait(), || settings.spawn())
-            .map_err(|error| match error {
-                SettingsLaunchError::Check(error) => {
-                    zbus::fdo::Error::Failed(format!("check Settings process: {error}"))
-                }
-                SettingsLaunchError::Spawn(error) => {
-                    zbus::fdo::Error::Failed(format!("open Settings: {error}"))
-                }
-            })
+        let result = {
+            let mut process = self.lock_settings_process();
+            launch_settings_if_idle(&mut process, |child| child.try_wait(), || settings.spawn())
+        };
+        match result {
+            Ok(SettingsLaunchOutcome::AlreadyOpen) => {
+                diag(&settings_outcome_line("already-open"));
+                Ok(())
+            }
+            Ok(SettingsLaunchOutcome::Launched) => {
+                diag(&settings_outcome_line("launched"));
+                Ok(())
+            }
+            Err(SettingsLaunchError::Check(error)) => {
+                diag(&settings_outcome_line("check-failed"));
+                Err(zbus::fdo::Error::Failed(format!(
+                    "check Settings process: {error}"
+                )))
+            }
+            Err(SettingsLaunchError::Spawn(error)) => {
+                diag(&settings_outcome_line("spawn-failed"));
+                Err(zbus::fdo::Error::Failed(format!("open Settings: {error}")))
+            }
+        }
     }
 
     pub fn status_notifier_item(&self) -> StatusNotifierItem {
@@ -893,8 +924,8 @@ mod tests {
 
         let mut process = None;
         let mut launches = 0;
-        for _ in 0..64 {
-            launch_settings_if_idle(
+        for index in 0..64 {
+            let outcome = launch_settings_if_idle(
                 &mut process,
                 |_process: &mut FakeProcess| Ok::<Option<()>, io::Error>(None),
                 || {
@@ -903,10 +934,86 @@ mod tests {
                 },
             )
             .unwrap();
+            if index == 0 {
+                assert_eq!(outcome, SettingsLaunchOutcome::Launched);
+            } else {
+                assert_eq!(outcome, SettingsLaunchOutcome::AlreadyOpen);
+            }
         }
 
         assert_eq!(launches, 1);
         assert!(process.is_some());
+    }
+
+    #[test]
+    fn settings_launch_idle_reports_check_and_spawn_failures() {
+        #[derive(Default)]
+        struct FakeProcess;
+
+        let mut process: Option<FakeProcess> = Some(FakeProcess);
+        let check = launch_settings_if_idle(
+            &mut process,
+            |_| Err::<Option<()>, io::Error>(io::Error::other("check boom")),
+            || Ok::<_, io::Error>(FakeProcess),
+        );
+        assert!(matches!(check, Err(SettingsLaunchError::Check(_))));
+
+        let mut process: Option<FakeProcess> = None;
+        let spawn = launch_settings_if_idle(
+            &mut process,
+            |_: &mut FakeProcess| Ok::<Option<()>, io::Error>(Some(())),
+            || Err::<FakeProcess, io::Error>(io::Error::other("spawn boom")),
+        );
+        assert!(matches!(spawn, Err(SettingsLaunchError::Spawn(_))));
+        assert!(process.is_none());
+    }
+
+    #[test]
+    fn settings_outcome_lines_are_bounded_without_identity() {
+        for outcome in [
+            "launched",
+            "already-open",
+            "unavailable",
+            "spawn-failed",
+            "check-failed",
+        ] {
+            assert_eq!(
+                settings_outcome_line(outcome),
+                format!(
+                    "plasma-auto-tiler:route-diag component=tray-endpoint stage=settings event=open outcome={outcome}"
+                )
+            );
+        }
+        for line in [
+            settings_outcome_line("launched"),
+            settings_outcome_line("already-open"),
+            settings_outcome_line("unavailable"),
+            settings_outcome_line("spawn-failed"),
+            settings_outcome_line("check-failed"),
+        ] {
+            assert!(!line.contains('\n'));
+            assert!(!line.contains('/'));
+            assert!(!line.contains("kcmshell"));
+        }
+    }
+
+    #[test]
+    fn launch_settings_without_launcher_reports_unavailable() {
+        let made = projection(Some(true), Instant::now());
+        let mut emitted = None;
+        let result = made.launch_settings_with(None, |line| {
+            emitted = Some(line.to_owned());
+        });
+        match result {
+            Err(zbus::fdo::Error::Failed(message)) => {
+                assert!(message.contains("Settings launcher is unavailable"));
+            }
+            other => panic!("expected unavailable Failed, got {other:?}"),
+        }
+        assert_eq!(
+            emitted.as_deref(),
+            Some(settings_outcome_line("unavailable").as_str())
+        );
     }
 
     #[test]
@@ -926,13 +1033,14 @@ mod tests {
 
         match SETTINGS_EXECUTABLE.filter(|path| std::path::Path::new(path).is_absolute()) {
             Some(path) => {
-                let mut baked = settings_command().expect("baked launcher is usable");
+                let mut baked =
+                    settings_command_for(SETTINGS_EXECUTABLE).expect("baked launcher is usable");
                 assert_eq!(baked.get_program(), std::path::Path::new(path));
                 let command = baked.env("PATH", "/tmp/hostile");
                 assert_eq!(command.get_args().collect::<Vec<_>>(), [SETTINGS_MODULE]);
             }
             None => {
-                assert!(settings_command().is_none());
+                assert!(settings_command_for(SETTINGS_EXECUTABLE).is_none());
                 let made = projection(Some(true), Instant::now());
                 assert!(made.launch_settings().is_err());
             }

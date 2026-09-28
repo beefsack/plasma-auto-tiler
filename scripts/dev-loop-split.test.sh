@@ -127,6 +127,7 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'cargo %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
+printf 'cargo-plasma-kcmshell6=%s\n' "${PLASMA_AUTO_TILER_KCMSHELL6:-empty}" >> "${FAKE_CALL_LOG:?}"
 if [[ -f "${FAKE_STATE_DIR:?}/cargo-fails" ]]; then
   echo "fake cargo: simulated build failure" >&2
   exit 1
@@ -241,7 +242,11 @@ echo "plasma-auto-tiler:plan:cmd=plan-1-p1 kind=admit windows=1 outcome=planned-
 echo "plasma-auto-tiler:route-diag:drag-pull action=dispatch"
 exit 0
 EOF
-  chmod +x "$FAKE_BIN/bin/busctl" "$FAKE_BIN/bin/cargo" "$FAKE_BIN/bin/npm" "$FAKE_BIN/bin/cmake" "$FAKE_BIN/bin/devenv" "$FAKE_BIN/bin/setsid" "$FAKE_BIN/bin/systemctl" "$FAKE_BIN/bin/tail" "$FAKE_BIN/bin/journalctl"
+  cat > "$FAKE_BIN/bin/kcmshell6" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$FAKE_BIN/bin/busctl" "$FAKE_BIN/bin/cargo" "$FAKE_BIN/bin/npm" "$FAKE_BIN/bin/cmake" "$FAKE_BIN/bin/devenv" "$FAKE_BIN/bin/setsid" "$FAKE_BIN/bin/systemctl" "$FAKE_BIN/bin/tail" "$FAKE_BIN/bin/journalctl" "$FAKE_BIN/bin/kcmshell6"
   cat > "$FAKE_BIN/bin/nix" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -292,6 +297,7 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'cargo %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
+printf 'cargo-plasma-kcmshell6=%s\n' "${PLASMA_AUTO_TILER_KCMSHELL6:-empty}" >> "${FAKE_CALL_LOG:?}"
 if [[ -f "${FAKE_STATE_DIR:?}/cargo-fails" ]]; then
   echo "fake cargo: simulated build failure" >&2
   exit 1
@@ -521,6 +527,51 @@ run_just_real() {
   set -e
 }
 
+# PATH with no kcmshell6 provider, preserving all other inherited entries
+# (host PATH is filtered, never masked): a shadow fake bin links every fake
+# except kcmshell6, and any PATH entry providing kcmshell6 is dropped.
+path_without_kcmshell6() {
+  local shadow="$WORK/fake-tools-no-kcm/bin"
+  rm -rf "$shadow"
+  mkdir -p "$shadow"
+  local f
+  for f in "$FAKE_BIN/bin/"*; do
+    [[ "$(basename -- "$f")" == "kcmshell6" ]] && continue
+    ln -sfn -- "$f" "$shadow/$(basename -- "$f")"
+  done
+  local filtered="" entry
+  local IFS=':'
+  local -a parts
+  read -ra parts <<<"$PATH"
+  for entry in ${parts[@]+"${parts[@]}"}; do
+    case "$entry" in ""|"$FAKE_BIN/bin"|"$shadow") continue ;; esac
+    [[ -x "$entry/kcmshell6" ]] && continue
+    filtered="${filtered:+$filtered:}$entry"
+  done
+  printf '%s' "$WORK/fake-store/hash-cargo/bin:$shadow:$filtered"
+}
+
+run_just_without_kcmshell6() {
+  set +e
+  local no_kcm_path
+  no_kcm_path="$(path_without_kcmshell6)"
+  if PATH="$no_kcm_path" command -v kcmshell6 >/dev/null 2>&1; then
+    echo "FAIL [missing-kcmshell6 setup still resolves kcmshell6: $(PATH="$no_kcm_path" command -v kcmshell6)]" >&2
+    FAIL=$((FAIL + 1))
+  else
+    PASS=$((PASS + 1))
+  fi
+  if [[ "$no_kcm_path" != *":"* ]]; then
+    echo "FAIL [missing-kcmshell6 PATH masked host entries: $no_kcm_path]" >&2
+    FAIL=$((FAIL + 1))
+  else
+    PASS=$((PASS + 1))
+  fi
+  FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" PLASMA_AUTO_TILER_KWIN_DIR="$WORK/fake-kwin" PLASMA_AUTO_TILER_NATIVE_SOURCE="$WORK/fake-native-source" PLASMA_AUTO_TILER_NATIVE_BUILD="$WORK/fake-native-build" PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/fake-native-stage" PLASMA_AUTO_TILER_TARGET_DIR="$WORK/fake-target" PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake" PLASMA_AUTO_TILER_HOST_KWIN_BIN="$WORK/fake-host/kwin_wayland" PLASMA_AUTO_TILER_STORE_ROOT="$WORK/fake-store" NIX_BIN="$FAKE_BIN/bin/nix" RUSTC_BIN="$WORK/fake-store/hash-rustc/bin/rustc" CARGO_BIN="$WORK/fake-store/hash-cargo/bin/cargo" CMAKE_BIN="$WORK/fake-store/hash-cmake/bin/cmake" FAKE_DRV="$FAKE_DRV" FAKE_STORE_PATH="$FAKE_STORE_PATH" FAKE_DEV_OUT="$FAKE_DEV_OUT" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" PATH="$no_kcm_path" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1
+  EXIT=$?
+  set -e
+}
+
 check_exit() {
   local expected="$1" label="$2"
   if [[ "$EXIT" -ne "$expected" ]]; then
@@ -646,6 +697,7 @@ assert_contains "planner pid" "dev-on both down msg"
 assert_calls_contain "dogfood disable" "dev-on both down disable"
 assert_calls_contain "setsid" "dev-on both down launch"
 assert_calls_contain "start-test start" "dev-on both down start"
+assert_calls_contain "cargo-plasma-kcmshell6=/" "dev-on both down absolute baked launcher"
 [[ -f "$WORK/runtime/plasma-auto-tiler-dev/planner-pid" ]] && PASS=$((PASS + 1)) || { echo "FAIL [dev-on both down state]" >&2; FAIL=$((FAIL + 1)); }
 [[ -f "$WORK/runtime/plasma-auto-tiler-dev/controller-receipt-path" ]] && PASS=$((PASS + 1)) || { echo "FAIL [dev-on both down receipt ptr]" >&2; FAIL=$((FAIL + 1)); }
 
@@ -1014,6 +1066,7 @@ assert_contains "plasma-auto-tiler:plan" "dev down kwin plugin line"
 assert_contains "[kwin] plasma-auto-tiler:route-diag:drag-pull action=dispatch" "dev down kwin route diagnostic line"
 assert_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin until logout/login delivers them; transient loadEffect below never hot-reloads a rebuilt binary. plasma-auto-tiler-active-border.so remains stale until logout/login." "dev down native warning"
 assert_calls_contain "cargo " "dev down cargo build"
+assert_calls_contain "cargo-plasma-kcmshell6=/" "dev down absolute baked launcher"
 assert_calls_contain "npm " "dev down npm build"
 assert_calls_contain "cmake " "dev down cmake build"
 assert_calls_contain "dogfood disable" "dev down disable"
@@ -1248,6 +1301,7 @@ reset_state
 run_just build
 check_exit 0 "isolated build exit"
 assert_calls_contain "cargo " "isolated build cargo"
+assert_calls_contain "cargo-plasma-kcmshell6=/" "isolated build absolute baked launcher"
 assert_calls_contain "npm " "isolated build npm"
 assert_calls_contain "cmake " "isolated build cmake"
 if [[ -f "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so" && -f "$WORK/fake-native-stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [isolated build 2 staged artifacts]" >&2; FAIL=$((FAIL + 1)); fi
@@ -1256,6 +1310,37 @@ assert_calls_missing "dogfood" "isolated build no dogfood"
 assert_calls_missing "start-test" "isolated build no start-test"
 assert_calls_missing "setsid" "isolated build no setsid"
 assert_calls_missing "busctl " "isolated build no busctl"
+
+# build-rust: present kcmshell6 bakes its absolute path for cargo.
+reset_state
+run_just build-rust
+check_exit 0 "build-rust present exit"
+assert_calls_contain "cargo " "build-rust present cargo"
+assert_calls_contain "cargo-plasma-kcmshell6=/" "build-rust present absolute baked launcher"
+
+# build-rust: missing kcmshell6 bakes empty without failing; the tray gates
+# empty via its absolute-path check (PATH filtered, never masked).
+reset_state
+run_just_without_kcmshell6 build-rust
+check_exit 0 "build-rust missing exit"
+assert_calls_contain "cargo " "build-rust missing cargo attempted"
+assert_calls_contain "cargo-plasma-kcmshell6=empty" "build-rust missing empty baked launcher"
+set +e
+MISSING_EVAL="$(PATH="$(path_without_kcmshell6)" just --justfile "$ISOLATED_JUSTFILE" --evaluate PLASMA_AUTO_TILER_KCMSHELL6 2>/dev/null)"
+MISSING_EVAL_RC=$?
+set -e
+if [[ "$MISSING_EVAL_RC" -ne 0 ]]; then
+  echo "FAIL [missing evaluate exit $MISSING_EVAL_RC]" >&2
+  FAIL=$((FAIL + 1))
+else
+  PASS=$((PASS + 1))
+fi
+if [[ -z "$MISSING_EVAL" ]]; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL [missing evaluate expected empty, got '$MISSING_EVAL']" >&2
+  FAIL=$((FAIL + 1))
+fi
 
 # Native build alone stages all three artifacts, static only.
 reset_state
