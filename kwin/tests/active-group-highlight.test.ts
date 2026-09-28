@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import {
+    ACTIVE_GROUP_MAX_REPLY_BYTES,
     ACTIVE_GROUP_MAX_REQUEST_BYTES,
     ACTIVE_GROUP_MAX_SEQ,
     ActiveGroupHighlight,
@@ -224,8 +225,8 @@ describe("active-group reply contract", () => {
         }
     });
 
-    it("formats only identity plus union bounds for the effect setter", () => {
-        const payload = formatGroupHighlightPayload(CORRELATION, OWNER, GENERATION, 2, "group-1", "win-2", {
+    it("formats only identity plus ordered member ids plus union bounds for the effect setter", () => {
+        const payload = formatGroupHighlightPayload(CORRELATION, OWNER, GENERATION, 2, "group-1", "win-2", ["win-1", "win-2"], {
             x: 0,
             y: 0,
             w: 1200,
@@ -240,9 +241,14 @@ describe("active-group reply contract", () => {
             revision: 2,
             group: "group-1",
             focused_window: "win-2",
+            members: ["win-1", "win-2"],
             bounds: { x: 0, y: 0, w: 1200, h: 800 },
         });
-        assert.ok((payload as string).length <= 4096);
+        assert.ok((payload as string).length <= ACTIVE_GROUP_MAX_REPLY_BYTES);
+        // Same normalized id kind as focused_window; ordering preserved.
+        assert.equal(formatGroupHighlightPayload(CORRELATION, OWNER, GENERATION, 2, "group-1", "win-2", [], { x: 0, y: 0, w: 1200, h: 800 }), null);
+        assert.equal(formatGroupHighlightPayload(CORRELATION, OWNER, GENERATION, 2, "group-1", "win-2", ["win-☃"], { x: 0, y: 0, w: 1200, h: 800 }), null);
+        assert.equal(formatGroupHighlightPayload(CORRELATION, OWNER, GENERATION, 2, "group-1", "win-2", ["win-1", "win-1"], { x: 0, y: 0, w: 1200, h: 800 }), null);
     });
 });
 
@@ -269,6 +275,7 @@ describe("active-group highlight bridge behavior", () => {
         assert.ok(firstSet !== undefined);
         const forwarded = JSON.parse(firstSet) as Record<string, unknown>;
         assert.equal(forwarded["group"], "group-1");
+        assert.deepEqual(forwarded["members"], ["win-1", "win-2"]);
         assert.deepEqual(forwarded["bounds"], { x: 0, y: 0, w: 1200, h: 800 });
         assert.ok(
             f.logs.some((line) => line === `plasma-auto-tiler:group-highlight:setter-submitted correlation=${CORRELATION} revision=2`),

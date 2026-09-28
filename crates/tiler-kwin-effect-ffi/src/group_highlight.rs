@@ -10,8 +10,9 @@
 // Payload contract (mirrors the script bridge `formatGroupHighlightPayload`
 // output, which forwards the engine `base_revision` verbatim):
 //   {"v":1,"correlation_id":..,"owner":..,"generation":..,"revision":..,
-//    "group":..,"focused_window":..,"bounds":{"x":..,"y":..,"w":..,"h":..}}
-// - Exactly these 8 root keys (any order), no unknown fields, no duplicates,
+//    "group":..,"focused_window":..,"members":[..],
+//    "bounds":{"x":..,"y":..,"w":..,"h":..}}
+// - Exactly these 9 root keys (any order), no unknown fields, no duplicates,
 //   no trailing data; `bounds` has exactly x/y/w/h.
 // - `v` is the integer number 1 written without fraction or exponent.
 //   Fractional versions (e.g. 1.5) and string versions reject. This mirrors
@@ -24,12 +25,18 @@
 // - `correlation_id`/`owner`/`group`/`focused_window` are non-empty opaque
 //   ids: 1..128 bytes of ASCII alnum plus `-_.` (matches `ids.rs` owner and
 //   correlation alphabets and `active_group.rs` opaque ids).
+// - `members` is a required non-empty list of opaque window ids using the
+//   same alphabet/limit as `focused_window`: each entry is 1..128 bytes,
+//   entries are unique (order preserved verbatim for native stacking choice).
+//   Missing/empty/duplicate/non-string/non-opaque entries reject. The list
+//   is accepted but not stored in the POD state: native C++ extracts it
+//   after Rust accepts.
 // - `generation` is 1..64 bytes of lowercase/digit/dash (matches
 //   `GenerationId::parse`).
 // - `bounds` integers use strict integer syntax (no fraction/exponent):
 //   x/y in -16384..=16384, w/h in 1..=16384 (matches the bridge
 //   `isTargetRect` gate and the planner carried-geometry bound).
-// - Payload bytes are 1..=4096 (matches the bridge 4096 cap).
+// - Payload bytes are 1..=65536 (matches the bridge 64 KiB reply cap).
 //
 // Parsing is `serde_json` into deny-unknown-fields structs plus the same
 // range/alphabet gates as before. Behavioral notes versus the retired
@@ -68,7 +75,7 @@
 
 pub const GROUP_HIGHLIGHT_MAX_ID_LEN: usize = 128;
 pub const GROUP_HIGHLIGHT_MAX_GENERATION_LEN: usize = 64;
-pub const GROUP_HIGHLIGHT_MAX_JSON: usize = 4096;
+pub const GROUP_HIGHLIGHT_MAX_JSON: usize = 65536;
 pub const GROUP_HIGHLIGHT_COORD_MIN: i32 = -16384;
 pub const GROUP_HIGHLIGHT_COORD_MAX: i32 = 16384;
 pub const GROUP_HIGHLIGHT_SIZE_MAX: i32 = 16384;
@@ -189,7 +196,7 @@ impl GroupHighlightState {
 
 // Wire shape of the script bridge payload. `deny_unknown_fields` rejects
 // unknown keys, missing keys fail as missing fields, and duplicate keys fail
-// as duplicate fields, preserving the exact-8-keys contract.
+// as duplicate fields, preserving the exact-9-keys contract.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GroupPayload {
@@ -200,6 +207,7 @@ struct GroupPayload {
     revision: u64,
     group: String,
     focused_window: String,
+    members: Vec<String>,
     bounds: GroupBounds,
 }
 
@@ -250,6 +258,22 @@ fn parse_payload(bytes: &[u8]) -> Option<Parsed> {
     }
     if !tiler_core::bounds::is_opaque_id(&payload.focused_window) {
         return None;
+    }
+    // Plain member list: required, non-empty, unique opaque ids in the same
+    // alphabet/limit as `focused_window`. Accepted but intentionally not
+    // stored in the POD state; native C++ extracts the list after Rust
+    // accepts.
+    if payload.members.is_empty() {
+        return None;
+    }
+    {
+        use std::collections::HashSet as MemberSet;
+        let mut seen = MemberSet::with_capacity(payload.members.len());
+        for member in &payload.members {
+            if !tiler_core::bounds::is_opaque_id(member) || !seen.insert(member.as_str()) {
+                return None;
+            }
+        }
     }
     // Carried-geometry bound: x/y in -16384..=16384, w/h in 1..=16384.
     if !tiler_core::bounds::valid_carried_rect(
@@ -722,7 +746,7 @@ mod tests {
 
     fn payload(correlation: &str, revision: u64) -> Vec<u8> {
         format!(
-            "{{\"v\":1,\"correlation_id\":\"{correlation}\",\"owner\":\"owner-1\",\"generation\":\"gen-1\",\"revision\":{revision},\"group\":\"group-1\",\"focused_window\":\"win-2\",\"bounds\":{{\"x\":0,\"y\":0,\"w\":1200,\"h\":800}}}}"
+            "{{\"v\":1,\"correlation_id\":\"{correlation}\",\"owner\":\"owner-1\",\"generation\":\"gen-1\",\"revision\":{revision},\"group\":\"group-1\",\"focused_window\":\"win-2\",\"members\":[\"win-1\",\"win-2\"],\"bounds\":{{\"x\":0,\"y\":0,\"w\":1200,\"h\":800}}}}"
         )
         .into_bytes()
     }
@@ -761,20 +785,20 @@ mod tests {
     #[test]
     fn fractional_schema_version_rejected() {
         assert!(!parse_ok(
-            br#"{"v":1.5,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+            br#"{"v":1.5,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
         ));
         assert!(!parse_ok(
-            br#"{"v":2,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+            br#"{"v":2,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
         ));
         assert!(!parse_ok(
-            br#"{"v":"1","correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+            br#"{"v":"1","correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
         ));
         assert!(!parse_ok(
-            br#"{"v":1.0,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+            br#"{"v":1.0,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
         ));
         // Exponent form of one is still a float token, not the integer 1.
         assert!(!parse_ok(
-            br#"{"v":1e0,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+            br#"{"v":1e0,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
         ));
     }
 
@@ -784,38 +808,55 @@ mod tests {
         assert!(!parse_ok(b""));
         assert!(!parse_ok(br#"{"v":1}"#));
         assert!(!parse_ok(
-            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1},"topology":[]}"#
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":0,"y":0,"w":1,"h":1},"topology":[]}"#
         ));
         assert!(!parse_ok(
             br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w"}"#
         ));
         assert!(!parse_ok(
-            "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"gr☃up\",\"focused_window\":\"w\",\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}"
+            "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"gr☃up\",\"focused_window\":\"w\",\"members\":[\"w\"],\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}"
                 .as_bytes()
         ));
         assert!(!parse_ok(
-            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"","focused_window":"w","members":["w"],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
         ));
         assert!(!parse_ok(
-            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"GEN-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"GEN-1","revision":0,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
         ));
         assert!(!parse_ok(
-            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":0,"h":1}}"#
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":0,"y":0,"w":0,"h":1}}"#
         ));
         assert!(!parse_ok(
-            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":50000,"y":0,"w":10,"h":10}}"#
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":50000,"y":0,"w":10,"h":10}}"#
         ));
         assert!(!parse_ok(
-            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":-1,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":-1,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
         ));
         assert!(!parse_ok(
-            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":1.5,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":1.5,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
         ));
         assert!(!parse_ok(
-            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":9007199254740992,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":9007199254740992,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
         ));
         assert!(!parse_ok(
-            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0.5,"y":0,"w":1,"h":1}}"#
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":0.5,"y":0,"w":1,"h":1}}"#
+        ));
+        // Member list uses the same opaque-id kind/limit as focused_window.
+        assert!(!parse_ok(
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","members":[],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+        ));
+        assert!(!parse_ok(
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","members":["w","w"],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+        ));
+        assert!(!parse_ok(
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","members":[""],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+        ));
+        assert!(!parse_ok(
+            "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"members\":[\"w☃\"],\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}"
+                .as_bytes()
+        ));
+        assert!(!parse_ok(
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","members":["w",null],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
         ));
     }
 
@@ -824,26 +865,26 @@ mod tests {
         // Leading zeros are not valid JSON numbers and were rejected by the
         // strict-digits gate before.
         assert!(!parse_ok(
-            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":01,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":01,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
         ));
         // Exponent-form integers decode as float, never as the integer field.
         assert!(!parse_ok(
-            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":1e2,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":1e2,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
         ));
         // Wrong JSON types for typed fields reject.
         assert!(!parse_ok(
-            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":"0","group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":"0","group":"g","focused_window":"w","members":["w"],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
         ));
         assert!(!parse_ok(
-            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":"0","y":0,"w":1,"h":1}}"#
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":"0","y":0,"w":1,"h":1}}"#
         ));
         assert!(!parse_ok(
-            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":null,"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":null,"members":["w"],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
         ));
         // Non-object roots and nested unknown keys reject.
         assert!(!parse_ok(br#"[]"#));
         assert!(!parse_ok(
-            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1,"z":0}}"#
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":0,"y":0,"w":1,"h":1,"z":0}}"#
         ));
         // Non-UTF8 bytes reject.
         assert!(!parse_ok(&[0x7b, 0x22, 0x76, 0x22, 0xff, 0x7d]));
@@ -854,25 +895,25 @@ mod tests {
         // The hand-written parser rejected duplicates via seen-bits; serde
         // must report duplicate fields instead of last-wins.
         assert!(!parse_ok(
-            br#"{"v":1,"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+            br#"{"v":1,"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
         ));
         assert!(!parse_ok(
-            br#"{"v":1,"correlation_id":"a","correlation_id":"b","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+            br#"{"v":1,"correlation_id":"a","correlation_id":"b","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
         ));
         assert!(!parse_ok(
-            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"revision":1,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"h":1}}"#
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"revision":1,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":0,"y":0,"w":1,"h":1}}"#
         ));
         assert!(!parse_ok(
-            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0,"x":1,"y":0,"w":1,"h":1}}"#
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":0,"x":1,"y":0,"w":1,"h":1}}"#
         ));
         assert!(!parse_ok(
-            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","bounds":{"x":0,"y":0,"w":1,"w":2,"h":1}}"#
+            br#"{"v":1,"correlation_id":"a","owner":"b","generation":"gen-1","revision":0,"group":"g","focused_window":"w","members":["w"],"bounds":{"x":0,"y":0,"w":1,"w":2,"h":1}}"#
         ));
         // A duplicated payload through the FFI clears the display and counts
         // as parse-rejected, never as an accepted update.
         let mut state = GroupHighlightState::zero();
         assert_eq!(apply(&mut state, "gen-1-g1", 3), 1);
-        let dup = br#"{"v":1,"correlation_id":"gen-1-g2","owner":"owner-1","generation":"gen-1","revision":4,"revision":4,"group":"group-1","focused_window":"win-2","bounds":{"x":0,"y":0,"w":1200,"h":800}}"#;
+        let dup = br#"{"v":1,"correlation_id":"gen-1-g2","owner":"owner-1","generation":"gen-1","revision":4,"revision":4,"group":"group-1","focused_window":"win-2","members":["win-1","win-2"],"bounds":{"x":0,"y":0,"w":1200,"h":800}}"#;
         assert_eq!(apply_inner(&mut state, dup, b"win-2"), 0);
         assert_eq!(state.has_group, 0);
         assert_eq!(state.parse_rejected, 1);
@@ -889,7 +930,7 @@ mod tests {
         trailing.extend(b" ");
         trailing.extend(b"{}");
         assert!(!parse_ok(&trailing));
-        // Exactly the 4096-byte cap still parses when the shape is valid.
+        // Exactly the 65536-byte cap still parses when the shape is valid.
         let mut padded = payload("gen-1-g0", 0);
         let room = GROUP_HIGHLIGHT_MAX_JSON - padded.len();
         assert!(room > 2);
@@ -960,12 +1001,12 @@ mod tests {
         assert_eq!(apply(&mut state, "gen-1-g10", 50), 1);
         // New owner with a lower revision is a new stream: must accept
         // rather than applying the stale high-water mark forever.
-        let bytes = b"{\"v\":1,\"correlation_id\":\"other-g0\",\"owner\":\"owner-2\",\"generation\":\"gen-1\",\"revision\":1,\"group\":\"group-1\",\"focused_window\":\"win-2\",\"bounds\":{\"x\":1,\"y\":2,\"w\":10,\"h\":10}}";
+        let bytes = b"{\"v\":1,\"correlation_id\":\"other-g0\",\"owner\":\"owner-2\",\"generation\":\"gen-1\",\"revision\":1,\"group\":\"group-1\",\"focused_window\":\"win-2\",\"members\":[\"win-2\"],\"bounds\":{\"x\":1,\"y\":2,\"w\":10,\"h\":10}}";
         assert_eq!(apply_inner(&mut state, bytes, b"win-2"), 1);
         assert_eq!(state.last_revision, 1);
         assert_eq!(state.owner_bytes(), b"owner-2");
         // New generation likewise resets.
-        let bytes = b"{\"v\":1,\"correlation_id\":\"gen-2-g0\",\"owner\":\"owner-2\",\"generation\":\"gen-2\",\"revision\":0,\"group\":\"group-1\",\"focused_window\":\"win-2\",\"bounds\":{\"x\":1,\"y\":2,\"w\":10,\"h\":10}}";
+        let bytes = b"{\"v\":1,\"correlation_id\":\"gen-2-g0\",\"owner\":\"owner-2\",\"generation\":\"gen-2\",\"revision\":0,\"group\":\"group-1\",\"focused_window\":\"win-2\",\"members\":[\"win-2\"],\"bounds\":{\"x\":1,\"y\":2,\"w\":10,\"h\":10}}";
         assert_eq!(apply_inner(&mut state, bytes, b"win-2"), 1);
         assert_eq!(state.generation_bytes(), b"gen-2");
     }

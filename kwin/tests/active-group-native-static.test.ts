@@ -47,15 +47,43 @@ describe("active-group native static contract", () => {
         assert.doesNotMatch(effectImpl, /org\.kde\.kwin\.Effects/);
     });
 
-    it("keeps the existing active border and adds exactly one group outline", () => {
-        assert.equal(countMatches(effectHeader, /OutlinedBorderItem/g), 2);
+    it("keeps the existing active border and adds exactly one filled group underlay", () => {
+        assert.equal(countMatches(effectHeader, /OutlinedBorderItem/g), 1);
+        assert.ok(countMatches(effectHeader, /ImageItem/g) >= 2);
         assert.match(effectHeader, /m_borderItem/);
         assert.match(effectHeader, /m_groupItem/);
-        assert.match(effectImpl, /m_groupItem\(RectF\(\), BorderOutline\(\)\)/);
-        assert.match(effectImpl, /m_groupItem\.setParentItem\(effects->scene\(\)->overlayItem\(\)\)/);
-        assert.match(effectImpl, /m_groupItem\.setOutline\(/);
-        assert.match(effectImpl, /m_groupItem\.setInnerRect\(/);
+        assert.match(effectHeader, /m_groupMemberIds/);
+        assert.match(effectHeader, /m_groupAnchor/);
+        assert.doesNotMatch(effectImpl, /m_groupItem\(RectF\(\), BorderOutline\(\)\)/);
+        // No valid anchor detaches so the underlay can never draw as a
+        // screen overlay; the drag preview keeps the overlay parent.
+        assert.match(effectImpl, /m_groupItem\.setParentItem\(nullptr\)/);
+        assert.doesNotMatch(effectImpl, /m_groupItem\.setParentItem\(effects->scene\(\)->overlayItem\(\)\)/);
+        assert.match(effectImpl, /m_dragPreviewItem\.setParentItem\(effects->scene\(\)->overlayItem\(\)\)/);
+        assert.match(effectImpl, /m_groupItem\.setImage\(/);
+        assert.match(effectImpl, /m_groupItem\.setPosition\(/);
+        assert.match(effectImpl, /m_groupItem\.setSize\(/);
         assert.match(effectImpl, /m_groupItem\.setVisible\(/);
+        assert.doesNotMatch(effectImpl, /m_groupItem\.setOutline\(/);
+        assert.doesNotMatch(effectImpl, /m_groupItem\.setInnerRect\(/);
+        // Underlay anchors under the lowest-stacked member at Z=-2 so it
+        // slides with the workspace and higher members occlude it.
+        assert.match(effectImpl, /m_groupItem\.setZ\(-2\)/);
+        assert.match(effectImpl, /updateGroupAnchorAndGeometry/);
+        assert.match(effectImpl, /stackingOrderChanged/);
+        // The current anchor's own frame move remaps the stored scene union
+        // without a fresh payload; the old anchor disconnects on change.
+        assert.match(effectImpl, /windowFrameGeometryChanged/);
+        assert.match(effectImpl, /disconnect\(oldAnchor, &EffectWindow::windowFrameGeometryChanged/);
+        assert.match(effectImpl, /connect\(anchor, &EffectWindow::windowFrameGeometryChanged/);
+        assert.match(effectImpl, /groupUnderlayOuterRect/);
+        assert.match(logic, /groupUnderlayOuterRect/);
+        // Default extension sentinel follows the current border width;
+        // explicit 0 renders as-is.
+        assert.match(logic, /groupUnderlayEffectiveExtension/);
+        assert.match(effectImpl, /groupUnderlayEffectiveExtension\(\s*ActiveBorderConfig::groupUnderlayExtension\(\),\s*ActiveBorderConfig::borderWidth\(\)\)/);
+        // Accepted non-group overlap paints over the lower edge.
+        assert.match(effectImpl, /painted over/);
         // The active border is local to its target, below target contents and
         // later-stacked windows rather than a global overlay.
         assert.match(effectImpl, /m_borderItem\.setZ\(-1\)/);
@@ -109,8 +137,11 @@ describe("active-group native static contract", () => {
         assert.doesNotMatch(effectImpl, /clearInitialGate/);
         assert.doesNotMatch(effectImpl, /isInitialConfirmedNormal/);
         assert.doesNotMatch(effectImpl, /emitActiveBorderApply/);
-        // No Qt JSON parsing: strict POD arrives through the Rust staticlib.
-        assert.doesNotMatch(effectImpl, /QJsonDocument/);
+        // Qt JSON reads only the already-Rust-accepted plain member list
+        // for the lowest-stacked anchor; policy stays in Rust.
+        assert.match(effectImpl, /QJsonDocument/);
+        assert.match(effectImpl, /members/);
+        assert.match(effectImpl, /m_groupMemberIds/);
         assert.doesNotMatch(ffi, /InitialMaximizeState/);
         assert.doesNotMatch(ffi, /initial_maximize_/);
         assert.doesNotMatch(rust, /initial_maximize_/);
@@ -153,7 +184,6 @@ describe("active-group native static contract", () => {
             /groupFocusEligible/,
             /groupFocusMatches/,
             /isGroupEndpointUsable/,
-            /QJsonDocument/,
         ]) {
             assert.doesNotMatch(effectHeader, moved);
             assert.doesNotMatch(effectImpl, moved);
@@ -209,6 +239,9 @@ describe("active-group native static contract", () => {
         assert.match(validator, /mouseChanged/);
         assert.match(validator, /MetaModifier/);
         assert.match(validator, /OutlinedBorderItem/);
+        assert.match(validator, /ImageItem/);
+        assert.match(validator, /updateGroupAnchorAndGeometry/);
+        assert.match(validator, /stackingOrderChanged/);
         assert.match(validator, /group_highlight_focus_matches/);
         assert.match(validator, /group_highlight_is_visible/);
         assert.match(validator, /m_groupDbusAvailable/);
@@ -225,10 +258,10 @@ describe("active-group native static contract", () => {
         assert.match(effectImpl, /drag_oracle_last_copy/);
         assert.doesNotMatch(effectImpl, /drag_oracle_last\(/);
         assert.match(effectImpl, /drag_oracle_record/);
-        // Exactly one shared hookup set: single stacking-order pass and one
-        // windowAdded/closed/deleted connection each driving both maximize
-        // tracking and oracle start/finish state.
-        assert.equal(countMatches(effectImpl, /stackingOrder/g), 1);
+        // Construction seed plus the group-underlay lowest-stacked anchor
+        // share the lifecycle; stacking changes re-anchor the underlay.
+        assert.equal(countMatches(effectImpl, /stackingOrder\(\)/g), 2);
+        assert.match(effectImpl, /stackingOrderChanged/);
         assert.equal(countMatches(effectImpl, /EffectsHandler::windowAdded/g), 1);
         assert.equal(countMatches(effectImpl, /EffectsHandler::windowClosed/g), 1);
         assert.equal(countMatches(effectImpl, /EffectsHandler::windowDeleted/g), 1);
@@ -253,8 +286,10 @@ describe("active-group native static contract", () => {
         assert.match(effectHeader, /m_oracleDbusObject/);
         assert.match(effectHeader, /m_oracleStartRects/);
         assert.match(effectHeader, /drag_oracle_ffi\.h/);
-        // Rendering untouched: still exactly two outlines.
-        assert.equal(countMatches(effectHeader, /OutlinedBorderItem/g), 2);
+        // Rendering: one active outline plus the filled group underlay and
+        // the drag preview fill.
+        assert.equal(countMatches(effectHeader, /OutlinedBorderItem/g), 1);
+        assert.ok(countMatches(effectHeader, /ImageItem/g) >= 2);
         // Oracle Rust FFI and pull protocol surface stay intact.
         const oracleFfi = read("native-effect/drag_oracle_ffi.h");
         const oracleRust = read("../crates/tiler-kwin-effect-ffi/src/drag_oracle.rs");

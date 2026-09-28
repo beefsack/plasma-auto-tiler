@@ -65,11 +65,21 @@ inline bool dragPreviewRectValid(int x, int y, int w, int h)
     return x >= -coordBound && x <= coordBound && y >= -coordBound && y <= coordBound;
 }
 
-// Default filled-translucent preview color: Plasma selection blue
-// (#2A82DA, matching the active-border fallback) at alpha 64 (~25%).
-inline QColor dragPreviewFillColor()
+// Group underlay extension default: sentinel -1 means "match the current
+// configured border width". Explicit values (including 0) render as-is.
+inline double groupUnderlayEffectiveExtension(double extension, double borderWidth)
 {
-    return QColor(0x2a, 0x82, 0xda, 64);
+    return extension < 0.0 ? borderWidth : extension;
+}
+
+// Group underlay outer geometry: the Rust-carried union bounds expanded by
+// the border gap plus the border width plus the resolved extension beyond
+// the border outer edge. Pure so the effect remap after re-anchor and
+// reconfigure stays testable without KWin.
+inline QRectF groupUnderlayOuterRect(const QRectF &unionRect, double gap, double borderWidth, double extension)
+{
+    const double pad = gap + borderWidth + extension;
+    return unionRect.adjusted(-pad, -pad, pad, pad);
 }
 
 } // namespace KWin

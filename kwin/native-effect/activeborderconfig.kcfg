@@ -25,5 +25,17 @@
             <label>Use theme highlight color when available</label>
             <default>true</default>
         </entry>
+        <entry name="DragPreviewColor" type="Color">
+            <label>Drop-target preview color</label>
+            <default>#402a82da</default>
+        </entry>
+        <entry name="GroupUnderlayColor" type="Color">
+            <label>Group underlay color</label>
+            <default>#40808080</default>
+        </entry>
+        <entry name="GroupUnderlayExtension" type="Double">
+            <label>Group underlay extension</label>
+            <default>-1</default>
+        </entry>
     </group>
 </kcfg>

@@ -48,7 +48,7 @@ std::string validPayload(const std::string &correlation, uint64_t revision)
 {
     return "{\"v\":1,\"correlation_id\":\"" + correlation
         + "\",\"owner\":\"owner-1\",\"generation\":\"gen-1\",\"revision\":" + std::to_string(revision)
-        + ",\"group\":\"group-1\",\"focused_window\":\"win-2\",\"bounds\":{\"x\":0,\"y\":0,\"w\":1200,\"h\":800}}";
+        + ",\"group\":\"group-1\",\"focused_window\":\"win-2\",\"members\":[\"win-1\",\"win-2\"],\"bounds\":{\"x\":0,\"y\":0,\"w\":1200,\"h\":800}}";
 }
 
 int32_t applyStr(GroupHighlightState *state, const std::string &payload, const char *active)
@@ -95,20 +95,22 @@ void malformedPayloadsFailClosed()
     CHECK(group_highlight_state_init(&state) == 0);
     const char *cases[] = {
         "not-json",
-        "{\"v\":2,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
-        "{\"v\":1.5,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
-        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1},\"topology\":[]}",
+        "{\"v\":2,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"members\":[\"w\"],\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
+        "{\"v\":1.5,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"members\":[\"w\"],\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
+        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"members\":[\"w\"],\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1},\"topology\":[]}",
         "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\"}",
-        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"\",\"focused_window\":\"w\",\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
-        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"GEN-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
-        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"bounds\":{\"x\":0,\"y\":0,\"w\":0,\"h\":1}}",
-        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"bounds\":{\"x\":50000,\"y\":0,\"w\":10,\"h\":10}}",
-        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":-1,\"group\":\"g\",\"focused_window\":\"w\",\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
-        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":1.5,\"group\":\"g\",\"focused_window\":\"w\",\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
-        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":9007199254740992,\"group\":\"g\",\"focused_window\":\"w\",\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
-        "{\"v\":1,\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
-        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
-        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"bounds\":{\"x\":0,\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
+        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"\",\"focused_window\":\"w\",\"members\":[\"w\"],\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
+        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"GEN-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"members\":[\"w\"],\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
+        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"members\":[\"w\"],\"bounds\":{\"x\":0,\"y\":0,\"w\":0,\"h\":1}}",
+        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"members\":[\"w\"],\"bounds\":{\"x\":50000,\"y\":0,\"w\":10,\"h\":10}}",
+        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":-1,\"group\":\"g\",\"focused_window\":\"w\",\"members\":[\"w\"],\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
+        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":1.5,\"group\":\"g\",\"focused_window\":\"w\",\"members\":[\"w\"],\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
+        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":9007199254740992,\"group\":\"g\",\"focused_window\":\"w\",\"members\":[\"w\"],\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
+        "{\"v\":1,\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"members\":[\"w\"],\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
+        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"members\":[\"w\"],\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
+        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"members\":[\"w\"],\"bounds\":{\"x\":0,\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
+        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"members\":[],\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
+        "{\"v\":1,\"correlation_id\":\"a\",\"owner\":\"b\",\"generation\":\"gen-1\",\"revision\":0,\"group\":\"g\",\"focused_window\":\"w\",\"members\":[\"w\",\"w\"],\"bounds\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}}",
         nullptr,
     };
     for (size_t i = 0; cases[i] != nullptr; ++i) {
@@ -151,11 +153,11 @@ void ownerGenerationChangeResetsMonotonicComparison()
     CHECK(group_highlight_state_init(&state) == 0);
     CHECK(applyStr(&state, validPayload("gen-1-g10", 50), "win-2") == 1);
     const std::string nextOwner = "{\"v\":1,\"correlation_id\":\"other-g0\",\"owner\":\"owner-2\",\"generation\":\"gen-1\",\"revision\":1,"
-        "\"group\":\"group-1\",\"focused_window\":\"win-2\",\"bounds\":{\"x\":1,\"y\":2,\"w\":10,\"h\":10}}";
+        "\"group\":\"group-1\",\"focused_window\":\"win-2\",\"members\":[\"win-2\"],\"bounds\":{\"x\":1,\"y\":2,\"w\":10,\"h\":10}}";
     CHECK(applyStr(&state, nextOwner, "win-2") == 1);
     CHECK(state.last_revision == 1);
     const std::string nextGeneration = "{\"v\":1,\"correlation_id\":\"gen-2-g0\",\"owner\":\"owner-2\",\"generation\":\"gen-2\",\"revision\":0,"
-        "\"group\":\"group-1\",\"focused_window\":\"win-2\",\"bounds\":{\"x\":1,\"y\":2,\"w\":10,\"h\":10}}";
+        "\"group\":\"group-1\",\"focused_window\":\"win-2\",\"members\":[\"win-2\"],\"bounds\":{\"x\":1,\"y\":2,\"w\":10,\"h\":10}}";
     CHECK(applyStr(&state, nextGeneration, "win-2") == 1);
 }
 

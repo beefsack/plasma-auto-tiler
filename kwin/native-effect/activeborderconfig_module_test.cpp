@@ -1,5 +1,6 @@
 #include "activeborderconfig.h"
 #include "activeborderconfig_module.h"
+#include "activeborderlogic.h"
 
 #include <KColorButton>
 #include <KConfigGroup>
@@ -53,9 +54,34 @@ QCheckBox *useThemeColorCheckBox(KWin::ActiveBorderConfigModule &module)
     return module.widget()->findChild<QCheckBox *>(QStringLiteral("kcfg_UseThemeColor"));
 }
 
+KColorButton *dragPreviewColorButton(KWin::ActiveBorderConfigModule &module)
+{
+    return module.widget()->findChild<KColorButton *>(QStringLiteral("kcfg_DragPreviewColor"));
+}
+
+KColorButton *groupUnderlayColorButton(KWin::ActiveBorderConfigModule &module)
+{
+    return module.widget()->findChild<KColorButton *>(QStringLiteral("kcfg_GroupUnderlayColor"));
+}
+
+QDoubleSpinBox *groupUnderlayExtensionSpinBox(KWin::ActiveBorderConfigModule &module)
+{
+    return module.widget()->findChild<QDoubleSpinBox *>(QStringLiteral("kcfg_GroupUnderlayExtension"));
+}
+
 QColor defaultBorderColor()
 {
     return QColor(0x2a, 0x82, 0xda);
+}
+
+QColor defaultDragPreviewColor()
+{
+    return QColor(0x2a, 0x82, 0xda, 64);
+}
+
+QColor defaultGroupUnderlayColor()
+{
+    return QColor(0x80, 0x80, 0x80, 64);
 }
 
 void dbusTargetIsExact()
@@ -417,7 +443,208 @@ void unifiedControlsArePresent()
     CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("outerGapSpinBox")) != nullptr);
     CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("scriptStatusLabel")) != nullptr);
     CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("kcfg_BorderWidth")) != nullptr);
+    CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("kcfg_DragPreviewColor")) != nullptr);
+    CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("kcfg_GroupUnderlayColor")) != nullptr);
+    CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("kcfg_GroupUnderlayExtension")) != nullptr);
     CHECK(module.widget()->findChild<QWidget *>(QStringLiteral("shortcutApplyButton")) != nullptr);
+}
+
+void translucentColorsAlphaChannelEnabled()
+{
+    KWin::ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    module.load();
+    KColorButton *preview = dragPreviewColorButton(module);
+    CHECK(preview != nullptr);
+    KColorButton *underlay = groupUnderlayColorButton(module);
+    CHECK(underlay != nullptr);
+    if (preview) {
+        CHECK(preview->isAlphaChannelEnabled());
+    }
+    if (underlay) {
+        CHECK(underlay->isAlphaChannelEnabled());
+    }
+}
+
+void translucentColorsMissingKeysDefaultToTranslucent()
+{
+    {
+        KConfigGroup group = borderGroup();
+        group.deleteEntry(QStringLiteral("DragPreviewColor"));
+        group.deleteEntry(QStringLiteral("GroupUnderlayColor"));
+        group.sync();
+    }
+    KWin::ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    KColorButton *preview = dragPreviewColorButton(module);
+    KColorButton *underlay = groupUnderlayColorButton(module);
+    CHECK(preview != nullptr);
+    CHECK(underlay != nullptr);
+    module.load();
+    if (preview) {
+        CHECK(preview->color() == defaultDragPreviewColor());
+    }
+    if (underlay) {
+        CHECK(underlay->color() == defaultGroupUnderlayColor());
+    }
+    KWin::ActiveBorderConfig::self()->read();
+    CHECK(KWin::ActiveBorderConfig::dragPreviewColor() == defaultDragPreviewColor());
+    CHECK(KWin::ActiveBorderConfig::groupUnderlayColor() == defaultGroupUnderlayColor());
+}
+
+void dragPreviewColorSaveReadbackAndDefaultsReset()
+{
+    SucceedingReconfigureModule module(nullptr, KPluginMetaData());
+    module.load();
+    KColorButton *preview = dragPreviewColorButton(module);
+    CHECK(preview != nullptr);
+    if (!preview) {
+        return;
+    }
+    const QColor target(0x11, 0x22, 0x33, 128);
+    preview->setColor(target);
+    module.save();
+    CHECK(borderGroup().readEntry(QStringLiteral("DragPreviewColor"), QColor()) == target);
+
+    KWin::ActiveBorderConfigModule reloaded(nullptr, KPluginMetaData());
+    reloaded.load();
+    KColorButton *reloadedPreview = dragPreviewColorButton(reloaded);
+    CHECK(reloadedPreview != nullptr);
+    if (reloadedPreview) {
+        CHECK(reloadedPreview->color() == target);
+    }
+    KWin::ActiveBorderConfig::self()->read();
+    CHECK(KWin::ActiveBorderConfig::dragPreviewColor() == target);
+
+    module.defaults();
+    CHECK(preview->color() == defaultDragPreviewColor());
+    module.save();
+    CHECK(borderGroup().readEntry(QStringLiteral("DragPreviewColor"), defaultDragPreviewColor()) == defaultDragPreviewColor());
+    KWin::ActiveBorderConfig::self()->read();
+    CHECK(KWin::ActiveBorderConfig::dragPreviewColor() == defaultDragPreviewColor());
+}
+
+void groupUnderlayColorSaveReadbackAndDefaultsReset()
+{
+    SucceedingReconfigureModule module(nullptr, KPluginMetaData());
+    module.load();
+    KColorButton *underlay = groupUnderlayColorButton(module);
+    CHECK(underlay != nullptr);
+    if (!underlay) {
+        return;
+    }
+    const QColor target(0x11, 0x22, 0x33, 128);
+    underlay->setColor(target);
+    module.save();
+    CHECK(borderGroup().readEntry(QStringLiteral("GroupUnderlayColor"), QColor()) == target);
+
+    KWin::ActiveBorderConfigModule reloaded(nullptr, KPluginMetaData());
+    reloaded.load();
+    KColorButton *reloadedUnderlay = groupUnderlayColorButton(reloaded);
+    CHECK(reloadedUnderlay != nullptr);
+    if (reloadedUnderlay) {
+        CHECK(reloadedUnderlay->color() == target);
+    }
+    KWin::ActiveBorderConfig::self()->read();
+    CHECK(KWin::ActiveBorderConfig::groupUnderlayColor() == target);
+
+    module.defaults();
+    CHECK(underlay->color() == defaultGroupUnderlayColor());
+    module.save();
+    CHECK(borderGroup().readEntry(QStringLiteral("GroupUnderlayColor"), defaultGroupUnderlayColor()) == defaultGroupUnderlayColor());
+    KWin::ActiveBorderConfig::self()->read();
+    CHECK(KWin::ActiveBorderConfig::groupUnderlayColor() == defaultGroupUnderlayColor());
+}
+
+void dragPreviewColorOnlyHotApplyRetry()
+{
+    CountingReconfigureModule module(nullptr, KPluginMetaData());
+    module.load();
+    KColorButton *preview = dragPreviewColorButton(module);
+    CHECK(preview != nullptr);
+    if (!preview) {
+        return;
+    }
+    const QColor target = (preview->color() == QColor(0x11, 0x22, 0x33, 128))
+        ? QColor(0x44, 0x55, 0x66, 200)
+        : QColor(0x11, 0x22, 0x33, 128);
+    preview->setColor(target);
+    CHECK(module.needsSave());
+    module.save();
+    CHECK(module.calls == 1);
+    CHECK(borderGroup().readEntry(QStringLiteral("DragPreviewColor"), QColor()) == target);
+    CHECK(module.needsSave());
+    module.succeed = true;
+    module.save();
+    CHECK(module.calls == 2);
+    CHECK(!module.needsSave());
+}
+
+void groupUnderlayExtensionDefaultsToBorderWidth()
+{
+    {
+        KConfigGroup group = borderGroup();
+        group.deleteEntry(QStringLiteral("GroupUnderlayExtension"));
+        group.deleteEntry(QStringLiteral("BorderWidth"));
+        group.sync();
+    }
+    KWin::ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    QDoubleSpinBox *extension = groupUnderlayExtensionSpinBox(module);
+    CHECK(extension != nullptr);
+    module.load();
+    if (extension) {
+        CHECK(extension->value() == -1.0);
+        CHECK(extension->minimum() == -1.0);
+        CHECK(extension->decimals() == 0);
+        CHECK(extension->specialValueText() == QStringLiteral("Match border width"));
+    }
+    KWin::ActiveBorderConfig::self()->read();
+    CHECK(KWin::ActiveBorderConfig::groupUnderlayExtension() == -1.0);
+    // Default sentinel follows the current border width: changing the
+    // border width to 5 while the extension stays at default resolves to 5.
+    CHECK(KWin::groupUnderlayEffectiveExtension(KWin::ActiveBorderConfig::groupUnderlayExtension(), 3.0) == 3.0);
+    {
+        KConfigGroup group = borderGroup();
+        group.writeEntry(QStringLiteral("BorderWidth"), 5.0);
+        group.sync();
+    }
+    KWin::ActiveBorderConfig::self()->read();
+    CHECK(KWin::ActiveBorderConfig::borderWidth() == 5.0);
+    CHECK(KWin::ActiveBorderConfig::groupUnderlayExtension() == -1.0);
+    CHECK(KWin::groupUnderlayEffectiveExtension(KWin::ActiveBorderConfig::groupUnderlayExtension(), KWin::ActiveBorderConfig::borderWidth()) == 5.0);
+    // Explicit 0 renders as-is and does not follow the border width.
+    {
+        KConfigGroup group = borderGroup();
+        group.writeEntry(QStringLiteral("GroupUnderlayExtension"), 0.0);
+        group.sync();
+    }
+    KWin::ActiveBorderConfig::self()->read();
+    CHECK(KWin::groupUnderlayEffectiveExtension(KWin::ActiveBorderConfig::groupUnderlayExtension(), KWin::ActiveBorderConfig::borderWidth()) == 0.0);
+    {
+        KConfigGroup group = borderGroup();
+        group.deleteEntry(QStringLiteral("GroupUnderlayExtension"));
+        group.writeEntry(QStringLiteral("BorderWidth"), 3.0);
+        group.sync();
+    }
+    KWin::ActiveBorderConfig::self()->read();
+}
+
+void groupUnderlayExtensionDefaultsReset()
+{
+    SucceedingReconfigureModule module(nullptr, KPluginMetaData());
+    module.load();
+    QDoubleSpinBox *extension = groupUnderlayExtensionSpinBox(module);
+    CHECK(extension != nullptr);
+    if (!extension) {
+        return;
+    }
+    extension->setValue(7.0);
+    module.save();
+    CHECK(borderGroup().readEntry(QStringLiteral("GroupUnderlayExtension"), -1.0) == 7.0);
+    module.defaults();
+    CHECK(extension->value() == -1.0);
+    module.save();
+    CHECK(borderGroup().readEntry(QStringLiteral("GroupUnderlayExtension"), -1.0) == -1.0);
+    KWin::ActiveBorderConfig::self()->read();
+    CHECK(KWin::ActiveBorderConfig::groupUnderlayExtension() == -1.0);
 }
 
 } // namespace
@@ -462,6 +689,13 @@ int main(int argc, char **argv)
         useThemeColorDefaultsReset();
         useThemeColorToggleMarksDirty();
         useThemeColorOnlyHotApplyRetry();
+        dragPreviewColorSaveReadbackAndDefaultsReset();
+        dragPreviewColorOnlyHotApplyRetry();
+        groupUnderlayColorSaveReadbackAndDefaultsReset();
+        groupUnderlayExtensionDefaultsToBorderWidth();
+        groupUnderlayExtensionDefaultsReset();
+        translucentColorsAlphaChannelEnabled();
+        translucentColorsMissingKeysDefaultToTranslucent();
         unifiedControlsArePresent();
     } else if (scenario == QStringLiteral("config")) {
         effectConfigReloadReflectsStoredValues();

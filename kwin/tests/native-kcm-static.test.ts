@@ -130,6 +130,9 @@ describe("native KCM static contract", () => {
         for (const token of [
             "kcfg_BorderColor",
             "kcfg_BorderWidth",
+            "kcfg_DragPreviewColor",
+            "kcfg_GroupUnderlayColor",
+            "kcfg_GroupUnderlayExtension",
             "workspaceModeCombo",
             "innerGapSpinBox",
             "outerGapSpinBox",
@@ -303,9 +306,28 @@ describe("native KCM static contract", () => {
             ["label_BorderWidth", "kcfg_BorderWidth"],
             ["label_BorderRadius", "kcfg_BorderRadius"],
             ["label_BorderGap", "kcfg_BorderGap"],
+            ["label_DragPreviewColor", "kcfg_DragPreviewColor"],
+            ["label_GroupUnderlayColor", "kcfg_GroupUnderlayColor"],
+            ["label_GroupUnderlayExtension", "kcfg_GroupUnderlayExtension"],
         ]) {
             assert.match(unifiedUi, new RegExp(`name="${label}"[\\s\\S]*?<property name="buddy">[\\s\\S]*?<cstring>${control}</cstring>`));
         }
+    });
+
+    it("exposes translucent group underlay color and extension through KConfigXT", () => {
+        assert.match(kcfg, /<entry name="GroupUnderlayColor" type="Color">[\s\S]*?<default>#40808080<\/default>/);
+        assert.match(kcfg, /<entry name="GroupUnderlayExtension" type="Double">[\s\S]*?<default>-1<\/default>/);
+        assert.match(kcfg, /<entry name="BorderColor" type="Color">/);
+        assert.match(kcfg, /<entry name="DragPreviewColor" type="Color">/);
+        assert.match(unifiedUi, /name="kcfg_GroupUnderlayColor"/);
+        assert.match(unifiedUi, /name="kcfg_GroupUnderlayExtension"/);
+        assert.match(unifiedUi, /Match border width/);
+        assert.match(effect, /groupUnderlayColor\(\)/);
+        assert.match(effect, /groupUnderlayExtension\(\)/);
+        assert.match(effect, /updateGroupUnderlayFill/);
+        assert.match(effect, /groupUnderlayOuterRect/);
+        assert.match(effect, /groupUnderlayEffectiveExtension\(/);
+        assert.match(logic, /groupUnderlayEffectiveExtension/);
     });
 
     it("manages the theme override through KConfigXT without disabling the fallback color", () => {

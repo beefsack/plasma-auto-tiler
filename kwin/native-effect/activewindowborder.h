@@ -16,6 +16,7 @@
 #include <QRectF>
 #include <QSet>
 #include <QString>
+#include <QStringList>
 
 #include <chrono>
 #include <cstdint>
@@ -50,6 +51,15 @@ private:
     void setTrackedWindow(EffectWindow *window);
     void subscribeMaximize(EffectWindow *window);
     void unsubscribeMaximize(EffectWindow *window);
+    // Group member visibility observation: every window subscribes its
+    // existing public minimizedChanged/windowHiddenChanged signals once;
+    // the handler re-anchors only for Rust-accepted member ids, so
+    // minimizing/restoring a lower member preserves the underlay without
+    // timers or polling. Precise disconnects never touch the tracked-window
+    // signals sharing minimizedChanged.
+    void subscribeGroupVisibility(EffectWindow *window);
+    void unsubscribeGroupVisibility(EffectWindow *window);
+    void onGroupMemberVisibilityChanged(EffectWindow *window);
     void attachOracleWindow(EffectWindow *window);
     void forgetOracleWindow(EffectWindow *window);
     void onOracleDragStart(EffectWindow *window);
@@ -68,6 +78,20 @@ private:
     void updateBorder();
     void updateOutline();
     void updateDragPreview();
+    void updateDragPreviewFill();
+    void updateGroupUnderlayFill();
+    // Lowest-stacked renderable group member anchor: picks the first
+    // stacking-order window whose bare-UUID internalId matches the
+    // Rust-accepted member list and whose EffectWindow isVisible() plus
+    // WindowItem effective visibility hold (skips minimized/hidden/
+    // off-current members whose item would hide the underlay), reparents
+    // the filled underlay there, and remaps the stored union outer rect
+    // into the anchor item coordinates. Tracks the current anchor's
+    // windowFrameGeometryChanged to remap on frame moves without a fresh
+    // payload; disconnects the old anchor on change/clear. Member
+    // minimizedChanged/windowHiddenChanged re-anchor via
+    // onGroupMemberVisibilityChanged. No logging of ids.
+    void updateGroupAnchorAndGeometry();
     void paintScreen(const RenderTarget &renderTarget, const RenderViewport &viewport, int mask, const Region &deviceRegion, LogicalOutput *screen) override;
     void updateGroupVisibility();
     void onMouseChanged(const QPointF &pos, const QPointF &oldPos, Qt::MouseButtons buttons, Qt::MouseButtons oldButtons,
@@ -76,9 +100,20 @@ private:
 
     const bool m_isOpenGL;
     OutlinedBorderItem m_borderItem;
-    OutlinedBorderItem m_groupItem;
+    // Filled-translucent group underlay below every group member (ImageItem
+    // with a 1x1 solid configured-color image scaled to the outer rect).
+    // Value member for auto-lifetime; visual parent is the lowest-stacked
+    // renderable member WindowItem at Z=-2 so it slides with the workspace and higher
+    // members occlude it normally. Detached (null parent) with no valid
+    // anchor so it can never draw as a screen overlay; stays hidden there.
+    ImageItem m_groupItem;
+    // Rust-accepted member bare-UUID strings plus the lowest-stacked anchor.
+    // Extracted native-side from the already-accepted payload with Qt JSON;
+    // no new FFI storage. Never logged.
+    QStringList m_groupMemberIds;
+    QPointer<EffectWindow> m_groupAnchor;
     // Filled-translucent preview above windows (ImageItem with a 1x1 solid
-    // default-color image scaled to the stored rect). Value member for
+    // configured-color image scaled to the stored rect). Value member for
     // auto-lifetime with the effect; visual parent is the scene overlay.
     ImageItem m_dragPreviewItem;
     QRect m_dragPreviewRect;
@@ -86,6 +121,7 @@ private:
     QPointer<EffectWindow> m_trackedWindow;
     QSet<EffectWindow *> m_maximizedWindows;
     QSet<EffectWindow *> m_maximizeSubscribed;
+    QSet<EffectWindow *> m_groupVisibilitySubscribed;
     QObject *m_groupDbusObject = nullptr;
     // Drag oracle state: inert read-only
     // observer state only (start rects plus the D-Bus object). The verdict

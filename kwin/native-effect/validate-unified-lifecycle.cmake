@@ -76,13 +76,20 @@ foreach(HEADER_TOKEN "drag_oracle_ffi.h" "m_oracleDbusObject" "m_oracleStartRect
     endif()
 endforeach()
 
-# Exactly one oracle hookup set shared with the existing lifecycle: one
-# stacking-order pass plus single windowAdded/closed/deleted connections that
+# Oracle seed plus the group-underlay lowest-stacked anchor share the
+# existing lifecycle: two stacking-order passes (construction seed plus
+# anchor choice) plus single windowAdded/closed/deleted connections that
 # also drive the oracle start/finish state through the shared lambdas.
-string(REGEX MATCHALL "stackingOrder" STACK_MATCHES "${IMPL}")
+# Count exact stackingOrder() calls so the stackingOrderChanged signal and
+# comments do not inflate the count.
+string(REGEX MATCHALL "stackingOrder\\(\\)" STACK_MATCHES "${IMPL}")
 list(LENGTH STACK_MATCHES STACK_COUNT)
-if(NOT STACK_COUNT EQUAL 1)
-    message(FATAL_ERROR "unified lifecycle validation failed: expected exactly one stackingOrder pass, found ${STACK_COUNT}")
+if(NOT STACK_COUNT EQUAL 2)
+    message(FATAL_ERROR "unified lifecycle validation failed: expected construction seed plus group anchor stackingOrder() passes, found ${STACK_COUNT}")
+endif()
+string(FIND "${IMPL}" "stackingOrderChanged" STACK_CHANGED_POS)
+if(STACK_CHANGED_POS EQUAL -1)
+    message(FATAL_ERROR "unified lifecycle validation failed: stackingOrderChanged re-anchor missing")
 endif()
 foreach(HOOK "attachOracleWindow" "forgetOracleWindow" "onOracleDragStart" "onOracleDragFinish" "windowStartUserMovedResized" "windowFinishUserMovedResized" "moveResizeGeometry")
     string(FIND "${IMPL}" "${HOOK}" HOOK_POS)
@@ -105,8 +112,9 @@ if(ORACLE_HELPER_POS EQUAL -1)
     message(FATAL_ERROR "unified lifecycle validation failed: oracleMoveResizeRect helper missing")
 endif()
 
-# Rendering stays untouched: the two outlines plus the pass-through paint.
-foreach(RENDER_TOKEN "m_borderItem" "m_groupItem" "paintScreen")
+# Rendering: the preserved active outline, the filled group underlay below
+# every member, the drag preview, plus the pass-through paint.
+foreach(RENDER_TOKEN "m_borderItem" "m_groupItem" "m_dragPreviewItem" "paintScreen" "updateGroupAnchorAndGeometry" "stackingOrderChanged")
     string(FIND "${IMPL}" "${RENDER_TOKEN}" RENDER_POS)
     if(RENDER_POS EQUAL -1)
         message(FATAL_ERROR "unified rendering validation failed: '${RENDER_TOKEN}' not found")
@@ -114,8 +122,8 @@ foreach(RENDER_TOKEN "m_borderItem" "m_groupItem" "paintScreen")
 endforeach()
 string(REGEX MATCHALL "OutlinedBorderItem" OUTLINE_MATCHES "${HEADER}")
 list(LENGTH OUTLINE_MATCHES OUTLINE_COUNT)
-if(NOT OUTLINE_COUNT EQUAL 2)
-    message(FATAL_ERROR "unified rendering validation failed: expected exactly two OutlinedBorderItem members, found ${OUTLINE_COUNT}")
+if(NOT OUTLINE_COUNT EQUAL 1)
+    message(FATAL_ERROR "unified rendering validation failed: expected exactly one OutlinedBorderItem member, found ${OUTLINE_COUNT}")
 endif()
 
 # CMake builds only the effect plus the KCM: no second plugin target,

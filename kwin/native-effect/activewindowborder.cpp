@@ -21,6 +21,10 @@
 #include <QColor>
 #include <QDBusConnection>
 #include <QImage>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QLoggingCategory>
 #include <QPalette>
 #include <QUuid>
@@ -198,10 +202,10 @@ const char *activeBorderDiagReason(bool hasWindow, bool deleted, bool minimized,
 ActiveWindowBorderEffect::ActiveWindowBorderEffect()
     : m_isOpenGL(effects->isOpenGLCompositing())
     , m_borderItem(RectF(), BorderOutline())
-    , m_groupItem(RectF(), BorderOutline())
 {
     ActiveBorderConfig::instance(QStringLiteral("kwinrc"));
     updateOutline();
+    updateGroupUnderlayFill();
 
     m_groupDbusObject = new GroupHighlightObject(this, this);
     group_highlight_state_init(&m_groupState);
@@ -219,6 +223,7 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
     // lifecycle hookup set active even when the border cannot render.
     connect(effects, &EffectsHandler::windowDeleted, this, [this](EffectWindow *window) {
         unsubscribeMaximize(window);
+        unsubscribeGroupVisibility(window);
         forgetOracleWindow(window);
         m_maximizedWindows.remove(window);
         if (!m_isOpenGL) {
@@ -228,16 +233,19 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
             setTrackedWindow(nullptr);
         }
         updateBorder();
+        updateGroupAnchorAndGeometry();
         updateGroupVisibility();
     });
     connect(effects, &EffectsHandler::windowClosed, this, [this](EffectWindow *window) {
         unsubscribeMaximize(window);
+        unsubscribeGroupVisibility(window);
         forgetOracleWindow(window);
         m_maximizedWindows.remove(window);
         if (!m_isOpenGL) {
             return;
         }
         updateBorder();
+        updateGroupAnchorAndGeometry();
         updateGroupVisibility();
     });
     // Global maximize tracking and the oracle observe every window,
@@ -247,11 +255,27 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
     // until native transition signals update it.
     for (EffectWindow *window : effects->stackingOrder()) {
         subscribeMaximize(window);
+        subscribeGroupVisibility(window);
         attachOracleWindow(window);
     }
     connect(effects, &EffectsHandler::windowAdded, this, [this](EffectWindow *window) {
         subscribeMaximize(window);
+        subscribeGroupVisibility(window);
         attachOracleWindow(window);
+        if (m_isOpenGL) {
+            updateGroupAnchorAndGeometry();
+            updateGroupVisibility();
+        }
+    });
+    // Lowest-stacked renderable anchor follows stacking and member
+    // visibility changes; geometry remaps into the new anchor item
+    // coordinates. Visibility gates stay unchanged.
+    connect(effects, &EffectsHandler::stackingOrderChanged, this, [this]() {
+        if (!m_isOpenGL) {
+            return;
+        }
+        updateGroupAnchorAndGeometry();
+        updateGroupVisibility();
     });
     // Activation recovery runs even when OpenGL rendering is off: the oracle
     // endpoint and press spy stay useful without a visible border. Rendering
@@ -277,17 +301,22 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
     // Keep the active outline in the target window subtree so higher windows
     // occlude it normally instead of treating it as a screen-wide overlay.
     m_borderItem.setZ(-1);
-    m_groupItem.setParentItem(effects->scene()->overlayItem());
+    // Group underlay below every group member: filled translucent rectangle
+    // anchored under the lowest-stacked renderable member WindowItem at Z=-2 so it
+    // slides with the workspace and higher members occlude it normally.
+    // A lower non-group window edge may be painted over where the extension
+    // overlaps it (accepted). Detached (null parent) with no anchor so it
+    // can never draw as a screen overlay; stays hidden there.
+    m_groupItem.setParentItem(nullptr);
+    m_groupItem.setZ(-2);
     m_groupItem.setVisible(false);
 
     // Independent drag-target preview above windows: filled translucent
-    // rectangle (1x1 solid default-color image scaled to the stored rect).
+    // rectangle (1x1 solid config-color image scaled to the stored rect).
     // Shown only between a valid set and an explicit clear; never gated on
-    // Meta, focus, or the group outline. Z=10 keeps it above the group
-    // outline (z=0) within the overlay.
-    QImage previewImage(1, 1, QImage::Format_ARGB32);
-    previewImage.fill(dragPreviewFillColor());
-    m_dragPreviewItem.setImage(previewImage);
+    // Meta, focus, or the group underlay. Z=10 keeps it above windows
+    // within the overlay.
+    updateDragPreviewFill();
     m_dragPreviewItem.setParentItem(effects->scene()->overlayItem());
     m_dragPreviewItem.setZ(10);
     m_dragPreviewItem.setVisible(false);
@@ -296,6 +325,7 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
 
     setTrackedWindow(effects->activeWindow());
     updateBorder();
+    updateGroupAnchorAndGeometry();
     updateGroupVisibility();
 }
 
@@ -321,7 +351,10 @@ void ActiveWindowBorderEffect::reconfigure(ReconfigureFlags)
     ensureEndpointsRegistered();
     ActiveBorderConfig::self()->read();
     updateOutline();
+    updateDragPreviewFill();
+    updateGroupUnderlayFill();
     updateBorder();
+    updateGroupAnchorAndGeometry();
     updateGroupVisibility();
     updateDragPreview();
 }
@@ -342,7 +375,85 @@ void ActiveWindowBorderEffect::updateOutline()
         activeBorderColor(themeColor, fallback, useThemeColor),
         BorderRadius(ActiveBorderConfig::borderRadius()));
     m_borderItem.setOutline(outline);
-    m_groupItem.setOutline(outline);
+}
+
+void ActiveWindowBorderEffect::updateGroupUnderlayFill()
+{
+    QImage underlayImage(1, 1, QImage::Format_ARGB32);
+    underlayImage.fill(ActiveBorderConfig::groupUnderlayColor());
+    m_groupItem.setImage(underlayImage);
+}
+
+void ActiveWindowBorderEffect::updateGroupAnchorAndGeometry()
+{
+    if (!m_isOpenGL) {
+        return;
+    }
+    GroupHighlightRect rect{};
+    const bool hasGroup = group_highlight_rect(&m_groupState, &rect) == 1 && !m_groupMemberIds.isEmpty();
+    EffectWindow *anchor = nullptr;
+    if (hasGroup) {
+        // The order runs bottom-first: the first *renderable* member match
+        // is the lowest-stacked painted group window. Bare-UUID string
+        // compare only; the member list came from the already-Rust-accepted
+        // payload. WindowItem effective visibility covers minimized/hidden
+        // members while preserving slide-painted off-desktop windows.
+        for (EffectWindow *candidate : effects->stackingOrder()) {
+            if (candidate == nullptr || candidate->isDeleted()) {
+                continue;
+            }
+            WindowItem *candidateItem = candidate->windowItem();
+            if (candidateItem == nullptr || !candidateItem->isVisible()) {
+                continue;
+            }
+            const QString bare = candidate->internalId().toString(QUuid::WithoutBraces);
+            if (m_groupMemberIds.contains(bare)) {
+                anchor = candidate;
+                break;
+            }
+        }
+    }
+    EffectWindow *oldAnchor = m_groupAnchor;
+    if (oldAnchor != anchor && oldAnchor != nullptr) {
+        // The current anchor's own frame move remaps below; the old anchor
+        // stops remapping on change/clear. QObject destruction auto-drops
+        // its connections, so a nulled QPointer needs no manual disconnect.
+        disconnect(oldAnchor, &EffectWindow::windowFrameGeometryChanged, this,
+            &ActiveWindowBorderEffect::updateGroupAnchorAndGeometry);
+        disconnect(oldAnchor, &EffectWindow::windowFrameGeometryChanged, this,
+            &ActiveWindowBorderEffect::updateGroupVisibility);
+    }
+    m_groupAnchor = anchor;
+    if (oldAnchor != anchor && anchor != nullptr) {
+        // Remap the stored scene union into the new anchor item coordinates
+        // on frame moves without a fresh payload; the parented subtree still
+        // slides with the workspace. Visibility stays gated by the existing
+        // Meta/focus/endpoint flow. Connected even before the item check so
+        // a later-mapped windowItem still remaps on its next frame change.
+        connect(anchor, &EffectWindow::windowFrameGeometryChanged, this,
+            &ActiveWindowBorderEffect::updateGroupAnchorAndGeometry);
+        connect(anchor, &EffectWindow::windowFrameGeometryChanged, this,
+            &ActiveWindowBorderEffect::updateGroupVisibility);
+    }
+    WindowItem *anchorItem = anchor ? anchor->windowItem() : nullptr;
+    if (!hasGroup || anchor == nullptr || anchorItem == nullptr) {
+        m_groupItem.setParentItem(nullptr);
+        return;
+    }
+    // Outer = union + border gap + border width + resolved extension beyond
+    // the border outer edge. Sentinel -1 resolves to the current border
+    // width; explicit values (including 0) render as-is.
+    const QRectF unionRect(static_cast<qreal>(rect.x), static_cast<qreal>(rect.y),
+        static_cast<qreal>(rect.w), static_cast<qreal>(rect.h));
+    const double extension = groupUnderlayEffectiveExtension(
+        ActiveBorderConfig::groupUnderlayExtension(), ActiveBorderConfig::borderWidth());
+    const QRectF outer = groupUnderlayOuterRect(unionRect, ActiveBorderConfig::borderGap(),
+        ActiveBorderConfig::borderWidth(), extension);
+    const RectF mapped = anchorItem->mapFromScene(outer);
+    m_groupItem.setParentItem(anchorItem);
+    m_groupItem.setZ(-2);
+    m_groupItem.setPosition(QPointF(mapped.x(), mapped.y()));
+    m_groupItem.setSize(QSizeF(mapped.width(), mapped.height()));
 }
 
 void ActiveWindowBorderEffect::setTrackedWindow(EffectWindow *window)
@@ -441,6 +552,47 @@ void ActiveWindowBorderEffect::unsubscribeMaximize(EffectWindow *window)
     }
     disconnect(window, &EffectWindow::windowMaximizedStateAboutToChange, this, nullptr);
     disconnect(window, &EffectWindow::windowMaximizedStateChanged, this, nullptr);
+}
+
+void ActiveWindowBorderEffect::subscribeGroupVisibility(EffectWindow *window)
+{
+    if (window == nullptr || m_groupVisibilitySubscribed.contains(window)) {
+        return;
+    }
+    m_groupVisibilitySubscribed.insert(window);
+    // Existing public visibility signals only. The handler ignores
+    // non-members via the Rust-accepted id list, so every window can stay
+    // subscribed across member-list changes (a restored lower member is no
+    // longer the anchor but still re-anchors here).
+    connect(window, &EffectWindow::minimizedChanged, this, &ActiveWindowBorderEffect::onGroupMemberVisibilityChanged);
+    connect(window, &EffectWindow::windowHiddenChanged, this, &ActiveWindowBorderEffect::onGroupMemberVisibilityChanged);
+}
+
+void ActiveWindowBorderEffect::unsubscribeGroupVisibility(EffectWindow *window)
+{
+    if (window == nullptr || !m_groupVisibilitySubscribed.remove(window)) {
+        return;
+    }
+    // Precise method-pointer disconnects: minimizedChanged is shared with
+    // the tracked-window signals, which must survive.
+    disconnect(window, &EffectWindow::minimizedChanged, this, &ActiveWindowBorderEffect::onGroupMemberVisibilityChanged);
+    disconnect(window, &EffectWindow::windowHiddenChanged, this, &ActiveWindowBorderEffect::onGroupMemberVisibilityChanged);
+}
+
+void ActiveWindowBorderEffect::onGroupMemberVisibilityChanged(EffectWindow *window)
+{
+    // Member minimize/restore or hide/show re-anchors to the lowest-stacked
+    // renderable member, preserving the underlay without timers or polling.
+    // Bare-UUID compare only against the Rust-accepted list; never logged.
+    if (!m_isOpenGL || window == nullptr || m_groupMemberIds.isEmpty()) {
+        return;
+    }
+    const QString bare = window->internalId().toString(QUuid::WithoutBraces);
+    if (!m_groupMemberIds.contains(bare)) {
+        return;
+    }
+    updateGroupAnchorAndGeometry();
+    updateGroupVisibility();
 }
 
 void ActiveWindowBorderEffect::attachOracleWindow(EffectWindow *window)
@@ -820,18 +972,29 @@ void ActiveWindowBorderEffect::applyGroupHighlight(const QString &payload)
         return;
     }
     if (code == 1) {
-        GroupHighlightRect rect{};
-        if (group_highlight_rect(&m_groupState, &rect) == 1 && m_isOpenGL) {
-            const qreal gap = ActiveBorderConfig::borderGap();
-            m_groupItem.setInnerRect(activeBorderInnerRect(QRectF(static_cast<qreal>(rect.x), static_cast<qreal>(rect.y),
-                static_cast<qreal>(rect.w), static_cast<qreal>(rect.h)), gap));
+        // Membership comes from the already-Rust-accepted payload via Qt
+        // JSON only: plain id list, no new FFI storage. Never logged.
+        m_groupMemberIds.clear();
+        const QJsonDocument document = QJsonDocument::fromJson(payloadBytes);
+        if (document.isObject()) {
+            const QJsonArray members = document.object().value(QStringLiteral("members")).toArray();
+            for (const QJsonValue &entry : members) {
+                if (entry.isString()) {
+                    m_groupMemberIds.append(entry.toString());
+                }
+            }
         }
+        updateGroupAnchorAndGeometry();
         updateGroupVisibility();
         if (m_isOpenGL) {
             effects->addRepaintFull();
         }
         return;
     }
+    m_groupMemberIds.clear();
+    // Leave m_groupAnchor for updateGroupAnchorAndGeometry so the old anchor
+    // disconnects its frame remap; the update nulls it when no member stays.
+    updateGroupAnchorAndGeometry();
     updateGroupVisibility();
     if (hadDisplayed && m_isOpenGL) {
         effects->addRepaintFull();
@@ -842,6 +1005,10 @@ void ActiveWindowBorderEffect::clearGroupHighlight()
 {
     // Rust preserves the order within the stream; only the display clears.
     const int32_t hadGroup = group_highlight_clear(&m_groupState);
+    m_groupMemberIds.clear();
+    // Leave m_groupAnchor for updateGroupAnchorAndGeometry so the old anchor
+    // disconnects its frame remap; the update nulls it.
+    updateGroupAnchorAndGeometry();
     updateGroupVisibility();
     if (hadGroup == 1 && m_isOpenGL) {
         effects->addRepaintFull();
@@ -876,6 +1043,13 @@ void ActiveWindowBorderEffect::clearDragTargetPreview()
     if (wasVisible && m_isOpenGL) {
         effects->addRepaintFull();
     }
+}
+
+void ActiveWindowBorderEffect::updateDragPreviewFill()
+{
+    QImage previewImage(1, 1, QImage::Format_ARGB32);
+    previewImage.fill(ActiveBorderConfig::dragPreviewColor());
+    m_dragPreviewItem.setImage(previewImage);
 }
 
 void ActiveWindowBorderEffect::updateDragPreview()
@@ -947,12 +1121,15 @@ void ActiveWindowBorderEffect::updateGroupVisibility()
     // Fail-closed endpoint gate plus the passive Meta gate plus live focus
     // eligibility (fullscreen/minimized/hidden/deleted/maximized hide
     // immediately via the tracked-signal connections above). Member validity
-    // is never derived native-side: only the carried union bounds render.
+    // is never derived native-side beyond the Rust-accepted list used for
+    // the lowest-stacked anchor; the carried union outer rect renders.
     // Policy lives in Rust; C++ supplies POD observer flags and renders.
+    // A missing anchor (no live member window) keeps the underlay hidden.
     const bool groupShow = group_highlight_is_visible(&m_groupState, m_metaHeld ? 1 : 0, m_firstMouseSeen ? 1 : 0,
                                isGroupFocusEligible() ? 1 : 0, m_groupDbusAvailable ? 1 : 0)
         == 1;
-    const bool show = groupShow;
+    const bool anchorOk = !m_groupAnchor.isNull() && m_groupAnchor->windowItem() != nullptr && !m_groupMemberIds.isEmpty();
+    const bool show = groupShow && anchorOk;
     if (show != m_groupVisible) {
         m_groupVisible = show;
         m_groupItem.setVisible(show);

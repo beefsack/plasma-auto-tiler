@@ -143,9 +143,11 @@ foreach(GROUP_REQUIRED "correlation" "revision" "focused_window" "90071992547409
     endif()
 endforeach()
 
-# Policy must not live in C++ anymore: no QString JSON parsing, ordering,
-# or focus/visibility policy beside the FFI call sites.
-foreach(GROUP_MOVED "parseGroupHighlightPayload" "acceptGroupHighlightOrder" "ParsedGroupHighlight" "GroupHighlightOrder" "shouldShowGroupHighlight" "groupFocusEligible" "groupFocusMatches" "isGroupEndpointUsable" "QJsonDocument")
+# Policy must not live in C++ anymore: no ordering or focus/visibility
+# policy beside the FFI call sites. Qt JSON extraction of the plain member
+# list from the already-Rust-accepted payload is authorized (no new FFI
+# storage); it must only read the "members" key after acceptance.
+foreach(GROUP_MOVED "parseGroupHighlightPayload" "acceptGroupHighlightOrder" "ParsedGroupHighlight" "GroupHighlightOrder" "shouldShowGroupHighlight" "groupFocusEligible" "groupFocusMatches" "isGroupEndpointUsable")
     string(FIND "${GROUP_IMPL_TEXT}" "${GROUP_MOVED}" GROUP_MOVED_IMPL_POS)
     if(NOT GROUP_MOVED_IMPL_POS EQUAL -1)
         message(FATAL_ERROR "group-highlight layering validation failed: '${GROUP_MOVED}' must not exist in implementation (policy lives in Rust)")
@@ -194,23 +196,35 @@ if(NOT GROUP_EFFECTS_POS EQUAL -1)
     message(FATAL_ERROR "group-highlight transport validation failed: /Effects must never be used for effect-defined setters")
 endif()
 
-# Exactly two auto-lifetime outlines: the preserved active border plus the
-# group union outline. No custom scene rendering.
+# Exactly one auto-lifetime outline (the preserved active border) plus the
+# filled group underlay below every group member. No custom scene rendering.
 string(REGEX MATCHALL "OutlinedBorderItem" GROUP_OUTLINE_MATCHES "${GROUP_HEADER_TEXT}")
 list(LENGTH GROUP_OUTLINE_MATCHES GROUP_OUTLINE_COUNT)
-if(NOT GROUP_OUTLINE_COUNT EQUAL 2)
-    message(FATAL_ERROR "group-highlight outline validation failed: expected exactly two OutlinedBorderItem members, found ${GROUP_OUTLINE_COUNT}")
+if(NOT GROUP_OUTLINE_COUNT EQUAL 1)
+    message(FATAL_ERROR "group-highlight outline validation failed: expected exactly one OutlinedBorderItem member, found ${GROUP_OUTLINE_COUNT}")
 endif()
-foreach(GROUP_MEMBER "m_borderItem" "m_groupItem")
+string(REGEX MATCHALL "ImageItem" GROUP_IMAGE_MATCHES "${GROUP_HEADER_TEXT}")
+list(LENGTH GROUP_IMAGE_MATCHES GROUP_IMAGE_COUNT)
+if(GROUP_IMAGE_COUNT LESS 2)
+    message(FATAL_ERROR "group-highlight underlay validation failed: expected group underlay plus drag preview ImageItem members, found ${GROUP_IMAGE_COUNT}")
+endif()
+foreach(GROUP_MEMBER "m_borderItem" "m_groupItem" "m_groupMemberIds" "m_groupAnchor")
     string(FIND "${GROUP_HEADER_TEXT}" "${GROUP_MEMBER}" GROUP_MEMBER_POS)
     if(GROUP_MEMBER_POS EQUAL -1)
         message(FATAL_ERROR "group-highlight outline validation failed: ${GROUP_MEMBER} missing in header")
     endif()
 endforeach()
-foreach(GROUP_RENDER "m_groupItem.setParentItem" "m_groupItem.setOutline" "m_groupItem.setInnerRect" "m_groupItem.setVisible" "group_highlight_rect")
+foreach(GROUP_RENDER "m_groupItem.setParentItem" "m_groupItem.setImage" "m_groupItem.setPosition" "m_groupItem.setSize" "m_groupItem.setVisible" "group_highlight_rect" "updateGroupAnchorAndGeometry" "updateGroupUnderlayFill" "groupUnderlayOuterRect" "stackingOrderChanged" "m_groupMemberIds")
     string(FIND "${GROUP_IMPL_TEXT}" "${GROUP_RENDER}" GROUP_RENDER_POS)
     if(GROUP_RENDER_POS EQUAL -1)
         message(FATAL_ERROR "group-highlight rendering validation failed: '${GROUP_RENDER}' not found")
+    endif()
+endforeach()
+# The underlay is filled, never an outline: no group outline calls remain.
+foreach(GROUP_NO_OUTLINE "m_groupItem.setOutline" "m_groupItem.setInnerRect")
+    string(FIND "${GROUP_IMPL_TEXT}" "${GROUP_NO_OUTLINE}" GROUP_NO_OUTLINE_POS)
+    if(NOT GROUP_NO_OUTLINE_POS EQUAL -1)
+        message(FATAL_ERROR "group-highlight underlay validation failed: '${GROUP_NO_OUTLINE}' must not exist in implementation")
     endif()
 endforeach()
 
@@ -218,7 +232,8 @@ endforeach()
 # before the first signal. No polling, timers, grabs, interception,
 # filters, shortcut mutation, or paint hooks. Policy predicates arrive via
 # the Rust FFI; the QString-to-UTF8 boundary plus native identity stay here.
-foreach(GROUP_PASSIVE "mouseChanged" "MetaModifier" "m_firstMouseSeen" "m_metaHeld" "toUtf8" "internalId" "group_highlight_apply" "group_highlight_is_visible" "group_highlight_focus_eligible")
+# Qt JSON reads only the already-accepted "members" list for the anchor.
+foreach(GROUP_PASSIVE "mouseChanged" "MetaModifier" "m_firstMouseSeen" "m_metaHeld" "toUtf8" "internalId" "group_highlight_apply" "group_highlight_is_visible" "group_highlight_focus_eligible" "QJsonDocument" "members")
     string(FIND "${GROUP_IMPL_TEXT}" "${GROUP_PASSIVE}" GROUP_PASSIVE_POS)
     if(GROUP_PASSIVE_POS EQUAL -1)
         string(FIND "${GROUP_LOGIC_TEXT}" "${GROUP_PASSIVE}" GROUP_PASSIVE_LOGIC_POS)

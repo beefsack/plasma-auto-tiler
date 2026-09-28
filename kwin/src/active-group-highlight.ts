@@ -592,8 +592,9 @@ export function buildActiveGroupRequest(
 }
 
 // Formats the bounded QString payload forwarded to the owned effect setter.
-// Carries only identity plus the engine-projected union bounds; member
-// topology never crosses to the renderer.
+// Carries only identity plus the ordered member window ids plus the
+// engine-projected union bounds; member rectangles never cross to the
+// renderer. Member order is preserved verbatim for native stacking choice.
 export function formatGroupHighlightPayload(
     correlationId: string,
     owner: string,
@@ -601,6 +602,7 @@ export function formatGroupHighlightPayload(
     revision: number,
     group: string,
     focusedWindow: string,
+    members: ReadonlyArray<string>,
     bounds: ActiveGroupRect,
 ): string | null {
     if (!isOpaqueId(correlationId, ACTIVE_GROUP_MAX_CORRELATION_LEN, false)) {
@@ -621,6 +623,16 @@ export function formatGroupHighlightPayload(
     if (!isOpaqueId(focusedWindow, ACTIVE_GROUP_MAX_ID_LEN, false)) {
         return null;
     }
+    if (!Array.isArray(members as unknown) || members.length === 0) {
+        return null;
+    }
+    const seenMembers = new Set<string>();
+    for (const entry of members) {
+        if (!isOpaqueId(entry, ACTIVE_GROUP_MAX_ID_LEN, false) || seenMembers.has(entry)) {
+            return null;
+        }
+        seenMembers.add(entry);
+    }
     if (!isTargetRect({ x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h })) {
         return null;
     }
@@ -634,13 +646,14 @@ export function formatGroupHighlightPayload(
             revision,
             group,
             focused_window: focusedWindow,
+            members: members.slice(),
             bounds: { x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h },
         });
     } catch (error) {
         void error;
         return null;
     }
-    if (payload.length > 4096) {
+    if (payload.length > ACTIVE_GROUP_MAX_REPLY_BYTES) {
         return null;
     }
     return payload;
@@ -852,6 +865,7 @@ export class ActiveGroupHighlight {
             parsed.baseRevision,
             parsed.group,
             parsed.focusedWindow,
+            parsed.members.map((member) => member.window),
             parsed.bounds,
         );
         if (payload === null) {

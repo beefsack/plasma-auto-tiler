@@ -91,14 +91,77 @@
         </property>
        </widget>
       </item>
-       <item row="4" column="0" colspan="2">
-        <widget class="QCheckBox" name="kcfg_UseThemeColor">
+        <item row="4" column="0" colspan="2">
+         <widget class="QCheckBox" name="kcfg_UseThemeColor">
+          <property name="text">
+           <string>Use theme highlight color when available</string>
+          </property>
+         </widget>
+        </item>
+       <item row="5" column="0">
+         <widget class="QLabel" name="label_DragPreviewColor">
+          <property name="buddy">
+           <cstring>kcfg_DragPreviewColor</cstring>
+          </property>
          <property name="text">
-          <string>Use theme highlight color when available</string>
+          <string>Drop-target preview color:</string>
          </property>
         </widget>
        </item>
-       <item row="5" column="0" colspan="2">
+       <item row="5" column="1">
+        <widget class="KColorButton" name="kcfg_DragPreviewColor">
+         <property name="alphaChannelEnabled">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+        <item row="6" column="0">
+         <widget class="QLabel" name="label_GroupUnderlayColor">
+          <property name="buddy">
+           <cstring>kcfg_GroupUnderlayColor</cstring>
+          </property>
+         <property name="text">
+          <string>Group underlay color:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="6" column="1">
+        <widget class="KColorButton" name="kcfg_GroupUnderlayColor">
+         <property name="alphaChannelEnabled">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item row="7" column="0">
+         <widget class="QLabel" name="label_GroupUnderlayExtension">
+          <property name="buddy">
+           <cstring>kcfg_GroupUnderlayExtension</cstring>
+          </property>
+         <property name="text">
+          <string>Group underlay extension:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="7" column="1">
+        <widget class="QDoubleSpinBox" name="kcfg_GroupUnderlayExtension">
+         <property name="suffix">
+          <string> px</string>
+         </property>
+         <property name="decimals">
+           <number>0</number>
+         </property>
+         <property name="minimum">
+           <double>-1.000000000000000</double>
+         </property>
+         <property name="maximum">
+          <double>32.000000000000000</double>
+         </property>
+         <property name="specialValueText">
+          <string>Match border width</string>
+         </property>
+        </widget>
+       </item>
+        <item row="8" column="0" colspan="2">
         <widget class="QLabel" name="borderDescription">
          <property name="text">
                <string>When enabled, the border uses the current theme highlight color when available and the configured color is the fallback. When disabled, the configured color is always used. Border changes apply immediately through the KWin effect reconfigure. Tiling gaps and workspace mode are on this page.</string>

@@ -236,12 +236,31 @@ void dragPreviewAcceptsCarriedGeometryBounds()
     CHECK(!KWin::dragPreviewRectValid(-16385, 0, 10, 10));
 }
 
-void dragPreviewDefaultIsTranslucentSelectionBlue()
+void groupUnderlayOuterExpandsByGapWidthAndExtension()
 {
-    const QColor fill = KWin::dragPreviewFillColor();
-    CHECK(fill.isValid());
-    CHECK(fill.red() == 0x2a && fill.green() == 0x82 && fill.blue() == 0xda);
-    CHECK(fill.alpha() == 64);
+    // Outer = union + gap + border width + extension beyond the border edge.
+    const QRectF unionRect(10.0, 20.0, 100.0, 80.0);
+    CHECK(KWin::groupUnderlayOuterRect(unionRect, 0.0, 3.0, 3.0) == unionRect.adjusted(-6.0, -6.0, 6.0, 6.0));
+    CHECK(KWin::groupUnderlayOuterRect(unionRect, 2.0, 3.0, 3.0) == unionRect.adjusted(-8.0, -8.0, 8.0, 8.0));
+}
+
+void groupUnderlayDefaultExtensionMatchesBorderWidth()
+{
+    // Default sentinel -1 follows the current configured border width:
+    // gap 0 plus border width plus resolved extension is twice the width.
+    // Explicit 0 renders as-is (outer = union + gap + border width only).
+    CHECK(KWin::groupUnderlayEffectiveExtension(-1.0, 3.0) == 3.0);
+    CHECK(KWin::groupUnderlayEffectiveExtension(-1.0, 5.0) == 5.0);
+    CHECK(KWin::groupUnderlayEffectiveExtension(0.0, 5.0) == 0.0);
+    CHECK(KWin::groupUnderlayEffectiveExtension(7.5, 5.0) == 7.5);
+    const QRectF unionRect(0.0, 0.0, 100.0, 100.0);
+    const QRectF outerDefault3 = KWin::groupUnderlayOuterRect(unionRect, 0.0, 3.0, KWin::groupUnderlayEffectiveExtension(-1.0, 3.0));
+    CHECK(outerDefault3 == QRectF(-6.0, -6.0, 112.0, 112.0));
+    const QRectF outerDefault5 = KWin::groupUnderlayOuterRect(unionRect, 0.0, 5.0, KWin::groupUnderlayEffectiveExtension(-1.0, 5.0));
+    CHECK(outerDefault5 == QRectF(-10.0, -10.0, 120.0, 120.0));
+    CHECK(outerDefault5.width() == unionRect.width() + 20.0);
+    const QRectF outerExplicit0 = KWin::groupUnderlayOuterRect(unionRect, 0.0, 5.0, KWin::groupUnderlayEffectiveExtension(0.0, 5.0));
+    CHECK(outerExplicit0 == QRectF(-5.0, -5.0, 110.0, 110.0));
 }
 
 } // namespace
@@ -271,7 +290,8 @@ int main()
     pressAgeGateBoundsTwoSecondsMonotonic();
     pressBindingNameIsClosedVocabulary();
     dragPreviewAcceptsCarriedGeometryBounds();
-    dragPreviewDefaultIsTranslucentSelectionBlue();
+    groupUnderlayOuterExpandsByGapWidthAndExtension();
+    groupUnderlayDefaultExtensionMatchesBorderWidth();
 
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);

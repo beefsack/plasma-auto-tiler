@@ -127,11 +127,11 @@ the corresponding item ships; each such entry names its replacement.
   native maximize axis, matching the adapter's nonzero maximize collapse. The
   public KWin maximize transition signals update the border before and after
   geometry changes. The user manually accepted active-border suppression on
-  2026-09-21 and additionally requires the Meta-held group outline to hide
-  while maximized: neither outline may be visible.
+  2026-09-21 and additionally requires the Meta-held group visual to hide
+  while maximized: neither visual may be visible.
 - Effect observation seeds every window on load and addition from its committed
   native maximize mode; any maximize axis or fullscreen suppresses both
-  outlines, and native transition signals remain authoritative (Orchestrator
+  visuals, and native transition signals remain authoritative (Orchestrator
   decision applying user-approved AR9: an unacknowledged Wayland maximize
   configure still renders normal, so the committed normal seed reflects that
   geometry; acknowledgement emits the observed maximize signal. Requested mode
@@ -142,9 +142,15 @@ the corresponding item ships; each such entry names its replacement.
   `plasma-auto-tiler-drag-oracle` effect, factory, metadata, or KCM entry remains.
 - The outline never clips, reshapes, or changes window textures. Plasma 6.5+
   decoration-driven rounded corners remain the selected corner solution.
-- The shipped border uses two effect-owned automatic-lifetime
-  `KWin::OutlinedBorderItem`s (active border and temporary group outline),
-  without texture changes or clipping.
+- The active border retains one effect-owned automatic-lifetime
+  `KWin::OutlinedBorderItem`, without texture changes or clipping. User decision
+  2026-09-28: replace the temporary Meta-held group outline with a filled
+  underlay beneath its windows, extending beyond the border outer edge by a
+  configurable size defaulting to the current border width. Colour (including
+  alpha) is configurable; Orchestrator default `#40808080` (translucent grey).
+  The drop-target preview colour also becomes configurable with alpha, retaining
+  its `#402a82da` default. All new keys live in the existing effect group and
+  hot-apply through effect reconfigure; existing keys/defaults are unchanged.
 
 ## Native Integration Boundary
 
@@ -865,26 +871,36 @@ the corresponding item ships; each such entry names its replacement.
   target `EffectWindow::windowItem()`; KWin's public `Item::setParentItem()`
   and `mapFromScene()` keep its geometry window-local. The target texture and
   later-stacked windows therefore occlude it through the normal item-tree and
-  workspace stacking passes. The temporary group outline remains a
-  screen-wide overlay because it is not tied to one window. No custom
+  workspace stacking passes. User decision 2026-09-28: the temporary group
+  visual is a filled underlay beneath the group's windows, not an outline.
+  Orchestrator decision applying the user's requirement: use public stacking
+  order to parent its `ImageItem` below the lowest painted group member and
+  re-anchor on stacking, membership, or visibility changes. The child inherits
+  its window's slide translation; being below the windows alone does not cause
+  the slide. The underlay spans the engine-projected union expanded by border
+  gap + border width + configured extension (unset means current border width).
+  Where the extension overlaps a non-group window stacked below the anchor, it
+  may paint over that window's edge (accepted by the Orchestrator). No custom
   scene/rendering mechanism is selected.
 - Active-group highlighting is statically delivered. Rust resolves the focused
   leaf's immediate parent split group and recursively projected members from
-  its retained focused-domain tree; the script forwards only the engine union
-  bounds and bounded identity to the renderer. Rust also owns native-effect
+  its retained focused-domain tree; the script forwards their validated window
+  IDs with engine union bounds and bounded identity to the renderer. Per
+  Orchestrator authorization, the member IDs occupy one additional field in
+  the existing `SetGroupHighlight` payload (no raw ID logging), and the setter
+  limit matches the existing 64 KiB Planner reply bound with a plain native
+  member list. Rust also owns native-effect
   payload parsing/validation, stream order, focus/visibility policy, and POD
-  state through a panic-contained byte/POD ABI. C++ is only the required
-  QObject/D-Bus boundary, native identity/signal observation, and automatic
-  outline/repaint shim. The active border remains while a second effect-owned
-  `OutlinedBorderItem` renders the temporary group outline.
+  state through a panic-contained byte/POD ABI. C++ extracts the accepted IDs
+  and owns the QObject/D-Bus boundary, native stacking/signal observation,
+  scene parenting and repaint shim. The active border stays an outline.
 - The approved writable bridge is an effect-owned session D-Bus endpoint,
   `org.plasmaautotiler.ActiveBorder` at
   `/org/plasmaautotiler/ActiveBorder` with interface
   `org.plasmaautotiler.ActiveBorder1`: bounded `SetGroupHighlight(QString)`
   and `ClearGroupHighlight()`. It is not a `/Effects` method. Its offline
   contract is verified; KWin Script demarshalling, service ownership, modifier
-  delivery, rendering, and performance remain live-unverified. Autonomous mode
-  remains off.
+  delivery, rendering, and performance remain live-unverified.
 - User decision R/S, option 2 (2026-09-26): if the native group-highlight or
   drag-oracle D-Bus endpoint fails to register at construction, retry on the
   effect's existing window-activation and reconfigure events, with no timer or
