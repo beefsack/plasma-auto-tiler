@@ -2223,13 +2223,12 @@ export class PlanAdapter {
     // fullscreen or maximized member carries its per-id applied rectangle
     // (the last planned projection for that id on the same output/workspace)
     // in place of the compositor-owned fullscreen or maximized frame rect,
-    // which can exceed the work area and would otherwise be rejected as
-    // window-out-of-bounds. A member with no applied projection yet is
+    // which can exceed the work area. A member with no applied projection yet is
     // clamped into the domain bounds. The raw frame rect is never carried
     // for a fullscreen or maximized member. A known tiled member can
     // transiently report an out-of-bounds frame while KWin applies a state
-    // change, so carry its applied projection rather than invalidating the
-    // complete snapshot. Unknown non-overlay windows still fail closed.
+    // change, so carry its applied projection rather than churning the
+    // complete snapshot. Unknown non-overlay windows keep their observed rects.
     // Applied evidence is read-only here; only applied replies mutate it.
     // Initial-fullscreen hold is overlaid first (synthetic floating for
     // first-seen fullscreen only) so dispatch, quiet equality, reprojection,
@@ -3548,24 +3547,21 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:drag-drop-refused-floating`);
             return refuseDrag("floating", observed.domainOutput, observed.domainWorkspace);
         }
-        // Started source binding is authoritative when valid; retained
-        // per-id evidence applies only without one (direct callers).
-        // An authorized cross-output tiled drag (Started source differs from
-        // the pointer destination, including lag native-on-source) joins
-        // destination tiling at the pointer: the destination snapshot below
-        // binds the flight while the Started binding rides the immutable
-        // body for terminal diagnostics and source forcing after apply. No
-        // source-scoped marker is armed here. Direct callers without a
-        // Started binding stay fail-closed below.
+        // Started binding is authoritative; retained evidence is for direct callers only.
+        // Same-output native workspace drift means the window was sent mid-drag:
+        // refuse and let send plus reflow win. Output moves stay cross-output.
+        // The pointer destination below still routes unchanged natives.
         let crossSource: { output: string; workspace: string } | null = null;
         if (explicitSource !== null) {
+            if (observed.domainOutput === explicitSource.output && observed.domainWorkspace !== explicitSource.workspace) {
+                this.logToken(`${LOG_PREFIX}:drag-drop-refused-stale-workspace`);
+                return refuseDrag("stale-workspace", explicitSource.output, explicitSource.workspace);
+            }
             if (
                 effectiveObserved.domainOutput !== explicitSource.output ||
                 effectiveObserved.domainWorkspace !== explicitSource.workspace
             ) {
-                // Authorized cross-output: destination dispatch, not a
-                // refusal. Failures converge through the destination-scoped
-                // marker via the ordinary failFlight path.
+                // Destination dispatch; failures converge through the destination marker.
                 crossSource = { output: explicitSource.output, workspace: explicitSource.workspace };
                 if (drag !== null) {
                     this.logToken(
@@ -6240,7 +6236,7 @@ export class PlanAdapter {
             this.pinnedOwner = null;
             this.activationStep = 0;
             this.diag(flightState.op, flightState.correlation, flightState.windowCount, "rejected");
-            this.rejectKind(kind, detail, flightState.snapshot);
+            this.rejectKind(kind, detail);
             // Core partial-observation diagnostics: log the retained vs
             // observed membership skew (counts only, no gate change) so a
             // floating/exception drift is attributable without guessing.
@@ -9020,20 +9016,9 @@ export class PlanAdapter {
         );
     }
 
-    private rejectKind(kind: string, detail: string | null, snapshot: PlanSnapshot | null = null): void {
+    private rejectKind(kind: string, detail: string | null): void {
         try {
             const suffix = kind === "snapshot-invalid" && detail !== null ? ` detail=${detail}` : "";
-            if (kind === "snapshot-invalid" && detail === "window-out-of-bounds" && snapshot !== null) {
-                const ordinal = snapshot.windows.findIndex((entry) => !entry.floating && !rectContained(entry.rect, this.workAreaFor(snapshot, entry.output, entry.workspace) ?? snapshot.domainBounds));
-                if (ordinal !== -1) {
-                    const outside = snapshot.windows[ordinal] as PlanSnapshotWindow;
-                    const bounds = this.workAreaFor(snapshot, outside.output, outside.workspace) ?? snapshot.domainBounds;
-                    this.env.log(
-                        `${LOG_PREFIX}:rejected kind=${kind}${suffix} output=${outside.output} ordinal=${String(ordinal)} resource_class=${outside.resourceClass} rect=${String(outside.rect.x)},${String(outside.rect.y)},${String(outside.rect.w)},${String(outside.rect.h)} bounds=${String(bounds.x)},${String(bounds.y)},${String(bounds.w)},${String(bounds.h)}`,
-                    );
-                    return;
-                }
-            }
             this.env.log(`${LOG_PREFIX}:rejected kind=${kind}${suffix}`);
         } catch (error) {
             void error;

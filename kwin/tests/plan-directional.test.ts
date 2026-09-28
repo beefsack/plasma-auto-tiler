@@ -1395,29 +1395,6 @@ describe("plan adapter R4 immediate transfer (lean, no wire protocol)", () => {
 });
 
 describe("directional target overlay bounds", () => {
-    it("reports the target's own bounds without a native id when Rust rejects its frame", () => {
-        const r = refs();
-        const mocks = mockEnv(r);
-        mocks.directionalImpl = () => ({
-            status: "ready",
-            observed: twoDomainObserved(r, { aRect: { x: 10, y: 10, w: 100, h: 80 } }),
-        });
-        const adapter = enable(mocks);
-        adapter.requestFocus("right");
-        const body = payload(mocks, 0);
-        assert.equal((body["domains"] as Array<unknown>).length, 2);
-        mocks.callbacks[0]?.(JSON.stringify({
-            v: 1,
-            correlation_id: body["correlation_id"],
-            outcome: "rejected",
-            kind: "snapshot-invalid",
-            detail: "window-out-of-bounds",
-        }));
-        assert.ok(mocks.logs.includes(
-            "plasma-auto-tiler:plan:rejected kind=snapshot-invalid detail=window-out-of-bounds output=out-2 ordinal=1 resource_class=unknown rect=10,10,100,80 bounds=800,0,800,600",
-        ));
-    });
-
     it("clamps a target overlay into its own output, retaining the two-domain route", () => {
         const r = refs();
         const mocks = mockEnv(r);

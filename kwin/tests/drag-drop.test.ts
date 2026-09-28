@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { PLAN_DEBOUNCE_MS, PLAN_TIMEOUT_MS } from "../src/plan-adapter";
+import { PLAN_DEBOUNCE_MS, PLAN_TIMEOUT_MS, PlanAdapter, type PlanAdapterEnv, type PlanObserved } from "../src/plan-adapter";
 import { DRAG_MEASURE_VERDICT_TIMEOUT_MS } from "../src/drag-measure";
 import { startPlanAdapterEntry } from "../src/plan-adapter-entry";
 
@@ -242,6 +242,82 @@ function dropWinA(world: DropWorld, mocks: DropMocks, pointer: { x: number; y: n
     (mocks.oracleCalls[mocks.oracleCalls.length - 1] as (reply: unknown) => void)(
         moveVerdict({ x: pointer.x, y: pointer.y, w: 600, h: 800 }, "win-a", correlation),
     );
+}
+
+function staleDirectAdapter(
+    observed: PlanObserved,
+    hidden: ReadonlyArray<PlanObserved>,
+): { adapter: PlanAdapter; planCalls: Array<{ payload: string; callback: (reply: unknown) => void }>; logs: string[] } {
+    const planCalls: Array<{ payload: string; callback: (reply: unknown) => void }> = [];
+    const logs: string[] = [];
+    const env: PlanAdapterEnv = {
+        callDbus: (_s, _p, _i, method, payload, callback): void => {
+            if (method === "NameHasOwner") {
+                callback(true);
+                return;
+            }
+            if (method === "GetNameOwner") {
+                callback(":1.7");
+                return;
+            }
+            if (method === "StartServiceByName") {
+                callback(1);
+                return;
+            }
+            planCalls.push({ payload, callback });
+        },
+        scheduleOnce: (): (() => void) => (): void => {},
+        log: (message): void => {
+            logs.push(message);
+        },
+        observe: (): PlanObserved | null => observed,
+        observeHidden: (): ReadonlyArray<PlanObserved> => hidden,
+        clearMaximize: (): "invoked" => "invoked",
+        setGeometry: (): boolean => true,
+        setActive: (): boolean => true,
+        active: () => observed.activeRef,
+        subscribe: (): (() => void) => (): void => {},
+    };
+    const adapter = new PlanAdapter(env);
+    assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+    return { adapter, planCalls, logs };
+}
+
+function directObserved(
+    output: string,
+    workspace: string,
+    bounds: { x: number; y: number; w: number; h: number },
+    winId: string,
+    ref: object,
+    fp: string,
+): PlanObserved {
+    return {
+        domainOutput: output,
+        domainWorkspace: workspace,
+        domainBounds: { ...bounds },
+        domainGap: 8,
+        domainOuterGap: 8,
+        focusedId: winId,
+        windows: [
+            { id: winId, ref, rect: { x: bounds.x, y: bounds.y, w: 60, h: 60 }, output, workspace, fullscreen: false, maximized: false },
+        ],
+        activeRef: ref,
+        fingerprint: fp,
+        revalidate: () => true,
+    };
+}
+
+function plannedReconcileReply(correlation: string, window: string, output: string, workspace: string): string {
+    return JSON.stringify({
+        v: 1,
+        correlation_id: correlation,
+        outcome: "planned",
+        base_revision: 2,
+        detail: { kind: "reconcile" },
+        desired_geometry: [
+            { window, leaf: `${window}-leaf`, output, workspace, rect: { x: 0, y: 0, w: 600, h: 800 } },
+        ],
+    });
 }
 
 describe("tiled drag-drop through the Planner", () => {
@@ -1101,6 +1177,140 @@ describe("tiled drag-drop through the Planner", () => {
             { op: "reconcile" },
         );
         stop();
+    });
+
+    it("held drag with mid-gesture workspace send refuses the stale source drop", () => {
+        const world = dropWorld();
+        const { stop, mocks } = startDropEntry(world);
+        baselineConverge(world, mocks);
+        const desktop1 = (world.workspace["currentDesktopForScreen"] as () => unknown)() as object;
+        const desktop2 = { id: "ws-2" };
+        const callsAtStart = mocks.planCalls.length;
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = true;
+        fireAll(world.startedA);
+        // Shift+2 mid-drag: the native window joins ws-2 while the gesture is held.
+        (world.wins["win-a"] as Record<string, unknown>)["desktops"] = [desktop2];
+        world.workspace["currentDesktopForScreen"] = (): unknown => desktop2;
+        world.workspace["cursorPos"] = { x: 400, y: 400 };
+        fireAll(world.finishedA);
+        (world.wins["win-a"] as Record<string, unknown>)["move"] = false;
+        (mocks.oracleCalls[mocks.oracleCalls.length - 1] as (reply: unknown) => void)(
+            moveVerdict({ x: 400, y: 400, w: 600, h: 800 }, "win-a", "drag-80"),
+        );
+        assert.ok(
+            mocks.logs.some((l) => l === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-80 accepted=false"),
+            "stale workspace-1 drop ignored",
+        );
+        assert.equal(mocks.planCalls.length - callsAtStart, 0, "no stale workspace-1 drop dispatched");
+        assert.ok(mocks.logs.some((l) => l.includes("drag-drop-refused-stale-workspace")), "stale refusal logged");
+        assert.ok(
+            mocks.logs.some((l) => l.includes("drag-rejected") && l.includes("correlation=drag-80") && l.includes("reason=stale-workspace")),
+            "stale drop feeds the source marker",
+        );
+        assert.ok(
+            !mocks.logs.some((l) => l.includes("drag-drop-cross-output") && l.includes("correlation=drag-80")),
+            "workspace send never claims cross-output",
+        );
+        // Destination admission on ws-2 through the ordinary refresh.
+        fireAll(world.geometry);
+        runDebounce(mocks);
+        const destCall = mocks.planCalls[mocks.planCalls.length - 1] as { payload: string; callback: (reply: unknown) => void };
+        assert.deepEqual(
+            (JSON.parse(destCall.payload) as Record<string, unknown>)["command"],
+            { op: "reconcile" },
+            "destination converges through reconcile, not a stale drop",
+        );
+        const destCorr = planCorrelation(JSON.parse(destCall.payload) as Record<string, unknown>);
+        destCall.callback(plannedReconcileReply(destCorr, "win-a", "out-1", "ws-2"));
+        // Source reflow on ws-1 once it is observed again.
+        world.workspace["currentDesktopForScreen"] = (): unknown => desktop1;
+        world.workspace["activeWindow"] = world.wins["win-b"];
+        fireAll(world.geometry);
+        runDebounce(mocks);
+        const srcCall = mocks.planCalls[mocks.planCalls.length - 1] as { payload: string; callback: (reply: unknown) => void };
+        assert.deepEqual(
+            (JSON.parse(srcCall.payload) as Record<string, unknown>)["command"],
+            { op: "reconcile" },
+            "source reflows once observed",
+        );
+        const srcCorr = planCorrelation(JSON.parse(srcCall.payload) as Record<string, unknown>);
+        srcCall.callback(plannedReconcileReply(srcCorr, "win-b", "out-1", "ws-1"));
+        // The deferred source marker pumps once its domain is observed again.
+        fireAll(world.geometry);
+        runDebounce(mocks);
+        const markerCall = mocks.planCalls[mocks.planCalls.length - 1] as { payload: string; callback: (reply: unknown) => void };
+        assert.deepEqual(
+            (JSON.parse(markerCall.payload) as Record<string, unknown>)["command"],
+            { op: "reconcile" },
+            "deferred source marker dispatches on ws-1",
+        );
+        const markerCorr = planCorrelation(JSON.parse(markerCall.payload) as Record<string, unknown>);
+        markerCall.callback(plannedReconcileReply(markerCorr, "win-b", "out-1", "ws-1"));
+        assert.ok(
+            mocks.logs.some((l) => l.includes("drag-reconcile-settled") && l.includes("correlation=drag-80")),
+            "stale drop settles through the source reconcile",
+        );
+        // Legitimate cross-output pointer drags still join the destination.
+        const callsBeforeCross = mocks.planCalls.length;
+        world.workspace["currentDesktopForScreen"] = (): unknown => desktop1;
+        (world.wins["win-b"] as Record<string, unknown>)["move"] = true;
+        fireAll(world.startedB);
+        (world.wins["win-b"] as Record<string, unknown>)["output"] = { name: "out-2" };
+        world.workspace["cursorPos"] = { x: 900, y: 5 };
+        fireAll(world.finishedB);
+        (world.wins["win-b"] as Record<string, unknown>)["move"] = false;
+        (mocks.oracleCalls[mocks.oracleCalls.length - 1] as (reply: unknown) => void)(
+            moveVerdict({ x: 900, y: 5, w: 600, h: 800 }, "win-b", "drag-81"),
+        );
+        assert.ok(
+            mocks.logs.some((l) => l === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-81 accepted=true"),
+            "cross-output drop still dispatches",
+        );
+        assert.equal(mocks.planCalls.length - callsBeforeCross, 1, "exactly one cross-output dispatch");
+        assert.deepEqual(
+            ((JSON.parse(mocks.planCalls[mocks.planCalls.length - 1]?.payload as string) as Record<string, unknown>)["command"] as Record<string, unknown>),
+            { op: "drag-drop", window: "win-b", x: 900, y: 5, source_output: "out-1", source_workspace: "ws-1" },
+        );
+        stop();
+    });
+
+    it("stale native drift refuses even when the pointer projects back to Started", () => {
+        // Native sent ws-1 -> ws-2 mid-drag; the release pointer resolves to
+        // hidden ws-1, so effective == Started. The native domain drifted, so
+        // the drop stays refused instead of dispatching the old workspace.
+        const refA = {};
+        const refB = {};
+        const observed = directObserved("out-1", "ws-2", { x: 0, y: 0, w: 100, h: 100 }, "win-a", refA, "fp-native-ws2");
+        const started = directObserved("out-1", "ws-1", { x: 400, y: 400, w: 200, h: 200 }, "win-b", refB, "fp-started-ws1");
+        const { adapter, planCalls, logs } = staleDirectAdapter(observed, [started]);
+        assert.equal(adapter.requestDragDrop("win-a", 500, 500, "drag-70", { output: "out-1", workspace: "ws-1" }), false);
+        assert.equal(planCalls.length, 0, "projected-back stale drop dispatches nothing");
+        assert.ok(logs.some((l) => l.includes("drag-drop-refused-stale-workspace")), "native drift refusal logged");
+        assert.ok(logs.some((l) => l.includes("drag-rejected") && l.includes("correlation=drag-70") && l.includes("reason=stale-workspace")));
+        assert.ok(!logs.some((l) => l.includes("drag-drop-cross-output") && l.includes("correlation=drag-70")));
+    });
+
+    it("unchanged native with pointer in another workspace still dispatches", () => {
+        // Native never left ws-1; the pointer sits in hidden ws-2. The native
+        // domain matches Started, so the drop joins the pointer destination.
+        const refA = {};
+        const refB = {};
+        const observed = directObserved("out-1", "ws-1", { x: 0, y: 0, w: 100, h: 100 }, "win-a", refA, "fp-native-ws1");
+        const other = directObserved("out-1", "ws-2", { x: 400, y: 400, w: 200, h: 200 }, "win-b", refB, "fp-other-ws2");
+        const { adapter, planCalls, logs } = staleDirectAdapter(observed, [other]);
+        assert.equal(adapter.requestDragDrop("win-a", 500, 500, "drag-71", { output: "out-1", workspace: "ws-1" }), true);
+        assert.equal(planCalls.length, 1, "pointer-destination drop dispatches once");
+        const directCall = planCalls[0] as { payload: string; callback: (reply: unknown) => void };
+        assert.deepEqual((JSON.parse(directCall.payload) as Record<string, unknown>)["command"], {
+            op: "drag-drop",
+            window: "win-a",
+            x: 500,
+            y: 500,
+            source_output: "out-1",
+            source_workspace: "ws-1",
+        });
+        assert.ok(logs.some((l) => l.includes("drag-drop-cross-output") && l.includes("correlation=drag-71")));
+        assert.ok(!logs.some((l) => l.includes("drag-rejected") && l.includes("correlation=drag-71")));
     });
 
     it("deferred cross-output drop keeps source binding and applies after the busy flight", () => {

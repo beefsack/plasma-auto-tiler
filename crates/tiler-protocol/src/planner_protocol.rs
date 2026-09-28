@@ -26,7 +26,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use tiler_core::bounds::{is_opaque_id, rect_contained, valid_carried_rect};
+use tiler_core::bounds::{is_opaque_id, valid_carried_rect};
 use tiler_core::contract::{LifecycleOperation, LifecyclePrecondition};
 use tiler_core::directional::{Direction, NodeId, OutputId, WindowId, WorkspaceId};
 use tiler_core::engine::Engine;
@@ -628,7 +628,6 @@ const PLANNER_SNAPSHOT_DETAILS: &[&str] = &[
     "outer-gap-low",
     "outer-gap-high",
     "window-rect-invalid",
-    "window-out-of-bounds",
     "focused-not-observed",
     "fingerprint-mismatch",
     "inset-exhausted",
@@ -843,20 +842,11 @@ fn parse_directional_domain(
     Ok((domain, key))
 }
 
-/// Shared request validation: bounds, opaque ids, geometry containment for
-/// existing tiled-state operations, and domain binding. A fresh
-/// complete reconcile seeds through fresh admission machinery, so its
-/// out-of-bounds containment is relaxed while invalid rectangles still reject.
+/// Shared request validation: bounds, opaque ids, and domain binding.
+/// Observed frame rectangles are host drift: valid carried rects are
+/// accepted and converge to canonical planned geometry downstream.
 /// Returns the ready-made rejected reply on failure.
-#[cfg(test)]
 fn validate_request(request_json: &str) -> Result<Validated, String> {
-    validate_request_with_engine(request_json, None)
-}
-
-fn validate_request_with_engine(
-    request_json: &str,
-    engine: Option<&Engine>,
-) -> Result<Validated, String> {
     if request_json.len() > PLAN_MAX_REQUEST_BYTES {
         return Err(rejected(String::new(), "oversized", MSG_OVERSIZED));
     }
@@ -1014,25 +1004,6 @@ fn validate_request_with_engine(
         .get("op")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
-    // Fresh complete reconcile is the admission route: when the domain
-    // is absent (or the owner/generation binding would reset, making it
-    // absent after sync) it seeds through fresh admission
-    // machinery, so out-of-bounds containment must not gate it. Retained
-    // reconcile keeps the refusal; invalid rectangles still reject first.
-    let fresh_reconcile = op_str == "reconcile"
-        && engine.is_some_and(|eng| {
-            let binding_fresh = eng.owner().is_none_or(|o| o.as_str() != request.owner)
-                || eng
-                    .generation()
-                    .is_none_or(|g| g.as_str() != request.generation);
-            if binding_fresh {
-                return true;
-            }
-            !eng.contains(&DomainKey {
-                output: OutputId(request.domain.output.clone()),
-                workspace: WorkspaceId(request.domain.workspace.clone()),
-            })
-        });
     // Production directional payload: only focus/move may carry `domains`;
     // every other op (including the standalone workspace-send route) keeps
     // legacy single-domain behavior and refuses it fail-closed.
@@ -1135,33 +1106,6 @@ fn validate_request_with_engine(
         }
         directional_parsed = Some(parsed);
     }
-    // Per-domain carried bounds for containment (raw wire bounds per
-    // domain; the already-inset projected bounds stay on the domains for
-    // planning/projection).
-    let directional_bounds: Option<Vec<Rect>> = directional.as_ref().map(|entries| {
-        entries
-            .iter()
-            .map(|entry| Rect {
-                x: entry.bounds.x,
-                y: entry.bounds.y,
-                w: entry.bounds.w,
-                h: entry.bounds.h,
-            })
-            .collect()
-    });
-    // KWin native interactive move carries the dragged frame with the
-    // pointer: during `drag-preview`/`drag-drop` the moved source's valid
-    // carried rect may straddle or sit outside the destination usable bounds
-    // (drop policy uses the pointer, not the frame). Exempt only the moved
-    // source's containment; survivors and all other ops keep it, and the
-    // valid-rect, homing, focus, and membership fences stay exact.
-    let drag_source_window: Option<&str> = match op_str {
-        "drag-drop" | "drag-preview" => request
-            .command
-            .get("window")
-            .and_then(serde_json::Value::as_str),
-        _ => None,
-    };
     for entry in &request.windows {
         if !valid_carried_rect(entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h) {
             return Err(snapshot_invalid(
@@ -1170,25 +1114,11 @@ fn validate_request_with_engine(
                 "window-rect-invalid",
             ));
         }
-        let entry_rect = Rect {
-            x: entry.rect.x,
-            y: entry.rect.y,
-            w: entry.rect.w,
-            h: entry.rect.h,
-        };
         if let Some(parsed) = &directional_parsed {
-            let bounds_list: &Vec<Rect> = directional_bounds.as_ref().expect("built");
             let mut homed = false;
-            for ((domain, _), bounds) in parsed.iter().zip(bounds_list.iter()) {
+            for (domain, _) in parsed.iter() {
                 if entry.output == domain.id.0 && entry.workspace == domain.workspace.0 {
                     homed = true;
-                    if !fresh_reconcile && !entry.floating && !rect_contained(entry_rect, *bounds) {
-                        return Err(snapshot_invalid(
-                            request.correlation_id.clone(),
-                            MSG_OBSERVATION,
-                            "window-out-of-bounds",
-                        ));
-                    }
                     break;
                 }
             }
@@ -1200,26 +1130,6 @@ fn validate_request_with_engine(
                 ));
             }
         } else {
-            let is_dragged_source = drag_source_window.is_some_and(|window| window == entry.window);
-            if !fresh_reconcile
-                && !entry.floating
-                && !is_dragged_source
-                && !rect_contained(
-                    Rect {
-                        x: entry.rect.x,
-                        y: entry.rect.y,
-                        w: entry.rect.w,
-                        h: entry.rect.h,
-                    },
-                    carried_bounds,
-                )
-            {
-                return Err(snapshot_invalid(
-                    request.correlation_id.clone(),
-                    MSG_OBSERVATION,
-                    "window-out-of-bounds",
-                ));
-            }
             if entry.output != request.domain.output || entry.workspace != request.domain.workspace
             {
                 return Err(rejected(
@@ -2023,7 +1933,7 @@ impl Planner {
     /// unchanged, projecting the existing tree without replacing shares or
     /// topology.
     pub fn evaluate(&mut self, request_json: &str) -> String {
-        let ctx = match validate_request_with_engine(request_json, Some(&self.engine)) {
+        let ctx = match validate_request(request_json) {
             Ok(ctx) => ctx,
             Err(reply) => return reply,
         };
@@ -2692,7 +2602,7 @@ impl Planner {
 
     /// Shared standalone workspace-send target scope: optional `target_domain`
     /// plus `target_windows` against the source `domain`. Refuses
-    /// cross-output, same-workspace, and malformed or uncovered target windows
+    /// cross-output, same-workspace, and malformed target windows
     /// fail-closed with bounded kinds, and returns the projected target domain
     /// plus its key. No mover/command binding; the request and status paths
     /// add their own command checks.
@@ -2797,21 +2707,6 @@ impl Planner {
                         "window-rect-invalid",
                     ));
                 }
-                if !rect_contained(
-                    Rect {
-                        x: entry.rect.x,
-                        y: entry.rect.y,
-                        w: entry.rect.w,
-                        h: entry.rect.h,
-                    },
-                    carried_bounds,
-                ) {
-                    return Err(snapshot_invalid(
-                        cid,
-                        MSG_OBSERVATION,
-                        "window-out-of-bounds",
-                    ));
-                }
                 if !seen.insert(entry.window.clone()) {
                     return Err(snapshot_invalid(cid, MSG_OPAQUE_ID, "duplicate-window"));
                 }
@@ -2841,8 +2736,8 @@ impl Planner {
 
     /// Validate the standalone workspace-send target: optional `target_domain`
     /// plus `target_windows` against the source `domain`/`windows`. Refuses
-    /// cross-output, same-workspace, absent/invalid focus, and malformed or
-    /// uncovered target windows fail-closed with bounded kinds.
+    /// cross-output, same-workspace, absent/invalid focus, and malformed
+    /// target windows fail-closed with bounded kinds.
     fn validate_workspace_input(&self, ctx: &Validated) -> Result<WorkspaceInput, String> {
         let cid = ctx.request.correlation_id.clone();
         // Target scope first (presence, cross-output, bounds, homing), then
@@ -4046,7 +3941,8 @@ mod tests {
         assert_eq!(restarted["outcome"], "planned", "{restarted}");
         assert_geometry_covers(&restarted, &["ghostty", "firefox-old", "firefox-new"]);
 
-        // Existing tiled-state operations still reject an out-of-bounds drift.
+        // Out-of-bounds drift is host drift: it plans and converges to
+        // canonical geometry.
         let drift = custom_request(
             "drift-oob-1",
             "ghostty",
@@ -4059,10 +3955,106 @@ mod tests {
             serde_json::json!({"op": "focus", "window": "ghostty", "direction": "left"}),
         );
         let drift_reply = parse_reply(&restarted_planner.evaluate(&drift));
-        assert_eq!(drift_reply["kind"], "snapshot-invalid", "{drift_reply}");
+        assert_eq!(drift_reply["outcome"], "planned", "{drift_reply}");
+        assert_geometry_covers(&drift_reply, &["ghostty", "firefox-old", "firefox-new"]);
+    }
+
+    #[test]
+    fn retained_out_of_bounds_reconcile_repeats_then_normal_ops_plan() {
+        // Mid-drag workspace send leaves a valid but out-of-bounds observed
+        // frame (54,586,756,478 over work area 0,44,1536,980): retained
+        // reconcile must accept it as host drift, converge to canonical
+        // planned geometry, repeat without wedging, and keep later normal
+        // operations usable. Malformed rectangles still reject.
+        fn assert_contained(reply: &serde_json::Value) {
+            for geometry in reply["desired_geometry"].as_array().expect("geometry") {
+                let rect = &geometry["rect"];
+                let (x, y, w, h) = (
+                    rect["x"].as_i64().unwrap(),
+                    rect["y"].as_i64().unwrap(),
+                    rect["w"].as_i64().unwrap(),
+                    rect["h"].as_i64().unwrap(),
+                );
+                assert!(x >= 0 && y >= 44, "{reply}");
+                assert!(x + w <= 1536 && y + h <= 1024, "{reply}");
+            }
+        }
+        let oob_windows = [
+            ("ghostty", 54, 586, 756, 478),
+            ("firefox-old", 810, 44, 363, 980),
+            ("firefox-new", 1173, 44, 363, 980),
+        ];
+        let mut planner = Planner::new();
+        let seed = custom_request(
+            "oob-retained-seed-1",
+            "ghostty",
+            (0, 44, 1536, 980),
+            &[
+                ("ghostty", 0, 44, 512, 980),
+                ("firefox-old", 512, 44, 512, 980),
+                ("firefox-new", 1024, 44, 512, 980),
+            ],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        assert_eq!(parse_reply(&planner.evaluate(&seed))["outcome"], "planned");
+        for cid in ["oob-retained-rec-1", "oob-retained-rec-2"] {
+            let request = custom_request(
+                cid,
+                "ghostty",
+                (0, 44, 1536, 980),
+                &oob_windows,
+                serde_json::json!({"op": "reconcile"}),
+            );
+            let reply = parse_reply(&planner.evaluate(&request));
+            assert_eq!(reply["outcome"], "planned", "{reply}");
+            assert_geometry_covers(&reply, &["ghostty", "firefox-old", "firefox-new"]);
+            assert_contained(&reply);
+        }
+        let focus = custom_request(
+            "oob-retained-focus-1",
+            "firefox-old",
+            (0, 44, 1536, 980),
+            &oob_windows,
+            serde_json::json!({"op": "focus", "window": "firefox-old", "direction": "left"}),
+        );
+        let focus_reply = parse_reply(&planner.evaluate(&focus));
+        assert_eq!(focus_reply["outcome"], "planned", "{focus_reply}");
+        assert_geometry_covers(&focus_reply, &["ghostty", "firefox-old", "firefox-new"]);
+        assert_contained(&focus_reply);
+        let normal = custom_request(
+            "oob-retained-rec-3",
+            "ghostty",
+            (0, 44, 1536, 980),
+            &[
+                ("ghostty", 0, 44, 512, 980),
+                ("firefox-old", 512, 44, 512, 980),
+                ("firefox-new", 1024, 44, 512, 980),
+            ],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let normal_reply = parse_reply(&planner.evaluate(&normal));
+        assert_eq!(normal_reply["outcome"], "planned", "{normal_reply}");
+        assert_geometry_covers(&normal_reply, &["ghostty", "firefox-old", "firefox-new"]);
+        let malformed = custom_request(
+            "oob-retained-bad-1",
+            "ghostty",
+            (0, 44, 1536, 980),
+            &[
+                ("ghostty", 54, 586, 0, 478),
+                ("firefox-old", 810, 44, 363, 980),
+                ("firefox-new", 1173, 44, 363, 980),
+            ],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let malformed_reply = parse_reply(&planner.evaluate(&malformed));
+        assert_eq!(malformed_reply["outcome"], "rejected", "{malformed_reply}");
         assert_eq!(
-            drift_reply["detail"], "window-out-of-bounds",
-            "{drift_reply}"
+            malformed_reply["kind"], "snapshot-invalid",
+            "{malformed_reply}"
+        );
+        assert_eq!(
+            malformed_reply["detail"], "window-rect-invalid",
+            "{malformed_reply}"
         );
     }
 
@@ -4572,8 +4564,7 @@ mod tests {
         ));
         let mut oob_planner = seed_pair();
         let oob = parse_reply(&oob_planner.evaluate(&oob_request.to_string()));
-        assert_eq!(oob["kind"], "snapshot-invalid", "{oob}");
-        assert_eq!(oob["detail"], "window-out-of-bounds", "{oob}");
+        assert_eq!(oob["outcome"], "planned", "{oob}");
     }
 
     #[test]
@@ -5052,9 +5043,6 @@ mod tests {
             }),
             ("window-rect-invalid", |v| {
                 v["windows"][0]["rect"]["w"] = serde_json::json!(0)
-            }),
-            ("window-out-of-bounds", |v| {
-                v["windows"][0]["rect"] = serde_json::json!({"x": 1100, "y": 0, "w": 200, "h": 80});
             }),
             ("focused-not-observed", |v| {
                 v["focused_window"] = serde_json::json!("win-9")
@@ -6288,13 +6276,9 @@ mod tests {
         assert_eq!(pv_cross["kind"], "drag-preview", "{pv_cross}");
     }
     #[test]
-    fn drag_moved_source_may_straddle_while_survivor_stays_contained() {
-        // KWin native interactive move carries the dragged frame with the
-        // pointer: a valid moved-source rect may straddle or sit outside the
-        // destination usable bounds while the drop pointer stays inside (drop
-        // policy uses the pointer, not the frame). Only the moved source is
-        // exempt; survivors and all other ops keep containment, and invalid
-        // rects still refuse.
+    fn drag_observed_out_of_bounds_frames_converge() {
+        // Observed frame rectangles are host drift: any valid carried rect
+        // is accepted and converges downstream, while invalid rects refuse.
         let straddling = vec![("win-1", 1100, 0, 200, 80), ("win-2", 200, 0, 100, 80)];
         let mut planner = seed_two_window_planner();
         let preview = parse_reply(&planner.evaluate(&retained_request(
@@ -6330,42 +6314,38 @@ mod tests {
             serde_json::json!({"op": "drag-preview", "window": "win-1", "x": 900, "y": 5}),
         )));
         assert_eq!(preview_out["outcome"], "preview", "{preview_out}");
-        // Destination survivor outside the usable bounds still refuses, for
-        // both drag ops and for reconcile.
+        // Out-of-bounds survivors are host drift too: drag ops and
+        // reconcile accept them and converge downstream.
         let outsider_survivor = vec![("win-1", 0, 0, 100, 80), ("win-2", 1300, 0, 100, 80)];
         let mut planner = seed_two_window_planner();
-        for ((cid, command), (outcome, kind, detail)) in [
-            (
-                (
-                    "drag-survivor-pv",
-                    serde_json::json!({"op": "drag-preview", "window": "win-1", "x": 900, "y": 5}),
-                ),
-                ("rejected", "snapshot-invalid", "window-out-of-bounds"),
-            ),
-            (
-                (
-                    "drag-survivor-drop",
-                    serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 900, "y": 5}),
-                ),
-                ("rejected", "snapshot-invalid", "window-out-of-bounds"),
-            ),
-            (
-                ("drag-survivor-rec", serde_json::json!({"op": "reconcile"})),
-                ("rejected", "snapshot-invalid", "window-out-of-bounds"),
-            ),
-        ] {
-            let reply = parse_reply(&planner.evaluate(&retained_request(
-                cid,
-                "owner-1",
-                "gen-1",
-                "win-1",
-                &outsider_survivor,
-                command,
-            )));
-            assert_eq!(reply["outcome"], outcome, "{reply}");
-            assert_eq!(reply["kind"], kind, "{reply}");
-            assert_eq!(reply["detail"], detail, "{reply}");
-        }
+        let survivor_pv = parse_reply(&planner.evaluate(&retained_request(
+            "drag-survivor-pv",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &outsider_survivor,
+            serde_json::json!({"op": "drag-preview", "window": "win-1", "x": 900, "y": 5}),
+        )));
+        assert_eq!(survivor_pv["outcome"], "preview", "{survivor_pv}");
+        let survivor_drop = parse_reply(&planner.evaluate(&retained_request(
+            "drag-survivor-drop",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &outsider_survivor,
+            serde_json::json!({"op": "drag-drop", "window": "win-1", "x": 900, "y": 5}),
+        )));
+        assert_eq!(survivor_drop["outcome"], "planned", "{survivor_drop}");
+        let survivor_rec = parse_reply(&planner.evaluate(&retained_request(
+            "drag-survivor-rec",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &outsider_survivor,
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(survivor_rec["outcome"], "planned", "{survivor_rec}");
+        assert_geometry_covers(&survivor_rec, &["win-1", "win-2"]);
         // Invalid moved-source rects still fence, even for drag ops.
         let mut planner = seed_two_window_planner();
         let invalid_source = vec![("win-1", 0, 0, 0, 80), ("win-2", 200, 0, 100, 80)];
@@ -6451,7 +6431,7 @@ mod tests {
             );
             assert!(seen.insert(*token), "duplicate token: {token}");
         }
-        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 52, "closed registry size");
+        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 51, "closed registry size");
     }
 
     fn geometry_by_window(
@@ -8091,6 +8071,77 @@ mod tests {
             target_geometry.iter().all(|g| g["window"] != "win-1"),
             "{target}"
         );
+    }
+
+    #[test]
+    fn workspace_send_accepts_out_of_bounds_target_observation() {
+        // Target observations are host drift too: a valid but out-of-bounds
+        // target rect plans and converges, while a malformed one refuses.
+        fn target_entry(window: &str, x: i32, y: i32, w: i32, h: i32) -> serde_json::Value {
+            serde_json::json!({
+                "window": window,
+                "output": "out-1",
+                "workspace": "ws-2",
+                "rect": {"x": x, "y": y, "w": w, "h": h},
+            })
+        }
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-oob-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![target_entry("win-t1", 1100, 700, 200, 200)],
+            workspace_send_body(),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["kind"], "send-to-workspace", "{reply}");
+        let geometry = reply["desired_geometry"].as_array().expect("geometry");
+        let mut members: Vec<(String, String)> = geometry
+            .iter()
+            .map(|g| {
+                (
+                    g["window"].as_str().expect("window").to_owned(),
+                    g["workspace"].as_str().expect("workspace").to_owned(),
+                )
+            })
+            .collect();
+        members.sort();
+        assert_eq!(
+            members,
+            vec![
+                ("win-1".to_owned(), "ws-2".to_owned()),
+                ("win-t1".to_owned(), "ws-2".to_owned()),
+            ],
+            "{reply}"
+        );
+        for entry in geometry {
+            let rect = &entry["rect"];
+            let (x, y, w, h) = (
+                rect["x"].as_i64().unwrap(),
+                rect["y"].as_i64().unwrap(),
+                rect["w"].as_i64().unwrap(),
+                rect["h"].as_i64().unwrap(),
+            );
+            assert!(x >= 0 && y >= 0, "{reply}");
+            assert!(x + w <= 1200 && y + h <= 800, "{reply}");
+        }
+        let mut planner = Planner::new();
+        let malformed = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-oob-2",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![target_entry("win-t1", 1100, 700, 0, 200)],
+            workspace_send_body(),
+        )));
+        assert_eq!(malformed["outcome"], "rejected", "{malformed}");
+        assert_eq!(malformed["kind"], "snapshot-invalid", "{malformed}");
+        assert_eq!(malformed["detail"], "window-rect-invalid", "{malformed}");
     }
 
     #[test]

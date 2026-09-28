@@ -673,41 +673,6 @@ describe("plan adapter recovery and fencing", () => {
         assert.equal(mocks.dbusCalls.length, 2);
     });
 
-    it("identifies the offending carried rectangle on an out-of-bounds rejection", () => {
-        const refs = makeRefs();
-        const mocks = mockEnv(refs);
-        mocks.observeImpl = () =>
-            makeObserved(refs, {
-                focused: refs.a,
-                bounds: { x: 0, y: 24, w: 1200, h: 776 },
-                rects: {
-                    "win-a": { x: -8, y: 24, w: 600, h: 776 },
-                    "win-b": { x: 600, y: 24, w: 600, h: 776 },
-                },
-                resourceClasses: { "win-a": "firefox" },
-            });
-        const adapter = enableAdapter(mocks);
-        adapter.requestFocus("left");
-        const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
-        mocks.callbacks[0]?.(
-            JSON.stringify({
-                v: 1,
-                correlation_id: correlation,
-                outcome: "rejected",
-                kind: "snapshot-invalid",
-                detail: "window-out-of-bounds",
-                message: "no",
-            }),
-        );
-        assert.ok(
-            mocks.logs.some(
-                (line) =>
-                    line ===
-                    "plasma-auto-tiler:plan:rejected kind=snapshot-invalid detail=window-out-of-bounds output=out-1 ordinal=0 resource_class=firefox rect=-8,24,600,776 bounds=0,24,1200,776",
-            ),
-        );
-    });
-
     it("keeps a rejected reconcile out of the committed baseline so a reopened window is converged", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);

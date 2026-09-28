@@ -598,9 +598,21 @@ the corresponding item ships; each such entry names its replacement.
   Admission assigns a new complete geometry for every member and may reflow
   existing members. In particular, an older out-of-work-area window must not
   prevent a later window from tiling or create a restart-persistent admission
-  deadlock. Bounds validation remains mandatory for non-admission operations,
-   where observed geometry is the client-drift input for bounded per-window acceptance and
-  echo fence.
+  deadlock. User Resilience direction, 2026-09-29: valid observed frame rectangles
+  outside the work area are host drift for retained commands, directional
+  commands, and workspace-send target observations too; they must not reject
+  the complete snapshot. Canonical projection and KWin's existing bounded
+  per-window drift handling converge them. Malformed rectangles, domain
+  homing, and reply geometry remain validated. Offline verified in
+  [mid-drag-workspace-recovery](changes/archive/mid-drag-workspace-recovery.md);
+  live acceptance pending.
+- Mid-drag workspace change (Orchestrator default, 2026-09-29): a native
+  same-output workspace send while Meta drag is held supersedes the Started
+  workspace's drop target. Ignore that stale drop and let complete source and
+  destination observations reflow/admit the mover normally. Lead implementation
+  choice: compare the mover's fresh native workspace with Started, not the
+  pointer-projected destination; a legitimate pointer-based cross-domain drag
+  remains available. Offline verified, live acceptance pending.
 - `workspaceMode` supports `per-output-local`, `global-unique`, and `shared`
   through a session-local, project-owned KWin backing-desktop mapping. KWin's
   global virtual-desktop pool is not a native COSMIC workspace-set mapping.
