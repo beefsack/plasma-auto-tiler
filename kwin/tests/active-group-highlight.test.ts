@@ -99,7 +99,7 @@ interface Fixture {
     logs: string[];
 }
 
-function fixture(observe: () => ActiveGroupObserved | null = observed): Fixture {
+function fixture(observe: () => ActiveGroupObserved | null = observed, groupGeneration?: string): Fixture {
     const payloads: string[] = [];
     const replies: Array<(reply: unknown) => void> = [];
     const sets: string[] = [];
@@ -120,6 +120,7 @@ function fixture(observe: () => ActiveGroupObserved | null = observed): Fixture 
         },
         owner: OWNER,
         generation: GENERATION,
+        ...(groupGeneration === undefined ? {} : { groupGeneration }),
     };
     return { env, bridge: new ActiveGroupHighlight(env), payloads, replies, sets, logs };
 }
@@ -892,6 +893,49 @@ describe("active-group highlight bridge behavior", () => {
         bridge.refresh();
         const secondPayload = JSON.parse(payloads[1] as string) as Record<string, unknown>;
         assert.equal(secondPayload["revision"], 0);
+    });
+});
+
+describe("active-group per-script-instance group stream", () => {
+    it("keeps the Planner request fixed while two instances carry differing effect generations", () => {
+        const first = fixture(observed, "script-aaa1");
+        const second = fixture(observed, "script-bbb2");
+        first.bridge.refresh();
+        second.bridge.refresh();
+        const firstRequest = JSON.parse(first.payloads[0] as string) as Record<string, unknown>;
+        const secondRequest = JSON.parse(second.payloads[0] as string) as Record<string, unknown>;
+        assert.equal(firstRequest["owner"], OWNER);
+        assert.equal(firstRequest["generation"], GENERATION);
+        assert.equal(secondRequest["owner"], OWNER);
+        assert.equal(secondRequest["generation"], GENERATION);
+        const firstReply = first.replies[0];
+        const secondReply = second.replies[0];
+        assert.ok(firstReply !== undefined && secondReply !== undefined);
+        firstReply(activeGroupReply(CORRELATION));
+        secondReply(activeGroupReply(CORRELATION));
+        const firstEffect = JSON.parse(first.sets[0] as string) as Record<string, unknown>;
+        const secondEffect = JSON.parse(second.sets[0] as string) as Record<string, unknown>;
+        assert.equal(firstEffect["owner"], OWNER);
+        assert.equal(firstEffect["generation"], "script-aaa1");
+        assert.equal(secondEffect["generation"], "script-bbb2");
+        assert.notEqual(firstEffect["generation"], secondEffect["generation"]);
+    });
+
+    it("refuses an invalid per-instance stream generation fail-closed", () => {
+        const handle = startActiveGroupHighlight({
+            callDescribePlan: () => {
+                assert.fail("must not dispatch with an invalid stream generation");
+            },
+            setHighlight: () => {},
+            clearHighlight: () => {},
+            observe: observed,
+            subscribe: () => () => {},
+            log: () => {},
+            owner: OWNER,
+            generation: GENERATION,
+            groupGeneration: "BAD generation",
+        });
+        assert.equal(handle, null);
     });
 });
 

@@ -112,6 +112,21 @@ describe("active-group native static contract", () => {
         assert.match(effectImpl, /updateGroupVisibility/);
     });
 
+    it("reports bounded native setter and anchor outcomes without raw identities", () => {
+        assert.match(effectImpl, /group-highlight:setter outcome=%1 members=%2 anchor=%3 first=%4 meta=%5 foc=%6 ep=%7 vis=%8/);
+        assert.match(effectImpl, /group-highlight:transition anchor=%1 members=%2 first=%3 meta=%4 foc=%5 ep=%6 vis=%7/);
+        for (const outcome of ["accepted", "stale", "endpoint-unavailable"]) {
+            assert.match(effectImpl, new RegExp(`emitGroupSetterDiag\\("${outcome}"\\)`));
+        }
+        assert.match(effectImpl, /emitGroupSetterDiag\(code == 3 \? "focus-mismatch" : "parse-rejected"\)/);
+        for (const reason of ["selected", "no-group", "no-member-match", "all-items-hidden"]) {
+            assert.match(effectImpl, new RegExp(`"${reason}"`));
+        }
+        const emitter = effectImpl.split("void ActiveWindowBorderEffect::emitGroupSetterDiag")[1]?.split("void ActiveWindowBorderEffect::updateBorder")[0];
+        assert.ok(emitter !== undefined);
+        assert.doesNotMatch(emitter, /internalId|m_groupMemberIds\.at|payloadBytes|frameGeometry/);
+    });
+
     it("seeds maximize observation directly from committed mode with transitions authoritative", () => {
         // Each observed window seeds m_maximizedWindows from window()->maximizeMode().
         assert.match(effectImpl, /maximizeMode\(\)/);

@@ -127,8 +127,16 @@ All items below shipped offline with no live result claimed.
   effect): Meta-held group shows a fill beneath all members, one border width
   beyond the border outer edge by default; underlay colour/extension and drop
   preview colour (with alpha) apply live; underlay slides with workspace
-  transitions; fullscreen/maximise still hides it.
+  transitions; fullscreen/maximise still hides it. User found (2026-09-29)
+  it showed only on workspace 2 (`~/Downloads/plasma-auto-tiler-dev.FeTnf4.log`)
+  and nowhere after a `just dev` restart (`y3jVs3`). Restart cause fixed
+  offline (effect kept the old stream's revision high-water mark); the
+  workspace-2-only cause is unproven. New effect lines
+  `group-highlight:setter outcome=... anchor=...` and
+  `group-highlight:transition` diagnose it: re-test both workspaces, before
+  and after a `just dev` restart.
   [change](changes/archive/group-underlay-and-preview-colors.md)
+  [fix](changes/archive/group-underlay-restart-visibility.md)
 - Mid-drag workspace send: repro (3 tiles, Meta+drag to a preview,
   Meta+Shift+2 while held, release) logs `drag-drop-refused-stale-workspace`
   and both workspaces keep tiling; a plain drag released partly off the work

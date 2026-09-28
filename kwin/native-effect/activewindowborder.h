@@ -152,6 +152,12 @@ private:
     void logActiveBorderDiag(const QString &message);
     void emitActiveBorderEndpoint();
     void emitOracleEndpoint();
+    // Bounded group-highlight observability only: setter receipt plus a
+    // combined anchor/visibility transition. Fixed tokens and bits, no
+    // identities, payload, or geometry. Failures never gate painting.
+    void emitGroupSetterDiag(const char *outcome);
+    void emitGroupTransitionDiag();
+    void syncGroupTransitionDiag();
     // Shared idempotent D-Bus registration: only reports success when both
     // the service name and the object path register; on partial success
     // rolls back only what this attempt acquired. Never unregisters an
@@ -177,6 +183,13 @@ private:
     // and then only when computed visibility flips.
     bool m_borderDiagEmitted = false;
     bool m_borderDiagVisible = false;
+    // Current anchor outcome for diagnostics plus the last emitted
+    // transition (anchor reason + visibility). Setter syncs without
+    // emitting; non-setter paths emit only on material change.
+    const char *m_groupAnchorDiag = "no-group";
+    const char *m_groupTransDiagAnchor = "no-group";
+    bool m_groupTransDiagVisible = false;
+    bool m_groupTransDiagEmitted = true;
 };
 
 } // namespace KWin

@@ -140,6 +140,13 @@ export interface ActiveGroupHighlightEnv {
     readonly log: (message: string) => void;
     readonly owner: string;
     readonly generation: string;
+    // Per-script-instance group effect stream generation. The Planner
+    // DescribePlan request/reply identity stays on `owner`/`generation`
+    // (fixed per session); only the effect setter payload carries this
+    // stream generation so the native monotonic policy accepts a restarted
+    // script through its existing new-stream branch. When omitted the
+    // planner generation is reused (legacy behavior).
+    readonly groupGeneration?: string;
 }
 
 export interface ActiveGroupHighlightHandle {
@@ -678,6 +685,14 @@ export class ActiveGroupHighlight {
 
     constructor(private readonly env: ActiveGroupHighlightEnv) {}
 
+    private effectGeneration(): string {
+        const candidate = this.env.groupGeneration;
+        if (typeof candidate === "string" && isGenerationId(candidate)) {
+            return candidate;
+        }
+        return this.env.generation;
+    }
+
     refresh(): void {
         this.epoch += 1;
         const flightEpoch = this.epoch;
@@ -861,7 +876,7 @@ export class ActiveGroupHighlight {
         const payload = formatGroupHighlightPayload(
             parsed.correlationId,
             parsed.owner,
-            parsed.generation,
+            this.effectGeneration(),
             parsed.baseRevision,
             parsed.group,
             parsed.focusedWindow,
@@ -910,8 +925,9 @@ export class ActiveGroupHighlight {
     }
 }
 
-// Starts the temporary highlight bridge: validates owner/generation,
-// subscribes to focus/domain/tree/fullscreen lifecycle signals, issues the
+// Starts the temporary highlight bridge: validates owner/generation plus
+// the optional per-instance group stream generation, subscribes to
+// focus/domain/tree/fullscreen lifecycle signals, issues the
 // initial DescribePlan active-group query, and re-queries (after clearing) on
 // every lifecycle change. Focus activation clears the old group immediately
 // before the asynchronous refresh so no stale group renders under the new
@@ -923,6 +939,9 @@ export function startActiveGroupHighlight(env: ActiveGroupHighlightEnv): ActiveG
         return null;
     }
     if (!isGenerationId(env.generation)) {
+        return null;
+    }
+    if (env.groupGeneration !== undefined && !isGenerationId(env.groupGeneration)) {
         return null;
     }
     if (typeof env.callDescribePlan !== "function" || typeof env.setHighlight !== "function" || typeof env.clearHighlight !== "function") {

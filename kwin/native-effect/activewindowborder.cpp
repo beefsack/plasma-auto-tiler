@@ -235,6 +235,7 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
         updateBorder();
         updateGroupAnchorAndGeometry();
         updateGroupVisibility();
+        emitGroupTransitionDiag();
     });
     connect(effects, &EffectsHandler::windowClosed, this, [this](EffectWindow *window) {
         unsubscribeMaximize(window);
@@ -247,6 +248,7 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
         updateBorder();
         updateGroupAnchorAndGeometry();
         updateGroupVisibility();
+        emitGroupTransitionDiag();
     });
     // Global maximize tracking and the oracle observe every window,
     // including when the active border cannot render. Each observed window
@@ -265,6 +267,7 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
         if (m_isOpenGL) {
             updateGroupAnchorAndGeometry();
             updateGroupVisibility();
+            emitGroupTransitionDiag();
         }
     });
     // Lowest-stacked renderable anchor follows stacking and member
@@ -276,6 +279,7 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
         }
         updateGroupAnchorAndGeometry();
         updateGroupVisibility();
+        emitGroupTransitionDiag();
     });
     // Activation recovery runs even when OpenGL rendering is off: the oracle
     // endpoint and press spy stay useful without a visible border. Rendering
@@ -292,6 +296,7 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
         setTrackedWindow(effects->activeWindow());
         updateBorder();
         updateGroupVisibility();
+        emitGroupTransitionDiag();
     });
 
     if (!m_isOpenGL) {
@@ -392,27 +397,33 @@ void ActiveWindowBorderEffect::updateGroupAnchorAndGeometry()
     GroupHighlightRect rect{};
     const bool hasGroup = group_highlight_rect(&m_groupState, &rect) == 1 && !m_groupMemberIds.isEmpty();
     EffectWindow *anchor = nullptr;
+    bool sawMember = false;
     if (hasGroup) {
         // The order runs bottom-first: the first *renderable* member match
         // is the lowest-stacked painted group window. Bare-UUID string
         // compare only; the member list came from the already-Rust-accepted
         // payload. WindowItem effective visibility covers minimized/hidden
         // members while preserving slide-painted off-desktop windows.
+        // sawMember distinguishes no-member-match from all-items-hidden.
         for (EffectWindow *candidate : effects->stackingOrder()) {
             if (candidate == nullptr || candidate->isDeleted()) {
                 continue;
+            }
+            const QString bare = candidate->internalId().toString(QUuid::WithoutBraces);
+            if (m_groupMemberIds.contains(bare)) {
+                sawMember = true;
             }
             WindowItem *candidateItem = candidate->windowItem();
             if (candidateItem == nullptr || !candidateItem->isVisible()) {
                 continue;
             }
-            const QString bare = candidate->internalId().toString(QUuid::WithoutBraces);
             if (m_groupMemberIds.contains(bare)) {
                 anchor = candidate;
                 break;
             }
         }
     }
+    m_groupAnchorDiag = !hasGroup ? "no-group" : (anchor != nullptr ? "selected" : (sawMember ? "all-items-hidden" : "no-member-match"));
     EffectWindow *oldAnchor = m_groupAnchor;
     if (oldAnchor != anchor && oldAnchor != nullptr) {
         // The current anchor's own frame move remaps below; the old anchor
@@ -593,6 +604,7 @@ void ActiveWindowBorderEffect::onGroupMemberVisibilityChanged(EffectWindow *wind
     }
     updateGroupAnchorAndGeometry();
     updateGroupVisibility();
+    emitGroupTransitionDiag();
 }
 
 void ActiveWindowBorderEffect::attachOracleWindow(EffectWindow *window)
@@ -915,6 +927,56 @@ void ActiveWindowBorderEffect::emitActiveBorderVisible(bool visible, const char 
     }
 }
 
+void ActiveWindowBorderEffect::emitGroupSetterDiag(const char *outcome)
+{
+    // Every SetGroupHighlight receipt: Rust outcome plus bounded scalars.
+    try {
+        const int members = m_groupMemberIds.size() > 9999 ? 9999 : static_cast<int>(m_groupMemberIds.size());
+        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:group-highlight:setter outcome=%1 members=%2 anchor=%3 first=%4 meta=%5 foc=%6 ep=%7 vis=%8")
+                .arg(QString::fromUtf8(outcome))
+                .arg(members)
+                .arg(QString::fromUtf8(m_groupAnchorDiag))
+                .arg(m_firstMouseSeen ? 1 : 0)
+                .arg(m_metaHeld ? 1 : 0)
+                .arg(isGroupFocusEligible() ? 1 : 0)
+                .arg(m_groupDbusAvailable ? 1 : 0)
+                .arg(m_groupVisible ? 1 : 0));
+    } catch (...) {
+    }
+}
+
+void ActiveWindowBorderEffect::syncGroupTransitionDiag()
+{
+    m_groupTransDiagAnchor = m_groupAnchorDiag;
+    m_groupTransDiagVisible = m_groupVisible;
+    m_groupTransDiagEmitted = true;
+}
+
+void ActiveWindowBorderEffect::emitGroupTransitionDiag()
+{
+    // Combined anchor/visibility line only on material change.
+    try {
+        const QString curAnchor = QString::fromUtf8(m_groupAnchorDiag);
+        const QString lastAnchor = QString::fromUtf8(m_groupTransDiagAnchor);
+        if (m_groupTransDiagEmitted && lastAnchor == curAnchor && m_groupTransDiagVisible == m_groupVisible) {
+            return;
+        }
+        m_groupTransDiagAnchor = m_groupAnchorDiag;
+        m_groupTransDiagVisible = m_groupVisible;
+        m_groupTransDiagEmitted = true;
+        const int members = m_groupMemberIds.size() > 9999 ? 9999 : static_cast<int>(m_groupMemberIds.size());
+        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:group-highlight:transition anchor=%1 members=%2 first=%3 meta=%4 foc=%5 ep=%6 vis=%7")
+                .arg(curAnchor)
+                .arg(members)
+                .arg(m_firstMouseSeen ? 1 : 0)
+                .arg(m_metaHeld ? 1 : 0)
+                .arg(isGroupFocusEligible() ? 1 : 0)
+                .arg(m_groupDbusAvailable ? 1 : 0)
+                .arg(m_groupVisible ? 1 : 0));
+    } catch (...) {
+    }
+}
+
 void ActiveWindowBorderEffect::updateBorder()
 {
     if (!m_isOpenGL) {
@@ -951,6 +1013,8 @@ void ActiveWindowBorderEffect::applyGroupHighlight(const QString &payload)
     // Unavailable endpoint never displays: fail closed.
     if (!m_groupDbusAvailable) {
         clearGroupHighlight();
+        emitGroupSetterDiag("endpoint-unavailable");
+        syncGroupTransitionDiag();
         return;
     }
     // QObject/D-Bus boundary: QString payload and native active identity to
@@ -969,6 +1033,8 @@ void ActiveWindowBorderEffect::applyGroupHighlight(const QString &payload)
     if (code == 2) {
         // Stale/out-of-order versus the newer displayed highlight is ignored
         // without destroying it.
+        emitGroupSetterDiag("stale");
+        syncGroupTransitionDiag();
         return;
     }
     if (code == 1) {
@@ -989,6 +1055,8 @@ void ActiveWindowBorderEffect::applyGroupHighlight(const QString &payload)
         if (m_isOpenGL) {
             effects->addRepaintFull();
         }
+        emitGroupSetterDiag("accepted");
+        syncGroupTransitionDiag();
         return;
     }
     m_groupMemberIds.clear();
@@ -999,6 +1067,8 @@ void ActiveWindowBorderEffect::applyGroupHighlight(const QString &payload)
     if (hadDisplayed && m_isOpenGL) {
         effects->addRepaintFull();
     }
+    emitGroupSetterDiag(code == 3 ? "focus-mismatch" : "parse-rejected");
+    syncGroupTransitionDiag();
 }
 
 void ActiveWindowBorderEffect::clearGroupHighlight()
@@ -1012,6 +1082,7 @@ void ActiveWindowBorderEffect::clearGroupHighlight()
     updateGroupVisibility();
     if (hadGroup == 1 && m_isOpenGL) {
         effects->addRepaintFull();
+        emitGroupTransitionDiag();
     }
 }
 
@@ -1111,6 +1182,7 @@ void ActiveWindowBorderEffect::onMouseChanged(const QPointF &pos, const QPointF 
     m_firstMouseSeen = true;
     m_metaHeld = modifiers.testFlag(Qt::MetaModifier);
     updateGroupVisibility();
+    emitGroupTransitionDiag();
 }
 
 void ActiveWindowBorderEffect::updateGroupVisibility()

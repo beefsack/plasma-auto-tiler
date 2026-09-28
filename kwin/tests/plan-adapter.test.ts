@@ -4648,6 +4648,77 @@ describe("plan entry live observation and shortcuts", () => {
         assert.ok(!entryC.mocks.logs.some((line) => line === RECOVERED), "no recovery after stop");
         assert.equal(countActiveGroup(entryC.mocks), 0, "no attach after stop");
     });
+
+    it("carries a fresh per-instance group stream across two entries while the Planner identity stays fixed", () => {
+        const replyActiveGroup = (mocks: EntryMocks, effects: Array<{ method: string; payload: string | undefined }>): Record<string, unknown> => {
+            const index = mocks.dbusCalls.findIndex((call) => {
+                try {
+                    return ((JSON.parse(call.payload) as Record<string, unknown>)["command"] as Record<string, unknown>)["op"] === "active-group";
+                } catch (error) {
+                    void error;
+                    return false;
+                }
+            });
+            assert.ok(index >= 0, "startup active-group query");
+            const request = JSON.parse(mocks.dbusCalls[index]?.payload as string) as Record<string, unknown>;
+            assert.equal(request["owner"], "owner-1");
+            assert.equal(request["generation"], "gen-1");
+            const correlation = request["correlation_id"] as string;
+            const callback = mocks.callbacks[index];
+            assert.ok(callback !== undefined);
+            callback(
+                JSON.stringify({
+                    v: 1,
+                    correlation_id: correlation,
+                    outcome: "active-group",
+                    kind: "active-group",
+                    base_revision: 2,
+                    detail: {
+                        kind: "active-group",
+                        owner: "owner-1",
+                        generation: "gen-1",
+                        domain_output: "out-1",
+                        domain_workspace: "ws-1",
+                        group: "group-1",
+                        focused_leaf: "leaf-win-a",
+                        focused_window: "win-a",
+                        members: [
+                            { window: "win-a", leaf: "leaf-win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                            { window: "win-b", leaf: "leaf-win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                        ],
+                        bounds: { x: 0, y: 0, w: 1200, h: 800 },
+                    },
+                }),
+            );
+            const setter = effects.find((entry) => entry.method === "SetGroupHighlight");
+            assert.ok(setter?.payload !== undefined, "effect setter submitted");
+            return JSON.parse(setter.payload as string) as Record<string, unknown>;
+        };
+        const collectEffects = (): { effects: Array<{ method: string; payload: string | undefined }>; override: PlanEntryOverrides } => {
+            const effects: Array<{ method: string; payload: string | undefined }> = [];
+            return {
+                effects,
+                override: {
+                    highlightCallDbus: (_service, _path, _iface, method, ...args): void => {
+                        effects.push({ method, payload: args[0] as string | undefined });
+                    },
+                },
+            };
+        };
+        const first = collectEffects();
+        const entryA = startEntry(fakeWorld(), { ...first.override, groupGeneration: "script-aaa1" });
+        const second = collectEffects();
+        const entryB = startEntry(fakeWorld(), { ...second.override, groupGeneration: "script-bbb2" });
+        assert.ok(entryA.handle !== null && entryB.handle !== null);
+        const effectA = replyActiveGroup(entryA.mocks, first.effects);
+        const effectB = replyActiveGroup(entryB.mocks, second.effects);
+        assert.equal(effectA["owner"], "owner-1");
+        assert.equal(effectA["generation"], "script-aaa1");
+        assert.equal(effectB["generation"], "script-bbb2");
+        assert.notEqual(effectA["generation"], effectB["generation"]);
+        entryA.handle?.stop();
+        entryB.handle?.stop();
+    });
 });
 
 describe("plan entry startup attach recovery", () => {

@@ -48,6 +48,7 @@ import {
     startActiveGroupHighlight,
 } from "./active-group-highlight";
 import { PLAN_DBUS_SERVICE, PLAN_INTERFACE, PLAN_METHOD, PLAN_OBJECT, PLAN_SERVICE, PLAN_START_FLAGS, PLAN_START_METHOD, PlanAdapter, PlanDirection, PlanDomain, PlanDragPreviewResult, PlanObserved, PlanResizeMode, DirectionalObservation, PlanWindowConstraints, planDirectionalFingerprint, planFingerprint } from "./plan-adapter";
+import { processGeneration } from "./tray-publisher";
 import { PLAN_SOURCE_REV } from "./source-rev";
 import { connectSignal, readSignal } from "./signal-capability";
 import { KWIN_TRACE_ENABLED } from "./trace";
@@ -91,6 +92,10 @@ export interface PlanEntryOverrides {
     readonly log?: (message: string) => void;
     readonly owner?: unknown;
     readonly generation?: unknown;
+    // Optional deterministic per-script-instance group effect stream
+    // generation. Test seam only: production omits it so the entry mints one
+    // fresh token from the shared tray source. Planner identity stays fixed.
+    readonly groupGeneration?: unknown;
     readonly registerShortcutFn?: (
         name: string,
         text: string,
@@ -5039,12 +5044,23 @@ function startPlanAdapterEntryOnce(
     // route with {"op":"active-group"} at startup and on focus/domain/tree
     // lifecycle changes, validates the exact bounded reply shape and identity,
     // and forwards engine-projected union bounds to the effect-owned
-    // SetGroupHighlight(QString)/ClearGroupHighlight() endpoint. No new
+    // SetGroupHighlight(QString)/ClearGroupHighlight() endpoint. The Planner
+    // request/reply identity stays on the fixed session owner/generation;
+    // only the effect setter payload carries one fresh bounded
+    // per-script-instance stream generation (minted here from the shared
+    // tray-publisher token source) so the native monotonic policy accepts a
+    // restarted script through its existing new-stream branch. No new
     // transport, no topology derivation, no /Effects. Every script error,
     // no-group, service loss, or lifecycle invalidation clears fail-closed.
     let highlightStop: (() => void) | null = null;
     let highlightAttachFailed = false;
     let entryStopped = false;
+    // Minted once per entry instance: a restarted script (new instance)
+    // mints a fresh stream while retries in this instance keep one stream.
+    const groupStreamGeneration =
+        typeof overrides.groupGeneration === "string" && isEntryGeneration(overrides.groupGeneration)
+            ? overrides.groupGeneration
+            : processGeneration();
     const attachHighlightBridge = (): void => {
         if (entryStopped) {
             return;
@@ -5199,6 +5215,7 @@ function startPlanAdapterEntryOnce(
                         log,
                         owner: ownerRaw,
                         generation: generationRaw,
+                        groupGeneration: groupStreamGeneration,
                     });
                     if (highlight !== null) {
                         // Single observational refresh after each successful

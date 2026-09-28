@@ -92,3 +92,18 @@ existing reconfigure path and effect `kwinrc` group.
 
 `[kwin]` script lines are dispatch/queued evidence, not confirmation of native
 composition. No agent performed live KWin/Plasma testing.
+
+## 2026-09-29 Laptop Follow-up
+
+- User saw the underlay only on workspace 2 in `FeTnf4`, then nowhere after a
+  `just dev` restart in the same Plasma session (`y3jVs3`). The script kept
+  submitting group setters; those lines do not prove native acceptance.
+- The group effect previously reused the fixed Planner `kwin-plan-adapter` /
+  `plan-1` stream across script restarts. Its Rust high-water mark survives
+  display clear while the effect stays loaded; the old trace reached revision
+  60 and the restarted script reached only 19. The follow-up fix gives only
+  the group setter a per-script-instance generation; Planner identity and
+  tiling behavior stay unchanged. Native redacted setter and transition logs
+  now expose stale/focus/parse/anchor/Meta outcomes for the workspace-specific
+  observation, whose exact cause the original traces cannot prove. See
+  [group-underlay-restart-visibility](group-underlay-restart-visibility.md).

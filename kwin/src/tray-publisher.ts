@@ -14,7 +14,7 @@ export interface TrayPublisherEnvironment {
     readonly log?: (message: string) => void;
 }
 
-function processGeneration(): string {
+export function processGeneration(): string {
     return `${Date.now().toString(36)}-${Math.floor(Math.random() * 0x100000000).toString(36)}`;
 }
 

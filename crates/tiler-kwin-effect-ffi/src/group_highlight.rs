@@ -999,16 +999,18 @@ mod tests {
     fn owner_and_generation_changes_reset_monotonic_comparison() {
         let mut state = GroupHighlightState::zero();
         assert_eq!(apply(&mut state, "gen-1-g10", 50), 1);
-        // New owner with a lower revision is a new stream: must accept
-        // rather than applying the stale high-water mark forever.
-        let bytes = b"{\"v\":1,\"correlation_id\":\"other-g0\",\"owner\":\"owner-2\",\"generation\":\"gen-1\",\"revision\":1,\"group\":\"group-1\",\"focused_window\":\"win-2\",\"members\":[\"win-2\"],\"bounds\":{\"x\":1,\"y\":2,\"w\":10,\"h\":10}}";
+        assert_eq!(group_highlight_clear(&mut state), 1);
+        assert_eq!(apply(&mut state, "gen-1-g0", 1), 2);
+        // Same owner, new script-instance stream: a lower revision must
+        // display after clear despite the old stream's high-water mark.
+        let bytes = b"{\"v\":1,\"correlation_id\":\"gen-2-g0\",\"owner\":\"owner-1\",\"generation\":\"gen-2\",\"revision\":1,\"group\":\"group-1\",\"focused_window\":\"win-2\",\"members\":[\"win-2\"],\"bounds\":{\"x\":1,\"y\":2,\"w\":10,\"h\":10}}";
         assert_eq!(apply_inner(&mut state, bytes, b"win-2"), 1);
         assert_eq!(state.last_revision, 1);
-        assert_eq!(state.owner_bytes(), b"owner-2");
-        // New generation likewise resets.
-        let bytes = b"{\"v\":1,\"correlation_id\":\"gen-2-g0\",\"owner\":\"owner-2\",\"generation\":\"gen-2\",\"revision\":0,\"group\":\"group-1\",\"focused_window\":\"win-2\",\"members\":[\"win-2\"],\"bounds\":{\"x\":1,\"y\":2,\"w\":10,\"h\":10}}";
-        assert_eq!(apply_inner(&mut state, bytes, b"win-2"), 1);
         assert_eq!(state.generation_bytes(), b"gen-2");
+        // New owner likewise starts a new stream.
+        let bytes = b"{\"v\":1,\"correlation_id\":\"other-g0\",\"owner\":\"owner-2\",\"generation\":\"gen-2\",\"revision\":0,\"group\":\"group-1\",\"focused_window\":\"win-2\",\"members\":[\"win-2\"],\"bounds\":{\"x\":1,\"y\":2,\"w\":10,\"h\":10}}";
+        assert_eq!(apply_inner(&mut state, bytes, b"win-2"), 1);
+        assert_eq!(state.owner_bytes(), b"owner-2");
     }
 
     #[test]
