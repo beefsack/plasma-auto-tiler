@@ -20,8 +20,13 @@ decisions of 2026-09-24 are under
   (source-only baseline fix is in; needs a fresh `just dev trace` local-move
   plus follow-on command trace), and one requested `2032x1092` became
   `1920x1036` while another primary Ghostty accepted full size (per-window
-  native cap or stale output-derived cap unproven).
+  native cap or stale output-derived cap unproven). Lead hypothesis
+  (Orchestrator, 2026-09-28): 1920x1036 equals HDMI-A-2's work area, so the
+  window may be constrained to the other output. Next: PC `just dev trace`
+  with one tall tiled window on DP-6; check output, bounds and constraints.
+  Gates reconciliation phase 2.
   [bounds fix](changes/archive/multi-output-domain-bounds.md)
+  [phase 2 parked](changes/learned-size-limits.md)
   [drag investigation](changes/window-alignment-drag-investigation.md)
 - P1 | Navigation/movement while maximised | No suppression policy selected;
   semantics await the user's COSMIC comparison.
@@ -46,9 +51,12 @@ decisions of 2026-09-24 are under
   foreground/hidden classifier, refresh classification logs) passed the
   user's laptop live test at `062d707` (2026-09-28, "felt good and minimally
   janky"; trace `~/Downloads/plasma-auto-tiler-dev.uE1S5n.log`). Quiet
-  refresh outcomes were ~60% of refresh log lines. Next: phase 2 (learned
-  limits).
+  refresh outcomes were ~60% of refresh log lines. Phase 2 (learned limits)
+  parked by the user (2026-09-28) after a candidate exceeded the complexity
+  rule; preserved on branch `wip/learned-size-limits`; resumes only if the
+  P1 Ghostty/output check leaves a genuine client-held limit.
   [record](changes/archive/robust-difference-reconciliation.md)
+  [parked](changes/learned-size-limits.md)
 - P2 | Active-group highlight redesign | Current overlay renders statically
   during slide transitions while the active border slides with its window
   (unproven). User-leaning direction (grey rect beneath windows) is thinking
