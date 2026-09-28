@@ -210,6 +210,7 @@ fn send_event(source: &OutputDomain, target: &OutputDomain, c: &str) -> CoreEven
             carried("win-t2", "out-1", "ws-b", 0),
             carried("win-t1", "out-1", "ws-b", 400),
         ],
+        learned_caps: BTreeMap::new(),
         command: CoreCommand::SendToWorkspace {
             window: "win-m".to_owned(),
             target_output: "out-1".to_owned(),
@@ -233,6 +234,7 @@ fn reconcile_event(domain_state: &OutputDomain, windows: Vec<EngineWindow>, c: &
         directional_target_outer_gap: None,
         target_domain: None,
         target_windows: vec![],
+        learned_caps: BTreeMap::new(),
         command: CoreCommand::Reconcile,
     }
 }
@@ -402,6 +404,7 @@ fn r4_cross_output_commits_immediately_with_empty_target() {
         directional_target_outer_gap: Some(0),
         target_domain: None,
         target_windows: vec![],
+        learned_caps: BTreeMap::new(),
         command: CoreCommand::Move {
             window: "win-m".to_owned(),
             direction: "right".to_owned(),
@@ -467,6 +470,7 @@ fn rapid_second_send_with_arrival_commits_without_reconcile() {
         directional_target_outer_gap: None,
         target_domain: Some((target_c.clone(), target_c.key())),
         target_windows: vec![],
+        learned_caps: BTreeMap::new(),
         command: CoreCommand::SendToWorkspace {
             window: "win-m".to_owned(),
             target_output: "out-1".to_owned(),
@@ -531,6 +535,7 @@ fn stale_rapid_second_send_drops_mover_until_domain_reconcile() {
         directional_target_outer_gap: None,
         target_domain: Some((target_c.clone(), target_c.key())),
         target_windows: vec![],
+        learned_caps: BTreeMap::new(),
         command: CoreCommand::SendToWorkspace {
             window: "win-m".to_owned(),
             target_output: "out-1".to_owned(),
@@ -606,6 +611,7 @@ fn stale_rapid_second_send_drops_mover_until_domain_reconcile() {
         directional_target_outer_gap: None,
         target_domain: Some((target_c.clone(), target_c.key())),
         target_windows: vec![],
+        learned_caps: BTreeMap::new(),
         command: CoreCommand::SendToWorkspace {
             window: "win-m".to_owned(),
             target_output: "out-1".to_owned(),

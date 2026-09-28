@@ -384,15 +384,41 @@ describe("plan adapter AR12 Ghostty-like client clamp", () => {
                 ),
             );
         }
-        const acceptedCalls = mocks.dbusCalls.length;
+        const promotionCalls = mocks.dbusCalls.length;
         mocks.observeImpl = () =>
             makeObserved(refs, { focused: refs.a, bounds, rects: { "win-a": driftA, "win-b": clampedB } });
         fire(mocks, "geometry");
         runDebounce(mocks);
-        assert.equal(mocks.dbusCalls.length, acceptedCalls, "stable mixed drift accepts without dispatching");
+        assert.equal(mocks.dbusCalls.length, promotionCalls + 1, "stable unhinted shortfall promotes a learned cap");
+        assert.deepEqual(
+            (plannerPayload(mocks, promotionCalls) as Record<string, unknown>)["learned_max_sizes"],
+            { "win-a": { w: 900, h: 0 } },
+            "only the genuine unhinted window rides learned_max_sizes",
+        );
         assert.ok(
-            mocks.logs.some((line) => line.includes("plasma-auto-tiler:plan:reconcile-accepted") && line.includes("cause=stable-drift")),
-            "genuine drift mixed with a clamp still accepts boundedly",
+            mocks.logs.some((line) => line.includes("learned-cap-learned") && line.includes("window=win-a")),
+            "unhinted shortfall promotes a learned cap",
+        );
+        const promotionCorrelation = plannerPayload(mocks, promotionCalls)["correlation_id"] as string;
+        const writesBefore = mocks.geometries.length;
+        mocks.callbacks[promotionCalls]?.(
+            plannedReplyWithFlags(promotionCorrelation, [
+                { window: "win-a", rect: driftA },
+                { window: "win-b", rect: desiredB, clientClamped: true },
+            ]),
+        );
+        assert.equal(mocks.geometries.length, writesBefore, "reprojected learned state rewrites nothing");
+        assert.ok(
+            mocks.geometries.every((entry) => entry.target !== refs.b),
+            "the hint-clamped window is still never rewritten",
+        );
+        assert.ok(
+            mocks.logs.some(
+                (line) =>
+                    line ===
+                    `plasma-auto-tiler:plan:clamp-accepted correlation=${promotionCorrelation} window=win-b resource_class=unknown op=reconcile`,
+            ),
+            "hint clamp stays skip-clamped on the learned reproject",
         );
         assert.ok(
             !mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"),

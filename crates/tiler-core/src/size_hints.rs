@@ -146,6 +146,37 @@ impl WindowSizeHints {
     }
 }
 
+/// Per-leaf learned upper limits, separate from native hints.
+///
+/// Explicit per-axis `Option<i32>`; never inferred from hints and never a
+/// step estimate. Sanitized like native bounds: only `1..=GEOMETRY_BOUND`
+/// counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LearnedCaps {
+    pub cap_w: Option<i32>,
+    pub cap_h: Option<i32>,
+}
+
+impl LearnedCaps {
+    /// No learned limits on any axis.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            cap_w: None,
+            cap_h: None,
+        }
+    }
+
+    /// Learned limit along `axis`, if meaningful.
+    #[must_use]
+    pub fn cap_for_axis(self, axis: Axis) -> Option<i32> {
+        match axis {
+            Axis::Horizontal => meaningful(self.cap_w),
+            Axis::Vertical => meaningful(self.cap_h),
+        }
+    }
+}
+
 /// Keep only positive, in-bound hint values.
 ///
 /// A host `max` of `i32::MAX` is the KWin unbounded sentinel, so it (like
@@ -304,6 +335,111 @@ pub fn enforce_minimums(sizes: &mut [i64], mins: &[i64]) -> bool {
     true
 }
 
+/// Cap the overs above learned limits by giving the freed split-axis extent
+/// to siblings in proportion to shares, capped by their own limits.
+///
+/// Skips (returns `false`, `sizes` restored) when infeasible: fewer than two
+/// children, any cap below the native-minimum/positivity floor, or every
+/// child capped with the cap sum below the total. Integer-only and
+/// deterministic: floor takes with the remainder in child order.
+fn enforce_learned_caps(
+    sizes: &mut [i64],
+    mins: &[i64],
+    caps: &[Option<i64>],
+    shares: &[u64],
+) -> bool {
+    if sizes.len() != mins.len() || sizes.len() != caps.len() || sizes.len() != shares.len() {
+        return false;
+    }
+    if sizes.len() < 2 {
+        return false;
+    }
+    let original = sizes.to_vec();
+    let total: i64 = sizes.iter().sum();
+    let floors: Vec<i64> = mins.iter().map(|m| (*m).max(1)).collect();
+    for (cap, floor) in caps.iter().zip(floors.iter()) {
+        if let Some(c) = cap
+            && (*c < 1 || *c < *floor)
+        {
+            return false;
+        }
+    }
+    if caps.iter().all(|c| c.is_some()) {
+        let sum = caps
+            .iter()
+            .map(|c| c.unwrap_or(0))
+            .fold(0i64, |acc, c| acc.saturating_add(c));
+        if sum < total {
+            return false;
+        }
+    }
+    let mut surplus: i64 = 0;
+    for (size, cap) in sizes.iter_mut().zip(caps.iter()) {
+        if let Some(c) = cap
+            && *size > *c
+        {
+            surplus += *size - *c;
+            *size = *c;
+        }
+    }
+    while surplus > 0 {
+        let mut recipients = Vec::new();
+        let mut share_total: u128 = 0;
+        for (index, (size, cap)) in sizes.iter().zip(caps.iter()).enumerate() {
+            let full = match cap {
+                Some(c) => *size >= *c,
+                None => false,
+            };
+            if !full {
+                recipients.push(index);
+                share_total += u128::from(shares[index].max(1));
+            }
+        }
+        if recipients.is_empty() {
+            sizes.copy_from_slice(&original);
+            return false;
+        }
+        let mut takes = vec![0i64; sizes.len()];
+        let mut taken: i64 = 0;
+        for &index in &recipients {
+            let capacity = match caps[index] {
+                Some(c) => c - sizes[index],
+                None => surplus,
+            };
+            let take = (u128::from(surplus as u64) * u128::from(shares[index].max(1)) / share_total)
+                as i64;
+            let take = take.min(capacity);
+            takes[index] = take;
+            taken += take;
+        }
+        let mut remaining = surplus - taken;
+        for &index in &recipients {
+            if remaining == 0 {
+                break;
+            }
+            let capacity = match caps[index] {
+                Some(c) => c - sizes[index] - takes[index],
+                None => remaining,
+            };
+            if capacity > 0 {
+                takes[index] += 1;
+                taken += 1;
+                remaining -= 1;
+            }
+        }
+        if taken == 0 {
+            sizes.copy_from_slice(&original);
+            return false;
+        }
+        for (size, take) in sizes.iter_mut().zip(takes.iter()) {
+            *size += *take;
+        }
+        surplus -= taken;
+    }
+    debug_assert_eq!(sizes.iter().sum::<i64>(), total);
+    true
+}
+
 /// Minimum extent the subtree rooted at `node` needs along `axis`, including
 /// internal descendant gaps. Cross-axis groups need the maximum of their
 /// children (every child spans the full cross extent).
@@ -332,6 +468,44 @@ fn subtree_min(
                     .map(|child| subtree_min(child, axis, gap, resolve))
                     .max()
                     .unwrap_or(0)
+            }
+        }
+    }
+}
+
+/// Learned upper bound the subtree rooted at `node` can occupy along
+/// `axis`, including internal descendant gaps. Split-axis groups bound only
+/// when every child is capped (their sum); cross-axis groups bound to the
+/// minimum of the capped children (each spans the full cross extent).
+fn subtree_cap(
+    node: &Node,
+    axis: Axis,
+    gap: i64,
+    resolve: &dyn Fn(&NodeId) -> LearnedCaps,
+) -> Option<i64> {
+    match node {
+        Node::Leaf { id } => resolve(id).cap_for_axis(axis).map(i64::from),
+        Node::Group {
+            axis: group_axis,
+            children,
+            ..
+        } => {
+            if *group_axis == axis {
+                let mut sum: i64 = 0;
+                for child in children {
+                    sum = sum.saturating_add(subtree_cap(child, axis, gap, resolve)?);
+                }
+                Some(
+                    sum.saturating_add(gap.saturating_mul(children.len().saturating_sub(1) as i64)),
+                )
+            } else {
+                let mut best: Option<i64> = None;
+                for child in children {
+                    if let Some(cap) = subtree_cap(child, axis, gap, resolve) {
+                        best = Some(best.map_or(cap, |b| b.min(cap)));
+                    }
+                }
+                best
             }
         }
     }
@@ -399,6 +573,24 @@ pub fn project_with_hints(
     gap: i32,
     resolve: &dyn Fn(&NodeId) -> WindowSizeHints,
 ) -> Result<HintedProjection, HintProjectionError> {
+    project_with_learned_caps(tree, bounds, gap, resolve, &|_| LearnedCaps::none())
+}
+
+/// Project with native minimums plus separate per-leaf learned upper limits.
+///
+/// Base and minimum handling match [`project_with_hints`] exactly; with no
+/// learned limits the output is identical. Learned caps redistribute freed
+/// split-axis extent to siblings (no gaps); infeasible caps (below native
+/// minimums, all-capped sum below the total, or a lone leaf) keep the
+/// minimum-enforced sizes with existing overconstrained behavior. Native
+/// maximums never reallocate here.
+pub fn project_with_learned_caps(
+    tree: &Node,
+    bounds: Rect,
+    gap: i32,
+    resolve: &dyn Fn(&NodeId) -> WindowSizeHints,
+    resolve_cap: &dyn Fn(&NodeId) -> LearnedCaps,
+) -> Result<HintedProjection, HintProjectionError> {
     project(tree, bounds, gap).map_err(|error| hint_error(error.message()))?;
     let mut leaves = Vec::new();
     let mut overconstrained = Vec::new();
@@ -408,6 +600,7 @@ pub fn project_with_hints(
         bounds,
         gap,
         resolve,
+        resolve_cap,
         &mut leaves,
         &mut overconstrained,
         &mut seen_over,
@@ -424,6 +617,7 @@ fn layout_hinted(
     rect: Rect,
     gap: i32,
     resolve: &dyn Fn(&NodeId) -> WindowSizeHints,
+    resolve_cap: &dyn Fn(&NodeId) -> LearnedCaps,
     out: &mut Vec<ProjectedLeaf>,
     overconstrained: &mut Vec<NodeId>,
     seen_over: &mut BTreeSet<NodeId>,
@@ -474,6 +668,11 @@ fn layout_hinted(
                 .map(|child| subtree_min(child, *axis, gap64, resolve))
                 .collect();
             let _ = enforce_minimums(&mut sizes, &mins);
+            let caps: Vec<Option<i64>> = children
+                .iter()
+                .map(|child| subtree_cap(child, *axis, gap64, resolve_cap))
+                .collect();
+            let _ = enforce_learned_caps(&mut sizes, &mins, &caps, shares);
             let mut cursor: i64 = match axis {
                 Axis::Horizontal => i64::from(rect.x),
                 Axis::Vertical => i64::from(rect.y),
@@ -503,6 +702,7 @@ fn layout_hinted(
                     child_rect,
                     gap,
                     resolve,
+                    resolve_cap,
                     out,
                     overconstrained,
                     seen_over,
@@ -880,5 +1080,201 @@ mod tests {
         assert_eq!(hinted.overconstrained, vec![NodeId::from("B")]);
         // Satisfiable sibling keeps its proportional share.
         assert_eq!(hinted.leaves[0].rect.w, 500);
+    }
+
+    fn learned(w: Option<i32>, h: Option<i32>) -> LearnedCaps {
+        LearnedCaps { cap_w: w, cap_h: h }
+    }
+
+    #[test]
+    fn learned_caps_redistribute_without_gap() {
+        let tree = group(
+            "root",
+            Axis::Horizontal,
+            vec![leaf("A"), leaf("B")],
+            vec![1, 1],
+        );
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 1000,
+            h: 800,
+        };
+        let none = |_: &NodeId| WindowSizeHints::none();
+        let first_short = |id: &NodeId| {
+            if id.0 == "A" {
+                learned(Some(400), None)
+            } else {
+                LearnedCaps::none()
+            }
+        };
+        let hinted =
+            project_with_learned_caps(&tree, bounds, 0, &none, &first_short).expect("valid");
+        assert!(hinted.overconstrained.is_empty());
+        assert_eq!(hinted.leaves[0].rect.w, 400);
+        assert_eq!(hinted.leaves[1].rect.w, 600);
+        assert_eq!(hinted.leaves[0].rect.x, 0);
+        assert_eq!(hinted.leaves[1].rect.x, 400);
+        let last_short = |id: &NodeId| {
+            if id.0 == "B" {
+                learned(Some(400), None)
+            } else {
+                LearnedCaps::none()
+            }
+        };
+        let hinted =
+            project_with_learned_caps(&tree, bounds, 0, &none, &last_short).expect("valid");
+        assert_eq!(hinted.leaves[0].rect.w, 600);
+        assert_eq!(hinted.leaves[1].rect.w, 400);
+        assert_eq!(hinted.leaves[1].rect.x, 600);
+    }
+
+    #[test]
+    fn learned_caps_nested_split_and_cross() {
+        let none = |_: &NodeId| WindowSizeHints::none();
+        // Split-axis sum: inner caps 200+200 bound the inner segment to 400.
+        let tree = group(
+            "root",
+            Axis::Horizontal,
+            vec![
+                leaf("A"),
+                group(
+                    "inner",
+                    Axis::Horizontal,
+                    vec![leaf("B"), leaf("C")],
+                    vec![1, 1],
+                ),
+            ],
+            vec![1, 1],
+        );
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 1000,
+            h: 800,
+        };
+        let resolve = |id: &NodeId| match id.0.as_str() {
+            "B" | "C" => learned(Some(200), None),
+            _ => LearnedCaps::none(),
+        };
+        let hinted = project_with_learned_caps(&tree, bounds, 0, &none, &resolve).expect("valid");
+        assert_eq!(hinted.leaves.len(), 3);
+        assert_eq!(hinted.leaves[0].rect.w, 600);
+        assert_eq!(hinted.leaves[1].rect.w, 200);
+        assert_eq!(hinted.leaves[2].rect.w, 200);
+        assert_eq!(hinted.leaves[2].rect.x, 800);
+        // Cross-axis min: inner spans full width, tightest capped child wins.
+        let cross = group(
+            "root",
+            Axis::Horizontal,
+            vec![
+                leaf("A"),
+                group(
+                    "inner",
+                    Axis::Vertical,
+                    vec![leaf("B"), leaf("C")],
+                    vec![1, 1],
+                ),
+            ],
+            vec![1, 1],
+        );
+        let resolve = |id: &NodeId| {
+            if id.0 == "B" {
+                learned(Some(300), None)
+            } else {
+                LearnedCaps::none()
+            }
+        };
+        let hinted = project_with_learned_caps(&cross, bounds, 0, &none, &resolve).expect("valid");
+        assert_eq!(hinted.leaves[0].rect.w, 700);
+        assert_eq!(hinted.leaves[1].rect.w, 300);
+        assert_eq!(hinted.leaves[2].rect.w, 300);
+    }
+
+    #[test]
+    fn learned_variant_ignores_native_max() {
+        let tree = group(
+            "root",
+            Axis::Horizontal,
+            vec![leaf("A"), leaf("B")],
+            vec![1, 1],
+        );
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 1000,
+            h: 800,
+        };
+        let resolve = |id: &NodeId| {
+            if id.0 == "A" {
+                WindowSizeHints {
+                    max_w: Some(400),
+                    ..WindowSizeHints::none()
+                }
+            } else {
+                WindowSizeHints::none()
+            }
+        };
+        let plain = project(&tree, bounds, 0).expect("valid");
+        let hinted =
+            project_with_learned_caps(&tree, bounds, 0, &resolve, &|_| LearnedCaps::none())
+                .expect("valid");
+        assert_eq!(hinted.leaves, plain);
+    }
+
+    #[test]
+    fn learned_caps_skip_on_min_conflict_or_infeasible() {
+        let tree = group(
+            "root",
+            Axis::Horizontal,
+            vec![leaf("A"), leaf("B")],
+            vec![1, 1],
+        );
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 1000,
+            h: 800,
+        };
+        // Cap below the native minimum: keep minimum-enforced sizes.
+        let resolve_min = |id: &NodeId| {
+            if id.0 == "A" {
+                hints(Some(600), None)
+            } else {
+                WindowSizeHints::none()
+            }
+        };
+        let resolve_cap = |id: &NodeId| {
+            if id.0 == "A" {
+                learned(Some(400), None)
+            } else {
+                LearnedCaps::none()
+            }
+        };
+        let hinted =
+            project_with_learned_caps(&tree, bounds, 0, &resolve_min, &resolve_cap).expect("valid");
+        assert_eq!(hinted.leaves[0].rect.w, 600);
+        assert_eq!(hinted.leaves[1].rect.w, 400);
+        // All capped below the total: keep the proportional base.
+        let resolve_cap = |_: &NodeId| learned(Some(400), None);
+        let hinted =
+            project_with_learned_caps(&tree, bounds, 0, &|_| WindowSizeHints::none(), &resolve_cap)
+                .expect("valid");
+        let plain = project(&tree, bounds, 0).expect("valid");
+        assert_eq!(hinted.leaves, plain);
+        // Lone leaf never shrinks to its cap.
+        let single = leaf("A");
+        let small = Rect {
+            x: 0,
+            y: 0,
+            w: 600,
+            h: 800,
+        };
+        let hinted =
+            project_with_learned_caps(&single, small, 0, &|_| WindowSizeHints::none(), &|_| {
+                learned(Some(400), None)
+            })
+            .expect("valid");
+        assert_eq!(hinted.leaves[0].rect.w, 600);
     }
 }

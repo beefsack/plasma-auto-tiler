@@ -1794,6 +1794,20 @@ function snapshotsEqualAllowingAdmissionMaximize(
     return true;
 }
 
+// Learned effective cap: per-id desired evidence tied to native ref/scope
+// snapshot, plus one held candidate and the promoted size cap. Promotion
+// needs two independent eligible writes of the same desired followed by the
+// same held rect with stable ref/scope/hints.
+interface LearnedCap {
+    desired: PlanRect;
+    held: PlanRect | null;
+    ready: boolean;
+    capW: number | null;
+    capH: number | null;
+    ref: object;
+    scope: PlanSnapshot;
+}
+
 export class PlanAdapter {
     private enabled = false;
     private owner = "";
@@ -1823,6 +1837,10 @@ export class PlanAdapter {
     // output/workspace. Written only on successful applied plan replies
     // alongside appliedById; never admission or membership authority.
     private appliedScopeByDomain = new Map<string, { bounds: PlanRect; gap: number; outerGap: number }>();
+    // Learned effective caps (`learned_max_sizes` on reconcile only). One map
+    // holds desired write evidence tied to native ref/scope plus one held
+    // candidate and the promoted cap. No timers or counts.
+    private learnedById = new Map<string, LearnedCap>();
     // First-seen fullscreen hold: ids ever observed non-fullscreen versus ids
     // first seen fullscreen and still held. A first-seen fullscreen window
     // rides the wire as a synthetic floating exception (planner observation
@@ -2012,6 +2030,7 @@ export class PlanAdapter {
         this.epoch = 0;
         this.appliedById.clear();
         this.appliedScopeByDomain.clear();
+        this.clearAllLearned();
         this.seenNonFullscreen.clear();
         this.heldInitialFullscreen.clear();
         this.settleDragRestoreUnavailable();
@@ -2054,6 +2073,7 @@ export class PlanAdapter {
         this.deferredAuto = null;
         this.appliedById.clear();
         this.appliedScopeByDomain.clear();
+        this.clearAllLearned();
         this.seenNonFullscreen.clear();
         this.heldInitialFullscreen.clear();
         this.settleDragRestoreUnavailable();
@@ -4604,6 +4624,413 @@ export class PlanAdapter {
         this.reconcileAttempts = 0;
     }
 
+    private clearLearnedById(id: string): void {
+        this.learnedById.delete(id);
+    }
+
+    private clearLearnedByRef(ref: object): void {
+        for (const [id, entry] of [...this.learnedById]) {
+            if (entry.ref === ref) {
+                this.learnedById.delete(id);
+            }
+        }
+    }
+
+    private clearAllLearned(): void {
+        this.learnedById.clear();
+    }
+
+    // Size-only cap: same origin with one or both dimensions held smaller.
+    // No position learning; hint-explained clamps and overlays are ignored
+    // by callers (overlays never reach here).
+    private learnSizeCap(
+        desired: PlanRect,
+        held: PlanRect,
+    ): { capW: number | null; capH: number | null } | null {
+        if (desired.x !== held.x || desired.y !== held.y) {
+            return null;
+        }
+        if (held.w > desired.w || held.h > desired.h) {
+            return null;
+        }
+        if (held.w === desired.w && held.h === desired.h) {
+            return null;
+        }
+        const capW = held.w < desired.w ? held.w : null;
+        const capH = held.h < desired.h ? held.h : null;
+        if (capW !== null && !(capW >= 1 && capW <= 16384)) {
+            return null;
+        }
+        if (capH !== null && !(capH >= 1 && capH <= 16384)) {
+            return null;
+        }
+        return { capW, capH };
+    }
+
+    private learnHintsEqual(a: PlanSnapshotWindow | undefined, b: PlanSnapshotWindow | undefined): boolean {
+        const norm = (entry: PlanSnapshotWindow | undefined): [number | null, number | null, number | null, number | null] => {
+            if (entry === undefined) {
+                return [null, null, null, null];
+            }
+            const num = (value: unknown): number | null =>
+                typeof value === "number" && Number.isInteger(value) ? value : null;
+            return [num(entry.maxSize?.w), num(entry.maxSize?.h), num(entry.minSize?.w), num(entry.minSize?.h)];
+        };
+        const left = norm(a);
+        const right = norm(b);
+        return left[0] === right[0] && left[1] === right[1] && left[2] === right[2] && left[3] === right[3];
+    }
+
+    private learnSnapshotWindow(snapshot: PlanSnapshot, id: string): PlanSnapshotWindow | undefined {
+        for (const entry of snapshot.windows) {
+            if (entry.id === id) {
+                return entry;
+            }
+        }
+        return undefined;
+    }
+
+    private learnRefOf(observed: PlanObserved, id: string): object | null {
+        for (const entry of observed.windows) {
+            if (entry.id === id) {
+                return entry.ref;
+            }
+        }
+        return null;
+    }
+
+    // Eligible completed-write evidence: desired tied to native ref plus the
+    // dispatch scope snapshot. Only genuine writes qualify: reconcile/admit
+    // outside interactive/echo with no pointer, drag, float, sticky, or
+    // reprojection. `written` already excludes overlay and AR12 skips. A
+    // stable second write of the same desired arms promotion; anything else
+    // resets the candidate while preserving a promoted cap.
+    private noteLearnedWrite(
+        written: ReadonlyArray<PlanGeometryEntry>,
+        flightState: PendingFlight,
+        byRef: ReadonlyMap<string, object>,
+    ): void {
+        if (typeof this.env.readWindowConstraints !== "function") {
+            return;
+        }
+        if (flightState.snapshot.windows.length < 2) {
+            return;
+        }
+        if (flightState.op !== "reconcile" && flightState.op !== "admit") {
+            return;
+        }
+        if (flightState.workAreaReprojection === true) {
+            return;
+        }
+        if (flightState.pointerSource !== null) {
+            return;
+        }
+        if ((flightState.dragSource ?? null) !== null) {
+            return;
+        }
+        if (flightState.floatTarget !== null || flightState.stickyTarget !== null) {
+            return;
+        }
+        if (this.pointerEcho !== null || this.interactiveResizeActive()) {
+            return;
+        }
+        for (const entry of written) {
+            const ref = byRef.get(entry.window);
+            if (ref === undefined) {
+                continue;
+            }
+            const scope = flightState.snapshot;
+            const existing = this.learnedById.get(entry.window);
+            if (
+                existing !== undefined &&
+                existing.ref === ref &&
+                sameScope(existing.scope, scope) &&
+                this.learnHintsEqual(this.learnSnapshotWindow(existing.scope, entry.window), this.learnSnapshotWindow(scope, entry.window))
+            ) {
+                if (
+                    existing.desired.x === entry.rect.x &&
+                    existing.desired.y === entry.rect.y &&
+                    existing.desired.w === entry.rect.w &&
+                    existing.desired.h === entry.rect.h
+                ) {
+                    if (existing.held !== null) {
+                        existing.ready = true;
+                    }
+                    existing.scope = scope;
+                } else {
+                    existing.desired = { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h };
+                    existing.held = null;
+                    existing.ready = false;
+                    existing.scope = scope;
+                }
+                continue;
+            }
+            if (existing !== undefined && (existing.capW !== null || existing.capH !== null)) {
+                const correlation = this.pending?.correlation ?? "none";
+                this.logToken(`${LOG_PREFIX}:learned-cap-expired window=${entry.window} correlation=${correlation} cause=scope-change`);
+            }
+            this.learnedById.set(entry.window, {
+                desired: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
+                held: null,
+                ready: false,
+                capW: null,
+                capH: null,
+                ref,
+                scope,
+            });
+        }
+    }
+
+    // Meaningful native bound per axis (1..16384); 0/absent/unbounded never counts.
+    private learnMeaningful(value: unknown): number | null {
+        return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 16384
+            ? value
+            : null;
+    }
+
+    // True when the held shortfall is exactly the native min/max clamp of the
+    // desired rect. Position drift never counts here (callers check shape).
+    private isHintExplained(desired: PlanRect, held: PlanRect, hint: PlanSnapshotWindow | undefined): boolean {
+        if (held.x !== desired.x || held.y !== desired.y) {
+            return false;
+        }
+        if (held.w === desired.w && held.h === desired.h) {
+            return false;
+        }
+        const minW = this.learnMeaningful(hint?.minSize?.w);
+        const minH = this.learnMeaningful(hint?.minSize?.h);
+        const maxW = this.learnMeaningful(hint?.maxSize?.w);
+        const maxH = this.learnMeaningful(hint?.maxSize?.h);
+        if (minW === null && minH === null && maxW === null && maxH === null) {
+            return false;
+        }
+        let expW = desired.w;
+        let expH = desired.h;
+        if (maxW !== null) {
+            expW = Math.min(expW, maxW);
+        }
+        if (minW !== null) {
+            expW = Math.max(expW, minW);
+        }
+        if (maxH !== null) {
+            expH = Math.min(expH, maxH);
+        }
+        if (minH !== null) {
+            expH = Math.max(expH, minH);
+        }
+        return expW === held.w && expH === held.h;
+    }
+
+    // Expire promoted caps on fresh settled evidence before any quiet branch.
+    // A promoted cap survives its own unchanged echo (size still equals the
+    // cap) and position-only drift; any held size change, ref/scope/hint/mode
+    // change drops it so the caller reprojects without the cap. Gated on a
+    // settled foreground/hidden observation: never while in flight, pending,
+    // pointer echo, or an interactive gesture, and never without a hint
+    // reader (no fresh stable hint evidence). Returns true when at least one
+    // promoted cap expired.
+    private expireLearnedCaps(fresh: PlanSnapshot, observed: PlanObserved, hidden: boolean): boolean {
+        if (this.learnedById.size === 0) {
+            return false;
+        }
+        if (this.inFlight || this.pending !== null || this.pointerEcho !== null || this.interactiveResizeActive()) {
+            return false;
+        }
+        if (typeof this.env.readWindowConstraints !== "function") {
+            return false;
+        }
+        const route = hidden ? "hidden" : "foreground";
+        let expired = 0;
+        for (const entry of fresh.windows) {
+            const stored = this.learnedById.get(entry.id);
+            if (stored === undefined || (stored.capW === null && stored.capH === null)) {
+                continue;
+            }
+            const drop = (cause: string): void => {
+                this.logToken(`${LOG_PREFIX}:learned-cap-expired window=${entry.id} route=${route} correlation=none cause=${sanitizeKind(cause)}`);
+                this.learnedById.delete(entry.id);
+                expired += 1;
+            };
+            if (entry.fullscreen || entry.maximized || entry.floating === true || entry.sticky === true) {
+                drop("flags-changed");
+                continue;
+            }
+            if (this.learnRefOf(observed, entry.id) !== stored.ref) {
+                drop("ref-changed");
+                continue;
+            }
+            if (!sameScope(stored.scope, fresh)) {
+                drop("scope-change");
+                continue;
+            }
+            if (!this.learnHintsEqual(this.learnSnapshotWindow(stored.scope, entry.id), this.learnSnapshotWindow(fresh, entry.id))) {
+                drop("hints-changed");
+                continue;
+            }
+            const evidence = this.appliedById.get(entry.id);
+            if (
+                evidence === undefined ||
+                evidence.output !== entry.output ||
+                evidence.workspace !== entry.workspace ||
+                evidence.floating !== false ||
+                evidence.sticky !== false ||
+                evidence.fullscreen !== false ||
+                evidence.maximized !== false
+            ) {
+                drop("scope-change");
+                continue;
+            }
+            const retained = evidence.rect;
+            const echoW = stored.capW ?? stored.desired.w;
+            const echoH = stored.capH ?? stored.desired.h;
+            const retainedOkW = retained.w === echoW || retained.w === stored.desired.w;
+            const retainedOkH = retained.h === echoH || retained.h === stored.desired.h;
+            if (!retainedOkW || !retainedOkH) {
+                drop("scope-change");
+                continue;
+            }
+            if (entry.rect.w !== echoW || entry.rect.h !== echoH) {
+                drop("held-changed");
+                continue;
+            }
+        }
+        return expired > 0;
+    }
+
+    // Pure-drift candidate tracking on a settled observation. Records the
+    // first held rect as candidate; promotion needs a second eligible write
+    // of the same desired (ready) plus the same stable held rect. Never runs
+    // while in flight, pending, pointer echo, or interactive, and never
+    // without a hint reader. Hint-explained clamps and position drift reset
+    // the candidate without promoting. No counts/timers.
+    private observeLearned(fresh: PlanSnapshot, observed: PlanObserved, hidden: boolean): boolean {
+        if (this.learnedById.size === 0) {
+            return false;
+        }
+        if (this.inFlight || this.pending !== null || this.pointerEcho !== null || this.interactiveResizeActive()) {
+            return false;
+        }
+        if (typeof this.env.readWindowConstraints !== "function") {
+            return false;
+        }
+        if (fresh.windows.length < 2) {
+            return false;
+        }
+        const route = hidden ? "hidden" : "foreground";
+        const correlation = "none";
+        const expire = (id: string, cause: string, hasCap: boolean): void => {
+            if (hasCap) {
+                this.logToken(`${LOG_PREFIX}:learned-cap-expired window=${id} route=${route} correlation=${correlation} cause=${sanitizeKind(cause)}`);
+            }
+            this.learnedById.delete(id);
+        };
+        let promoted = 0;
+        for (const entry of fresh.windows) {
+            const stored = this.learnedById.get(entry.id);
+            if (stored === undefined) {
+                continue;
+            }
+            if (entry.fullscreen || entry.maximized || entry.floating === true || entry.sticky === true) {
+                expire(entry.id, "flags-changed", stored.capW !== null || stored.capH !== null);
+                continue;
+            }
+            if (this.learnRefOf(observed, entry.id) !== stored.ref) {
+                expire(entry.id, "ref-changed", stored.capW !== null || stored.capH !== null);
+                continue;
+            }
+            if (!sameScope(stored.scope, fresh)) {
+                expire(entry.id, "scope-change", stored.capW !== null || stored.capH !== null);
+                continue;
+            }
+            if (!this.learnHintsEqual(this.learnSnapshotWindow(stored.scope, entry.id), this.learnSnapshotWindow(fresh, entry.id))) {
+                expire(entry.id, "hints-changed", stored.capW !== null || stored.capH !== null);
+                continue;
+            }
+            const evidence = this.appliedById.get(entry.id);
+            if (
+                evidence === undefined ||
+                evidence.output !== entry.output ||
+                evidence.workspace !== entry.workspace ||
+                evidence.floating !== false ||
+                evidence.sticky !== false ||
+                evidence.fullscreen !== false ||
+                evidence.maximized !== false
+            ) {
+                this.learnedById.delete(entry.id);
+                continue;
+            }
+            const desired = evidence.rect;
+            if (
+                stored.desired.x !== desired.x ||
+                stored.desired.y !== desired.y ||
+                stored.desired.w !== desired.w ||
+                stored.desired.h !== desired.h
+            ) {
+                stored.desired = { x: desired.x, y: desired.y, w: desired.w, h: desired.h };
+                stored.held = null;
+                stored.ready = false;
+                continue;
+            }
+            const held = entry.rect;
+            if (held.x === desired.x && held.y === desired.y && held.w === desired.w && held.h === desired.h) {
+                stored.held = null;
+                stored.ready = false;
+                continue;
+            }
+            if (this.learnSizeCap(desired, held) === null) {
+                stored.held = null;
+                stored.ready = false;
+                continue;
+            }
+            if (this.isHintExplained(desired, held, this.learnSnapshotWindow(fresh, entry.id))) {
+                stored.held = null;
+                stored.ready = false;
+                continue;
+            }
+            if (stored.held === null) {
+                stored.held = { x: held.x, y: held.y, w: held.w, h: held.h };
+                stored.ready = false;
+                continue;
+            }
+            if (
+                stored.held.x !== held.x ||
+                stored.held.y !== held.y ||
+                stored.held.w !== held.w ||
+                stored.held.h !== held.h
+            ) {
+                stored.held = null;
+                stored.ready = false;
+                continue;
+            }
+            if (!stored.ready) {
+                continue;
+            }
+            const cap = this.learnSizeCap(stored.desired, stored.held);
+            if (cap === null) {
+                stored.held = null;
+                stored.ready = false;
+                continue;
+            }
+            stored.capW = cap.capW;
+            stored.capH = cap.capH;
+            stored.held = null;
+            stored.ready = false;
+            promoted += 1;
+            this.logToken(
+                `${LOG_PREFIX}:learned-cap-learned window=${entry.id} route=${route} correlation=${correlation} cap=${String(cap.capW ?? 0)}x${String(cap.capH ?? 0)}`,
+            );
+            if (KWIN_TRACE_ENABLED) {
+                const want = stored.desired;
+                this.logToken(
+                    `${LOG_PREFIX}:learned-cap-detail window=${entry.id} desired=${String(want.x)},${String(want.y)},${String(want.w)},${String(want.h)} held=${String(held.x)},${String(held.y)},${String(held.w)},${String(held.h)}`,
+                );
+            }
+        }
+        return promoted > 0;
+    }
+
+
+
     // Accept only exact client-held rectangles after bounded reassertions.
     private acceptClientDrift(snapshot: PlanSnapshot, hidden = false): void {
         let accepted = 0;
@@ -4633,6 +5060,11 @@ export class PlanAdapter {
                 continue;
             }
             this.appliedById.set(entry.id, { ...evidence, rect: { ...entry.rect } });
+            const learned = this.learnedById.get(entry.id);
+            if (learned !== undefined) {
+                learned.held = null;
+                learned.ready = false;
+            }
             accepted += 1;
         }
         if (hidden) {
@@ -4747,6 +5179,7 @@ export class PlanAdapter {
                     this.seenNonFullscreen.delete(id);
                 }
             }
+            this.clearLearnedByRef(target);
         }
         // Bounded native-write exclusion only: signals delivered
         // synchronously from our own R4 setters must not advance epoch or
@@ -4942,7 +5375,8 @@ export class PlanAdapter {
         const restoreMarker = this.dragRestore.get(restoreKey);
         const hasPendingMarker =
             restoreMarker !== undefined && !restoreMarker.dispatched && restoreMarker.drags.length > 0;
-        if (classification.pureDrift && classification.converged && classification.scopeEqual && !hasPendingMarker && freshSnapshot.windows.length > 0 && !classification.rawRetainedOutOfBounds && !sendForced) {
+        const learnedExpired = this.expireLearnedCaps(freshSnapshot, fresh, false);
+        if (classification.pureDrift && classification.converged && classification.scopeEqual && !hasPendingMarker && freshSnapshot.windows.length > 0 && !classification.rawRetainedOutOfBounds && !sendForced && !learnedExpired) {
             // Quiet equality cannot invalidate an in-flight reply.
             this.epoch = epochBeforeQuiet;
             if (this.pointerEcho !== null) {
@@ -5003,9 +5437,38 @@ export class PlanAdapter {
             this.logRefreshClassification("foreground", "uncertain", "interactive-active", "suppressed");
             return;
         }
+        // Learned-cap promotion settles from observed lifecycle before legacy
+        // three-strike acceptance: no count gate.
+        if (
+            classification.pureDrift &&
+            !classification.converged &&
+            classification.scopeEqual &&
+            !classification.rawRetainedOutOfBounds &&
+            !sendForced &&
+            !learnedExpired
+        ) {
+            if (this.observeLearned(freshSnapshot, fresh, false)) {
+                this.reconcileAttempts = 0;
+                this.absorbDeferredDragIntent(this.deferredAuto, false);
+                this.deferredAuto = {
+                    op: "reconcile",
+                    snapshot: freshSnapshot,
+                    removed: null,
+                    body: { op: "reconcile" },
+                    admissionMaximizeClears: prepared.cleared,
+                };
+                const pendingLearned = this.deferredAuto;
+                this.deferredAuto = null;
+                if (pendingLearned !== null) {
+                    this.dispatch(pendingLearned);
+                }
+                this.logRefreshClassification("foreground", "change", "learned-cap", "dispatch");
+                return;
+            }
+        }
         // Bounded per-window acceptance: pure geometry drift accepts after
         // three reassertions. Fresh/flag/scope/raw/forced always dispatch.
-        if (!classification.pureDrift || classification.converged || classification.rawRetainedOutOfBounds || sendForced) {
+        if (!classification.pureDrift || classification.converged || classification.rawRetainedOutOfBounds || sendForced || learnedExpired) {
             this.reconcileAttempts = 0;
         } else if (this.reconcileAttempts >= MAX_RECONCILE_ATTEMPTS && classification.scopeEqual) {
             this.acceptClientDrift(freshSnapshot);
@@ -5207,6 +5670,7 @@ export class PlanAdapter {
                 this.keepAbovePrevious.delete(id);
                 this.stickyPreviousFloating.delete(id);
                 this.adoptedSticky.delete(id);
+                this.clearLearnedById(id);
                 try {
                     this.env.noteRemoved?.(id);
                 } catch (error) {
@@ -5216,6 +5680,7 @@ export class PlanAdapter {
         }
         const hiddenKey = this.domainKey(freshSnapshot);
         const hiddenForced = this.hasSendForced(hiddenKey);
+        const learnedExpired = this.expireLearnedCaps(freshSnapshot, prepared.observed, true);
         if (classification.isEmpty || !classification.pureDrift) {
             this.consumeSendForced(hiddenKey);
             return {
@@ -5232,7 +5697,7 @@ export class PlanAdapter {
                 terminal: "dispatch",
             };
         }
-        if (classification.converged && classification.scopeEqual && !classification.rawRetainedOutOfBounds && !hiddenForced) {
+        if (classification.converged && classification.scopeEqual && !classification.rawRetainedOutOfBounds && !hiddenForced && !learnedExpired) {
             this.clearBackgroundReconcile(freshSnapshot);
             return { intent: null, outcome: "equal", reason: "applied-evidence-equal", terminal: "quiet" };
         }
@@ -5279,9 +5744,35 @@ export class PlanAdapter {
                 terminal: "dispatch",
             };
         }
+        // Learned-cap promotion settles from observed lifecycle before legacy
+        // three-strike acceptance: no count gate.
+        if (
+            classification.pureDrift &&
+            !classification.converged &&
+            classification.scopeEqual &&
+            !classification.rawRetainedOutOfBounds &&
+            !hiddenForced &&
+            !learnedExpired
+        ) {
+            if (this.observeLearned(freshSnapshot, prepared.observed, true)) {
+                this.clearBackgroundReconcile(freshSnapshot);
+                return {
+                    intent: {
+                        op: "reconcile",
+                        snapshot: freshSnapshot,
+                        removed: null,
+                        body: { op: "reconcile" },
+                        background: true,
+                    },
+                    outcome: "change",
+                    reason: "learned-cap",
+                    terminal: "dispatch",
+                };
+            }
+        }
         // Bounded acceptance for pure geometry drift only; membership/flag
         // changes already returned above. Send-forced always converges.
-        if (!hiddenForced && (this.backgroundAttempts.get(this.domainKey(observed)) ?? 0) >= MAX_RECONCILE_ATTEMPTS) {
+        if (!hiddenForced && !learnedExpired && (this.backgroundAttempts.get(this.domainKey(observed)) ?? 0) >= MAX_RECONCILE_ATTEMPTS) {
             this.acceptClientDrift(freshSnapshot, true);
             return { intent: null, outcome: "equal", reason: "stable-drift-accepted", terminal: "accept" };
         }
@@ -5490,6 +5981,20 @@ export class PlanAdapter {
                       })),
                   );
         let payload = "";
+        let learnedCaps: Record<string, { w: number; h: number }> | undefined;
+        if (op === "reconcile" && this.learnedById.size > 0) {
+            const caps: Record<string, { w: number; h: number }> = {};
+            for (const entry of snapshot.windows) {
+                const learned = this.learnedById.get(entry.id);
+                if (learned === undefined || (learned.capW === null && learned.capH === null)) {
+                    continue;
+                }
+                caps[entry.id] = { w: learned.capW ?? 0, h: learned.capH ?? 0 };
+            }
+            if (Object.keys(caps).length > 0) {
+                learnedCaps = caps;
+            }
+        }
         try {
             payload = JSON.stringify({
                 v: PLAN_CONTRACT_VERSION,
@@ -5513,6 +6018,7 @@ export class PlanAdapter {
                 ...(directionalDomains === undefined ? {} : { domains: directionalDomains }),
                 focused_window: snapshot.focusedId,
                 windows,
+                ...(learnedCaps === undefined ? {} : { learned_max_sizes: learnedCaps }),
                 command,
             });
         } catch (error) {
@@ -6086,6 +6592,7 @@ export class PlanAdapter {
         this.clearProbeTimer();
         this.appliedById.clear();
         this.appliedScopeByDomain.clear();
+        this.clearAllLearned();
         this.seenNonFullscreen.clear();
         this.heldInitialFullscreen.clear();
         this.reconcileAttempts = 0;
@@ -7812,6 +8319,7 @@ export class PlanAdapter {
                 for (const [id, evidence] of [...this.appliedById]) {
                     if (evidence.output === base.domainOutput && evidence.workspace === base.domainWorkspace) {
                         this.appliedById.delete(id);
+                        this.clearLearnedById(id);
                     }
                 }
                 if (flightState.background === true) {
@@ -7824,6 +8332,7 @@ export class PlanAdapter {
                     this.adoptedSticky.delete(flightState.removed);
                     this.heldInitialFullscreen.delete(flightState.removed);
                     this.seenNonFullscreen.delete(flightState.removed);
+                    this.clearLearnedById(flightState.removed);
                     try {
                         this.env.noteRemoved?.(flightState.removed);
                     } catch (error) {
@@ -7870,6 +8379,7 @@ export class PlanAdapter {
                         // global markers retained for possible cross-domain
                         // survivors (see above).
                         this.appliedById.delete(id);
+                        this.clearLearnedById(id);
                     }
                 }
             }
@@ -7914,6 +8424,13 @@ export class PlanAdapter {
             } else {
                 this.reconcileAttempts = 0;
             }
+            const written = ordered.filter(
+                (entry) =>
+                    !fullscreenById.has(entry.window) &&
+                    !maximizedById.has(entry.window) &&
+                    !(floatingById.has(entry.window) && flightState.floatTarget?.window !== entry.window),
+            );
+            this.noteLearnedWrite(written, flightState, byRef);
         } else {
             this.reconcileAttempts = 0;
         }

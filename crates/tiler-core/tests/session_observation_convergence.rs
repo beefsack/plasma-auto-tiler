@@ -139,6 +139,7 @@ fn core_event(
         directional_target_outer_gap: None,
         target_domain: None,
         target_windows: vec![],
+        learned_caps: BTreeMap::new(),
         command,
     }
 }
@@ -849,6 +850,7 @@ fn engine_paired_focus_with_source_skew_converges() {
         directional_target_outer_gap: Some(0),
         target_domain: None,
         target_windows: vec![],
+        learned_caps: BTreeMap::new(),
         command: CoreCommand::Focus {
             window: "win-b".to_owned(),
             direction: "left".to_owned(),

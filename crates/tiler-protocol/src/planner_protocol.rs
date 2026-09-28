@@ -284,6 +284,12 @@ struct RequestDto {
     /// single-domain requests, whose behavior is unchanged.
     #[serde(default)]
     domains: Option<Vec<DirectionalDomainDto>>,
+    /// Per-request learned upper limits for retained reconcile only: window
+    /// id to `{w, h}` with 0 meaning absent axis (meaningful `1..GEOMETRY_BOUND`
+    /// judged in [`tiler_core::size_hints`], never native `max_size`). Absent
+    /// preserves legacy behavior; other ops ignore it for projection.
+    #[serde(default)]
+    learned_max_sizes: Option<std::collections::BTreeMap<String, SizeDto>>,
     focused_window: String,
     windows: Vec<ObservedDto>,
     command: serde_json::Value,
@@ -719,6 +725,10 @@ struct Validated {
     /// single-domain requests, whose behavior is unchanged.
     directional_domains: Option<Vec<OutputDomain>>,
     directional_keys: Option<Vec<DomainKey>>,
+    /// Validated per-request learned caps (empty when absent). Keys are opaque
+    /// observed members; `0` axes are absent and meaningfulness is judged in
+    /// [`tiler_core::size_hints`]. Used by retained reconcile projection only.
+    learned_caps: std::collections::BTreeMap<WindowId, tiler_core::size_hints::LearnedCaps>,
 }
 
 /// Parse one directional wire domain into its projected [`OutputDomain`].
@@ -961,6 +971,32 @@ fn validate_request_with_engine(
                     "duplicate-window",
                 ));
             }
+        }
+    }
+    // Learned caps (retained reconcile only): opaque ids restricted to
+    // observed members, using the existing observed-window pattern. Numeric
+    // meaningfulness (`0` absent, `1..GEOMETRY_BOUND`) is judged in
+    // `tiler_core::size_hints`, never here; the request size bound already
+    // applies. Other ops validate identically but ignore for projection.
+    let mut learned_caps = std::collections::BTreeMap::new();
+    if let Some(map) = &request.learned_max_sizes {
+        let observed: std::collections::HashSet<&str> =
+            request.windows.iter().map(|e| e.window.as_str()).collect();
+        for (id, size) in map {
+            if !is_opaque_id(id) || !observed.contains(id.as_str()) {
+                return Err(snapshot_invalid(
+                    request.correlation_id.clone(),
+                    MSG_OPAQUE_ID,
+                    "observed-window-invalid",
+                ));
+            }
+            learned_caps.insert(
+                WindowId(id.clone()),
+                tiler_core::size_hints::LearnedCaps {
+                    cap_w: if size.w == 0 { None } else { Some(size.w) },
+                    cap_h: if size.h == 0 { None } else { Some(size.h) },
+                },
+            );
         }
     }
     let carried_bounds = Rect {
@@ -1329,6 +1365,7 @@ fn validate_request_with_engine(
         domain_key,
         directional_domains,
         directional_keys,
+        learned_caps,
     })
 }
 
@@ -3399,6 +3436,7 @@ fn core_event(
             .iter()
             .map(engine_window_from_dto)
             .collect(),
+        learned_caps: ctx.learned_caps.clone(),
         command: command.clone(),
     }
 }
@@ -9790,5 +9828,188 @@ mod tests {
         assert_eq!(after_focus_domain, Some(target_key.clone()), "{moved}");
         assert_eq!(after_focus_leaf, before_focus_leaf, "{moved}");
         assert_eq!(before_focus_domain, Some(source_key), "{moved}");
+    }
+
+    #[test]
+    fn retained_reconcile_applies_learned_caps_without_mutating_shares() {
+        // Retained vertical split on a tall domain: equal shares give 1092px
+        // each of 2184px. A learned cap of 1036px on win-1 frees 56px to the
+        // neighbour (1148px) with no revision/share mutation; native max is
+        // unchanged and infeasible caps keep the existing fallback.
+        fn tall_reconcile(
+            correlation: &str,
+            learned: Option<serde_json::Value>,
+            win1_extra: Option<serde_json::Value>,
+        ) -> String {
+            let mut win1 = serde_json::json!({
+                "window": "win-1",
+                "output": "out-1",
+                "workspace": "ws-1",
+                "rect": {"x": 0, "y": 0, "w": 800, "h": 1092},
+            });
+            if let Some(extra) = win1_extra {
+                for (k, v) in extra.as_object().expect("extra object") {
+                    win1[k] = v.clone();
+                }
+            }
+            let mut request = serde_json::json!({
+                "v": 1,
+                "correlation_id": correlation,
+                "owner": "owner-1",
+                "generation": "gen-1",
+                "revision": 0,
+                "fingerprint": 7,
+                "domain": {
+                    "output": "out-1",
+                    "workspace": "ws-1",
+                    "bounds": {"x": 0, "y": 0, "w": 800, "h": 2184},
+                    "gap": 0,
+                    "outer_gap": 0,
+                },
+                "focused_window": "win-1",
+                "windows": [
+                    win1,
+                    {
+                        "window": "win-2",
+                        "output": "out-1",
+                        "workspace": "ws-1",
+                        "rect": {"x": 0, "y": 1092, "w": 800, "h": 1092},
+                    },
+                ],
+                "command": {"op": "reconcile"},
+            });
+            if let Some(map) = learned {
+                request["learned_max_sizes"] = map;
+            }
+            request.to_string()
+        }
+        fn rects_by_window(
+            reply: &serde_json::Value,
+        ) -> std::collections::BTreeMap<String, (i32, i32, i32, i32)> {
+            reply["desired_geometry"]
+                .as_array()
+                .expect("planned geometry present")
+                .iter()
+                .map(|entry| {
+                    (
+                        entry["window"].as_str().expect("window").to_owned(),
+                        (
+                            entry["rect"]["x"].as_i64().unwrap() as i32,
+                            entry["rect"]["y"].as_i64().unwrap() as i32,
+                            entry["rect"]["w"].as_i64().unwrap() as i32,
+                            entry["rect"]["h"].as_i64().unwrap() as i32,
+                        ),
+                    )
+                })
+                .collect()
+        }
+        let key = DomainKey {
+            output: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+        };
+        let mut planner = Planner::new();
+        let seed = parse_reply(&planner.evaluate(&tall_reconcile("learned-cap-seed", None, None)));
+        assert_eq!(seed["outcome"], "planned", "{seed}");
+        let baseline =
+            parse_reply(&planner.evaluate(&tall_reconcile("learned-cap-base", None, None)));
+        assert_eq!(baseline["outcome"], "planned", "{baseline}");
+        assert_eq!(baseline["detail"]["kind"], "reconcile", "{baseline}");
+        let base_rects = rects_by_window(&baseline);
+        assert_eq!(base_rects.len(), 2, "{baseline}");
+        assert_eq!(base_rects["win-1"].2, 800, "{baseline}");
+        assert_eq!(base_rects["win-2"].2, 800, "{baseline}");
+        assert_eq!(base_rects["win-1"].3, 1092, "{baseline}");
+        assert_eq!(base_rects["win-2"].3, 1092, "{baseline}");
+        let revision = baseline["base_revision"].as_u64().expect("base revision");
+        let before = planner.engine.session(&key).expect("retained").clone();
+        let before_snapshot = before.snapshot();
+        assert_eq!(before.accepted_revision(), revision, "{baseline}");
+        // Learned cap: win-1 `w: 0` means absent width axis; `h: 1036` caps
+        // the split axis, freeing 56px to the neighbour. NOT native max_size.
+        let capped = parse_reply(&planner.evaluate(&tall_reconcile(
+            "learned-cap-on",
+            Some(serde_json::json!({"win-1": {"w": 0, "h": 1036}})),
+            None,
+        )));
+        assert_eq!(capped["outcome"], "planned", "{capped}");
+        assert_eq!(capped["detail"]["kind"], "reconcile", "{capped}");
+        assert_eq!(
+            capped["base_revision"].as_u64().expect("base revision"),
+            revision,
+            "retained projection never advances the revision {capped}"
+        );
+        let capped_rects = rects_by_window(&capped);
+        assert_eq!(capped_rects["win-1"].3, 1036, "{capped}");
+        assert_eq!(capped_rects["win-2"].3, 1148, "{capped}");
+        assert_eq!(
+            capped_rects["win-1"].3 + capped_rects["win-2"].3,
+            2184,
+            "{capped}"
+        );
+        assert_eq!(capped_rects["win-1"].2, 800, "{capped}");
+        assert_eq!(capped_rects["win-2"].2, 800, "{capped}");
+        let after = planner.engine.session(&key).expect("retained");
+        assert_eq!(after.accepted_revision(), revision, "{capped}");
+        assert_eq!(
+            after.snapshot(),
+            before_snapshot,
+            "shares/topology untouched {capped}"
+        );
+        // Removing caps restores the baseline exactly: no share mutation.
+        let restored =
+            parse_reply(&planner.evaluate(&tall_reconcile("learned-cap-off", None, None)));
+        assert_eq!(restored["outcome"], "planned", "{restored}");
+        assert_eq!(rects_by_window(&restored), base_rects, "{restored}");
+        assert_eq!(
+            restored["base_revision"].as_u64().expect("base revision"),
+            revision,
+            "{restored}"
+        );
+        // Native max never reallocates: same 1036 bound as a carried max_size
+        // keeps the proportional baseline.
+        let native = parse_reply(&planner.evaluate(&tall_reconcile(
+            "learned-cap-native",
+            None,
+            Some(serde_json::json!({"max_size": {"w": 800, "h": 1036}})),
+        )));
+        assert_eq!(native["outcome"], "planned", "{native}");
+        assert_eq!(rects_by_window(&native), base_rects, "{native}");
+        assert_eq!(
+            native["base_revision"].as_u64().expect("base revision"),
+            revision,
+            "{native}"
+        );
+        // Infeasible caps (both 400px sum below the 2184px total) preserve the
+        // existing proportional fallback.
+        let infeasible = parse_reply(&planner.evaluate(&tall_reconcile(
+            "learned-cap-infeasible",
+            Some(serde_json::json!({"win-1": {"w": 0, "h": 400}, "win-2": {"w": 0, "h": 400}})),
+            None,
+        )));
+        assert_eq!(infeasible["outcome"], "planned", "{infeasible}");
+        assert_eq!(rects_by_window(&infeasible), base_rects, "{infeasible}");
+        assert_eq!(
+            infeasible["base_revision"].as_u64().expect("base revision"),
+            revision,
+            "{infeasible}"
+        );
+        // Validation uses the existing observed-window pattern: unknown
+        // members and bad ids refuse fail-closed.
+        for (correlation, map) in [
+            (
+                "learned-cap-unknown",
+                serde_json::json!({"win-9": {"w": 0, "h": 1036}}),
+            ),
+            (
+                "learned-cap-bad-id",
+                serde_json::json!({"": {"w": 0, "h": 1036}}),
+            ),
+        ] {
+            let refused =
+                parse_reply(&planner.evaluate(&tall_reconcile(correlation, Some(map), None)));
+            assert_eq!(refused["outcome"], "rejected", "{refused}");
+            assert_eq!(refused["kind"], "snapshot-invalid", "{refused}");
+            assert_eq!(refused["detail"], "observed-window-invalid", "{refused}");
+        }
     }
 }

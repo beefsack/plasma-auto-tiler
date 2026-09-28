@@ -168,6 +168,7 @@ fn project(
         )),
         ProjectionKind::Reconcile,
         hints,
+        &BTreeMap::new(),
         observed,
     )
     .expect("projects")

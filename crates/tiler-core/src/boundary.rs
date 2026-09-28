@@ -148,6 +148,11 @@ pub struct CoreEvent {
     pub directional_target_outer_gap: Option<i32>,
     pub target_domain: Option<(OutputDomain, DomainKey)>,
     pub target_windows: Vec<EngineWindow>,
+    /// Per-request learned upper limits for retained reconcile only
+    /// (window id to caps; 0/absent/out-of-bound axes behave as absent via
+    /// [`crate::size_hints::LearnedCaps`]). Non-persistent: never stored,
+    /// never mutates shares/revision; other ops ignore it.
+    pub learned_caps: BTreeMap<WindowId, crate::size_hints::LearnedCaps>,
     pub command: CoreCommand,
 }
 
@@ -680,7 +685,10 @@ pub struct ProjectionPlan {
 /// per-window client size hints (`hints`, AR12) exactly like every other
 /// workflow: satisfiable minimums take slack from siblings, unsatisfiable
 /// windows keep the proportional fallback flagged `overconstrained` on their
-/// [`DesiredGeometry`]. Rebuilds authoritative desired geometry from retained
+/// [`DesiredGeometry`]. Per-request learned upper limits (`learned_caps`,
+/// retained reconcile only) redistribute freed split-axis extent to siblings
+/// with existing infeasible fallback; empty behaves as no caps so other ops
+/// stay byte-identical. Rebuilds authoritative desired geometry from retained
 /// topology only (observed client rectangles are never adopted, shares
 /// untouched), sorts by (output, workspace, leaf), and refuses tiled-coverage
 /// mismatch.
@@ -711,6 +719,7 @@ pub fn project_retained_tiled_geometry(
     focus: Option<(DomainKey, NodeId)>,
     kind: ProjectionKind,
     hints: &BTreeMap<WindowId, crate::size_hints::WindowSizeHints>,
+    learned_caps: &BTreeMap<WindowId, crate::size_hints::LearnedCaps>,
     observed: &[EngineWindow],
 ) -> Option<ProjectionPlan> {
     let snapshot = session.snapshot();
@@ -734,7 +743,16 @@ pub fn project_retained_tiled_geometry(
             .copied()
             .unwrap_or_else(crate::size_hints::WindowSizeHints::none)
     };
-    let hinted = crate::size_hints::project_with_hints(&tree, bounds, gap, &resolve).ok()?;
+    let resolve_cap = |leaf: &crate::directional::NodeId| {
+        leaf_to_window
+            .get(&leaf.0)
+            .and_then(|window| learned_caps.get(&WindowId(window.clone())))
+            .copied()
+            .unwrap_or_else(crate::size_hints::LearnedCaps::none)
+    };
+    let hinted =
+        crate::size_hints::project_with_learned_caps(&tree, bounds, gap, &resolve, &resolve_cap)
+            .ok()?;
     let over: BTreeSet<String> = hinted
         .overconstrained
         .iter()
@@ -942,6 +960,7 @@ mod tests {
             directional_target_outer_gap: None,
             target_domain: None,
             target_windows: Vec::new(),
+            learned_caps: BTreeMap::new(),
             domain,
             domain_key,
             command,
@@ -1078,6 +1097,7 @@ mod tests {
                 0,
                 None,
                 ProjectionKind::Reconcile,
+                &BTreeMap::new(),
                 &BTreeMap::new(),
                 &[],
             )
@@ -1217,6 +1237,7 @@ mod tests {
             Some((key.clone(), focus_leaf.clone())),
             ProjectionKind::Reconcile,
             &BTreeMap::new(),
+            &BTreeMap::new(),
             &[],
         )
         .expect("projects");
@@ -1248,6 +1269,7 @@ mod tests {
             retained.gap,
             Some((key.clone(), focus_leaf.clone())),
             ProjectionKind::UpdateGaps,
+            &BTreeMap::new(),
             &BTreeMap::new(),
             &[],
         )

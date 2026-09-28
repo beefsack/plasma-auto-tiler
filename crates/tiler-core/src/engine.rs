@@ -901,6 +901,7 @@ impl Engine {
                         Some((focus_domain, focus_leaf)),
                         ProjectionKind::Reconcile,
                         &hints,
+                        &BTreeMap::new(),
                         &event.windows,
                     ) {
                         if let Some(stored) = self.session_mut(&event.domain_key) {
@@ -1217,6 +1218,7 @@ impl Engine {
             Some((focus_domain.clone(), focus_leaf.clone())),
             ProjectionKind::Reconcile,
             &hints,
+            &event.learned_caps,
             &event.windows,
         ) else {
             restore(self, &backup, relocated_here);
@@ -1360,6 +1362,7 @@ impl Engine {
             Some((focus_domain.clone(), focus_leaf.clone())),
             ProjectionKind::UpdateGaps,
             &hints,
+            &BTreeMap::new(),
             &event.windows,
         ) else {
             return CoreReply::Rejected {
@@ -2871,6 +2874,7 @@ impl Engine {
             Some((event.domain_key.clone(), link.leaf.clone())),
             ProjectionKind::Reconcile,
             &hints,
+            &BTreeMap::new(),
             &event.windows,
         )?;
         let rect = plan
@@ -3438,6 +3442,7 @@ mod tests {
             directional_target_outer_gap: None,
             target_domain: None,
             target_windows: vec![],
+            learned_caps: BTreeMap::new(),
             command: CoreCommand::Move {
                 window: "win-1".to_owned(),
                 direction: "left".to_owned(),
@@ -3489,6 +3494,7 @@ mod tests {
             directional_target_outer_gap: None,
             target_domain: None,
             target_windows: vec![],
+            learned_caps: BTreeMap::new(),
             command: CoreCommand::Reconcile,
         };
         match engine.handle(&reconcile) {
@@ -3658,6 +3664,7 @@ mod tests {
             directional_target_outer_gap: None,
             target_domain: None,
             target_windows: vec![],
+            learned_caps: BTreeMap::new(),
             command: CoreCommand::Reconcile,
         };
         match engine.handle(&event) {
@@ -3756,6 +3763,7 @@ mod tests {
             directional_target_outer_gap: None,
             target_domain: None,
             target_windows: vec![],
+            learned_caps: BTreeMap::new(),
             command: CoreCommand::Reconcile,
         };
         match engine.handle(&event) {
@@ -3836,6 +3844,7 @@ mod tests {
             directional_target_outer_gap: None,
             target_domain: None,
             target_windows: vec![],
+            learned_caps: BTreeMap::new(),
             command: CoreCommand::Reconcile,
         };
         match engine.handle(&event) {
@@ -3909,6 +3918,7 @@ mod tests {
             directional_target_outer_gap: None,
             target_domain: None,
             target_windows: vec![],
+            learned_caps: BTreeMap::new(),
             command: CoreCommand::Reconcile,
         };
         match engine.handle(&event) {
@@ -3967,6 +3977,7 @@ mod tests {
             directional_target_outer_gap: None,
             target_domain: None,
             target_windows: vec![],
+            learned_caps: BTreeMap::new(),
             command: CoreCommand::Reconcile,
         };
         match engine.handle(&event) {
@@ -4028,6 +4039,7 @@ mod tests {
             directional_target_outer_gap: None,
             target_domain: None,
             target_windows: vec![],
+            learned_caps: BTreeMap::new(),
             command: CoreCommand::Reconcile,
         };
         match engine.handle(&event) {
@@ -4078,6 +4090,7 @@ mod tests {
             directional_target_outer_gap: None,
             target_domain: None,
             target_windows: vec![],
+            learned_caps: BTreeMap::new(),
             command: CoreCommand::Reconcile,
         };
         match engine.handle(&event) {
@@ -4129,6 +4142,7 @@ mod tests {
             directional_target_outer_gap: None,
             target_domain: None,
             target_windows: vec![],
+            learned_caps: BTreeMap::new(),
             command: CoreCommand::UpdateGaps,
         };
         match engine.handle(&event) {
@@ -4201,6 +4215,7 @@ mod tests {
             directional_target_outer_gap: None,
             target_domain: None,
             target_windows: vec![],
+            learned_caps: BTreeMap::new(),
             command: CoreCommand::Reconcile,
         };
         match engine.handle(&event) {
@@ -4295,6 +4310,7 @@ mod tests {
             directional_target_outer_gap: None,
             target_domain: None,
             target_windows: vec![],
+            learned_caps: BTreeMap::new(),
             command,
         }
     }
@@ -4361,6 +4377,7 @@ mod tests {
             directional_target_outer_gap: None,
             target_domain: None,
             target_windows: vec![],
+            learned_caps: BTreeMap::new(),
             command,
         };
         let same_drop = event(
