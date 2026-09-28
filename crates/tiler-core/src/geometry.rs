@@ -164,6 +164,29 @@ pub fn project(tree: &Node, bounds: Rect, gap: i32) -> Result<Vec<ProjectedLeaf>
     Ok(out)
 }
 
+/// Both callers validate positive shares, nonzero total and `avail >= shares.len()`.
+pub(crate) fn proportional_base_sizes(
+    shares: &[u64],
+    total: u64,
+    distributable: i64,
+    avail: i64,
+) -> Vec<i64> {
+    let mut sizes: Vec<i64> = Vec::with_capacity(shares.len());
+    let mut used: i64 = 0;
+    for (index, share) in shares.iter().enumerate() {
+        if index + 1 == shares.len() {
+            sizes.push(avail - used);
+        } else {
+            let proportional =
+                (i128::from(distributable) * i128::from(*share) / i128::from(total)) as i64;
+            let size = proportional + 1;
+            sizes.push(size);
+            used += size;
+        }
+    }
+    sizes
+}
+
 fn layout_into(
     node: &Node,
     rect: Rect,
@@ -213,23 +236,7 @@ fn layout_into(
             // Reserve one unit per child before proportional allocation so a
             // valid skewed share vector never produces a zero-area leaf.
             let distributable = avail - n as i64;
-            // i128 product keeps u64 shares exact without float math; the
-            // quotient never exceeds `distributable` (share <= total), so i32 holds.
-            let mut sizes: Vec<i64> = Vec::with_capacity(n);
-            let mut used: i64 = 0;
-            for (index, share) in shares.iter().enumerate() {
-                if index + 1 == n {
-                    sizes.push(avail - used);
-                } else {
-                    let proportional: i64 = (i128::from(distributable) * i128::from(*share)
-                        / i128::from(total))
-                    .try_into()
-                    .map_err(|_| error("segment size overflows"))?;
-                    let size = proportional + 1;
-                    sizes.push(size);
-                    used += size;
-                }
-            }
+            let sizes = proportional_base_sizes(shares, total, distributable, avail);
             let mut cursor: i64 = match axis {
                 Axis::Horizontal => i64::from(rect.x),
                 Axis::Vertical => i64::from(rect.y),

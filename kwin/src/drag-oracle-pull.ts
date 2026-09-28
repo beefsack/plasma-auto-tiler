@@ -1,4 +1,5 @@
 import { connectSignal, isConnectableSignal, readSignal } from "./signal-capability";
+import { decodeList } from "./qml-list";
 import { KWIN_TRACE_ENABLED } from "./trace";
 export const DRAG_ORACLE_SERVICE = "org.plasmaautotiler.DragOracle"; export const DRAG_ORACLE_OBJECT = "/org/plasmaautotiler/DragOracle"; export const DRAG_ORACLE_INTERFACE = "org.plasmaautotiler.DragOracle1"; export const DRAG_ORACLE_METHOD = "LastVerdict";
 export const DRAG_ORACLE_MAX_REPLY_BYTES = 64 * 1024; export const DRAG_ORACLE_MAX_TOKEN_LEN = 128; export const DRAG_ORACLE_MAX_REASON_LEN = 64; export const DRAG_ORACLE_MAX_ID_LEN = 128;
@@ -296,29 +297,6 @@ function resolveLexicalWorkspace(): unknown {
         // Missing global fails closed below.
     }
     return null;
-}
-function decodeList(value: unknown, maxLength: number): ReadonlyArray<unknown> | null {
-    if (typeof value !== "object" || value === null) return null;
-    if (Array.isArray(value)) return value.length <= maxLength ? value : null;
-    let length: unknown = undefined;
-    try {
-        length = Reflect.get(value, "length");
-    } catch (_e) {
-        return null;
-    }
-    if (typeof length !== "number" || !Number.isInteger(length) || length < 0 || length > maxLength) return null;
-    const out: unknown[] = [];
-    for (let i = 0; i < length; i += 1) {
-        let el: unknown = undefined;
-        try {
-            el = Reflect.get(value, String(i));
-        } catch (_e) {
-            return null;
-        }
-        if (el === undefined) return null;
-        out.push(el);
-    }
-    return out;
 }
 export function startDragOraclePullEntry(overrides: DragOraclePullOverrides = {}): DragOraclePullHandle | null {
     const liveWorkspace: unknown = overrides.workspace !== undefined ? overrides.workspace : resolveLexicalWorkspace();

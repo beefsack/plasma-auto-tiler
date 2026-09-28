@@ -26,6 +26,7 @@
 
 import { DomainGaps, readDomainGaps } from "./domain-gap";
 import { identifyGrabbedEdges, identifyPressGrabbed, resolveOracleResizeTargets, startDragOraclePullEntry, DragOracleFinishContext, DragOracleVerdict, OracleGrabbed, OracleGrabSource } from "./drag-oracle-pull";
+import { decodeList } from "./qml-list";
 import {
     DRAG_MEASURE_LATER_TIMEOUT_MS,
     DRAG_MEASURE_VERDICT_TIMEOUT_MS,
@@ -158,40 +159,6 @@ function isOpaqueId(value: unknown): value is string {
         }
     }
     return true;
-}
-
-function decodeList(value: unknown, maxLength: number): ReadonlyArray<unknown> | null {
-    if (typeof value !== "object" || value === null) {
-        return null;
-    }
-    if (Array.isArray(value)) {
-        return value.length <= maxLength ? value : null;
-    }
-    let length: unknown = undefined;
-    try {
-        length = Reflect.get(value, "length");
-    } catch (error) {
-        void error;
-        return null;
-    }
-    if (typeof length !== "number" || !Number.isInteger(length) || length < 0 || length > maxLength) {
-        return null;
-    }
-    const out: unknown[] = [];
-    for (let index = 0; index < length; index += 1) {
-        let element: unknown = undefined;
-        try {
-            element = Reflect.get(value, String(index));
-        } catch (error) {
-            void error;
-            return null;
-        }
-        if (element === undefined) {
-            return null;
-        }
-        out.push(element);
-    }
-    return out;
 }
 
 function resolveLexicalWorkspace(): unknown {

@@ -113,6 +113,10 @@ All items below shipped offline with no live result claimed.
   rather than `H[W1 H[W2 W3]]`. Compare `stage=refresh terminal=quiet` under
   normal and trace logging; non-quiet terminals stay visible in both.
   [change](changes/archive/unfloat-admission-axis.md)
+- Duplicate-implementation unification (no intended behavior change): new
+  window and unfloat placement, `just dev` start with mixed floating/tiled
+  windows, send to another workspace, drag still refreshes and attaches.
+  [change](changes/archive/unify-duplicate-implementations.md)
 - Same-output drag drops + preview overlay: user confirmed live at
   `826b233` (2026-09-28) that a paused drag stays under the pointer, the
   preview renders well and drops place correctly. Remaining: overlay

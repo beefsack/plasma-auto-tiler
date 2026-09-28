@@ -14,7 +14,7 @@ use crate::contract::{DivergenceKind, Observation};
 use crate::directional::{
     Direction, Node, NodeId, OutputId, Snapshot, WindowId, WindowLink, WorkspaceId,
 };
-use crate::geometry::{Rect, project};
+use crate::geometry::Rect;
 
 use super::{ProposeError, RefusalKind};
 
@@ -817,11 +817,8 @@ impl super::Session {
         }
         // Normal admissions: brand-new tiled windows plus unfloats, in
         // window-id order through the existing normal-placement helper.
-        // Placement reuses the exact admission policy on the evolving state
-        // (the evolving focused leaf's projected rect, else the domain
-        // bounds, mirroring `seed_target_bounds`); like successive ordinary
-        // admits, each insertion splits the previously inserted leaf. The
-        // helper wraps the whole root when no eligible focus resolves.
+        // Successive admissions split the previous leaf; without eligible
+        // focus, insertion wraps the root.
         let base_revision = observation.observation.revision;
         let mut existing_ids: BTreeSet<NodeId> = BTreeSet::new();
         for tree in new_trees.values().flatten() {
@@ -847,23 +844,12 @@ impl super::Session {
                     .then(|| l.clone()),
                 _ => None,
             };
-            // Placement axis comes from the evolving focused leaf's
-            // projected rect, falling back to the domain bounds exactly as
-            // `seed_target_bounds` does for ordinary admissions.
-            let placement = match &eligible {
-                Some(l) => new_trees
-                    .get(&key)
-                    .cloned()
-                    .flatten()
-                    .and_then(|tree| project(&tree, domain.bounds, domain.gap).ok())
-                    .and_then(|leaves| leaves.into_iter().find(|e| e.leaf == *l).map(|e| e.rect))
-                    .unwrap_or(domain.bounds),
-                None => domain.bounds,
-            };
+            let current = new_trees.get(&key).cloned().flatten();
+            let placement =
+                super::admission_placement_for(domain, current.as_ref(), eligible.as_ref());
             let orientation = self.policy().admission_axis_for_rect(&placement);
             let leaf_id = super::ops::lifecycle::generate_leaf_id(id, &mut existing_ids);
             existing_ids.insert(leaf_id.clone());
-            let current = new_trees.get(&key).cloned().flatten();
             let Some(next) = super::insert_tiled(
                 self.policy(),
                 current,

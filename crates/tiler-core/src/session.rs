@@ -2081,6 +2081,21 @@ fn nest_focused_with_new(
     }
 }
 
+/// Admission target for a caller-validated eligible focus.
+pub(crate) fn admission_placement_for(
+    domain: &OutputDomain,
+    tree: Option<&Node>,
+    eligible: Option<&NodeId>,
+) -> Rect {
+    if let (Some(tree), Some(leaf)) = (tree, eligible)
+        && let Ok(projected) = crate::geometry::project(tree, domain.bounds, domain.gap)
+        && let Some(target) = projected.iter().find(|entry| &entry.leaf == leaf)
+    {
+        return target.rect;
+    }
+    domain.bounds
+}
+
 #[allow(clippy::too_many_arguments)]
 fn insert_tiled(
     policy: &dyn LayoutPolicy,

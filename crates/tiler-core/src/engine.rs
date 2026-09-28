@@ -713,6 +713,74 @@ impl Engine {
             .map(|entry| entry.window.clone())
     }
 
+    /// Fresh floating-aware convergence build shared by fresh admit, fresh
+    /// reconcile (all-floating tail), and toggle-float.
+    ///
+    /// Builds one empty session and runs the single convergence primitive
+    /// over the complete carried observation, reporting nonzero counts under
+    /// `report_op` and storing the converged session. Per-op gating (fresh
+    /// slot, floating presence, unique source), empty-session creation
+    /// failure, and every reply/follow-on stay at the call sites: `Err(None)`
+    /// means `Session::new` failed, `Err(Some(reply))` is the mapped
+    /// primitive error to return, and `Ok(base)` is the converged revision
+    /// already stored (callers reload/project from the store so empty-retire
+    /// stays exact). The reply is boxed per the existing
+    /// [`ConvergeOutcome::Rejected`] precedent (`CoreReply` is large).
+    fn converge_fresh_floating(
+        &mut self,
+        event: &CoreEvent,
+        report_op: &'static str,
+    ) -> Result<u64, Option<Box<CoreReply>>> {
+        let Ok(mut fresh) = Session::new(
+            event.owner.clone(),
+            event.generation.clone(),
+            0,
+            event.fingerprint,
+            vec![event.domain.clone()],
+        ) else {
+            return Err(None);
+        };
+        fresh.set_policy(self.policy.clone());
+        let observation = crate::seed::session_observation_for(
+            &event.owner,
+            &event.generation,
+            fresh.accepted_revision(),
+            event.fingerprint,
+            &event.windows,
+        );
+        let focus = if event.focused_window.0.is_empty() {
+            None
+        } else {
+            Some(&event.focused_window)
+        };
+        match fresh.converge_observation(&observation, focus) {
+            Err(ProposeError::PendingExists) => Err(Some(Box::new(CoreReply::Rejected {
+                kind: PENDING_EXISTS_KIND,
+                message: PENDING_EXISTS_MESSAGE,
+            }))),
+            Err(ProposeError::Diverged(reason)) => Err(Some(Box::new(CoreReply::Diverged(reason)))),
+            Err(error) => Err(Some(Box::new(CoreReply::Rejected {
+                kind: error.kind(),
+                message: error.message(),
+            }))),
+            Ok(counts) => {
+                self.converged_this_op = true;
+                if counts.removed + counts.admitted + counts.flags_adopted > 0 {
+                    self.last_convergence = Some(EngineConvergenceReport {
+                        correlation: event.correlation.clone(),
+                        op: report_op,
+                        removed: counts.removed,
+                        admitted: counts.admitted,
+                        flags_adopted: counts.flags_adopted,
+                    });
+                }
+                let base = fresh.accepted_revision();
+                self.store_committed(event.domain_key.clone(), fresh, event.outer_gap);
+                Ok(base)
+            }
+        }
+    }
+
     /// Shared fresh-domain admission route: flat-strip fit fast path,
     /// floating-aware convergence build, deterministic seed order, seeding,
     /// relocation, propose/commit, and store.
@@ -786,54 +854,13 @@ impl Engine {
             && self
                 .find_unique_source_for_target(&event.domain_key)
                 .is_none()
-            && let Ok(mut fresh) = Session::new(
-                event.owner.clone(),
-                event.generation.clone(),
-                0,
-                event.fingerprint,
-                vec![event.domain.clone()],
-            )
         {
-            fresh.set_policy(self.policy.clone());
-            let observation = crate::seed::session_observation_for(
-                &event.owner,
-                &event.generation,
-                fresh.accepted_revision(),
-                event.fingerprint,
-                &event.windows,
-            );
-            let focus = if event.focused_window.0.is_empty() {
-                None
-            } else {
-                Some(&event.focused_window)
-            };
-            match fresh.converge_observation(&observation, focus) {
-                Err(ProposeError::PendingExists) => {
-                    return CoreReply::Rejected {
-                        kind: PENDING_EXISTS_KIND,
-                        message: PENDING_EXISTS_MESSAGE,
-                    };
-                }
-                Err(ProposeError::Diverged(reason)) => return CoreReply::Diverged(reason),
-                Err(error) => {
-                    return CoreReply::Rejected {
-                        kind: error.kind(),
-                        message: error.message(),
-                    };
-                }
-                Ok(counts) => {
-                    self.converged_this_op = true;
-                    if counts.removed + counts.admitted + counts.flags_adopted > 0 {
-                        self.last_convergence = Some(EngineConvergenceReport {
-                            correlation: event.correlation.clone(),
-                            op: report_op,
-                            removed: counts.removed,
-                            admitted: counts.admitted,
-                            flags_adopted: counts.flags_adopted,
-                        });
-                    }
-                    self.store_committed(event.domain_key.clone(), fresh, event.outer_gap);
-                }
+            // Shared floating-aware convergence: `Session::new` failure
+            // (`Err(None)`) falls through to the legacy route below with no
+            // flags set; the projection below then misses the store and falls
+            // through identically.
+            if let Err(Some(reply)) = self.converge_fresh_floating(event, report_op) {
+                return *reply;
             }
             // Fresh mixed float+tiled projection: convergence above already
             // admitted normals and retained floating exceptions; project the
@@ -974,64 +1001,22 @@ impl Engine {
                 "reconcile",
             );
         }
-        let mut fresh = match Session::new(
-            event.owner.clone(),
-            event.generation.clone(),
-            0,
-            event.fingerprint,
-            vec![event.domain.clone()],
-        ) {
-            Ok(session) => session,
-            Err(_) => {
-                return CoreReply::SnapshotInvalid {
-                    message: OBSERVATION_MESSAGE,
-                    detail: "seed-failed",
-                };
-            }
-        };
-        fresh.set_policy(self.policy.clone());
-        let observation = crate::seed::session_observation_for(
-            &event.owner,
-            &event.generation,
-            fresh.accepted_revision(),
-            event.fingerprint,
-            &event.windows,
-        );
-        let focus = if event.focused_window.0.is_empty() {
-            None
-        } else {
-            Some(&event.focused_window)
-        };
-        match fresh.converge_observation(&observation, focus) {
-            Ok(counts) => {
-                self.converged_this_op = true;
-                if counts.removed + counts.admitted + counts.flags_adopted > 0 {
-                    self.last_convergence = Some(EngineConvergenceReport {
-                        correlation: event.correlation.clone(),
-                        op: "reconcile",
-                        removed: counts.removed,
-                        admitted: counts.admitted,
-                        flags_adopted: counts.flags_adopted,
-                    });
-                }
-                let base = fresh.accepted_revision();
-                self.store_committed(event.domain_key.clone(), fresh, event.outer_gap);
-                CoreReply::Projection(ProjectionPlan {
-                    base_revision: base,
-                    kind: ProjectionKind::Reconcile,
-                    geometry: Vec::new(),
-                    focus_domain: None,
-                    focus_leaf: None,
-                })
-            }
-            Err(ProposeError::PendingExists) => CoreReply::Rejected {
-                kind: PENDING_EXISTS_KIND,
-                message: PENDING_EXISTS_MESSAGE,
-            },
-            Err(ProposeError::Diverged(reason)) => CoreReply::Diverged(reason),
-            Err(error) => CoreReply::Rejected {
-                kind: error.kind(),
-                message: error.message(),
+        // All-floating tail: no anchor exists, so converge the complete
+        // observation through the shared fresh floating-aware build. Only a
+        // genuinely absent domain seeds here; `Session::new` failure keeps
+        // the existing `seed-failed` shape.
+        match self.converge_fresh_floating(event, "reconcile") {
+            Ok(base) => CoreReply::Projection(ProjectionPlan {
+                base_revision: base,
+                kind: ProjectionKind::Reconcile,
+                geometry: Vec::new(),
+                focus_domain: None,
+                focus_leaf: None,
+            }),
+            Err(Some(reply)) => *reply,
+            Err(None) => CoreReply::SnapshotInvalid {
+                message: OBSERVATION_MESSAGE,
+                detail: "seed-failed",
             },
         }
     }
@@ -1971,54 +1956,12 @@ impl Engine {
             && self
                 .find_unique_source_for_target(&event.domain_key)
                 .is_none()
-            && let Ok(mut fresh) = Session::new(
-                event.owner.clone(),
-                event.generation.clone(),
-                0,
-                event.fingerprint,
-                vec![event.domain.clone()],
-            )
         {
-            fresh.set_policy(self.policy.clone());
-            let observation = crate::seed::session_observation_for(
-                &event.owner,
-                &event.generation,
-                fresh.accepted_revision(),
-                event.fingerprint,
-                &event.windows,
-            );
-            let focus = if event.focused_window.0.is_empty() {
-                None
-            } else {
-                Some(&event.focused_window)
-            };
-            match fresh.converge_observation(&observation, focus) {
-                Err(ProposeError::PendingExists) => {
-                    return CoreReply::Rejected {
-                        kind: PENDING_EXISTS_KIND,
-                        message: PENDING_EXISTS_MESSAGE,
-                    };
-                }
-                Err(ProposeError::Diverged(reason)) => return CoreReply::Diverged(reason),
-                Err(error) => {
-                    return CoreReply::Rejected {
-                        kind: error.kind(),
-                        message: error.message(),
-                    };
-                }
-                Ok(counts) => {
-                    self.converged_this_op = true;
-                    if counts.removed + counts.admitted + counts.flags_adopted > 0 {
-                        self.last_convergence = Some(EngineConvergenceReport {
-                            correlation: event.correlation.clone(),
-                            op: "toggle-float",
-                            removed: counts.removed,
-                            admitted: counts.admitted,
-                            flags_adopted: counts.flags_adopted,
-                        });
-                    }
-                    self.store_committed(event.domain_key.clone(), fresh, event.outer_gap);
-                }
+            // Shared floating-aware convergence; `Session::new` failure
+            // (`Err(None)`) falls through to the legacy route with no flags
+            // set, exactly like the previous `let Ok(...)` gate.
+            if let Err(Some(reply)) = self.converge_fresh_floating(event, "toggle-float") {
+                return *reply;
             }
             if self.session(&event.domain_key).is_none() {
                 // Converged empty retires the slot: behave as if never

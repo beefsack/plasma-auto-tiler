@@ -24,6 +24,7 @@
 // single check (never duplicated here).
 
 import { normalizeNativeId } from "./native-id";
+import { decodeList } from "./qml-list";
 import { readDomainGaps } from "./domain-gap";
 import { connectSignal, readSignal } from "./signal-capability";
 import {
@@ -93,40 +94,6 @@ function isOpaqueId(value: unknown): value is string {
         }
     }
     return true;
-}
-
-function decodeList(value: unknown, maxLength: number): ReadonlyArray<unknown> | null {
-    if (typeof value !== "object" || value === null) {
-        return null;
-    }
-    if (Array.isArray(value)) {
-        return value.length <= maxLength ? value : null;
-    }
-    let length: unknown = undefined;
-    try {
-        length = Reflect.get(value, "length");
-    } catch (error) {
-        void error;
-        return null;
-    }
-    if (typeof length !== "number" || !Number.isInteger(length) || length < 0 || length > maxLength) {
-        return null;
-    }
-    const out: unknown[] = [];
-    for (let index = 0; index < length; index += 1) {
-        let element: unknown = undefined;
-        try {
-            element = Reflect.get(value, String(index));
-        } catch (error) {
-            void error;
-            return null;
-        }
-        if (element === undefined) {
-            return null;
-        }
-        out.push(element);
-    }
-    return out;
 }
 
 function resolveLexicalWorkspace(): unknown {

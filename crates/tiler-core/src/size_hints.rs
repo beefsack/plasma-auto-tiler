@@ -61,7 +61,7 @@ use std::collections::BTreeSet;
 
 use crate::bounds::GEOMETRY_BOUND;
 use crate::directional::{Axis, Node, NodeId};
-use crate::geometry::{ProjectedLeaf, Rect, project};
+use crate::geometry::{ProjectedLeaf, Rect, project, proportional_base_sizes};
 
 /// Per-axis clamp tolerance in device units.
 ///
@@ -447,8 +447,8 @@ fn layout_hinted(
             ..
         } => {
             let n = children.len();
-            // Same proportional base as geometry::layout_into: reserve one
-            // unit per child, then floor shares of the distributable.
+            // Shared proportional base with geometry::layout_into; minimums
+            // below reallocate from these sizes, never replace the formula.
             let mut total: u64 = 0;
             for share in shares {
                 total = total
@@ -464,21 +464,7 @@ fn layout_hinted(
                 .ok_or_else(|| hint_error("gap budget overflows"))?;
             let avail: i64 = extent - gaps_total;
             let distributable = avail - n as i64;
-            let mut sizes: Vec<i64> = Vec::with_capacity(n);
-            let mut used: i64 = 0;
-            for (index, share) in shares.iter().enumerate() {
-                if index + 1 == n {
-                    sizes.push(avail - used);
-                } else {
-                    let proportional: i64 = (i128::from(distributable) * i128::from(*share)
-                        / i128::from(total))
-                    .try_into()
-                    .map_err(|_| hint_error("segment size overflows"))?;
-                    let size = proportional + 1;
-                    sizes.push(size);
-                    used += size;
-                }
-            }
+            let mut sizes = proportional_base_sizes(shares, total, distributable, avail);
             // Honor child minimums along the split axis only. Maximums never
             // reallocate (approved projection honors minimums; max feeds
             // clamp acceptance). Infeasible minimums keep the base sizes.
