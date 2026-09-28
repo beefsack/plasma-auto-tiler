@@ -663,6 +663,11 @@ the corresponding item ships; each such entry names its replacement.
   2026-09-28 under the standing 2026-09-21 approval: clear those four stock
   bindings through the existing reversible KCM Apply/Force/Revert override;
   do not relocate them. Project directional focus supersedes stock switching.
+- USER decision 2026-09-28: project `Meta+Left/Down/Up/Right` focus and
+  `Meta+Shift+Left/Right` move supersede the KWin 6.7.5 defaults for
+  `kwin/Window Quick Tile Left/Bottom/Top/Right` and
+  `kwin/Window to Previous/Next Screen`. Clear those six exact bindings
+  through reversible KCM Apply/Force/Revert, without relocation.
 - Approved 2026-09-21, standing until revoked: clear Grid View's `Meta+G`
   and Krohnkite Monocle's `Meta+M` through reversible Apply/Revert overrides,
   plus other exact project-required shortcut conflicts. The "recorded preimage"
@@ -676,11 +681,15 @@ the corresponding item ships; each such entry names its replacement.
 - Non-conflicting project shortcuts register by default. Conflicting
   Plasma-global shortcuts change only through explicit KCM Apply, Force Apply,
   and Revert. Installation/startup never mutate global shortcuts. Ordinary
-  settings Save never mutates shortcuts. The nine project-required chords are
+  settings Save never mutates shortcuts. The fifteen project-required chords are
   `Meta+L` (focus-right, relocating `ksmserver/Lock Session` `Meta+L` to
   `Meta+Esc`), `Meta+Alt+K`, `Meta+Alt+L`, `Meta+G`, `Meta+M`, and
   `Meta+Alt+Left/Down/Up/Right` (grow arrows, clearing the corresponding
-  `kwin/Switch Window Left/Down/Up/Right` defaults). The sole
+  `kwin/Switch Window Left/Down/Up/Right` defaults), plus
+  `Meta+Left/Down/Up/Right` (focus arrows, clearing the corresponding
+  `kwin/Window Quick Tile Left/Bottom/Top/Right` defaults) and
+  `Meta+Shift+Left/Right` (move arrows, clearing `kwin/Window to
+  Previous/Next Screen`). The sole
   approved target-occupant exception is `Meta+Esc`: System Monitor
   `org.kde.plasma-systemmonitor.desktop` / `_launch` may hold it and is
   displaced without rebinding System Monitor itself; it is never writable by

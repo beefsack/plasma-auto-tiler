@@ -328,6 +328,11 @@ appear in the registered shortcut set below.
 | plasma-auto-tiler-move-workspace-1..9 | Meta+Shift+1..9 |
 | plasma-auto-tiler-move-workspace-append | Meta+Shift+0 |
 
+Plasma's default Quick Tile actions occupy `Meta+Arrows` and its next/previous
+screen actions occupy `Meta+Shift+Right/Left`. The effect KCM's explicit
+reversible shortcut override clears those defaults for the project focus and
+move aliases; ordinary settings Apply does not change global shortcuts.
+
 Sequences above are the `cosmic` profile default; `hyprland` and `bspwm`
 select different catalog rows for shared actions.
 

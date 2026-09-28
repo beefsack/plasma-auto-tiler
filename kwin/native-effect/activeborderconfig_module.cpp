@@ -214,16 +214,20 @@ QString ActiveBorderConfigModule::buildForcePreviewText(const ShortcutForcePrevi
 
 void ActiveBorderConfigModule::runShortcutApply(const char *operation)
 {
+    const QList<ShortcutConflictRow> &table = shortcutConflictTable();
+    const int prefixSize = QStringLiteral("plasma-auto-tiler-").size();
+    QStringList assigns;
+    assigns.append(QStringLiteral("Assign %1 to %2 and move %3 to %4")
+                       .arg(table.at(0).projectAction.mid(prefixSize), table.at(0).projectDisplay,
+                            table.at(0).foreignAction, table.at(0).targetDisplay));
+    for (int i = 1; i < table.size(); ++i) {
+        assigns.append(QStringLiteral("assign %1 to %2")
+                           .arg(table.at(i).projectAction.mid(prefixSize), table.at(i).projectDisplay));
+    }
     if (!confirmShortcutAction(QStringLiteral("Apply Shortcuts"),
-                               QStringLiteral("Assign focus-right to Meta+L and move Lock Session to Meta+Esc; assign "
-                                              "resize-outwards-up to Meta+Alt+K; assign resize-outwards-right to "
-                                              "Meta+Alt+L; assign resize-outwards-left-arrow to Meta+Alt+Left; assign "
-                                              "resize-outwards-down-arrow to Meta+Alt+Down; assign "
-                                              "resize-outwards-up-arrow to Meta+Alt+Up; assign "
-                                              "resize-outwards-right-arrow to Meta+Alt+Right; assign toggle-float to "
-                                              "Meta+G; assign toggle-maximize to "
-                                              "Meta+M? Conflicting bindings refuse Apply; Force lists each holder "
-                                              "with the exact keys removed and kept."))) {
+                               assigns.join(QStringLiteral("; "))
+                                   + QStringLiteral("? Conflicting bindings refuse Apply; Force lists each holder "
+                                                    "with the exact keys removed and kept."))) {
         return;
     }
     if (m_shortcutStore == nullptr || m_clearedStore == nullptr) {
@@ -349,59 +353,38 @@ void ActiveBorderConfigModule::refreshShortcutState()
         updateShortcutPresentation();
         return;
     }
-    const ShortcutTuple *focusCurrent = nullptr;
+    const QList<ShortcutConflictRow> &table = shortcutConflictTable();
+    QList<const ShortcutTuple *> projectCurrents;
+    projectCurrents.reserve(table.size());
+    for (int i = 0; i < table.size(); ++i) {
+        projectCurrents.append(nullptr);
+    }
     const ShortcutTuple *lockCurrent = nullptr;
-    const ShortcutTuple *upCurrent = nullptr;
-    const ShortcutTuple *rightCurrent = nullptr;
-    const ShortcutTuple *leftArrowCurrent = nullptr;
-    const ShortcutTuple *downArrowCurrent = nullptr;
-    const ShortcutTuple *upArrowCurrent = nullptr;
-    const ShortcutTuple *rightArrowCurrent = nullptr;
-    const ShortcutTuple *floatCurrent = nullptr;
-    const ShortcutTuple *maximizeCurrent = nullptr;
-    int matches[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    QList<int> projectMatches;
+    projectMatches.reserve(table.size());
+    for (int i = 0; i < table.size(); ++i) {
+        projectMatches.append(0);
+    }
+    int lockMatches = 0;
     for (const ShortcutTuple &tuple : tuples) {
-        if (tuple.component == shortcutFocusComponent() && tuple.action == shortcutFocusAction()) {
-            ++matches[0];
-            focusCurrent = &tuple;
-        } else if (tuple.component == shortcutLockComponent() && tuple.action == shortcutLockAction()) {
-            ++matches[1];
+        for (int i = 0; i < table.size(); ++i) {
+            if (tuple.component == table.at(i).projectComponent && tuple.action == table.at(i).projectAction) {
+                ++projectMatches[i];
+                projectCurrents[i] = &tuple;
+            }
+        }
+        if (tuple.component == table.at(0).foreignComponent && tuple.action == table.at(0).foreignAction) {
+            ++lockMatches;
             lockCurrent = &tuple;
-        } else if (tuple.component == shortcutResizeUpComponent() && tuple.action == shortcutResizeUpAction()) {
-            ++matches[2];
-            upCurrent = &tuple;
-        } else if (tuple.component == shortcutResizeRightComponent() && tuple.action == shortcutResizeRightAction()) {
-            ++matches[3];
-            rightCurrent = &tuple;
-        } else if (tuple.component == shortcutResizeLeftArrowComponent()
-            && tuple.action == shortcutResizeLeftArrowAction()) {
-            ++matches[4];
-            leftArrowCurrent = &tuple;
-        } else if (tuple.component == shortcutResizeDownArrowComponent()
-            && tuple.action == shortcutResizeDownArrowAction()) {
-            ++matches[5];
-            downArrowCurrent = &tuple;
-        } else if (tuple.component == shortcutResizeUpArrowComponent()
-            && tuple.action == shortcutResizeUpArrowAction()) {
-            ++matches[6];
-            upArrowCurrent = &tuple;
-        } else if (tuple.component == shortcutResizeRightArrowComponent()
-            && tuple.action == shortcutResizeRightArrowAction()) {
-            ++matches[7];
-            rightArrowCurrent = &tuple;
-        } else if (tuple.component == shortcutFloatComponent() && tuple.action == shortcutFloatAction()) {
-            ++matches[8];
-            floatCurrent = &tuple;
-        } else if (tuple.component == shortcutMaximizeComponent() && tuple.action == shortcutMaximizeAction()) {
-            ++matches[9];
-            maximizeCurrent = &tuple;
         }
     }
-    if (matches[0] != 1 || matches[1] != 1 || matches[2] != 1 || matches[3] != 1 || matches[4] != 1 || matches[5] != 1
-        || matches[6] != 1 || matches[7] != 1 || matches[8] != 1 || matches[9] != 1 || focusCurrent == nullptr
-        || lockCurrent == nullptr || upCurrent == nullptr || rightCurrent == nullptr
-        || leftArrowCurrent == nullptr || downArrowCurrent == nullptr || upArrowCurrent == nullptr
-        || rightArrowCurrent == nullptr || floatCurrent == nullptr || maximizeCurrent == nullptr) {
+    bool projectsMissing = lockMatches != 1 || lockCurrent == nullptr;
+    for (int i = 0; i < table.size(); ++i) {
+        if (projectMatches.at(i) != 1 || projectCurrents.at(i) == nullptr) {
+            projectsMissing = true;
+        }
+    }
+    if (projectsMissing) {
         m_shortcutStatus = QStringLiteral("Shortcut state unavailable: project bindings are missing.");
         updateShortcutPresentation();
         return;
@@ -433,42 +416,54 @@ void ActiveBorderConfigModule::refreshShortcutState()
             return;
         }
     }
-    const bool focusAtPost = focusCurrent->active == ShortcutReconciler::focusPostKeys();
-    const bool lockHasMetaL = lockCurrent->active.contains(SHORTCUT_META_L);
-    const bool lockHasMetaEsc = lockCurrent->active.contains(SHORTCUT_META_ESC);
-    const bool upAtPost = upCurrent->active == ShortcutReconciler::resizeUpPostKeys();
-    const bool rightAtPost = rightCurrent->active == ShortcutReconciler::resizeRightPostKeys();
-    const bool leftArrowAtPost = leftArrowCurrent->active == ShortcutReconciler::resizeLeftArrowPostKeys();
-    const bool downArrowAtPost = downArrowCurrent->active == ShortcutReconciler::resizeDownArrowPostKeys();
-    const bool upArrowAtPost = upArrowCurrent->active == ShortcutReconciler::resizeUpArrowPostKeys();
-    const bool rightArrowAtPost = rightArrowCurrent->active == ShortcutReconciler::resizeRightArrowPostKeys();
-    const bool floatAtPost = floatCurrent->active == ShortcutReconciler::floatPostKeys();
-    const bool maximizeAtPost = maximizeCurrent->active == ShortcutReconciler::maximizePostKeys();
+    bool allAtPost = true;
+    for (int i = 0; i < table.size(); ++i) {
+        if (projectCurrents.at(i)->active != table.at(i).projectPost) {
+            allAtPost = false;
+            break;
+        }
+    }
+    bool lockHasPre = false;
+    bool lockHasTarget = false;
+    for (int key : table.at(0).foreignExpectedPre) {
+        if (lockCurrent->active.contains(key)) {
+            lockHasPre = true;
+        }
+    }
+    for (int key : table.at(0).resolutionTarget) {
+        if (lockCurrent->active.contains(key)) {
+            lockHasTarget = true;
+        }
+    }
     QString clearedHint;
     if (!cleared.isEmpty()) {
         clearedHint = QStringLiteral(" %1 cleared binding(s) recorded; Revert restores KDE defaults.")
                           .arg(cleared.size());
     }
-    if (focusAtPost && !lockHasMetaL && lockHasMetaEsc && upAtPost && rightAtPost && leftArrowAtPost
-        && downArrowAtPost && upArrowAtPost && rightArrowAtPost && floatAtPost && maximizeAtPost) {
-        m_shortcutStatus = QStringLiteral("Shortcuts applied (9 rows): focus-right owns Meta+L, Lock Session owns "
-                                           "Meta+Esc, resize-outwards-up owns Meta+Alt+K, resize-outwards-right owns "
-                                           "Meta+Alt+L, resize-outwards-left-arrow owns Meta+Alt+Left, "
-                                           "resize-outwards-down-arrow owns Meta+Alt+Down, "
-                                           "resize-outwards-up-arrow owns Meta+Alt+Up, "
-                                           "resize-outwards-right-arrow owns Meta+Alt+Right, toggle-float owns "
-                                           "Meta+G, toggle-maximize owns Meta+M.")
+    const int prefixSize = QStringLiteral("plasma-auto-tiler-").size();
+    if (allAtPost && !lockHasPre && lockHasTarget) {
+        QStringList owns;
+        owns.append(QStringLiteral("%1 owns %2, %3 owns %4")
+                        .arg(table.at(0).projectAction.mid(prefixSize), table.at(0).projectDisplay,
+                             table.at(0).foreignAction, table.at(0).targetDisplay));
+        for (int i = 1; i < table.size(); ++i) {
+            owns.append(QStringLiteral("%1 owns %2")
+                            .arg(table.at(i).projectAction.mid(prefixSize), table.at(i).projectDisplay));
+        }
+        m_shortcutStatus = QStringLiteral("Shortcuts applied (%1 rows): %2.").arg(table.size()).arg(owns.join(QStringLiteral(", ")))
             + clearedHint;
         updateShortcutPresentation();
         return;
     }
-    m_shortcutStatus = QStringLiteral("Ready (9 rows): Apply will assign focus-right to Meta+L and move Lock "
-                                       "Session to Meta+Esc; assign resize-outwards-up to Meta+Alt+K; assign "
-                                       "resize-outwards-right to Meta+Alt+L; assign resize-outwards-left-arrow to "
-                                       "Meta+Alt+Left; assign resize-outwards-down-arrow to Meta+Alt+Down; assign "
-                                       "resize-outwards-up-arrow to Meta+Alt+Up; assign resize-outwards-right-arrow "
-                                       "to Meta+Alt+Right; assign toggle-float to Meta+G; assign "
-                                       "toggle-maximize to Meta+M.")
+    QStringList assigns;
+    assigns.append(QStringLiteral("assign %1 to %2 and move %3 to %4")
+                       .arg(table.at(0).projectAction.mid(prefixSize), table.at(0).projectDisplay,
+                            table.at(0).foreignAction, table.at(0).targetDisplay));
+    for (int i = 1; i < table.size(); ++i) {
+        assigns.append(QStringLiteral("assign %1 to %2")
+                           .arg(table.at(i).projectAction.mid(prefixSize), table.at(i).projectDisplay));
+    }
+    m_shortcutStatus = QStringLiteral("Ready (%1 rows): Apply will %2.").arg(table.size()).arg(assigns.join(QStringLiteral("; ")))
         + clearedHint;
     updateShortcutPresentation();
 }

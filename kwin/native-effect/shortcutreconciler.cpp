@@ -432,31 +432,60 @@ const QList<ShortcutConflictRow> &shortcutConflictTable()
     static const QList<ShortcutConflictRow> table = {
         {shortcutFocusComponent(), shortcutFocusAction(), {SHORTCUT_META_L}, shortcutLockComponent(),
          shortcutLockAction(), {SHORTCUT_META_L}, shortcutResolutionRelocate(), {SHORTCUT_META_ESC},
-         shortcutAuthorizedEscComponent(), shortcutAuthorizedEscAction()},
+         shortcutAuthorizedEscComponent(), shortcutAuthorizedEscAction(), QStringLiteral("Meta+L"),
+         QStringLiteral("Meta+Esc"), QStringLiteral("focus")},
         {shortcutResizeUpComponent(), shortcutResizeUpAction(), {SHORTCUT_META_ALT_K},
           shortcutSwitchNextComponent(), shortcutSwitchNextAction(), {SHORTCUT_META_ALT_K},
-          shortcutResolutionClear(), {}, {}, {}},
+          shortcutResolutionClear(), {}, {}, {}, QStringLiteral("Meta+Alt+K"), {}, QStringLiteral("resize-up")},
         {shortcutResizeRightComponent(), shortcutResizeRightAction(), {SHORTCUT_META_ALT_L},
           shortcutSwitchLastComponent(), shortcutSwitchLastAction(), {SHORTCUT_META_ALT_L},
-          shortcutResolutionClear(), {}, {}, {}},
+          shortcutResolutionClear(), {}, {}, {}, QStringLiteral("Meta+Alt+L"), {}, QStringLiteral("resize-right")},
         {shortcutResizeLeftArrowComponent(), shortcutResizeLeftArrowAction(), {SHORTCUT_META_ALT_LEFT},
           shortcutSwitchLeftComponent(), shortcutSwitchLeftAction(), {SHORTCUT_META_ALT_LEFT},
-          shortcutResolutionClear(), {}, {}, {}},
+          shortcutResolutionClear(), {}, {}, {}, QStringLiteral("Meta+Alt+Left"), {},
+          QStringLiteral("resize-left-arrow")},
         {shortcutResizeDownArrowComponent(), shortcutResizeDownArrowAction(), {SHORTCUT_META_ALT_DOWN},
           shortcutSwitchDownComponent(), shortcutSwitchDownAction(), {SHORTCUT_META_ALT_DOWN},
-          shortcutResolutionClear(), {}, {}, {}},
+          shortcutResolutionClear(), {}, {}, {}, QStringLiteral("Meta+Alt+Down"), {},
+          QStringLiteral("resize-down-arrow")},
         {shortcutResizeUpArrowComponent(), shortcutResizeUpArrowAction(), {SHORTCUT_META_ALT_UP},
           shortcutSwitchUpComponent(), shortcutSwitchUpAction(), {SHORTCUT_META_ALT_UP},
-          shortcutResolutionClear(), {}, {}, {}},
+          shortcutResolutionClear(), {}, {}, {}, QStringLiteral("Meta+Alt+Up"), {},
+          QStringLiteral("resize-up-arrow")},
         {shortcutResizeRightArrowComponent(), shortcutResizeRightArrowAction(), {SHORTCUT_META_ALT_RIGHT},
           shortcutSwitchRightComponent(), shortcutSwitchRightAction(), {SHORTCUT_META_ALT_RIGHT},
-          shortcutResolutionClear(), {}, {}, {}},
+          shortcutResolutionClear(), {}, {}, {}, QStringLiteral("Meta+Alt+Right"), {},
+          QStringLiteral("resize-right-arrow")},
         {shortcutFloatComponent(), shortcutFloatAction(), {SHORTCUT_META_G},
           shortcutGridViewComponent(), shortcutGridViewAction(), {SHORTCUT_META_G},
-          shortcutResolutionClear(), {}, {}, {}},
+          shortcutResolutionClear(), {}, {}, {}, QStringLiteral("Meta+G"), {}, QStringLiteral("float")},
         {shortcutMaximizeComponent(), shortcutMaximizeAction(), {SHORTCUT_META_M},
           shortcutMonocleComponent(), shortcutMonocleAction(), {SHORTCUT_META_M},
-          shortcutResolutionClear(), {}, {}, {}},
+          shortcutResolutionClear(), {}, {}, {}, QStringLiteral("Meta+M"), {}, QStringLiteral("maximize")},
+        {shortcutFocusLeftArrowComponent(), shortcutFocusLeftArrowAction(), {SHORTCUT_META_LEFT},
+          shortcutQuickTileLeftComponent(), shortcutQuickTileLeftAction(), {SHORTCUT_META_LEFT},
+          shortcutResolutionClear(), {}, {}, {}, QStringLiteral("Meta+Left"), {},
+          QStringLiteral("focus-left-arrow")},
+        {shortcutFocusDownArrowComponent(), shortcutFocusDownArrowAction(), {SHORTCUT_META_DOWN},
+          shortcutQuickTileBottomComponent(), shortcutQuickTileBottomAction(), {SHORTCUT_META_DOWN},
+          shortcutResolutionClear(), {}, {}, {}, QStringLiteral("Meta+Down"), {},
+          QStringLiteral("focus-down-arrow")},
+        {shortcutFocusUpArrowComponent(), shortcutFocusUpArrowAction(), {SHORTCUT_META_UP},
+          shortcutQuickTileTopComponent(), shortcutQuickTileTopAction(), {SHORTCUT_META_UP},
+          shortcutResolutionClear(), {}, {}, {}, QStringLiteral("Meta+Up"), {},
+          QStringLiteral("focus-up-arrow")},
+        {shortcutFocusRightArrowComponent(), shortcutFocusRightArrowAction(), {SHORTCUT_META_RIGHT},
+          shortcutQuickTileRightComponent(), shortcutQuickTileRightAction(), {SHORTCUT_META_RIGHT},
+          shortcutResolutionClear(), {}, {}, {}, QStringLiteral("Meta+Right"), {},
+          QStringLiteral("focus-right-arrow")},
+        {shortcutMoveLeftArrowComponent(), shortcutMoveLeftArrowAction(), {SHORTCUT_META_SHIFT_LEFT},
+          shortcutToPrevScreenComponent(), shortcutToPrevScreenAction(), {SHORTCUT_META_SHIFT_LEFT},
+          shortcutResolutionClear(), {}, {}, {}, QStringLiteral("Meta+Shift+Left"), {},
+          QStringLiteral("move-left-arrow")},
+        {shortcutMoveRightArrowComponent(), shortcutMoveRightArrowAction(), {SHORTCUT_META_SHIFT_RIGHT},
+          shortcutToNextScreenComponent(), shortcutToNextScreenAction(), {SHORTCUT_META_SHIFT_RIGHT},
+          shortcutResolutionClear(), {}, {}, {}, QStringLiteral("Meta+Shift+Right"), {},
+          QStringLiteral("move-right-arrow")},
     };
     return table;
 }
@@ -522,37 +551,20 @@ QList<int> ShortcutReconciler::remainderAfterClear(const QList<int> &active)
     return out;
 }
 
-QList<int> ShortcutReconciler::focusPostKeys() { return shortcutConflictTable().at(0).projectPost; }
 QList<int> ShortcutReconciler::lockPostFor(const QList<int> &lockPre)
 {
-    const QList<int> target = shortcutConflictTable().at(0).resolutionTarget;
+    const ShortcutConflictRow &row = shortcutConflictTable().at(0);
     QList<int> replaced;
     replaced.reserve(lockPre.size());
     for (int key : lockPre) {
-        if (key == SHORTCUT_META_L) {
-            for (int t : target) replaced.append(t);
+        if (row.foreignExpectedPre.contains(key)) {
+            for (int t : row.resolutionTarget) replaced.append(t);
         } else {
             replaced.append(key);
         }
     }
     return dedupKeys(replaced);
 }
-QList<int> ShortcutReconciler::resizeUpPostKeys() { return shortcutConflictTable().at(1).projectPost; }
-QList<int> ShortcutReconciler::resizeRightPostKeys() { return shortcutConflictTable().at(2).projectPost; }
-QList<int> ShortcutReconciler::switchNextExpectedPre() { return shortcutConflictTable().at(1).foreignExpectedPre; }
-QList<int> ShortcutReconciler::switchLastExpectedPre() { return shortcutConflictTable().at(2).foreignExpectedPre; }
-QList<int> ShortcutReconciler::resizeLeftArrowPostKeys() { return shortcutConflictTable().at(3).projectPost; }
-QList<int> ShortcutReconciler::switchLeftExpectedPre() { return shortcutConflictTable().at(3).foreignExpectedPre; }
-QList<int> ShortcutReconciler::resizeDownArrowPostKeys() { return shortcutConflictTable().at(4).projectPost; }
-QList<int> ShortcutReconciler::switchDownExpectedPre() { return shortcutConflictTable().at(4).foreignExpectedPre; }
-QList<int> ShortcutReconciler::resizeUpArrowPostKeys() { return shortcutConflictTable().at(5).projectPost; }
-QList<int> ShortcutReconciler::switchUpExpectedPre() { return shortcutConflictTable().at(5).foreignExpectedPre; }
-QList<int> ShortcutReconciler::resizeRightArrowPostKeys() { return shortcutConflictTable().at(6).projectPost; }
-QList<int> ShortcutReconciler::switchRightExpectedPre() { return shortcutConflictTable().at(6).foreignExpectedPre; }
-QList<int> ShortcutReconciler::floatPostKeys() { return shortcutConflictTable().at(7).projectPost; }
-QList<int> ShortcutReconciler::gridViewExpectedPre() { return shortcutConflictTable().at(7).foreignExpectedPre; }
-QList<int> ShortcutReconciler::maximizePostKeys() { return shortcutConflictTable().at(8).projectPost; }
-QList<int> ShortcutReconciler::monocleExpectedPre() { return shortcutConflictTable().at(8).foreignExpectedPre; }
 QList<int> ShortcutReconciler::dedupKeys(const QList<int> &keys)
 {
     QList<int> deduped;
@@ -1087,42 +1099,41 @@ bool ShortcutReconciler::parseAllComponentsReply(QDBusMessage::MessageType reply
 
 QList<int> ShortcutReconciler::relevantConflictKeys()
 {
-    return {SHORTCUT_META_L, SHORTCUT_META_ESC, SHORTCUT_META_ALT_K, SHORTCUT_META_ALT_L,
-            SHORTCUT_META_ALT_LEFT, SHORTCUT_META_ALT_DOWN, SHORTCUT_META_ALT_UP,
-            SHORTCUT_META_ALT_RIGHT, SHORTCUT_META_G, SHORTCUT_META_M};
+    QList<int> out;
+    for (const ShortcutConflictRow &row : shortcutConflictTable()) {
+        for (int key : row.projectPost) {
+            if (!out.contains(key)) {
+                out.append(key);
+            }
+        }
+        for (int key : row.resolutionTarget) {
+            if (!out.contains(key)) {
+                out.append(key);
+            }
+        }
+        for (int key : row.foreignExpectedPre) {
+            if (!out.contains(key)) {
+                out.append(key);
+            }
+        }
+    }
+    return out;
 }
 
 QString ShortcutReconciler::keyDisplayName(int key)
 {
-    if (key == SHORTCUT_META_L) {
-        return QStringLiteral("Meta+L");
+    for (const ShortcutConflictRow &row : shortcutConflictTable()) {
+        if (row.projectPost.contains(key) && !row.projectDisplay.isEmpty()) {
+            return row.projectDisplay;
+        }
+        if (row.resolutionTarget.contains(key) && !row.targetDisplay.isEmpty()) {
+            return row.targetDisplay;
+        }
     }
-    if (key == SHORTCUT_META_ESC) {
-        return QStringLiteral("Meta+Esc");
-    }
-    if (key == SHORTCUT_META_ALT_K) {
-        return QStringLiteral("Meta+Alt+K");
-    }
-    if (key == SHORTCUT_META_ALT_L) {
-        return QStringLiteral("Meta+Alt+L");
-    }
-    if (key == SHORTCUT_META_ALT_LEFT) {
-        return QStringLiteral("Meta+Alt+Left");
-    }
-    if (key == SHORTCUT_META_ALT_DOWN) {
-        return QStringLiteral("Meta+Alt+Down");
-    }
-    if (key == SHORTCUT_META_ALT_UP) {
-        return QStringLiteral("Meta+Alt+Up");
-    }
-    if (key == SHORTCUT_META_ALT_RIGHT) {
-        return QStringLiteral("Meta+Alt+Right");
-    }
-    if (key == SHORTCUT_META_G) {
-        return QStringLiteral("Meta+G");
-    }
-    if (key == SHORTCUT_META_M) {
-        return QStringLiteral("Meta+M");
+    for (const ShortcutConflictRow &row : shortcutConflictTable()) {
+        if (row.foreignExpectedPre.contains(key) && !row.projectDisplay.isEmpty()) {
+            return row.projectDisplay;
+        }
     }
     return QStringLiteral("key %1").arg(key);
 }
@@ -2430,33 +2441,36 @@ bool ShortcutReconciler::collectHolderSnapshot(HolderSnapshot *snapshot, QString
         }
         return false;
     }
-    if (!findAllowlisted(tuples, shortcutFocusComponent(), shortcutFocusAction(), &snap.focus, error)
-        || !findAllowlisted(tuples, shortcutLockComponent(), shortcutLockAction(), &snap.lock, error)
-        || !findAllowlisted(tuples, shortcutResizeUpComponent(), shortcutResizeUpAction(), &snap.resizeUp, error)
-        || !findAllowlisted(tuples, shortcutResizeRightComponent(), shortcutResizeRightAction(), &snap.resizeRight,
-                            error)
-        || !findAllowlisted(tuples, shortcutResizeLeftArrowComponent(), shortcutResizeLeftArrowAction(),
-                            &snap.resizeLeftArrow, error)
-        || !findAllowlisted(tuples, shortcutResizeDownArrowComponent(), shortcutResizeDownArrowAction(),
-                            &snap.resizeDownArrow, error)
-        || !findAllowlisted(tuples, shortcutResizeUpArrowComponent(), shortcutResizeUpArrowAction(),
-                            &snap.resizeUpArrow, error)
-        || !findAllowlisted(tuples, shortcutResizeRightArrowComponent(), shortcutResizeRightArrowAction(),
-                            &snap.resizeRightArrow, error)
-        || !findAllowlisted(tuples, shortcutFloatComponent(), shortcutFloatAction(), &snap.floatToggle, error)
-        || !findAllowlisted(tuples, shortcutMaximizeComponent(), shortcutMaximizeAction(), &snap.maximizeToggle,
-                            error)) {
+    const QList<ShortcutConflictRow> &table = shortcutConflictTable();
+    snap.projects.reserve(table.size());
+    ShortcutTuple focusCurrent;
+    if (!findAllowlisted(tuples, table.at(0).projectComponent, table.at(0).projectAction, &focusCurrent, error)) {
         return false;
     }
-    if (!keysValid(snap.focus.active) || !keysValid(snap.lock.active) || !keysValid(snap.resizeUp.active)
-        || !keysValid(snap.resizeRight.active) || !keysValid(snap.resizeLeftArrow.active)
-        || !keysValid(snap.resizeDownArrow.active) || !keysValid(snap.resizeUpArrow.active)
-        || !keysValid(snap.resizeRightArrow.active) || !keysValid(snap.floatToggle.active)
-        || !keysValid(snap.maximizeToggle.active)) {
+    if (!findAllowlisted(tuples, table.at(0).foreignComponent, table.at(0).foreignAction, &snap.lock, error)) {
+        return false;
+    }
+    snap.projects.append(focusCurrent);
+    for (int i = 1; i < table.size(); ++i) {
+        ShortcutTuple current;
+        if (!findAllowlisted(tuples, table.at(i).projectComponent, table.at(i).projectAction, &current, error)) {
+            return false;
+        }
+        snap.projects.append(current);
+    }
+    if (!keysValid(snap.projects.at(0).active) || !keysValid(snap.lock.active)) {
         if (error) {
             *error = QStringLiteral("allowlisted tuple is unbounded");
         }
         return false;
+    }
+    for (int i = 1; i < snap.projects.size(); ++i) {
+        if (!keysValid(snap.projects.at(i).active)) {
+            if (error) {
+                *error = QStringLiteral("allowlisted tuple is unbounded");
+            }
+            return false;
+        }
     }
     // Independent structural validation of enumerated state: unbounded
     // unrelated tuples fail closed with zero writes.
@@ -2643,13 +2657,28 @@ bool ShortcutReconciler::collectHolderSnapshot(HolderSnapshot *snapshot, QString
         }
         return a.action < b.action;
     });
-    // Lock preconditions are relocate logic: without Meta+L to replace and
-    // without Meta+Esc already held there is nothing safe to do.
-    if (!snap.lock.active.contains(SHORTCUT_META_L) && !snap.lock.active.contains(SHORTCUT_META_ESC)) {
-        if (error) {
-            *error = QStringLiteral("refusing to apply: lock binding has no Meta+L to replace");
+    // Lock preconditions are relocate logic: without the preimage to replace
+    // and without the target already held there is nothing safe to do.
+    {
+        const ShortcutConflictRow &lockRow = shortcutConflictTable().at(0);
+        bool hasPre = false;
+        bool hasTarget = false;
+        for (int key : lockRow.foreignExpectedPre) {
+            if (snap.lock.active.contains(key)) {
+                hasPre = true;
+            }
         }
-        return false;
+        for (int key : lockRow.resolutionTarget) {
+            if (snap.lock.active.contains(key)) {
+                hasTarget = true;
+            }
+        }
+        if (!hasPre && !hasTarget) {
+            if (error) {
+                *error = QStringLiteral("refusing to apply: lock binding has no Meta+L to replace");
+            }
+            return false;
+        }
     }
     if (snapshot) {
         *snapshot = snap;
@@ -2664,7 +2693,9 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeys(const char *operation)
         result.error = QStringLiteral("reconciler is not configured");
         return result;
     }
-    ShortcutDiag::log(QtDebugMsg, operation, "start", "running", QStringLiteral("rows=9"));
+    const QList<ShortcutConflictRow> &table = shortcutConflictTable();
+    ShortcutDiag::log(QtDebugMsg, operation, "start", "running",
+                      QStringLiteral("rows=%1").arg(table.size()));
     const int startWrites = m_store->writeCount();
     auto usedWrites = [&]() {
         return m_store->writeCount() - startWrites;
@@ -2731,10 +2762,11 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeys(const char *operation)
         }
         return checkOwner(writeError);
     };
-    // Phase 1: focus must own Meta+L before lock drops it.
-    const QList<int> focusPost = focusPostKeys();
-    if (snap.focus.active != focusPost) {
-        if (!writeOne(snap.focus.component, snap.focus.action, snap.focus.componentFriendly, snap.focus.friendly,
+    // Phase 1: focus must own its post before lock drops the preimage.
+    const QList<int> focusPost = table.at(0).projectPost;
+    const ShortcutTuple &focusSnap = snap.projects.at(0);
+    if (focusSnap.active != focusPost) {
+        if (!writeOne(focusSnap.component, focusSnap.action, focusSnap.componentFriendly, focusSnap.friendly,
                       focusPost, "focus", &error)) {
             result.error = error;
             result.writes = usedWrites();
@@ -2742,7 +2774,7 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeys(const char *operation)
         }
     }
     // Phase 2: lock relocation preserving exact other keys/order, gated on a
-    // fresh read showing focus still owning Meta+L.
+    // fresh read showing focus still owning its post.
     {
         QList<ShortcutTuple> tuples;
         if (!m_store->readAll(&tuples, &error)) {
@@ -2752,8 +2784,8 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeys(const char *operation)
         }
         ShortcutTuple focusGate;
         ShortcutTuple lockGate;
-        if (!findAllowlisted(tuples, shortcutFocusComponent(), shortcutFocusAction(), &focusGate, &error)
-            || !findAllowlisted(tuples, shortcutLockComponent(), shortcutLockAction(), &lockGate, &error)) {
+        if (!findAllowlisted(tuples, table.at(0).projectComponent, table.at(0).projectAction, &focusGate, &error)
+            || !findAllowlisted(tuples, table.at(0).foreignComponent, table.at(0).foreignAction, &lockGate, &error)) {
             result.error = error;
             result.writes = usedWrites();
             return result;
@@ -2773,7 +2805,7 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeys(const char *operation)
             }
         }
     }
-    // Phase 3: remaining project assignments from a fresh read.
+    // Phase 3: remaining project assignments from a fresh read, in table order.
     {
         QList<ShortcutTuple> tuples;
         if (!m_store->readAll(&tuples, &error)) {
@@ -2785,68 +2817,26 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeys(const char *operation)
         {
             ShortcutTuple current;
             QList<int> post;
-            const char *what;
+            QString what;
         };
         QList<Need> needs;
-        ShortcutTuple current;
-        if (!findAllowlisted(tuples, shortcutResizeUpComponent(), shortcutResizeUpAction(), &current, &error)) {
-            result.error = error;
-            result.writes = usedWrites();
-            return result;
+        for (int i = 1; i < table.size(); ++i) {
+            ShortcutTuple current;
+            if (!findAllowlisted(tuples, table.at(i).projectComponent, table.at(i).projectAction, &current,
+                                 &error)) {
+                result.error = error;
+                result.writes = usedWrites();
+                return result;
+            }
+            needs.append({current, table.at(i).projectPost, table.at(i).projectDiag});
         }
-        needs.append({current, resizeUpPostKeys(), "resize-up"});
-        if (!findAllowlisted(tuples, shortcutResizeRightComponent(), shortcutResizeRightAction(), &current, &error)) {
-            result.error = error;
-            result.writes = usedWrites();
-            return result;
-        }
-        needs.append({current, resizeRightPostKeys(), "resize-right"});
-        if (!findAllowlisted(tuples, shortcutResizeLeftArrowComponent(), shortcutResizeLeftArrowAction(), &current,
-                             &error)) {
-            result.error = error;
-            result.writes = usedWrites();
-            return result;
-        }
-        needs.append({current, resizeLeftArrowPostKeys(), "resize-left-arrow"});
-        if (!findAllowlisted(tuples, shortcutResizeDownArrowComponent(), shortcutResizeDownArrowAction(), &current,
-                             &error)) {
-            result.error = error;
-            result.writes = usedWrites();
-            return result;
-        }
-        needs.append({current, resizeDownArrowPostKeys(), "resize-down-arrow"});
-        if (!findAllowlisted(tuples, shortcutResizeUpArrowComponent(), shortcutResizeUpArrowAction(), &current,
-                             &error)) {
-            result.error = error;
-            result.writes = usedWrites();
-            return result;
-        }
-        needs.append({current, resizeUpArrowPostKeys(), "resize-up-arrow"});
-        if (!findAllowlisted(tuples, shortcutResizeRightArrowComponent(), shortcutResizeRightArrowAction(), &current,
-                             &error)) {
-            result.error = error;
-            result.writes = usedWrites();
-            return result;
-        }
-        needs.append({current, resizeRightArrowPostKeys(), "resize-right-arrow"});
-        if (!findAllowlisted(tuples, shortcutFloatComponent(), shortcutFloatAction(), &current, &error)) {
-            result.error = error;
-            result.writes = usedWrites();
-            return result;
-        }
-        needs.append({current, floatPostKeys(), "float"});
-        if (!findAllowlisted(tuples, shortcutMaximizeComponent(), shortcutMaximizeAction(), &current, &error)) {
-            result.error = error;
-            result.writes = usedWrites();
-            return result;
-        }
-        needs.append({current, maximizePostKeys(), "maximize"});
         for (const Need &need : needs) {
             if (need.current.active == need.post) {
                 continue;
             }
+            const QByteArray whatBytes = need.what.toUtf8();
             if (!writeOne(need.current.component, need.current.action, need.current.componentFriendly,
-                          need.current.friendly, need.post, need.what, &error)) {
+                          need.current.friendly, need.post, whatBytes.constData(), &error)) {
                 result.error = error;
                 result.writes = usedWrites();
                 return result;
@@ -2861,51 +2851,62 @@ ShortcutApplyResult ShortcutReconciler::writeProjectKeys(const char *operation)
             result.writes = usedWrites();
             return result;
         }
-        ShortcutTuple focusFinal;
         ShortcutTuple lockFinal;
-        ShortcutTuple upFinal;
-        ShortcutTuple rightFinal;
-        ShortcutTuple leftArrowFinal;
-        ShortcutTuple downArrowFinal;
-        ShortcutTuple upArrowFinal;
-        ShortcutTuple rightArrowFinal;
-        ShortcutTuple floatFinal;
-        ShortcutTuple maximizeFinal;
-        if (!findAllowlisted(finalTuples, shortcutFocusComponent(), shortcutFocusAction(), &focusFinal, &error)
-            || !findAllowlisted(finalTuples, shortcutLockComponent(), shortcutLockAction(), &lockFinal, &error)
-            || !findAllowlisted(finalTuples, shortcutResizeUpComponent(), shortcutResizeUpAction(), &upFinal, &error)
-            || !findAllowlisted(finalTuples, shortcutResizeRightComponent(), shortcutResizeRightAction(), &rightFinal,
-                                &error)
-            || !findAllowlisted(finalTuples, shortcutResizeLeftArrowComponent(), shortcutResizeLeftArrowAction(),
-                                &leftArrowFinal, &error)
-            || !findAllowlisted(finalTuples, shortcutResizeDownArrowComponent(), shortcutResizeDownArrowAction(),
-                                &downArrowFinal, &error)
-            || !findAllowlisted(finalTuples, shortcutResizeUpArrowComponent(), shortcutResizeUpArrowAction(),
-                                &upArrowFinal, &error)
-            || !findAllowlisted(finalTuples, shortcutResizeRightArrowComponent(), shortcutResizeRightArrowAction(),
-                                &rightArrowFinal, &error)
-            || !findAllowlisted(finalTuples, shortcutFloatComponent(), shortcutFloatAction(), &floatFinal, &error)
-            || !findAllowlisted(finalTuples, shortcutMaximizeComponent(), shortcutMaximizeAction(), &maximizeFinal,
-                                &error)) {
+        QList<ShortcutTuple> projectFinals;
+        projectFinals.reserve(table.size());
+        bool lookupOk = true;
+        for (const ShortcutConflictRow &row : table) {
+            ShortcutTuple current;
+            if (!findAllowlisted(finalTuples, row.projectComponent, row.projectAction, &current, &error)) {
+                lookupOk = false;
+                break;
+            }
+            projectFinals.append(current);
+        }
+        if (lookupOk) {
+            if (!findAllowlisted(finalTuples, table.at(0).foreignComponent, table.at(0).foreignAction, &lockFinal,
+                                 &error)) {
+                lookupOk = false;
+            }
+        }
+        if (!lookupOk) {
             result.error = error;
             result.writes = usedWrites();
             return result;
         }
-        if (focusFinal.active != focusPost || upFinal.active != resizeUpPostKeys()
-            || rightFinal.active != resizeRightPostKeys()
-            || leftArrowFinal.active != resizeLeftArrowPostKeys()
-            || downArrowFinal.active != resizeDownArrowPostKeys()
-            || upArrowFinal.active != resizeUpArrowPostKeys()
-            || rightArrowFinal.active != resizeRightArrowPostKeys() || floatFinal.active != floatPostKeys()
-            || maximizeFinal.active != maximizePostKeys() || lockFinal.active.contains(SHORTCUT_META_L)
-            || !lockFinal.active.contains(SHORTCUT_META_ESC)) {
+        bool verified = true;
+        for (int i = 0; i < table.size(); ++i) {
+            if (projectFinals.at(i).active != table.at(i).projectPost) {
+                verified = false;
+                break;
+            }
+        }
+        if (verified) {
+            const ShortcutConflictRow &lockRow = table.at(0);
+            for (int key : lockRow.foreignExpectedPre) {
+                if (lockFinal.active.contains(key)) {
+                    verified = false;
+                    break;
+                }
+            }
+            if (verified) {
+                for (int key : lockRow.resolutionTarget) {
+                    if (!lockFinal.active.contains(key)) {
+                        verified = false;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!verified) {
             result.error = QStringLiteral("finish-apply verification failed: live state differs from the expected image");
             result.writes = usedWrites();
             return result;
         }
     }
-    if (usedWrites() > SHORTCUT_MAX_WRITES) {
-        result.error = QStringLiteral("tuple writes exceed the exact ten writes max");
+    const int maxWrites = shortcutMaxProjectWrites();
+    if (usedWrites() > maxWrites) {
+        result.error = QStringLiteral("tuple writes exceed the exact %1 writes max").arg(maxWrites);
         result.writes = usedWrites();
         return result;
     }
@@ -3080,14 +3081,34 @@ ShortcutForcePreview ShortcutReconciler::buildForcePreview()
     // Lock preconditions are relocate logic, never forceable: even with
     // clearable holders, a lock binding with nothing to replace refuses the
     // preview up front instead of failing mid-force after clearing.
-    if (!snap.lock.active.contains(SHORTCUT_META_L) && !snap.lock.active.contains(SHORTCUT_META_ESC)) {
-        return refuse(QStringLiteral("refusing to apply: lock binding has no Meta+L to replace"));
+    {
+        const ShortcutConflictRow &lockRow = shortcutConflictTable().at(0);
+        bool hasPre = false;
+        bool hasTarget = false;
+        for (int key : lockRow.foreignExpectedPre) {
+            if (snap.lock.active.contains(key)) {
+                hasPre = true;
+            }
+        }
+        for (int key : lockRow.resolutionTarget) {
+            if (snap.lock.active.contains(key)) {
+                hasTarget = true;
+            }
+        }
+        if (!hasPre && !hasTarget) {
+            return refuse(QStringLiteral("refusing to apply: lock binding has no Meta+L to replace"));
+        }
     }
     preview.owner = snap.owner;
     preview.uid = snap.uid;
-    preview.liveImages = {snap.focus.active, snap.lock.active, snap.resizeUp.active, snap.resizeRight.active,
-                          snap.resizeLeftArrow.active, snap.resizeDownArrow.active, snap.resizeUpArrow.active,
-                          snap.resizeRightArrow.active, snap.floatToggle.active, snap.maximizeToggle.active};
+    preview.liveImages.reserve(snap.projects.size() + 1);
+    if (!snap.projects.isEmpty()) {
+        preview.liveImages.append(snap.projects.at(0).active);
+    }
+    preview.liveImages.append(snap.lock.active);
+    for (int i = 1; i < snap.projects.size(); ++i) {
+        preview.liveImages.append(snap.projects.at(i).active);
+    }
     if (!snap.blocked.isEmpty()) {
         const Blocker &first = snap.blocked.first();
         return refuse(QStringLiteral("refusing force: %1 is claimed by %2/%3 with no active binding to clear")

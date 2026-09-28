@@ -157,10 +157,13 @@ All items below shipped offline with no live result claimed.
   preserves the packaged owner; tray diagnostics appear once each in
   `journalctl --user` (native journald submission removed).
   [change](changes/archive/tray-and-restart-followups.md)
-- Grow arrow shortcuts: KCM Apply/Force/Revert clears and restores
-  `kwin/Switch Window Left/Down/Up/Right` on Meta+Alt+Arrows; physical
-  Meta+Alt+Arrow grows the focused window.
+- Arrow shortcuts: KCM Apply/Force/Revert clears and restores
+  `kwin/Switch Window Left/Down/Up/Right` (Meta+Alt+Arrows), Quick Tile
+  (Meta+Arrows) and Window to Next/Previous Screen (Meta+Shift+Left/Right);
+  then physical Meta+Arrows focus, Meta+Shift+Arrows move and
+  Meta+Alt+Arrows grow all fire ours.
   [change](changes/archive/grow-arrow-shortcuts.md)
+  [refactor](changes/archive/shortcut-table-refactor-and-arrow-collisions.md)
   [plan](live-shortcut-override-verification.md)
 - Process-loss and sleep recovery cases on the laptop.
   [live plan](changes/archive/recovery-process-sleep-audit.md#live-test-plan)

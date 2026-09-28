@@ -40,6 +40,18 @@ const QDBusArgument &operator>>(const QDBusArgument &argument, QSet<QKeySequence
 //     kwin/Grid View cleared
 //   row 8 clear: kwin/plasma-auto-tiler-toggle-maximize -> Meta+M;
 //     kwin/KrohnkiteMonocleLayout cleared
+//   row 9 clear: kwin/plasma-auto-tiler-focus-left-arrow -> Meta+Left;
+//     kwin/Window Quick Tile Left cleared
+//   row 10 clear: kwin/plasma-auto-tiler-focus-down-arrow -> Meta+Down;
+//     kwin/Window Quick Tile Bottom cleared
+//   row 11 clear: kwin/plasma-auto-tiler-focus-up-arrow -> Meta+Up;
+//     kwin/Window Quick Tile Top cleared
+//   row 12 clear: kwin/plasma-auto-tiler-focus-right-arrow -> Meta+Right;
+//     kwin/Window Quick Tile Right cleared
+//   row 13 clear: kwin/plasma-auto-tiler-move-left-arrow -> Meta+Shift+Left;
+//     kwin/Window to Previous Screen cleared
+//   row 14 clear: kwin/plasma-auto-tiler-move-right-arrow -> Meta+Shift+Right;
+//     kwin/Window to Next Screen cleared
 //
 // Uses only the KGlobalAccel D-Bus APIs proven on live Plasma 6.7.4:
 //   org.kde.kglobalaccel /kglobalaccel org.kde.KGlobalAccel
@@ -65,12 +77,17 @@ inline constexpr int SHORTCUT_META_ALT_RIGHT = 419430420; // Meta+Alt+Right cata
 inline constexpr int SHORTCUT_META_ALT_DOWN = 419430421; // Meta+Alt+Down catalog resize-outwards-down-arrow
 inline constexpr int SHORTCUT_META_G = 268435527; // Meta+G catalog toggle-float
 inline constexpr int SHORTCUT_META_M = 268435533; // Meta+M catalog toggle-maximize
+inline constexpr int SHORTCUT_META_LEFT = 285212690; // Meta+Left catalog focus-left-arrow
+inline constexpr int SHORTCUT_META_DOWN = 285212693; // Meta+Down catalog focus-down-arrow
+inline constexpr int SHORTCUT_META_UP = 285212691; // Meta+Up catalog focus-up-arrow
+inline constexpr int SHORTCUT_META_RIGHT = 285212692; // Meta+Right catalog focus-right-arrow
+inline constexpr int SHORTCUT_META_SHIFT_LEFT = 318767122; // Meta+Shift+Left catalog move-left-arrow
+inline constexpr int SHORTCUT_META_SHIFT_RIGHT = 318767124; // Meta+Shift+Right catalog move-right-arrow
 inline constexpr uint SHORTCUT_SET_FLAGS = 6; // SetPresent|NoAutoloading
 inline constexpr int SHORTCUT_MAX_KEYS_PER_TUPLE = 16;
 inline constexpr int SHORTCUT_MAX_TUPLES = 16384;
 inline constexpr int SHORTCUT_MAX_STRING_LEN = 256;
 inline constexpr int SHORTCUT_MAX_KEY_VALUE = 536870911;
-inline constexpr int SHORTCUT_MAX_WRITES = 10;
 
 inline const QString &shortcutService()
 {
@@ -199,6 +216,30 @@ inline const QString &shortcutMaximizeComponent() { static const QString v = QSt
 inline const QString &shortcutMaximizeAction() { static const QString v = QStringLiteral("plasma-auto-tiler-toggle-maximize"); return v; }
 inline const QString &shortcutMonocleComponent() { static const QString v = QStringLiteral("kwin"); return v; }
 inline const QString &shortcutMonocleAction() { static const QString v = QStringLiteral("KrohnkiteMonocleLayout"); return v; }
+inline const QString &shortcutFocusLeftArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutFocusLeftArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-focus-left-arrow"); return v; }
+inline const QString &shortcutQuickTileLeftComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutQuickTileLeftAction() { static const QString v = QStringLiteral("Window Quick Tile Left"); return v; }
+inline const QString &shortcutFocusDownArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutFocusDownArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-focus-down-arrow"); return v; }
+inline const QString &shortcutQuickTileBottomComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutQuickTileBottomAction() { static const QString v = QStringLiteral("Window Quick Tile Bottom"); return v; }
+inline const QString &shortcutFocusUpArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutFocusUpArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-focus-up-arrow"); return v; }
+inline const QString &shortcutQuickTileTopComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutQuickTileTopAction() { static const QString v = QStringLiteral("Window Quick Tile Top"); return v; }
+inline const QString &shortcutFocusRightArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutFocusRightArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-focus-right-arrow"); return v; }
+inline const QString &shortcutQuickTileRightComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutQuickTileRightAction() { static const QString v = QStringLiteral("Window Quick Tile Right"); return v; }
+inline const QString &shortcutMoveLeftArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutMoveLeftArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-move-left-arrow"); return v; }
+inline const QString &shortcutToPrevScreenComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutToPrevScreenAction() { static const QString v = QStringLiteral("Window to Previous Screen"); return v; }
+inline const QString &shortcutMoveRightArrowComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutMoveRightArrowAction() { static const QString v = QStringLiteral("plasma-auto-tiler-move-right-arrow"); return v; }
+inline const QString &shortcutToNextScreenComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutToNextScreenAction() { static const QString v = QStringLiteral("Window to Next Screen"); return v; }
 inline const QString &shortcutResolutionRelocate() { static const QString v = QStringLiteral("relocate"); return v; }
 inline const QString &shortcutResolutionClear() { static const QString v = QStringLiteral("clear"); return v; }
 
@@ -225,9 +266,18 @@ struct ShortcutConflictRow
     // never writable and any other holder remains a conflict.
     QString authorizedTargetComponent;
     QString authorizedTargetAction;
+    QString projectDisplay;
+    QString targetDisplay;
+    QString projectDiag;
 };
 
 const QList<ShortcutConflictRow> &shortcutConflictTable();
+// Max project writes derived from the table: one write per project row plus
+// the Lock Session relocation.
+inline int shortcutMaxProjectWrites()
+{
+    return static_cast<int>(shortcutConflictTable().size()) + 1;
+}
 
 // Typed keyed-occupancy outcome (no substring classification):
 // Clear means no foreign occupancy, Conflict means an unexpected holder
@@ -326,10 +376,8 @@ struct ShortcutForcePreview
     // not merely the rows that initially needed clearing.
     QString owner;
     uint uid = 0;
-    // Project/lock actives at preview time (focus, lock, resize-up,
-    // resize-right, resize-left-arrow, resize-down-arrow, resize-up-arrow,
-    // resize-right-arrow, float, maximize, in table order). Any drift fails the
-    // confirmation as stale with zero writes.
+    // Full bounded preflight image in table order: projects.at(0), lock,
+    // projects.at(1..). Any drift fails the confirmation as stale.
     QList<QList<int>> liveImages;
 };
 
@@ -514,7 +562,7 @@ public:
     ShortcutForceApplyResult applyForced(const ShortcutForcePreview &confirmed);
 
     static bool isAllowlisted(const QString &component, const QString &action);
-    // Current project-owned action (one of the nine conflict-table project
+    // Current project-owned action (one of the conflict-table project
     // rows). Never cleared by Force, never restored by Revert.
     static bool isProjectAction(const QString &component, const QString &action);
     // Any own-prefix action: kwin/plasma-auto-tiler-*, covering the current
@@ -529,24 +577,7 @@ public:
     // Remainder kept on a cleared holder (active minus required chords),
     // order-preserving.
     static QList<int> remainderAfterClear(const QList<int> &active);
-    static QList<int> focusPostKeys();
     static QList<int> lockPostFor(const QList<int> &lockPre);
-    static QList<int> resizeUpPostKeys();
-    static QList<int> resizeRightPostKeys();
-    static QList<int> switchNextExpectedPre();
-    static QList<int> switchLastExpectedPre();
-    static QList<int> resizeLeftArrowPostKeys();
-    static QList<int> switchLeftExpectedPre();
-    static QList<int> resizeDownArrowPostKeys();
-    static QList<int> switchDownExpectedPre();
-    static QList<int> resizeUpArrowPostKeys();
-    static QList<int> switchUpExpectedPre();
-    static QList<int> resizeRightArrowPostKeys();
-    static QList<int> switchRightExpectedPre();
-    static QList<int> floatPostKeys();
-    static QList<int> gridViewExpectedPre();
-    static QList<int> maximizePostKeys();
-    static QList<int> monocleExpectedPre();
     static QList<int> dedupKeys(const QList<int> &keys);
     static bool keysValid(const QList<int> &keys);
     static bool stringValid(const QString &value);
@@ -706,16 +737,8 @@ private:
     {
         QString owner;
         uint uid = 0;
-        ShortcutTuple focus;
         ShortcutTuple lock;
-        ShortcutTuple resizeUp;
-        ShortcutTuple resizeRight;
-        ShortcutTuple resizeLeftArrow;
-        ShortcutTuple resizeDownArrow;
-        ShortcutTuple resizeUpArrow;
-        ShortcutTuple resizeRightArrow;
-        ShortcutTuple floatToggle;
-        ShortcutTuple maximizeToggle;
+        QList<ShortcutTuple> projects;
         QList<ClearRow> rows;
         QList<Blocker> blocked;
     };

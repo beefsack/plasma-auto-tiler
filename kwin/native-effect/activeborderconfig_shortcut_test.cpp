@@ -43,6 +43,12 @@ constexpr int META_ALT_RIGHT = 419430420;
 constexpr int META_ALT_DOWN = 419430421;
 constexpr int META_G = 268435527;
 constexpr int META_M = 268435533;
+constexpr int META_LEFT = 285212690;
+constexpr int META_DOWN = 285212693;
+constexpr int META_UP = 285212691;
+constexpr int META_RIGHT = 285212692;
+constexpr int META_SHIFT_LEFT = 318767122;
+constexpr int META_SHIFT_RIGHT = 318767124;
 
 ShortcutTuple makeTuple(const QString &component, const QString &action, const QList<int> &active)
 {
@@ -399,8 +405,8 @@ QLabel *labelByName(ActiveBorderConfigModule &module, const char *name)
 
 void seedReady(FakeShortcutStore &store)
 {
-    // Ten project rows at non-post values with zero foreign holders of the
-    // ten required chords, so Apply succeeds.
+    // Sixteen project rows at non-post values with zero foreign holders of
+    // the sixteen required chords, so Apply succeeds.
     store.tuples = {
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{419430420}),
         makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
@@ -416,6 +422,12 @@ void seedReady(FakeShortcutStore &store)
                   QList<int>{14}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-float"), QList<int>{9}),
         makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-toggle-maximize"), QList<int>{10}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-left-arrow"), QList<int>{21}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-down-arrow"), QList<int>{22}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-up-arrow"), QList<int>{23}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right-arrow"), QList<int>{24}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-left-arrow"), QList<int>{25}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-move-right-arrow"), QList<int>{26}),
     };
 }
 
@@ -528,7 +540,7 @@ void stateAndErrorPresentation()
         module.setShortcutStores(&store, &cleared);
         module.load();
         CHECK(module.shortcutStatusText().contains(QStringLiteral("Ready")));
-        CHECK(module.shortcutStatusText().contains(QStringLiteral("9 rows")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("15 rows")));
         CHECK(module.shortcutErrorText().isEmpty());
         CHECK(buttonByName(module, "shortcutFinishApplyButton") == nullptr);
         CHECK(buttonByName(module, "shortcutRestoreButton") == nullptr);
@@ -559,7 +571,7 @@ void stateAndErrorPresentation()
         module.requestShortcutApply();
         CHECK(module.shortcutErrorText().isEmpty());
         CHECK(module.shortcutStatusText().contains(QStringLiteral("applied")));
-        CHECK(module.shortcutStatusText().contains(QStringLiteral("9 rows")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("15 rows")));
     }
     // Conflict with an unknown foreign holder.
     {
@@ -869,7 +881,7 @@ void knownForeignStatusAlignsWithApply()
 void growArrowStatusAlignsWithApply()
 {
     // KCM status/backend alignment: a Switch Window holder on Meta+Alt+Left
-    // shows Conflict with the 9-row state, Apply refuses with zero writes,
+    // shows Conflict with the 15-row state, Apply refuses with zero writes,
     // and Force preview lists the exact removal.
     FakeShortcutStore store;
     seedReady(store);
@@ -891,6 +903,51 @@ void growArrowStatusAlignsWithApply()
     CHECK(module.isShortcutForceApplyVisible());
     CHECK(module.shortcutForcePreviewText().contains(QStringLiteral("Switch Window Left")));
     CHECK(module.shortcutForcePreviewText().contains(QStringLiteral("419430418")));
+}
+
+void focusMoveArrowStatusAlignsWithApply()
+{
+    // KCM status/backend alignment for all six focus/move rows: each Quick
+    // Tile / to-Screen holder shows Conflict, Apply refuses with zero
+    // writes, and Force preview lists the exact removal.
+    const QList<QString> actions = {
+        QStringLiteral("Window Quick Tile Left"),
+        QStringLiteral("Window Quick Tile Bottom"),
+        QStringLiteral("Window Quick Tile Top"),
+        QStringLiteral("Window Quick Tile Right"),
+        QStringLiteral("Window to Previous Screen"),
+        QStringLiteral("Window to Next Screen"),
+    };
+    const QList<QString> displays = {
+        QStringLiteral("Meta+Left"),
+        QStringLiteral("Meta+Down"),
+        QStringLiteral("Meta+Up"),
+        QStringLiteral("Meta+Right"),
+        QStringLiteral("Meta+Shift+Left"),
+        QStringLiteral("Meta+Shift+Right"),
+    };
+    const QList<int> keys = {META_LEFT, META_DOWN, META_UP, META_RIGHT, META_SHIFT_LEFT, META_SHIFT_RIGHT};
+    for (int i = 0; i < actions.size(); ++i) {
+        FakeShortcutStore store;
+        seedReady(store);
+        store.tuples.append(makeTuple(QStringLiteral("kwin"), actions.at(i), QList<int>{keys.at(i)}));
+        FakeClearedStore cleared;
+        ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+        module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
+        module.setShortcutStores(&store, &cleared);
+        module.load();
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("Conflict")));
+        CHECK(module.shortcutStatusText().contains(displays.at(i)));
+        CHECK(!module.shortcutStatusText().contains(QStringLiteral("Ready")));
+        module.requestShortcutApply();
+        CHECK(store.writeLog.empty());
+        CHECK(store.foreignWriteLog.empty());
+        CHECK(!module.shortcutErrorText().isEmpty());
+        CHECK(module.shortcutErrorText().contains(actions.at(i)));
+        CHECK(module.isShortcutForceApplyVisible());
+        CHECK(module.shortcutForcePreviewText().contains(actions.at(i)));
+        CHECK(module.shortcutForcePreviewText().contains(QString::number(keys.at(i))));
+    }
 }
 
 void terminalFailureLogIncludesReason()
@@ -973,6 +1030,7 @@ int main(int argc, char **argv)
         stateAndErrorPresentation();
         knownForeignStatusAlignsWithApply();
         growArrowStatusAlignsWithApply();
+        focusMoveArrowStatusAlignsWithApply();
     } else {
         std::fprintf(stderr, "unknown scenario: %s\n", argv[1]);
         return EXIT_FAILURE;

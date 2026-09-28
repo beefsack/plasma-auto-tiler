@@ -60,8 +60,11 @@ Inspect only; do not create, edit, or delete it.
 `Apply Shortcuts` (`kwin/native-effect/activeborderconfig_module.cpp:runShortcutApply`).
 It assigns focus-right to `Meta+L` and moves Lock Session to `Meta+Esc`,
 plus `Meta+Alt+K`, `Meta+Alt+L`, `Meta+Alt+Left`, `Meta+Alt+Down`,
-`Meta+Alt+Up`, `Meta+Alt+Right`, `Meta+G`, `Meta+M`.
-- Success assigns all nine project chords. A preflight refusal writes nothing;
+`Meta+Alt+Up`, `Meta+Alt+Right`, `Meta+G`, `Meta+M`,
+`Meta+Left/Down/Up/Right`, and `Meta+Shift+Left/Right`. The four focus arrows
+clear KWin Quick Tile defaults; the two move arrows clear KWin's next/previous
+screen defaults.
+- Success assigns all fifteen project chords. A preflight refusal writes nothing;
   preserve the reported write count if a later operation fails.
 Capture the resulting status verbatim.
 
@@ -115,9 +118,13 @@ With disposable windows, physically press each chord and confirm:
 - `Meta+Alt+Left` / `Meta+Alt+Down` / `Meta+Alt+Up` / `Meta+Alt+Right`
   grow the focused pane outward (clearing `kwin/Switch Window
   Left/Down/Up/Right`).
+- `Meta+Left/Down/Up/Right` move focus by direction without KWin quick tiling.
+- `Meta+Shift+Left/Right` move the focused tiled window by direction without
+  KWin moving it to another screen.
 - `Meta+G` toggles float; `Meta+M` toggles maximize.
-- Then Revert and confirm cleared non-project actions return to their KDE
-  defaults. Project chords remain assigned, and old project IDs stay cleared.
+- Then Revert and confirm cleared non-project actions, including Quick Tile
+  and next/previous screen, return to their KDE defaults. Project chords
+  remain assigned, and old project IDs stay cleared.
 
 ## Diagnostics
 
