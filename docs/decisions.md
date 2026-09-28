@@ -428,8 +428,14 @@ the corresponding item ships; each such entry names its replacement.
   unfloat is fresh planner admission, never prior-leaf restoration. Unfloat
   carries the window's live frame rect so a user moved/resized float is
   retained across float/unfloat/float. Fullscreen and maximized targets refuse
-  with `float-refused-fullscreen` and `float-refused-maximize`. The controller
-  registers `Meta+G` without changing Grid View's record. KGlobalAccel permits
+  with `float-refused-fullscreen` and `float-refused-maximize`. User decision
+  2026-09-28, option A: unfloat uses exactly the new-window admission
+  placement rule (focused leaf's projected rect, otherwise domain bounds),
+  with no remembered-origin slot; COSMIC's `toggle_floating_window` maps
+  through `tiling_layer.map(window, focus_stack)` as for a new window, and
+  sway's `container_set_floating` likewise re-tiles by ordinary placement.
+  The controller registers `Meta+G` without changing Grid View's record.
+  KGlobalAccel permits
   both active records but dispatches the lower serial holder, so startup emits
   `shortcut-dispatch-shadowed` until the user applies the exact reversible KCM
   override. Explicit normal and sticky float toggles retain the exact toggled

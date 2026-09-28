@@ -1271,6 +1271,101 @@ fn intentional_float_centered_fallback_matches_adapter_placement() {
 }
 
 #[test]
+fn unfloat_reuses_admission_axis_not_domain_bounds() {
+    // Landscape 120x80 work area. Build H[win-1 V[win-2 win-3]] the same way
+    // ordinary admission does (wide admits split H, tall nests V), then float
+    // win-3 and unfloat it. Fresh admission must reuse the exact new-window
+    // placement rule (focused leaf's projected rect, else domain bounds), so
+    // win-3 nests back under win-2 instead of flattening to H[win-1 win-2
+    // win-3] from the wide domain bounds. No remembered-origin slot.
+    let mut session = single_domain_session();
+    admit_and_commit(
+        &mut session,
+        "win-1",
+        "out-1",
+        "ws-1",
+        placement(120, 80),
+        "axis-admit-1",
+    );
+    admit_and_commit(
+        &mut session,
+        "win-2",
+        "out-1",
+        "ws-1",
+        placement(120, 80),
+        "axis-admit-2",
+    );
+    admit_and_commit(
+        &mut session,
+        "win-3",
+        "out-1",
+        "ws-1",
+        placement(80, 120),
+        "axis-admit-3",
+    );
+    assert_nested_h_v(&session);
+
+    toggle_float_and_commit(&mut session, "win-3", None, "axis-float");
+    assert_eq!(session.exception_count(), 1);
+    assert_eq!(
+        leaves_of(&session, "out-1", "ws-1"),
+        vec!["leaf-win-1".to_string(), "leaf-win-2".to_string()]
+    );
+    match &session.snapshot().domains[0].tree {
+        Some(Node::Group { axis, children, .. }) => {
+            assert_eq!(*axis, Axis::Horizontal);
+            assert_eq!(children.len(), 2);
+            assert_eq!(children[0].id().0, "leaf-win-1");
+            assert_eq!(children[1].id().0, "leaf-win-2");
+        }
+        other => panic!("expected flat H[win-1 win-2] after float, got {other:?}"),
+    }
+    let retained = session
+        .retained_float_geometry(&WindowId("win-3".to_owned()))
+        .expect("float retains placement");
+
+    toggle_float_and_commit(&mut session, "win-3", None, "axis-unfloat");
+    assert_eq!(session.exception_count(), 0);
+    assert_nested_h_v(&session);
+    // The float placement survives unfloat as durable retained geometry while
+    // the tree itself is freshly admitted.
+    assert_eq!(
+        session.retained_float_geometry(&WindowId("win-3".to_owned())),
+        Some(retained)
+    );
+    let (_, focus) = session.focus();
+    assert_eq!(focus, Some(NodeId("leaf-win-3".to_owned())));
+}
+
+fn assert_nested_h_v(session: &Session) {
+    assert_eq!(
+        leaves_of(session, "out-1", "ws-1"),
+        vec![
+            "leaf-win-1".to_string(),
+            "leaf-win-2".to_string(),
+            "leaf-win-3".to_string(),
+        ]
+    );
+    match &session.snapshot().domains[0].tree {
+        Some(Node::Group { axis, children, .. }) => {
+            assert_eq!(*axis, Axis::Horizontal);
+            assert_eq!(children.len(), 2);
+            assert_eq!(children[0].id().0, "leaf-win-1");
+            match &children[1] {
+                Node::Group { axis, children, .. } => {
+                    assert_eq!(*axis, Axis::Vertical);
+                    assert_eq!(children.len(), 2);
+                    assert_eq!(children[0].id().0, "leaf-win-2");
+                    assert_eq!(children[1].id().0, "leaf-win-3");
+                }
+                other => panic!("expected inner V[win-2 win-3], got {other:?}"),
+            }
+        }
+        other => panic!("expected root H[win-1 V[win-2 win-3]], got {other:?}"),
+    }
+}
+
+#[test]
 fn deterministic_replay() {
     fn run() -> (Session, Vec<SessionPlan>) {
         let mut session = single_domain_session();

@@ -39,8 +39,9 @@ impl super::super::Session {
             }
             // Track the live float geometry the adapter carried (the user may
             // have moved or resized the float). A request without a rect keeps
-            // the already-retained placement. Fresh admission uses the current
-            // domain bounds; the retained float rectangle is intentionally not
+            // the already-retained placement. Fresh admission reuses the exact
+            // admission placement (focused leaf's projected rect, else domain
+            // bounds); the retained float rectangle is intentionally not
             // a prior-leaf restoration.
             let retained = match float_geometry {
                 Some(rect) if valid_rect_shape(&rect) => Some(rect),
@@ -67,13 +68,14 @@ impl super::super::Session {
             let domain = candidate
                 .domain_for(&target.output, &target.workspace)
                 .ok_or(ProposeError::Refused(RefusalKind::UnknownDomain))?;
+            let placement = crate::seed::seed_target_bounds(&candidate, domain);
             let plan = candidate.propose_admit(
                 window,
                 &target.output,
                 &target.workspace,
                 ExceptionFlags::none(),
                 None,
-                domain.bounds,
+                placement,
                 &observation,
                 correlation_id,
                 capabilities,

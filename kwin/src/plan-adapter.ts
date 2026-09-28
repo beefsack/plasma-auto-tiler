@@ -2443,6 +2443,11 @@ export class PlanAdapter {
         reason: string,
         terminal: string,
     ): void {
+        // Quiet equality is trace-only: background reconciliation must not
+        // flood the ordinary journal. All other terminals stay visible.
+        if (terminal === "quiet" && !KWIN_TRACE_ENABLED) {
+            return;
+        }
         const correlation = this.pending?.correlation ?? "none";
         const generation = this.generation.length > 0 ? this.generation : "-";
         this.logToken(

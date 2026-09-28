@@ -43,8 +43,11 @@ decisions of 2026-09-24 are under
   neighbours around learned limits only, native maximum behavior unchanged;
   (4) KWin script and Rust tiling only, native effect unchanged. Added
   complexity must deliver more value than it costs. Phase 1 (shared
-  foreground/hidden classifier, refresh classification logs) shipped offline.
-  Next: phase 2 (learned limits) after the user live-tests phase 1.
+  foreground/hidden classifier, refresh classification logs) passed the
+  user's laptop live test at `062d707` (2026-09-28, "felt good and minimally
+  janky"; trace `~/Downloads/plasma-auto-tiler-dev.uE1S5n.log`). Quiet
+  refresh outcomes were ~60% of refresh log lines. Next: phase 2 (learned
+  limits).
   [record](changes/archive/robust-difference-reconciliation.md)
 - P2 | Active-group highlight redesign | Current overlay renders statically
   during slide transitions while the active border slides with its window
@@ -105,6 +108,11 @@ All items below shipped offline with no live result claimed.
 
 ### Single-output laptop
 
+- Unfloat placement and quiet refresh logs: with three new windows in
+  `H[W1 V[W2 W3]]`, float and unfloat W3; confirm the nested V group returns
+  rather than `H[W1 H[W2 W3]]`. Compare `stage=refresh terminal=quiet` under
+  normal and trace logging; non-quiet terminals stay visible in both.
+  [change](changes/archive/unfloat-admission-axis.md)
 - Same-output drag drops + preview overlay: user confirmed live at
   `826b233` (2026-09-28) that a paused drag stays under the pointer, the
   preview renders well and drops place correctly. Remaining: overlay
@@ -137,11 +145,6 @@ All items below shipped offline with no live result claimed.
   preserves the packaged owner; tray diagnostics appear once each in
   `journalctl --user` (native journald submission removed).
   [change](changes/archive/tray-and-restart-followups.md)
-- Reconciliation phase 1 (laptop): under `just dev trace`, `stage=refresh`
-  classification logs and write counts through membership, flag, drift,
-  work-area, overlay and resize-finish transitions; no extra writes or
-  oscillation; equal/quiet log volume acceptable.
-  [record](changes/archive/robust-difference-reconciliation.md)
 - Process-loss and sleep recovery cases on the laptop.
   [live plan](changes/archive/recovery-process-sleep-audit.md#live-test-plan)
 - Native border delivery and suppression: fresh-session plugin discovery,
