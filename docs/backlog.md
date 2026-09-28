@@ -20,7 +20,7 @@ decisions of 2026-09-24 are under
   (source-only baseline fix is in; needs a fresh `just dev trace` local-move
   plus follow-on command trace), and one requested `2032x1092` became
   `1920x1036` while another primary Ghostty accepted full size (per-window
-  native cap or stale output-derived cap unproven). Lead hypothesis
+  native cap or stale output-derived cap unproven). Hypothesis
   (Orchestrator, 2026-09-28): 1920x1036 equals HDMI-A-2's work area, so the
   window may be constrained to the other output. Next: PC `just dev trace`
   with one tall tiled window on DP-6; check output, bounds and constraints.
