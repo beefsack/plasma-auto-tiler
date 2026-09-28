@@ -10,12 +10,34 @@ decisions of 2026-09-24 are under
 
 ## Open work
 
-- P0 | All settings live application (launch blocker) | Gap/border live-apply
-  still pending, including the gaps Save-to-visible check; `workspaceMode`
-  startup-only and hidden `shortcutProfile` are approved exceptions.
+- P0 | All settings live application (launch blocker) | Border settings
+  confirmed live on the laptop (user, 2026-09-28). Tiling gaps live-apply
+  still pending, including the gaps Save-to-visible check. Unified settings
+  page (user decision 2026-09-28, option B) shipped offline: tray Settings,
+  KWin Scripts Configure and Desktop Effects Configure all open one page with
+  border, shortcuts, gaps and workspace mode; live check pending.
+  `workspaceMode` startup-only and hidden `shortcutProfile` are approved
+  exceptions.
   [investigation](changes/reliability-condition-investigation.md)
   [settings research](research/live-settings-after-ar15.md)
+  [unified page](changes/archive/unified-settings-page.md)
   [gaps record](changes/archive/window-gap-configurability.md)
+- P1 | Drag + workspace-send breaks tiling | User repro (laptop,
+  2026-09-28): workspace 1 with 3 windows; Meta+drag a window until a drop
+  target shows; without releasing, Meta+Shift+2 sends it to workspace 2;
+  release; tiling fails. User hypothesis: recalculate the drop target when
+  the dragged window changes workspace. Trace
+  `~/Downloads/plasma-auto-tiler-dev.1t4fJa.log`.
+- P1 | Group underlay redesign (user decision 2026-09-28) | Replace the
+  active-group highlight with a rectangle beneath the group's windows,
+  extending one extra border width beyond the outer edge of the window
+  borders; colour and size configurable on the unified settings page.
+  [record](changes/archive/active-group-highlight-design.md)
+- P1 | Drop preview colour setting | Drop overlay colour configurable,
+  including transparency, on the unified settings page.
+- P1 | Group underlay slides with workspace transitions | Make the group
+  visual move with the workspace slide like the active border now does
+  (believed to be due to a lower layer than windows; unverified).
 - P1 | Ghostty/local native alignment | The ~56 px shortfall is unexplained
   (source-only baseline fix is in; needs a fresh `just dev trace` local-move
   plus follow-on command trace), and one requested `2032x1092` became
@@ -57,11 +79,6 @@ decisions of 2026-09-24 are under
   P1 Ghostty/output check leaves a genuine client-held limit.
   [record](changes/archive/robust-difference-reconciliation.md)
   [parked](changes/learned-size-limits.md)
-- P2 | Active-group highlight redesign | Current overlay renders statically
-  during slide transitions while the active border slides with its window
-  (unproven). User-leaning direction (grey rect beneath windows) is thinking
-  only; no product decision, no heavy investment approved.
-  [record](changes/archive/active-group-highlight-design.md)
 - P2 | PID 3568836 SIGABRT (`QKeySequence` D-Bus abort) | Formally open;
   needs sender, method, and fault-stack evidence before attributing it to
   the effect or script.
@@ -116,15 +133,11 @@ All items below shipped offline with no live result claimed.
 
 ### Single-output laptop
 
-- Unfloat placement and quiet refresh logs: with three new windows in
-  `H[W1 V[W2 W3]]`, float and unfloat W3; confirm the nested V group returns
-  rather than `H[W1 H[W2 W3]]`. Compare `stage=refresh terminal=quiet` under
-  normal and trace logging; non-quiet terminals stay visible in both.
+- Quiet refresh logs: compare `stage=refresh terminal=quiet` under normal
+  and trace logging; non-quiet terminals stay visible in both. (Unfloat
+  placement and the duplicate-implementation unification were confirmed live
+  by the user on 2026-09-28.)
   [change](changes/archive/unfloat-admission-axis.md)
-- Duplicate-implementation unification (no intended behavior change): new
-  window and unfloat placement, `just dev` start with mixed floating/tiled
-  windows, send to another workspace, drag still refreshes and attaches.
-  [change](changes/archive/unify-duplicate-implementations.md)
 - Same-output drag drops + preview overlay: user confirmed live at
   `826b233` (2026-09-28) that a paused drag stays under the pointer, the
   preview renders well and drops place correctly. Remaining: overlay
@@ -157,16 +170,6 @@ All items below shipped offline with no live result claimed.
   preserves the packaged owner; tray diagnostics appear once each in
   `journalctl --user` (native journald submission removed).
   [change](changes/archive/tray-and-restart-followups.md)
-- Arrow shortcuts (user confirmed live at `744d7cf`, 2026-09-28: tray
-  Settings opens the KCM under `just dev`; Meta+Alt+Arrow grow works).
-  Remaining: KCM Apply/Force/Revert clears and restores
-  `kwin/Switch Window Left/Down/Up/Right` (Meta+Alt+Arrows), Quick Tile
-  (Meta+Arrows) and Window to Next/Previous Screen (Meta+Shift+Left/Right);
-  then physical Meta+Arrows focus, Meta+Shift+Arrows move and
-  Meta+Alt+Arrows grow all fire ours.
-  [change](changes/archive/grow-arrow-shortcuts.md)
-  [refactor](changes/archive/shortcut-table-refactor-and-arrow-collisions.md)
-  [plan](live-shortcut-override-verification.md)
 - Process-loss and sleep recovery cases on the laptop.
   [live plan](changes/archive/recovery-process-sleep-audit.md#live-test-plan)
 - Native border delivery and suppression: fresh-session plugin discovery,
@@ -266,9 +269,6 @@ All items below shipped offline with no live result claimed.
 - Gap-drag gap-0 behavior: deferred experimentation; choose whether a zero-gap
   layout exposes a drag anchor before prototyping.
   [native boundary](decisions.md#native-integration-boundary)
-- Group highlight redesign: grey rect beneath windows is thinking only, no
-  product decision and no heavy investment approved.
-  [record](changes/archive/active-group-highlight-design.md)
 - Borderless-windowed fullscreen heuristic (born-fullscreen option 3): only
   if dogfooding shows games arriving non-fullscreen.
   [change](changes/archive/born-fullscreen-admission.md)
