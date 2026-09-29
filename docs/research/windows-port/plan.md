@@ -6,6 +6,9 @@ Status: research proposal, 2026-09-29. Builds on
 requires tiling, groups, borders, shortcuts and workspaces, with no impact on
 fullscreen gaming. Existing KWin decisions remain in `docs/decisions.md`.
 This plan recommends Windows choices; none has been approved or tested live.
+The matching [macOS plan](../macos-port/plan.md) compares host constraints;
+the [core extraction audit](../cross-platform-core/extraction.md) now includes
+a three-host capability and sharing comparison.
 
 **Recommendation [I: W1-W6]:** start on Windows 11 x64 with one per-user Rust
 process. Prove geometry, shortcuts and game exclusion on real Windows. Build
