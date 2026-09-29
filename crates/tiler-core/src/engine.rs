@@ -70,6 +70,13 @@ pub struct Engine {
     /// without any [`CoreReply`] change (core has no logging sink). Exact
     /// (zero-count) convergence records nothing so only nonzero counts log.
     last_convergence: Option<EngineConvergenceReport>,
+    /// Last fresh adoption-fit report for protocol logging.
+    ///
+    /// Set exactly once per actual fresh adoption attempt in
+    /// [`Engine::fresh_admit_shared`] (no retained slot at entry); cleared
+    /// at the start of every [`Engine::handle`]. Bounded counts plus
+    /// correlation/outcome/reason only, never native identifiers.
+    last_adoption_fit: Option<EngineAdoptionFitReport>,
     /// Whether the current [`Engine::handle`] converged (changed or exact).
     ///
     /// Internal reseed guard only, never logged: once converged, partial or
@@ -91,6 +98,22 @@ pub struct EngineConvergenceReport {
     pub admitted: usize,
     /// Floating adoptions by convergence.
     pub flags_adopted: usize,
+}
+
+/// Bounded correlated fresh adoption-fit report for the protocol logging
+/// boundary. Counts only, no window/domain identifiers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngineAdoptionFitReport {
+    /// Validated correlation for this op (cross-service lookup key).
+    pub correlation: CorrelationId,
+    /// `fitted` when the fit committed, else `fallback`.
+    pub outcome: &'static str,
+    /// Complete carried window count.
+    pub windows: usize,
+    /// `ok` for fitted, else the decline token (`single_window`,
+    /// `fit_excluded`, `invalid_geometry`, `no_cut`, `projection_invalid`,
+    /// or `commit_failed` when fit geometry succeeded but commit did not).
+    pub reason: &'static str,
 }
 
 /// Single-domain convergence routing: absent sessions run the existing seed
@@ -137,6 +160,7 @@ impl Default for Engine {
             owner: None,
             generation: None,
             last_convergence: None,
+            last_adoption_fit: None,
             converged_this_op: false,
         }
     }
@@ -261,6 +285,14 @@ impl Engine {
     #[must_use]
     pub fn last_convergence(&self) -> Option<&EngineConvergenceReport> {
         self.last_convergence.as_ref()
+    }
+
+    /// Last fresh adoption-fit report for protocol logging, if the current
+    /// [`Engine::handle`] attempted a fresh adoption. `None` for retained
+    /// reconciliations so they stay silent.
+    #[must_use]
+    pub fn last_adoption_fit(&self) -> Option<&EngineAdoptionFitReport> {
+        self.last_adoption_fit.as_ref()
     }
 
     /// Converge one retained single-domain session to the complete current
@@ -609,6 +641,7 @@ impl Engine {
         // two per-domain calls). `run_retained` never converges again, so no
         // double converge.
         self.last_convergence = None;
+        self.last_adoption_fit = None;
         self.converged_this_op = false;
         match &event.command {
             CoreCommand::Reconcile => {
@@ -781,7 +814,7 @@ impl Engine {
         }
     }
 
-    /// Shared fresh-domain admission route: flat-strip fit fast path,
+    /// Shared fresh-domain admission route: recursive-cut fit fast path,
     /// floating-aware convergence build, deterministic seed order, seeding,
     /// relocation, propose/commit, and store.
     ///
@@ -789,6 +822,11 @@ impl Engine {
     /// with the same anchor/placement inputs, so startup fit, seed fallback,
     /// focus-last placement, mixed float+tiled handling, and revision shape
     /// stay byte-identical without fabricating a synthetic admit command.
+    ///
+    /// Owns the fresh adoption-fit decision for protocol logging: exactly one
+    /// [`EngineAdoptionFitReport`] per actual fresh attempt (no retained slot
+    /// at entry, no explicit placement, anchor is focus). `fitted` only when
+    /// the fit commits; any decline or commit failure records `fallback`.
     fn fresh_admit_shared(
         &mut self,
         event: &CoreEvent,
@@ -799,47 +837,86 @@ impl Engine {
         report_op: &'static str,
     ) -> CoreReply {
         use crate::boundary::{TiledKind, TiledPlan};
-        if placement_bounds.is_none()
+        // Engine-owned fit decision: compute once, commit once. The report
+        // records the actual commit result, never fitted on commit failure.
+        let fresh_attempt = placement_bounds.is_none()
             && window.0 == event.focused_window.0
-            && self.session(&event.domain_key).is_none()
-            && let Some((tree, links)) =
-                crate::seed::try_flat_strip_fit(&event.domain, &event.windows)
-            && let Some(focus_leaf) = links
-                .iter()
-                .find(|l| l.window.0 == window.0)
-                .map(|l| l.leaf.clone())
-            && let Ok(mut fitted) = Session::new(
-                event.owner.clone(),
-                event.generation.clone(),
-                0,
-                event.fingerprint,
-                vec![event.domain.clone()],
-            )
-        {
-            fitted.set_policy(self.policy.clone());
-            let base = fitted.accepted_revision();
-            let observation = crate::seed::session_observation_for(
-                &event.owner,
-                &event.generation,
-                base,
-                event.fingerprint,
-                &event.windows,
-            );
-            if let Ok(plan) = fitted.propose_fitted_admit(
-                tree,
-                links,
-                focus_leaf,
-                window,
-                output,
-                workspace,
-                &observation,
-                &event.correlation,
-                &LifecycleCapabilities::full(),
-            ) {
-                let typed = CoreReply::Tiled(TiledPlan::from_lifecycle(TiledKind::Admit, &plan));
-                if Self::commit_lifecycle(&mut fitted, &plan, event, base) {
-                    self.store_committed(event.domain_key.clone(), fitted, event.outer_gap);
-                    return typed;
+            && self.session(&event.domain_key).is_none();
+        if fresh_attempt {
+            match crate::seed::try_recursive_cut_fit(&event.domain, &event.windows) {
+                Ok((tree, links)) => {
+                    let focus_leaf = links
+                        .iter()
+                        .find(|l| l.window.0 == window.0)
+                        .map(|l| l.leaf.clone());
+                    let mut committed: Option<CoreReply> = None;
+                    if let (Some(focus_leaf), Ok(mut fitted)) = (
+                        focus_leaf,
+                        Session::new(
+                            event.owner.clone(),
+                            event.generation.clone(),
+                            0,
+                            event.fingerprint,
+                            vec![event.domain.clone()],
+                        ),
+                    ) {
+                        fitted.set_policy(self.policy.clone());
+                        let base = fitted.accepted_revision();
+                        let observation = crate::seed::session_observation_for(
+                            &event.owner,
+                            &event.generation,
+                            base,
+                            event.fingerprint,
+                            &event.windows,
+                        );
+                        if let Ok(plan) = fitted.propose_fitted_admit(
+                            tree,
+                            links,
+                            focus_leaf,
+                            window,
+                            output,
+                            workspace,
+                            &observation,
+                            &event.correlation,
+                            &LifecycleCapabilities::full(),
+                        ) {
+                            let typed = CoreReply::Tiled(TiledPlan::from_lifecycle(
+                                TiledKind::Admit,
+                                &plan,
+                            ));
+                            if Self::commit_lifecycle(&mut fitted, &plan, event, base) {
+                                self.store_committed(
+                                    event.domain_key.clone(),
+                                    fitted,
+                                    event.outer_gap,
+                                );
+                                committed = Some(typed);
+                            }
+                        }
+                    }
+                    if let Some(typed) = committed {
+                        self.last_adoption_fit = Some(EngineAdoptionFitReport {
+                            correlation: event.correlation.clone(),
+                            outcome: "fitted",
+                            windows: event.windows.len(),
+                            reason: "ok",
+                        });
+                        return typed;
+                    }
+                    self.last_adoption_fit = Some(EngineAdoptionFitReport {
+                        correlation: event.correlation.clone(),
+                        outcome: "fallback",
+                        windows: event.windows.len(),
+                        reason: "commit_failed",
+                    });
+                }
+                Err(reason) => {
+                    self.last_adoption_fit = Some(EngineAdoptionFitReport {
+                        correlation: event.correlation.clone(),
+                        outcome: "fallback",
+                        windows: event.windows.len(),
+                        reason: reason.as_str(),
+                    });
                 }
             }
         }
@@ -962,7 +1039,7 @@ impl Engine {
     }
 
     /// Fresh-domain reconcile on an absent domain: seed through the SAME
-    /// existing fresh admission machinery (flat-strip fit fast path,
+    /// existing fresh admission machinery (recursive-cut fit fast path,
     /// floating-aware convergence build, deterministic seed order) without
     /// requiring KWin to derive an admit.
     ///

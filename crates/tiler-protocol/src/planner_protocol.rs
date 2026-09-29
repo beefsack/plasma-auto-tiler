@@ -575,6 +575,69 @@ fn emit_engine_convergence(engine: &Engine) {
     }
 }
 
+/// Bounded fresh adoption-fit prefix (normal-level, log-only).
+pub const ADOPTION_FIT_PREFIX: &str = "plasma-auto-tiler:adoption-fit";
+
+/// Sanitize one adoption-fit token: lowercase/digits with dashes or
+/// underscores, capped at 64 chars, else `unknown`. Covers the `ok` and
+/// `single_window`-style reason vocabulary. Never echoes payload bytes.
+fn adoption_token(raw: Option<&str>) -> String {
+    match raw {
+        Some(text)
+            if !text.is_empty()
+                && text.len() <= 64
+                && text.bytes().all(|b| {
+                    b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_'
+                }) =>
+        {
+            text.to_owned()
+        }
+        _ => "unknown".to_owned(),
+    }
+}
+
+/// Normal-level fresh adoption-fit summary: exactly one per actual fresh
+/// adoption attempt, owned by the Engine decision and emitted at
+/// `handle_and_serialize` after [`Engine::handle`]. Correlated, with the
+/// actual commit result (`fitted` only when the fit committed, else
+/// `fallback`), the complete carried window count, and the decline reason.
+/// No raw ids or payloads. Pure and total: malformed sides degrade to
+/// bounded placeholders.
+#[must_use]
+pub fn summarize_adoption_fit(
+    correlation: &str,
+    outcome: &str,
+    windows: usize,
+    reason: &str,
+) -> String {
+    format!(
+        "{ADOPTION_FIT_PREFIX} outcome={} windows={} reason={} correlation={}",
+        adoption_token(Some(outcome)),
+        windows,
+        adoption_token(Some(reason)),
+        summary_correlation(Some(correlation)),
+    )
+}
+
+/// Emit the bounded correlated adoption-fit summary for the just-completed
+/// [`Engine::handle`] call, if it attempted a fresh adoption. Retained
+/// reconciliations record nothing so they stay silent. Log-only.
+fn emit_engine_adoption_fit(engine: &Engine) {
+    if let Some(report) = engine.last_adoption_fit() {
+        use std::io::Write;
+        let _ = writeln!(
+            std::io::stderr(),
+            "{}",
+            summarize_adoption_fit(
+                report.correlation.as_str(),
+                report.outcome,
+                report.windows,
+                report.reason,
+            )
+        );
+    }
+}
+
 fn rejected(correlation_id: String, kind: &str, message: &str) -> String {
     serialize_bounded(&PlanReply {
         v: PLAN_CONTRACT_VERSION,
@@ -1995,9 +2058,11 @@ impl Planner {
 
     /// Engine-handle choke point: runs the owned [`Engine::handle`] entry
     /// point, emits the bounded correlated convergence summary when the op
-    /// converged with nonzero counts, then serializes through the typed choke
-    /// point. Reply bytes are unchanged; the summary carries counts plus the
-    /// reason op only (no new reply field, no identifiers, no payloads).
+    /// converged with nonzero counts plus the fresh adoption-fit summary
+    /// when the op attempted a fresh adoption, then serializes through the
+    /// typed choke point. Reply bytes are unchanged; summaries carry counts
+    /// plus reason tokens only (no new reply field, no identifiers, no
+    /// payloads).
     fn handle_and_serialize(
         &mut self,
         ctx: &Validated,
@@ -2005,6 +2070,7 @@ impl Planner {
     ) -> String {
         let reply = self.engine.handle(event);
         emit_engine_convergence(&self.engine);
+        emit_engine_adoption_fit(&self.engine);
         serialize_core_reply(ctx, &reply)
     }
 
@@ -6541,9 +6607,8 @@ mod tests {
 
     #[test]
     fn reconcile_fresh_horizontal_fit_projects_exact_geometry() {
-        // A fresh two-window strip reconciles through the flat-strip fit
-        // without any admit derivation: equal shares project back with fit
-        // leaves.
+        // Fresh adoption returns the complete projection without separate
+        // admit requests.
         let mut planner = Planner::new();
         let reply = parse_reply(&planner.evaluate(&retained_request(
             "fresh-fit-rec",
@@ -6563,14 +6628,16 @@ mod tests {
             ]),
             "{reply}"
         );
-        assert_eq!(fit_leaves(&reply), vec!["fit-l0", "fit-l1"], "{reply}");
         assert_eq!(planner.retained_domains(), 1);
+        assert_eq!(
+            planner.engine.last_adoption_fit().unwrap().outcome,
+            "fitted"
+        );
     }
 
     #[test]
     fn reconcile_fresh_fallback_seeds_deterministic_geometry() {
-        // Overlapping carried rectangles decline fitting, so fresh reconcile
-        // takes the deterministic spatial seed with no fit leaves.
+        // Heavily overlapping rectangles use deterministic spatial seeding.
         let mut planner = Planner::new();
         let reply = parse_reply(&planner.evaluate(&retained_request(
             "fresh-seed-rec",
@@ -6590,12 +6657,7 @@ mod tests {
             ]),
             "{reply}"
         );
-        assert!(
-            !fit_leaves(&reply)
-                .iter()
-                .any(|leaf| leaf.starts_with("fit-l")),
-            "{reply}"
-        );
+        assert_eq!(planner.engine.last_adoption_fit().unwrap().reason, "no_cut");
         assert_eq!(planner.retained_domains(), 1);
     }
 
@@ -8980,21 +9042,11 @@ mod tests {
         request.to_string()
     }
 
-    fn fit_leaves(reply: &serde_json::Value) -> Vec<String> {
-        let mut leaves: Vec<String> = reply["desired_geometry"]
-            .as_array()
-            .expect("planned geometry present")
-            .iter()
-            .map(|entry| entry["leaf"].as_str().expect("leaf").to_owned())
-            .collect();
-        leaves.sort();
-        leaves
-    }
-
     #[test]
-    fn fit_horizontal_strip_commits_through_reconcile() {
-        // Unequal 400/800 side-by-side strip: the normal seed would reflow to
-        // an equal split, so exact observed geometry proves the fit path.
+    fn adoption_fit_horizontal_nary_commits_through_reconcile() {
+        // Unequal 400/800 side-by-side N-ary cut: the normal seed would
+        // reflow to an equal split, so exact observed geometry proves the
+        // recursive-cut fit path.
         let windows = [("win-1", 0, 0, 400, 800), ("win-2", 400, 0, 800, 800)];
         let mut planner = Planner::new();
         let reply = parse_reply(&planner.evaluate(&retained_request(
@@ -9015,12 +9067,15 @@ mod tests {
             ]),
             "{reply}"
         );
-        assert_eq!(fit_leaves(&reply), vec!["fit-l0", "fit-l1"], "{reply}");
+        assert_eq!(
+            planner.engine.last_adoption_fit().unwrap().outcome,
+            "fitted"
+        );
     }
 
     #[test]
-    fn fit_vertical_flat_nary_strip_with_exact_shares() {
-        // Three-high stacked strip: one flat N-ary group with positive spans
+    fn adoption_fit_vertical_nary_with_exact_shares() {
+        // Three-high stacked N-ary cut: one N-ary group with positive spans
         // as shares projects back to the exact observed geometry.
         let windows = [
             ("win-1", 0, 0, 1200, 200),
@@ -9048,15 +9103,10 @@ mod tests {
             ]),
             "{reply}"
         );
-        assert_eq!(
-            fit_leaves(&reply),
-            vec!["fit-l0", "fit-l1", "fit-l2"],
-            "{reply}"
-        );
     }
 
     #[test]
-    fn fit_respects_configured_inner_and_outer_gaps() {
+    fn adoption_fit_respects_configured_gaps() {
         let windows = [("win-1", 8, 8, 588, 784), ("win-2", 604, 8, 588, 784)];
         let mut planner = Planner::new();
         let reply = parse_reply(&planner.evaluate(&retained_request_with_selected_gaps(
@@ -9081,13 +9131,13 @@ mod tests {
     }
 
     #[test]
-    fn fit_horizontal_near_strip_with_drift_projects_canonical_gaps() {
-        // Imperfect horizontal near strip: left/right edge offsets, cross-axis
+    fn adoption_fit_horizontal_nary_with_drift_projects_canonical() {
+        // Imperfect horizontal N-ary cut: left/right edge offsets, cross-axis
         // drift, and a nonconfigured observed 7px inter-gap. The x intervals
-        // stay sequential, so the fit builds one flat N-ary group with the
-        // observed widths as shares and projects the canonical configured-gap
-        // result, which matches neither the observed geometry nor the normal
-        // equal reflow.
+        // stay sequential within tolerance, so the fit builds one N-ary group
+        // with the observed widths as shares and projects the canonical
+        // configured-gap result, which matches neither the observed geometry
+        // nor the normal equal reflow.
         let windows = [("win-1", 10, 5, 398, 790), ("win-2", 415, 2, 770, 795)];
         let mut planner = Planner::new();
         let reply = parse_reply(&planner.evaluate(&retained_request(
@@ -9110,7 +9160,6 @@ mod tests {
             ]),
             "{reply}"
         );
-        assert_eq!(fit_leaves(&reply), vec!["fit-l0", "fit-l1"], "{reply}");
         assert_ne!(
             got,
             std::collections::BTreeMap::from([
@@ -9130,10 +9179,11 @@ mod tests {
     }
 
     #[test]
-    fn fit_vertical_near_strip_with_drift_projects_canonical() {
-        // Imperfect vertical near strip: cross-axis drift with x intervals
+    fn adoption_fit_vertical_nary_with_drift_projects_canonical() {
+        // Imperfect vertical N-ary cut: cross-axis drift with x intervals
         // overlapping (so horizontal is unsupported) while y intervals stay
-        // sequential. Canonical heights come from the observed spans.
+        // sequential within tolerance. Canonical heights come from the
+        // observed spans.
         let windows = [("win-1", 5, 10, 1190, 250), ("win-2", 2, 270, 1194, 515)];
         let mut planner = Planner::new();
         let reply = parse_reply(&planner.evaluate(&retained_request(
@@ -9155,11 +9205,10 @@ mod tests {
             ]),
             "{reply}"
         );
-        assert_eq!(fit_leaves(&reply), vec!["fit-l0", "fit-l1"], "{reply}");
     }
 
     #[test]
-    fn fit_excluded_flag_declines_fit_without_changing_normal_path() {
+    fn adoption_fit_excluded_declines_to_seed() {
         // The marker only declines fitting: the normal seed still tiles the
         // flagged member to the same deterministic geometry.
         let windows = [("win-1", 0, 0, 400, 800), ("win-2", 400, 0, 800, 800)];
@@ -9184,7 +9233,7 @@ mod tests {
     }
 
     #[test]
-    fn fit_commits_once_and_retained_followup_never_refits() {
+    fn adoption_fit_commits_once_and_retained_followup_never_refits() {
         let mut planner = Planner::new();
         let fitted = parse_reply(&planner.evaluate(&retained_request(
             "fit-r-1",
@@ -9196,6 +9245,12 @@ mod tests {
         )));
         assert_eq!(fitted["outcome"], "planned", "{fitted}");
         let before = geometry_by_window(&fitted)["win-1"];
+        // Fresh attempt records exactly one fitted report.
+        let fresh_report = planner.engine.last_adoption_fit().expect("fresh fit logs");
+        assert_eq!(fresh_report.outcome, "fitted", "{fitted}");
+        assert_eq!(fresh_report.reason, "ok", "{fitted}");
+        assert_eq!(fresh_report.windows, 2, "{fitted}");
+        assert_eq!(fresh_report.correlation.as_str(), "fit-r-1", "{fitted}");
         // A retained follow-up reconciles the newcomer into the fitted tree
         // without rewriting the fitted first child.
         let follow = parse_reply(&planner.evaluate(&retained_request(
@@ -9217,6 +9272,247 @@ mod tests {
             before,
             "{follow} vs {fitted}"
         );
+        // Retained reconciliations never duplicate the adoption-fit log.
+        assert!(planner.engine.last_adoption_fit().is_none(), "{follow}");
+    }
+
+    #[test]
+    fn adoption_fit_nested_left_two_right_is_focus_independent_and_exact() {
+        // Nested recursive cut: left plus a two-high right column. Observed
+        // spans become shares, so the canonical projection matches the
+        // observation with zero moves regardless of which member is focused.
+        let windows = [
+            ("win-left", 0, 0, 400, 800),
+            ("win-top", 400, 0, 800, 400),
+            ("win-bottom", 400, 400, 800, 400),
+        ];
+        let mut baseline: Option<std::collections::BTreeMap<String, (i32, i32, i32, i32)>> = None;
+        for focused in ["win-left", "win-top", "win-bottom"] {
+            let mut planner = Planner::new();
+            let reply = parse_reply(&planner.evaluate(&retained_request(
+                "adopt-nested-1",
+                "owner-1",
+                "gen-1",
+                focused,
+                &windows,
+                serde_json::json!({"op": "reconcile"}),
+            )));
+            assert_eq!(reply["outcome"], "planned", "{reply}");
+            assert_geometry_covers(&reply, &["win-left", "win-top", "win-bottom"]);
+            let got = geometry_by_window(&reply);
+            assert_eq!(
+                got,
+                std::collections::BTreeMap::from([
+                    ("win-left".to_owned(), (0, 0, 400, 800)),
+                    ("win-top".to_owned(), (400, 0, 800, 400)),
+                    ("win-bottom".to_owned(), (400, 400, 800, 400)),
+                ]),
+                "{reply} focused={focused}"
+            );
+            if let Some(first) = &baseline {
+                assert_eq!(&got, first, "focused={focused}");
+            } else {
+                baseline = Some(got);
+            }
+            let report = planner.engine.last_adoption_fit().expect("fresh fit logs");
+            assert_eq!(report.outcome, "fitted", "{reply}");
+            assert_eq!(report.reason, "ok", "{reply}");
+            assert_eq!(report.windows, 3, "{reply}");
+        }
+    }
+
+    #[test]
+    fn adoption_fit_nested_resized_shares_follow_observed_spans() {
+        // Same nested topology with resized observed spans: shares follow the
+        // observed primary spans, not an equal split.
+        let windows = [
+            ("win-left", 0, 0, 600, 800),
+            ("win-top", 600, 0, 600, 500),
+            ("win-bottom", 600, 500, 600, 300),
+        ];
+        let mut planner = Planner::new();
+        let reply = parse_reply(&planner.evaluate(&retained_request(
+            "adopt-nested-resize-1",
+            "owner-1",
+            "gen-1",
+            "win-top",
+            &windows,
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        // Shares follow the observed 500/300 spans through the canonical
+        // proportional projection (one-unit reservation), not an equal
+        // 400/400 split.
+        assert_eq!(
+            geometry_by_window(&reply),
+            std::collections::BTreeMap::from([
+                ("win-left".to_owned(), (0, 0, 600, 800)),
+                ("win-top".to_owned(), (600, 0, 600, 499)),
+                ("win-bottom".to_owned(), (600, 499, 600, 301)),
+            ]),
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn adoption_fit_nested_gap_projection_is_canonical() {
+        // Nested cut under configured gaps: the canonical projection keeps
+        // the outer inset and inner gaps with zero retained moves.
+        let mut planner = Planner::new();
+        let request: serde_json::Value =
+            serde_json::from_str(&retained_request_with_selected_gaps(
+                "adopt-nested-gap-1",
+                "owner-1",
+                "gen-1",
+                "win-top",
+                &[
+                    ("win-left", 8, 8, 388, 784),
+                    ("win-top", 404, 8, 788, 388),
+                    ("win-bottom", 404, 404, 788, 388),
+                ],
+                serde_json::json!({"op": "reconcile"}),
+            ))
+            .expect("valid request");
+        let reply = parse_reply(&planner.evaluate(&request.to_string()));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_geometry_covers(&reply, &["win-left", "win-top", "win-bottom"]);
+        let got = geometry_by_window(&reply);
+        assert_eq!(
+            got,
+            std::collections::BTreeMap::from([
+                ("win-left".to_owned(), (8, 8, 388, 784)),
+                ("win-top".to_owned(), (404, 8, 788, 388)),
+                ("win-bottom".to_owned(), (404, 404, 788, 388)),
+            ]),
+            "{reply}"
+        );
+        let left = got["win-left"];
+        let top = got["win-top"];
+        let bottom = got["win-bottom"];
+        assert_eq!(left.0, 8, "{reply}");
+        assert_eq!(left.1, 8, "{reply}");
+        assert_eq!(top.0, left.0 + left.2 + 8, "{reply}");
+        assert_eq!(bottom.0, top.0, "{reply}");
+        assert_eq!(bottom.1, top.1 + top.3 + 8, "{reply}");
+        // Retained follow-up with the same observation is a zero-move
+        // projection on the fitted tree.
+        let follow = parse_reply(
+            &planner.evaluate(
+                &request
+                    .to_string()
+                    .replace("adopt-nested-gap-1", "adopt-nested-gap-2"),
+            ),
+        );
+        assert_eq!(follow["outcome"], "planned", "{follow}");
+        assert_eq!(geometry_by_window(&follow), got, "{follow}");
+        assert!(planner.engine.last_adoption_fit().is_none(), "{follow}");
+    }
+
+    #[test]
+    fn adoption_fit_overlap_within_tolerance_fits_and_beyond_falls_back() {
+        // Domain 1200 wide: tolerance is max(0, 36) = 36. A 5px cross-cut
+        // overlap still fits; a 200px overlap has no valid cut and falls
+        // back to the deterministic seed.
+        let mut fitted_planner = Planner::new();
+        let fitted = parse_reply(&fitted_planner.evaluate(&retained_request(
+            "adopt-tol-1",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &[("win-1", 0, 0, 400, 800), ("win-2", 395, 0, 800, 800)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(fitted["outcome"], "planned", "{fitted}");
+        assert_eq!(
+            geometry_by_window(&fitted),
+            std::collections::BTreeMap::from([
+                ("win-1".to_owned(), (0, 0, 400, 800)),
+                ("win-2".to_owned(), (400, 0, 800, 800)),
+            ]),
+            "{fitted}"
+        );
+        let report = fitted_planner.engine.last_adoption_fit().expect("fit logs");
+        assert_eq!(report.outcome, "fitted", "{fitted}");
+        assert_eq!(report.reason, "ok", "{fitted}");
+
+        let mut fallback_planner = Planner::new();
+        let fallback = parse_reply(&fallback_planner.evaluate(&retained_request(
+            "adopt-tol-2",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &[("win-1", 0, 0, 600, 800), ("win-2", 400, 0, 600, 800)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(fallback["outcome"], "planned", "{fallback}");
+        assert_eq!(
+            geometry_by_window(&fallback),
+            std::collections::BTreeMap::from([
+                ("win-1".to_owned(), (0, 0, 600, 800)),
+                ("win-2".to_owned(), (600, 0, 600, 800)),
+            ]),
+            "{fallback}"
+        );
+        let fallback_report = fallback_planner
+            .engine
+            .last_adoption_fit()
+            .expect("fallback logs");
+        assert_eq!(fallback_report.outcome, "fallback", "{fallback}");
+        assert_eq!(fallback_report.reason, "no_cut", "{fallback}");
+    }
+
+    #[test]
+    fn adoption_fit_summary_is_correlated_bounded_and_single_per_attempt() {
+        let line = summarize_adoption_fit("adopt-log-1", "fitted", 3, "ok");
+        assert_eq!(
+            line,
+            "plasma-auto-tiler:adoption-fit outcome=fitted windows=3 reason=ok correlation=adopt-log-1"
+        );
+        let fallback = summarize_adoption_fit("adopt-log-2", "fallback", 2, "single_window");
+        assert!(fallback.contains("outcome=fallback"), "{fallback}");
+        assert!(fallback.contains("windows=2"), "{fallback}");
+        assert!(fallback.contains("reason=single_window"), "{fallback}");
+        assert!(fallback.contains("correlation=adopt-log-2"), "{fallback}");
+        assert!(!fallback.contains("win-1"), "{fallback}");
+        let garbage = summarize_adoption_fit("evil!!", "FITTED!!", 2, "evil reason!!");
+        assert!(!garbage.contains("evil"), "{garbage}");
+        assert!(garbage.contains("correlation=-"), "{garbage}");
+
+        // Fresh single-window and fit-excluded attempts log fallback reasons.
+        let mut single = Planner::new();
+        let single_reply = parse_reply(&single.evaluate(&retained_request(
+            "adopt-log-single-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(single_reply["outcome"], "planned", "{single_reply}");
+        let single_report = single.engine.last_adoption_fit().expect("single logs");
+        assert_eq!(single_report.outcome, "fallback", "{single_reply}");
+        assert_eq!(single_report.reason, "single_window", "{single_reply}");
+        assert_eq!(
+            summarize_adoption_fit(
+                single_report.correlation.as_str(),
+                single_report.outcome,
+                single_report.windows,
+                single_report.reason,
+            ),
+            "plasma-auto-tiler:adoption-fit outcome=fallback windows=1 reason=single_window correlation=adopt-log-single-1"
+        );
+
+        let mut excluded = Planner::new();
+        let excluded_reply = parse_reply(&excluded.evaluate(&fit_excluded_request(
+            "adopt-log-excluded-1",
+            "win-2",
+            &[("win-1", 0, 0, 400, 800), ("win-2", 400, 0, 800, 800)],
+            &["win-1"],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(excluded_reply["outcome"], "planned", "{excluded_reply}");
+        let excluded_report = excluded.engine.last_adoption_fit().expect("excluded logs");
+        assert_eq!(excluded_report.reason, "fit_excluded", "{excluded_reply}");
     }
 
     #[test]

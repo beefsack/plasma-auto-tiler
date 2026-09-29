@@ -364,6 +364,18 @@ the corresponding item ships; each such entry names its replacement.
   configured-gap behavior remains authoritative; preserving it at the current
   eligibility or pure input boundary is implementation work, not an unselected
   product behavior.
+  User decision 2026-09-29: replace the flat near-strip fit with one simple
+  deterministic recursive-cut fit to preserve nested layouts and screen order
+  across tiler restarts, independent of focus; do not chase rare complex
+  cases. Orchestrator defaults approved by the user: try horizontal then
+  vertical cut axes, collect all viable cuts into ordered N-ary children,
+  derive shares from observed child spans, recurse on the orthogonal axis,
+  and allow each window to cross a cut by at most the greater of configured
+  inner gap and 3% of the relevant work-area dimension. If any multi-window
+  piece cannot split, fall back to the existing normal seed/reflow. Existing
+  fit exclusions, lifecycle and canonical configured-gap projection remain
+  unchanged; a flat strip is just a one-level fit. This still selects no
+  exhaustive search or historical topology reconstruction.
 
 ## Live KWin/Plasma Boundary
 

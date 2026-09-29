@@ -222,8 +222,14 @@ All items below shipped offline with no live result claimed.
 - Drag-oracle post-fix proof: rebuild/new session with committed resizes,
   8 px gaps, one planned-applied result, no immediate reconcile.
   [decision](decisions.md#production-interactive-edge-drag)
-- Placement-aware startup adoption: fresh near-strip adoption including the
-  session-restart case.
+- Startup adoption recursive-cut fit (user decision 2026-09-29, replaces the
+  near-strip fit): restart the tiler over a previously tiled nested layout
+  (e.g. one left, two stacked right) with each member focused in turn, and
+  after resizing/moving tiles. Expect `[planner]
+  plasma-auto-tiler:adoption-fit outcome=fitted ... reason=ok`,
+  `disposition=skip-already-equal` for unchanged tiles and no window swaps.
+  Red flags: `reason=no_cut` on a normal tiled layout, swaps, repeated
+  writes after settling.
   [record](changes/placement-aware-startup-adoption.md)
 - KWin controller silent unload (diagnostic only): attribute only with
   before/after `isScriptLoaded`, exact `Script<ID>`, and KWin PID/start

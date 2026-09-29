@@ -196,12 +196,31 @@
   complete eligible snapshots, 0 LOC absent a proven observer bug; do not merge
   different workspaces); (3) event-driven bounded startup coalescing (~40-100
   LOC plus tests, medium risk, delays tiling, needs a user-visible timing choice
-  and evidence of an actual restore burst). Recursive fit/tolerance still need
-  separate product decisions and do not address these later admissions.
+  and evidence of an actual restore burst). Recursive fitting was subsequently
+  approved below; keeping noncanonical observed rectangles remains unselected.
 - Live acceptance remains: source-pinned user-run `just dev trace`, two normal
   windows at `8,52,756,964` and `772,52,756,964` on `eDP-1` with work area
   `0,44,1536,980` and gaps `8`; first `reconcile` should fit, log two
   `skip-already-equal`, zero `written`, then quiet `applied-evidence-equal`.
   Repeat after confirmed Planner loss (`plan:recovery ... outcome=confirmed-loss`)
-  and distinguish KWin restart with surviving Planner. Fit/source diagnostics
-  must be added before their log markers can be expected.
+  and distinguish KWin restart with surviving Planner. The fit marker is now
+  implemented below; observation-source diagnostics remain unimplemented.
+
+## Recursive-Cut Outcome 2026-09-29
+
+- User clarified the concern: restarting over a previously tiled, sometimes
+  resized nested layout can swap windows when fallback seeds focus-last.
+  The user approved replacing flat-strip fitting with a simple recursive-cut
+  heuristic, without rare-case machinery. Orchestrator defaults, user approved:
+  horizontal-before-vertical cuts, geometry order independent of focus, all
+  viable cuts per axis forming N-ary siblings, observed-span shares, orthogonal
+  recursion and `max(inner gap, floor(3% of domain axis))` per-window cut
+  crossing tolerance.
+- Rust now fits flat strips and nested/T layouts through the same fresh-adoption
+  lifecycle, projects configured gaps, and falls back to unchanged seed/reflow
+  on exclusions, invalid geometry, no cut or invalid projection. One bounded
+  `plasma-auto-tiler:adoption-fit outcome=... windows=... reason=... correlation=...`
+  line reports each fresh fit attempt; retained reconciles do not repeat it.
+  No adapter or native changes. Offline tests cover focus-independent exact
+  nested adoption, resized shares, N-ary axes, configured gaps and tolerance
+  success/failure. Live restart and confirmed-loss acceptance remain pending.

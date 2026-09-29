@@ -20,10 +20,10 @@ use crate::session::{
     SessionCommand, SessionObservation,
 };
 
-/// Serde-free observed window for seed ordering and strip fitting.
+/// Serde-free observed window for seed ordering and recursive-cut fitting.
 ///
 /// Carries the ephemeral client size hints (AR12) alongside the frame: seed
-/// ordering and strip fitting ignore hints (topology derives from rectangles
+/// ordering and fitting ignore hints (topology derives from rectangles
 /// only), while [`observed_window_from_engine`] propagates them so later
 /// projection and clamp assessment see the same advisory input. Pre/post-image
 /// matching ignores hints (identity is window/output/workspace/rect/flags).
@@ -38,138 +38,193 @@ pub struct EngineWindow {
     pub hints: crate::size_hints::WindowSizeHints,
 }
 
-/// Deterministic near-strip fit over the current admission's complete
-/// carried rectangles.
-///
-/// A simple best-effort project policy, not topology reconstruction and not
-/// exact recognition: succeeds only when every non-excluded rectangle is
-/// valid, contained in the already-inset domain, and non-overlapping, plus
-/// one axis has unambiguous sequential primary intervals. A horizontal
-/// near-strip sorts by the existing `(x, y, w, h)` key and needs each
-/// carried positive x interval strictly non-overlapping and sequential
-/// (`previous.x + previous.w <= next.x`), regardless of domain edge offsets,
-/// cross-axis drift, or the observed inter-window gap; vertical mirrors by
-/// sorting on `(y, x, h, w)` and checking `previous.y + previous.h <=
-/// next.y`. A single window stays on the normal path (`None`).
-///
-/// Each supported axis builds one ordered flat N-ary `Node::Group` along
-/// that axis with the observed primary spans (`w` horizontal, `h` vertical)
-/// as shares, then projects it with the existing
-/// `project(domain.bounds, domain.gap)` as the canonical valid complete
-/// result with the configured gap. No exact input reprojection is required.
-/// When both axes support, the fixed Horizontal tie-break applies. Anything
-/// else returns `None` for the normal deterministic seed/reflow. Grids,
-/// nested, and T arrangements with primary-interval overlap on both axes are
-/// normal unsupported fallback, not fitted topology. Topology decisions use
-/// only rectangle geometry (never opaque window ids); leaf/group ids are
-/// safe internal deterministic index names.
-#[must_use]
-pub fn try_flat_strip_fit(
+/// Bounded near-layout fit decline reason for correlated logging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FitDeclineReason {
+    SingleWindow,
+    FitExcluded,
+    InvalidGeometry,
+    NoCut,
+    ProjectionInvalid,
+}
+
+impl FitDeclineReason {
+    /// Stable token for this decline reason.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SingleWindow => "single_window",
+            Self::FitExcluded => "fit_excluded",
+            Self::InvalidGeometry => "invalid_geometry",
+            Self::NoCut => "no_cut",
+            Self::ProjectionInvalid => "projection_invalid",
+        }
+    }
+}
+
+/// Fit one geometry-ordered recursive-cut tree, or decline to normal seeding.
+/// Collect all viable cuts on an axis into an N-ary group, then recurse on the
+/// orthogonal axis. Cuts allow at most `max(inner gap, 3% of domain extent)`
+/// crossing per window; the finished tree projects with configured gaps.
+pub fn try_recursive_cut_fit(
     domain: &OutputDomain,
     windows: &[EngineWindow],
-) -> Option<(Node, Vec<WindowLink>)> {
+) -> Result<(Node, Vec<WindowLink>), FitDeclineReason> {
     if windows.len() < 2 {
-        return None;
+        return Err(FitDeclineReason::SingleWindow);
     }
     if windows.iter().any(|w| w.floating || w.fit_excluded) {
-        return None;
+        return Err(FitDeclineReason::FitExcluded);
     }
     let mut items: Vec<(WindowId, Rect)> = Vec::with_capacity(windows.len());
     for entry in windows {
         let rect = entry.rect;
         if !valid_carried_rect(rect.x, rect.y, rect.w, rect.h) {
-            return None;
+            return Err(FitDeclineReason::InvalidGeometry);
         }
         if !rect_contained(rect, domain.bounds) {
-            return None;
+            return Err(FitDeclineReason::InvalidGeometry);
         }
         items.push((entry.window.clone(), rect));
     }
-    for i in 0..items.len() {
-        for (_, other) in items.iter().skip(i + 1) {
-            let (a, b) = (items[i].1, *other);
-            if a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h {
+    fn tolerance(domain: &OutputDomain, axis: Axis) -> i64 {
+        let gap = i64::from(domain.gap).max(0);
+        let extent = match axis {
+            Axis::Horizontal => i64::from(domain.bounds.w),
+            Axis::Vertical => i64::from(domain.bounds.h),
+        }
+        .max(0);
+        gap.max(extent * 3 / 100)
+    }
+    fn primary_start(rect: Rect, axis: Axis) -> i64 {
+        match axis {
+            Axis::Horizontal => i64::from(rect.x),
+            Axis::Vertical => i64::from(rect.y),
+        }
+    }
+    fn primary_end(rect: Rect, axis: Axis) -> i64 {
+        match axis {
+            Axis::Horizontal => i64::from(rect.x) + i64::from(rect.w),
+            Axis::Vertical => i64::from(rect.y) + i64::from(rect.h),
+        }
+    }
+    fn sort_for_axis(items: &mut [(WindowId, Rect)], axis: Axis) {
+        match axis {
+            Axis::Horizontal => items.sort_by_key(|a| (a.1.x, a.1.y, a.1.w, a.1.h)),
+            Axis::Vertical => items.sort_by_key(|a| (a.1.y, a.1.x, a.1.h, a.1.w)),
+        }
+    }
+    fn orthogonal(axis: Axis) -> Axis {
+        match axis {
+            Axis::Horizontal => Axis::Vertical,
+            Axis::Vertical => Axis::Horizontal,
+        }
+    }
+    struct Alloc {
+        next_leaf: usize,
+        next_group: usize,
+    }
+    // Collect every valid cut on this axis; each child tries the other axis.
+    fn build_region(
+        domain: &OutputDomain,
+        members: &[(WindowId, Rect)],
+        axis: Axis,
+        alloc: &mut Alloc,
+    ) -> Option<(Node, Vec<WindowLink>)> {
+        let mut ordered: Vec<(WindowId, Rect)> = members.to_vec();
+        sort_for_axis(&mut ordered, axis);
+        let tol = tolerance(domain, axis);
+        let mut prefix_max: Vec<i64> = Vec::with_capacity(ordered.len());
+        let mut running = i64::MIN;
+        for (_, rect) in &ordered {
+            running = running.max(primary_end(*rect, axis));
+            prefix_max.push(running);
+        }
+        let mut suffix_min: Vec<i64> = vec![0; ordered.len()];
+        let mut floor = i64::MAX;
+        for (index, (_, rect)) in ordered.iter().enumerate().rev() {
+            floor = floor.min(primary_start(*rect, axis));
+            suffix_min[index] = floor;
+        }
+        let mut cuts: Vec<usize> = Vec::new();
+        for index in 0..ordered.len() - 1 {
+            // A midpoint cut exists when neither side crosses it by more
+            // than the tolerance, including when their extents overlap.
+            if prefix_max[index] - suffix_min[index + 1] <= 2 * tol {
+                cuts.push(index);
+            }
+        }
+        if cuts.is_empty() {
+            return None;
+        }
+        let group = NodeId(format!("fit-g{}", alloc.next_group));
+        alloc.next_group += 1;
+        let mut boundaries: Vec<usize> = vec![0];
+        boundaries.extend(cuts.iter().map(|c| c + 1));
+        boundaries.push(ordered.len());
+        let mut children: Vec<Node> = Vec::with_capacity(boundaries.len() - 1);
+        let mut shares: Vec<u64> = Vec::with_capacity(boundaries.len() - 1);
+        let mut links: Vec<WindowLink> = Vec::with_capacity(ordered.len());
+        for pair in boundaries.windows(2) {
+            let group_members = &ordered[pair[0]..pair[1]];
+            let mut start = i64::MAX;
+            let mut end = i64::MIN;
+            for (_, rect) in group_members {
+                start = start.min(primary_start(*rect, axis));
+                end = end.max(primary_end(*rect, axis));
+            }
+            let span = end - start;
+            if span <= 0 {
                 return None;
             }
-        }
-    }
-    // One axis attempt: sort by the existing geometry key, require strictly
-    // non-overlapping sequential primary intervals with no tolerance knobs,
-    // then project one flat N-ary group with observed primary spans as
-    // shares. Edge offsets, cross-axis drift, and observed gaps never gate
-    // support; the configured-gap projection is the canonical result.
-    fn strip_candidate(
-        domain: &OutputDomain,
-        items: &[(WindowId, Rect)],
-        axis: Axis,
-    ) -> Option<(Node, Vec<WindowLink>)> {
-        let mut ordered: Vec<(WindowId, Rect)> = items.to_vec();
-        match axis {
-            Axis::Horizontal => ordered.sort_by_key(|a| (a.1.x, a.1.y, a.1.w, a.1.h)),
-            Axis::Vertical => ordered.sort_by_key(|a| (a.1.y, a.1.x, a.1.h, a.1.w)),
-        }
-        for pair in ordered.windows(2) {
-            let (previous, next) = (pair[0].1, pair[1].1);
-            match axis {
-                Axis::Horizontal => {
-                    if i64::from(previous.x) + i64::from(previous.w) > i64::from(next.x) {
-                        return None;
-                    }
-                }
-                Axis::Vertical => {
-                    if i64::from(previous.y) + i64::from(previous.h) > i64::from(next.y) {
-                        return None;
-                    }
-                }
+            let Ok(share) = u64::try_from(span) else {
+                return None;
+            };
+            shares.push(share);
+            if group_members.len() == 1 {
+                let leaf = NodeId(format!("fit-l{}", alloc.next_leaf));
+                alloc.next_leaf += 1;
+                links.push(WindowLink {
+                    window: group_members[0].0.clone(),
+                    leaf: leaf.clone(),
+                    output: domain.id.clone(),
+                    workspace: domain.workspace.clone(),
+                });
+                children.push(Node::Leaf { id: leaf });
+            } else {
+                let (child, child_links) =
+                    build_region(domain, group_members, orthogonal(axis), alloc)?;
+                links.extend(child_links);
+                children.push(child);
             }
         }
-        let shares: Vec<u64> = ordered
-            .iter()
-            .map(|(_, rect)| match axis {
-                Axis::Horizontal => rect.w as u64,
-                Axis::Vertical => rect.h as u64,
-            })
-            .collect();
-        if shares.contains(&0) {
-            return None;
-        }
-        let children: Vec<Node> = (0..ordered.len())
-            .map(|i| Node::Leaf {
-                id: NodeId(format!("fit-l{i}")),
-            })
-            .collect();
-        let tree = Node::Group {
-            id: NodeId("fit-g0".to_owned()),
-            axis,
-            children,
-            shares,
+        Some((
+            Node::Group {
+                id: group,
+                axis,
+                children,
+                shares,
+            },
+            links,
+        ))
+    }
+    for axis in [Axis::Horizontal, Axis::Vertical] {
+        let mut alloc = Alloc {
+            next_leaf: 0,
+            next_group: 0,
         };
-        let projected = project(&tree, domain.bounds, domain.gap).ok()?;
-        if projected.len() != ordered.len() {
-            return None;
+        if let Some((tree, links)) = build_region(domain, &items, axis, &mut alloc) {
+            let projected = project(&tree, domain.bounds, domain.gap).ok();
+            let Some(projected) = projected else {
+                return Err(FitDeclineReason::ProjectionInvalid);
+            };
+            if projected.len() != items.len() {
+                return Err(FitDeclineReason::ProjectionInvalid);
+            }
+            return Ok((tree, links));
         }
-        let links: Vec<WindowLink> = ordered
-            .iter()
-            .enumerate()
-            .map(|(index, (window, _))| WindowLink {
-                window: window.clone(),
-                leaf: NodeId(format!("fit-l{index}")),
-                output: domain.id.clone(),
-                workspace: domain.workspace.clone(),
-            })
-            .collect();
-        Some((tree, links))
     }
-    let horizontal = strip_candidate(domain, &items, Axis::Horizontal);
-    let vertical = strip_candidate(domain, &items, Axis::Vertical);
-    match (horizontal, vertical) {
-        // Fixed Horizontal tie-break keeps the choice deterministic when both
-        // interval orders support a near strip.
-        (Some(h), Some(_)) => Some(h),
-        (Some(h), None) => Some(h),
-        (None, Some(v)) => Some(v),
-        (None, None) => None,
-    }
+    Err(FitDeclineReason::NoCut)
 }
 
 /// Admission seed order: spatial `(y, x, h, w)` sort with the focused window
@@ -568,11 +623,27 @@ mod tests {
         }
     }
 
+    fn square_domain() -> OutputDomain {
+        OutputDomain {
+            id: OutputId("out".to_owned()),
+            workspace: WorkspaceId("ws".to_owned()),
+            bounds: Rect {
+                x: 0,
+                y: 0,
+                w: 300,
+                h: 300,
+            },
+            gap: 0,
+            adjacent: BTreeMap::new(),
+        }
+    }
+
     #[test]
-    fn horizontal_strip_orders_by_x_with_deterministic_ids() {
+    fn flat_nary_horizontal_orders_by_geometry() {
         let domain = domain();
         let windows = vec![window("b", 100, 0, 100, 100), window("a", 0, 0, 100, 100)];
-        let (tree, links) = try_flat_strip_fit(&domain, &windows).expect("horizontal strip fits");
+        let (tree, links) =
+            try_recursive_cut_fit(&domain, &windows).expect("horizontal strip fits");
         match &tree {
             Node::Group { axis, shares, .. } => {
                 assert_eq!(*axis, Axis::Horizontal);
@@ -581,16 +652,202 @@ mod tests {
             Node::Leaf { .. } => panic!("expected group"),
         }
         assert_eq!(links[0].window.0, "a");
-        assert_eq!(links[0].leaf.0, "fit-l0");
         assert_eq!(links[1].window.0, "b");
-        assert_eq!(links[1].leaf.0, "fit-l1");
     }
 
     #[test]
-    fn overlapping_rects_decline_fitting() {
+    fn flat_nary_vertical_orders_by_geometry() {
         let domain = domain();
-        let windows = vec![window("a", 0, 0, 200, 100), window("b", 100, 0, 200, 100)];
-        assert!(try_flat_strip_fit(&domain, &windows).is_none());
+        let windows = vec![
+            window("b", 0, 60, 300, 40),
+            window("a", 0, 0, 300, 30),
+            window("c", 0, 30, 300, 30),
+        ];
+        let (tree, links) = try_recursive_cut_fit(&domain, &windows).expect("vertical strip fits");
+        match &tree {
+            Node::Group { axis, shares, .. } => {
+                assert_eq!(*axis, Axis::Vertical);
+                assert_eq!(*shares, vec![30, 30, 40]);
+            }
+            Node::Leaf { .. } => panic!("expected group"),
+        }
+        let ids: Vec<&str> = links.iter().map(|l| l.window.0.as_str()).collect();
+        assert_eq!(ids, vec!["a", "c", "b"]);
+    }
+
+    #[test]
+    fn resized_shares_follow_observed_spans() {
+        let domain = domain();
+        let windows = vec![window("b", 60, 0, 240, 100), window("a", 0, 0, 60, 100)];
+        let (tree, _) = try_recursive_cut_fit(&domain, &windows).expect("resized strip fits");
+        match &tree {
+            Node::Group { shares, .. } => assert_eq!(*shares, vec![60, 240]),
+            Node::Leaf { .. } => panic!("expected group"),
+        }
+    }
+
+    #[test]
+    fn nested_t_is_focus_independent_geometry_order() {
+        let domain = square_domain();
+        let left = window("left", 0, 0, 100, 300);
+        let top = window("top", 100, 0, 200, 150);
+        let bottom = window("bottom", 100, 150, 200, 150);
+        let orders = vec![
+            vec![left.clone(), top.clone(), bottom.clone()],
+            vec![bottom.clone(), top.clone(), left.clone()],
+            vec![top.clone(), left.clone(), bottom.clone()],
+        ];
+        let mut results = Vec::new();
+        for order in &orders {
+            let (tree, links) = try_recursive_cut_fit(&domain, order).expect("nested T fits");
+            match &tree {
+                Node::Group {
+                    axis,
+                    shares,
+                    children,
+                    ..
+                } => {
+                    assert_eq!(*axis, Axis::Horizontal);
+                    assert_eq!(*shares, vec![100, 200]);
+                    assert_eq!(children.len(), 2);
+                    match &children[1] {
+                        Node::Group {
+                            axis,
+                            shares,
+                            children,
+                            ..
+                        } => {
+                            assert_eq!(*axis, Axis::Vertical);
+                            assert_eq!(*shares, vec![150, 150]);
+                            assert_eq!(children.len(), 2);
+                        }
+                        Node::Leaf { .. } => panic!("expected nested group"),
+                    }
+                }
+                Node::Leaf { .. } => panic!("expected group"),
+            }
+            let order: Vec<&str> = links.iter().map(|l| l.window.0.as_str()).collect();
+            assert_eq!(order, vec!["left", "top", "bottom"]);
+            results.push((tree, links));
+        }
+        assert_eq!(results[0], results[1]);
+        assert_eq!(results[0], results[2]);
+    }
+
+    #[test]
+    fn small_overlap_within_tolerance_fits() {
+        // With tolerance 9, a 16px overlap admits a midpoint cut that each
+        // window crosses by 8px.
+        let domain = domain();
+        let windows = vec![window("a", 0, 0, 100, 100), window("b", 84, 0, 100, 100)];
+        let (tree, links) = try_recursive_cut_fit(&domain, &windows).expect("small overlap fits");
+        match &tree {
+            Node::Group { axis, .. } => assert_eq!(*axis, Axis::Horizontal),
+            Node::Leaf { .. } => panic!("expected group"),
+        }
+        assert_eq!(links.len(), 2);
+    }
+
+    #[test]
+    fn overlap_beyond_tolerance_declines_no_cut() {
+        let domain = domain();
+        let windows = vec![window("a", 0, 0, 100, 100), window("b", 80, 0, 100, 100)];
+        assert_eq!(
+            try_recursive_cut_fit(&domain, &windows),
+            Err(FitDeclineReason::NoCut)
+        );
+    }
+
+    #[test]
+    fn configured_gap_can_allow_a_wider_cross_cut_overlap() {
+        let windows = vec![window("a", 0, 0, 100, 100), window("b", 70, 0, 100, 100)];
+        assert_eq!(
+            try_recursive_cut_fit(&domain(), &windows),
+            Err(FitDeclineReason::NoCut)
+        );
+        let mut with_gap = domain();
+        with_gap.gap = 20;
+        assert!(try_recursive_cut_fit(&with_gap, &windows).is_ok());
+    }
+
+    #[test]
+    fn pinwheel_without_guillotine_cut_declines() {
+        let domain = OutputDomain {
+            id: OutputId("out".to_owned()),
+            workspace: WorkspaceId("ws".to_owned()),
+            bounds: Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 100,
+            },
+            gap: 0,
+            adjacent: BTreeMap::new(),
+        };
+        let windows = vec![
+            window("a", 0, 0, 60, 40),
+            window("b", 60, 0, 40, 60),
+            window("c", 40, 60, 60, 40),
+            window("d", 0, 40, 40, 60),
+        ];
+        assert_eq!(
+            try_recursive_cut_fit(&domain, &windows),
+            Err(FitDeclineReason::NoCut)
+        );
+    }
+
+    #[test]
+    fn decline_reasons_use_stable_tokens() {
+        let domain = domain();
+        assert_eq!(
+            try_recursive_cut_fit(&domain, &[]),
+            Err(FitDeclineReason::SingleWindow)
+        );
+        assert_eq!(FitDeclineReason::SingleWindow.as_str(), "single_window");
+        let mut excluded = window("a", 0, 0, 100, 100);
+        excluded.fit_excluded = true;
+        assert_eq!(
+            try_recursive_cut_fit(&domain, &[excluded, window("b", 100, 0, 100, 100)]),
+            Err(FitDeclineReason::FitExcluded)
+        );
+        assert_eq!(FitDeclineReason::FitExcluded.as_str(), "fit_excluded");
+        assert_eq!(
+            try_recursive_cut_fit(
+                &domain,
+                &[window("a", 0, 0, 100, 100), window("b", 500, 0, 100, 100)]
+            ),
+            Err(FitDeclineReason::InvalidGeometry)
+        );
+        assert_eq!(
+            FitDeclineReason::InvalidGeometry.as_str(),
+            "invalid_geometry"
+        );
+        assert_eq!(FitDeclineReason::NoCut.as_str(), "no_cut");
+        let tight = OutputDomain {
+            id: OutputId("out".to_owned()),
+            workspace: WorkspaceId("ws".to_owned()),
+            bounds: Rect {
+                x: 0,
+                y: 0,
+                w: 10,
+                h: 10,
+            },
+            gap: 6,
+            adjacent: BTreeMap::new(),
+        };
+        let crowded = vec![
+            window("a", 0, 0, 3, 10),
+            window("b", 3, 0, 4, 10),
+            window("c", 7, 0, 3, 10),
+        ];
+        assert_eq!(
+            try_recursive_cut_fit(&tight, &crowded),
+            Err(FitDeclineReason::ProjectionInvalid)
+        );
+        assert_eq!(
+            FitDeclineReason::ProjectionInvalid.as_str(),
+            "projection_invalid"
+        );
     }
 
     #[test]
