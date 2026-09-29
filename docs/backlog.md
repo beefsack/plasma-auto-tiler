@@ -10,13 +10,16 @@ decisions of 2026-09-24 are under
 
 ## Open work
 
-- P1 | Tray tiling/floating workspace toggle | Shipped offline
-  (2026-09-29); live check pending (see Pending live checks). Tray invokes a
-  keyless KWin script shortcut action over KGlobalAccel; the default is
-  `kwinrc [Script-plasma-auto-tiler-kwin] defaultTiled`. Review candidate:
-  `tray.rs` production grew substantially; simplify after live acceptance if
-  parts prove low-value.
+- P1 | Tray tiling/floating workspace toggle | Shipped `e407531`; user
+  confirmed live (2026-09-29) that toggling a workspace floating and back to
+  tiled behaves as expected. Remaining live: default change, cross-boundary
+  send (see Pending live checks). Tray invokes a keyless KWin script shortcut
+  action over KGlobalAccel; the default is
+  `kwinrc [Script-plasma-auto-tiler-kwin] defaultTiled`. Simplicity review
+  done offline (2026-09-29): duplicated cache recovery consolidated, the
+  rest kept as earning its place.
   [change](changes/archive/tray-workspace-toggle.md)
+  [review](changes/archive/tray-toggle-simplicity.md)
 - P1 | Ghostty/local native alignment | The ~56 px shortfall is unexplained
   (source-only baseline fix is in; needs a fresh `just dev trace` local-move
   plus follow-on command trace), and one requested `2032x1092` became
@@ -52,8 +55,8 @@ decisions of 2026-09-24 are under
   Revert restores KDE defaults; no stored prior values or tracking of user
   changes; alerts on the settings page first, later a tray indicator/icon
   whose click opens the normal settings page. Settings-page Fix/Revert for
-  the three `kwinrc [Windows]` edge settings shipped offline; live check
-  pending. Remaining: tray indicator. Uninstall revert parked under Future.
+  the three `kwinrc [Windows]` edge settings shipped; Fix confirmed live by
+  the user (2026-09-29). Remaining: tray indicator. Uninstall revert parked under Future.
   [change](changes/host-settings-conflicts.md)
 - P2 | Live sibling reflow while dragging | Deferred, not light (est. several
   hundred to ~1,000 lines, write-fighting risk); research done.
@@ -138,14 +141,8 @@ All items below shipped offline with no live result claimed.
 
 ### Single-output laptop
 
-- Tray workspace toggle (needs a fresh Plasma session so the rebuilt tray and
-  script load): left-click opens the menu (workspace checkbox, Tiled/Floating
-  default, Settings); toggling to floating leaves geometry untouched, clears
-  the group underlay, keeps the border (`stage=toggle ...
-  outcome=sent-unconfirmed`, `plan:workspace-floating tiled=false`,
-  `plan:workspace-released outcome=released`); opening/moving windows there
-  writes no tiles; toggling back logs `plan:workspace-floating tiled=true
-  ... confirmed=true` then `adoption-fit`; default change logs `stage=persist
+- Tray workspace toggle: floating/tiled toggling confirmed live by the user
+  (2026-09-29). Remaining: default change logs `stage=persist
   ... outcome=written`, `plan:config-reloaded stage=default-tiled`, applies
   to new workspaces and to all workspaces after a session restart;
   cross-boundary send is a native move with tiled-side reflow. Red flags:
@@ -153,11 +150,9 @@ All items below shipped offline with no live result claimed.
   without confirmed release, `native-failed` sends, a physical key bound to
   the keyless action.
   [change](changes/archive/tray-workspace-toggle.md)
-- Host settings Fix/Revert: fresh Plasma session, open Settings; both edge
-  boolean rows show Fix (Borders row only if nonzero); Fix switches rows to
-  Revert and stops KWin's native edge previews during Meta-drag; Revert
-  removes the local key and native previews return. One
-  `op=fix|revert setting=<key> outcome=ok reason=ok` log line per click.
+- Host settings Revert: Fix confirmed live by the user (2026-09-29).
+  Remaining: Revert removes the local key and native edge previews return;
+  one `op=revert setting=<key> outcome=ok reason=ok` log line per click.
   [change](changes/host-settings-conflicts.md)
 
 - Confirmed live by the user (2026-09-29): tiling gap Save re-spaces tiles

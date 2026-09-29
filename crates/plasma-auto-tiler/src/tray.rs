@@ -129,15 +129,10 @@ fn toggle_outcome_line(outcome: &str) -> String {
     )
 }
 
-fn default_outcome_line(stage: &str, outcome: &str, default_tiled: Option<bool>) -> String {
-    match default_tiled {
-        Some(value) => format!(
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage={stage} event=persist outcome={outcome} defaultTiled={value}"
-        ),
-        None => format!(
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage={stage} event=persist outcome={outcome}"
-        ),
-    }
+fn default_outcome_line(stage: &str, outcome: &str, default_tiled: bool) -> String {
+    format!(
+        "plasma-auto-tiler:route-diag component=tray-endpoint stage={stage} event=persist outcome={outcome} defaultTiled={default_tiled}"
+    )
 }
 
 /// KConfig-compatible `kwriteconfig6` argv for the persisted default. Returns
@@ -322,6 +317,21 @@ async fn with_emit_deadline<T>(
     )))
 }
 
+/// Row Q: lock a poisoned `Option` cache, recovering at the boundary
+/// instead of panicking. Recovery discards the cached value (forcing one
+/// fresh re-emission or spawn) rather than trusting it.
+fn lock_poisoned_option<T>(mutex: &Mutex<Option<T>>) -> std::sync::MutexGuard<'_, Option<T>> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poison) => {
+            let mut guard = poison.into_inner();
+            *guard = None;
+            mutex.clear_poison();
+            guard
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct TrayProjection {
     state: Arc<Mutex<TrayState>>,
@@ -488,26 +498,14 @@ impl TrayProjection {
         mut diag: impl FnMut(&str),
     ) -> zbus::fdo::Result<()> {
         // No optimistic flip: KWin publishes the default after configChanged.
-        diag(&default_outcome_line(
-            "persist",
-            "intent",
-            Some(default_tiled),
-        ));
+        diag(&default_outcome_line("persist", "intent", default_tiled));
         let (write, reconfigure) = persist(default_tiled);
         match write {
             Ok(()) => {
-                diag(&default_outcome_line(
-                    "persist",
-                    "written",
-                    Some(default_tiled),
-                ));
+                diag(&default_outcome_line("persist", "written", default_tiled));
             }
             Err(reason) => {
-                diag(&default_outcome_line(
-                    "persist",
-                    reason,
-                    Some(default_tiled),
-                ));
+                diag(&default_outcome_line("persist", reason, default_tiled));
                 return Err(zbus::fdo::Error::Failed("default write failed".to_owned()));
             }
         }
@@ -517,16 +515,12 @@ impl TrayProjection {
                 diag(&default_outcome_line(
                     "reconfigure",
                     "sent-unconfirmed",
-                    Some(default_tiled),
+                    default_tiled,
                 ));
                 Ok(())
             }
             Err(reason) => {
-                diag(&default_outcome_line(
-                    "reconfigure",
-                    reason,
-                    Some(default_tiled),
-                ));
+                diag(&default_outcome_line("reconfigure", reason, default_tiled));
                 // Write persisted; reconfigure failure keeps the click ok.
                 Ok(())
             }
@@ -543,48 +537,16 @@ impl TrayProjection {
         DbusMenu::new(self.clone())
     }
 
-    /// Row Q: lock the status cache, recovering a poisoned mutex at the
-    /// boundary instead of panicking. Recovery discards the cached status
-    /// (forcing one fresh re-emission) rather than trusting it.
     fn lock_last_status(&self) -> std::sync::MutexGuard<'_, Option<String>> {
-        match self.last_status.lock() {
-            Ok(guard) => guard,
-            Err(poison) => {
-                let mut guard = poison.into_inner();
-                *guard = None;
-                self.last_status.clear_poison();
-                guard
-            }
-        }
+        lock_poisoned_option(&self.last_status)
     }
 
-    /// Row Q: lock the menu fingerprint cache, recovering poison by forcing
-    /// one fresh re-emission.
     fn lock_last_menu(&self) -> std::sync::MutexGuard<'_, Option<(String, bool, bool)>> {
-        match self.last_menu.lock() {
-            Ok(guard) => guard,
-            Err(poison) => {
-                let mut guard = poison.into_inner();
-                *guard = None;
-                self.last_menu.clear_poison();
-                guard
-            }
-        }
+        lock_poisoned_option(&self.last_menu)
     }
 
-    /// Row Q: lock the settings child handle, recovering a poisoned mutex
-    /// at the boundary instead of panicking. Recovery drops the untrusted
-    /// handle so the next request spawns fresh.
     fn lock_settings_process(&self) -> std::sync::MutexGuard<'_, Option<Child>> {
-        match self.settings_process.lock() {
-            Ok(guard) => guard,
-            Err(poison) => {
-                let mut guard = poison.into_inner();
-                *guard = None;
-                self.settings_process.clear_poison();
-                guard
-            }
-        }
+        lock_poisoned_option(&self.settings_process)
     }
 
     fn view(&self) -> crate::tray_endpoint::StateView {
@@ -1985,10 +1947,10 @@ mod tests {
             toggle_outcome_line("sent-unconfirmed"),
             toggle_outcome_line("stale-refused"),
             toggle_outcome_line("invoke-failed"),
-            default_outcome_line("persist", "intent", Some(true)),
-            default_outcome_line("persist", "written", Some(false)),
-            default_outcome_line("reconfigure", "sent-unconfirmed", Some(true)),
-            default_outcome_line("reconfigure", "reconfigure-failed", Some(false)),
+            default_outcome_line("persist", "intent", true),
+            default_outcome_line("persist", "written", false),
+            default_outcome_line("reconfigure", "sent-unconfirmed", true),
+            default_outcome_line("reconfigure", "reconfigure-failed", false),
         ] {
             assert!(!line.contains('\n'));
             assert!(!line.contains("ws-1"));
