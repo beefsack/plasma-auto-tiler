@@ -10,17 +10,6 @@ decisions of 2026-09-24 are under
 
 ## Open work
 
-- P1 | Mid-drag workspace send drop | User live (2026-09-29, trace
-  `~/Downloads/plasma-auto-tiler-dev.llROHi.log`): after Meta+Shift+2
-  mid-drag, the destination reserved a spot, but dropping near it left the
-  window floating instead of tiling. Cause: the refused stale drop's restore
-  reconcile targeted the source workspace and deferred. Fixed offline (restore
-  binds to the observed destination); live re-test pending: expect
-  `drag-drop-refused-stale-workspace`, `drag-reconcile ... dispatch=dispatched`
-  and `drag-reconcile-settled ... outcome=applied`; red flag
-  `dispatch=deferred` with the window left at its drop frame.
-  [change](changes/archive/mid-drag-workspace-recovery.md)
-  [fix](changes/archive/mid-drag-destination-recovery.md)
 - P1 | Ghostty/local native alignment | The ~56 px shortfall is unexplained
   (source-only baseline fix is in; needs a fresh `just dev trace` local-move
   plus follow-on command trace), and one requested `2032x1092` became
@@ -130,11 +119,12 @@ All items below shipped offline with no live result claimed.
   P0 settings live-application launch blocker); group underlay survives
   workspace switches and `just dev` restarts, its settings apply live and it
   slides with workspace transitions; a plain drag released off-screen
-  retiles correctly with no `snapshot-invalid` (trace `H28tD1`). Remaining:
-  underlay fullscreen/maximise suppression; the mid-drag send drop is open
-  work above.
+  retiles correctly with no `snapshot-invalid` (trace `H28tD1`); mid-drag
+  workspace send now tiles the mover on its destination (after `8be1a32`).
+  Remaining: underlay fullscreen/maximise suppression.
   [settings](changes/archive/unified-settings-page.md)
   [underlay](changes/archive/group-underlay-and-preview-colors.md)
+  [mid-drag](changes/archive/mid-drag-destination-recovery.md)
 
 - Quiet refresh logs: compare `stage=refresh terminal=quiet` under normal
   and trace logging; non-quiet terminals stay visible in both. (Unfloat

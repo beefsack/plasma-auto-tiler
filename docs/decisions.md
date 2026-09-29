@@ -616,7 +616,7 @@ the corresponding item ships; each such entry names its replacement.
   the refused drop's existing restore reconcile binds to the freshly observed
   destination containing the mover, rather than waiting for the Started
   source to become visible. The source still reflows through send settlement.
-  Offline verified; live re-test pending in
+  Confirmed live by the user (laptop, 2026-09-29); see
   [mid-drag-destination-recovery](changes/archive/mid-drag-destination-recovery.md).
 - `workspaceMode` supports `per-output-local`, `global-unique`, and `shared`
   through a session-local, project-owned KWin backing-desktop mapping. KWin's
