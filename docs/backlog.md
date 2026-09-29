@@ -43,10 +43,11 @@ decisions of 2026-09-24 are under
   Interim (user, 2026-09-29): leave as is. Research done. User decisions
   (2026-09-29): Fix buttons for as many conflicting settings as possible;
   Revert restores KDE defaults; no stored prior values or tracking of user
-  changes; uninstall reverts our overridden settings to defaults; alerts on
-  the settings page first, later a tray indicator/icon whose click opens the
-  normal settings page. Open: uninstall mechanics.
-  [research](changes/host-settings-conflicts.md)
+  changes; alerts on the settings page first, later a tray indicator/icon
+  whose click opens the normal settings page. Settings-page Fix/Revert for
+  the three `kwinrc [Windows]` edge settings shipped offline; live check
+  pending. Remaining: tray indicator. Uninstall revert parked under Future.
+  [change](changes/host-settings-conflicts.md)
 - P2 | Live sibling reflow while dragging | Deferred, not light (est. several
   hundred to ~1,000 lines, write-fighting risk); research done.
   [research](research/drag-and-drop-reorganisation.md)
@@ -113,11 +114,29 @@ decisions of 2026-09-24 are under
   catalogs and live switching when adding new tiling types.
   [change](changes/shortcuts.md)
 
+## Future
+
+Unprioritised ideas; not scheduled.
+
+- Uninstall revert of host settings: reset our overridden KDE settings to
+  defaults on uninstall. Parked by the user (2026-09-29) pending research,
+  possibly via package manager hooks; no verified per-user hook exists for
+  Nix/Home Manager, KDE Store or distro packages. Users can use the
+  settings-page Revert buttons meanwhile.
+  [research](changes/host-settings-conflicts.md)
+
 ## Pending live checks
 
 All items below shipped offline with no live result claimed.
 
 ### Single-output laptop
+
+- Host settings Fix/Revert: fresh Plasma session, open Settings; both edge
+  boolean rows show Fix (Borders row only if nonzero); Fix switches rows to
+  Revert and stops KWin's native edge previews during Meta-drag; Revert
+  removes the local key and native previews return. One
+  `op=fix|revert setting=<key> outcome=ok reason=ok` log line per click.
+  [change](changes/host-settings-conflicts.md)
 
 - Confirmed live by the user (2026-09-29): tiling gap Save re-spaces tiles
   without restart and the unified settings page shows everything (closes the

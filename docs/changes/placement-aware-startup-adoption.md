@@ -151,3 +151,57 @@
   add/remove lifecycle, contrary to the current production path above. This is
   a material documentation contradiction to resolve separately, not an
   authorization to alter lifecycle policy.
+
+## Review 2026-09-29
+
+- Startup requests a debounced complete per-domain observation
+  (`kwin/src/plan-adapter-entry.ts:3156-3178`; `kwin/src/plan-adapter.ts:4804-4837`).
+  Rust attempts flat-strip fit for a fresh domain, otherwise floating-aware or
+  focus-last seed; later arrivals converge into retained topology
+  (`crates/tiler-core/src/engine.rs:601-635,792-1002`). Internal seed steps
+  never write native geometry: KWin applies one final projection per flight,
+  skipping equal rectangles (`crates/tiler-core/src/seed.rs:424-464`;
+  `kwin/src/geometry-order.ts:29-52`; `kwin/src/plan-adapter.ts:7478-7597`).
+  Confirmed Planner loss reobserves after clearing evidence; KWin restart with
+  surviving Planner retains shared-ID domains, fresh-adopts disjoint IDs
+  (`kwin/src/plan-adapter.ts:6063-6111`; `docs/decisions.md:301-308`).
+- Correction to the initial review: these are not proven successive *startup*
+  flights. `uE1S5n.log:4-12` already has `p0/p1` carrying 2/3 members before
+  the cited `p2/p3/p4` carry 1/2/3 (`:62-71,124-130,190-199`); the later
+  members first appear at `:143-148,210-215`. `H28tD1.log:4-16` already
+  settles `p0/p1` before `p2`, and `p3` follows many further refreshes
+  (`:47-74,82-610,626-647`); its third member first appears at `:639-641`.
+  Neither log records whether these later members were newly mapped or became
+  eligible. Native-effect `observe-seed` cannot decide: it runs both on effect
+  load and window addition (`kwin/native-effect/activewindowborder.cpp:253-272`).
+  `llROHi.log:4-16,151,199-227` starts with earlier 3/2-member plans; later
+  Settings open precedes admission of its config window. The other two `p2`
+  members were already observed on another desktop (`:17-23`), not created
+  during `p2`. `y3jVs3.log:15-21` skips two equal strip members;
+  `FeTnf4.log:18-24` begins mid-write. Fit/fallback choice, confirmed-loss
+  journey and native visual frames remain unproven by these logs.
+- Source explanation: the foreground observer includes every eligible normal
+  window on the active output/desktop and quarantines an unreadable member
+  rather than sending a partial snapshot (`kwin/src/plan-adapter-entry.ts:1451-1658`).
+  Hidden domains are complete individually, processed one flight per domain
+  (`kwin/src/plan-adapter.ts:5049-5098,8787-8831`). `admitted=1` counts a
+  member newly observed in a retained domain, not necessarily a new KWin window
+  (`crates/tiler-core/src/engine.rs:278-340`). Later real opens correctly
+  reflow one per observation; `desktop-mismatch` excludes other-desktop members
+  until their domain is observed. No cited trace proves that the first fresh
+  adoption omitted an already-eligible member.
+- Ranked next steps: (1) bounded correlated fit/fallback plus observation-source
+  diagnostics (~30-80 production LOC, low risk, inside observability policy);
+  (2) include missing pre-existing members in first adoption (already true for
+  complete eligible snapshots, 0 LOC absent a proven observer bug; do not merge
+  different workspaces); (3) event-driven bounded startup coalescing (~40-100
+  LOC plus tests, medium risk, delays tiling, needs a user-visible timing choice
+  and evidence of an actual restore burst). Recursive fit/tolerance still need
+  separate product decisions and do not address these later admissions.
+- Live acceptance remains: source-pinned user-run `just dev trace`, two normal
+  windows at `8,52,756,964` and `772,52,756,964` on `eDP-1` with work area
+  `0,44,1536,980` and gaps `8`; first `reconcile` should fit, log two
+  `skip-already-equal`, zero `written`, then quiet `applied-evidence-equal`.
+  Repeat after confirmed Planner loss (`plan:recovery ... outcome=confirmed-loss`)
+  and distinguish KWin restart with surviving Planner. Fit/source diagnostics
+  must be added before their log markers can be expected.
