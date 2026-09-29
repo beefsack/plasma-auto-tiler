@@ -358,9 +358,121 @@
      </layout>
     </widget>
    </item>
+   <item>
+    <widget class="QGroupBox" name="windowConflictGroup">
+     <property name="title">
+      <string>Window Edge Conflicts</string>
+     </property>
+     <layout class="QVBoxLayout" name="windowConflictLayout">
+      <item>
+       <widget class="QLabel" name="windowConflictStatusLabel">
+        <property name="text">
+         <string>Window edge state unknown.</string>
+        </property>
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="windowConflictErrorLabel">
+        <property name="text">
+         <string></string>
+        </property>
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QWidget" name="windowTilingRow">
+        <layout class="QHBoxLayout" name="windowTilingRowLayout">
+         <item>
+          <widget class="QLabel" name="windowTilingLabel">
+           <property name="text">
+            <string>ElectricBorderTiling: current ?. Tiler needs off.</string>
+           </property>
+           <property name="wordWrap">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="windowTilingFixButton">
+           <property name="text">
+            <string>Fix</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="windowTilingRevertButton">
+           <property name="text">
+            <string>Revert to KDE default</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item>
+       <widget class="QWidget" name="windowMaximizeRow">
+        <layout class="QHBoxLayout" name="windowMaximizeRowLayout">
+         <item>
+          <widget class="QLabel" name="windowMaximizeLabel">
+           <property name="text">
+            <string>ElectricBorderMaximize: current ?. Tiler needs off.</string>
+           </property>
+           <property name="wordWrap">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="windowMaximizeFixButton">
+           <property name="text">
+            <string>Fix</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="windowMaximizeRevertButton">
+           <property name="text">
+            <string>Revert to KDE default</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item>
+       <widget class="QWidget" name="windowBordersRow">
+        <layout class="QHBoxLayout" name="windowBordersRowLayout">
+         <item>
+          <widget class="QLabel" name="windowBordersLabel">
+           <property name="text">
+            <string>ElectricBorders: current ?. Tiler needs 0.</string>
+           </property>
+           <property name="wordWrap">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="windowBordersFixButton">
+           <property name="text">
+            <string>Fix</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
    </layout>
   </widget>
- <customwidgets>
+  <customwidgets>
   <customwidget>
    <class>KColorButton</class>
    <extends>QPushButton</extends>

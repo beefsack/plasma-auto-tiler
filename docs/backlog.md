@@ -40,8 +40,13 @@ decisions of 2026-09-24 are under
   revert them. Evidence: native edge tiling fired on an off-screen drag
   (trace `~/Downloads/plasma-auto-tiler-dev.H28tD1.log`; our tiler retiled
   correctly after drop) and competed visibly with our Meta-drag preview.
-  Interim (user, 2026-09-29): leave as is. Exact KWin setting keys
-  unverified; research first.
+  Interim (user, 2026-09-29): leave as is. Research done. User decisions
+  (2026-09-29): Fix buttons for as many conflicting settings as possible;
+  Revert restores KDE defaults; no stored prior values or tracking of user
+  changes; uninstall reverts our overridden settings to defaults; alerts on
+  the settings page first, later a tray indicator/icon whose click opens the
+  normal settings page. Open: uninstall mechanics.
+  [research](changes/host-settings-conflicts.md)
 - P2 | Live sibling reflow while dragging | Deferred, not light (est. several
   hundred to ~1,000 lines, write-fighting risk); research done.
   [research](research/drag-and-drop-reorganisation.md)

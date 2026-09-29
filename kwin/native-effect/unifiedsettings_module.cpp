@@ -10,11 +10,13 @@
 #include <QDBusConnection>
 #include <QDBusInterface>
 #include <QDBusMessage>
+#include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSpinBox>
 
 Q_LOGGING_CATEGORY(lcScriptConfig, "plasmaautotiler.script-config", QtInfoMsg)
+Q_LOGGING_CATEGORY(lcWindowConflicts, "plasmaautotiler.window-conflicts", QtInfoMsg)
 
 namespace KWin
 {
@@ -60,6 +62,31 @@ void logScriptConfig(const char *operation, const char *stage, const char *outco
                                                  QString::fromUtf8(outcome), bounded);
 }
 
+struct WindowConflictState {
+    bool tiling = true;
+    bool maximize = true;
+    int borders = 0;
+};
+
+WindowConflictState readWindowConflictState()
+{
+    const KSharedConfig::Ptr config = KSharedConfig::openConfig(QStringLiteral("kwinrc"));
+    config->reparseConfiguration();
+    const KConfigGroup group(config, QStringLiteral("Windows"));
+    WindowConflictState state;
+    state.tiling = group.readEntry(QStringLiteral("ElectricBorderTiling"), true);
+    state.maximize = group.readEntry(QStringLiteral("ElectricBorderMaximize"), true);
+    state.borders = group.readEntry(QStringLiteral("ElectricBorders"), 0);
+    return state;
+}
+
+void logWindowConflict(const char *operation, const QString &setting, const char *outcome, const QString &reason)
+{
+    qCInfo(lcWindowConflicts).noquote() << QStringLiteral("op=%1 setting=%2 outcome=%3 reason=%4")
+                                               .arg(QString::fromUtf8(operation), setting,
+                                                    QString::fromUtf8(outcome), reason);
+}
+
 } // namespace
 
 UnifiedSettingsModule::UnifiedSettingsModule(QObject *parent, const KPluginMetaData &data)
@@ -91,6 +118,28 @@ UnifiedSettingsModule::UnifiedSettingsModule(QObject *parent, const KPluginMetaD
     connect(m_ui.shortcutForceApplyButton, &QPushButton::clicked, this, &UnifiedSettingsModule::requestShortcutForceApply);
     connect(m_ui.shortcutForceCancelButton, &QPushButton::clicked, this, &UnifiedSettingsModule::requestShortcutForceCancel);
     refreshShortcutState();
+
+    if (m_ui.windowTilingFixButton != nullptr) {
+        connect(m_ui.windowTilingFixButton, &QPushButton::clicked, this,
+                [this] { requestWindowFix(QStringLiteral("ElectricBorderTiling")); });
+    }
+    if (m_ui.windowTilingRevertButton != nullptr) {
+        connect(m_ui.windowTilingRevertButton, &QPushButton::clicked, this,
+                [this] { requestWindowRevert(QStringLiteral("ElectricBorderTiling")); });
+    }
+    if (m_ui.windowMaximizeFixButton != nullptr) {
+        connect(m_ui.windowMaximizeFixButton, &QPushButton::clicked, this,
+                [this] { requestWindowFix(QStringLiteral("ElectricBorderMaximize")); });
+    }
+    if (m_ui.windowMaximizeRevertButton != nullptr) {
+        connect(m_ui.windowMaximizeRevertButton, &QPushButton::clicked, this,
+                [this] { requestWindowRevert(QStringLiteral("ElectricBorderMaximize")); });
+    }
+    if (m_ui.windowBordersFixButton != nullptr) {
+        connect(m_ui.windowBordersFixButton, &QPushButton::clicked, this,
+                [this] { requestWindowFix(QStringLiteral("ElectricBorders")); });
+    }
+    refreshWindowConflicts();
 
     m_scriptRestartRequired = false;
     m_scriptStatus = QStringLiteral("No pending script setting in this dialog.");
@@ -607,6 +656,8 @@ void UnifiedSettingsModule::load()
 
     clearForcePreview();
     refreshShortcutState();
+    m_windowConflictError.clear();
+    refreshWindowConflicts();
 
     const KConfigGroup group(KSharedConfig::openConfig(QStringLiteral("kwinrc")),
                              QStringLiteral("Script-plasma-auto-tiler-kwin"));
@@ -797,6 +848,125 @@ void UnifiedSettingsModule::defaults()
     m_ui.innerGapSpinBox->setValue(kGapDefault);
     m_ui.outerGapSpinBox->setValue(kGapDefault);
     updateScriptState();
+}
+
+void UnifiedSettingsModule::refreshWindowConflicts()
+{
+    updateWindowConflictPresentation();
+}
+
+void UnifiedSettingsModule::requestWindowFix(const QString &key)
+{
+    runWindowConflictWrite(key, "fix");
+}
+
+void UnifiedSettingsModule::requestWindowRevert(const QString &key)
+{
+    runWindowConflictWrite(key, "revert");
+}
+
+void UnifiedSettingsModule::runWindowConflictWrite(const QString &key, const char *operation)
+{
+    const bool isFix = QString::fromUtf8(operation) == QStringLiteral("fix");
+    const bool isBorders = key == QStringLiteral("ElectricBorders");
+
+    const KSharedConfig::Ptr config = KSharedConfig::openConfig(QStringLiteral("kwinrc"));
+    KConfigGroup group(config, QStringLiteral("Windows"));
+    if (isFix && !isBorders) {
+        group.writeEntry(key, false);
+    } else {
+        group.deleteEntry(key);
+    }
+    bool syncOk = group.sync();
+    if (syncOk) {
+        syncOk = config->sync();
+    }
+    bool sendOk = false;
+    if (syncOk) {
+        sendOk = requestScriptReconfigure();
+    }
+
+    config->reparseConfiguration();
+    const KConfigGroup readback(config, QStringLiteral("Windows"));
+    bool matches = false;
+    if (isBorders) {
+        matches = readback.readEntry(key, 0) == 0;
+    } else if (isFix) {
+        matches = !readback.readEntry(key, true);
+    } else {
+        matches = readback.readEntry(key, true);
+    }
+
+    const bool ok = syncOk && sendOk && matches;
+    QString reason;
+    if (!syncOk) {
+        reason = QStringLiteral("write-failed");
+    } else if (!sendOk) {
+        reason = QStringLiteral("send-failed");
+    } else if (!matches) {
+        reason = QStringLiteral("readback-mismatch");
+    } else {
+        reason = QStringLiteral("ok");
+    }
+    logWindowConflict(operation, key, ok ? "ok" : "failed", reason);
+    if (ok) {
+        m_windowConflictError.clear();
+    } else {
+        const QString what = isFix ? QStringLiteral("Fix") : QStringLiteral("Revert");
+        QString cause;
+        if (!syncOk) {
+            cause = QStringLiteral("the kwinrc write failed");
+        } else if (!sendOk) {
+            cause = QStringLiteral("the KWin reconfigure send failed");
+        } else {
+            cause = QStringLiteral("the re-read value did not match");
+        }
+        m_windowConflictError = QStringLiteral("%1 failed for %2: %3.").arg(what, key, cause);
+    }
+    updateWindowConflictPresentation();
+}
+
+void UnifiedSettingsModule::updateWindowConflictPresentation()
+{
+    const WindowConflictState state = readWindowConflictState();
+    const int conflicts = (state.tiling ? 1 : 0) + (state.maximize ? 1 : 0) + (state.borders != 0 ? 1 : 0);
+
+    if (m_ui.windowConflictStatusLabel != nullptr) {
+        m_ui.windowConflictStatusLabel->setText(
+            conflicts > 0 ? QStringLiteral("Found %1 conflicting edge setting(s). Use Fix on each shown row.")
+                                        .arg(conflicts)
+                          : QStringLiteral("No window edge conflicts."));
+    }
+    if (m_ui.windowTilingLabel != nullptr) {
+        m_ui.windowTilingLabel->setText(QStringLiteral("ElectricBorderTiling: %1. Edge drag tiles windows over our preview.")
+                                            .arg(state.tiling ? QStringLiteral("on") : QStringLiteral("off")));
+    }
+    if (m_ui.windowMaximizeLabel != nullptr) {
+        m_ui.windowMaximizeLabel->setText(QStringLiteral("ElectricBorderMaximize: %1. Top-edge drag maximizes windows over our preview.")
+                                               .arg(state.maximize ? QStringLiteral("on") : QStringLiteral("off")));
+    }
+    if (m_ui.windowBordersLabel != nullptr) {
+        m_ui.windowBordersLabel->setText(
+            QStringLiteral("ElectricBorders: %1. Switching desktops at edges interrupts a window drag.").arg(state.borders));
+    }
+    if (m_ui.windowTilingFixButton != nullptr) {
+        m_ui.windowTilingFixButton->setVisible(state.tiling);
+    }
+    if (m_ui.windowTilingRevertButton != nullptr) {
+        m_ui.windowTilingRevertButton->setVisible(!state.tiling);
+    }
+    if (m_ui.windowMaximizeFixButton != nullptr) {
+        m_ui.windowMaximizeFixButton->setVisible(state.maximize);
+    }
+    if (m_ui.windowMaximizeRevertButton != nullptr) {
+        m_ui.windowMaximizeRevertButton->setVisible(!state.maximize);
+    }
+    if (m_ui.windowBordersRow != nullptr) {
+        m_ui.windowBordersRow->setVisible(state.borders != 0);
+    }
+    if (m_ui.windowConflictErrorLabel != nullptr) {
+        m_ui.windowConflictErrorLabel->setText(m_windowConflictError);
+    }
 }
 
 } // namespace KWin

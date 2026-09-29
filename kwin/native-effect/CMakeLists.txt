@@ -328,10 +328,13 @@ if(BUILD_TESTING)
         COMMAND plasma-auto-tiler-script-config-test gaps)
     add_test(NAME native-script-config-save
         COMMAND plasma-auto-tiler-script-config-test save)
+    add_test(NAME native-script-config-windows
+        COMMAND plasma-auto-tiler-script-config-test windows)
     set_tests_properties(
         native-script-config-dbus
         native-script-config-gaps
         native-script-config-save
+        native-script-config-windows
         PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

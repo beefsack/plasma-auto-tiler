@@ -93,6 +93,25 @@ the corresponding item ships; each such entry names its replacement.
   Storage remains in the existing `kwinrc` groups. The script KPackage still
   needs the host-built native KCM companion for Configure; the effect need not
   be enabled. Live gap pickup and unified-page acceptance remain pending.
+- Host setting conflicts (user decision 2026-09-29; offline implementation,
+  live acceptance pending): the unified settings page reads `kwinrc [Windows]`
+  `ElectricBorderTiling`, `ElectricBorderMaximize`, and `ElectricBorders` on
+  open, showing current values with short explanations. The boolean rows are
+  always visible: Fix writes `false` when on; Revert removes the local key
+  when off so the KDE 6.7.5 default `true` takes effect. The `ElectricBorders`
+  row appears only when nonzero: its sole Fix removes the local key so default
+  `0` takes effect. No prior-value journal or change ownership is tracked.
+  Explicit KConfig changes send KWin reconfigure and read back effective
+  config; a failed write or send is shown/logged, and a queued send does not
+  prove that the running compositor applied the value.
+  Startup and ordinary settings Save never change these host keys. Existing
+  shortcut Apply/Force/Revert remains the sole key-binding correction flow.
+  Alerts are settings-page-only for now; a tray indicator/icon opening the
+  normal settings page is a later, unimplemented direction. The user wants
+  uninstall to restore defaults for our overridden host settings, but how
+  each delivery route can do that without tracking is still unselected; no
+  uninstall reset is implemented. Stateless uninstall would also reset a
+  user-made value that equals our fix value.
 - Threat model (AR13, shipped offline): processes of the same user are trusted.
   The tray has no KWin executable allowlist or `/proc`/pidfd/inode binding;
   it runs single-instance by owning its D-Bus name with `DoNotQueue` and

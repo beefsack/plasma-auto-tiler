@@ -11,9 +11,11 @@
 #include <QLabel>
 #include <QMessageLogContext>
 #include <QMimeData>
+#include <QPushButton>
 #include <QSpinBox>
 #include <QStringList>
 #include <QTemporaryDir>
+#include <QWidget>
 
 #include <cstdio>
 #include <cstdlib>
@@ -110,14 +112,6 @@ bool containsAppliedClaim(const QString &text)
     return text.toLower().contains(QStringLiteral("applied"));
 }
 
-void scriptReconfigureTargetIsExact()
-{
-    CHECK(KWin::ScriptConfigModule::scriptService() == QStringLiteral("org.kde.KWin"));
-    CHECK(KWin::ScriptConfigModule::scriptPath() == QStringLiteral("/KWin"));
-    CHECK(KWin::ScriptConfigModule::scriptInterface() == QStringLiteral("org.kde.KWin"));
-    CHECK(KWin::ScriptConfigModule::scriptMethod() == QStringLiteral("reconfigure"));
-}
-
 class CountingScriptModule : public KWin::ScriptConfigModule
 {
 public:
@@ -150,6 +144,269 @@ public:
     int effectCalls = 0;
     bool effectSucceed = false;
 };
+
+void scriptReconfigureTargetIsExact()
+{
+    CHECK(KWin::ScriptConfigModule::scriptService() == QStringLiteral("org.kde.KWin"));
+    CHECK(KWin::ScriptConfigModule::scriptPath() == QStringLiteral("/KWin"));
+    CHECK(KWin::ScriptConfigModule::scriptInterface() == QStringLiteral("org.kde.KWin"));
+    CHECK(KWin::ScriptConfigModule::scriptMethod() == QStringLiteral("reconfigure"));
+}
+
+KConfigGroup windowsGroup()
+{
+    return KConfigGroup(KSharedConfig::openConfig(QStringLiteral("kwinrc")), QStringLiteral("Windows"));
+}
+
+QLabel *windowConflictStatusLabel(KWin::ScriptConfigModule &module)
+{
+    return module.widget()->findChild<QLabel *>(QStringLiteral("windowConflictStatusLabel"));
+}
+
+QLabel *windowConflictErrorLabel(KWin::ScriptConfigModule &module)
+{
+    return module.widget()->findChild<QLabel *>(QStringLiteral("windowConflictErrorLabel"));
+}
+
+QPushButton *windowButton(KWin::ScriptConfigModule &module, const char *name)
+{
+    return module.widget()->findChild<QPushButton *>(QString::fromUtf8(name));
+}
+
+QLabel *windowLabel(KWin::ScriptConfigModule &module, const char *name)
+{
+    return module.widget()->findChild<QLabel *>(QString::fromUtf8(name));
+}
+
+QWidget *windowRow(KWin::ScriptConfigModule &module, const char *name)
+{
+    return module.widget()->findChild<QWidget *>(QString::fromUtf8(name));
+}
+
+bool windowVisible(QWidget *widget)
+{
+    return widget != nullptr && !widget->isHidden();
+}
+
+void seedWindows(bool tiling, bool maximize, int borders)
+{
+    KConfigGroup group = windowsGroup();
+    group.writeEntry(QStringLiteral("ElectricBorderTiling"), tiling);
+    group.writeEntry(QStringLiteral("ElectricBorderMaximize"), maximize);
+    group.writeEntry(QStringLiteral("ElectricBorders"), borders);
+    group.sync();
+    KSharedConfig::openConfig(QStringLiteral("kwinrc"))->sync();
+}
+
+void clearWindowsKeys()
+{
+    KConfigGroup group = windowsGroup();
+    group.deleteEntry(QStringLiteral("ElectricBorderTiling"));
+    group.deleteEntry(QStringLiteral("ElectricBorderMaximize"));
+    group.deleteEntry(QStringLiteral("ElectricBorders"));
+    group.sync();
+    KSharedConfig::openConfig(QStringLiteral("kwinrc"))->sync();
+}
+
+void windowRowAndButtonStates()
+{
+    // Bool rows are always visible with exactly one button; the borders row
+    // shows only when nonzero. Ordinary Save leaves [Windows] keys alone.
+    seedWindows(true, true, 2);
+    {
+        CountingScriptModule module(nullptr, KPluginMetaData());
+        module.load();
+        CHECK(windowConflictStatusLabel(module) != nullptr);
+        CHECK(windowConflictErrorLabel(module) != nullptr);
+        CHECK(windowConflictErrorLabel(module)->text().isEmpty());
+        CHECK(windowVisible(windowRow(module, "windowTilingRow")));
+        CHECK(windowVisible(windowRow(module, "windowMaximizeRow")));
+        CHECK(windowVisible(windowRow(module, "windowBordersRow")));
+        CHECK(windowVisible(windowButton(module, "windowTilingFixButton")));
+        CHECK(!windowVisible(windowButton(module, "windowTilingRevertButton")));
+        CHECK(windowVisible(windowButton(module, "windowMaximizeFixButton")));
+        CHECK(!windowVisible(windowButton(module, "windowMaximizeRevertButton")));
+        CHECK(windowVisible(windowButton(module, "windowBordersFixButton")));
+        CHECK(windowConflictStatusLabel(module)->text().contains(QStringLiteral("3")));
+        CHECK(windowLabel(module, "windowTilingLabel")->text().contains(QStringLiteral("Tiling: on")));
+        CHECK(windowLabel(module, "windowMaximizeLabel")->text().contains(QStringLiteral("Maximize: on")));
+        CHECK(windowLabel(module, "windowBordersLabel")->text().contains(QStringLiteral("Borders: 2")));
+        CHECK(!module.needsSave());
+        module.scriptSucceed = true;
+        module.save();
+        CHECK(windowsGroup().readEntry(QStringLiteral("ElectricBorderTiling"), false));
+        CHECK(windowsGroup().readEntry(QStringLiteral("ElectricBorderMaximize"), false));
+        CHECK(windowsGroup().readEntry(QStringLiteral("ElectricBorders"), -1) == 2);
+        CHECK(!module.needsSave());
+    }
+    // Tiler-friendly: bools offer only Revert, borders at default hides.
+    seedWindows(false, false, 0);
+    {
+        CountingScriptModule module(nullptr, KPluginMetaData());
+        module.load();
+        CHECK(windowVisible(windowRow(module, "windowTilingRow")));
+        CHECK(windowVisible(windowRow(module, "windowMaximizeRow")));
+        CHECK(!windowVisible(windowRow(module, "windowBordersRow")));
+        CHECK(!windowVisible(windowButton(module, "windowTilingFixButton")));
+        CHECK(windowVisible(windowButton(module, "windowTilingRevertButton")));
+        CHECK(!windowVisible(windowButton(module, "windowMaximizeFixButton")));
+        CHECK(windowVisible(windowButton(module, "windowMaximizeRevertButton")));
+        CHECK(windowConflictStatusLabel(module)->text().contains(QStringLiteral("No window edge conflicts")));
+        CHECK(windowLabel(module, "windowTilingLabel")->text().contains(QStringLiteral("Tiling: off")));
+        CHECK(windowLabel(module, "windowMaximizeLabel")->text().contains(QStringLiteral("Maximize: off")));
+    }
+    // Missing keys read back as the KDE defaults (true/true/0): the two
+    // booleans conflict, the integer does not.
+    clearWindowsKeys();
+    {
+        KWin::ScriptConfigModule module(nullptr, KPluginMetaData());
+        module.load();
+        CHECK(windowVisible(windowButton(module, "windowTilingFixButton")));
+        CHECK(!windowVisible(windowButton(module, "windowTilingRevertButton")));
+        CHECK(windowVisible(windowButton(module, "windowMaximizeFixButton")));
+        CHECK(!windowVisible(windowButton(module, "windowMaximizeRevertButton")));
+        CHECK(!windowVisible(windowRow(module, "windowBordersRow")));
+        CHECK(windowConflictStatusLabel(module)->text().contains(QStringLiteral("2")));
+    }
+    // Single conflict flips only its own button.
+    seedWindows(false, true, 0);
+    {
+        KWin::ScriptConfigModule module(nullptr, KPluginMetaData());
+        module.load();
+        CHECK(!windowVisible(windowButton(module, "windowTilingFixButton")));
+        CHECK(windowVisible(windowButton(module, "windowTilingRevertButton")));
+        CHECK(windowVisible(windowButton(module, "windowMaximizeFixButton")));
+        CHECK(!windowVisible(windowButton(module, "windowMaximizeRevertButton")));
+    }
+    clearWindowsKeys();
+}
+
+void windowFixPersistsAndRevertDeletesKey()
+{
+    seedWindows(true, true, 0);
+    CountingScriptModule module(nullptr, KPluginMetaData());
+    module.load();
+    const bool needsSaveBefore = module.needsSave();
+    module.scriptSucceed = true;
+
+    module.requestWindowFix(QStringLiteral("ElectricBorderTiling"));
+    CHECK(windowsGroup().readEntry(QStringLiteral("ElectricBorderTiling"), true) == false);
+    CHECK(windowConflictErrorLabel(module)->text().isEmpty());
+    CHECK(module.needsSave() == needsSaveBefore);
+    CHECK(!windowVisible(windowButton(module, "windowTilingFixButton")));
+    CHECK(windowVisible(windowButton(module, "windowTilingRevertButton")));
+    CHECK(windowLabel(module, "windowTilingLabel")->text().contains(QStringLiteral("Tiling: off")));
+
+    module.requestWindowFix(QStringLiteral("ElectricBorderMaximize"));
+    CHECK(windowsGroup().readEntry(QStringLiteral("ElectricBorderMaximize"), true) == false);
+    CHECK(windowConflictErrorLabel(module)->text().isEmpty());
+    CHECK(windowConflictStatusLabel(module)->text().contains(QStringLiteral("No window edge conflicts")));
+    CHECK(module.needsSave() == needsSaveBefore);
+
+    // Readback into a fresh page reflects the persisted values.
+    {
+        KWin::ScriptConfigModule reloaded(nullptr, KPluginMetaData());
+        reloaded.load();
+        CHECK(!windowVisible(windowButton(reloaded, "windowTilingFixButton")));
+        CHECK(windowVisible(windowButton(reloaded, "windowTilingRevertButton")));
+        CHECK(windowLabel(reloaded, "windowTilingLabel")->text().contains(QStringLiteral("Tiling: off")));
+    }
+
+    // Revert deletes the local key so the KDE default (true) takes effect.
+    module.requestWindowRevert(QStringLiteral("ElectricBorderTiling"));
+    CHECK(!windowsGroup().hasKey(QStringLiteral("ElectricBorderTiling")));
+    CHECK(windowsGroup().readEntry(QStringLiteral("ElectricBorderTiling"), true));
+    CHECK(windowConflictErrorLabel(module)->text().isEmpty());
+    CHECK(windowVisible(windowButton(module, "windowTilingFixButton")));
+    CHECK(!windowVisible(windowButton(module, "windowTilingRevertButton")));
+    CHECK(windowLabel(module, "windowTilingLabel")->text().contains(QStringLiteral("Tiling: on")));
+    CHECK(module.needsSave() == needsSaveBefore);
+    // The untouched key is preserved.
+    CHECK(windowsGroup().readEntry(QStringLiteral("ElectricBorderMaximize"), true) == false);
+    clearWindowsKeys();
+}
+
+void windowBordersFixDeletesKey()
+{
+    seedWindows(false, false, 4);
+    CountingScriptModule module(nullptr, KPluginMetaData());
+    module.load();
+    CHECK(windowVisible(windowRow(module, "windowBordersRow")));
+    const bool needsSaveBefore = module.needsSave();
+    module.scriptSucceed = true;
+    module.requestWindowFix(QStringLiteral("ElectricBorders"));
+    CHECK(!windowsGroup().hasKey(QStringLiteral("ElectricBorders")));
+    CHECK(windowsGroup().readEntry(QStringLiteral("ElectricBorders"), 0) == 0);
+    CHECK(windowConflictErrorLabel(module)->text().isEmpty());
+    CHECK(!windowVisible(windowRow(module, "windowBordersRow")));
+    CHECK(windowConflictStatusLabel(module)->text().contains(QStringLiteral("No window edge conflicts")));
+    CHECK(module.needsSave() == needsSaveBefore);
+    {
+        KWin::ScriptConfigModule reloaded(nullptr, KPluginMetaData());
+        reloaded.load();
+        CHECK(!windowVisible(windowRow(reloaded, "windowBordersRow")));
+    }
+    clearWindowsKeys();
+}
+
+void windowFailedSendShowsError()
+{
+    seedWindows(true, false, 0);
+    CountingScriptModule module(nullptr, KPluginMetaData());
+    module.load();
+    module.scriptSucceed = false;
+    module.requestWindowFix(QStringLiteral("ElectricBorderTiling"));
+    CHECK(!windowConflictErrorLabel(module)->text().isEmpty());
+    CHECK(windowConflictErrorLabel(module)->text().contains(QStringLiteral("ElectricBorderTiling")));
+    CHECK(module.needsSave() == false);
+    clearWindowsKeys();
+}
+
+QStringList capturedWindowConflictMessages;
+
+void captureWindowConflictMessage(QtMsgType, const QMessageLogContext &, const QString &message)
+{
+    capturedWindowConflictMessages.append(message);
+}
+
+void windowOperationsLogOneLinePerOperation()
+{
+    seedWindows(true, false, 0);
+    capturedWindowConflictMessages.clear();
+    const QtMessageHandler previous = qInstallMessageHandler(captureWindowConflictMessage);
+    {
+        CountingScriptModule module(nullptr, KPluginMetaData());
+        module.load();
+        module.scriptSucceed = true;
+        module.requestWindowFix(QStringLiteral("ElectricBorderTiling"));
+        module.requestWindowRevert(QStringLiteral("ElectricBorderTiling"));
+    }
+    qInstallMessageHandler(previous);
+    int fixLogs = 0;
+    int revertLogs = 0;
+    for (const QString &message : capturedWindowConflictMessages) {
+        if (!message.contains(QStringLiteral("op="))) {
+            continue;
+        }
+        if (message.contains(QStringLiteral("op=fix")) && message.contains(QStringLiteral("setting=ElectricBorderTiling"))) {
+            ++fixLogs;
+            CHECK(message.contains(QStringLiteral("outcome=ok")));
+            CHECK(message.contains(QStringLiteral("reason=ok")));
+        }
+        if (message.contains(QStringLiteral("op=revert"))
+            && message.contains(QStringLiteral("setting=ElectricBorderTiling"))) {
+            ++revertLogs;
+            CHECK(message.contains(QStringLiteral("outcome=ok")));
+            CHECK(message.contains(QStringLiteral("reason=ok")));
+        }
+        // Short single line: no config paths leak into the log.
+        CHECK(!message.contains(QStringLiteral("/home")));
+        CHECK(!message.contains(QStringLiteral(".config")));
+    }
+    CHECK(fixLogs == 1);
+    CHECK(revertLogs == 1);
+    clearWindowsKeys();
+}
 
 void gapContractNormalizesBoundsAndPersists()
 {
@@ -770,7 +1027,7 @@ int main(int argc, char **argv)
     app.clipboard()->setMimeData(new QMimeData);
 
     if (argc != 2) {
-        std::fprintf(stderr, "usage: %s dbus|gaps|save\n", argv[0]);
+        std::fprintf(stderr, "usage: %s dbus|gaps|save|windows\n", argv[0]);
         return EXIT_FAILURE;
     }
 
@@ -791,6 +1048,12 @@ int main(int argc, char **argv)
         combinedGapAndStartupSaveSendsWithResidualRestart();
         combinedGapAndStartupSendFailureKeepsResidualRestart();
         combinedEffectAndScriptSavePreservesScriptOnEffectFailure();
+    } else if (scenario == QStringLiteral("windows")) {
+        windowRowAndButtonStates();
+        windowFixPersistsAndRevertDeletesKey();
+        windowBordersFixDeletesKey();
+        windowFailedSendShowsError();
+        windowOperationsLogOneLinePerOperation();
     } else {
         std::fprintf(stderr, "unknown scenario: %s\n", argv[1]);
         return EXIT_FAILURE;

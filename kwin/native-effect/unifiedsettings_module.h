@@ -50,6 +50,10 @@ public:
     bool isScriptRestartRequired() const;
     bool isGapReconfigurePending() const;
 
+    void refreshWindowConflicts();
+    void requestWindowFix(const QString &key);
+    void requestWindowRevert(const QString &key);
+
 public Q_SLOTS:
     void load() override;
     void save() override;
@@ -68,6 +72,9 @@ private:
 
     QVariantMap currentScriptValues() const;
     void updateScriptState();
+
+    void runWindowConflictWrite(const QString &key, const char *operation);
+    void updateWindowConflictPresentation();
 
     ::Ui::UnifiedSettings m_ui;
     bool m_effectReconfigurePending = false;
@@ -95,6 +102,8 @@ private:
     // for it through updateScriptState. Cleared on a sent request or load.
     bool m_gapReconfigurePending = false;
     QString m_scriptStatus;
+
+    QString m_windowConflictError;
 };
 
 } // namespace KWin
