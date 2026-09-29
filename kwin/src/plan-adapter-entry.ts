@@ -47,12 +47,12 @@ import {
     GROUP_HIGHLIGHT_SET_METHOD,
     startActiveGroupHighlight,
 } from "./active-group-highlight";
-import { PLAN_DBUS_SERVICE, PLAN_INTERFACE, PLAN_METHOD, PLAN_OBJECT, PLAN_SERVICE, PLAN_START_FLAGS, PLAN_START_METHOD, PlanAdapter, PlanDirection, PlanDomain, PlanDragPreviewResult, PlanObserved, PlanResizeMode, DirectionalObservation, PlanWindowConstraints, planDirectionalFingerprint, planFingerprint } from "./plan-adapter";
+import { PLAN_DBUS_SERVICE, PLAN_INTERFACE, PLAN_METHOD, PLAN_OBJECT, PLAN_SERVICE, PLAN_START_FLAGS, PLAN_START_METHOD, PlanAdapter, PlanDirection, PlanDomain, PlanDragPreviewResult, PlanObserved, PlanResizeMode, PlanSnapshot, DirectionalObservation, PlanWindowConstraints, planDirectionalFingerprint, planFingerprint, snapshotOf } from "./plan-adapter";
 import { processGeneration } from "./tray-publisher";
 import { PLAN_SOURCE_REV } from "./source-rev";
 import { connectSignal, readSignal } from "./signal-capability";
 import { KWIN_TRACE_ENABLED } from "./trace";
-import { WorkspaceNativeAdapter, workspaceShortcutCatalog } from "./workspace-native";
+import { WorkspaceNativeAdapter, parseDefaultTiled, workspaceShortcutCatalog } from "./workspace-native";
 import {
     WORKSPACE_SEND_DBUS_SERVICE,
     WORKSPACE_SEND_START_FLAGS,
@@ -104,10 +104,24 @@ export interface PlanEntryOverrides {
     ) => boolean;
     readonly readProfileFn?: () => unknown;
     readonly readWorkspaceModeFn?: () => unknown;
+    readonly readTilingDefaultFn?: () => unknown;
     readonly readInnerGapFn?: () => unknown;
     readonly readOuterGapFn?: () => unknown;
     readonly options?: unknown;
+    // Workspace tiling menu state: invoked whenever the tray snapshot
+    // (scope, tiled, default) changes so entry.ts can bump the publisher
+    // revision immediately. Heartbeat also converges drift once per second.
+    readonly onWorkspaceTilingChanged?: (snapshot: WorkspaceTilingSnapshot) => void;
 }
+
+export interface WorkspaceTilingSnapshot {
+    readonly scope: string;
+    readonly tiled: boolean;
+    readonly defaultTiled: boolean;
+}
+
+export const WORKSPACE_TILING_TOGGLE_ACTION = "plasma-auto-tiler-toggle-workspace-tiling";
+export const WORKSPACE_TILING_TOGGLE_TEXT = "Toggle tiling for current workspace";
 
 export interface PlanEntryHandle {
     readonly stop: () => void;
@@ -120,6 +134,8 @@ export interface PlanEntryHandle {
     readonly requestFullscreen: () => void;
     readonly requestWorkspaceSelect: (index: unknown) => void;
     readonly requestWorkspaceMove: (index: unknown) => void;
+    readonly getWorkspaceTilingSnapshot: () => WorkspaceTilingSnapshot;
+    readonly requestWorkspaceTilingToggle: () => void;
 }
 
 export interface PlanShortcutRow {
@@ -420,6 +436,23 @@ function readWorkspaceModeValue(readModeFn: (() => unknown) | undefined): unknow
     } catch (error) {
         void error;
         return "per-output-local";
+    }
+}
+
+function readTilingDefaultValue(readDefaultFn: (() => unknown) | undefined): unknown {
+    if (readDefaultFn !== undefined) {
+        try {
+            return readDefaultFn();
+        } catch (error) {
+            void error;
+            return true;
+        }
+    }
+    try {
+        return readConfig("defaultTiled", true);
+    } catch (error) {
+        void error;
+        return true;
     }
 }
 
@@ -2642,6 +2675,19 @@ function startPlanAdapterEntryOnce(
     // Actual failed subscription stage kind from this attempt's enable
     // loop, reported once via reportEnableCause when enable refuses.
     let failedSubscribeKind: string | null = null;
+    // Workspace tiling owner, assigned after the adapter. Null before
+    // enable reads as tiled.
+    let workspaceNativeRef: WorkspaceNativeAdapter | null = null;
+    const isEntryDomainTiled = (output: string, workspace: string): boolean => {
+        void output;
+        try {
+            const ref = workspaceNativeRef;
+            return ref === null ? true : ref.isTiled(workspace);
+        } catch (error) {
+            void error;
+            return true;
+        }
+    };
     const adapter = new PlanAdapter({
         callDbus,
         scheduleOnce,
@@ -2736,10 +2782,50 @@ function startPlanAdapterEntryOnce(
                 void error;
             }
         },
-        observe: () => observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility, nativeOwners),
-        observeHidden: () => observeHiddenDomains(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility, nativeOwners),
-        observeDirectional: (direction) =>
-            observeDirectionalDomain(liveWorkspace, nativeIds, floatingIds, domainGaps, direction, reportEligibility, nativeOwners),
+        observe: () => {
+            const seen = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility, nativeOwners);
+            if (seen === null) {
+                return null;
+            }
+            // Floating workspaces are unmanaged: hide the foreground
+            // observation so automatic tiling, Meta+G, and group queries
+            // skip it. Release-domain snapshots bypass this filter via the
+            // raw observers below.
+            if (!isEntryDomainTiled(seen.domainOutput, seen.domainWorkspace)) {
+                return null;
+            }
+            return seen;
+        },
+        observeHidden: () => {
+            const list = observeHiddenDomains(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility, nativeOwners);
+            const out: PlanObserved[] = [];
+            for (const entry of list) {
+                if (isEntryDomainTiled(entry.domainOutput, entry.domainWorkspace)) {
+                    out.push(entry);
+                }
+            }
+            return Object.freeze(out);
+        },
+        observeDirectional: (direction) => {
+            const outcome = observeDirectionalDomain(liveWorkspace, nativeIds, floatingIds, domainGaps, direction, reportEligibility, nativeOwners);
+            if (outcome.status !== "ready" || outcome.observed === null) {
+                return outcome;
+            }
+            const seen = outcome.observed;
+            if (!isEntryDomainTiled(seen.domainOutput, seen.domainWorkspace)) {
+                return { status: "invalid", observed: null };
+            }
+            const domains = seen.domains;
+            if (domains !== undefined) {
+                for (const entry of domains) {
+                    if (!isEntryDomainTiled(entry.output, entry.workspace)) {
+                        return { status: "invalid", observed: null };
+                    }
+                }
+            }
+            return outcome;
+        },
+        isDomainTiled: (output, workspace) => isEntryDomainTiled(output, workspace),
         clearMaximize: (target) => {
             try {
                 const method = readProp(target, "setMaximize");
@@ -3280,9 +3366,230 @@ function startPlanAdapterEntryOnce(
     const workspaceNative = new WorkspaceNativeAdapter({
         getWorkspace: () => liveWorkspace,
         readWorkspaceMode: () => readWorkspaceModeValue(overrides.readWorkspaceModeFn),
+        readTilingDefault: () => readTilingDefaultValue(overrides.readTilingDefaultFn),
         log,
     });
     workspaceNative.enable();
+    workspaceNativeRef = workspaceNative;
+    const getWorkspaceTilingSnapshot = (): WorkspaceTilingSnapshot => {
+        try {
+            const scope = workspaceNative.currentScopeId() ?? "";
+            const current = workspaceNative.isCurrentTiled();
+            const defaultTiled = workspaceNative.getDefaultTiled();
+            return { scope, tiled: current === null ? defaultTiled : current, defaultTiled };
+        } catch (error) {
+            void error;
+            return { scope: "", tiled: true, defaultTiled: true };
+        }
+    };
+    const emitWorkspaceTiling = (): void => {
+        try {
+            overrides.onWorkspaceTilingChanged?.(getWorkspaceTilingSnapshot());
+        } catch (error) {
+            void error;
+        }
+    };
+    // Retile marks tiled only after the exact domain release confirms;
+    // failures retry on a later lifecycle edge.
+    const confirmedReleases = new Set<string>();
+    const pendingRetiles = new Set<string>();
+    const dispatchedReleases = new Set<string>();
+    let pendingRetileIds: string[] = [];
+    const releaseDomainKey = (output: string, workspace: string): string => `${output}\u0000${workspace}`;
+    const collectAllSnapshots = (): PlanSnapshot[] => {
+        const out: PlanSnapshot[] = [];
+        const seen = new Set<string>();
+        const push = (snapshot: PlanSnapshot): void => {
+            const key = releaseDomainKey(snapshot.domainOutput, snapshot.domainWorkspace);
+            if (!seen.has(key)) {
+                seen.add(key);
+                out.push(snapshot);
+            }
+        };
+        try {
+            const foreground = observeNative(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility, nativeOwners);
+            if (foreground !== null) {
+                push(snapshotOf(foreground));
+            }
+        } catch (error) {
+            void error;
+        }
+        try {
+            const hidden = observeHiddenDomains(liveWorkspace, nativeIds, floatingIds, domainGaps, reportEligibility, nativeOwners);
+            for (const entry of hidden) {
+                push(snapshotOf(entry));
+            }
+        } catch (error) {
+            void error;
+        }
+        return out;
+    };
+    const collectReleaseSnapshots = (workspaceId: string): PlanSnapshot[] =>
+        collectAllSnapshots().filter((snapshot) => snapshot.domainWorkspace === workspaceId);
+    const markTiledAndResync = (ids: ReadonlyArray<string>): void => {
+        for (const id of ids) {
+            workspaceNative.setTiled(id, true);
+        }
+        workspaceNative.handleTopologySignal();
+        emitWorkspaceTiling();
+        log(`plasma-auto-tiler:plan:workspace-floating tiled=true awaiting-release=0 confirmed=true`);
+        adapter.requestResync();
+        highlightRefresh?.();
+    };
+    const dispatchRelease = (snapshot: PlanSnapshot, key: string): void => {
+        if (dispatchedReleases.has(key)) {
+            return;
+        }
+        dispatchedReleases.add(key);
+        try {
+            adapter.requestDomainRelease(snapshot, (outcome) => {
+                dispatchedReleases.delete(key);
+                if (outcome === "released") {
+                    confirmedReleases.add(key);
+                    log(`plasma-auto-tiler:plan:workspace-released outcome=released windows=${String(snapshot.windows.length)}`);
+                } else {
+                    log(`plasma-auto-tiler:plan:workspace-released outcome=${outcome} recovery=retry-on-event`);
+                    return;
+                }
+                if (!pendingRetiles.has(key)) {
+                    return;
+                }
+                pendingRetiles.delete(key);
+                if (pendingRetiles.size > 0) {
+                    return;
+                }
+                const retileIds = pendingRetileIds;
+                pendingRetileIds = [];
+                try {
+                    markTiledAndResync(retileIds);
+                } catch (error) {
+                    void error;
+                }
+            });
+        } catch (error) {
+            dispatchedReleases.delete(key);
+            void error;
+        }
+    };
+    const retryPendingReleases = (): void => {
+        if (pendingRetiles.size === 0) {
+            return;
+        }
+        // Retry pending domain keys against fresh observations so the retry
+        // carries current geometry. Runs only on lifecycle edges.
+        try {
+            const byKey = new Map<string, PlanSnapshot>();
+            for (const snapshot of collectAllSnapshots()) {
+                byKey.set(releaseDomainKey(snapshot.domainOutput, snapshot.domainWorkspace), snapshot);
+            }
+            for (const key of [...pendingRetiles]) {
+                if (confirmedReleases.has(key)) {
+                    continue;
+                }
+                const snapshot = byKey.get(key);
+                if (snapshot !== undefined) {
+                    dispatchRelease(snapshot, key);
+                }
+            }
+        } catch (error) {
+            void error;
+        }
+    };
+    const toggleWorkspaceTiling = (): void => {
+        try {
+            const scope = workspaceNative.currentScopeId();
+            if (scope === null) {
+                log("plasma-auto-tiler:plan:workspace-tiling-refused reason=no-scope");
+                return;
+            }
+            const ids = [scope];
+            const target = !workspaceNative.isTiled(scope);
+            if (target === false) {
+                for (const id of ids) {
+                    workspaceNative.setTiled(id, false);
+                }
+                workspaceNative.handleTopologySignal();
+                emitWorkspaceTiling();
+                // Floating leaves windows in place. A pending retile intent
+                // for these domains is cancelled.
+                const snapshots: PlanSnapshot[] = [];
+                for (const id of ids) {
+                    for (const snapshot of collectReleaseSnapshots(id)) {
+                        snapshots.push(snapshot);
+                    }
+                }
+                if (snapshots.length === 0) {
+                    try {
+                        log("plasma-auto-tiler:plan:workspace-floating windows=0 release=none");
+                    } catch (error) {
+                        void error;
+                    }
+                    return;
+                }
+                for (const snapshot of snapshots) {
+                    const key = releaseDomainKey(snapshot.domainOutput, snapshot.domainWorkspace);
+                    confirmedReleases.delete(key);
+                    pendingRetiles.delete(key);
+                }
+                if (pendingRetiles.size === 0) {
+                    pendingRetileIds = [];
+                }
+                for (const snapshot of snapshots) {
+                    const key = releaseDomainKey(snapshot.domainOutput, snapshot.domainWorkspace);
+                    dispatchRelease(snapshot, key);
+                }
+                try {
+                    log(`plasma-auto-tiler:plan:workspace-floating tiled=false domains=${String(snapshots.length)}`);
+                } catch (error) {
+                    void error;
+                }
+                try {
+                    highlightRefresh?.();
+                } catch (error) {
+                    void error;
+                }
+                return;
+            }
+            // Retile stays floating until the release confirms.
+            const retileSnapshots: PlanSnapshot[] = [];
+            for (const id of ids) {
+                for (const snapshot of collectReleaseSnapshots(id)) {
+                    retileSnapshots.push(snapshot);
+                }
+            }
+            const unconfirmed: PlanSnapshot[] = [];
+            for (const snapshot of retileSnapshots) {
+                const key = releaseDomainKey(snapshot.domainOutput, snapshot.domainWorkspace);
+                if (!confirmedReleases.has(key)) {
+                    unconfirmed.push(snapshot);
+                }
+            }
+            if (unconfirmed.length === 0) {
+                try {
+                    markTiledAndResync(ids);
+                } catch (error) {
+                    void error;
+                }
+                return;
+            }
+            for (const snapshot of unconfirmed) {
+                const key = releaseDomainKey(snapshot.domainOutput, snapshot.domainWorkspace);
+                pendingRetiles.add(key);
+            }
+            pendingRetileIds = [...ids];
+            for (const snapshot of unconfirmed) {
+                const key = releaseDomainKey(snapshot.domainOutput, snapshot.domainWorkspace);
+                dispatchRelease(snapshot, key);
+            }
+            try {
+                log(`plasma-auto-tiler:plan:workspace-floating tiled=false awaiting-release=${String(unconfirmed.length)} pending-retile=true`);
+            } catch (error) {
+                void error;
+            }
+        } catch (error) {
+            void error;
+        }
+    };
     const emitNativeFollow = (
         diagnostic: WorkspaceFollowNativeDiagnostic,
         event: string,
@@ -3353,6 +3660,7 @@ function startPlanAdapterEntryOnce(
             } catch (error) {
                 void error;
             }
+            emitWorkspaceTiling();
         },
         setGeometry: (target, rect) => {
             try {
@@ -3375,6 +3683,7 @@ function startPlanAdapterEntryOnce(
                 return false;
             }
         },
+        isDomainTiled: (output, workspace) => isEntryDomainTiled(output, workspace),
         subscribeMoverDesktops: (moverRef, handler) => {
             try {
                 return connectSignal(readSignal(moverRef, "desktopsChanged"), handler);
@@ -3566,6 +3875,79 @@ function startPlanAdapterEntryOnce(
             void error;
         }
     };
+    const readActiveMover = (): object | null => {
+        try {
+            const surface = liveWorkspace as Record<string, unknown>;
+            const active = readProp(surface, "activeWindow");
+            if (typeof active !== "object" || active === null) {
+                return null;
+            }
+            return active as object;
+        } catch (error) {
+            void error;
+            return null;
+        }
+    };
+    const resolveDesktopRef = (workspaceId: string): object | null => {
+        try {
+            const surface = liveWorkspace as Record<string, unknown>;
+            const desktops = decodeList(readProp(surface, "desktops"), MAX_DESKTOPS);
+            if (desktops === null) {
+                return null;
+            }
+            for (const item of desktops) {
+                if (typeof item === "object" && item !== null && readProp(item as object, "id") === workspaceId) {
+                    return item as object;
+                }
+            }
+            return null;
+        } catch (error) {
+            void error;
+            return null;
+        }
+    };
+    const writeMoverDesktops = (mover: object, targetRef: object): boolean => {
+        try {
+            const probe = connectSignal(readSignal(mover, "desktopsChanged"), () => {});
+            if (probe === null) {
+                return false;
+            }
+            probe();
+            const applied = Reflect.set(mover, "desktops", [targetRef]);
+            if (applied !== true) {
+                return false;
+            }
+            // Immediate readback: never claim native-moved when the desktop
+            // write did not take. Compare by wrapper identity first, then by
+            // stable desktop id since KWin may return fresh wrappers per read.
+            try {
+                const targetId = readProp(targetRef, "id");
+                const members = decodeList(readProp(mover, "desktops"), MAX_DESKTOPS);
+                if (members === null) {
+                    return false;
+                }
+                for (const member of members) {
+                    if (member === targetRef) {
+                        return true;
+                    }
+                }
+                if (isOpaqueId(targetId)) {
+                    for (const member of members) {
+                        if (typeof member === "object" && member !== null && readProp(member as object, "id") === targetId) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            } catch (error) {
+                void error;
+                return false;
+            }
+        } catch (error) {
+            void error;
+            return false;
+        }
+    };
     const requestWorkspaceMove = (index: unknown): void => {
         try {
             if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 9) {
@@ -3633,6 +4015,92 @@ function startPlanAdapterEntryOnce(
             // Diagnostic-only handoff: the validated logical ordinal (0
             // permitted for the trailing target) travels into the send flight
             // for follow logs and never gates request behavior.
+            // Floating-boundary sends stay native-only: when either side is
+            // an unmanaged workspace, move membership natively with no Rust
+            // two-domain geometry, preserve native focus/visibility (no
+            // desktop switch, no focus write), then reflow the tiled side
+            // through the ordinary complete-observation resync.
+            try {
+                const probed = observeSendTarget(liveWorkspace, sendNativeIds, target, floatingIds, undefined, nativeOwners);
+                const sourceId = probed === null ? workspaceNative.currentScopeId() : probed.sourceWorkspace;
+                const sourceTiled = sourceId === null ? true : workspaceNative.isTiled(sourceId);
+                const targetTiled = workspaceNative.isTiled(target);
+                if (!sourceTiled || !targetTiled) {
+                    const mover = readActiveMover();
+                    const targetRef = resolveDesktopRef(target);
+                    if (mover === null || targetRef === null) {
+                        try {
+                            log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=native-unavailable follow=not-reached gate=pre-commit phase=entry reason=native-unavailable req_ord=${String(index)} inflight_stage=idle`);
+                        } catch (error) {
+                            void error;
+                        }
+                        return;
+                    }
+                    // Native membership preservation: a sticky (onAllDesktops)
+                    // or multi-home mover cannot be expressed as a
+                    // single-desktop write, so refuse instead of silently
+                    // stripping native semantics. Only positive evidence
+                    // refuses: unreadable membership still attempts the write
+                    // so broken movers report native-failed truthfully below.
+                    // Ordinary single-home moves proceed unchanged.
+                    let refusal: string | null = null;
+                    try {
+                        if (readProp(mover, "onAllDesktops") === true) {
+                            refusal = "sticky";
+                        } else {
+                            const members = decodeList(readProp(mover, "desktops"), MAX_DESKTOPS);
+                            if (members !== null && members.length > 1) {
+                                refusal = "multi-home";
+                            }
+                        }
+                    } catch (error) {
+                        void error;
+                    }
+                    if (refusal !== null) {
+                        try {
+                            log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=native-refused follow=preserved gate=floating-boundary phase=entry reason=${refusal} req_ord=${String(index)} inflight_stage=idle`);
+                        } catch (error) {
+                            void error;
+                        }
+                        return;
+                    }
+                    const moved = writeMoverDesktops(mover, targetRef);
+                    // Native focus/visibility stay untouched: no desktop
+                    // switch, no focus write. The tiled side reflows through
+                    // the ordinary complete-observation resync below.
+                    try {
+                        workspaceNative.handleTopologySignal();
+                    } catch (error) {
+                        void error;
+                    }
+                    try {
+                        adapter.requestResync();
+                    } catch (error) {
+                        void error;
+                    }
+                    emitWorkspaceTiling();
+                    // Report the actual native write outcome: moved means the
+                    // membership write applied, failed means it did not. The
+                    // follow stays preserved in both cases because no desktop
+                    // switch or focus write ever runs on this path.
+                    const nativeOutcome = moved ? "native-moved" : "native-failed";
+                    try {
+                        log(`plasma-auto-tiler:route-diag component=cosmic-send stage=entry correlation= generation=${String(overrides.generation)} revision=0 diag_seq=-1 event=workspace-move outcome=${nativeOutcome} follow=preserved gate=floating-boundary phase=entry reason=floating-boundary req_ord=${String(index)} inflight_stage=idle`);
+                    } catch (error) {
+                        void error;
+                    }
+                    if (!moved) {
+                        try {
+                            log("plasma-auto-tiler:plan:workspace-send-native-failed");
+                        } catch (error) {
+                            void error;
+                        }
+                    }
+                    return;
+                }
+            } catch (error) {
+                void error;
+            }
             workspaceSend.requestSend(target, index);
         } catch (error) {
             void error;
@@ -3664,6 +4132,27 @@ function startPlanAdapterEntryOnce(
                 } catch (inner) {
                     void inner;
                 }
+            }
+        }
+        // Project-owned keyless toggle for the tray menu (invoked over
+        // KGlobalAccel by action name, never by a physical key). The menu
+        // waits for the next published snapshot rather than assuming
+        // this dispatch applied.
+        try {
+            const ok = registerFn(WORKSPACE_TILING_TOGGLE_ACTION, WORKSPACE_TILING_TOGGLE_TEXT, "", () => toggleWorkspaceTiling());
+            if (ok !== true) {
+                try {
+                    log(`plasma-auto-tiler:plan:shortcut-failed action=${WORKSPACE_TILING_TOGGLE_ACTION} sequence=`);
+                } catch (error) {
+                    void error;
+                }
+            }
+        } catch (error) {
+            void error;
+            try {
+                log(`plasma-auto-tiler:plan:shortcut-failed action=${WORKSPACE_TILING_TOGGLE_ACTION} sequence=`);
+            } catch (inner) {
+                void inner;
             }
         }
     }
@@ -3748,17 +4237,59 @@ function startPlanAdapterEntryOnce(
         sub("desktopsChanged", () => {
             pruneDragRestoreForTopologySignal();
             workspaceNative.handleTopologySignal();
+            try {
+                retryPendingReleases();
+            } catch (error) {
+                void error;
+            }
+            emitWorkspaceTiling();
         }),
     );
-    trackWorkspaceDetach(sub("currentDesktopChanged", () => workspaceNative.handleTopologySignal()));
+    trackWorkspaceDetach(
+        sub("currentDesktopChanged", () => {
+            workspaceNative.handleTopologySignal();
+            try {
+                retryPendingReleases();
+            } catch (error) {
+                void error;
+            }
+            emitWorkspaceTiling();
+        }),
+    );
     trackWorkspaceDetach(
         sub("screensChanged", () => {
             pruneDragRestoreForTopologySignal();
             workspaceNative.handleTopologySignal();
+            try {
+                retryPendingReleases();
+            } catch (error) {
+                void error;
+            }
+            emitWorkspaceTiling();
         }),
     );
-    trackWorkspaceDetach(sub("windowAdded", () => workspaceNative.handleTopologySignal()));
-    trackWorkspaceDetach(sub("windowRemoved", () => workspaceNative.handleTopologySignal()));
+    trackWorkspaceDetach(
+        sub("windowAdded", () => {
+            workspaceNative.handleTopologySignal();
+            try {
+                retryPendingReleases();
+            } catch (error) {
+                void error;
+            }
+            emitWorkspaceTiling();
+        }),
+    );
+    trackWorkspaceDetach(
+        sub("windowRemoved", () => {
+            workspaceNative.handleTopologySignal();
+            try {
+                retryPendingReleases();
+            } catch (error) {
+                void error;
+            }
+            emitWorkspaceTiling();
+        }),
+    );
     try {
         const lister = surface["windowList"];
         if (typeof lister === "function") {
@@ -5109,6 +5640,11 @@ function startPlanAdapterEntryOnce(
                             if (seen === null) {
                                 return null;
                             }
+                            // Floating workspaces clear the tiling group
+                            // underlay: no group queries there.
+                            if (!isEntryDomainTiled(seen.domainOutput, seen.domainWorkspace)) {
+                                return null;
+                            }
                             try {
                                 return {
                                     domainOutput: seen.domainOutput,
@@ -5327,6 +5863,27 @@ function startPlanAdapterEntryOnce(
                     } catch (error) {
                         void error;
                     }
+                    // Live default: newly discovered backing ids use the
+                    // current default after configChanged; existing session
+                    // states are retained.
+                    try {
+                        const parsed = parseDefaultTiled(readTilingDefaultValue(overrides.readTilingDefaultFn));
+                        if (workspaceNative.setDefaultTiled(parsed)) {
+                            try {
+                                workspaceNative.handleTopologySignal();
+                            } catch (error) {
+                                void error;
+                            }
+                            emitWorkspaceTiling();
+                            try {
+                                log(`plasma-auto-tiler:plan:config-reloaded stage=default-tiled tiled=${parsed ? "true" : "false"}`);
+                            } catch (error) {
+                                void error;
+                            }
+                        }
+                    } catch (error) {
+                        void error;
+                    }
                     let next: DomainGaps;
                     try {
                         next = readDomainGaps({
@@ -5375,6 +5932,7 @@ function startPlanAdapterEntryOnce(
     return {
         stop: () => {
             entryStopped = true;
+            workspaceNativeRef = null;
             for (const ref of [...movePreviewSessions.keys()]) {
                 clearMovePreviewFull(ref);
             }
@@ -5476,6 +6034,21 @@ function startPlanAdapterEntryOnce(
         requestWorkspaceMove: (index) => {
             try {
                 requestWorkspaceMove(index);
+            } catch (error) {
+                void error;
+            }
+        },
+        getWorkspaceTilingSnapshot: () => {
+            try {
+                return getWorkspaceTilingSnapshot();
+            } catch (error) {
+                void error;
+                return { scope: "", tiled: true, defaultTiled: true };
+            }
+        },
+        requestWorkspaceTilingToggle: () => {
+            try {
+                toggleWorkspaceTiling();
             } catch (error) {
                 void error;
             }
@@ -5709,6 +6282,19 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         },
         requestWorkspaceMove: (index) => {
             delegate((target) => target.requestWorkspaceMove(index));
+        },
+        getWorkspaceTilingSnapshot: () => {
+            if (current !== null) {
+                try {
+                    return current.getWorkspaceTilingSnapshot();
+                } catch (error) {
+                    void error;
+                }
+            }
+            return { scope: "", tiled: true, defaultTiled: true };
+        },
+        requestWorkspaceTilingToggle: () => {
+            delegate((target) => target.requestWorkspaceTilingToggle());
         },
     };
 }

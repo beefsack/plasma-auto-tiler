@@ -942,8 +942,7 @@ describe("cosmic send-to-workspace settlement domains", () => {
         assertRedacted(mocks);
     });
 
-    it("rotates the correlation namespace after 1M sends without permanent refusal", () => {
-        const refs = makeRefs();
+    it("rotates the correlation namespace after 1M sends without permanent refusal", () => {        const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = new WorkspaceSendAdapter(mocks.env);
         adapter.enable({ owner: "owner-1", generation: "gen-1" });
@@ -966,6 +965,71 @@ describe("cosmic send-to-workspace settlement domains", () => {
         assert.equal(adapter.isInFlight, true, "a delayed old-epoch reply cannot settle the new flight");
         assert.ok(
             mocks.logs.some((l) => l.includes("event=sequence-exhausted") && l.includes(`correlation=${second}`) && l.includes("outcome=correlation-rotated")),
+            mocks.logs.join("\n"),
+        );
+        assertRedacted(mocks);
+    });
+
+    it("mid-flight floating toggle issues zero geometry writes and settles normally", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let tiled = true;
+        const adapter = new WorkspaceSendAdapter({ ...mocks.env, isDomainTiled: () => tiled });
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        const correlation = dispatch(mocks, adapter);
+        // Either flight domain toggles floating between dispatch and reply.
+        tiled = false;
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        assert.equal(mocks.geometries.length, 0);
+        assert.equal(mocks.desktops.length, 0);
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+        assert.equal(mocks.settled, 1);
+        assert.deepEqual(adapter.pendingWorkspaces, []);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.isEnabled, true);
+        assert.ok(
+            mocks.logs.some((l) => l.includes("stage=release") && l.includes("outcome=workspace-floating")),
+            mocks.logs.join("\n"),
+        );
+        assert.deepEqual(mocks.settledInfos[0], {
+            sourceOutput: "out-1",
+            sourceWorkspace: "ws-1",
+            targetOutput: "out-1",
+            targetWorkspace: "ws-2",
+        });
+        assertRedacted(mocks);
+    });
+
+    it("mid-write floating toggle stops further geometry writes", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let writes = 0;
+        let tiled = true;
+        const adapter = new WorkspaceSendAdapter({
+            ...mocks.env,
+            isDomainTiled: () => tiled,
+            setGeometry: (target, rect) => {
+                writes += 1;
+                if (writes === 1) {
+                    tiled = false;
+                }
+                return mocks.env.setGeometry(target, rect);
+            },
+        });
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        const correlation = dispatch(mocks, adapter);
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        // The first write applied before the toggle; the gate stops the rest
+        // and the flight settles without a mover write or follow.
+        assert.equal(writes, 1);
+        assert.equal(mocks.desktops.length, 0);
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+        assert.equal(mocks.settled, 1);
+        assert.equal(adapter.isInFlight, false);
+        assert.ok(
+            mocks.logs.some((l) => l.includes("stage=release") && l.includes("outcome=workspace-floating")),
             mocks.logs.join("\n"),
         );
         assertRedacted(mocks);

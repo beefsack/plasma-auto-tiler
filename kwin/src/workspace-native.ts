@@ -26,11 +26,43 @@ export const WORKSPACE_MODES: ReadonlyArray<WorkspaceMode> = Object.freeze([
     "shared",
 ]);
 
+export const DEFAULT_TILED = true;
+export const TILING_DEFAULT_CONFIG_KEY = "defaultTiled";
+
 export function parseWorkspaceMode(value: unknown): WorkspaceMode {
     if (value === "per-output-local" || value === "global-unique" || value === "shared") {
         return value;
     }
     return DEFAULT_WORKSPACE_MODE;
+}
+
+export function parseDefaultTiled(value: unknown): boolean {
+    if (value === true) {
+        return true;
+    }
+    if (value === false) {
+        return false;
+    }
+    if (typeof value === "number") {
+        if (value === 1) {
+            return true;
+        }
+        if (value === 0) {
+            return false;
+        }
+        return DEFAULT_TILED;
+    }
+    if (typeof value === "string") {
+        const text = value.trim().toLowerCase();
+        if (text === "true" || text === "1") {
+            return true;
+        }
+        if (text === "false" || text === "0") {
+            return false;
+        }
+        return DEFAULT_TILED;
+    }
+    return DEFAULT_TILED;
 }
 
 const SHIFT_DIGIT_SYMBOL_ALIAS: ReadonlyMap<number, string> = new Map([
@@ -370,6 +402,7 @@ class SessionOutputKeys {
 export interface WorkspaceNativeEnv {
     readonly getWorkspace: () => unknown;
     readonly readWorkspaceMode: () => unknown;
+    readonly readTilingDefault?: () => unknown;
     readonly log: (message: string) => void;
 }
 
@@ -389,6 +422,10 @@ export class WorkspaceNativeAdapter {
     // Preexisting desktops join only the latter set.
     private readonly owned = new Set<string>();
     private readonly managed = new Set<string>();
+    // Session-local per-workspace tiling state, keyed by backing desktop
+    // id. Only the default persists; overrides reset on script reload.
+    private defaultTiled = DEFAULT_TILED;
+    private readonly tiledById = new Map<string, boolean>();
     // Session-local output-displacement mapping only, no restart persistence.
     // Origin output key -> displaced workspace ids plus chosen survivor key.
     // Workspace relocation is the unit: return moves whole workspaces with
@@ -446,6 +483,49 @@ export class WorkspaceNativeAdapter {
         return this.mode;
     }
 
+    getDefaultTiled(): boolean {
+        return this.defaultTiled;
+    }
+
+    setDefaultTiled(value: boolean): boolean {
+        if (value === this.defaultTiled) {
+            return false;
+        }
+        this.defaultTiled = value;
+        return true;
+    }
+
+    isTiled(id: string): boolean {
+        const stored = this.tiledById.get(id);
+        return stored === undefined ? this.defaultTiled : stored;
+    }
+
+    setTiled(id: string, tiled: boolean): void {
+        this.tiledById.set(id, tiled);
+    }
+
+    // Active scope for the tray menu and toggle. Null when unreadable.
+    currentScopeId(): string | null {
+        if (!this.enabled) {
+            return null;
+        }
+        if (this.mode === "shared") {
+            const current = this.currentShared();
+            return current === null ? null : current.id;
+        }
+        const output = this.activeOutput();
+        if (output === null) {
+            return null;
+        }
+        const current = this.currentOnOutput(output);
+        return current === null ? null : current.id;
+    }
+
+    isCurrentTiled(): boolean | null {
+        const id = this.currentScopeId();
+        return id === null ? null : this.isTiled(id);
+    }
+
     enable(): boolean {
         if (this.enabled) {
             return false;
@@ -458,11 +538,19 @@ export class WorkspaceNativeAdapter {
             raw = undefined;
         }
         this.mode = parseWorkspaceMode(raw);
+        try {
+            const reader = this.env.readTilingDefault;
+            this.defaultTiled = reader === undefined ? DEFAULT_TILED : parseDefaultTiled(reader());
+        } catch (error) {
+            void error;
+            this.defaultTiled = DEFAULT_TILED;
+        }
         this.resetMappingState();
         this.pruneTrackedToLive();
         this.enabled = true;
         this.rebuildKeysAndMappings();
         this.cleanupDesktops();
+        this.syncTilingWithLive();
         this.primeDisplacedTracking();
         return true;
     }
@@ -483,6 +571,25 @@ export class WorkspaceNativeAdapter {
         this.lastVisibleByKey.clear();
         this.lastKnownByKey.clear();
         this.managed.clear();
+        this.tiledById.clear();
+    }
+
+    private syncTilingWithLive(): void {
+        const live = this.liveOrdered();
+        if (live === null) {
+            return;
+        }
+        const liveIds = new Set(live.map((entry) => entry.id));
+        for (const id of [...this.tiledById.keys()]) {
+            if (!liveIds.has(id)) {
+                this.tiledById.delete(id);
+            }
+        }
+        for (const entry of live) {
+            if (!this.tiledById.has(entry.id)) {
+                this.tiledById.set(entry.id, this.defaultTiled);
+            }
+        }
     }
 
     private pruneTrackedToLive(): void {
@@ -562,6 +669,7 @@ export class WorkspaceNativeAdapter {
         }
         this.reconcileOutputDisplacement(prevLocal, prevGlobal);
         this.cleanupDesktops();
+        this.syncTilingWithLive();
     }
 
     // Meta+1..9: select only an existing logical position on the active
@@ -2226,6 +2334,9 @@ export class WorkspaceNativeAdapter {
             }
             this.owned.add(candidate.id);
             this.managed.add(candidate.id);
+            if (!this.tiledById.has(candidate.id)) {
+                this.tiledById.set(candidate.id, this.defaultTiled);
+            }
             this.logToken("workspace-created-owned");
             return candidate;
         } finally {

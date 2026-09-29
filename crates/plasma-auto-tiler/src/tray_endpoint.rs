@@ -26,11 +26,19 @@ const STATUS_NOTIFIER_WATCHER_INTERFACE: &str = "org.kde.StatusNotifierWatcher";
 const REGISTER_STATUS_NOTIFIER_ITEM: &str = "RegisterStatusNotifierItem";
 const MAX_GENERATION_HISTORY: usize = 256;
 
+pub const TRAY_SCHEMA: i32 = 2;
+/// Maximum accepted workspace scope length. The scope is a live KWin
+/// backing-desktop id, never logged; the bound keeps retained state bounded.
+pub const MAX_SCOPE_LEN: usize = 256;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snapshot {
     pub generation: String,
     pub revision: i32,
     pub enabled: bool,
+    pub current_scope: String,
+    pub tiled: bool,
+    pub default_tiled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -88,15 +96,23 @@ impl TrayState {
         self.owner = owner.map(str::to_owned);
     }
 
+    // Schema-2 snapshot carries 7 wire args; the arity is the D-Bus contract.
+    #[allow(clippy::too_many_arguments)]
     pub fn publish_snapshot(
         &mut self,
         schema: i32,
         generation: String,
         revision: i32,
         enabled: bool,
+        current_scope: String,
+        tiled: bool,
+        default_tiled: bool,
         now_ms: u64,
     ) -> Result<(), TrayError> {
-        if schema != 1 || !valid_generation(&generation) {
+        if schema != TRAY_SCHEMA
+            || !valid_generation(&generation)
+            || current_scope.len() > MAX_SCOPE_LEN
+        {
             return Err(TrayError::InvalidSnapshot(
                 "schema or generation is invalid".to_owned(),
             ));
@@ -110,6 +126,9 @@ impl TrayState {
             generation,
             revision,
             enabled,
+            current_scope,
+            tiled,
+            default_tiled,
         };
         let accept = match self.generation.as_deref() {
             None => true,
@@ -228,14 +247,17 @@ impl TrayState {
         let before = (
             self.generation.clone(),
             self.revision,
-            self.snapshot.as_ref().map(|current| current.enabled),
+            self.snapshot.clone(),
         );
         let revision = snapshot.revision;
         let enabled = snapshot.enabled;
+        let tiled = snapshot.tiled;
+        let default_tiled = snapshot.default_tiled;
         // Bounded join identity: the generation token is only carried when it
         // passes the existing protocol validation; otherwise only the `i32`
         // revision is logged, never untrusted text. The clone is bounded
-        // (at most 32 bytes) and changes no validation or state.
+        // (at most 32 bytes) and changes no validation or state. The workspace
+        // scope id is never carried (native identifier).
         let logged_generation =
             valid_generation(&snapshot.generation).then(|| snapshot.generation.clone());
         let result = self.publish_snapshot(
@@ -243,6 +265,9 @@ impl TrayState {
             snapshot.generation,
             snapshot.revision,
             snapshot.enabled,
+            snapshot.current_scope,
+            snapshot.tiled,
+            snapshot.default_tiled,
             now_ms,
         );
         // Best-effort only: accepted-but-unchanged snapshots are the
@@ -254,7 +279,7 @@ impl TrayState {
         let after = (
             self.generation.clone(),
             self.revision,
-            self.snapshot.as_ref().map(|current| current.enabled),
+            self.snapshot.clone(),
         );
         let outcome = publish_outcome_line(
             before != after,
@@ -262,6 +287,8 @@ impl TrayState {
             logged_generation.as_deref(),
             revision,
             enabled,
+            tiled,
+            default_tiled,
         );
         let line = match (&result, outcome) {
             (Ok(()), Some(accepted)) => {
@@ -482,27 +509,31 @@ fn invalid_snapshot_reason(message: &str) -> &'static str {
 }
 
 /// Bounded publication record. `revision` is a plain `i32` snapshot marker
-/// and `enabled` the snapshot state label; `generation` is only carried when
-/// the caller attests it passed the existing protocol validation
-/// (`valid_generation`), so unvalidated (possibly attacker-controlled) tokens
-/// are omitted and never echoed. Accepted-but-unchanged snapshots are the
-/// steady-state heartbeat duplicate and stay silent (`None`); only genuine
-/// state changes, refusals, and failures produce a line. The
-/// generation/revision/enabled triple is a snapshot-identity join key only:
-/// equality with a KWin bridge send line never implies endpoint acceptance
-/// and never claims correlation or request ancestry.
+/// and `enabled`/`tiled`/`defaultTiled` the snapshot state labels;
+/// `generation` is only carried when the caller attests it passed the
+/// existing protocol validation (`valid_generation`), so unvalidated
+/// (possibly attacker-controlled) tokens are omitted and never echoed. The
+/// workspace scope id is never carried (native identifier).
+/// Accepted-but-unchanged snapshots are the steady-state heartbeat duplicate
+/// and stay silent (`None`); only genuine state changes, refusals, and
+/// failures produce a line. The generation/revision/enabled/tiled/default
+/// tuple is a snapshot-identity join key only: equality with a KWin bridge
+/// send line never implies endpoint acceptance and never claims correlation
+/// or request ancestry.
 fn publish_outcome_line(
     changed: bool,
     result: &Result<(), TrayError>,
     generation: Option<&str>,
     revision: i32,
     enabled: bool,
+    tiled: bool,
+    default_tiled: bool,
 ) -> Option<String> {
     match result {
         Ok(()) if changed => {
             let token = generation?;
             Some(format!(
-                "{TRAY_DIAG_PREFIX} component={TRAY_DIAG_COMPONENT} stage=publish event=publish outcome=accepted generation={token} revision={revision} enabled={enabled}"
+                "{TRAY_DIAG_PREFIX} component={TRAY_DIAG_COMPONENT} stage=publish event=publish outcome=accepted generation={token} revision={revision} enabled={enabled} tiled={tiled} defaultTiled={default_tiled}"
             ))
         }
         Ok(()) => None,
@@ -510,7 +541,7 @@ fn publish_outcome_line(
             let reason = invalid_snapshot_reason(message);
             match generation {
                 Some(token) => Some(format!(
-                    "{TRAY_DIAG_PREFIX} component={TRAY_DIAG_COMPONENT} stage=publish event=publish outcome=refused reason={reason} generation={token} revision={revision} enabled={enabled}"
+                    "{TRAY_DIAG_PREFIX} component={TRAY_DIAG_COMPONENT} stage=publish event=publish outcome=refused reason={reason} generation={token} revision={revision} enabled={enabled} tiled={tiled} defaultTiled={default_tiled}"
                 )),
                 None => Some(format!(
                     "{TRAY_DIAG_PREFIX} component={TRAY_DIAG_COMPONENT} stage=publish event=publish outcome=refused reason={reason} revision={revision}"
@@ -552,6 +583,17 @@ fn signal_emission_failed_line() -> String {
 pub(crate) fn status_projected_line(status: &str) -> String {
     format!(
         "{TRAY_DIAG_PREFIX} component={TRAY_DIAG_COMPONENT} stage=projection event=projected outcome={status}"
+    )
+}
+
+/// Bounded menu projection record. Emitted only when the fresh menu state
+/// (scope/tiled/default) actually changes while the SNI status stays put;
+/// the scope id is never carried (native identifier), only the typed
+/// `tiled`/`defaultTiled` labels. Describes the emitted LayoutUpdated only,
+/// never final panel visibility.
+pub(crate) fn menu_projected_line(tiled: bool, default_tiled: bool) -> String {
+    format!(
+        "{TRAY_DIAG_PREFIX} component={TRAY_DIAG_COMPONENT} stage=projection event=projected outcome=menu-updated tiled={tiled} defaultTiled={default_tiled}"
     )
 }
 
@@ -806,6 +848,8 @@ impl TrayEndpoint {
                 None,
                 revision,
                 false,
+                false,
+                true,
             );
             // Revocation is a refusal: route it through the change-driven
             // tracker like every other refusal. Only the i32 revision is
@@ -836,12 +880,17 @@ impl TrayEndpoint {
 
 #[zbus::interface(name = "org.plasmaautotiler.Tray1")]
 impl TrayEndpoint {
+    // Schema-2 D-Bus arity is the wire contract (7 args + header/emitter).
+    #[allow(clippy::too_many_arguments)]
     async fn publish_snapshot(
         &self,
         schema: i32,
         generation: String,
         revision: i32,
         enabled: bool,
+        current_scope: String,
+        tiled: bool,
+        default_tiled: bool,
         #[zbus(header)] header: zbus::message::Header<'_>,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
     ) -> Result<(), TrayError> {
@@ -870,6 +919,9 @@ impl TrayEndpoint {
                     generation,
                     revision,
                     enabled,
+                    current_scope,
+                    tiled,
+                    default_tiled,
                 },
                 &emitter,
             )
@@ -1576,11 +1628,14 @@ mod tests {
             generation: "gen-1".to_owned(),
             revision,
             enabled: true,
+            current_scope: String::new(),
+            tiled: true,
+            default_tiled: true,
         };
         let (result, _) = super::lock_tray_state(&endpoint.state).publish_snapshot_from(
             Some(":1.7"),
             Some(":1.7"),
-            1,
+            2,
             snapshot(0),
             0,
         );
@@ -1606,7 +1661,7 @@ mod tests {
         let (result, _) = super::lock_tray_state(&endpoint.state).publish_snapshot_from(
             Some(":1.7"),
             Some(":1.7"),
-            1,
+            2,
             snapshot(1),
             1,
         );
@@ -1628,9 +1683,12 @@ mod tests {
             generation: generation.to_owned(),
             revision,
             enabled,
+            current_scope: String::new(),
+            tiled: true,
+            default_tiled: true,
         };
         super::lock_tray_state(&endpoint.state)
-            .publish_snapshot_from(Some(":1.7"), Some(":1.7"), 1, snapshot("gen-1", 5, true), 0)
+            .publish_snapshot_from(Some(":1.7"), Some(":1.7"), 2, snapshot("gen-1", 5, true), 0)
             .0
             .unwrap();
         let state = Arc::clone(&endpoint.state);
@@ -1646,7 +1704,7 @@ mod tests {
         let (result, _) = super::lock_tray_state(&endpoint.state).publish_snapshot_from(
             Some(":1.8"),
             Some(":1.8"),
-            1,
+            2,
             snapshot("gen-1", 5, true),
             1,
         );
@@ -1655,7 +1713,7 @@ mod tests {
         let (result, _) = super::lock_tray_state(&endpoint.state).publish_snapshot_from(
             Some(":1.7"),
             Some(":1.7"),
-            1,
+            2,
             snapshot("gen-1", 4, true),
             2,
         );
@@ -1664,7 +1722,7 @@ mod tests {
         let (result, _) = super::lock_tray_state(&endpoint.state).publish_snapshot_from(
             Some(":1.7"),
             Some(":1.7"),
-            1,
+            2,
             snapshot("gen-1", 5, true),
             3,
         );
@@ -1674,7 +1732,7 @@ mod tests {
         let (result, _) = super::lock_tray_state(&endpoint.state).publish_snapshot_from(
             Some(":1.7"),
             Some(":1.7"),
-            1,
+            2,
             snapshot("gen-1", 4, true),
             4,
         );
@@ -1685,7 +1743,7 @@ mod tests {
         let (result, _) = super::lock_tray_state(&endpoint.state).publish_snapshot_from(
             Some(":1.8"),
             Some(":1.8"),
-            1,
+            2,
             snapshot("gen-1", 5, true),
             5,
         );
@@ -1694,7 +1752,7 @@ mod tests {
         let (result, _) = super::lock_tray_state(&endpoint.state).publish_snapshot_from(
             Some(":1.7"),
             Some(":1.7"),
-            1,
+            2,
             snapshot("gen-2", 1, true),
             6,
         );
@@ -1736,11 +1794,14 @@ mod tests {
                 .publish_snapshot_from(
                     None,
                     Some(":org.kwin"),
-                    1,
+                    2,
                     super::Snapshot {
                         generation: "alpha".to_owned(),
                         revision: 1,
                         enabled: true,
+                        current_scope: String::new(),
+                        tiled: true,
+                        default_tiled: true,
                     },
                     0,
                 )
@@ -1754,11 +1815,14 @@ mod tests {
                 .publish_snapshot_from(
                     Some(":org.kwin"),
                     None,
-                    1,
+                    2,
                     super::Snapshot {
                         generation: "alpha".to_owned(),
                         revision: 1,
                         enabled: true,
+                        current_scope: String::new(),
+                        tiled: true,
+                        default_tiled: true,
                     },
                     0,
                 )
@@ -1772,11 +1836,14 @@ mod tests {
                 .publish_snapshot_from(
                     Some(":other"),
                     Some(":other"),
-                    1,
+                    2,
                     super::Snapshot {
                         generation: "alpha".to_owned(),
                         revision: 1,
                         enabled: true,
+                        current_scope: String::new(),
+                        tiled: true,
+                        default_tiled: true,
                     },
                     0,
                 )
@@ -1790,11 +1857,14 @@ mod tests {
                 .publish_snapshot_from(
                     Some(":org.kwin"),
                     Some(":org.moved"),
-                    1,
+                    2,
                     super::Snapshot {
                         generation: "alpha".to_owned(),
                         revision: 1,
                         enabled: true,
+                        current_scope: String::new(),
+                        tiled: true,
+                        default_tiled: true,
                     },
                     0,
                 )
@@ -1808,11 +1878,14 @@ mod tests {
                 .publish_snapshot_from(
                     Some(":org.kwin"),
                     Some(":org.kwin"),
-                    1,
+                    2,
                     super::Snapshot {
                         generation: "alpha".to_owned(),
                         revision: 1,
                         enabled: true,
+                        current_scope: String::new(),
+                        tiled: true,
+                        default_tiled: true,
                     },
                     0,
                 )
@@ -1828,11 +1901,14 @@ mod tests {
                 .publish_snapshot_from(
                     Some(":org.kwin"),
                     Some(":org.kwin"),
-                    1,
+                    2,
                     super::Snapshot {
                         generation: "beta".to_owned(),
                         revision: 1,
                         enabled: false,
+                        current_scope: String::new(),
+                        tiled: true,
+                        default_tiled: true,
                     },
                     1,
                 )
@@ -1846,11 +1922,14 @@ mod tests {
                 .publish_snapshot_from(
                     Some(":org.new-kwin"),
                     Some(":org.new-kwin"),
-                    1,
+                    2,
                     super::Snapshot {
                         generation: "beta".to_owned(),
                         revision: 0,
                         enabled: false,
+                        current_scope: String::new(),
+                        tiled: true,
+                        default_tiled: true,
                     },
                     1,
                 )
@@ -1869,11 +1948,14 @@ mod tests {
                 .publish_snapshot_from(
                     Some("not-a-unique-name"),
                     Some("not-a-unique-name"),
-                    1,
+                    2,
                     super::Snapshot {
                         generation: "alpha".to_owned(),
                         revision: 1,
                         enabled: true,
+                        current_scope: String::new(),
+                        tiled: true,
+                        default_tiled: true,
                     },
                     0,
                 )
@@ -1891,11 +1973,14 @@ mod tests {
             .publish_snapshot_from(
                 Some(":org.kwin"),
                 Some(":org.kwin"),
-                1,
+                2,
                 super::Snapshot {
                     generation: "alpha".to_owned(),
                     revision: 0,
                     enabled: true,
+                    current_scope: String::new(),
+                    tiled: true,
+                    default_tiled: true,
                 },
                 0,
             )
@@ -1915,11 +2000,14 @@ mod tests {
             .publish_snapshot_from(
                 Some(":org.kwin"),
                 Some(":org.kwin"),
-                1,
+                2,
                 super::Snapshot {
                     generation: "alpha".to_owned(),
                     revision: 0,
                     enabled: true,
+                    current_scope: String::new(),
+                    tiled: true,
+                    default_tiled: true,
                 },
                 1,
             )
@@ -1964,18 +2052,21 @@ mod tests {
         let (result, pending) = endpoint.publish_authenticated_snapshot(
             ":new.kwin",
             Some(":new.kwin"),
-            1,
+            2,
             super::Snapshot {
                 generation: "alpha".to_owned(),
                 revision: 1,
                 enabled: true,
+                current_scope: String::new(),
+                tiled: true,
+                default_tiled: true,
             },
         );
         result.unwrap();
         assert_eq!(
             pending,
             Some(
-                "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=accepted generation=alpha revision=1 enabled=true"
+                "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=accepted generation=alpha revision=1 enabled=true tiled=true defaultTiled=true"
                     .to_owned()
             )
         );
@@ -2001,11 +2092,14 @@ mod tests {
             .publish_snapshot_from(
                 Some(":org.kwin"),
                 Some(":org.kwin"),
-                1,
+                2,
                 super::Snapshot {
                     generation: "alpha".to_owned(),
                     revision: 1,
                     enabled: true,
+                    current_scope: String::new(),
+                    tiled: true,
+                    default_tiled: true,
                 },
                 0,
             )
@@ -2020,11 +2114,14 @@ mod tests {
             .publish_snapshot_from(
                 Some(":org.kwin"),
                 Some(":org.kwin"),
-                1,
+                2,
                 super::Snapshot {
                     generation: "alpha".to_owned(),
                     revision: 1,
                     enabled: true,
+                    current_scope: String::new(),
+                    tiled: true,
+                    default_tiled: true,
                 },
                 1,
             )
@@ -2046,11 +2143,14 @@ mod tests {
             .publish_snapshot_from(
                 Some(":org.kwin"),
                 Some(":org.kwin"),
-                1,
+                2,
                 super::Snapshot {
                     generation: "alpha".to_owned(),
                     revision: 2,
                     enabled: true,
+                    current_scope: String::new(),
+                    tiled: true,
+                    default_tiled: true,
                 },
                 2,
             )
@@ -2391,20 +2491,23 @@ mod tests {
             generation: "alpha".to_owned(),
             revision,
             enabled: true,
+            current_scope: String::new(),
+            tiled: true,
+            default_tiled: true,
         };
         // Unauthorized sender while unknown: refused, no resync.
         let (result, _) =
-            state.publish_snapshot_from(Some(":1.9"), Some(":1.7"), 1, snapshot(0), 0);
+            state.publish_snapshot_from(Some(":1.9"), Some(":1.7"), 2, snapshot(0), 0);
         assert_eq!(result.unwrap_err(), super::TrayError::UnauthorizedPublisher);
         assert_eq!(state.owner, None);
         // Live owner missing: refused, no resync.
-        let (result, _) = state.publish_snapshot_from(Some(":1.7"), None, 1, snapshot(0), 1);
+        let (result, _) = state.publish_snapshot_from(Some(":1.7"), None, 2, snapshot(0), 1);
         assert_eq!(result.unwrap_err(), super::TrayError::UnauthorizedPublisher);
         assert_eq!(state.owner, None);
         // Authenticated publish from the current KWin owner: live-confirmed
         // resync plus accept, with the accepted record as recovery evidence.
         let (result, line) =
-            state.publish_snapshot_from(Some(":1.7"), Some(":1.7"), 1, snapshot(0), 2);
+            state.publish_snapshot_from(Some(":1.7"), Some(":1.7"), 2, snapshot(0), 2);
         assert!(result.is_ok());
         assert_eq!(state.owner.as_deref(), Some(":1.7"));
         assert!(
@@ -2417,7 +2520,7 @@ mod tests {
         // Stale epoch never auto-moves: cached Some(old) with live/publisher
         // new stays fail-closed until an owner-changed signal resyncs.
         let (result, _) =
-            state.publish_snapshot_from(Some(":1.8"), Some(":1.8"), 1, snapshot(0), 3);
+            state.publish_snapshot_from(Some(":1.8"), Some(":1.8"), 2, snapshot(0), 3);
         assert_eq!(result.unwrap_err(), super::TrayError::UnauthorizedPublisher);
         assert_eq!(state.owner.as_deref(), Some(":1.7"));
     }
@@ -2506,7 +2609,7 @@ mod tests {
         // Steady-state duplicate: accepted but observably unchanged, so the
         // 1 Hz heartbeat stays silent.
         assert_eq!(
-            publish_outcome_line(false, &Ok(()), Some("alpha"), 1, true),
+            publish_outcome_line(false, &Ok(()), Some("alpha"), 1, true, true, true),
             None
         );
         // Genuine state change: one bounded acceptance line carrying the
@@ -2514,9 +2617,9 @@ mod tests {
         // state label. The triple joins with the KWin bridge send line on
         // equality only, with no ancestry claim.
         assert_eq!(
-            publish_outcome_line(true, &Ok(()), Some("beta"), 2, false),
+            publish_outcome_line(true, &Ok(()), Some("beta"), 2, false, true, true),
             Some(
-                "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=accepted generation=beta revision=2 enabled=false"
+                "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=accepted generation=beta revision=2 enabled=false tiled=true defaultTiled=true"
                     .to_owned()
             )
         );
@@ -2525,11 +2628,11 @@ mod tests {
         let transition = Err(super::TrayError::InvalidSnapshot(
             "revision is not a valid state transition".to_owned(),
         ));
-        let line = publish_outcome_line(false, &transition, Some("alpha"), 3, true)
+        let line = publish_outcome_line(false, &transition, Some("alpha"), 3, true, true, true)
             .expect("refusal is logged");
         assert_eq!(
             line,
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=invalid-transition generation=alpha revision=3 enabled=true"
+            "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=invalid-transition generation=alpha revision=3 enabled=true tiled=true defaultTiled=true"
         );
         assert!(!line.contains("valid state transition"));
         // Schema/generation refusal carries no generation: the token failed
@@ -2537,21 +2640,21 @@ mod tests {
         let schema = Err(super::TrayError::InvalidSnapshot(
             "schema or generation is invalid".to_owned(),
         ));
-        let line = publish_outcome_line(false, &schema, None, 0, true).unwrap();
+        let line = publish_outcome_line(false, &schema, None, 0, true, true, true).unwrap();
         assert!(line.contains("reason=invalid-schema-or-generation"));
         assert!(!line.contains("generation="));
         // Unknown refusal text degrades to the transition label, never echo.
         let hostile = Err(super::TrayError::InvalidSnapshot(
             "alpha\ninjected".to_owned(),
         ));
-        let line = publish_outcome_line(false, &hostile, None, 5, true).unwrap();
+        let line = publish_outcome_line(false, &hostile, None, 5, true, true, true).unwrap();
         assert!(line.contains("reason=invalid-transition"));
         assert!(!line.contains("alpha"));
         assert!(!line.contains("generation="));
         // Authorization refusal: bounded label plus revision only.
         let unauthorized = Err(super::TrayError::UnauthorizedPublisher);
         assert_eq!(
-            publish_outcome_line(false, &unauthorized, None, 4, true),
+            publish_outcome_line(false, &unauthorized, None, 4, true, true, true),
             Some(
                 "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=not-current-KWin-owner revision=4"
                     .to_owned()
@@ -2607,6 +2710,9 @@ mod tests {
             generation: generation.to_owned(),
             revision,
             enabled,
+            current_scope: String::new(),
+            tiled: true,
+            default_tiled: true,
         };
         let triple = |state: &super::TrayState| {
             (
@@ -2619,15 +2725,15 @@ mod tests {
             .publish_snapshot_from(
                 Some(":org.kwin"),
                 Some(":org.kwin"),
-                1,
+                2,
                 snapshot("alpha", 0, true),
                 0,
             )
             .0
             .unwrap();
         assert_eq!(
-            publish_outcome_line(true, &Ok(()), Some("alpha"), 0, true).unwrap(),
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=accepted generation=alpha revision=0 enabled=true"
+            publish_outcome_line(true, &Ok(()), Some("alpha"), 0, true, true, true).unwrap(),
+            "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=accepted generation=alpha revision=0 enabled=true tiled=true defaultTiled=true"
         );
 
         let before = triple(&state);
@@ -2635,7 +2741,7 @@ mod tests {
             .publish_snapshot_from(
                 Some(":org.kwin"),
                 Some(":org.kwin"),
-                1,
+                2,
                 snapshot("alpha", 0, true),
                 1,
             )
@@ -2643,7 +2749,7 @@ mod tests {
             .unwrap();
         assert_eq!(triple(&state), before);
         assert_eq!(
-            publish_outcome_line(false, &Ok(()), Some("alpha"), 0, true),
+            publish_outcome_line(false, &Ok(()), Some("alpha"), 0, true, true, true),
             None
         );
 
@@ -2651,7 +2757,7 @@ mod tests {
             .publish_snapshot_from(
                 Some(":org.kwin"),
                 Some(":org.kwin"),
-                1,
+                2,
                 snapshot("alpha", 1, false),
                 2,
             )
@@ -2659,14 +2765,14 @@ mod tests {
             .unwrap();
         assert_ne!(triple(&state), before);
         assert_eq!(
-            publish_outcome_line(true, &Ok(()), Some("alpha"), 1, false).unwrap(),
-            "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=accepted generation=alpha revision=1 enabled=false"
+            publish_outcome_line(true, &Ok(()), Some("alpha"), 1, false, true, true).unwrap(),
+            "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=accepted generation=alpha revision=1 enabled=false tiled=true defaultTiled=true"
         );
 
         let (refusal, refusal_line) = state.publish_snapshot_from(
             Some(":org.kwin"),
             Some(":org.kwin"),
-            1,
+            2,
             snapshot("alpha", 0, true),
             3,
         );
@@ -2679,7 +2785,7 @@ mod tests {
                 .is_some_and(|line| line.contains("reason=invalid-transition"))
         );
         assert!(
-            publish_outcome_line(false, &refusal, Some("alpha"), 0, true)
+            publish_outcome_line(false, &refusal, Some("alpha"), 0, true, true, true)
                 .unwrap()
                 .contains("reason=invalid-transition")
         );
@@ -2687,7 +2793,7 @@ mod tests {
         let (unauthorized, _) = state.publish_snapshot_from(
             Some(":other"),
             Some(":org.kwin"),
-            1,
+            2,
             snapshot("alpha", 2, true),
             4,
         );
@@ -2713,13 +2819,16 @@ mod tests {
             generation: generation.to_owned(),
             revision,
             enabled,
+            current_scope: String::new(),
+            tiled: true,
+            default_tiled: true,
         };
         let publish =
             |state: &mut super::TrayState, generation: &str, revision: i32, enabled: bool| {
                 state.publish_snapshot_from(
                     Some(":org.kwin"),
                     Some(":org.kwin"),
-                    1,
+                    2,
                     snapshot(generation, revision, enabled),
                     0,
                 )
@@ -2730,7 +2839,7 @@ mod tests {
         assert_eq!(
             line,
             Some(
-                "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=accepted generation=alpha revision=0 enabled=true"
+                "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=accepted generation=alpha revision=0 enabled=true tiled=true defaultTiled=true"
                     .to_owned()
             )
         );
@@ -2741,7 +2850,7 @@ mod tests {
         assert_eq!(
             line,
             Some(
-                "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=invalid-transition generation=alpha revision=0 enabled=false"
+                "plasma-auto-tiler:route-diag component=tray-endpoint stage=publish event=publish outcome=refused reason=invalid-transition generation=alpha revision=0 enabled=false tiled=true defaultTiled=true"
                     .to_owned()
             )
         );
@@ -2763,11 +2872,12 @@ mod tests {
             "distinct identity was hidden: {line:?}"
         );
 
-        // A different failure category logs again.
+        // A different failure category logs again (schema 1 is now invalid;
+        // schema 2 is the current contract).
         let (result, line) = state.publish_snapshot_from(
             Some(":org.kwin"),
             Some(":org.kwin"),
-            2,
+            1,
             snapshot("alpha", 5, true),
             0,
         );
@@ -2808,10 +2918,13 @@ mod tests {
             generation: "alpha".to_owned(),
             revision,
             enabled: true,
+            current_scope: String::new(),
+            tiled: true,
+            default_tiled: true,
         };
 
         let (result, line) =
-            state.publish_snapshot_from(Some(":org.kwin"), None, 1, snapshot(1), 0);
+            state.publish_snapshot_from(Some(":org.kwin"), None, 2, snapshot(1), 0);
         assert_eq!(result.unwrap_err(), super::TrayError::UnauthorizedPublisher);
         assert_eq!(
             line,
@@ -2822,12 +2935,12 @@ mod tests {
         );
 
         let (result, line) =
-            state.publish_snapshot_from(Some(":org.kwin"), None, 1, snapshot(1), 1);
+            state.publish_snapshot_from(Some(":org.kwin"), None, 2, snapshot(1), 1);
         assert_eq!(result.unwrap_err(), super::TrayError::UnauthorizedPublisher);
         assert_eq!(line, None);
 
         let (result, line) =
-            state.publish_snapshot_from(Some(":org.kwin"), None, 1, snapshot(2), 2);
+            state.publish_snapshot_from(Some(":org.kwin"), None, 2, snapshot(2), 2);
         assert_eq!(result.unwrap_err(), super::TrayError::UnauthorizedPublisher);
         assert!(
             line.as_deref()
@@ -2839,7 +2952,7 @@ mod tests {
         // the new epoch logs again. The raw owner never appears in records.
         state.owner_changed(Some(":org.other"));
         let (result, line) =
-            state.publish_snapshot_from(Some(":org.other"), None, 1, snapshot(1), 3);
+            state.publish_snapshot_from(Some(":org.other"), None, 2, snapshot(1), 3);
         assert_eq!(result.unwrap_err(), super::TrayError::UnauthorizedPublisher);
         let line = line.expect("owner change re-arms the refusal record");
         assert!(line.contains("revision=1"));
@@ -2849,7 +2962,7 @@ mod tests {
         // An idempotent owner signal does not re-arm: the repeat stays silent.
         state.owner_changed(Some(":org.other"));
         let (result, line) =
-            state.publish_snapshot_from(Some(":org.other"), None, 1, snapshot(1), 4);
+            state.publish_snapshot_from(Some(":org.other"), None, 2, snapshot(1), 4);
         assert_eq!(result.unwrap_err(), super::TrayError::UnauthorizedPublisher);
         assert_eq!(line, None);
     }
@@ -2889,11 +3002,14 @@ mod tests {
         let (result, _) = state.publish_snapshot_from(
             Some(":org.kwin"),
             Some(":org.kwin"),
-            1,
+            2,
             super::Snapshot {
                 generation: "alpha".to_owned(),
                 revision: 0,
                 enabled: true,
+                current_scope: String::new(),
+                tiled: true,
+                default_tiled: true,
             },
             0,
         );
@@ -2957,11 +3073,14 @@ mod tests {
             generation: "alpha".to_owned(),
             revision,
             enabled,
+            current_scope: String::new(),
+            tiled: true,
+            default_tiled: true,
         };
         let (result, _) = endpoint.publish_authenticated_snapshot(
             ":org.kwin",
             Some(":org.kwin"),
-            1,
+            2,
             snapshot(0, true),
         );
         result.unwrap();
@@ -2969,7 +3088,7 @@ mod tests {
         let (result, line) = endpoint.publish_authenticated_snapshot(
             ":org.kwin",
             Some(":org.kwin"),
-            1,
+            2,
             snapshot(0, false),
         );
         assert!(result.is_err());
@@ -2982,7 +3101,7 @@ mod tests {
         let (result, line) = endpoint.publish_authenticated_snapshot(
             ":org.kwin",
             Some(":org.kwin"),
-            1,
+            2,
             snapshot(0, false),
         );
         assert!(result.is_err());

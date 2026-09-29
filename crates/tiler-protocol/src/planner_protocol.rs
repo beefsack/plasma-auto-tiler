@@ -1846,6 +1846,32 @@ fn serialize_drag_preview_reply(
     })
 }
 
+/// Byte-exact explicit release serializer: outcome `released` with kind
+/// `release-domain`. No base revision (the slot is gone), no geometry, no
+/// focus, no preconditions/operation: the adapter must perform zero native
+/// writes and only drop that domain's applied evidence. A later ordinary
+/// fresh reconcile re-adopts current geometry.
+fn serialize_release_reply(correlation_id: &str) -> String {
+    serialize_bounded(&PlanReply {
+        v: PLAN_CONTRACT_VERSION,
+        correlation_id: correlation_id.to_owned(),
+        outcome: "released",
+        kind: Some("release-domain".to_owned()),
+        message: None,
+        base_revision: None,
+        detail: Some(serde_json::json!({
+            "kind": "release-domain",
+        })),
+        desired_geometry: None,
+        desired_focus: None,
+        float_geometry: None,
+        preconditions: None,
+        operation: None,
+        preview_rect: None,
+        hover_prior: None,
+    })
+}
+
 /// Shared typed-reply choke point: every [`tiler_core::boundary::CoreReply`]
 /// variant serializes here through the exact legacy wire shapes, so output
 /// stays byte identical. Rejection/status/ack/commit/cancel arms reuse their
@@ -1863,6 +1889,7 @@ fn serialize_core_reply(ctx: &Validated, reply: &tiler_core::boundary::CoreReply
         CoreReply::Resize(plan) => serialize_resize_reply(&cid, plan),
         CoreReply::ActiveGroup(found) => serialize_active_group_found(ctx, found),
         CoreReply::DragPreview(plan) => serialize_drag_preview_reply(&cid, plan),
+        CoreReply::Released => serialize_release_reply(&cid),
         CoreReply::NoGroup {
             base_revision,
             reason,
@@ -2019,10 +2046,11 @@ impl Planner {
         // docs for the exact probe/ordering reasons), so these arms dispatch
         // by op string.
         match validated_op(&ctx).as_str() {
-            "reconcile" | "update-gaps" | "active-group" => {
+            "reconcile" | "update-gaps" | "active-group" | "release-domain" => {
                 match serde_json::from_value::<SyncCommand>(ctx.request.command.clone()) {
                     Ok(SyncCommand::Reconcile {}) => self.evaluate_reconcile_inner(&ctx),
                     Ok(SyncCommand::UpdateGaps {}) => self.evaluate_update_gaps_inner(&ctx),
+                    Ok(SyncCommand::ReleaseDomain {}) => self.evaluate_release_inner(&ctx),
                     Ok(command @ SyncCommand::ActiveGroup {}) => {
                         // Production typed-boundary route: convert the
                         // already-decoded command after all fences, then run
@@ -2554,6 +2582,18 @@ impl Planner {
         // membership, projection, and reprojection run in `Engine::handle`.
         // Serialization funnels through the typed choke point.
         let core_command = tiler_core::boundary::CoreCommand::Reconcile;
+        let event = core_event(ctx, &core_command);
+        self.handle_and_serialize(ctx, &event)
+    }
+
+    /// Production release-domain body without a second command parse/op check.
+    /// Same boundary contract as [`Self::evaluate_reconcile_inner`]: the
+    /// envelope is already validated (that domain's complete current
+    /// observation, same homing/rect/focus rules as reconcile). The Engine
+    /// drops the exact domain slot with no geometry; the reply carries none,
+    /// so the adapter must perform zero native writes.
+    fn evaluate_release_inner(&mut self, ctx: &Validated) -> String {
+        let core_command = tiler_core::boundary::CoreCommand::ReleaseDomain;
         let event = core_event(ctx, &core_command);
         self.handle_and_serialize(ctx, &event)
     }
@@ -3145,10 +3185,10 @@ struct DragPayload {
 
 /// Typed synchronous command codec (narrow).
 ///
-/// Internally tagged on `op` with `deny_unknown_fields` for all eleven
-/// synchronous command ops: reconcile, update-gaps, active-group, move,
-/// focus, resize, pointer-resize, toggle-float, `send-to-workspace`,
-/// `drag-drop`, and read-only `drag-preview`.
+/// Internally tagged on `op` with `deny_unknown_fields` for all twelve
+/// synchronous command ops: reconcile, update-gaps, active-group,
+/// release-domain, move, focus, resize, pointer-resize, toggle-float,
+/// `send-to-workspace`, `drag-drop`, and read-only `drag-preview`.
 /// Sync handlers parse
 /// [`SyncCommand`] once in place after the existing dispatch boundaries
 /// (validation, send dispatch, binding sync): the production `evaluate`
@@ -3173,6 +3213,8 @@ enum SyncCommand {
     UpdateGaps {},
     #[serde(rename = "active-group")]
     ActiveGroup {},
+    #[serde(rename = "release-domain")]
+    ReleaseDomain {},
     #[serde(rename = "move")]
     Move {
         window: String,
@@ -3251,6 +3293,7 @@ fn core_command_from_sync(command: &SyncCommand) -> Option<tiler_core::boundary:
         SyncCommand::Reconcile {} => Some(CoreCommand::Reconcile),
         SyncCommand::UpdateGaps {} => Some(CoreCommand::UpdateGaps),
         SyncCommand::ActiveGroup {} => Some(CoreCommand::ActiveGroup),
+        SyncCommand::ReleaseDomain {} => Some(CoreCommand::ReleaseDomain),
         SyncCommand::Move {
             window,
             direction,

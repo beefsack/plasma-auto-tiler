@@ -11,10 +11,30 @@ import { TrayPublisher } from "./tray-publisher";
 // and window/scope signals feed one debounced fresh-snapshot resync.
 
 const trayTimers = new Set<QTimer>();
+
+// The plan adapter owns session workspace tiling state; the tray snapshot
+// projects its current scope/tiled/default. The tray invokes the keyless
+// toggle over KGlobalAccel; the menu waits for the next published state.
+const trayHolder: { current: TrayPublisher | null } = { current: null };
+const planHandle = startPlanAdapterEntry({
+    owner: "kwin-plan-adapter",
+    generation: "plan-1",
+    onWorkspaceTilingChanged: () => {
+        try {
+            trayHolder.current?.notifyWorkspaceChanged();
+        } catch (error) {
+            void error;
+        }
+    },
+});
+
 const trayPublisher = new TrayPublisher({
     isEnabled: () => true,
     log: (message) => console.log(message),
-    publishSnapshot: (schema, generation, revision, enabled) => {
+    getScope: () => planHandle?.getWorkspaceTilingSnapshot().scope ?? "",
+    isTiled: () => planHandle?.getWorkspaceTilingSnapshot().tiled ?? true,
+    getDefaultTiled: () => planHandle?.getWorkspaceTilingSnapshot().defaultTiled ?? true,
+    publishSnapshot: (schema, generation, revision, enabled, currentScope, tiled, defaultTiled) => {
         callDBus(
             "org.plasmaautotiler.Tray",
             "/org/plasmaautotiler/Tray",
@@ -24,6 +44,9 @@ const trayPublisher = new TrayPublisher({
             generation,
             revision,
             enabled,
+            currentScope,
+            tiled,
+            defaultTiled,
         );
     },
     scheduleOnce: (delayMs, callback) => {
@@ -47,10 +70,10 @@ const trayPublisher = new TrayPublisher({
 });
 
 trayPublisher.start();
+trayHolder.current = trayPublisher;
 
 // Drag-verdict route: the plan adapter owns the single finished-handler
 // LastVerdict pull and routes exactly one strict pointer-resize after a
 // non-cancelled verdict. Cancelled verdicts are a strict no-op; derive
 // failures fail closed with exact bounded reasons. No push, retry, or fallback.
-const planHandle = startPlanAdapterEntry({ owner: "kwin-plan-adapter", generation: "plan-1" });
 void planHandle;

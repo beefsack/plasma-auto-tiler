@@ -14,6 +14,10 @@
                 <choice name="shared" value="shared"/>
             </choices>
         </entry>
+        <entry name="defaultTiled" type="Bool">
+            <label>Tiled behavior for newly discovered workspaces</label>
+            <default>true</default>
+        </entry>
         <entry name="shortcutProfile" type="Enum">
             <label>The startup shortcut profile</label>
             <default>cosmic</default>

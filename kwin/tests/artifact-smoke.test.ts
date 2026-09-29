@@ -118,7 +118,7 @@ describe("shipped artifact smoke execution", () => {
         assert.ok(trayDiag[1] !== undefined);
         assert.match(
             trayDiag[1],
-            /^plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=[a-z0-9-]{1,32} revision=0 enabled=true$/,
+            /^plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=[a-z0-9-]{1,32} revision=0 enabled=true tiled=true defaultTiled=true$/,
         );
         assert.ok(!stub.diagnostics.some((entry) => entry.includes("drag-attach")));
         assert.ok(!bundle.includes("TileController"));

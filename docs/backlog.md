@@ -10,15 +10,13 @@ decisions of 2026-09-24 are under
 
 ## Open work
 
-- P1 | Tray tiling/floating workspace toggle (next, user 2026-09-29) | Tray
-  icon click opens a menu instead of Settings directly: Settings item,
-  toggle tiling/floating for the current workspace, and a toggle for the
-  default of new workspaces (tiling by default). Only the default persists;
-  a new session applies it to all workspaces (user, 2026-09-29). Orchestrator
-  defaults: switching to floating leaves windows in place; switching back to
-  tiling re-adopts via the adoption fit.
-  [cosmic menu](reference-cosmic-tray-menu.md)
-
+- P1 | Tray tiling/floating workspace toggle | Shipped offline
+  (2026-09-29); live check pending (see Pending live checks). Tray invokes a
+  keyless KWin script shortcut action over KGlobalAccel; the default is
+  `kwinrc [Script-plasma-auto-tiler-kwin] defaultTiled`. Review candidate:
+  `tray.rs` production grew substantially; simplify after live acceptance if
+  parts prove low-value.
+  [change](changes/archive/tray-workspace-toggle.md)
 - P1 | Ghostty/local native alignment | The ~56 px shortfall is unexplained
   (source-only baseline fix is in; needs a fresh `just dev trace` local-move
   plus follow-on command trace), and one requested `2032x1092` became
@@ -140,6 +138,21 @@ All items below shipped offline with no live result claimed.
 
 ### Single-output laptop
 
+- Tray workspace toggle (needs a fresh Plasma session so the rebuilt tray and
+  script load): left-click opens the menu (workspace checkbox, Tiled/Floating
+  default, Settings); toggling to floating leaves geometry untouched, clears
+  the group underlay, keeps the border (`stage=toggle ...
+  outcome=sent-unconfirmed`, `plan:workspace-floating tiled=false`,
+  `plan:workspace-released outcome=released`); opening/moving windows there
+  writes no tiles; toggling back logs `plan:workspace-floating tiled=true
+  ... confirmed=true` then `adoption-fit`; default change logs `stage=persist
+  ... outcome=written`, `plan:config-reloaded stage=default-tiled`, applies
+  to new workspaces and to all workspaces after a session restart;
+  cross-boundary send is a native move with tiled-side reflow. Red flags:
+  geometry changes while floating, menu check disagreeing with KWin, re-tile
+  without confirmed release, `native-failed` sends, a physical key bound to
+  the keyless action.
+  [change](changes/archive/tray-workspace-toggle.md)
 - Host settings Fix/Revert: fresh Plasma session, open Settings; both edge
   boolean rows show Fix (Borders row only if nonzero); Fix switches rows to
   Revert and stops KWin's native edge previews during Meta-drag; Revert

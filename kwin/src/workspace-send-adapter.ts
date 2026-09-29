@@ -216,6 +216,12 @@ export interface WorkspaceSendAdapterEnv {
     readonly setGeometry: (target: object, rect: WorkspaceSendRect) => boolean;
     readonly readGeometry?: (target: object) => WorkspaceSendRect | null;
     readonly setDesktops: (target: object, refs: ReadonlyArray<object>) => boolean;
+    // Current tiling-mode gate: false for an (output, workspace) domain that
+    // toggled floating mid-flight means unmanaged, so the flight must issue
+    // zero further geometry writes there and settle normally. Absent means
+    // tiled (fail-open); exceptions fail open. Read at call time so a toggle
+    // between dispatch and any native setter is observed.
+    readonly isDomainTiled?: (output: string, workspace: string) => boolean;
     readonly switchToTarget?: (desktopRef: object, diagnostic: WorkspaceFollowNativeDiagnostic) => boolean;
     readonly focusWindow?: (windowRef: object, diagnostic: WorkspaceFollowNativeDiagnostic) => boolean;
     // Narrow mover desktop-change subscription seam for delayed arrival.
@@ -1684,6 +1690,13 @@ export class WorkspaceSendAdapter {
             this.settleTerminal(flight, correlation, "stale-revision", "release");
             return;
         }
+        // Mid-flight floating gate: either flight domain toggled floating
+        // after dispatch must receive zero native writes. Settle normally so
+        // the entry refreshes both domains from native observation.
+        if (!this.isFlightTiled(pending)) {
+            this.settleTerminal(flight, correlation, "workspace-floating", "release");
+            return;
+        }
         // Arm the one-shot arrival signal BEFORE native writes so a delayed
         // arrival signalling reentrantly between setters and the post-write
         // observation stays observable. Synchronous echo during the write
@@ -1698,6 +1711,10 @@ export class WorkspaceSendAdapter {
         const moverWritten = geometryWritten && this.writeMoverDesktops(flight, correlation, pending);
         this.nativeWriteDepth -= 1;
         if (!geometryWritten || !moverWritten) {
+            if (!this.isFlightTiled(pending)) {
+                this.settleTerminal(flight, correlation, "workspace-floating", "release");
+                return;
+            }
             if (!this.fencesHold(flight, correlation) || !this.scopeStillMatches(pending) || !this.flightGapsHold(pending)) {
                 this.settleTerminal(flight, correlation, "stale-revision", "release");
                 return;
@@ -2202,6 +2219,29 @@ export class WorkspaceSendAdapter {
         }
     }
 
+    // Current-mode gate for a live flight: both flight domains must still
+    // be tiled. Either side toggling floating mid-flight forbids further
+    // geometry writes. Absent gate or exceptions fail open (tiled).
+    private isFlightTiled(pending: WorkspacePendingFlight): boolean {
+        try {
+            const gate = this.env.isDomainTiled;
+            if (typeof gate !== "function") {
+                return true;
+            }
+            const snapshot = pending.snapshot;
+            if (gate(snapshot.sourceOutput, snapshot.sourceWorkspace) === false) {
+                return false;
+            }
+            if (gate(snapshot.targetOutput, snapshot.targetWorkspace) === false) {
+                return false;
+            }
+            return true;
+        } catch (error) {
+            void error;
+            return true;
+        }
+    }
+
     private writeGeometries(
         flight: number,
         correlation: string,
@@ -2227,7 +2267,11 @@ export class WorkspaceSendAdapter {
         for (let writeOrdinal = 0; writeOrdinal < ordered.length; writeOrdinal += 1) {
             // Retain the exact source+target scope and token before every
             // native setter: a window may resize, move, or close mid-write.
+            // A mid-write floating toggle stops further geometry writes.
             if (!this.fencesHold(flight, correlation) || this.pending !== pending) {
+                return false;
+            }
+            if (!this.isFlightTiled(pending)) {
                 return false;
             }
             const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
@@ -2284,7 +2328,11 @@ export class WorkspaceSendAdapter {
     ): boolean {
         // Fresh scope fence immediately before the mover membership setter:
         // never reuse the pre-geometry observation after geometry writes.
+        // A floating toggle before this setter forbids the membership write.
         if (!this.fencesHold(flight, correlation) || this.pending !== pending) {
+            return false;
+        }
+        if (!this.isFlightTiled(pending)) {
             return false;
         }
         const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);

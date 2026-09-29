@@ -120,6 +120,26 @@ the corresponding item ships; each such entry names its replacement.
   launch it on demand with `cargo run -p plasma-auto-tiler -- tray`. The
   Planner same-UID caller check remains. Live login and watcher acceptance
   remain pending.
+- Tray workspace behavior (user 2026-09-29, offline implementation; live
+  acceptance pending): clicking the tray icon opens its menu with current
+  workspace tiling, new-workspace behavior Tiled/Floating, and Settings for the
+  existing unified page. The existing disabled status row may remain. The
+  keyless KWin script action is invoked by the tray through KGlobalAccel;
+  invoking it does not confirm application, so the menu reflects fresh
+  KWin-owned snapshots. The tray writes only `defaultTiled` (Tiled by default)
+  in `kwinrc [Script-plasma-auto-tiler-kwin]` and requests KWin reconfigure;
+  only a running KWin reread/snapshot confirms its live value. All existing
+  workspaces take the saved default at new-session startup, while a live
+  default change applies only to subsequently discovered workspaces.
+  Orchestrator defaults approved by the user: per-workspace overrides are
+  session-only in the KWin backing-desktop mapping and reset on script reload;
+  shared mode toggles the backing workspace across outputs. Floating leaves
+  native windows in place and stops domain tiling/underlay management; the
+  active border stays independent. An explicit no-write Planner domain release
+  precedes fresh recursive-cut/centre-split adoption on retiling. Sends across
+  a floating boundary move native desktop membership without a Rust two-domain
+  tiling plan; only the tiled side reflows. No per-workspace history persists.
+  Evidence and residual live steps: [tray workspace toggle](changes/archive/tray-workspace-toggle.md).
 - Testing investment: build test fixtures that are sensible and valuable for
   the change at hand; avoid extensive custom harnesses that constrain later
   development.

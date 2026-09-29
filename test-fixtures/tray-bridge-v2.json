@@ -1,0 +1,683 @@
+{
+  "contract": {
+    "service": "org.plasmaautotiler.Tray",
+    "object": "/org/plasmaautotiler/Tray",
+    "interface": "org.plasmaautotiler.Tray1",
+    "method": "PublishSnapshot",
+    "signature": "isibsbb",
+    "schema": 2,
+    "generationPattern": "^[a-z0-9-]{1,32}$(?![\\s\\S])",
+    "freshnessMs": 30000
+  },
+  "routes": {
+    "accepted": {
+      "service": "org.plasmaautotiler.Tray",
+      "object": "/org/plasmaautotiler/Tray",
+      "interface": "org.plasmaautotiler.Tray1",
+      "method": "PublishSnapshot"
+    },
+    "rejected": [
+      {
+        "service": "org.plasmaautotiler.Tray",
+        "object": "/org/plasmaautotiler/Tray",
+        "interface": "org.plasmaautotiler.Tray1",
+        "method": "OtherMethod"
+      },
+      {
+        "service": "org.other.Service",
+        "object": "/org/plasmaautotiler/Tray",
+        "interface": "org.plasmaautotiler.Tray1",
+        "method": "PublishSnapshot"
+      },
+      {
+        "service": "org.plasmaautotiler.Tray",
+        "object": "/org/other/Object",
+        "interface": "org.plasmaautotiler.Tray1",
+        "method": "PublishSnapshot"
+      },
+      {
+        "service": "org.plasmaautotiler.Tray",
+        "object": "/org/plasmaautotiler/Tray",
+        "interface": "org.other.Interface",
+        "method": "PublishSnapshot"
+      }
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "owner freshness replay and invalidation",
+      "events": [
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "alpha",
+            1,
+            true,
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": false,
+            "snapshot": null,
+            "refreshedAt": null,
+            "current": false
+          }
+        },
+        {
+          "op": "owner-acquired",
+          "expected": {
+            "owner": true,
+            "snapshot": null,
+            "refreshedAt": null,
+            "current": false
+          }
+        },
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "alpha",
+            1,
+            true,
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "alpha",
+              "revision": 1,
+              "enabled": true,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 0,
+            "current": true
+          }
+        },
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "alpha\n",
+            2,
+            false,
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "alpha",
+              "revision": 1,
+              "enabled": true,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 0,
+            "current": true
+          }
+        },
+        {
+          "op": "advance",
+          "ms": 29999,
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "alpha",
+              "revision": 1,
+              "enabled": true,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 0,
+            "current": true
+          }
+        },
+        {
+          "op": "advance",
+          "ms": 1,
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "alpha",
+              "revision": 1,
+              "enabled": true,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 0,
+            "current": false
+          }
+        },
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "alpha",
+            1,
+            true,
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "alpha",
+              "revision": 1,
+              "enabled": true,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 30000,
+            "current": true
+          }
+        },
+        {
+          "op": "advance",
+          "ms": 1,
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "alpha",
+              "revision": 1,
+              "enabled": true,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 30000,
+            "current": true
+          }
+        },
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "alpha",
+            2,
+            false,
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "alpha",
+              "revision": 2,
+              "enabled": false,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 30001,
+            "current": true
+          }
+        },
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "beta",
+            0,
+            true,
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "beta",
+              "revision": 0,
+              "enabled": true,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 30001,
+            "current": true
+          }
+        },
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "beta",
+            0,
+            false,
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": true,
+            "snapshot": null,
+            "refreshedAt": null,
+            "current": false
+          }
+        },
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "beta",
+            1,
+            true,
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "beta",
+              "revision": 1,
+              "enabled": true,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 30001,
+            "current": true
+          }
+        },
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "beta",
+            1,
+            false,
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": true,
+            "snapshot": null,
+            "refreshedAt": null,
+            "current": false
+          }
+        },
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "beta",
+            2,
+            true,
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "beta",
+              "revision": 2,
+              "enabled": true,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 30001,
+            "current": true
+          }
+        },
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "gamma",
+            0,
+            false,
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "gamma",
+              "revision": 0,
+              "enabled": false,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 30001,
+            "current": true
+          }
+        },
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "alpha",
+            0,
+            false,
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "gamma",
+              "revision": 0,
+              "enabled": false,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 30001,
+            "current": true
+          }
+        },
+        {
+          "op": "transport-failure",
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "gamma",
+              "revision": 0,
+              "enabled": false,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 30001,
+            "current": true
+          }
+        },
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "beta",
+            2,
+            false,
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "gamma",
+              "revision": 0,
+              "enabled": false,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 30001,
+            "current": true
+          }
+        },
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "BAD",
+            2,
+            false,
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "gamma",
+              "revision": 0,
+              "enabled": false,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 30001,
+            "current": true
+          }
+        },
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "beta",
+            2147483648,
+            false,
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "gamma",
+              "revision": 0,
+              "enabled": false,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 30001,
+            "current": true
+          }
+        },
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "beta",
+            2,
+            "false",
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "gamma",
+              "revision": 0,
+              "enabled": false,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 30001,
+            "current": true
+          }
+        },
+        {
+          "op": "owner-lost",
+          "expected": {
+            "owner": false,
+            "snapshot": null,
+            "refreshedAt": null,
+            "current": false
+          }
+        },
+        {
+          "op": "owner-acquired",
+          "expected": {
+            "owner": true,
+            "snapshot": null,
+            "refreshedAt": null,
+            "current": false
+          }
+        },
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "gamma",
+            1,
+            false,
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "gamma",
+              "revision": 1,
+              "enabled": false,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 30001,
+            "current": true
+          }
+        },
+        {
+          "op": "restart",
+          "expected": {
+            "owner": false,
+            "snapshot": null,
+            "refreshedAt": null,
+            "current": false
+          }
+        },
+        {
+          "op": "owner-acquired",
+          "expected": {
+            "owner": true,
+            "snapshot": null,
+            "refreshedAt": null,
+            "current": false
+          }
+        },
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "gamma",
+            1,
+            false,
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "gamma",
+              "revision": 1,
+              "enabled": false,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 30001,
+            "current": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "signed revision boundaries",
+      "events": [
+        {
+          "op": "owner-acquired",
+          "expected": {
+            "owner": true,
+            "snapshot": null,
+            "refreshedAt": null,
+            "current": false
+          }
+        },
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "limits",
+            -2147483648,
+            true,
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "limits",
+              "revision": -2147483648,
+              "enabled": true,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 0,
+            "current": true
+          }
+        },
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "limits",
+            2147483647,
+            false,
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "limits",
+              "revision": 2147483647,
+              "enabled": false,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 0,
+            "current": true
+          }
+        },
+        {
+          "op": "publish",
+          "args": [
+            2,
+            "limits",
+            2147483646,
+            true,
+            "",
+            true,
+            true
+          ],
+          "expected": {
+            "owner": true,
+            "snapshot": {
+              "generation": "limits",
+              "revision": 2147483647,
+              "enabled": false,
+              "currentScope": "",
+              "tiled": true,
+              "defaultTiled": true
+            },
+            "refreshedAt": 0,
+            "current": true
+          }
+        }
+      ]
+    }
+  ]
+}

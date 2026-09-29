@@ -677,6 +677,7 @@ impl Engine {
             }
             CoreCommand::SendToWorkspace { .. } => self.workspace_request(event),
             CoreCommand::ActiveGroup => self.active_group_request(event),
+            CoreCommand::ReleaseDomain => self.release_request(event),
             CoreCommand::ToggleFloat { .. } => {
                 match self.converge_for_single_domain(event, "toggle-float") {
                     ConvergeOutcome::Rejected(reply) => *reply,
@@ -1104,6 +1105,17 @@ impl Engine {
                 detail: "seed-failed",
             },
         }
+    }
+
+    /// Explicit domain release: drop the exact domain slot and its outer gap
+    /// with no native geometry writes. Idempotent when absent; every other
+    /// domain and the owner/generation binding are untouched. No convergence,
+    /// seeding, relocation, or observation is fabricated: a later ordinary
+    /// fresh reconcile re-adopts current geometry through the existing
+    /// fit/seed route.
+    fn release_request(&mut self, event: &CoreEvent) -> CoreReply {
+        self.remove(&event.domain_key);
+        CoreReply::Released
     }
 
     /// Reconcile request phase: retained-tree projection with displaced

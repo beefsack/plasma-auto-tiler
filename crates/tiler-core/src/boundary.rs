@@ -32,9 +32,9 @@ use crate::session::{
     SessionDragPlan, SessionFocusPlan, SessionMovePlan, SessionPlan, SessionResizePlan,
 };
 
-/// Typed command for all 11 wire ops: reconcile, update-gaps, active-group,
-/// move, focus, resize, pointer-resize, toggle-float, `send-to-workspace`,
-/// `drag-drop`, and read-only `drag-preview`.
+/// Typed command for all 12 wire ops: reconcile, update-gaps, active-group,
+/// release-domain, move, focus, resize, pointer-resize, toggle-float,
+/// `send-to-workspace`, `drag-drop`, and read-only `drag-preview`.
 /// Payloads are already-decoded clones; fallible wire vocabularies
 /// (direction/mode) cross opaquely so this conversion stays total
 /// and handler precedence is untouched.
@@ -43,6 +43,7 @@ pub enum CoreCommand {
     Reconcile,
     UpdateGaps,
     ActiveGroup,
+    ReleaseDomain,
     Move {
         window: String,
         direction: String,
@@ -114,6 +115,7 @@ impl CoreCommand {
             Self::Reconcile => "reconcile",
             Self::UpdateGaps => "update-gaps",
             Self::ActiveGroup => "active-group",
+            Self::ReleaseDomain => "release-domain",
             Self::Move { .. } => "move",
             Self::Focus { .. } => "focus",
             Self::Resize { .. } => "resize",
@@ -602,7 +604,7 @@ pub struct DragPreviewPlan {
     pub preview: DragPreview,
 }
 
-/// Typed reply across all 11 ops plus every rejection shape. Success variants
+/// Typed reply across all 12 ops plus every rejection shape. Success variants
 /// carry core plans; rejection variants carry the closed
 /// `&'static str` kind/message/detail vocabulary (single sources live in
 /// [`crate::session`]/[`crate::contract`] and the protocol `MSG_*`
@@ -621,6 +623,10 @@ pub enum CoreReply {
         reason: NoGroupReason,
     },
     DragPreview(DragPreviewPlan),
+    /// Explicit domain release: the exact domain slot is gone, so there is
+    /// no geometry, focus, or revision to report. The adapter must perform
+    /// zero native writes for this reply.
+    Released,
     Rejected {
         kind: &'static str,
         message: &'static str,
@@ -955,6 +961,7 @@ mod tests {
             CoreCommand::Reconcile,
             CoreCommand::UpdateGaps,
             CoreCommand::ActiveGroup,
+            CoreCommand::ReleaseDomain,
             CoreCommand::Move {
                 window: "w".to_owned(),
                 direction: "left".to_owned(),
@@ -1002,10 +1009,11 @@ mod tests {
                 source: None,
             },
         ];
-        assert_eq!(commands.len(), 11);
+        assert_eq!(commands.len(), 12);
         let tokens: HashSet<&'static str> = commands.iter().map(|c| c.op()).collect();
-        assert_eq!(tokens.len(), 11);
+        assert_eq!(tokens.len(), 12);
         assert!(tokens.contains("reconcile"));
+        assert!(tokens.contains("release-domain"));
         assert!(tokens.contains("send-to-workspace"));
         assert!(tokens.contains("drag-drop"));
         assert!(tokens.contains("drag-preview"));

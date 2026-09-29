@@ -20,6 +20,9 @@ interface Snapshot {
     readonly generation: string;
     readonly revision: number;
     readonly enabled: boolean;
+    readonly currentScope: string;
+    readonly tiled: boolean;
+    readonly defaultTiled: boolean;
 }
 
 function fixture(): TrayFixture {
@@ -41,16 +44,25 @@ function setup(initialEnabled = true, generations = ["first", "second"]): {
     readonly scheduleCount: () => number;
     readonly cancelCount: () => number;
     readonly setEnabled: (value: boolean) => void;
+    readonly setScope: (value: string) => void;
+    readonly setTiled: (value: boolean) => void;
+    readonly setDefaultTiled: (value: boolean) => void;
 } {
     let enabled = initialEnabled;
+    let scope = "";
+    let tiled = true;
+    let defaultTiled = true;
     let heartbeat: (() => void) | undefined;
     let schedules = 0;
     let cancellations = 0;
     const snapshots: Snapshot[] = [];
     const publisher = new TrayPublisher({
         isEnabled: () => enabled,
-        publishSnapshot: (schema, generation, revision, currentEnabled) => {
-            snapshots.push({ schema, generation, revision, enabled: currentEnabled });
+        getScope: () => scope,
+        isTiled: () => tiled,
+        getDefaultTiled: () => defaultTiled,
+        publishSnapshot: (schema, generation, revision, currentEnabled, currentScope, currentTiled, currentDefault) => {
+            snapshots.push({ schema, generation, revision, enabled: currentEnabled, currentScope, tiled: currentTiled, defaultTiled: currentDefault });
         },
         scheduleOnce: (_delayMs, callback) => {
             schedules += 1;
@@ -76,6 +88,15 @@ function setup(initialEnabled = true, generations = ["first", "second"]): {
         setEnabled: (value) => {
             enabled = value;
         },
+        setScope: (value) => {
+            scope = value;
+        },
+        setTiled: (value) => {
+            tiled = value;
+        },
+        setDefaultTiled: (value) => {
+            defaultTiled = value;
+        },
     };
 }
 
@@ -83,25 +104,31 @@ test("publishes the startup snapshot and retries it on each heartbeat", () => {
     const contract = fixture().contract;
     const state = setup();
 
-    assert.deepEqual(state.snapshots, [{ schema: contract.schema, generation: "first", revision: 0, enabled: true }]);
+    assert.deepEqual(state.snapshots, [{ schema: 2, generation: "first", revision: 0, enabled: true, currentScope: "", tiled: true, defaultTiled: true }]);
     assert.match("first", new RegExp(contract.generationPattern));
 
     state.heartbeat();
     assert.deepEqual(state.snapshots[state.snapshots.length - 1], {
-        schema: 1,
+        schema: 2,
         generation: "first",
         revision: 0,
         enabled: true,
+        currentScope: "",
+        tiled: true,
+        defaultTiled: true,
     });
     assert.equal(state.snapshots.length, 2);
 
     state.setEnabled(false);
     state.heartbeat();
     assert.deepEqual(state.snapshots[state.snapshots.length - 1], {
-        schema: 1,
+        schema: 2,
         generation: "first",
         revision: 0,
         enabled: true,
+        currentScope: "",
+        tiled: true,
+        defaultTiled: true,
     });
 });
 
@@ -110,18 +137,24 @@ test("increments revision only when enabled changes", () => {
 
     state.publisher.notifyEnabledChanged(false);
     assert.deepEqual(state.snapshots[state.snapshots.length - 1], {
-        schema: 1,
+        schema: 2,
         generation: "first",
         revision: 1,
         enabled: false,
+        currentScope: "",
+        tiled: true,
+        defaultTiled: true,
     });
 
     state.publisher.notifyEnabledChanged(false);
     assert.deepEqual(state.snapshots[state.snapshots.length - 1], {
-        schema: 1,
+        schema: 2,
         generation: "first",
         revision: 1,
         enabled: false,
+        currentScope: "",
+        tiled: true,
+        defaultTiled: true,
     });
 });
 
@@ -133,9 +166,9 @@ test("publishes both immediate enabled transitions without duplicate same-state 
     state.publisher.notifyEnabledChanged(false);
 
     assert.deepEqual(state.snapshots, [
-        { schema: 1, generation: "first", revision: 0, enabled: false },
-        { schema: 1, generation: "first", revision: 1, enabled: true },
-        { schema: 1, generation: "first", revision: 2, enabled: false },
+        { schema: 2, generation: "first", revision: 0, enabled: false, currentScope: "", tiled: true, defaultTiled: true },
+        { schema: 2, generation: "first", revision: 1, enabled: true, currentScope: "", tiled: true, defaultTiled: true },
+        { schema: 2, generation: "first", revision: 2, enabled: false, currentScope: "", tiled: true, defaultTiled: true },
     ]);
 });
 
@@ -148,10 +181,13 @@ test("rolls generation when an enabled transition reaches the signed revision li
     state.publisher.notifyEnabledChanged(false);
 
     assert.deepEqual(state.snapshots[state.snapshots.length - 1], {
-        schema: 1,
+        schema: 2,
         generation: "second",
         revision: 0,
         enabled: false,
+        currentScope: "",
+        tiled: true,
+        defaultTiled: true,
     });
 });
 
@@ -237,8 +273,8 @@ function setupWithLog(initialEnabled = true, generations = ["first", "second"]):
     const lines: string[] = [];
     const publisher = new TrayPublisher({
         isEnabled: () => enabled,
-        publishSnapshot: (schema, generation, revision, currentEnabled) => {
-            snapshots.push({ schema, generation, revision, enabled: currentEnabled });
+        publishSnapshot: (schema, generation, revision, currentEnabled, currentScope, currentTiled, currentDefault) => {
+            snapshots.push({ schema, generation, revision, enabled: currentEnabled, currentScope, tiled: currentTiled, defaultTiled: currentDefault });
         },
         scheduleOnce: (_delayMs, callback) => {
             heartbeat = callback;
@@ -270,7 +306,7 @@ test("emits bounded lifecycle and send-initiation lines only for state changes",
 
     assert.deepEqual(state.lines, [
         "plasma-auto-tiler:route-diag component=tray stage=tray event=started outcome=ok",
-        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=0 enabled=true",
+        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=0 enabled=true tiled=true defaultTiled=true",
     ]);
 
     state.heartbeat();
@@ -281,7 +317,7 @@ test("emits bounded lifecycle and send-initiation lines only for state changes",
     state.publisher.notifyEnabledChanged(false);
     assert.deepEqual(state.lines.slice(2), [
         "plasma-auto-tiler:route-diag component=tray stage=tray event=enabled-changed outcome=ok",
-        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=1 enabled=false",
+        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=1 enabled=false tiled=true defaultTiled=true",
     ]);
 
     state.publisher.notifyEnabledChanged(false);
@@ -298,7 +334,7 @@ test("emits bounded lifecycle and send-initiation lines only for state changes",
     for (const line of state.lines) {
         assert.match(
             line,
-            /^plasma-auto-tiler:route-diag component=tray stage=(tray|bridge) event=[a-z-]+ outcome=(ok|failed)( generation=[a-z0-9-]{1,32} revision=-?[0-9]+ enabled=(true|false))?$/,
+            /^plasma-auto-tiler:route-diag component=tray stage=(tray|bridge) event=[a-z-]+ outcome=(ok|failed)( generation=[a-z0-9-]{1,32} revision=-?[0-9]+ enabled=(true|false) tiled=(true|false) defaultTiled=(true|false))?$/,
         );
     }
     // Join identity lives only on bridge send lines: the lifecycle records
@@ -306,8 +342,8 @@ test("emits bounded lifecycle and send-initiation lines only for state changes",
     // snapshot handed to publishSnapshot (join by equality, never ancestry).
     const bridge = state.lines.filter((line) => line.includes("stage=bridge"));
     assert.deepEqual(bridge, [
-        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=0 enabled=true",
-        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=1 enabled=false",
+        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=0 enabled=true tiled=true defaultTiled=true",
+        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=1 enabled=false tiled=true defaultTiled=true",
     ]);
     assert.deepEqual(
         bridge.map((line) => {
@@ -351,7 +387,7 @@ test("send failure emits a bounded refusal without error text", () => {
     publisher.start();
     assert.deepEqual(lines, [
         "plasma-auto-tiler:route-diag component=tray stage=tray event=started outcome=ok",
-        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-failed outcome=failed generation=first revision=0 enabled=true",
+        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-failed outcome=failed generation=first revision=0 enabled=true tiled=true defaultTiled=true",
     ]);
     for (const line of lines) {
         assert.ok(!line.includes("transport") && !line.includes("secret"));
@@ -406,13 +442,13 @@ test("a heartbeat failure after an initial success becomes visible once", () => 
     const state = setupFlakyTransport();
     assert.deepEqual(state.lines, [
         "plasma-auto-tiler:route-diag component=tray stage=tray event=started outcome=ok",
-        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=0 enabled=true",
+        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=0 enabled=true tiled=true defaultTiled=true",
     ]);
 
     state.failNext(true);
     state.heartbeat();
     assert.deepEqual(state.lines.slice(2), [
-        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-failed outcome=failed generation=first revision=0 enabled=true",
+        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-failed outcome=failed generation=first revision=0 enabled=true tiled=true defaultTiled=true",
     ]);
     assert.equal(state.attempts(), 2);
 });
@@ -438,7 +474,7 @@ test("heartbeat recovery to success is visible, then steady state is silent", ()
     state.failNext(false);
     state.heartbeat();
     assert.deepEqual(state.lines.slice(3), [
-        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=0 enabled=true",
+        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok generation=first revision=0 enabled=true tiled=true defaultTiled=true",
     ]);
 
     state.heartbeat();
@@ -463,7 +499,7 @@ test("a later distinct heartbeat failure is visible again", () => {
     state.failNext(true);
     state.heartbeat();
     assert.deepEqual(state.lines.slice(4), [
-        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-failed outcome=failed generation=first revision=0 enabled=true",
+        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-failed outcome=failed generation=first revision=0 enabled=true tiled=true defaultTiled=true",
     ]);
     // Identical repeats after the second report stay silent again.
     state.heartbeat();
@@ -485,7 +521,7 @@ test("an unvalidated generation token is omitted from diagnostics, never echoed"
     publisher.start();
     assert.deepEqual(lines, [
         "plasma-auto-tiler:route-diag component=tray stage=tray event=started outcome=ok",
-        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok revision=0 enabled=true",
+        "plasma-auto-tiler:route-diag component=tray stage=bridge event=send-initiated outcome=ok revision=0 enabled=true tiled=true defaultTiled=true",
     ]);
     assert.ok(!lines.join("\n").includes("BAD"));
     assert.ok(!lines.join("\n").includes("injected"));
@@ -495,8 +531,8 @@ test("a throwing log sink never interferes with publication", () => {
     const snapshots: Snapshot[] = [];
     const publisher = new TrayPublisher({
         isEnabled: () => true,
-        publishSnapshot: (schema, generation, revision, enabled) => {
-            snapshots.push({ schema, generation, revision, enabled });
+        publishSnapshot: (schema, generation, revision, enabled, currentScope, tiled, defaultTiled) => {
+            snapshots.push({ schema, generation, revision, enabled, currentScope, tiled, defaultTiled });
         },
         scheduleOnce: () => {},
         createGeneration: () => "first",
@@ -509,8 +545,8 @@ test("a throwing log sink never interferes with publication", () => {
     publisher.notifyEnabledChanged(false);
     publisher.dispose();
     assert.deepEqual(snapshots, [
-        { schema: 1, generation: "first", revision: 0, enabled: true },
-        { schema: 1, generation: "first", revision: 1, enabled: false },
+        { schema: 2, generation: "first", revision: 0, enabled: true, currentScope: "", tiled: true, defaultTiled: true },
+        { schema: 2, generation: "first", revision: 1, enabled: false, currentScope: "", tiled: true, defaultTiled: true },
     ]);
 });
 test("does not publish or reschedule after disposal", () => {
@@ -523,4 +559,56 @@ test("does not publish or reschedule after disposal", () => {
     assert.equal(state.snapshots.length, 1);
     assert.equal(state.scheduleCount(), schedules);
     assert.equal(state.cancelCount(), 1);
+});
+
+test("publishes schema v2 with scope, tiled, and default; empty scope when none", () => {
+    const state = setup();
+    const first = state.snapshots[0];
+    assert.ok(first !== undefined);
+    assert.equal(first.schema, 2);
+    assert.equal(first.currentScope, "");
+    assert.equal(first.tiled, true);
+    assert.equal(first.defaultTiled, true);
+
+    state.setScope("ws-1");
+    state.setTiled(false);
+    state.publisher.notifyWorkspaceChanged();
+    const changed = state.snapshots[state.snapshots.length - 1];
+    assert.ok(changed !== undefined);
+    assert.deepEqual(
+        [changed.schema, changed.generation, changed.revision, changed.enabled, changed.currentScope, changed.tiled, changed.defaultTiled],
+        [2, "first", 1, true, "ws-1", false, true],
+    );
+
+    // No duplicate revision for identical workspace state.
+    state.publisher.notifyWorkspaceChanged();
+    assert.equal(state.snapshots[state.snapshots.length - 1]?.revision, 1);
+});
+
+test("heartbeat converges scope drift with a revision bump, then stays silent", () => {
+    const state = setup();
+    state.setScope("ws-2");
+    const before = state.snapshots.length;
+    state.heartbeat();
+    assert.equal(state.snapshots.length, before + 1);
+    assert.deepEqual(
+        [state.snapshots[state.snapshots.length - 1]?.currentScope, state.snapshots[state.snapshots.length - 1]?.revision],
+        ["ws-2", 1],
+    );
+    state.heartbeat();
+    assert.equal(state.snapshots[state.snapshots.length - 1]?.revision, 1);
+});
+
+test("default change bumps revision without touching scope", () => {
+    const state = setup();
+    state.setScope("ws-1");
+    state.publisher.notifyWorkspaceChanged();
+    const revision = state.snapshots[state.snapshots.length - 1]?.revision;
+    state.setDefaultTiled(false);
+    state.publisher.notifyWorkspaceChanged();
+    const changed = state.snapshots[state.snapshots.length - 1];
+    assert.ok(changed !== undefined && revision !== undefined);
+    assert.equal(changed.revision, revision + 1);
+    assert.equal(changed.currentScope, "ws-1");
+    assert.equal(changed.defaultTiled, false);
 });

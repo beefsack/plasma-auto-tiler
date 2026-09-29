@@ -87,7 +87,7 @@ const LOG_PREFIX = "plasma-auto-tiler:plan";
 export type PlanDirection = "left" | "right" | "up" | "down";
 export type PlanResizeMode = "inwards" | "outwards";
 export type PlanSignal = "added" | "removed" | "activated" | "geometry" | "scope" | "fullscreen" | "maximize" | "desktops";
-export type PlanOp = "admit" | "remove" | "move" | "focus" | "resize" | "reconcile" | "update-gaps" | "pointer-resize" | "toggle-float" | "drag-drop";
+export type PlanOp = "admit" | "remove" | "move" | "focus" | "resize" | "reconcile" | "update-gaps" | "pointer-resize" | "toggle-float" | "drag-drop" | "release-domain";
 
 // Read-only drag preview result for the overlay sender: the proposed source
 // rectangle plus the verbatim carried hover state for the next preview or the
@@ -624,6 +624,9 @@ export interface PlanAdapterEnv {
     readonly setKeepBelow?: (target: object, keepBelow: boolean) => KeepAboveWriteOutcome;
     readonly setGeometry: (target: object, rect: PlanRect) => boolean;
     readonly setFloating?: (id: string, floating: boolean) => void;
+    // Workspace tiling gate: false means floating/unmanaged, so automatic
+    // tiling and geometry writes skip that workspace. Releases bypass it.
+    readonly isDomainTiled?: (output: string, workspace: string) => boolean;
     readonly setActive: (target: object) => boolean;
     readonly active: () => object | null;
     // Production R4 cross-output transfer capabilities. All ten must be
@@ -1931,6 +1934,12 @@ export class PlanAdapter {
     // output/workspace.
     private dragRestore = new Map<string, DragRestoreMarker>();
     private dragRestoreSeq = 0;
+    // Explicit no-write release-domain queue through the shared single-flight.
+    private releaseQueue: Array<{
+        readonly snapshot: PlanSnapshot;
+        readonly onSettled: ((outcome: string) => void) | undefined;
+    }> = [];
+    private releaseCallbacks = new Map<string, (outcome: string) => void>();
     // Bounded read-only drag preview state (no timers, no caps, no queue):
     // one entry per drag-N correlation carrying the last validated
     // `hover_prior` plus the one live reply fence (sequence, scope,
@@ -2179,6 +2188,10 @@ export class PlanAdapter {
         }
         if (observed.activeExcluded) {
             this.logToken(`${LOG_PREFIX}:focus-refused-floating`);
+            return;
+        }
+        if (!this.isTiledDomain(observed.domainOutput, observed.domainWorkspace)) {
+            this.logToken(`${LOG_PREFIX}:focus-refused-workspace-floating`);
             return;
         }
         const snapshot = this.carriedSnapshot(observed);
@@ -2633,6 +2646,10 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:move-refused-floating`);
             return;
         }
+        if (!this.isTiledDomain(observed.domainOutput, observed.domainWorkspace)) {
+            this.logToken(`${LOG_PREFIX}:move-refused-workspace-floating`);
+            return;
+        }
         if (this.windowIsFullscreen(observed, observed.focusedId)) {
             this.logToken(`${LOG_PREFIX}:move-refused-fullscreen`);
             return;
@@ -2707,6 +2724,10 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:resize-refused-floating`);
             return;
         }
+        if (!this.isTiledDomain(observed.domainOutput, observed.domainWorkspace)) {
+            this.logToken(`${LOG_PREFIX}:resize-refused-workspace-floating`);
+            return;
+        }
         if (this.windowIsFullscreen(observed, observed.focusedId)) {
             this.logToken(`${LOG_PREFIX}:resize-refused-fullscreen`);
             return;
@@ -2758,6 +2779,10 @@ export class PlanAdapter {
         const target = observed.windows.find((entry) => entry.id === observed.focusedId);
         if (target === undefined) {
             this.logToken(`${LOG_PREFIX}:float-refused-observe`);
+            return;
+        }
+        if (!this.isTiledDomain(observed.domainOutput, observed.domainWorkspace)) {
+            this.logToken(`${LOG_PREFIX}:float-refused-workspace-floating`);
             return;
         }
         const resourceClass = isOpaqueId(target.resourceClass) ? target.resourceClass : "unknown";
@@ -2934,6 +2959,10 @@ export class PlanAdapter {
         const target = observed.windows.find((entry) => entry.id === observed.focusedId);
         if (target === undefined) {
             this.logToken(`${LOG_PREFIX}:sticky-refused-observe`);
+            return;
+        }
+        if (!this.isTiledDomain(observed.domainOutput, observed.domainWorkspace)) {
+            this.logToken(`${LOG_PREFIX}:sticky-refused-workspace-floating`);
             return;
         }
         const resourceClass = isOpaqueId(target.resourceClass) ? target.resourceClass : "unknown";
@@ -4872,6 +4901,11 @@ export class PlanAdapter {
         if (fresh === null) {
             return;
         }
+        // Floating workspaces skip automatic foreground tiling.
+        if (!this.isTiledDomain(fresh.domainOutput, fresh.domainWorkspace)) {
+            this.logRefreshClassification("foreground", "equal", "workspace-floating", "quiet");
+            return;
+        }
         const prepared = this.clearMaximizeAtAdmission(fresh, null);
         if (prepared === null) {
             return;
@@ -5173,8 +5207,12 @@ export class PlanAdapter {
 
     // Single hidden-domain step: same shared classification with sticky
     // multi-home forgiveness. Empty dispatches only with applied evidence;
-    // omission stays unknown. No echo/interactive handling here.
+    // omission stays unknown. No echo/interactive handling here. Floating
+    // workspaces are unmanaged and never dispatch here.
     private hiddenIntentFor(observed: PlanObserved): HiddenDecision | null {
+        if (!this.isTiledDomain(observed.domainOutput, observed.domainWorkspace)) {
+            return { intent: null, outcome: "equal", reason: "workspace-floating", terminal: "quiet" };
+        }
         const prepared = this.clearMaximizeAtAdmission(observed, null, () =>
             this.freshHiddenFor(observed),
         );
@@ -5524,6 +5562,29 @@ export class PlanAdapter {
     private dispatch(intent: AutoIntent): void {
         if (!this.enabled || this.inFlight) {
             return;
+        }
+        // Floating workspaces skip geometry-producing dispatch. Releases bypass.
+        if (intent.op !== "release-domain") {
+            const domains = intent.snapshot.domains;
+            if (domains !== undefined && domains.length === 2) {
+                for (const entry of domains) {
+                    if (!this.isTiledDomain(entry.output, entry.workspace)) {
+                        this.logToken(`${LOG_PREFIX}:workspace-floating-skip kind=${intent.op}`);
+                        if (typeof intent.dragSource === "string" && isDragCorrelation(intent.dragSource)) {
+                            this.noteDragRejected(intent.dragSource, "workspace-floating", intent.pointerSource ?? null, intent.snapshot.domainOutput, intent.snapshot.domainWorkspace);
+                        }
+                        this.failMarkerDispatch(intent, "workspace-floating", null);
+                        return;
+                    }
+                }
+            } else if (!this.isTiledDomain(intent.snapshot.domainOutput, intent.snapshot.domainWorkspace)) {
+                this.logToken(`${LOG_PREFIX}:workspace-floating-skip kind=${intent.op}`);
+                if (typeof intent.dragSource === "string" && isDragCorrelation(intent.dragSource)) {
+                    this.noteDragRejected(intent.dragSource, "workspace-floating", intent.pointerSource ?? null, intent.snapshot.domainOutput, intent.snapshot.domainWorkspace);
+                }
+                this.failMarkerDispatch(intent, "workspace-floating", null);
+                return;
+            }
         }
         // A new lifecycle command supersedes an unanswered terminal probe. Its
         // callback must not make a later recovery decision for an older flight.
@@ -5885,6 +5946,9 @@ export class PlanAdapter {
         if (flightState.plannerSession !== this.plannerSession) {
             return;
         }
+        if (flightState.op === "release-domain") {
+            this.settleRelease(flightState.correlation, outcome);
+        }
         this.clearTimer();
         this.inFlight = false;
         this.pending = null;
@@ -6151,6 +6215,9 @@ export class PlanAdapter {
         this.activationStep = 0;
         if (lost !== null) {
             this.diag(lost.op, lost.correlation, lost.windowCount, "timeout");
+            if (lost.op === "release-domain") {
+                this.settleRelease(lost.correlation, "timeout");
+            }
             if (lost.background === true) {
                 this.noteBackgroundTerminal(lost.snapshot);
             } else {
@@ -6216,10 +6283,29 @@ export class PlanAdapter {
             return;
         }
         const outcome = parsed["outcome"];
+        if (outcome === "released") {
+            if (flightState.op !== "release-domain") {
+                this.lifecycleDiag(flightState, "reply", "validate", "malformed", "service-fault");
+                this.ordinaryTerminal(flightState, null, "uncertain", "validate");
+                this.failFlight(flightState, "service-fault");
+                return;
+            }
+            if (isRecord(parsed)) {
+                this.handleReleaseReply(parsed, flightState);
+            } else {
+                this.lifecycleDiag(flightState, "reply", "validate", "malformed", "service-fault");
+                this.ordinaryTerminal(flightState, null, "uncertain", "validate");
+                this.failFlight(flightState, "service-fault");
+            }
+            return;
+        }
         if (outcome === "diverged") {
             const kind = sanitizeKind(parsed["kind"]);
             this.lifecycleDiag(flightState, "reply", "validate", "rejected", kind);
             this.ordinaryTerminal(flightState, null, "rejected", "validate");
+            if (flightState.op === "release-domain") {
+                this.settleRelease(flightState.correlation, sanitizeKind(parsed["kind"]));
+            }
             this.failFlight(flightState, sanitizeKind(parsed["kind"]));
             return;
         }
@@ -6237,6 +6323,9 @@ export class PlanAdapter {
             this.activationStep = 0;
             this.diag(flightState.op, flightState.correlation, flightState.windowCount, "rejected");
             this.rejectKind(kind, detail);
+            if (flightState.op === "release-domain") {
+                this.settleRelease(flightState.correlation, "rejected");
+            }
             // Core partial-observation diagnostics: log the retained vs
             // observed membership skew (counts only, no gate change) so a
             // floating/exception drift is attributable without guessing.
@@ -6699,6 +6788,27 @@ export class PlanAdapter {
     // primitive snapshot, and resolve all geometry/focus targets only from the
     // fresh observation.
     private applyPlanned(planned: PlannedReply, flightState: PendingFlight): void {
+        // A domain that turned floating after dispatch gets zero native writes.
+        if (flightState.op !== "release-domain") {
+            const domains = flightState.snapshot.domains;
+            let floating = false;
+            if (domains !== undefined && domains.length === 2) {
+                for (const entry of domains) {
+                    if (!this.isTiledDomain(entry.output, entry.workspace)) {
+                        floating = true;
+                        break;
+                    }
+                }
+            } else if (!this.isTiledDomain(flightState.snapshot.domainOutput, flightState.snapshot.domainWorkspace)) {
+                floating = true;
+            }
+            if (floating) {
+                this.lifecycleDiag(flightState, "apply", "setters", "dropped", "workspace-floating", this.ordinaryRevision(planned, flightState));
+                this.ordinaryTerminal(flightState, planned, "uncertain", "setters");
+                this.failFlight(flightState, "workspace-floating");
+                return;
+            }
+        }
         if (
             flightState.op === "reconcile" &&
             flightState.background !== true &&
@@ -8759,6 +8869,9 @@ export class PlanAdapter {
         if (flightState.plannerSession !== this.plannerSession) {
             return;
         }
+        if (flightState.op === "release-domain") {
+            this.settleRelease(flightState.correlation, outcome);
+        }
         this.clearR4Flight();
         this.clearTimer();
         this.clearR4ArrivalTimer();
@@ -8829,6 +8942,10 @@ export class PlanAdapter {
                 this.chainingHidden = false;
             }
         }
+        // Queued explicit releases own the next idle slot. Deferred auto,
+        // drag markers, and hidden steps above take precedence within this
+        // chain; the pump no-ops while any of them hold the slot.
+        this.pumpReleaseQueue();
     }
 
     private clearTimer(): void {
@@ -9027,5 +9144,150 @@ export class PlanAdapter {
 
     private domainKey(snapshot: Pick<PlanSnapshot, "domainOutput" | "domainWorkspace">): string {
         return `${snapshot.domainOutput}\u0000${snapshot.domainWorkspace}`;
+    }
+
+    private isTiledDomain(output: string, workspace: string): boolean {
+        try {
+            const gate = this.env.isDomainTiled;
+            if (typeof gate !== "function") {
+                return true;
+            }
+            return gate(output, workspace) !== false;
+        } catch (error) {
+            void error;
+            return true;
+        }
+    }
+
+    // Explicit no-write domain release. The snapshot must be a complete
+    // observation; the Planner drops the domain with no geometry.
+    requestDomainRelease(snapshot: PlanSnapshot, onSettled?: (outcome: string) => void): void {
+        if (!this.enabled) {
+            try {
+                onSettled?.("disabled");
+            } catch (error) {
+                void error;
+            }
+            return;
+        }
+        this.releaseQueue.push({ snapshot, onSettled });
+        this.pumpReleaseQueue();
+    }
+
+    private pumpReleaseQueue(): void {
+        if (!this.enabled || this.inFlight || this.r4Flight !== null) {
+            return;
+        }
+        // A deferred auto intent owns the next slot; releases wait for it.
+        if (this.deferredAuto !== null) {
+            return;
+        }
+        const next = this.releaseQueue.shift();
+        if (next === undefined) {
+            return;
+        }
+        this.dispatch({
+            op: "release-domain",
+            snapshot: next.snapshot,
+            removed: null,
+            body: { op: "release-domain" },
+        });
+        const flight = this.pending;
+        if (flight !== null && flight.op === "release-domain" && next.onSettled !== undefined) {
+            const callback = next.onSettled;
+            this.releaseCallbacks.set(flight.correlation, callback);
+        } else if (next.onSettled !== undefined) {
+            try {
+                next.onSettled("dispatch-failed");
+            } catch (error) {
+                void error;
+            }
+            this.pumpReleaseQueue();
+        }
+    }
+
+    private settleRelease(correlation: string, outcome: string): void {
+        const callback = this.releaseCallbacks.get(correlation);
+        if (callback === undefined) {
+            return;
+        }
+        this.releaseCallbacks.delete(correlation);
+        try {
+            callback(outcome);
+        } catch (error) {
+            void error;
+        }
+    }
+
+    private dropAppliedForDomain(output: string, workspace: string): void {
+        const key = this.domainKey({ domainOutput: output, domainWorkspace: workspace });
+        this.appliedScopeByDomain.delete(key);
+        for (const [id, evidence] of [...this.appliedById]) {
+            if (evidence.output === output && evidence.workspace === workspace) {
+                this.appliedById.delete(id);
+            }
+        }
+        this.sendForcedDomains.delete(key);
+        this.backgroundAttempts.delete(key);
+    }
+
+    private handleReleaseReply(parsed: Record<string, unknown>, flightState: PendingFlight): boolean {
+        if (parsed["outcome"] !== "released") {
+            return false;
+        }
+        if (parsed["v"] !== PLAN_CONTRACT_VERSION) {
+            this.lifecycleDiag(flightState, "reply", "validate", "malformed", "service-fault");
+            this.ordinaryTerminal(flightState, null, "uncertain", "validate");
+            this.failFlight(flightState, "service-fault");
+            return true;
+        }
+        if (parsed["correlation_id"] !== flightState.correlation) {
+            this.lifecycleDiag(flightState, "reply", "validate", "stale", "correlation-mismatch");
+            this.ordinaryTerminal(flightState, null, "uncertain", "validate");
+            this.failFlight(flightState, "correlation-mismatch");
+            return true;
+        }
+        const kind = parsed["kind"];
+        const detail = parsed["detail"];
+        const detailKind = isRecord(detail) ? detail["kind"] : undefined;
+        if (kind !== "release-domain" || detailKind !== "release-domain") {
+            this.lifecycleDiag(flightState, "reply", "validate", "malformed", "service-fault");
+            this.ordinaryTerminal(flightState, null, "uncertain", "validate");
+            this.failFlight(flightState, "service-fault");
+            return true;
+        }
+        if (flightState.epoch !== this.epoch) {
+            this.lifecycleDiag(flightState, "reply", "validate", "stale", "stale-dropped");
+            this.ordinaryTerminal(flightState, null, "uncertain", "validate");
+            this.settleRelease(flightState.correlation, "stale-dropped");
+            this.clearTimer();
+            this.inFlight = false;
+            this.pending = null;
+            this.pinnedOwner = null;
+            this.activationStep = 0;
+            this.diag(flightState.op, flightState.correlation, flightState.windowCount, "stale-dropped");
+            this.finishFlight();
+            this.pumpReleaseQueue();
+            return true;
+        }
+        // Confirmed release: drop the exact domain's applied evidence with
+        // zero native writes. A later ordinary fresh reconcile re-adopts
+        // current geometry through the existing fit/seed route.
+        this.dropAppliedForDomain(flightState.snapshot.domainOutput, flightState.snapshot.domainWorkspace);
+        if (isUniqueOwner(this.pinnedOwner)) {
+            this.knownOwner = this.pinnedOwner;
+        }
+        this.lifecycleDiag(flightState, "reply", "validate", "validated", "-", flightState.requestRevision);
+        this.ordinaryTerminal(flightState, null, "released", "validate");
+        this.settleRelease(flightState.correlation, "released");
+        this.clearTimer();
+        this.inFlight = false;
+        this.pending = null;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
+        this.diag(flightState.op, flightState.correlation, flightState.windowCount, "released");
+        this.finishFlight();
+        this.pumpReleaseQueue();
+        return true;
     }
 }

@@ -210,6 +210,8 @@
           dontWrapQtApps = true;
           env.PLASMA_AUTO_TILER_KCMSHELL6 =
             "${pkgs.kdePackages.kcmutils}/bin/kcmshell6";
+          env.PLASMA_AUTO_TILER_KWRITECONFIG6 =
+            "${pkgs.kdePackages.kconfig}/bin/kwriteconfig6";
           # Shared compile-time identity: self.rev or local-dev.
           env.PLASMA_AUTO_TILER_SOURCE_REV = sourceRev;
           preCheck = ''

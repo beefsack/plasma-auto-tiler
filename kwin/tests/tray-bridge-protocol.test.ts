@@ -6,6 +6,9 @@ type Snapshot = {
   generation: string;
   revision: number;
   enabled: boolean;
+  currentScope: string;
+  tiled: boolean;
+  defaultTiled: boolean;
 };
 
 type Route = {
@@ -56,6 +59,7 @@ type State = {
 };
 
 const MAX_GENERATION_HISTORY = 256;
+const MAX_SCOPE_LEN = 256;
 
 const fixturePath = process.env.TRAY_BRIDGE_FIXTURE;
 assert.ok(fixturePath, "TRAY_BRIDGE_FIXTURE must point to the tray bridge fixture");
@@ -74,11 +78,11 @@ function decodeCall(route: Route, args: unknown[], contract: Fixture["contract"]
     object: contract.object,
     interface: contract.interface,
     method: contract.method,
-  }) || args.length !== 4) {
+  }) || args.length !== 7) {
     return null;
   }
 
-  const [schema, generation, revision, enabled] = args;
+  const [schema, generation, revision, enabled, currentScope, tiled, defaultTiled] = args;
   if (schema !== contract.schema ||
       typeof generation !== "string" ||
       !new RegExp(contract.generationPattern).test(generation) ||
@@ -86,11 +90,24 @@ function decodeCall(route: Route, args: unknown[], contract: Fixture["contract"]
       !Number.isInteger(revision) ||
       revision < -2147483648 ||
       revision > 2147483647 ||
-      typeof enabled !== "boolean") {
+      typeof enabled !== "boolean" ||
+      typeof currentScope !== "string" ||
+      currentScope.length > MAX_SCOPE_LEN ||
+      typeof tiled !== "boolean" ||
+      typeof defaultTiled !== "boolean") {
     return null;
   }
 
-  return { generation, revision, enabled };
+  return { generation, revision, enabled, currentScope, tiled, defaultTiled };
+}
+
+function snapshotsEqual(left: Snapshot, right: Snapshot): boolean {
+  return left.generation === right.generation &&
+    left.revision === right.revision &&
+    left.enabled === right.enabled &&
+    left.currentScope === right.currentScope &&
+    left.tiled === right.tiled &&
+    left.defaultTiled === right.defaultTiled;
 }
 
 function emptyState(): State {
@@ -122,7 +139,8 @@ function applyPublish(state: State, route: Route, args: unknown[], now: number, 
     snapshot.generation === state.generation && state.revision !== null &&
       (state.orderingConflicted ? snapshot.revision > state.revision :
         snapshot.revision > state.revision ||
-        snapshot.revision === state.revision && state.snapshot?.enabled === snapshot.enabled) ||
+        snapshot.revision === state.revision && state.snapshot !== null &&
+          snapshotsEqual(state.snapshot, snapshot)) ||
     state.generation !== null && snapshot.generation !== state.generation && snapshot.revision === 0 &&
       !state.retiredGenerations.includes(snapshot.generation) &&
       !state.quarantinedGenerations.includes(snapshot.generation);
@@ -169,21 +187,86 @@ test("tray bridge fixture defines one method and rejects other routes", () => {
     object: "/org/plasmaautotiler/Tray",
     interface: "org.plasmaautotiler.Tray1",
     method: "PublishSnapshot",
-    signature: "isib",
-    schema: 1,
+    signature: "isibsbb",
+    schema: 2,
      generationPattern: "^[a-z0-9-]{1,32}$(?![\\s\\S])",
     freshnessMs: 30000,
   });
   assert.equal(fixture.routes.rejected.length, 4);
 
+  const validArgs: unknown[] = [2, "alpha", 1, true, "", true, true];
   for (const route of fixture.routes.rejected) {
-    assert.equal(decodeCall(route, [1, "alpha", 1, true], fixture.contract), null);
+    assert.equal(decodeCall(route, validArgs, fixture.contract), null);
   }
-  assert.deepEqual(decodeCall(fixture.routes.accepted, [1, "alpha", 1, true], fixture.contract), {
+  assert.deepEqual(decodeCall(fixture.routes.accepted, validArgs, fixture.contract), {
     generation: "alpha",
     revision: 1,
     enabled: true,
+    currentScope: "",
+    tiled: true,
+    defaultTiled: true,
   });
+
+  // Schema2 wire shape: 7 args (isibsbb). Old schema1 payloads are refused.
+  assert.equal(decodeCall(fixture.routes.accepted, [1, "alpha", 1, true], fixture.contract), null);
+  assert.equal(decodeCall(fixture.routes.accepted, [1, "alpha", 1, true, "", true, true], fixture.contract), null);
+  assert.equal(decodeCall(fixture.routes.accepted, [2, "alpha", 1], fixture.contract), null);
+
+  // Workspace payload: scope is a bounded string, tiled/default are booleans.
+  assert.deepEqual(decodeCall(fixture.routes.accepted, [2, "alpha", 0, true, "ws-1", false, true], fixture.contract), {
+    generation: "alpha",
+    revision: 0,
+    enabled: true,
+    currentScope: "ws-1",
+    tiled: false,
+    defaultTiled: true,
+  });
+  assert.equal(decodeCall(fixture.routes.accepted, [2, "alpha", 1, true, "x".repeat(257), true, true], fixture.contract), null);
+  assert.equal(decodeCall(fixture.routes.accepted, [2, "alpha", 1, true, "", "true", true], fixture.contract), null);
+  assert.equal(decodeCall(fixture.routes.accepted, [2, "alpha", 1, true, "", true, "true"], fixture.contract), null);
+  assert.equal(decodeCall(fixture.routes.accepted, [2, "alpha", 2147483648, true, "", true, true], fixture.contract), null);
+});
+
+test("same revision requires equality over all schema2 fields", () => {
+  const state = emptyState();
+  state.owner = true;
+  const now = 0;
+
+  applyPublish(state, fixture.routes.accepted, [2, "alpha", 1, true, "ws-1", true, true], now, fixture.contract);
+  assert.deepEqual(state.snapshot, {
+    generation: "alpha",
+    revision: 1,
+    enabled: true,
+    currentScope: "ws-1",
+    tiled: true,
+    defaultTiled: true,
+  });
+
+  // Identical repeat refreshes; a flip in any one field contradicts.
+  applyPublish(state, fixture.routes.accepted, [2, "alpha", 1, true, "ws-1", true, true], 1, fixture.contract);
+  assert.deepEqual(state.snapshot, {
+    generation: "alpha",
+    revision: 1,
+    enabled: true,
+    currentScope: "ws-1",
+    tiled: true,
+    defaultTiled: true,
+  });
+  assert.equal(state.refreshedAt, 1);
+
+  for (const args of [
+    [2, "alpha", 1, false, "ws-1", true, true],
+    [2, "alpha", 1, true, "ws-2", true, true],
+    [2, "alpha", 1, true, "ws-1", false, true],
+    [2, "alpha", 1, true, "ws-1", true, false],
+  ]) {
+    const contradicting = emptyState();
+    contradicting.owner = true;
+    applyPublish(contradicting, fixture.routes.accepted, [2, "alpha", 1, true, "ws-1", true, true], now, fixture.contract);
+    applyPublish(contradicting, fixture.routes.accepted, args, 1, fixture.contract);
+    assert.equal(contradicting.snapshot, null);
+    assert.equal(contradicting.refreshedAt, null);
+  }
 });
 
 test("tray bridge fixture proves the local codec and state machine", () => {

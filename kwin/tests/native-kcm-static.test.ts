@@ -181,7 +181,13 @@ describe("native KCM static contract", () => {
     });
 
     it("keeps the four supported script keys and defaults identical between schema and the unified script KCM", () => {
-        assert.deepEqual(schemaEntries(), SCRIPT_SETTINGS);
+        // defaultTiled is schema-only (tray persist + script readConfig for
+        // newly discovered workspaces); the unified KCM intentionally owns
+        // only workspaceMode/innerGap/outerGap, so it is asserted separately.
+        const entries = schemaEntries();
+        assert.deepEqual(entries["defaultTiled"], { type: "Bool", defaultValue: "true" });
+        const { defaultTiled: _ignored, ...rest } = entries;
+        assert.deepEqual(rest, SCRIPT_SETTINGS);
         assert.match(kcfg, /<group name="Effect-plasma-auto-tiler-active-border">/);
 
         for (const [key, setting] of Object.entries(SCRIPT_SETTINGS)) {

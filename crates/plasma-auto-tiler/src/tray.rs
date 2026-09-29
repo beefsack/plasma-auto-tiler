@@ -10,7 +10,9 @@ use serde::Serialize;
 use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, StructureBuilder, Type, Value};
 
-use crate::tray_endpoint::{TrayState, emit_tray_diag, lock_tray_state, status_projected_line};
+use crate::tray_endpoint::{
+    TrayState, emit_tray_diag, lock_tray_state, menu_projected_line, status_projected_line,
+};
 
 pub const STATUS_NOTIFIER_ITEM_OBJECT: &str = "/StatusNotifierItem";
 pub const MENU_OBJECT: &str = "/Menu";
@@ -70,6 +72,176 @@ fn settings_command_for(executable: Option<&str>) -> Option<Command> {
     let mut command = Command::new(executable);
     command.arg(SETTINGS_MODULE);
     Some(command)
+}
+
+/// Project-owned keyless KWin action for the current-workspace tiling toggle.
+/// Registered by the KWin script with an empty key sequence (KWin 6.7.5
+/// `src/scripting/scripting.cpp` keyless registration); invoked by the tray
+/// over KGlobalAccel, never by a physical key.
+pub const WORKSPACE_TOGGLE_ACTION: &str = "plasma-auto-tiler-toggle-workspace-tiling";
+/// KGlobalAccel service/path/interface for shortcut invocation. The tray
+/// resolves the `kwin` component via `getComponent` on `/kglobalaccel`, then
+/// calls `Component.invokeShortcut(action, "default")`. That method returns
+/// void even for a missing action, so dispatch is fire-and-forget: no receipt
+/// proves the toggle applied, and the menu waits for the next KWin-published
+/// snapshot rather than assuming it did.
+pub const KGLOBALACCEL_SERVICE: &str = "org.kde.kglobalaccel";
+pub const KGLOBALACCEL_PATH: &str = "/kglobalaccel";
+pub const KGLOBALACCEL_IFACE: &str = "org.kde.KGlobalAccel";
+pub const KGLOBALACCEL_GET_COMPONENT: &str = "getComponent";
+pub const KGLOBALACCEL_COMPONENT_IFACE: &str = "org.kde.kglobalaccel.Component";
+pub const KGLOBALACCEL_INVOKE: &str = "invokeShortcut";
+pub const KGLOBALACCEL_COMPONENT: &str = "kwin";
+pub const KGLOBALACCEL_CONTEXT: &str = "default";
+
+/// Persisted new-workspace default: `kwinrc [Script-plasma-auto-tiler-kwin]
+/// defaultTiled`, default true. Written through KConfig-compatible
+/// `kwriteconfig6` (host Plasma runtime tool, no new dependency) and applied
+/// via the existing KWin `org.kde.KWin /KWin reconfigure` route. KWin
+/// declares `reconfigure` as `Q_NOREPLY void` (`src/dbusinterface.h`), so the
+/// tray sends it with the D-Bus `NoReplyExpected` flag and never waits for a
+/// reply: `sent-unconfirmed` means the send succeeded, not that KWin applied
+/// it. KWin publishes the actual default on the next snapshot after
+/// `configChanged`.
+pub const KWINRC_GROUP: &str = "Script-plasma-auto-tiler-kwin";
+pub const DEFAULT_TILED_KEY: &str = "defaultTiled";
+pub const KWRITECONFIG_EXECUTABLE: &str = "kwriteconfig6";
+/// Nix-baked absolute `kwriteconfig6` for immutable packaging. `None` in dev,
+/// where the `PATH` fallback above is used.
+const KWRITECONFIG_BAKED: Option<&str> = option_env!("PLASMA_AUTO_TILER_KWRITECONFIG6");
+pub const KWIN_RECONFIGURE_SERVICE: &str = "org.kde.KWin";
+pub const KWIN_RECONFIGURE_PATH: &str = "/KWin";
+pub const KWIN_RECONFIGURE_IFACE: &str = "org.kde.KWin";
+pub const KWIN_RECONFIGURE_METHOD: &str = "reconfigure";
+
+/// DBusMenu item ids. Status (2) and Settings (1) retain their existing ids;
+/// new ids follow.
+pub const MENU_ID_SETTINGS: i32 = 1;
+pub const MENU_ID_STATUS: i32 = 2;
+pub const MENU_ID_TILE_TOGGLE: i32 = 3;
+pub const MENU_ID_DEFAULT_HEADING: i32 = 4;
+pub const MENU_ID_DEFAULT_TILED: i32 = 5;
+pub const MENU_ID_DEFAULT_FLOATING: i32 = 6;
+
+fn toggle_outcome_line(outcome: &str) -> String {
+    format!(
+        "plasma-auto-tiler:route-diag component=tray-endpoint stage=toggle event=invoke outcome={outcome}"
+    )
+}
+
+fn default_outcome_line(stage: &str, outcome: &str, default_tiled: Option<bool>) -> String {
+    match default_tiled {
+        Some(value) => format!(
+            "plasma-auto-tiler:route-diag component=tray-endpoint stage={stage} event=persist outcome={outcome} defaultTiled={value}"
+        ),
+        None => format!(
+            "plasma-auto-tiler:route-diag component=tray-endpoint stage={stage} event=persist outcome={outcome}"
+        ),
+    }
+}
+
+/// KConfig-compatible `kwriteconfig6` argv for the persisted default. Returns
+/// the full argv (including executable) for call-shape tests; the caller
+/// spawns it.
+fn kwriteconfig_argv(default_tiled: bool) -> Vec<String> {
+    kwriteconfig_argv_for(kwriteconfig_executable(), default_tiled)
+}
+
+/// Nix-baked absolute writer when available, otherwise the dev `PATH`
+/// `kwriteconfig6`. A relative baked value is rejected to the fallback so a
+/// hostile `PATH`-relative build env cannot redirect the write.
+fn kwriteconfig_executable() -> &'static str {
+    KWRITECONFIG_BAKED
+        .filter(|path| std::path::Path::new(path).is_absolute())
+        .unwrap_or(KWRITECONFIG_EXECUTABLE)
+}
+
+fn kwriteconfig_argv_for(executable: &str, default_tiled: bool) -> Vec<String> {
+    vec![
+        executable.to_owned(),
+        "--file".to_owned(),
+        "kwinrc".to_owned(),
+        "--group".to_owned(),
+        KWINRC_GROUP.to_owned(),
+        "--key".to_owned(),
+        DEFAULT_TILED_KEY.to_owned(),
+        if default_tiled { "true" } else { "false" }.to_owned(),
+    ]
+}
+
+/// Real KGlobalAccel toggle dispatch: resolve the `kwin` component, then
+/// invoke the keyless toggle action. Fire-and-forget; any transport failure
+/// is a fixed redacted label, never raw D-Bus detail.
+fn invoke_kglobalaccel_toggle() -> Result<(), &'static str> {
+    let connection = zbus::blocking::Connection::session().map_err(|_| "invoke-failed")?;
+    let component: zbus::zvariant::OwnedObjectPath = connection
+        .call_method(
+            Some(KGLOBALACCEL_SERVICE),
+            KGLOBALACCEL_PATH,
+            Some(KGLOBALACCEL_IFACE),
+            KGLOBALACCEL_GET_COMPONENT,
+            &(KGLOBALACCEL_COMPONENT,),
+        )
+        .map_err(|_| "resolve-failed")?
+        .body()
+        .deserialize()
+        .map_err(|_| "resolve-failed")?;
+    connection
+        .call_method(
+            Some(KGLOBALACCEL_SERVICE),
+            component.as_str(),
+            Some(KGLOBALACCEL_COMPONENT_IFACE),
+            KGLOBALACCEL_INVOKE,
+            &(WORKSPACE_TOGGLE_ACTION, KGLOBALACCEL_CONTEXT),
+        )
+        .map_err(|_| "invoke-failed")?;
+    Ok(())
+}
+
+/// Build the no-reply KWin reconfigure message: `Q_NOREPLY void reconfigure`
+/// (`src/dbusinterface.h`) never sends a reply, so zbus 5.19
+/// `blocking::Connection::call_method` (which registers a pending call and
+/// waits) would hang until the bus times out. The `NoReplyExpected` flag
+/// sends fire-and-forget via `Connection::send` and returns after the send.
+fn reconfigure_noreply_message() -> zbus::Result<zbus::message::Message> {
+    zbus::message::Message::method_call(KWIN_RECONFIGURE_PATH, KWIN_RECONFIGURE_METHOD)?
+        .destination(KWIN_RECONFIGURE_SERVICE)?
+        .interface(KWIN_RECONFIGURE_IFACE)?
+        .with_flags(zbus::message::Flags::NoReplyExpected)?
+        .build(&())
+}
+
+/// Real default persistence: `kwriteconfig6` write, then KWin reconfigure
+/// no-reply send. Returns the write outcome and the reconfigure send outcome
+/// separately so the caller logs `sent-unconfirmed` (send succeeded, not
+/// applied proof) distinctly from failure. Application is confirmed only by
+/// the next KWin snapshot after `configChanged`.
+fn persist_default_tiled(
+    default_tiled: bool,
+) -> (Result<(), &'static str>, Result<(), &'static str>) {
+    let argv = kwriteconfig_argv(default_tiled);
+    let write = std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .status()
+        .map(|status| {
+            if status.success() {
+                Ok(())
+            } else {
+                Err("write-failed")
+            }
+        })
+        .unwrap_or(Err("write-failed"));
+    if write.is_err() {
+        return (write, Err("reconfigure-skipped"));
+    }
+    let reconfigure = zbus::blocking::Connection::session()
+        .map_err(|_| "reconfigure-failed")
+        .and_then(|connection| {
+            reconfigure_noreply_message()
+                .map_err(|_| "reconfigure-failed")
+                .and_then(|message| connection.send(&message).map_err(|_| "reconfigure-failed"))
+        });
+    (Ok(()), reconfigure)
 }
 
 pub fn icon_pixmap_bytes() -> Vec<u8> {
@@ -155,6 +327,7 @@ pub struct TrayProjection {
     state: Arc<Mutex<TrayState>>,
     started: Instant,
     last_status: Arc<Mutex<Option<String>>>,
+    last_menu: Arc<Mutex<Option<(String, bool, bool)>>>,
     notification_lock: Arc<async_lock::Mutex<()>>,
     menu_revision: Arc<AtomicU32>,
     settings_process: Arc<Mutex<Option<Child>>>,
@@ -175,6 +348,7 @@ impl TrayProjection {
             state,
             started,
             last_status,
+            last_menu: Arc::new(Mutex::new(None)),
             notification_lock: Arc::new(async_lock::Mutex::new(())),
             menu_revision: Arc::new(AtomicU32::new(0)),
             settings_process: Arc::new(Mutex::new(None)),
@@ -226,6 +400,139 @@ impl TrayProjection {
         }
     }
 
+    /// Fresh workspace menu state. `None` when stale/absent so the menu
+    /// never projects a wrong checkmark.
+    fn fresh_workspace_state(&self) -> Option<(bool, bool)> {
+        let view = self.view();
+        if !view.current {
+            return None;
+        }
+        let snapshot = view.snapshot?;
+        Some((snapshot.tiled, snapshot.default_tiled))
+    }
+
+    fn tile_toggle_checked(&self) -> bool {
+        self.has_fresh_workspace_scope()
+            && self.fresh_workspace_state().is_some_and(|(tiled, _)| tiled)
+    }
+
+    fn tile_toggle_enabled(&self) -> bool {
+        self.has_fresh_workspace_scope()
+    }
+
+    /// Fresh non-empty scope gate for the toggle only.
+    fn has_fresh_workspace_scope(&self) -> bool {
+        let view = self.view();
+        view.current
+            && view
+                .snapshot
+                .as_ref()
+                .is_some_and(|snapshot| !snapshot.current_scope.is_empty())
+    }
+
+    fn default_radio_enabled(&self) -> bool {
+        self.fresh_workspace_state().is_some()
+    }
+
+    fn default_tiled_checked(&self) -> bool {
+        self.fresh_workspace_state()
+            .is_some_and(|(_, default_tiled)| default_tiled)
+    }
+
+    fn default_floating_checked(&self) -> bool {
+        self.fresh_workspace_state()
+            .is_some_and(|(_, default_tiled)| !default_tiled)
+    }
+
+    pub(crate) fn request_toggle(&self) -> zbus::fdo::Result<()> {
+        self.request_toggle_with(invoke_kglobalaccel_toggle, emit_tray_diag)
+    }
+
+    fn request_toggle_with(
+        &self,
+        invoke: impl FnOnce() -> Result<(), &'static str>,
+        mut diag: impl FnMut(&str),
+    ) -> zbus::fdo::Result<()> {
+        // One fire-and-forget dispatch per click; the menu waits for the next
+        // fresh snapshot. Stale or empty scope refuses.
+        if !self.has_fresh_workspace_scope() {
+            diag(&toggle_outcome_line("stale-refused"));
+            return Err(zbus::fdo::Error::Failed(
+                "workspace state is stale; toggle refused".to_owned(),
+            ));
+        }
+        diag(&toggle_outcome_line("intent"));
+        match invoke() {
+            Ok(()) => {
+                // Sent, not applied: void reply even for a missing action.
+                diag(&toggle_outcome_line("sent-unconfirmed"));
+                Ok(())
+            }
+            Err(reason) => {
+                diag(&toggle_outcome_line(reason));
+                Err(zbus::fdo::Error::Failed(
+                    "workspace toggle dispatch failed".to_owned(),
+                ))
+            }
+        }
+    }
+
+    pub(crate) fn request_default(&self, default_tiled: bool) -> zbus::fdo::Result<()> {
+        self.request_default_with(default_tiled, persist_default_tiled, emit_tray_diag)
+    }
+
+    fn request_default_with(
+        &self,
+        default_tiled: bool,
+        persist: impl FnOnce(bool) -> (Result<(), &'static str>, Result<(), &'static str>),
+        mut diag: impl FnMut(&str),
+    ) -> zbus::fdo::Result<()> {
+        // No optimistic flip: KWin publishes the default after configChanged.
+        diag(&default_outcome_line(
+            "persist",
+            "intent",
+            Some(default_tiled),
+        ));
+        let (write, reconfigure) = persist(default_tiled);
+        match write {
+            Ok(()) => {
+                diag(&default_outcome_line(
+                    "persist",
+                    "written",
+                    Some(default_tiled),
+                ));
+            }
+            Err(reason) => {
+                diag(&default_outcome_line(
+                    "persist",
+                    reason,
+                    Some(default_tiled),
+                ));
+                return Err(zbus::fdo::Error::Failed("default write failed".to_owned()));
+            }
+        }
+        match reconfigure {
+            Ok(()) => {
+                // Sent, not applied: the send succeeding never proves KWin applied it.
+                diag(&default_outcome_line(
+                    "reconfigure",
+                    "sent-unconfirmed",
+                    Some(default_tiled),
+                ));
+                Ok(())
+            }
+            Err(reason) => {
+                diag(&default_outcome_line(
+                    "reconfigure",
+                    reason,
+                    Some(default_tiled),
+                ));
+                // Write persisted; reconfigure failure keeps the click ok.
+                Ok(())
+            }
+        }
+    }
+
     pub fn status_notifier_item(&self) -> StatusNotifierItem {
         StatusNotifierItem {
             projection: self.clone(),
@@ -246,6 +553,20 @@ impl TrayProjection {
                 let mut guard = poison.into_inner();
                 *guard = None;
                 self.last_status.clear_poison();
+                guard
+            }
+        }
+    }
+
+    /// Row Q: lock the menu fingerprint cache, recovering poison by forcing
+    /// one fresh re-emission.
+    fn lock_last_menu(&self) -> std::sync::MutexGuard<'_, Option<(String, bool, bool)>> {
+        match self.last_menu.lock() {
+            Ok(guard) => guard,
+            Err(poison) => {
+                let mut guard = poison.into_inner();
+                *guard = None;
+                self.last_menu.clear_poison();
                 guard
             }
         }
@@ -308,6 +629,29 @@ impl TrayProjection {
         *self.lock_last_status() = Some(status);
     }
 
+    /// Fresh menu fingerprint for LayoutUpdated idempotence: `None` when
+    /// stale/absent, otherwise the live triple. Scope is never logged.
+    fn menu_fingerprint(&self) -> Option<(String, bool, bool)> {
+        let view = self.view();
+        if !view.current {
+            return None;
+        }
+        let snapshot = view.snapshot?;
+        Some((
+            snapshot.current_scope,
+            snapshot.tiled,
+            snapshot.default_tiled,
+        ))
+    }
+
+    fn should_emit_menu(&self, fingerprint: &Option<(String, bool, bool)>) -> bool {
+        *self.lock_last_menu() != *fingerprint
+    }
+
+    fn remember_menu(&self, fingerprint: Option<(String, bool, bool)>) {
+        *self.lock_last_menu() = fingerprint;
+    }
+
     fn sni_changed(&self, status: &str) -> HashMap<String, OwnedValue> {
         let label = Self::status_label_for(status);
         let mut changed = HashMap::new();
@@ -321,87 +665,112 @@ impl TrayProjection {
         changed
     }
 
-    /// Locked projection step shared by production emission and offline
-    /// tests: holds the notification lock, recomputes the fresh status, runs
-    /// the caller-supplied signal block under one deadline, and remembers the
-    /// status only on success. Timeout or failure drops the guard without
-    /// remembering, so the next fresh projection re-attempts.
+    /// Locked projection step for emission and tests: remembers status and
+    /// menu only on success; steady state stays silent.
     async fn emit_guarded<F, Fut>(&self, timeout: Duration, send: F) -> zbus::Result<()>
     where
-        F: FnOnce(String) -> Fut,
+        F: FnOnce(String, Option<(String, bool, bool)>, bool, bool) -> Fut,
         Fut: Future<Output = zbus::Result<()>>,
     {
-        // Signals and status recording keep their exact order and behavior
-        // under the notification lock; the already-built bounded projection
-        // line is emitted only after the explicit guard release below.
         let _notification_guard = self.notification_lock.lock().await;
         let status = self.status().to_owned();
-        if !self.should_emit_status(&status) {
+        let menu = self.menu_fingerprint();
+        let status_changed = self.should_emit_status(&status);
+        let menu_changed = self.should_emit_menu(&menu);
+        if !status_changed && !menu_changed {
             return Ok(());
         }
-        with_emit_deadline(timeout, send(status.clone())).await?;
+        with_emit_deadline(
+            timeout,
+            send(status.clone(), menu.clone(), status_changed, menu_changed),
+        )
+        .await?;
 
-        // Best-effort only: built solely on an actual projected-status
-        // change (the early return above keeps steady state silent), and
-        // describes the emitted signals, never final panel visibility. The
-        // write happens after the notification lock releases below.
-        let pending = status_projected_line(&status);
+        // Best-effort projection lines for the emitted signals only.
+        let status_line = status_changed.then(|| status_projected_line(&status));
+        let menu_line = menu_changed.then(|| match &menu {
+            Some((_, tiled, default_tiled)) => {
+                menu_projected_line(*tiled, *default_tiled)
+            }
+            None => "plasma-auto-tiler:route-diag component=tray-endpoint stage=projection event=projected outcome=menu-updated stale=true"
+                .to_string(),
+        });
         self.remember_status(status);
+        self.remember_menu(menu);
         drop(_notification_guard);
-        emit_tray_diag(&pending);
+        if let Some(line) = status_line {
+            emit_tray_diag(&line);
+        }
+        if let Some(line) = menu_line {
+            emit_tray_diag(&line);
+        }
         Ok(())
     }
 
     pub async fn emit_changed(&self, connection: &zbus::Connection) -> zbus::Result<()> {
-        // Row P: the four signal emits run as one block under a single
-        // bounded deadline; on expiry the block is cancelled, the lock
-        // releases, and the status stays unremembered for a later retry.
-        self.emit_guarded(NOTIFICATION_TIMEOUT, |status| async move {
-            let changed = self.sni_changed(&status);
-            connection
-                .emit_signal(
-                    None::<&str>,
-                    STATUS_NOTIFIER_ITEM_OBJECT,
-                    DBUS_PROPERTIES_INTERFACE,
-                    PROPERTIES_CHANGED_SIGNAL,
-                    &(
+        // Status changes keep the four-signal block; menu-only changes emit
+        // LayoutUpdated alone.
+        self.emit_guarded(
+            NOTIFICATION_TIMEOUT,
+            |status, _menu, status_changed, _menu_changed| async move {
+                if !status_changed {
+                    connection
+                        .emit_signal(
+                            None::<&str>,
+                            MENU_OBJECT,
+                            DBUS_MENU_INTERFACE,
+                            LAYOUT_UPDATED_SIGNAL,
+                            &(self.next_menu_revision(), 0_i32),
+                        )
+                        .await?;
+                    return Ok(());
+                }
+                let changed = self.sni_changed(&status);
+                connection
+                    .emit_signal(
+                        None::<&str>,
+                        STATUS_NOTIFIER_ITEM_OBJECT,
+                        DBUS_PROPERTIES_INTERFACE,
+                        PROPERTIES_CHANGED_SIGNAL,
+                        &(
+                            STATUS_NOTIFIER_ITEM_INTERFACE,
+                            changed,
+                            Vec::<String>::new(),
+                        ),
+                    )
+                    .await?;
+                let mut menu_changed = HashMap::new();
+                menu_changed.insert("Status".to_owned(), owned_string(menu_status(&status)));
+                connection
+                    .emit_signal(
+                        None::<&str>,
+                        MENU_OBJECT,
+                        DBUS_PROPERTIES_INTERFACE,
+                        PROPERTIES_CHANGED_SIGNAL,
+                        &(DBUS_MENU_INTERFACE, menu_changed, Vec::<String>::new()),
+                    )
+                    .await?;
+                connection
+                    .emit_signal(
+                        None::<&str>,
+                        STATUS_NOTIFIER_ITEM_OBJECT,
                         STATUS_NOTIFIER_ITEM_INTERFACE,
-                        changed,
-                        Vec::<String>::new(),
-                    ),
-                )
-                .await?;
-            let mut menu_changed = HashMap::new();
-            menu_changed.insert("Status".to_owned(), owned_string(menu_status(&status)));
-            connection
-                .emit_signal(
-                    None::<&str>,
-                    MENU_OBJECT,
-                    DBUS_PROPERTIES_INTERFACE,
-                    PROPERTIES_CHANGED_SIGNAL,
-                    &(DBUS_MENU_INTERFACE, menu_changed, Vec::<String>::new()),
-                )
-                .await?;
-            connection
-                .emit_signal(
-                    None::<&str>,
-                    STATUS_NOTIFIER_ITEM_OBJECT,
-                    STATUS_NOTIFIER_ITEM_INTERFACE,
-                    NEW_STATUS_SIGNAL,
-                    &(status.as_str(),),
-                )
-                .await?;
-            connection
-                .emit_signal(
-                    None::<&str>,
-                    MENU_OBJECT,
-                    DBUS_MENU_INTERFACE,
-                    LAYOUT_UPDATED_SIGNAL,
-                    &(self.next_menu_revision(), 0_i32),
-                )
-                .await?;
-            Ok(())
-        })
+                        NEW_STATUS_SIGNAL,
+                        &(status.as_str(),),
+                    )
+                    .await?;
+                connection
+                    .emit_signal(
+                        None::<&str>,
+                        MENU_OBJECT,
+                        DBUS_MENU_INTERFACE,
+                        LAYOUT_UPDATED_SIGNAL,
+                        &(self.next_menu_revision(), 0_i32),
+                    )
+                    .await?;
+                Ok(())
+            },
+        )
         .await
     }
 
@@ -504,7 +873,8 @@ impl StatusNotifierItem {
 
     #[zbus(property)]
     fn item_is_menu(&self) -> bool {
-        false
+        // Left-click opens the menu; Activate stays a no-op.
+        true
     }
 
     #[zbus(property, name = "Menu")]
@@ -513,7 +883,7 @@ impl StatusNotifierItem {
     }
 
     fn activate(&self, _x: i32, _y: i32) -> zbus::fdo::Result<()> {
-        self.projection.launch_settings()
+        Ok(())
     }
 
     fn secondary_activate(&self, _x: i32, _y: i32) {}
@@ -549,13 +919,20 @@ impl DbusMenu {
         MenuLayout {
             id: 0,
             properties: HashMap::new(),
-            children: vec![menu_value(self.status_item()), menu_value(self.menu_item())],
+            children: vec![
+                menu_value(self.status_item()),
+                menu_value(self.tile_toggle_item()),
+                menu_value(self.default_heading_item()),
+                menu_value(self.default_tiled_item()),
+                menu_value(self.default_floating_item()),
+                menu_value(self.menu_item()),
+            ],
         }
     }
 
     fn status_item(&self) -> MenuLayout {
         MenuLayout {
-            id: 2,
+            id: MENU_ID_STATUS,
             properties: HashMap::from([
                 (
                     "label".to_owned(),
@@ -568,9 +945,78 @@ impl DbusMenu {
         }
     }
 
+    fn tile_toggle_item(&self) -> MenuLayout {
+        let checked = self.projection.tile_toggle_checked();
+        let enabled = self.projection.tile_toggle_enabled();
+        MenuLayout {
+            id: MENU_ID_TILE_TOGGLE,
+            properties: HashMap::from([
+                ("label".to_owned(), owned_string("Tile current workspace")),
+                ("enabled".to_owned(), OwnedValue::from(enabled)),
+                ("visible".to_owned(), OwnedValue::from(true)),
+                ("toggle-type".to_owned(), owned_string("checkmark")),
+                (
+                    "toggle-state".to_owned(),
+                    OwnedValue::from(if checked { 1_i32 } else { 0_i32 }),
+                ),
+            ]),
+            children: Vec::new(),
+        }
+    }
+
+    fn default_heading_item(&self) -> MenuLayout {
+        MenuLayout {
+            id: MENU_ID_DEFAULT_HEADING,
+            properties: HashMap::from([
+                ("label".to_owned(), owned_string("New workspace behavior")),
+                ("enabled".to_owned(), OwnedValue::from(false)),
+                ("visible".to_owned(), OwnedValue::from(true)),
+            ]),
+            children: Vec::new(),
+        }
+    }
+
+    fn default_tiled_item(&self) -> MenuLayout {
+        let checked = self.projection.default_tiled_checked();
+        let enabled = self.projection.default_radio_enabled();
+        MenuLayout {
+            id: MENU_ID_DEFAULT_TILED,
+            properties: HashMap::from([
+                ("label".to_owned(), owned_string("Tiled")),
+                ("enabled".to_owned(), OwnedValue::from(enabled)),
+                ("visible".to_owned(), OwnedValue::from(true)),
+                ("toggle-type".to_owned(), owned_string("radio")),
+                (
+                    "toggle-state".to_owned(),
+                    OwnedValue::from(if checked { 1_i32 } else { 0_i32 }),
+                ),
+            ]),
+            children: Vec::new(),
+        }
+    }
+
+    fn default_floating_item(&self) -> MenuLayout {
+        let checked = self.projection.default_floating_checked();
+        let enabled = self.projection.default_radio_enabled();
+        MenuLayout {
+            id: MENU_ID_DEFAULT_FLOATING,
+            properties: HashMap::from([
+                ("label".to_owned(), owned_string("Floating")),
+                ("enabled".to_owned(), OwnedValue::from(enabled)),
+                ("visible".to_owned(), OwnedValue::from(true)),
+                ("toggle-type".to_owned(), owned_string("radio")),
+                (
+                    "toggle-state".to_owned(),
+                    OwnedValue::from(if checked { 1_i32 } else { 0_i32 }),
+                ),
+            ]),
+            children: Vec::new(),
+        }
+    }
+
     fn menu_item(&self) -> MenuLayout {
         MenuLayout {
-            id: 1,
+            id: MENU_ID_SETTINGS,
             properties: HashMap::from([
                 ("label".to_owned(), owned_string("Settings")),
                 ("enabled".to_owned(), OwnedValue::from(true)),
@@ -581,8 +1027,15 @@ impl DbusMenu {
     }
 }
 
-fn is_settings_event(id: i32, event_id: &str) -> bool {
-    id == 1 && event_id == "clicked"
+fn is_menu_event(id: i32, event_id: &str) -> bool {
+    event_id == "clicked"
+        && matches!(
+            id,
+            MENU_ID_SETTINGS
+                | MENU_ID_TILE_TOGGLE
+                | MENU_ID_DEFAULT_TILED
+                | MENU_ID_DEFAULT_FLOATING
+        )
 }
 
 #[zbus::interface(name = "com.canonical.dbusmenu")]
@@ -615,8 +1068,12 @@ impl DbusMenu {
     ) -> zbus::fdo::Result<(u32, MenuLayout)> {
         let mut layout = match parent_id {
             0 => self.layout(),
-            1 => self.menu_item(),
-            2 => self.status_item(),
+            MENU_ID_SETTINGS => self.menu_item(),
+            MENU_ID_STATUS => self.status_item(),
+            MENU_ID_TILE_TOGGLE => self.tile_toggle_item(),
+            MENU_ID_DEFAULT_HEADING => self.default_heading_item(),
+            MENU_ID_DEFAULT_TILED => self.default_tiled_item(),
+            MENU_ID_DEFAULT_FLOATING => self.default_floating_item(),
             _ => return Err(zbus::fdo::Error::Failed("unknown menu item".to_owned())),
         };
         if recursion_depth == 0 {
@@ -632,10 +1089,16 @@ impl DbusMenu {
         _data: OwnedValue,
         _timestamp: u32,
     ) -> zbus::fdo::Result<()> {
-        if !is_settings_event(id, event_id) {
+        if !is_menu_event(id, event_id) {
             return Ok(());
         }
-        self.projection.launch_settings()
+        match id {
+            MENU_ID_SETTINGS => self.projection.launch_settings(),
+            MENU_ID_TILE_TOGGLE => self.projection.request_toggle(),
+            MENU_ID_DEFAULT_TILED => self.projection.request_default(true),
+            MENU_ID_DEFAULT_FLOATING => self.projection.request_default(false),
+            _ => Ok(()),
+        }
     }
 
     fn about_to_show(&self, _id: i32) -> bool {
@@ -679,12 +1142,30 @@ mod tests {
     type ToolTip = (String, IconPixmap, String, String);
 
     fn projection(enabled: Option<bool>, started: Instant) -> TrayProjection {
+        projection_full(enabled, Some(true), Some(true), started)
+    }
+
+    fn projection_full(
+        enabled: Option<bool>,
+        tiled: Option<bool>,
+        default_tiled: Option<bool>,
+        started: Instant,
+    ) -> TrayProjection {
         let state = Arc::new(Mutex::new(TrayState::default()));
         let mut guard = state.lock().unwrap();
         guard.owner_changed(Some(":kwin"));
-        if let Some(enabled) = enabled {
+        if let (Some(enabled), Some(tiled), Some(default_tiled)) = (enabled, tiled, default_tiled) {
             guard
-                .publish_snapshot(1, "generation".to_owned(), 0, enabled, 0)
+                .publish_snapshot(
+                    2,
+                    "generation".to_owned(),
+                    0,
+                    enabled,
+                    "ws-1".to_owned(),
+                    tiled,
+                    default_tiled,
+                    0,
+                )
                 .unwrap();
         }
         drop(guard);
@@ -777,7 +1258,16 @@ mod tests {
         made.state
             .lock()
             .unwrap()
-            .publish_snapshot(1, "generation".to_owned(), 1, true, 0)
+            .publish_snapshot(
+                2,
+                "generation".to_owned(),
+                1,
+                true,
+                "ws-1".to_owned(),
+                true,
+                true,
+                0,
+            )
             .expect("next fresh publish converges");
         assert_eq!(made.status(), "Active");
     }
@@ -789,7 +1279,7 @@ mod tests {
         // fresh projection retries; the retry then remembers normally.
         let made = projection(Some(true), Instant::now());
         assert!(made.should_emit_status("Active"));
-        let hung = zbus::block_on(made.emit_guarded(Duration::from_millis(20), |_| {
+        let hung = zbus::block_on(made.emit_guarded(Duration::from_millis(20), |_, _, _, _| {
             std::future::pending::<zbus::Result<()>>()
         }));
         assert!(hung.is_err(), "hung emission must time out");
@@ -801,7 +1291,7 @@ mod tests {
             made.should_emit_status("Active"),
             "timed-out status stays unremembered for a later retry"
         );
-        zbus::block_on(made.emit_guarded(Duration::from_secs(2), |_| async { Ok(()) }))
+        zbus::block_on(made.emit_guarded(Duration::from_secs(2), |_, _, _, _| async { Ok(()) }))
             .expect("later fresh projection retries");
         assert!(!made.should_emit_status("Active"));
     }
@@ -867,9 +1357,9 @@ mod tests {
     }
 
     #[test]
-    fn menu_layout_has_status_and_one_settings_action() {
-        let menu = projection(Some(true), Instant::now()).menu();
-        assert_eq!(menu.layout().children.len(), 2);
+    fn menu_layout_has_status_toggle_default_radios_and_settings() {
+        let menu = projection_full(Some(true), Some(true), Some(true), Instant::now()).menu();
+        assert_eq!(menu.layout().children.len(), 6);
         let status = menu.status_item();
         assert_eq!(
             status.properties["label"].downcast_ref::<String>().ok(),
@@ -878,6 +1368,58 @@ mod tests {
         assert_eq!(
             status.properties["enabled"].downcast_ref::<bool>().ok(),
             Some(false)
+        );
+        let toggle = menu.tile_toggle_item();
+        assert_eq!(toggle.id, MENU_ID_TILE_TOGGLE);
+        assert_eq!(
+            toggle.properties["label"].downcast_ref::<String>().ok(),
+            Some("Tile current workspace".to_owned())
+        );
+        assert_eq!(
+            toggle.properties["toggle-type"]
+                .downcast_ref::<String>()
+                .ok(),
+            Some("checkmark".to_owned())
+        );
+        assert_eq!(
+            toggle.properties["toggle-state"].downcast_ref::<i32>().ok(),
+            Some(1)
+        );
+        assert_eq!(
+            toggle.properties["enabled"].downcast_ref::<bool>().ok(),
+            Some(true)
+        );
+        let heading = menu.default_heading_item();
+        assert_eq!(heading.id, MENU_ID_DEFAULT_HEADING);
+        assert_eq!(
+            heading.properties["label"].downcast_ref::<String>().ok(),
+            Some("New workspace behavior".to_owned())
+        );
+        assert_eq!(
+            heading.properties["enabled"].downcast_ref::<bool>().ok(),
+            Some(false)
+        );
+        let tiled = menu.default_tiled_item();
+        assert_eq!(
+            tiled.properties["label"].downcast_ref::<String>().ok(),
+            Some("Tiled".to_owned())
+        );
+        assert_eq!(
+            tiled.properties["toggle-type"]
+                .downcast_ref::<String>()
+                .ok(),
+            Some("radio".to_owned())
+        );
+        assert_eq!(
+            tiled.properties["toggle-state"].downcast_ref::<i32>().ok(),
+            Some(1)
+        );
+        let floating = menu.default_floating_item();
+        assert_eq!(
+            floating.properties["toggle-state"]
+                .downcast_ref::<i32>()
+                .ok(),
+            Some(0)
         );
         let settings = menu.menu_item();
         assert_eq!(
@@ -889,6 +1431,87 @@ mod tests {
             Some(true)
         );
         assert_eq!(<MenuLayout as Type>::SIGNATURE.to_string(), "(ia{sv}av)");
+    }
+
+    #[test]
+    fn menu_state_reflects_fresh_snapshot_tiled_and_default() {
+        let tiled = projection_full(Some(true), Some(true), Some(false), Instant::now());
+        assert!(tiled.tile_toggle_checked());
+        assert!(!tiled.default_tiled_checked());
+        assert!(tiled.default_floating_checked());
+        let menu = tiled.menu();
+        assert_eq!(
+            menu.tile_toggle_item().properties["toggle-state"]
+                .downcast_ref::<i32>()
+                .ok(),
+            Some(1)
+        );
+        assert_eq!(
+            menu.default_tiled_item().properties["toggle-state"]
+                .downcast_ref::<i32>()
+                .ok(),
+            Some(0)
+        );
+        assert_eq!(
+            menu.default_floating_item().properties["toggle-state"]
+                .downcast_ref::<i32>()
+                .ok(),
+            Some(1)
+        );
+
+        let floating = projection_full(Some(true), Some(false), Some(true), Instant::now());
+        assert!(!floating.tile_toggle_checked());
+        assert!(floating.default_tiled_checked());
+        assert!(!floating.default_floating_checked());
+    }
+
+    #[test]
+    fn stale_snapshot_disables_toggle_and_radios_but_keeps_settings() {
+        let stale = TrayProjection::new(
+            {
+                let state = Arc::new(Mutex::new(TrayState::default()));
+                state.lock().unwrap().owner_changed(Some(":kwin"));
+                state
+            },
+            Instant::now(),
+        );
+        assert!(stale.fresh_workspace_state().is_none());
+        assert!(!stale.tile_toggle_enabled());
+        assert!(!stale.default_radio_enabled());
+        let menu = stale.menu();
+        assert_eq!(
+            menu.tile_toggle_item().properties["enabled"]
+                .downcast_ref::<bool>()
+                .ok(),
+            Some(false)
+        );
+        assert_eq!(
+            menu.default_tiled_item().properties["enabled"]
+                .downcast_ref::<bool>()
+                .ok(),
+            Some(false)
+        );
+        assert_eq!(
+            menu.default_floating_item().properties["enabled"]
+                .downcast_ref::<bool>()
+                .ok(),
+            Some(false)
+        );
+        assert_eq!(
+            menu.menu_item().properties["enabled"]
+                .downcast_ref::<bool>()
+                .ok(),
+            Some(true)
+        );
+
+        let expired = projection_full(
+            Some(true),
+            Some(true),
+            Some(true),
+            Instant::now() - Duration::from_millis(FRESHNESS_MS),
+        );
+        assert!(expired.fresh_workspace_state().is_none());
+        assert!(!expired.tile_toggle_enabled());
     }
 
     #[test]
@@ -1146,25 +1769,511 @@ mod tests {
     }
 
     #[test]
-    fn settings_events_only_accept_the_single_fixed_action() {
-        assert!(is_settings_event(1, "clicked"));
-        assert!(!is_settings_event(2, "clicked"));
-        assert!(!is_settings_event(0, "clicked"));
-        assert!(!is_settings_event(1, "pressed"));
-        assert!(!is_settings_event(1, ""));
+    fn menu_events_accept_toggle_default_and_settings_only() {
+        assert!(is_menu_event(MENU_ID_SETTINGS, "clicked"));
+        assert!(is_menu_event(MENU_ID_TILE_TOGGLE, "clicked"));
+        assert!(is_menu_event(MENU_ID_DEFAULT_TILED, "clicked"));
+        assert!(is_menu_event(MENU_ID_DEFAULT_FLOATING, "clicked"));
+        assert!(!is_menu_event(MENU_ID_STATUS, "clicked"));
+        assert!(!is_menu_event(MENU_ID_DEFAULT_HEADING, "clicked"));
+        assert!(!is_menu_event(0, "clicked"));
+        assert!(!is_menu_event(MENU_ID_SETTINGS, "pressed"));
+        assert!(!is_menu_event(MENU_ID_SETTINGS, ""));
         let menu = projection(Some(true), Instant::now()).menu();
-        assert!(menu.event(2, "clicked", owned_string("x"), 0).is_ok());
-        assert!(menu.event(1, "pressed", owned_string("x"), 0).is_ok());
+        assert!(
+            menu.event(MENU_ID_STATUS, "clicked", owned_string("x"), 0)
+                .is_ok()
+        );
+        assert!(
+            menu.event(MENU_ID_DEFAULT_HEADING, "clicked", owned_string("x"), 0)
+                .is_ok()
+        );
+        assert!(
+            menu.event(MENU_ID_SETTINGS, "pressed", owned_string("x"), 0)
+                .is_ok()
+        );
+        assert!(menu.get_layout(99, -1, Vec::new()).is_err());
     }
 
     #[test]
-    fn settings_single_flight_is_shared_between_menu_and_activate() {
+    fn sni_activation_is_menu_noop_and_item_is_menu() {
         let made = projection(Some(true), Instant::now());
         let item = made.status_notifier_item();
+        assert!(item.item_is_menu());
+        // Left-click opens the menu via ItemIsMenu; Activate never launches
+        // Settings (the Settings row does).
+        assert!(item.activate(0, 0).is_ok());
+    }
+
+    #[test]
+    fn toggle_click_invokes_kglobalaccel_without_optimistic_flip() {
+        let made = projection_full(Some(true), Some(true), Some(true), Instant::now());
+        let mut invoked = 0;
+        let mut lines = Vec::new();
+        let result = made.request_toggle_with(
+            || {
+                invoked += 1;
+                Ok(())
+            },
+            |line| lines.push(line.to_owned()),
+        );
+        assert!(result.is_ok());
+        assert_eq!(invoked, 1);
+        assert!(lines.iter().any(|line| line.contains("outcome=intent")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("outcome=sent-unconfirmed"))
+        );
+        for line in &lines {
+            assert!(!line.contains('\n'));
+            assert!(!line.contains("ws-1"));
+        }
+        // No optimistic toggling: the fresh snapshot still projects tiled.
+        assert!(made.tile_toggle_checked());
+        assert_eq!(made.fresh_workspace_state(), Some((true, true)));
+    }
+
+    #[test]
+    fn toggle_click_refuses_when_stale_without_invoking() {
+        let stale = TrayProjection::new(
+            {
+                let state = Arc::new(Mutex::new(TrayState::default()));
+                state.lock().unwrap().owner_changed(Some(":kwin"));
+                state
+            },
+            Instant::now(),
+        );
+        let mut invoked = 0;
+        let mut lines = Vec::new();
+        let result = stale.request_toggle_with(
+            || {
+                invoked += 1;
+                Ok(())
+            },
+            |line| lines.push(line.to_owned()),
+        );
+        assert!(result.is_err());
+        assert_eq!(invoked, 0);
+        assert!(lines.iter().any(|line| line.contains("stale-refused")));
+    }
+
+    #[test]
+    fn toggle_dispatch_failure_logs_and_returns_err() {
+        let made = projection_full(Some(true), Some(false), Some(true), Instant::now());
+        let mut lines = Vec::new();
+        let result =
+            made.request_toggle_with(|| Err("invoke-failed"), |line| lines.push(line.to_owned()));
+        assert!(result.is_err());
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("outcome=invoke-failed"))
+        );
+        // Failed dispatch never flips the menu either.
+        assert!(!made.tile_toggle_checked());
+    }
+
+    #[test]
+    fn kglobalaccel_and_persistence_call_shapes_use_fixed_contracts() {
+        assert_eq!(KGLOBALACCEL_SERVICE, "org.kde.kglobalaccel");
+        assert_eq!(KGLOBALACCEL_PATH, "/kglobalaccel");
+        assert_eq!(KGLOBALACCEL_IFACE, "org.kde.KGlobalAccel");
+        assert_eq!(KGLOBALACCEL_GET_COMPONENT, "getComponent");
+        assert_eq!(
+            KGLOBALACCEL_COMPONENT_IFACE,
+            "org.kde.kglobalaccel.Component"
+        );
+        assert_eq!(KGLOBALACCEL_INVOKE, "invokeShortcut");
+        assert_eq!(
+            WORKSPACE_TOGGLE_ACTION,
+            "plasma-auto-tiler-toggle-workspace-tiling"
+        );
+        assert_eq!(KGLOBALACCEL_COMPONENT, "kwin");
+        assert_eq!(KGLOBALACCEL_CONTEXT, "default");
+
+        assert_eq!(
+            kwriteconfig_argv_for("kwriteconfig6", true),
+            vec![
+                "kwriteconfig6".to_owned(),
+                "--file".to_owned(),
+                "kwinrc".to_owned(),
+                "--group".to_owned(),
+                "Script-plasma-auto-tiler-kwin".to_owned(),
+                "--key".to_owned(),
+                "defaultTiled".to_owned(),
+                "true".to_owned(),
+            ]
+        );
+        assert_eq!(
+            kwriteconfig_argv_for("kwriteconfig6", false)
+                .last()
+                .map(String::as_str),
+            Some("false")
+        );
+        assert_eq!(KWIN_RECONFIGURE_SERVICE, "org.kde.KWin");
+        assert_eq!(KWIN_RECONFIGURE_PATH, "/KWin");
+        assert_eq!(KWIN_RECONFIGURE_IFACE, "org.kde.KWin");
+        assert_eq!(KWIN_RECONFIGURE_METHOD, "reconfigure");
+    }
+
+    #[test]
+    fn default_click_persists_without_optimistic_flip() {
+        let made = projection_full(Some(true), Some(true), Some(true), Instant::now());
+        let mut seen = None;
+        let mut lines = Vec::new();
+        let result = made.request_default_with(
+            false,
+            |value| {
+                seen = Some(value);
+                (Ok(()), Ok(()))
+            },
+            |line| lines.push(line.to_owned()),
+        );
+        assert!(result.is_ok());
+        assert_eq!(seen, Some(false));
+        assert!(lines.iter().any(|line| line.contains("stage=persist")
+            && line.contains("outcome=intent")
+            && line.contains("defaultTiled=false")));
+        assert!(lines.iter().any(|line| line.contains("outcome=written")));
+        assert!(lines.iter().any(|line| line.contains("sent-unconfirmed")));
+        for line in &lines {
+            assert!(!line.contains("ws-1"));
+            assert!(!line.contains('\n'));
+        }
+        // No optimistic radio flip: the snapshot still projects default true.
+        assert!(made.default_tiled_checked());
+    }
+
+    #[test]
+    fn default_write_failure_returns_err_without_reconfigure() {
+        let made = projection_full(Some(true), Some(true), Some(true), Instant::now());
+        let mut reconfig_called = false;
+        let result = made.request_default_with(
+            true,
+            |_| {
+                reconfig_called = true;
+                (Err("write-failed"), Err("reconfigure-skipped"))
+            },
+            |_| {},
+        );
+        assert!(result.is_err());
+        assert!(reconfig_called);
+    }
+
+    #[test]
+    fn default_reconfigure_failure_still_ok_after_persist() {
+        let made = projection_full(Some(true), Some(true), Some(true), Instant::now());
+        let mut lines = Vec::new();
+        let result = made.request_default_with(
+            true,
+            |_| (Ok(()), Err("reconfigure-failed")),
+            |line| lines.push(line.to_owned()),
+        );
+        assert!(result.is_ok());
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("outcome=reconfigure-failed"))
+        );
+    }
+
+    #[test]
+    fn toggle_and_default_outcome_lines_are_bounded_without_identity() {
+        for line in [
+            toggle_outcome_line("intent"),
+            toggle_outcome_line("sent-unconfirmed"),
+            toggle_outcome_line("stale-refused"),
+            toggle_outcome_line("invoke-failed"),
+            default_outcome_line("persist", "intent", Some(true)),
+            default_outcome_line("persist", "written", Some(false)),
+            default_outcome_line("reconfigure", "sent-unconfirmed", Some(true)),
+            default_outcome_line("reconfigure", "reconfigure-failed", Some(false)),
+        ] {
+            assert!(!line.contains('\n'));
+            assert!(!line.contains("ws-1"));
+            assert!(!line.contains("/component/"));
+        }
+        assert_eq!(
+            toggle_outcome_line("intent"),
+            "plasma-auto-tiler:route-diag component=tray-endpoint stage=toggle event=invoke outcome=intent"
+        );
+    }
+
+    fn publish_fresh(
+        state: &Arc<Mutex<TrayState>>,
+        revision: i32,
+        scope: &str,
+        tiled: bool,
+        default_tiled: bool,
+    ) {
+        state
+            .lock()
+            .unwrap()
+            .publish_snapshot(
+                2,
+                "generation".to_owned(),
+                revision,
+                true,
+                scope.to_owned(),
+                tiled,
+                default_tiled,
+                0,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn menu_fingerprint_tracks_scope_tiled_default_and_stale() {
+        let state = Arc::new(Mutex::new(TrayState::default()));
+        state.lock().unwrap().owner_changed(Some(":kwin"));
+        let made = TrayProjection::new(Arc::clone(&state), Instant::now());
+        assert_eq!(made.menu_fingerprint(), None);
+        publish_fresh(&state, 0, "ws-1", true, true);
+        assert_eq!(
+            made.menu_fingerprint(),
+            Some(("ws-1".to_owned(), true, true))
+        );
+        // Same Active status, different tiled: fingerprint must differ so the
+        // menu emits even though SNI stays Active.
+        publish_fresh(&state, 1, "ws-1", false, true);
+        assert_eq!(made.status(), "Active");
+        assert_eq!(
+            made.menu_fingerprint(),
+            Some(("ws-1".to_owned(), false, true))
+        );
+        publish_fresh(&state, 2, "ws-2", false, true);
+        assert_eq!(
+            made.menu_fingerprint(),
+            Some(("ws-2".to_owned(), false, true))
+        );
+        publish_fresh(&state, 3, "ws-2", false, false);
+        assert_eq!(
+            made.menu_fingerprint(),
+            Some(("ws-2".to_owned(), false, false))
+        );
+    }
+
+    #[test]
+    fn emit_guarded_emits_menu_update_when_only_menu_changes() {
+        let state = Arc::new(Mutex::new(TrayState::default()));
+        state.lock().unwrap().owner_changed(Some(":kwin"));
+        publish_fresh(&state, 0, "ws-1", true, true);
+        let made = TrayProjection::new(Arc::clone(&state), Instant::now());
+        let mut sends = 0;
+        zbus::block_on(
+            made.emit_guarded(Duration::from_secs(2), |status, menu, _, _| {
+                sends += 1;
+                assert_eq!(status, "Active");
+                assert_eq!(menu, Some(("ws-1".to_owned(), true, true)));
+                async { Ok(()) }
+            }),
+        )
+        .unwrap();
+        assert_eq!(sends, 1);
+        // Steady state: same status and same menu stays silent.
+        zbus::block_on(
+            made.emit_guarded(Duration::from_secs(2), |_, _, _, _| async {
+                panic!("steady state must not send");
+                #[allow(unreachable_code)]
+                Ok(())
+            }),
+        )
+        .unwrap();
+        // Accepted fresh snapshot flips only tiled: status stays Active but
+        // the menu must emit again.
+        publish_fresh(&state, 1, "ws-1", false, true);
+        assert_eq!(made.status(), "Active");
+        let mut menu_sends = 0;
+        zbus::block_on(
+            made.emit_guarded(Duration::from_secs(2), |status, menu, _, _| {
+                menu_sends += 1;
+                assert_eq!(status, "Active");
+                assert_eq!(menu, Some(("ws-1".to_owned(), false, true)));
+                async { Ok(()) }
+            }),
+        )
+        .unwrap();
+        assert_eq!(menu_sends, 1, "tiled-only change must emit menu update");
+        // Duplicate after remembering stays silent again.
+        zbus::block_on(
+            made.emit_guarded(Duration::from_secs(2), |_, _, _, _| async {
+                panic!("duplicate menu must stay silent");
+                #[allow(unreachable_code)]
+                Ok(())
+            }),
+        )
+        .unwrap();
+        // Scope-only change also emits.
+        publish_fresh(&state, 2, "ws-2", false, true);
+        let mut scope_sends = 0;
+        zbus::block_on(made.emit_guarded(Duration::from_secs(2), |_, menu, _, _| {
+            scope_sends += 1;
+            assert_eq!(menu, Some(("ws-2".to_owned(), false, true)));
+            async { Ok(()) }
+        }))
+        .unwrap();
+        assert_eq!(scope_sends, 1);
+    }
+
+    #[test]
+    fn reconfigure_message_sets_noreply_expected_without_waiting() {
+        // Behavior, not call shape: the built message carries the D-Bus
+        // NoReplyExpected flag, targets the KWin reconfigure route, and has
+        // an empty body, so `Connection::send` fire-and-forget never waits
+        // for the reply Q_NOREPLY never sends (KWin src/dbusinterface.h).
+        let message = reconfigure_noreply_message().expect("reconfigure message builds");
+        assert!(
+            message
+                .primary_header()
+                .flags()
+                .contains(zbus::message::Flags::NoReplyExpected)
+        );
+        let header = message.header();
+        assert_eq!(
+            header.path().map(|path| path.to_string()).as_deref(),
+            Some(KWIN_RECONFIGURE_PATH)
+        );
+        assert_eq!(
+            header.interface().map(|iface| iface.to_string()).as_deref(),
+            Some(KWIN_RECONFIGURE_IFACE)
+        );
+        assert_eq!(
+            header.member().map(|member| member.to_string()).as_deref(),
+            Some(KWIN_RECONFIGURE_METHOD)
+        );
+        let body: () = message.body().deserialize().expect("empty body");
+        assert_eq!(body, ());
+    }
+
+    #[test]
+    fn menu_projected_line_is_bounded_without_scope_identity() {
+        let line = crate::tray_endpoint::menu_projected_line(false, true);
+        assert!(line.contains("outcome=menu-updated"));
+        assert!(line.contains("tiled=false"));
+        assert!(line.contains("defaultTiled=true"));
+        assert!(!line.contains("ws-1"));
+        assert!(!line.contains('\n'));
+    }
+
+    #[test]
+    fn empty_scope_disables_toggle_but_keeps_default_radios() {
+        let state = Arc::new(Mutex::new(TrayState::default()));
+        state.lock().unwrap().owner_changed(Some(":kwin"));
+        publish_fresh(&state, 0, "", true, true);
+        let made = TrayProjection::new(Arc::clone(&state), Instant::now());
+        // Fresh snapshot still projects the persisted default.
+        assert_eq!(made.fresh_workspace_state(), Some((true, true)));
+        assert!(!made.has_fresh_workspace_scope());
+        assert!(!made.tile_toggle_enabled());
+        assert!(!made.tile_toggle_checked());
+        assert!(made.default_radio_enabled());
+        assert!(made.default_tiled_checked());
+        assert!(!made.default_floating_checked());
         let menu = made.menu();
-        assert!(Arc::ptr_eq(
-            &item.projection.settings_process,
-            &menu.projection.settings_process
-        ));
+        assert_eq!(
+            menu.tile_toggle_item().properties["enabled"]
+                .downcast_ref::<bool>()
+                .ok(),
+            Some(false)
+        );
+        assert_eq!(
+            menu.default_tiled_item().properties["enabled"]
+                .downcast_ref::<bool>()
+                .ok(),
+            Some(true)
+        );
+        assert_eq!(
+            menu.default_floating_item().properties["enabled"]
+                .downcast_ref::<bool>()
+                .ok(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn empty_scope_toggle_refuses_without_invoking_while_default_persists() {
+        let state = Arc::new(Mutex::new(TrayState::default()));
+        state.lock().unwrap().owner_changed(Some(":kwin"));
+        publish_fresh(&state, 0, "", true, false);
+        let made = TrayProjection::new(Arc::clone(&state), Instant::now());
+        let mut invoked = 0;
+        let mut lines = Vec::new();
+        let result = made.request_toggle_with(
+            || {
+                invoked += 1;
+                Ok(())
+            },
+            |line| lines.push(line.to_owned()),
+        );
+        assert!(result.is_err());
+        assert_eq!(invoked, 0);
+        assert!(lines.iter().any(|line| line.contains("stale-refused")));
+        // Default radios stay usable on empty scope: persist path still runs.
+        let result = made.request_default_with(
+            true,
+            |value| {
+                assert!(value);
+                (Ok(()), Ok(()))
+            },
+            |_| {},
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn emit_guarded_flags_distinguish_menu_only_from_status_change() {
+        let state = Arc::new(Mutex::new(TrayState::default()));
+        state.lock().unwrap().owner_changed(Some(":kwin"));
+        publish_fresh(&state, 0, "ws-1", true, true);
+        let made = TrayProjection::new(Arc::clone(&state), Instant::now());
+        // First emission is both status and menu (fresh cache).
+        let mut first = None;
+        zbus::block_on(
+            made.emit_guarded(Duration::from_secs(2), |status, menu, sc, mc| {
+                first = Some((status, menu, sc, mc));
+                async { Ok(()) }
+            }),
+        )
+        .unwrap();
+        let (_, _, status_changed, menu_changed) = first.expect("first emits");
+        assert!(status_changed);
+        assert!(menu_changed);
+        // Tiled-only flip: status unchanged, menu changed.
+        publish_fresh(&state, 1, "ws-1", false, true);
+        let mut second = None;
+        zbus::block_on(
+            made.emit_guarded(Duration::from_secs(2), |status, menu, sc, mc| {
+                second = Some((status, menu, sc, mc));
+                async { Ok(()) }
+            }),
+        )
+        .unwrap();
+        let (status, menu, status_changed, menu_changed) = second.expect("menu-only emits");
+        assert_eq!(status, "Active");
+        assert_eq!(menu, Some(("ws-1".to_owned(), false, true)));
+        assert!(!status_changed, "Active unchanged must not re-emit status");
+        assert!(menu_changed);
+    }
+
+    #[test]
+    fn kwriteconfig_resolves_baked_absolute_or_path_fallback() {
+        // Fixed call shape for an explicit executable (Nix absolute or dev).
+        let nix_argv = kwriteconfig_argv_for("/run/current-system/sw/bin/kwriteconfig6", true);
+        assert_eq!(nix_argv[0], "/run/current-system/sw/bin/kwriteconfig6");
+        assert_eq!(nix_argv[1..4], ["--file", "kwinrc", "--group"]);
+        // Runtime resolver: baked absolute in Nix, PATH fallback in dev.
+        let resolved = kwriteconfig_executable();
+        let is_baked_absolute = std::path::Path::new(resolved).is_absolute();
+        assert!(
+            is_baked_absolute || resolved == KWRITECONFIG_EXECUTABLE,
+            "resolver must be absolute baked or PATH fallback"
+        );
+        assert_eq!(
+            kwriteconfig_argv(true)[0],
+            resolved,
+            "argv must use the resolved writer"
+        );
+        assert_eq!(KWRITECONFIG_EXECUTABLE, "kwriteconfig6");
     }
 }
