@@ -1017,10 +1017,9 @@ export class WorkspaceNativeAdapter {
             this.globalAssigned.set(key, filtered);
         }
         // Prune inverse entries for dead desktops.
-        for (const [id, key] of [...this.globalInverse]) {
+        for (const id of [...this.globalInverse.keys()]) {
             if (!liveIds.has(id)) {
                 this.globalInverse.delete(id);
-                void key;
             }
         }
         for (const entry of live) {

@@ -448,18 +448,6 @@ impl LifecycleOperation {
             LifecyclePrecondition::AdapterMustVerifyPostconditions,
         ]
     }
-
-    /// Affected window, if any.
-    #[must_use]
-    pub fn window(&self) -> &WindowId {
-        match self {
-            Self::Admit { window, .. }
-            | Self::AdmitDeferred { window, .. }
-            | Self::Remove { window, .. }
-            | Self::RemoveDeferred { window, .. }
-            | Self::MoveTiled { window, .. } => window,
-        }
-    }
 }
 
 /// Deterministic lifecycle plan with explicit capability and preconditions.

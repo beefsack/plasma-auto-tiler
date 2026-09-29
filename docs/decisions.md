@@ -92,12 +92,14 @@ the corresponding item ships; each such entry names its replacement.
   profiles exist post-MVP; its saved value and startup read remain untouched.
   Storage remains in the existing `kwinrc` groups. The script KPackage still
   needs the host-built native KCM companion for Configure; the effect need not
-  be enabled. Live gap pickup and unified-page acceptance remain pending.
+  be enabled. Gap Save live re-spacing and unified-page acceptance confirmed
+  live by the user (2026-09-29).
 - Host setting conflicts (user decision 2026-09-29; offline implementation,
-  live acceptance pending): the unified settings page reads `kwinrc [Windows]`
-  `ElectricBorderTiling`, `ElectricBorderMaximize`, and `ElectricBorders` on
-  open, showing current values with short explanations. The boolean rows are
-  always visible: Fix writes `false` when on; Revert removes the local key
+  Fix confirmed live 2026-09-29, Revert/tray-indicator acceptance pending):
+  the unified settings page reads `kwinrc [Windows]` `ElectricBorderTiling`,
+  `ElectricBorderMaximize`, and `ElectricBorders` on open, showing current
+  values with short explanations. The boolean rows are always visible: Fix
+  writes `false` when on; Revert removes the local key
   when off so the KDE 6.7.5 default `true` takes effect. The `ElectricBorders`
   row appears only when nonzero: its sole Fix removes the local key so default
   `0` takes effect. No prior-value journal or change ownership is tracked.
@@ -110,9 +112,9 @@ the corresponding item ships; each such entry names its replacement.
   the tray icon and a top menu row, "Conflicting KDE settings...", opening the
   existing unified Settings page. Left-click keeps opening the tray menu, and
   snapshot loss keeps its separate NeedsAttention status. No notification or
-   direct Settings-on-icon-click. The user wants uninstall to restore defaults
-   for our overridden host settings; the route-specific mechanism without
-   tracking is still unselected, and no
+  direct Settings-on-icon-click. The user wants uninstall to restore defaults
+  for our overridden host settings; the route-specific mechanism without
+  tracking is still unselected, and no
   uninstall reset is implemented. Stateless uninstall would also reset a
   user-made value that equals our fix value.
 - Threat model (AR13, shipped offline): processes of the same user are trusted.
@@ -123,14 +125,16 @@ the corresponding item ships; each such entry names its replacement.
   launch it on demand with `cargo run -p plasma-auto-tiler -- tray`. The
   Planner same-UID caller check remains. Live login and watcher acceptance
   remain pending.
-- Tray workspace behavior (user 2026-09-29, offline implementation; live
-  acceptance pending): clicking the tray icon opens its menu with current
-  workspace tiling, new-workspace behavior Tiled/Floating, and Settings for the
-  existing unified page. The existing disabled status row may remain. The
-  keyless KWin script action is invoked by the tray through KGlobalAccel;
-  invoking it does not confirm application, so the menu reflects fresh
-  KWin-owned snapshots. The tray writes only `defaultTiled` (Tiled by default)
-  in `kwinrc [Script-plasma-auto-tiler-kwin]` and requests KWin reconfigure;
+- Tray workspace behavior (user 2026-09-29, offline implementation;
+  floating/tiled toggle confirmed live 2026-09-29, default change and
+  cross-boundary send pending): clicking the tray icon opens its menu with
+  current workspace tiling, new-workspace behavior Tiled/Floating, and
+  Settings for the existing unified page. The existing disabled status row
+  may remain. The keyless KWin script action is invoked by the tray through
+  KGlobalAccel; invoking it does not confirm application, so the menu reflects
+  fresh KWin-owned snapshots. The tray writes only `defaultTiled` (Tiled by
+  default) in `kwinrc [Script-plasma-auto-tiler-kwin]` and requests KWin
+  reconfigure;
   only a running KWin reread/snapshot confirms its live value. All existing
   workspaces take the saved default at new-session startup, while a live
   default change applies only to subsequently discovered workspaces.
@@ -279,8 +283,8 @@ the corresponding item ships; each such entry names its replacement.
 - Development iteration uses the packaged baseline plus a namespaced,
   reversible, user-local dogfood override as the smallest selected boundary.
   It must not coexist with a Nix-managed copy of the same KWin plugin IDs, must
-   preserve exact normal-path restoration, and must not mutate system or
-   unrelated state.
+  preserve exact normal-path restoration, and must not mutate system or
+  unrelated state.
 - Dev native delivery uses an explicit one-time `just dev-native-setup` (and
   matching `just dev-native-remove`) for this checkout's
   `target/kwin-native-effect-stage` via the project-owned
@@ -568,10 +572,10 @@ the corresponding item ships; each such entry names its replacement.
   receives no geometry write, and on unmaximize is restored to its exact
   retained allocation. Fullscreen takes precedence when a window is both
   fullscreen and maximized: fullscreen refusal tokens and the `skip-fullscreen`
-   disposition win over maximize. User decision I (2026-09-26): a normal window
-   without a connectable `maximizedChanged` remains tiled; log once and use
-   fresh `maximizeMode` reads on later observations. An unseen native change
-   remains unknown until a subsequent observation.
+  disposition win over maximize. User decision I (2026-09-26): a normal window
+  without a connectable `maximizedChanged` remains tiled; log once and use
+  fresh `maximizeMode` reads on later observations. An unseen native change
+  remains unknown until a subsequent observation.
 - Admission-time maximize clearing is a deliberate, user-approved KWin-native
   deviation from cosmic-comp parity, authorized 2026-09-14. For a non-fullscreen
   window first observed without a retained tiled slot, the adapter calls KWin
@@ -593,52 +597,52 @@ the corresponding item ships; each such entry names its replacement.
 - H/V maximize is deliberately not modeled in the engine. Maximize is a
   recorded overlay state over the original layer, not a distinct topology or
   managed layer, so the engine carries no horizontal/vertical maximize concept.
- - Complete automatic per-domain observations, not an applied membership
-   baseline, drive `reconcile` for foreground and hidden tiling. The Engine
-   converges departures, arrivals, and floating transitions before projecting
-   surviving topology; explicit complete hidden empties may retire a domain.
-   KWin retains only applied per-window geometry/domain/flag evidence for
-   overlays, first-admission maximize, drag fallback, drift and reply checks,
-   never as membership authority. Incomplete foreground frames and unreadable
-   hidden domains cannot establish a departure. Changed gaps use one bounded
-   fresh same-domain `update-gaps` retry only after an exact correlated gap
-   mismatch; unrelated/malformed refusals do not retry. The redundant
-   post-convergence ID-set checks for ordinary retained reconcile and
-   update-gaps are gone; relocated but previously unconverged sources still
-   require exact membership and atomic rollback. Other operation and reply
-    fences remain where needed for changed scope or uncertain state.
- - User decision D, option 2 (2026-09-26): on existing topology-change
-   signals, a successfully validated complete desktop-ID or output-name list
-   proves a drag-restore marker's workspace or output removed if absent from
-   that list. Settle each such drag `outcome=unavailable plan=none` and drop
-   its marker; a failed or malformed list proves nothing for that axis. No
-   timer, count cap, inferred per-window departure or fabricated applied plan.
-   Ordinary later observations remain usable.
+- Complete automatic per-domain observations, not an applied membership
+  baseline, drive `reconcile` for foreground and hidden tiling. The Engine
+  converges departures, arrivals, and floating transitions before projecting
+  surviving topology; explicit complete hidden empties may retire a domain.
+  KWin retains only applied per-window geometry/domain/flag evidence for
+  overlays, first-admission maximize, drag fallback, drift and reply checks,
+  never as membership authority. Incomplete foreground frames and unreadable
+  hidden domains cannot establish a departure. Changed gaps use one bounded
+  fresh same-domain `update-gaps` retry only after an exact correlated gap
+  mismatch; unrelated/malformed refusals do not retry. The redundant
+  post-convergence ID-set checks for ordinary retained reconcile and
+  update-gaps are gone; relocated but previously unconverged sources still
+  require exact membership and atomic rollback. Other operation and reply
+  fences remain where needed for changed scope or uncertain state.
+- User decision D, option 2 (2026-09-26): on existing topology-change
+  signals, a successfully validated complete desktop-ID or output-name list
+  proves a drag-restore marker's workspace or output removed if absent from
+  that list. Settle each such drag `outcome=unavailable plan=none` and drop
+  its marker; a failed or malformed list proves nothing for that axis. No
+  timer, count cap, inferred per-window departure or fabricated applied plan.
+  Ordinary later observations remain usable.
 - USER-APPROVED recoverability, 2026-09-21: "log and continue rather than hard
   fail." A failed native geometry operation or client geometry discrepancy is
   an operation failure, not a permanently disabled window or domain. Later
   valid commands and fresh observations remain usable while the adapter retains
-   confirmed canonical topology where available. User decision A (2026-09-26,
-   interim): after three bounded reassertions, automatic reconciliation accepts
-   each exact client-held rectangle as per-window applied geometry evidence
-   without disabling the domain; other or later drift still reconciles. This
-   does not fabricate a native write or change canonical Rust topology. The
-   retained allocation owns topology over same-scope client drift: strict
-   `DescribePlan {"op":"reconcile"}` never derives sibling shares from a
-   client's actual rectangle. Three attempts are a KWin anti-fighting policy,
-   not a COSMIC threshold or KWin acknowledgement. Learned
-   size limits and neighbour replans are deferred. Later explicit commands
-   remain usable; no infinite retries, fabricated acknowledgement, stale
-   geometry or uncertain cross-output transfer recovery is authorized.
+  confirmed canonical topology where available. User decision A (2026-09-26,
+  interim): after three bounded reassertions, automatic reconciliation accepts
+  each exact client-held rectangle as per-window applied geometry evidence
+  without disabling the domain; other or later drift still reconciles. This
+  does not fabricate a native write or change canonical Rust topology. The
+  retained allocation owns topology over same-scope client drift: strict
+  `DescribePlan {"op":"reconcile"}` never derives sibling shares from a
+  client's actual rectangle. Three attempts are a KWin anti-fighting policy,
+  not a COSMIC threshold or KWin acknowledgement. Learned
+  size limits and neighbour replans are deferred. Later explicit commands
+  remain usable; no infinite retries, fabricated acknowledgement, stale
+  geometry or uncertain cross-output transfer recovery is authorized.
   Authorization, malformed-input, owner, correlation, and stale-scope fences
   remain fail-closed. Send/R4 uncertainty now uses the 2026-09-25
   step-3 observation convergence below. Future
   recovery must preserve later valid commands without fabricating success,
-   replaying setters, resetting topology, or weakening those fences. User
-   decision G (2026-09-26): a stale pre-write snapshot replans the same
-   command once against a fresh complete observation under identity,
-   correlation, owner and scope fences. A second staleness logs, drops and
-   converges; never replay after any setter has run.
+  replaying setters, resetting topology, or weakening those fences. User
+  decision G (2026-09-26): a stale pre-write snapshot replans the same
+  command once against a fresh complete observation under identity,
+  correlation, owner and scope fences. A second staleness logs, drops and
+  converges; never replay after any setter has run.
 - USER-APPROVED observation-convergence step 3, decided 2026-09-25:
   complete per-domain observations are authoritative for membership and portable
   flags, retaining survivor topology. The user authorized retiring send/R4
@@ -831,8 +835,8 @@ the corresponding item ships; each such entry names its replacement.
   `plasmaautotiler.shortcut` (operation, stage, outcome, allowlisted
   identity, key images, cleared count/writes only; foreign occupants
   redacted). Query with
-   `journalctl --user --no-pager -g "plasmaautotiler.shortcut op="`.
-   Operational warnings and info are enabled by default; the logging rule adds
+  `journalctl --user --no-pager -g "plasmaautotiler.shortcut op="`.
+  Operational warnings and info are enabled by default; the logging rule adds
   debug-only records. Logging never affects behavior.
 
 ## Planner Unauthorized Reply Correlation
@@ -1040,10 +1044,10 @@ the corresponding item ships; each such entry names its replacement.
   live acceptance pending): KDE `OverlayIconName=dialog-warning` indicates
   effective `kwinrc [Windows]` conflicts without changing SNI Status. The top
   "Conflicting KDE settings..." menu row uses the normal Settings launch
-   action; icon click still opens the menu. The tray directly checks the
-   three settings-page keys against their KDE defaults and fixed values. It
-   rereads the user's `kwinrc` at startup and on a changed file mtime during
-   the existing watchdog, so Fix/Revert and user-file edits appear without a tray
+  action; icon click still opens the menu. The tray directly checks the
+  three settings-page keys against their KDE defaults and fixed values. It
+  rereads the user's `kwinrc` at startup and on a changed file mtime during
+  the existing watchdog, so Fix/Revert and user-file edits appear without a tray
   restart, and logs one normal-level line only when the conflict state changes.
 - Tray delivery (user decision 2026-09-28, option 2): Home Manager installs a
   systemd user unit wanted by and bound to `graphical-session.target`, using

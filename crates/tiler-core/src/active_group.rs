@@ -17,9 +17,6 @@ use crate::bounds::is_opaque_id;
 use crate::directional::{Node, NodeId, WindowId};
 use crate::geometry::{Rect, project};
 
-/// Opaque id bound (single source: [`crate::bounds`]).
-pub const MAX_ACTIVE_GROUP_ID_LEN: usize = crate::bounds::MAX_OPAQUE_ID_LEN;
-
 /// One projected group member: opaque window/leaf identities plus the
 /// engine-projected rectangle (never a native/client rectangle).
 #[derive(Debug, Clone, PartialEq, Eq)]

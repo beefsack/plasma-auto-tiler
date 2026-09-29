@@ -955,7 +955,7 @@ mod tests {
     }
 
     #[test]
-    fn all_eleven_ops_have_distinct_wire_tokens() {
+    fn all_twelve_ops_have_distinct_wire_tokens() {
         use std::collections::HashSet;
         let commands = vec![
             CoreCommand::Reconcile,

@@ -8514,7 +8514,6 @@ export class PlanAdapter {
         if (domains === undefined || domains.length !== 2) {
             return false;
         }
-        const source = domains[0] as PlanDomain;
         const target = domains[1] as PlanDomain;
         if (target.output !== r4.targetOutput || target.workspace !== r4.targetWorkspace) {
             return false;
@@ -8587,7 +8586,6 @@ export class PlanAdapter {
         // Mover absent from source is implied by the single exact target
         // entry above plus unchanged non-mover placements; explicitly guard
         // the source domain identity already pinned in domainsEqual.
-        void source;
         return true;
     }
 

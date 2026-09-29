@@ -1460,7 +1460,6 @@ bool ShortcutReconciler::clearedActionsPathSafe(const QString &path, QString *er
         }
         return false;
     }
-    const QFileInfo leaf(path);
     // Refuse symlink or nonregular leaf without following it.
     {
         struct stat st = {};
@@ -1490,7 +1489,6 @@ bool ShortcutReconciler::clearedActionsPathSafe(const QString &path, QString *er
                 }
                 return false;
             }
-            Q_UNUSED(leaf);
         }
     }
     // The direct parent directory is the writable trust boundary. It cannot
