@@ -612,7 +612,12 @@ the corresponding item ships; each such entry names its replacement.
   destination observations reflow/admit the mover normally. Lead implementation
   choice: compare the mover's fresh native workspace with Started, not the
   pointer-projected destination; a legitimate pointer-based cross-domain drag
-  remains available. Offline verified, live acceptance pending.
+  remains available. Lead correction after the user's live repro, 2026-09-29:
+  the refused drop's existing restore reconcile binds to the freshly observed
+  destination containing the mover, rather than waiting for the Started
+  source to become visible. The source still reflows through send settlement.
+  Offline verified; live re-test pending in
+  [mid-drag-destination-recovery](changes/archive/mid-drag-destination-recovery.md).
 - `workspaceMode` supports `per-output-local`, `global-unique`, and `shared`
   through a session-local, project-owned KWin backing-desktop mapping. KWin's
   global virtual-desktop pool is not a native COSMIC workspace-set mapping.

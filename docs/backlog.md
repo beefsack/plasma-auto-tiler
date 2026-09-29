@@ -10,18 +10,17 @@ decisions of 2026-09-24 are under
 
 ## Open work
 
-- P0 | All settings live application (launch blocker) | Border settings
-  confirmed live on the laptop (user, 2026-09-28). Tiling gaps live-apply
-  still pending, including the gaps Save-to-visible check. Unified settings
-  page (user decision 2026-09-28, option B) shipped offline: tray Settings,
-  KWin Scripts Configure and Desktop Effects Configure all open one page with
-  border, shortcuts, gaps and workspace mode; live check pending.
-  `workspaceMode` startup-only and hidden `shortcutProfile` are approved
-  exceptions.
-  [investigation](changes/reliability-condition-investigation.md)
-  [settings research](research/live-settings-after-ar15.md)
-  [unified page](changes/archive/unified-settings-page.md)
-  [gaps record](changes/archive/window-gap-configurability.md)
+- P1 | Mid-drag workspace send drop | User live (2026-09-29, trace
+  `~/Downloads/plasma-auto-tiler-dev.llROHi.log`): after Meta+Shift+2
+  mid-drag, the destination reserved a spot, but dropping near it left the
+  window floating instead of tiling. Cause: the refused stale drop's restore
+  reconcile targeted the source workspace and deferred. Fixed offline (restore
+  binds to the observed destination); live re-test pending: expect
+  `drag-drop-refused-stale-workspace`, `drag-reconcile ... dispatch=dispatched`
+  and `drag-reconcile-settled ... outcome=applied`; red flag
+  `dispatch=deferred` with the window left at its drop frame.
+  [change](changes/archive/mid-drag-workspace-recovery.md)
+  [fix](changes/archive/mid-drag-destination-recovery.md)
 - P1 | Ghostty/local native alignment | The ~56 px shortfall is unexplained
   (source-only baseline fix is in; needs a fresh `just dev trace` local-move
   plus follow-on command trace), and one requested `2032x1092` became
@@ -45,6 +44,15 @@ decisions of 2026-09-24 are under
   cut advisory `hover_prior` validation, lag-only fences, verbose comments;
   net deletion, no behavior change.
   [change](changes/archive/cross-output-drag-preview.md)
+- P2 | Conflicting host settings detection | User direction (2026-09-29):
+  detect KDE/KWin/Plasma settings that conflict with the tiler (e.g. native
+  edge/quick tiling, conflicting key bindings), alert via tray icon state or
+  a notification, and offer settings-page helpers to correct and ideally
+  revert them. Evidence: native edge tiling fired on an off-screen drag
+  (trace `~/Downloads/plasma-auto-tiler-dev.H28tD1.log`; our tiler retiled
+  correctly after drop) and competed visibly with our Meta-drag preview.
+  Interim (user, 2026-09-29): leave as is. Exact KWin setting keys
+  unverified; research first.
 - P2 | Live sibling reflow while dragging | Deferred, not light (est. several
   hundred to ~1,000 lines, write-fighting risk); research done.
   [research](research/drag-and-drop-reorganisation.md)
@@ -117,38 +125,16 @@ All items below shipped offline with no live result claimed.
 
 ### Single-output laptop
 
-- Unified settings page: tray Settings, KWin Scripts Configure and Desktop
-  Effects Configure open the same page; each tiling gap Save re-spaces
-  existing tiles without restart (`config-reloaded stage=re-read-queued`,
-  then `kind=update-gaps ... outcome=applied`); border and shortcut buttons
-  unchanged.
-  [change](changes/archive/unified-settings-page.md)
-- Group underlay and colours (needs a fresh Plasma session for the rebuilt
-  effect): Meta-held group shows a fill beneath all members, one border width
-  beyond the border outer edge by default; underlay colour/extension and drop
-  preview colour (with alpha) apply live; underlay slides with workspace
-  transitions; fullscreen/maximise still hides it. User found (2026-09-29)
-  it showed only on workspace 2 (`~/Downloads/plasma-auto-tiler-dev.FeTnf4.log`)
-  and nowhere after a `just dev` restart (`y3jVs3`). Restart cause fixed
-  offline (effect kept the old stream's revision high-water mark). The
-  single-workspace cause was found from the user's `l6uNLk` repro
-  (2026-09-29): Planner group revisions are per workspace but the script and
-  effect compared them globally, so switching to a lower-revision workspace
-  dropped its group (`dropped reason=stale-revision`); fixed by ordering on
-  script correlation only (`6f25bb9`). User confirmed live (2026-09-29) that
-  the underlay now survives workspace switches. Remaining: survival after a
-  `just dev` restart, colour/extension/drop colour live apply, slide, and
-  fullscreen/maximise suppression.
-  [change](changes/archive/group-underlay-and-preview-colors.md)
-  [fix](changes/archive/group-underlay-restart-visibility.md)
-  [cross-workspace fix](changes/archive/group-underlay-cross-domain-revision.md)
-- Mid-drag workspace send: repro (3 tiles, Meta+drag to a preview,
-  Meta+Shift+2 while held, release) logs `drag-drop-refused-stale-workspace`
-  and both workspaces keep tiling; a plain drag released partly off the work
-  area no longer causes repeated `snapshot-invalid
-  detail=window-out-of-bounds`. May also resolve the multi-output
-  `window-out-of-bounds` risk (unconfirmed).
-  [change](changes/archive/mid-drag-workspace-recovery.md)
+- Confirmed live by the user (2026-09-29): tiling gap Save re-spaces tiles
+  without restart and the unified settings page shows everything (closes the
+  P0 settings live-application launch blocker); group underlay survives
+  workspace switches and `just dev` restarts, its settings apply live and it
+  slides with workspace transitions; a plain drag released off-screen
+  retiles correctly with no `snapshot-invalid` (trace `H28tD1`). Remaining:
+  underlay fullscreen/maximise suppression; the mid-drag send drop is open
+  work above.
+  [settings](changes/archive/unified-settings-page.md)
+  [underlay](changes/archive/group-underlay-and-preview-colors.md)
 
 - Quiet refresh logs: compare `stage=refresh terminal=quiet` under normal
   and trace logging; non-quiet terminals stay visible in both. (Unfloat

@@ -3555,7 +3555,7 @@ export class PlanAdapter {
         if (explicitSource !== null) {
             if (observed.domainOutput === explicitSource.output && observed.domainWorkspace !== explicitSource.workspace) {
                 this.logToken(`${LOG_PREFIX}:drag-drop-refused-stale-workspace`);
-                return refuseDrag("stale-workspace", explicitSource.output, explicitSource.workspace);
+                return refuseDrag("stale-workspace", observed.domainOutput, observed.domainWorkspace);
             }
             if (
                 effectiveObserved.domainOutput !== explicitSource.output ||

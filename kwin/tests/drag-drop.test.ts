@@ -1201,27 +1201,32 @@ describe("tiled drag-drop through the Planner", () => {
             mocks.logs.some((l) => l === "plasma-auto-tiler:route-diag:drag-drop-dispatched correlation=drag-80 accepted=false"),
             "stale workspace-1 drop ignored",
         );
-        assert.equal(mocks.planCalls.length - callsAtStart, 0, "no stale workspace-1 drop dispatched");
         assert.ok(mocks.logs.some((l) => l.includes("drag-drop-refused-stale-workspace")), "stale refusal logged");
         assert.ok(
             mocks.logs.some((l) => l.includes("drag-rejected") && l.includes("correlation=drag-80") && l.includes("reason=stale-workspace")),
-            "stale drop feeds the source marker",
+            "stale drop feeds the destination marker",
         );
         assert.ok(
             !mocks.logs.some((l) => l.includes("drag-drop-cross-output") && l.includes("correlation=drag-80")),
             "workspace send never claims cross-output",
         );
-        // Destination admission on ws-2 through the ordinary refresh.
-        fireAll(world.geometry);
-        runDebounce(mocks);
+        assert.ok(!payloads(mocks).some((p) => (p["command"] as Record<string, unknown>)?.["op"] === "drag-drop"), "stale drop dispatches no drag-drop");
+        assert.equal(mocks.planCalls.length - callsAtStart, 1, "destination marker dispatches on release");
         const destCall = mocks.planCalls[mocks.planCalls.length - 1] as { payload: string; callback: (reply: unknown) => void };
-        assert.deepEqual(
-            (JSON.parse(destCall.payload) as Record<string, unknown>)["command"],
-            { op: "reconcile" },
-            "destination converges through reconcile, not a stale drop",
-        );
-        const destCorr = planCorrelation(JSON.parse(destCall.payload) as Record<string, unknown>);
+        const destPayload = JSON.parse(destCall.payload) as Record<string, unknown>;
+        assert.deepEqual(destPayload["command"], { op: "reconcile" }, "destination converges through reconcile, not a stale drop");
+        assert.equal((destPayload["domain"] as Record<string, unknown>)["workspace"], "ws-2", "marker binds the observed destination");
+        const destCorr = planCorrelation(destPayload);
         destCall.callback(plannedReconcileReply(destCorr, "win-a", "out-1", "ws-2"));
+        assert.deepEqual(
+            (world.wins["win-a"] as Record<string, unknown>)["frameGeometry"],
+            { x: 0, y: 0, width: 600, height: 800 },
+            "destination tile applies on release without another signal or switch",
+        );
+        assert.ok(
+            mocks.logs.some((l) => l.includes("drag-reconcile-settled correlation=drag-80 outcome=applied") && l.includes(`plan=${destCorr}`)),
+            "stale drop settles through the destination reconcile",
+        );
         // Source reflow on ws-1 once it is observed again.
         world.workspace["currentDesktopForScreen"] = (): unknown => desktop1;
         world.workspace["activeWindow"] = world.wins["win-b"];
@@ -1235,21 +1240,6 @@ describe("tiled drag-drop through the Planner", () => {
         );
         const srcCorr = planCorrelation(JSON.parse(srcCall.payload) as Record<string, unknown>);
         srcCall.callback(plannedReconcileReply(srcCorr, "win-b", "out-1", "ws-1"));
-        // The deferred source marker pumps once its domain is observed again.
-        fireAll(world.geometry);
-        runDebounce(mocks);
-        const markerCall = mocks.planCalls[mocks.planCalls.length - 1] as { payload: string; callback: (reply: unknown) => void };
-        assert.deepEqual(
-            (JSON.parse(markerCall.payload) as Record<string, unknown>)["command"],
-            { op: "reconcile" },
-            "deferred source marker dispatches on ws-1",
-        );
-        const markerCorr = planCorrelation(JSON.parse(markerCall.payload) as Record<string, unknown>);
-        markerCall.callback(plannedReconcileReply(markerCorr, "win-b", "out-1", "ws-1"));
-        assert.ok(
-            mocks.logs.some((l) => l.includes("drag-reconcile-settled") && l.includes("correlation=drag-80")),
-            "stale drop settles through the source reconcile",
-        );
         // Legitimate cross-output pointer drags still join the destination.
         const callsBeforeCross = mocks.planCalls.length;
         world.workspace["currentDesktopForScreen"] = (): unknown => desktop1;
@@ -1284,7 +1274,10 @@ describe("tiled drag-drop through the Planner", () => {
         const started = directObserved("out-1", "ws-1", { x: 400, y: 400, w: 200, h: 200 }, "win-b", refB, "fp-started-ws1");
         const { adapter, planCalls, logs } = staleDirectAdapter(observed, [started]);
         assert.equal(adapter.requestDragDrop("win-a", 500, 500, "drag-70", { output: "out-1", workspace: "ws-1" }), false);
-        assert.equal(planCalls.length, 0, "projected-back stale drop dispatches nothing");
+        assert.equal(planCalls.length, 1, "stale refusal restores the observed destination");
+        const markerPayload = JSON.parse(planCalls[0]?.payload as string) as Record<string, unknown>;
+        assert.deepEqual(markerPayload["command"], { op: "reconcile" });
+        assert.equal((markerPayload["domain"] as Record<string, unknown>)["workspace"], "ws-2");
         assert.ok(logs.some((l) => l.includes("drag-drop-refused-stale-workspace")), "native drift refusal logged");
         assert.ok(logs.some((l) => l.includes("drag-rejected") && l.includes("correlation=drag-70") && l.includes("reason=stale-workspace")));
         assert.ok(!logs.some((l) => l.includes("drag-drop-cross-output") && l.includes("correlation=drag-70")));
