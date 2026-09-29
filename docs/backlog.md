@@ -130,13 +130,16 @@ All items below shipped offline with no live result claimed.
   transitions; fullscreen/maximise still hides it. User found (2026-09-29)
   it showed only on workspace 2 (`~/Downloads/plasma-auto-tiler-dev.FeTnf4.log`)
   and nowhere after a `just dev` restart (`y3jVs3`). Restart cause fixed
-  offline (effect kept the old stream's revision high-water mark); the
-  workspace-2-only cause is unproven. New effect lines
-  `group-highlight:setter outcome=... anchor=...` and
-  `group-highlight:transition` diagnose it: re-test both workspaces, before
-  and after a `just dev` restart.
+  offline (effect kept the old stream's revision high-water mark). The
+  single-workspace cause was found from the user's `l6uNLk` repro
+  (2026-09-29): Planner group revisions are per workspace but the script and
+  effect compared them globally, so switching to a lower-revision workspace
+  dropped its group (`dropped reason=stale-revision`); fixed offline by
+  ordering on script correlation only. Re-test: switch both directions with
+  Meta held and via the panel, and after a `just dev` restart.
   [change](changes/archive/group-underlay-and-preview-colors.md)
   [fix](changes/archive/group-underlay-restart-visibility.md)
+  [cross-workspace fix](changes/archive/group-underlay-cross-domain-revision.md)
 - Mid-drag workspace send: repro (3 tiles, Meta+drag to a preview,
   Meta+Shift+2 while held, release) logs `drag-drop-refused-stale-workspace`
   and both workspaces keep tiling; a plain drag released partly off the work

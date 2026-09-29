@@ -59,16 +59,12 @@
 //   generation differs from the stored stream is a new stream: it accepts
 //   and resets the monotonic comparison, so owner/generation rotation never
 //   imposes a stale high-water mark forever.
-// - Within one stream, revision is monotonic: greater accepts, lesser
-//   ignores (display preserved). Same-revision ties break on correlation:
-//   exact replays ignore; otherwise the epoch-rotated bridge order compares
-//   numerically (epoch, then sequence) within one head, so a valid successive
-//   same-revision update g9->g10 passes, the rollover g1000000->g1r0 passes,
-//   and an older same-revision sequence or older epoch (e.g. g10 offered
-//   after g10 displayed, g9 replayed after g10, or g1000000 replayed after
-//   g1r0) cannot erase the newer display. Correlations without a shared
-//   `-g` order tail fall back to trailing-sequence then byte-lexicographic
-//   order.
+// - Within one stream, only monotonic correlation order decides: exact
+//   replays and older correlations ignore; newer ones accept regardless of
+//   the Planner's per-domain revision. The stored `last_revision` is only
+//   last-accepted metadata. Epoch-rotated `-g` correlations compare their
+//   epoch then sequence numerically; other forms retain the trailing-sequence
+//   then byte-lexicographic comparison.
 // - Only accepted payloads advance the order. Parse failures, focus
 //   mismatches, and explicit clears fail closed on the display but preserve
 //   (never reset, never advance) the order within the stream.
@@ -414,6 +410,9 @@ fn same_stream(state: &GroupHighlightState, parsed: &Parsed) -> bool {
 
 fn store_stream(state: &mut GroupHighlightState, parsed: &Parsed) {
     state.order_initialized = 1;
+    // Last-accepted metadata only: never compared in `order_allows`, which
+    // keys the same-stream decision on the monotonic correlation sequence so
+    // per-domain Planner revisions cannot gate the per-script stream.
     state.last_revision = parsed.revision;
     state.owner_len = parsed.owner.len();
     state.owner[..parsed.owner.len()].copy_from_slice(parsed.owner.as_bytes());
@@ -427,19 +426,16 @@ fn store_stream(state: &mut GroupHighlightState, parsed: &Parsed) {
 // stream order. Never mutates; the caller stores the new stream position
 // only after the payload fully accepts (parse, order, and focus match), so
 // a focus-mismatched payload clears the display without advancing the
-// high-water mark within the stream.
+// correlation position within the stream. Within one (owner, generation)
+// stream only the monotonic correlation sequence decides: exact replays and
+// older correlations reject, newer correlations accept independent of
+// `revision` (retained as last-accepted metadata only).
 fn order_allows(state: &GroupHighlightState, parsed: &Parsed) -> bool {
     if state.order_initialized == 0 {
         return true;
     }
     if !same_stream(state, parsed) {
         return true;
-    }
-    if parsed.revision > state.last_revision {
-        return true;
-    }
-    if parsed.revision < state.last_revision {
-        return false;
     }
     if parsed.correlation.as_bytes() == state.correlation_bytes() {
         return false;
@@ -478,8 +474,8 @@ fn apply_inner(state: &mut GroupHighlightState, payload: &[u8], active: &[u8]) -
     }
     if !focus_matches(parsed.focused.as_bytes(), active) {
         // Focus mismatch clears the display but preserves the order: a
-        // payload that never displayed must not advance the high-water mark
-        // within the stream.
+        // payload that never displayed must not advance the correlation
+        // position within the stream.
         state.focus_mismatch = state.focus_mismatch.saturating_add(1);
         state.clear_display();
         return 3;
@@ -990,9 +986,31 @@ mod tests {
         assert_eq!(state.correlation_bytes(), b"gen-1-g10");
         // Exact replay ignores as well.
         assert_eq!(apply(&mut state, "gen-1-g10", 3), 2);
-        // Older revision ignores.
-        assert_eq!(apply(&mut state, "gen-1-g11", 2), 2);
-        assert_eq!(state.last_revision, 3);
+        // Newer correlation accepts independent of Planner per-domain
+        // revision: the native stream keys on the correlation sequence, not
+        // on base_revision.
+        assert_eq!(apply(&mut state, "gen-1-g11", 2), 1);
+        assert_eq!(state.last_revision, 2);
+        assert_eq!(state.correlation_bytes(), b"gen-1-g11");
+        // Focused cross-domain regression (l6uNLk): high-A then low-B with a
+        // newer correlation must accept, and the late older correlation must
+        // reject even with the higher revision and after a clear.
+        let mut cross = GroupHighlightState::zero();
+        assert_eq!(apply(&mut cross, "gen-1-g10", 23), 1);
+        assert_eq!(apply(&mut cross, "gen-1-g11", 2), 1);
+        assert_eq!(cross.last_revision, 2);
+        assert_eq!(cross.correlation_bytes(), b"gen-1-g11");
+        assert_eq!(apply(&mut cross, "gen-1-g10", 23), 2);
+        assert_eq!(cross.has_group, 1);
+        assert_eq!(cross.correlation_bytes(), b"gen-1-g11");
+        assert_eq!(
+            group_highlight_clear(&mut cross as *mut GroupHighlightState),
+            1
+        );
+        assert_eq!(cross.has_group, 0);
+        assert_eq!(apply(&mut cross, "gen-1-g12", 2), 1);
+        assert_eq!(apply(&mut cross, "gen-1-g11", 2), 2);
+        assert_eq!(cross.correlation_bytes(), b"gen-1-g12");
     }
 
     #[test]
@@ -1002,7 +1020,8 @@ mod tests {
         assert_eq!(group_highlight_clear(&mut state), 1);
         assert_eq!(apply(&mut state, "gen-1-g0", 1), 2);
         // Same owner, new script-instance stream: a lower revision must
-        // display after clear despite the old stream's high-water mark.
+        // display after clear because the new (owner, generation) resets the
+        // correlation comparison.
         let bytes = b"{\"v\":1,\"correlation_id\":\"gen-2-g0\",\"owner\":\"owner-1\",\"generation\":\"gen-2\",\"revision\":1,\"group\":\"group-1\",\"focused_window\":\"win-2\",\"members\":[\"win-2\"],\"bounds\":{\"x\":1,\"y\":2,\"w\":10,\"h\":10}}";
         assert_eq!(apply_inner(&mut state, bytes, b"win-2"), 1);
         assert_eq!(state.last_revision, 1);

@@ -9,8 +9,8 @@
 // `ClearGroupHighlight()`. It never derives topology or native geometry:
 // member rectangles and the union bounds are Rust engine projections carried
 // verbatim. Every failure (script errors, no-group, service loss,
-// focus/domain/tree lifecycle invalidation, malformed/stale/out-of-order
-// replies) clears fail-closed. Argument demarshalling on the effect side is
+// focus/domain/tree lifecycle invalidation, malformed/superseded
+// replies) fails closed. Argument demarshalling on the effect side is
 // static-only/live-unverified.
 //
 // Effect endpoint (owned by the active-border effect, never the generic
@@ -195,44 +195,6 @@ function isGenerationId(value: unknown): value is string {
         }
     }
     return true;
-}
-
-function parseCorrelationOrder(value: string): { head: string; epoch: number; seq: number } | null {
-    const match = /^(.*)-g(?:(\d+)r)?(\d+)$/.exec(value);
-    if (match === null) {
-        return null;
-    }
-    const head = match[1] as string;
-    const epoch = match[2] === undefined ? 0 : Number(match[2]);
-    const seq = Number(match[3]);
-    if (!Number.isSafeInteger(epoch) || !Number.isSafeInteger(seq) || epoch < 0 || seq < 0) {
-        return null;
-    }
-    return { head, epoch, seq };
-}
-
-function correlationIsNewer(next: string, previous: string): boolean {
-    const nextOrder = parseCorrelationOrder(next);
-    const previousOrder = parseCorrelationOrder(previous);
-    if (nextOrder !== null && previousOrder !== null && nextOrder.head === previousOrder.head) {
-        if (nextOrder.epoch !== previousOrder.epoch) {
-            return nextOrder.epoch > previousOrder.epoch;
-        }
-        if (nextOrder.seq !== previousOrder.seq) {
-            return nextOrder.seq > previousOrder.seq;
-        }
-        return next > previous;
-    }
-    const nextMatch = /^(.*?)(\d+)$/.exec(next);
-    const previousMatch = /^(.*?)(\d+)$/.exec(previous);
-    if (nextMatch !== null && previousMatch !== null && nextMatch[1] === previousMatch[1]) {
-        const nextSeq = Number(nextMatch[2]);
-        const previousSeq = Number(previousMatch[2]);
-        if (Number.isSafeInteger(nextSeq) && Number.isSafeInteger(previousSeq) && nextSeq !== previousSeq) {
-            return nextSeq > previousSeq;
-        }
-    }
-    return next > previous;
 }
 
 function isTargetRect(value: unknown): value is ActiveGroupRect {
@@ -679,8 +641,6 @@ export class ActiveGroupHighlight {
     private seq = 0;
     private seqEpoch = 0;
     private pending: PendingHighlightFlight | null = null;
-    private lastRevision: number | null = null;
-    private lastCorrelation: string | null = null;
     private requestRevision = 0;
 
     constructor(private readonly env: ActiveGroupHighlightEnv) {}
@@ -714,9 +674,6 @@ export class ActiveGroupHighlight {
         // the opaque-id alphabet and, for any safe-integer epoch, inside the
         // 128-byte wire cap even with the longest generation, so only an
         // unreachable non-safe-integer counter clears fail-closed.
-        // correlationIsNewer compares epoch then sequence numerically within
-        // one head, so a rolled-over epoch always orders after the old epoch
-        // and late old-epoch payloads cannot erase the newer display.
         // Superseded flights still reject via the pending correlation/epoch
         // fences. A negative counter normalizes to zero and continues.
         if (!Number.isInteger(this.seq) || this.seq < 0) {
@@ -833,18 +790,10 @@ export class ActiveGroupHighlight {
             this.clearFlight(`${LOG_PREFIX}:cleared reason=identity-mismatch`);
             return;
         }
-        // Stale/out-of-order versus the currently displayed highlight is
-        // ignored without destroying it: the newer display stays up.
-        if (this.lastRevision !== null) {
-            if (parsed.baseRevision < this.lastRevision) {
-                this.logToken(`${LOG_PREFIX}:dropped reason=stale-revision`);
-                return;
-            }
-            if (parsed.baseRevision === this.lastRevision && this.lastCorrelation !== null && !correlationIsNewer(parsed.correlationId, this.lastCorrelation)) {
-                this.logToken(`${LOG_PREFIX}:dropped reason=out-of-order`);
-                return;
-            }
-        }
+        // Per-domain base revisions are never compared across flights: the
+        // pending correlation/epoch fence plus the focus/domain flight
+        // identity above already protect late async replies, so the current
+        // flight always displays once validated.
         // Fail-closed fullscreen gate for non-focused members: every
         // Rust-reported member must have a current observed entry and none may
         // be fullscreen. The check re-reads current script observation (never
@@ -894,8 +843,6 @@ export class ActiveGroupHighlight {
             this.clearFlight(`${LOG_PREFIX}:cleared reason=service-loss`);
             return;
         }
-        this.lastRevision = parsed.baseRevision;
-        this.lastCorrelation = parsed.correlationId;
         this.requestRevision = parsed.baseRevision;
         // The effect setter has no callback: this line records only that the
         // setter call was submitted, never effect acceptance or rendering.

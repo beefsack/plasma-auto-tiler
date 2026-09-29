@@ -2522,8 +2522,8 @@ impl Planner {
     /// projector (never native/client rect topology). The carried
     /// `revision` is never a staleness gate (read-only snapshot resolves
     /// current retained state, so initial revision 0 and any lagging caller
-    /// revision still resolve); the authoritative `base_revision` is returned
-    /// for downstream identity ordering. Replies `active-group` with opaque
+    /// revision still resolve); the per-domain `base_revision` is returned
+    /// as current snapshot metadata. Replies `active-group` with opaque
     /// group/member identities, the projected union bounds, and the
     /// owner/generation/correlation/base-revision identity; any
     /// invalid/missing/non-tiled focus, unknown domain/tree, or root-leaf

@@ -137,7 +137,9 @@ void staleAndOutOfOrderPreserveNewerDisplay()
     CHECK(group_highlight_state_init(&state) == 0);
     CHECK(applyStr(&state, validPayload("gen-1-g0", 2), "win-2") == 1);
     CHECK(applyStr(&state, validPayload("gen-1-g0", 2), "win-2") == 2);
-    CHECK(applyStr(&state, validPayload("gen-1-g1", 1), "win-2") == 2);
+    // Newer correlation accepts independent of Planner per-domain revision:
+    // the native stream keys on the correlation sequence, not base_revision.
+    CHECK(applyStr(&state, validPayload("gen-1-g1", 1), "win-2") == 1);
     CHECK(applyStr(&state, validPayload("gen-1-g2", 3), "win-2") == 1);
     CHECK(state.last_revision == 3);
     // Superseded same-revision sequence cannot erase the newer display.
@@ -145,6 +147,20 @@ void staleAndOutOfOrderPreserveNewerDisplay()
     CHECK(applyStr(&state, validPayload("gen-1-g1", 3), "win-2") == 2);
     CHECK(state.has_group != 0);
     CHECK(state.rect.x == shown.x && state.rect.y == shown.y && state.rect.w == shown.w && state.rect.h == shown.h);
+    // Focused cross-domain regression (l6uNLk): high-A then low-B with a
+    // newer correlation must accept, and the late older correlation must
+    // reject even with the higher revision and after a clear.
+    GroupHighlightState cross{};
+    CHECK(group_highlight_state_init(&cross) == 0);
+    CHECK(applyStr(&cross, validPayload("gen-1-g10", 23), "win-2") == 1);
+    CHECK(applyStr(&cross, validPayload("gen-1-g11", 2), "win-2") == 1);
+    CHECK(cross.last_revision == 2);
+    CHECK(applyStr(&cross, validPayload("gen-1-g10", 23), "win-2") == 2);
+    CHECK(cross.has_group != 0);
+    CHECK(group_highlight_clear(&cross) == 1);
+    CHECK(cross.has_group == 0);
+    CHECK(applyStr(&cross, validPayload("gen-1-g12", 2), "win-2") == 1);
+    CHECK(applyStr(&cross, validPayload("gen-1-g11", 2), "win-2") == 2);
 }
 
 void ownerGenerationChangeResetsMonotonicComparison()

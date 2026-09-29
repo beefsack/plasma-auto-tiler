@@ -73,6 +73,19 @@ Native `vis=1` proves item selection, not composited pixels; compare each
 diagnostic with what is actually on screen. Avoid sharing raw window IDs from
 the surrounding trace.
 
+## 2026-09-29 Cross-Domain Correction
+
+The user reproduced the workspace-specific failure after a fresh boot:
+workspace 1 showed the underlay, then switching to workspace 2 with Meta held
+left it behind. `l6uNLk.log:1094-1121` shows workspace 1 group revision 23,
+workspace 2 revision 2, and the script dropping the latter as `stale-revision`;
+the same pattern repeats at `:1155,1189,1223,1265,1307`. Native Rust also
+compared those per-domain revisions within one effect stream. This explains
+the direction-dependent workspace-only behavior independently of the restart
+stream fix above. The follow-up removes the redundant script high-water gate
+and orders native setters by the existing script-instance monotonic correlation
+instead. See [group-underlay-cross-domain-revision](group-underlay-cross-domain-revision.md).
+
 ## Bounded units
 
 1. Give the effect payload a fresh script-instance group stream while keeping

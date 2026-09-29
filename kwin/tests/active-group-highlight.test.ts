@@ -365,15 +365,14 @@ describe("active-group highlight bridge behavior", () => {
         void f;
     });
 
-    it("preserves a newer display when a late stale revision arrives", () => {
-        const payloads: string[] = [];
+    it("displays a lower per-domain revision after a higher revision from another domain", () => {
         const replies: Array<(reply: unknown) => void> = [];
         const sets: string[] = [];
         const logs: string[] = [];
         let clears = 0;
+        let workspace = "ws-1";
         const bridge = new ActiveGroupHighlight({
-            callDescribePlan: (payload, callback) => {
-                payloads.push(payload);
+            callDescribePlan: (_payload, callback) => {
                 replies.push(callback);
             },
             setHighlight: (payload) => {
@@ -382,7 +381,10 @@ describe("active-group highlight bridge behavior", () => {
             clearHighlight: () => {
                 clears += 1;
             },
-            observe: observed,
+            observe: () => {
+                const snapshot = observed();
+                return { ...snapshot, domainWorkspace: workspace, windows: snapshot.windows.map((entry) => ({ ...entry, workspace })) };
+            },
             subscribe: () => () => {},
             log: (message) => {
                 logs.push(message);
@@ -390,24 +392,44 @@ describe("active-group highlight bridge behavior", () => {
             owner: OWNER,
             generation: GENERATION,
         });
+        const atRevision = (correlation: string, revision: number): string => {
+            const body = JSON.parse(activeGroupReply(correlation)) as Record<string, unknown>;
+            body["base_revision"] = revision;
+            const detail = body["detail"] as Record<string, unknown>;
+            detail["domain_workspace"] = workspace;
+            detail["group"] = workspace === "ws-1" ? "group-a" : "group-b";
+            return JSON.stringify(body);
+        };
+        // Workspace 1 displays at base_revision 23 (log g36).
         bridge.refresh();
         const first = replies[0];
         assert.ok(first !== undefined);
-        first(activeGroupReply("gen-1-g0"));
+        first(atRevision("gen-1-g0", 23));
         assert.equal(sets.length, 1);
-        assert.equal(clears, 0);
-        // A fresh flight reporting an older base revision is dropped without
-        // destroying the newer valid highlight.
+        // Workspace 2 answers at per-domain base_revision 2 (log g37/g38):
+        // must display, not drop as stale-revision against workspace 1.
+        workspace = "ws-2";
+        bridge.invalidate();
         bridge.refresh();
-        const stale = JSON.parse(activeGroupReply("gen-1-g1")) as Record<string, unknown>;
-        stale["base_revision"] = 1;
         const second = replies[1];
         assert.ok(second !== undefined);
-        second(JSON.stringify(stale));
-        assert.equal(sets.length, 1);
-        assert.equal(clears, 0);
-        assert.ok(logs.some((line) => line === "plasma-auto-tiler:group-highlight:dropped reason=stale-revision"));
-        void payloads;
+        second(atRevision("gen-1-g1", 2));
+        assert.equal(sets.length, 2);
+        assert.equal((JSON.parse(sets[1] as string) as Record<string, unknown>)["group"], "group-b");
+        assert.equal(clears, 1);
+        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:group-highlight:dropped reason=stale-revision"));
+        // A superseded earlier flight is still ignored without clearing.
+        bridge.refresh();
+        bridge.refresh();
+        const superseded = replies[2];
+        const current = replies[3];
+        assert.ok(superseded !== undefined && current !== undefined);
+        superseded(atRevision("gen-1-g2", 2));
+        assert.equal(sets.length, 2);
+        assert.equal(clears, 1);
+        assert.ok(logs.some((line) => line === "plasma-auto-tiler:group-highlight:dropped reason=stale-dropped"));
+        current(atRevision("gen-1-g3", 2));
+        assert.equal(sets.length, 3);
     });
 
     it("accepts g10 after g9 at the same revision", () => {
@@ -437,10 +459,10 @@ describe("active-group highlight bridge behavior", () => {
             reply(activeGroupReply(`gen-1-g${String(sequence)}`));
         }
         assert.equal(sets.length, 11);
-        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:group-highlight:dropped reason=out-of-order"));
+        void logs;
     });
 
-    it("rotates past ACTIVE_GROUP_MAX_SEQ with an epoch and keeps boundary order", () => {
+    it("rotates past ACTIVE_GROUP_MAX_SEQ with an epoch and keeps the pending fence", () => {
         const payloads: string[] = [];
         const replies: Array<(reply: unknown) => void> = [];
         const sets: string[] = [];
@@ -479,14 +501,12 @@ describe("active-group highlight bridge behavior", () => {
         assert.ok(first !== undefined);
         first(atRevision(`${GENERATION}-g${String(ACTIVE_GROUP_MAX_SEQ - 1)}`, 7));
         assert.equal(sets.length, 1);
-        // Same-revision boundary orders numerically: g1000000 accepts after
-        // g999999.
+        // Sequential current flights each display at the same revision.
         bridge.refresh();
         const second = replies[1];
         assert.ok(second !== undefined);
         second(atRevision(`${GENERATION}-g${String(ACTIVE_GROUP_MAX_SEQ)}`, 7));
         assert.equal(sets.length, 2);
-        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:group-highlight:dropped reason=out-of-order"));
         // The post-cap flight rotates to epoch one (`g1r0`) instead of
         // refusing seq-exhausted. Supersede it, then prove its late reply
         // drops via the pending/epoch fence without clearing, while the newer
@@ -509,24 +529,12 @@ describe("active-group highlight bridge behavior", () => {
         assert.equal(sets.length, 2);
         assert.equal(clears, 0);
         assert.ok(logs.some((line) => line === "plasma-auto-tiler:group-highlight:dropped reason=stale-dropped"));
-        // Rolled-over epoch orders after the old epoch at the same revision.
+        // Rolled-over epoch flight still displays at the same revision.
         const current = replies[3];
         assert.ok(current !== undefined);
         current(atRevision(`${GENERATION}-g1r1`, 7));
         assert.equal(sets.length, 3);
         assert.ok(!logs.some((line) => line.indexOf("seq-exhausted") >= 0));
-        // A forged late old-epoch flight at the same revision cannot erase
-        // the newer epoch display: it drops as out-of-order without clearing.
-        (bridge as unknown as { seq: number; seqEpoch: number }).seq = ACTIVE_GROUP_MAX_SEQ;
-        (bridge as unknown as { seq: number; seqEpoch: number }).seqEpoch = 0;
-        bridge.refresh();
-        assert.equal(payloads.length, 5);
-        const forged = replies[4];
-        assert.ok(forged !== undefined);
-        forged(atRevision(`${GENERATION}-g${String(ACTIVE_GROUP_MAX_SEQ)}`, 7));
-        assert.equal(sets.length, 3);
-        assert.equal(clears, 0);
-        assert.ok(logs.some((line) => line === "plasma-auto-tiler:group-highlight:dropped reason=out-of-order"));
     });
 
     it("clears when observation is invalid and when the transport throws", () => {
