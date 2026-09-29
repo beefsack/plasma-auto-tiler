@@ -134,9 +134,11 @@ All items below shipped offline with no live result claimed.
   single-workspace cause was found from the user's `l6uNLk` repro
   (2026-09-29): Planner group revisions are per workspace but the script and
   effect compared them globally, so switching to a lower-revision workspace
-  dropped its group (`dropped reason=stale-revision`); fixed offline by
-  ordering on script correlation only. Re-test: switch both directions with
-  Meta held and via the panel, and after a `just dev` restart.
+  dropped its group (`dropped reason=stale-revision`); fixed by ordering on
+  script correlation only (`6f25bb9`). User confirmed live (2026-09-29) that
+  the underlay now survives workspace switches. Remaining: survival after a
+  `just dev` restart, colour/extension/drop colour live apply, slide, and
+  fullscreen/maximise suppression.
   [change](changes/archive/group-underlay-and-preview-colors.md)
   [fix](changes/archive/group-underlay-restart-visibility.md)
   [cross-workspace fix](changes/archive/group-underlay-cross-domain-revision.md)
