@@ -121,7 +121,10 @@ All items below shipped offline with no live result claimed.
   slides with workspace transitions; a plain drag released off-screen
   retiles correctly with no `snapshot-invalid` (trace `H28tD1`); mid-drag
   workspace send now tiles the mover on its destination (after `8be1a32`).
-  Remaining: underlay fullscreen/maximise suppression.
+  Maximise and fullscreen hide the underlay; tray Settings and Desktop
+  Effects Configure open the unified page. KWin Scripts Configure is not
+  listed under `just dev` (script loaded from the worktree, not installed);
+  verify with an installed package when available.
   [settings](changes/archive/unified-settings-page.md)
   [underlay](changes/archive/group-underlay-and-preview-colors.md)
   [mid-drag](changes/archive/mid-drag-destination-recovery.md)
