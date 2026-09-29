@@ -330,14 +330,14 @@ describe("active-border visibility diagnostics", () => {
         assert.match(effectImpl, /qCInfo\(lcActiveBorder\)\.noquote\(\)/);
         assert.match(effectImpl, /plasma-auto-tiler:active-border:endpoint available=/);
         assert.match(effectImpl, /plasma-auto-tiler:active-border:observe-seed maximized=/);
-        assert.match(effectImpl, /plasma-auto-tiler:active-border:visible vis=/);
+        assert.match(effectImpl, /plasma-auto-tiler:active-border:visible vis=%1 reason=%2 appletPopup=%3/);
         assert.match(effectImpl, /emitActiveBorderEndpoint\(\)/);
         assert.match(effectImpl, /emitActiveBorderVisible\(visible,/);
         assert.doesNotMatch(effectImpl, /initial-apply/);
         assert.doesNotMatch(effectImpl, /emitActiveBorderApply/);
         assert.match(effectHeader, /m_borderDiagEmitted/);
         assert.match(effectHeader, /m_borderDiagVisible/);
-        assert.match(effectHeader, /emitActiveBorderVisible\(bool visible, const char \*reason\)/);
+        assert.match(effectHeader, /emitActiveBorderVisible\(bool visible, const char \*reason, bool appletPopup\)/);
         for (const token of [
             "eligible",
             "no-window",
@@ -345,6 +345,7 @@ describe("active-border visibility diagnostics", () => {
             "minimized",
             "fullscreen",
             "maximized",
+            "applet-popup",
             "endpoint-unavailable",
         ]) {
             assert.ok(effectImpl.includes(`"${token}"`), token);
