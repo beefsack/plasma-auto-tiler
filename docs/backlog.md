@@ -10,6 +10,19 @@ decisions of 2026-09-24 are under
 
 ## Open work
 
+- P1 | Windows port | User focus from 2026-09-29 (KDE work paused).
+  Research plan done offline: one per-user Rust process on Windows 11 x64,
+  documented Win32 APIs, project-managed per-monitor workspaces gated on a
+  reversible hide/reveal prototype, underlay via z-order insertion behind the
+  group. Next: user decisions (plan "Open user decisions"), then a Windows 11
+  VM plus a physical Windows host for the Phase 0-1 throwaway spikes.
+  [plan](research/windows-port/plan.md)
+  [core audit](research/cross-platform-core/extraction.md)
+- P2 | macOS port | Research plan done offline: one signed per-login Rust app,
+  public Accessibility APIs, AeroSpace-style offscreen parking prototype for
+  per-display workspaces, no private Spaces APIs or reduced SIP. Next: user
+  decisions, then an Apple Silicon Mac for Phase 0-1 signed spikes.
+  [plan](research/macos-port/plan.md)
 - P1 | Tray tiling/floating workspace toggle | Shipped `e407531`; user
   confirmed live (2026-09-29) that toggling a workspace floating and back to
   tiled behaves as expected. Remaining live: default change, cross-boundary
@@ -86,7 +99,11 @@ decisions of 2026-09-24 are under
   [OBS](research/distribution-package-feasibility/obs.md)
 - P3 | AR6/AR7 workspace model + portable policy in core | Deferred until a
   non-KWin host needs it; current KWin is the "native workspaces" mode.
+  Windows and macOS both need project-managed workspaces, so the trigger
+  arrives with either port; extraction order and gates are in the
+  cross-platform audit.
   [design](changes/architecture-review-ar6-workspaces.md)
+  [audit](research/cross-platform-core/extraction.md)
 - P3 | Gap-drag anchor | Deferred experimentation incl. gap-0; research complete
   (layer-shell gap surfaces first, KWin input filter fallback; needs a Rust
   split-boundary request).
