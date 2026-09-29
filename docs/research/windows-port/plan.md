@@ -140,9 +140,9 @@ windows remain unmanaged, the user sees them float at their native position
 without automatic tiling, group underlay or managed workspace hiding; other
 normal windows continue tiling. A shortcut pressed while one is focused may
 be observed, but its requested focus/geometry action may fail. Test each
-operation rather than assuming UIPI blocks every call. Whether to support
-elevated apps stays a user decision; this document recommends excluding them
-from the first implementation, not selecting that product limitation.
+operation rather than assuming UIPI blocks every call. User decision
+2026-09-30: elevated apps stay unmanaged by default; a future user-chosen
+option to run the tiler elevated may be considered.
 
 ## Shortcuts and host-setting conflicts
 
@@ -542,7 +542,8 @@ decisions of 2026-09-30. The technology behind them still needs proof.
 | Decided: shortcuts | [User 2026-09-30] Non-Win defaults, proven opt-in Win+Arrow, explicit opt-in Win+L. Win+Arrow is required for this user's feature-complete experience. | Keep Win+L policy behavior as an unproven spike, not a promise. |
 | Decided: group visual | [User 2026-09-30] Test custom drawing and shell pollution; outline fallback accepted if the underlay fails. | Choose a renderer only after Task View/Alt+Tab evidence. |
 | Decided: development and distribution goal | [User 2026-09-30] Native physical Windows PC after KDE-first extraction; distribution should feel obvious. | Test Store MSIX alongside signed installer and winget, without promising MSIX certification. |
-| Open: elevated apps | [V: W4; I] Leave administrator apps floating/unmanaged, or add UIAccess/elevated helper with signing, privilege and maintenance costs. | Exclude initially pending user choice after a concrete normal/admin-window demo. |
+| Decided: elevated apps | [User 2026-09-30] Administrator apps stay unmanaged (floating) by default. | A future opt-in to run the tiler elevated may be considered; no UIAccess or elevated helper now. |
+| Decided: workspace model | [User 2026-09-30] KDE-first extraction stops before the logical workspace model. | Refine the core workspace shape during Windows visibility spikes, then extract with matching KWin fixtures. |
 | Open: Store implementation if both pass | [V: W39-W41; I] Store MSIX has Store signing/updates but differs in process/storage behavior; Store-listed MSI/EXE shares the manual installer and updater, but needs publisher signing and hosting. | Prefer MSIX only if desktop hooks, login, policy and recovery pass; otherwise list the signed installer. Resolve any user-visible updater/channel tradeoff with the user. |
 
 The KDE-first logical workspace extraction choice is open in

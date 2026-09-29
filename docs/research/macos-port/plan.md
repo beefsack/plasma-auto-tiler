@@ -469,8 +469,8 @@ game/input-latency acceptance. Hosted CI cannot establish visual parity.
 
 ## Open user decisions
 
-The decided rows record the user's direction; open rows identify
-choices that still depend on macOS measurements or a new user decision.
+The decided rows record the user's direction. The open rows are deferred
+by the user (2026-09-30) until macOS spiking starts.
 
 | Status / decision | Consequences and evidence | Direction |
 | --- | --- | --- |

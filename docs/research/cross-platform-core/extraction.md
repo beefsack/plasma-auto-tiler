@@ -128,7 +128,10 @@ normal crate dependencies, as checked by `just check-portable`
 (`justfile:1306-1321`); retain that guard [O]. macOS-specific capability
 evidence comes from its later Lead; Windows need not wait for macOS work.
 
-### Open: workspace model in the KDE-first phase
+### Decided: workspace model in the KDE-first phase
+
+User decision 2026-09-30: take the recommended option below. Stop before
+workspace lifecycle extraction; refine the core shape during Windows spiking.
 
 Windows needs logical workspaces, but KDE alone cannot show whether the
 Windows hiding model can preserve Task View, focus and post-crash recovery.
@@ -138,7 +141,6 @@ Windows hiding model can preserve Task View, focus and post-crash recovery.
 | Move full `kwin/src/workspace-native.ts` logical model to Rust now | [O/I: `docs/decisions.md:55-58`, `kwin/src/workspace-native.ts:409-556`] Earlier shared types and extensive KWin churn, with risk of encoding backing-desktop behavior Windows cannot use. KDE fixtures cannot establish Windows visibility/recovery semantics. | Do not do this in K0-K3. |
 | Stop before workspace lifecycle extraction; preserve `(output,workspace)` Engine domains | [O/I: `crates/tiler-core/src/session/world.rs:31-75`] Smaller KDE regression surface; after the Windows owned-window hide/reveal spike, define pure select/send/trailing/displacement state and replay matching KWin fixtures before migration. | **Recommended.** This honors the previous deferral: Windows now triggers design, but its backing evidence determines shape. |
 
-This choice is not yet approved by the user. Whichever path is selected must
-preserve KWin's per-output-local, global-unique and shared semantics plus
+The later extraction must preserve KWin's per-output-local, global-unique and shared semantics plus
 trailing-empty and reconnect behavior in fixtures and user live checks
 (`docs/decisions.md:689-727`) [I].

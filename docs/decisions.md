@@ -22,14 +22,22 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   selected package or update channel.
 - Develop directly on the Windows 11 PC, not a VM. Keep the NixOS/Linux flow
   intact; account for the PC also serving as the KDE multi-output test host.
+- Elevated (administrator) windows stay unmanaged by default: they float at
+  their native position while other windows keep tiling. A future opt-in
+  where the user chooses to run the tiler elevated may be considered; it is
+  not a sensible default now.
+- macOS decisions (version floor, App Store, shortcut consent, updates, UI
+  language) are deferred until macOS spiking starts.
 
 ## Cross-Platform Core
 
 - User decision 2026-09-30: portable core extraction is the immediate priority
   and precedes Windows implementation. Do it under KDE first, with KWin
   fixtures and applicable live checks establishing no regressions. Windows
-  visibility evidence must inform the later workspace-model shape; moving the
-  full logical workspace model in the KDE-first phase remains an open choice.
+  visibility evidence must inform the later workspace-model shape. The
+  KDE-first phase stops before the logical workspace model (user
+  2026-09-30); its core shape is refined during Windows spiking, then
+  extracted with matching KWin fixtures.
 
 ## Architecture Direction
 

@@ -16,9 +16,9 @@ decisions of 2026-09-24 are under
   border, group underlay extension, drop preview) into Rust; K2 settings
   validation and shortcut action intent; K3 pure difference comparison only
   if fixtures justify it. Each step writes fixtures first, keeps KWin
-  behavior identical and ends with named user live checks on KDE. Open user
-  decision: whether to move the logical workspace model now (recommendation:
-  stop before it; shape it from Windows visibility spikes).
+  behavior identical and ends with named user live checks on KDE. Stops
+  before the logical workspace model (user 2026-09-30); its shape is refined
+  during Windows spiking.
   [audit](research/cross-platform-core/extraction.md)
   [decision](decisions.md#cross-platform-core)
 - P1 | Windows port | After the KDE-first extraction. User decisions
@@ -27,8 +27,10 @@ decisions of 2026-09-24 are under
   the user (opt-in after proof) and Win+L explicit opt-in; custom-drawing
   underlay experiment with outline fallback; most obvious distribution
   (Store plus signed installer plus winget under evaluation); develop
-  natively on the user's Windows 11 PC (also the KDE multi-output PC). Open:
-  elevated (administrator) windows policy; final package/update channel.
+  natively on the user's Windows 11 PC (also the KDE multi-output PC);
+  elevated (administrator) windows unmanaged by default, a user-chosen
+  run-elevated option possible later; logical workspace model refined in the
+  spikes. Open: final package/update channel.
   Next: Phase 0-1 throwaway spikes on the PC.
   [plan](research/windows-port/plan.md)
   [decision](decisions.md#windows-port)
@@ -37,9 +39,9 @@ decisions of 2026-09-24 are under
   parking prototype for per-display workspaces, no private Spaces APIs or
   reduced SIP. Proposed floor macOS 15+ (~90% by Homebrew analytics,
   2026-08/09; re-measure at release). Notarized DMG plus Homebrew cask
-  first; full-featured Mac App Store unproven. Open: exact floor and Intel
-  coverage, App Store investment, shortcut consent, updates, Swift glue.
-  Needs an Apple Silicon Mac.
+  first; full-featured Mac App Store unproven. Open decisions (floor and
+  Intel coverage, App Store, shortcut consent, updates, Swift glue) deferred
+  by the user until macOS spiking starts. Needs an Apple Silicon Mac.
   [plan](research/macos-port/plan.md)
 - P1 | Tray tiling/floating workspace toggle | Shipped `e407531`; user
   confirmed live (2026-09-29) that toggling a workspace floating and back to
