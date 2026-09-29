@@ -171,6 +171,10 @@ the corresponding item ships; each such entry names its replacement.
   geometry changes. The user manually accepted active-border suppression on
   2026-09-21 and additionally requires the Meta-held group visual to hide
   while maximized: neither visual may be visible.
+- User decision 2026-09-29: hide the native active border when the active
+  window is an applet popup (`EffectWindow::isAppletPopup()`), restoring it on
+  ordinary focus. This is a first step; tighten other window-type exclusions
+  only if live use shows a need. KRunner is out of scope for now.
 - Effect observation seeds every window on load and addition from its committed
   native maximize mode; any maximize axis or fullscreen suppresses both
   visuals, and native transition signals remain authoritative (Orchestrator

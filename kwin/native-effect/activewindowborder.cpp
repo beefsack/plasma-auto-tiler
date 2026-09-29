@@ -172,9 +172,9 @@ QRect oracleMoveResizeRect(EffectWindow *window)
 // Single fixed reason token for the computed active-border visibility. Order
 // matches updateBorder() evaluation so exactly one token distinguishes the
 // first suppressing gate: endpoint, window presence, deleted, minimized,
-// fullscreen, then maximized.
+// fullscreen, maximized, then applet popup.
 const char *activeBorderDiagReason(bool hasWindow, bool deleted, bool minimized, bool fullScreen, bool nativeMaximized,
-    bool dbusAvailable)
+    bool appletPopup, bool dbusAvailable)
 {
     if (!dbusAvailable) {
         return "endpoint-unavailable";
@@ -193,6 +193,9 @@ const char *activeBorderDiagReason(bool hasWindow, bool deleted, bool minimized,
     }
     if (nativeMaximized) {
         return "maximized";
+    }
+    if (appletPopup) {
+        return "applet-popup";
     }
     return "eligible";
 }
@@ -911,18 +914,19 @@ void ActiveWindowBorderEffect::ensureEndpointsRegistered()
     ensureOraclePressSpy();
 }
 
-void ActiveWindowBorderEffect::emitActiveBorderVisible(bool visible, const char *reason)
+void ActiveWindowBorderEffect::emitActiveBorderVisible(bool visible, const char *reason, bool appletPopup)
 {
-    // Edge only: first evaluation plus visibility flips. Two scalars, no ledger.
+    // Edge only: first evaluation plus visibility flips. Fixed scalars, no ledger.
     try {
         if (m_borderDiagEmitted && visible == m_borderDiagVisible) {
             return;
         }
         m_borderDiagEmitted = true;
         m_borderDiagVisible = visible;
-        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:active-border:visible vis=%1 reason=%2")
+        logActiveBorderDiag(QStringLiteral("plasma-auto-tiler:active-border:visible vis=%1 reason=%2 appletPopup=%3")
                 .arg(visible ? 1 : 0)
-                .arg(QString::fromUtf8(reason)));
+                .arg(QString::fromUtf8(reason))
+                .arg(appletPopup ? 1 : 0));
     } catch (...) {
     }
 }
@@ -986,13 +990,15 @@ void ActiveWindowBorderEffect::updateBorder()
     EffectWindow *window = effects->activeWindow();
     const bool nativeMaximized = window ? m_maximizedWindows.contains(window) : false;
     const bool fullScreen = window ? window->isFullScreen() : false;
+    const bool appletPopup = window ? window->isAppletPopup() : false;
     const ActiveBorderState state = activeBorderState(
         window != nullptr,
         window ? static_cast<QRectF>(window->frameGeometry()) : QRectF(),
         window ? window->isDeleted() : false,
         window ? window->isMinimized() : false,
         fullScreen,
-        nativeMaximized);
+        nativeMaximized,
+        appletPopup);
     // Native maximize/fullscreen signals stay authoritative: any seeded or
     // transitioned maximize axis plus live fullscreen suppresses the border.
     const bool visible = state.visible;
@@ -1000,7 +1006,8 @@ void ActiveWindowBorderEffect::updateBorder()
     // Never affects the border or repaint decision below.
     emitActiveBorderVisible(visible,
         activeBorderDiagReason(window != nullptr, window ? window->isDeleted() : false, window ? window->isMinimized() : false,
-            fullScreen, nativeMaximized, m_groupDbusAvailable));
+            fullScreen, nativeMaximized, appletPopup, m_groupDbusAvailable),
+        appletPopup);
     const qreal gap = ActiveBorderConfig::borderGap();
     const QRectF innerRect = activeBorderInnerRect(state.innerRect, gap);
     m_borderItem.setInnerRect(window ? window->windowItem()->mapFromScene(innerRect) : RectF());

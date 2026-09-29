@@ -165,7 +165,7 @@ private:
     bool ensureDbusEndpoint(const QString &service, const QString &path, QObject *object, bool *serviceOkOut, bool *objectOkOut);
     void ensureOraclePressSpy();
     void ensureEndpointsRegistered();
-    void emitActiveBorderVisible(bool visible, const char *reason);
+    void emitActiveBorderVisible(bool visible, const char *reason, bool appletPopup);
     bool m_groupVisible = false;
     bool m_metaHeld = false;
     bool m_firstMouseSeen = false;

@@ -27,7 +27,7 @@ void check(bool condition, const char *expression, const char *file, int line)
 void eligibleWindowUsesFrameGeometryAsInnerRect()
 {
     const QRectF frame(10.0, 20.0, 320.0, 200.0);
-    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, false, false, false, false);
+    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, false, false, false, false, false);
     CHECK(state.visible);
     CHECK(state.innerRect == frame);
 }
@@ -35,7 +35,7 @@ void eligibleWindowUsesFrameGeometryAsInnerRect()
 void missingWindowIsNotVisible()
 {
     const QRectF frame(0.0, 0.0, 100.0, 100.0);
-    const KWin::ActiveBorderState state = KWin::activeBorderState(false, frame, false, false, false, false);
+    const KWin::ActiveBorderState state = KWin::activeBorderState(false, frame, false, false, false, false, false);
     CHECK(!state.visible);
     CHECK(state.innerRect == QRectF());
 }
@@ -43,29 +43,29 @@ void missingWindowIsNotVisible()
 void deletedWindowIsNotVisible()
 {
     const QRectF frame(0.0, 0.0, 100.0, 100.0);
-    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, true, false, false, false);
+    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, true, false, false, false, false);
     CHECK(!state.visible);
 }
 
 void minimizedWindowIsNotVisible()
 {
     const QRectF frame(0.0, 0.0, 100.0, 100.0);
-    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, false, true, false, false);
+    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, false, true, false, false, false);
     CHECK(!state.visible);
 }
 
 void fullScreenWindowIsNotVisible()
 {
     const QRectF frame(0.0, 0.0, 1920.0, 1080.0);
-    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, false, false, true, false);
+    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, false, false, true, false, false);
     CHECK(!state.visible);
 }
 
 void maximizedWindowIsNotVisibleAndRestores()
 {
     const QRectF frame(0.0, 0.0, 1920.0, 1080.0);
-    const KWin::ActiveBorderState maximized = KWin::activeBorderState(true, frame, false, false, false, true);
-    const KWin::ActiveBorderState restored = KWin::activeBorderState(true, frame, false, false, false, false);
+    const KWin::ActiveBorderState maximized = KWin::activeBorderState(true, frame, false, false, false, true, false);
+    const KWin::ActiveBorderState restored = KWin::activeBorderState(true, frame, false, false, false, false, false);
     CHECK(!maximized.visible);
     CHECK(restored.visible);
     CHECK(restored.innerRect == frame);
@@ -126,7 +126,7 @@ void positiveGapExpandsInnerRect()
 void gapAppliesToVisibleBorderState()
 {
     const QRectF frame(0.0, 0.0, 100.0, 100.0);
-    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, false, false, false, false);
+    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, false, false, false, false, false);
     CHECK(state.visible);
     CHECK(KWin::activeBorderInnerRect(state.innerRect, 2.0) == QRectF(-2.0, -2.0, 104.0, 104.0));
 }
@@ -147,10 +147,10 @@ void normalObservationStartShowsThenMaximizes()
     // maximize transition hides; the restore transition shows again.
     // Transitions stay authoritative after the seed.
     CHECK(KWin::activeBorderState(true, QRectF(0.0, 0.0, 100.0, 100.0), false, false, false,
-        KWin::activeBorderSeedMaximized(0))
+        KWin::activeBorderSeedMaximized(0), false)
             .visible);
-    CHECK(!KWin::activeBorderState(true, QRectF(0.0, 0.0, 100.0, 100.0), false, false, false, true).visible);
-    CHECK(KWin::activeBorderState(true, QRectF(0.0, 0.0, 100.0, 100.0), false, false, false, false).visible);
+    CHECK(!KWin::activeBorderState(true, QRectF(0.0, 0.0, 100.0, 100.0), false, false, false, true, false).visible);
+    CHECK(KWin::activeBorderState(true, QRectF(0.0, 0.0, 100.0, 100.0), false, false, false, false, false).visible);
 }
 
 void maximizedObservationStartHidesUntilRestore()
@@ -158,13 +158,13 @@ void maximizedObservationStartHidesUntilRestore()
     // A window already maximized before effect load seeds hidden and stays
     // hidden across a repeated maximized signal until restore.
     CHECK(!KWin::activeBorderState(true, QRectF(0.0, 0.0, 1920.0, 1080.0), false, false, false,
-        KWin::activeBorderSeedMaximized(3))
+        KWin::activeBorderSeedMaximized(3), false)
             .visible);
     CHECK(!KWin::activeBorderState(true, QRectF(0.0, 0.0, 1920.0, 1080.0), false, false, false,
-        KWin::activeBorderIsMaximized(true, true))
+        KWin::activeBorderIsMaximized(true, true), false)
             .visible);
     CHECK(KWin::activeBorderState(true, QRectF(0.0, 0.0, 1920.0, 1080.0), false, false, false,
-        KWin::activeBorderIsMaximized(false, false))
+        KWin::activeBorderIsMaximized(false, false), false)
             .visible);
 }
 
@@ -173,14 +173,27 @@ void fullscreenObservationStartHidesRegardlessOfSeed()
     // Fullscreen stays suppressed independently: even a normal seed hides
     // while fullscreen, and un-fullscreen restores when normal.
     CHECK(!KWin::activeBorderState(true, QRectF(0.0, 0.0, 1920.0, 1080.0), false, false, true,
-        KWin::activeBorderSeedMaximized(0))
+        KWin::activeBorderSeedMaximized(0), false)
             .visible);
     CHECK(!KWin::activeBorderState(true, QRectF(0.0, 0.0, 1920.0, 1080.0), false, false, true,
-        KWin::activeBorderSeedMaximized(3))
+        KWin::activeBorderSeedMaximized(3), false)
             .visible);
     CHECK(KWin::activeBorderState(true, QRectF(0.0, 0.0, 1920.0, 1080.0), false, false, false,
-        KWin::activeBorderSeedMaximized(0))
+        KWin::activeBorderSeedMaximized(0), false)
             .visible);
+}
+
+void appletPopupIsNotVisibleAndOrdinaryRestores()
+{
+    // Active applet popups never carry the border; an ordinary active window
+    // with the same geometry restores it.
+    const QRectF frame(0.0, 0.0, 800.0, 600.0);
+    const KWin::ActiveBorderState popup = KWin::activeBorderState(true, frame, false, false, false, false, true);
+    const KWin::ActiveBorderState ordinary = KWin::activeBorderState(true, frame, false, false, false, false, false);
+    CHECK(!popup.visible);
+    CHECK(popup.innerRect == QRectF());
+    CHECK(ordinary.visible);
+    CHECK(ordinary.innerRect == frame);
 }
 
 void pressResizeBindingMapsSlotsInOrder()
@@ -285,6 +298,7 @@ int main()
     normalObservationStartShowsThenMaximizes();
     maximizedObservationStartHidesUntilRestore();
     fullscreenObservationStartHidesRegardlessOfSeed();
+    appletPopupIsNotVisibleAndOrdinaryRestores();
     pressResizeBindingMapsSlotsInOrder();
     pressDefaultBindingIsAltRight();
     pressAgeGateBoundsTwoSecondsMonotonic();

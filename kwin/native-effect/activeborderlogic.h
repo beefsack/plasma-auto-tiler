@@ -43,9 +43,10 @@ inline bool activeBorderSeedMaximized(int maximizeMode)
     return maximizeMode != 0;
 }
 
-inline ActiveBorderState activeBorderState(bool hasWindow, const QRectF &frameGeometry, bool deleted, bool minimized, bool fullScreen, bool maximized)
+inline ActiveBorderState activeBorderState(bool hasWindow, const QRectF &frameGeometry, bool deleted, bool minimized, bool fullScreen, bool maximized,
+    bool appletPopup)
 {
-    if (!hasWindow || deleted || minimized || fullScreen || maximized) {
+    if (!hasWindow || deleted || minimized || fullScreen || maximized || appletPopup) {
         return {false, QRectF()};
     }
     return {true, frameGeometry};
