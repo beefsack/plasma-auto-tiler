@@ -1,30 +1,32 @@
 # macOS port: decision plan
 
-Status: research proposal, 2026-09-29. Compare the
+Status: research updated 2026-09-30. User-selected goals and sequence are in
+`docs/decisions.md`; platform behavior remains untested. Compare the
 [Windows plan](../windows-port/plan.md),
 [public-API feasibility](../cross-platform-support/feasibility.md) and
 [portable-core audit](../cross-platform-core/extraction.md). `VISION.md`
 requires tiling, group visuals, shortcuts and workspaces without interfering
-with fullscreen games. No macOS port, version floor or visual compromise has
-been approved or tested on a Mac.
+with fullscreen games. No macOS port or exact version floor has been approved
+or tested on a Mac.
 
-**Recommendation [I: M1-M9, U1,U6]:** use one signed, non-sandboxed, per-login
-Rust application with a small native settings/menu surface. Prove Accessibility
-window control and game exclusion first, then prototype project-managed
-per-display workspaces by reversible offscreen parking. Do not require private
-Space control or weakened System Integrity Protection (SIP). A true filled
-underlay behind foreign windows is an unresolved public-API parity gate.
+**Answer [user decision 2026-09-30; I: M1-M9,U1,U6]:** extract portable policy
+under KDE first, implement Windows next, then investigate a signed macOS app.
+Managed per-display workspaces are required for macOS feature completeness.
+Experiment with custom drawing and a true group underlay; an outline fallback
+is approved if it fails. Use public Accessibility (AX) APIs without weakened
+System Integrity Protection (SIP). A full-featured Mac App Store build is not
+yet a proven delivery path; start with a notarized DMG and Homebrew cask.
 
 ## Evidence key and baseline correction
 
 The 2026-09-17 feasibility study describes a sound single-Space prototype;
-first-class per-display workspaces and a *filled* underlay need separate gates.
+managed workspaces and the desired underlay still need capability proof.
 
 - **V** means verified Apple documentation or checked license; **O** means
   observed upstream source/issue, not a platform guarantee; **I** means a
   proposed design or unverified behavior. Source keys below were checked
-  2026-09-29. Upstream implementation claims remain O even where their
-  licenses are V.
+  2026-09-29 unless stated 2026-09-30. Upstream implementations remain O
+  even where their licenses are V.
 - [I: `VISION.md:15-16`, `docs/decisions.md:689-727`; O: U1] A current native
   Space is enough to test tiling, but not the project's per-output-local,
   global-unique and shared modes. Parking is a candidate, not native Spaces.
@@ -48,9 +50,43 @@ Rust work, but its desktop cannot stand in for macOS window-server behavior.
 Apple Silicon release. Include it in physical-Mac acceptance even if hosted
 runner images have not yet caught up; keep the exact CI image list pinned.
 
-**Iteration loop [I: M1-M3,M9]:** run `cargo test -p tiler-core
--p tiler-protocol` on NixOS, sync source to the Mac, build an `.app` in a
-stable location and sign each development build with the *same* identity.
+## Version adoption and supported floor
+
+The best available observations favor macOS 15 as a *proposed* floor. None
+measures all Mac users, so the 80-90% target cannot be guaranteed from public
+data alone; repeat the measurement before release [I].
+
+| Source and date | What it actually measures | Floor implication |
+| --- | --- | --- |
+| Homebrew OS-version analytics, 30 days starting 2026-08-30 [O: M20] | Mac **events**, not unique users: 26 = 4,809,333; 15 = 2,103,399; 27 = 1,033,822; 14 = 494,200. Normalizing by about 8.81 million reported Mac events gives 26+27 about **66.3%**, 15+ about **90.2%**, 14+ about **95.8%** [I: calculated from M20]. Linux rows must not enter the denominator. Homebrew users and frequent command users are overrepresented. | 26 alone misses the target in this sample; 15 is near its upper edge [I]. |
+| TelemetryDeck, week of 2026-08-31, CSV published 2026-09-01 [O: M21] | Among its **top ten point releases**, 26/27 sum to 475,736 of 535,828 observations (88.8%); 15 adds 56,855 (15+ = 99.4%). Older builds are omitted. Its app-user panel skews toward independent apps, technical users and US/Europe; the publisher warns that panel growth distorts trends. | Supports 15+, but the top-ten share cannot establish 90% of all Macs [I]. |
+| Statcounter, August 2026 [O: M22] | Browser page views, not devices. Its table shows Catalina 41.7% and Cheetah 39.99%; Statcounter explicitly says Apple user-agent reporting collapses releases since Catalina. | No usable 15/26/27 coverage estimate [I]. |
+| Apple developer App Store support page, checked 2026-09-30 [V: M23] | Publishes iOS/iPadOS adoption for 2026-06-07, but no comparable macOS version breakdown. | Do not import iPhone adoption into a Mac floor [I]. |
+
+**Proposed floor [I: M4,M6,M14,M15,M19-M23]: macOS 15.0**, x86_64 and
+arm64 where Apple supports that OS. Test 15 latest patch on Intel and Apple
+Silicon, plus 26 on both supported architectures and 27 on Apple Silicon;
+27 does not support Intel [V: M19]. An Apple Silicon Mac cannot substitute
+for the Intel *interactive* test host if x86_64 is promised [I]. Mac 14
+would broaden reach by about 5.6 percentage points of Homebrew Mac events,
+but adds a separate legacy acceptance obligation. In that panel, 26+
+would lose about 24 percentage points versus 15+. These are event-weighted
+comparisons, not user promises [I].
+
+[V: M4,M15; O: M14; I] `SMAppService` needs 13+, SwiftUI `Settings` needs
+11+, and AX APIs in this plan predate 15, so the chosen floor adds no
+obvious *API-availability* workaround for these surfaces. `objc2` documents
+bindings generated from Xcode 16.4 (through macOS 15.5) with newer OSes
+working but newly introduced API bindings lagging; test 26/27 runtime and
+signing separately. AX/TCC, Stage Manager and overlay behavior can still
+change across versions even when symbols exist. Build both Rust targets,
+pin an SDK/deployment target and confirm an Intel machine actually runs the
+packaged app; a cross-compiled binary or CI success is insufficient.
+
+**Iteration loop [I: M1-M3,M9]:** on NixOS run
+`cargo test -p tiler-core -p tiler-protocol`, sync source to the Mac, build
+an `.app` in a stable location and sign each development build with the
+*same* identity.
 Stop the old owner, restore any parked windows, replace/relaunch and inspect
 permission/observation status before testing. A dev command may later automate
 that sequence, but must refuse an uncertain restore. Use a separately signed
@@ -167,15 +203,21 @@ lock-screen and Secure Input behavior even when a requested chord conflicts.
 
 ## Dynamic and per-display workspaces
 
-Public macOS APIs do not provide the KWin backing-desktop operations. To
-provide independent logical workspaces on two monitors, the project must own
-membership and reversible visibility, or accept a smaller feature set.
+Public macOS APIs do not provide the KWin backing-desktop operations. The
+2026-09-30 user decision requires managed per-display workspaces for a
+feature-complete macOS release; a native-Space-only build is a preview.
 
 | Approach | Capability and trade-off | Position |
 | --- | --- | --- |
 | Native Spaces | [V: M8; O: U1,U4] Active-Space change is observable; no documented create/list/select/delete or arbitrary foreign-window transfer API. Fullscreen gets its own Space. "Displays have separate Spaces" changes monitor/fullscreen behavior; with it off, independent per-display switching is not a native guarantee [I]. | Coexist with native Spaces and Mission Control; tile only the visible ordinary Space during initial spikes [I]. |
 | yabai scripting addition | [O: U2] Broader Space manipulation uses Dock injection/private SkyLight APIs and a partially disabled SIP configuration; OS updates and security posture become product dependencies. | Exclude from default release [I]. |
 | AeroSpace-style logical sets | [O: U1] Move inactive AX windows to an offscreen corner with a small on-screen remainder, then restore; this does not remove them from Dock, Cmd-Tab or Mission Control. AX refusals, app re-positioning, Stage Manager, fullscreen and crash recovery remain costs [I]. | Preferred **throwaway prototype**, not a selected release contract [I]. |
+
+[O: U1,M25] AeroSpace documents a real Mission Control side effect: corner-
+parked windows may appear as tiny previews, with "Group windows by application"
+as a workaround. That is a change to the user's host setting, not our default
+fix [I]. Test Cmd-Tab to a parked window and subsequent Space selection rather
+than assuming offscreen parking is invisible to the shell [I].
 
 [I: U1,M8] Prototype on one native Space, then two displays with "Displays
 have separate Spaces" both on and off. Keep explicit logical
@@ -191,16 +233,21 @@ the full-workspace release rather than label single-Space tiling parity.
 
 ## Active border, group underlay and drop preview
 
-Public AppKit can render a mouse-transparent outline and drag preview. Exact
-underlay stacking behind foreign windows remains the largest visual unknown.
+Public AppKit can custom-draw an outline and drop preview. Native collection
+flags help overlays coexist with Spaces and Mission Control, but cannot
+promise a true underlay behind foreign windows or an absent Cmd-Tab entry.
 
-- [V: M5; O: U6; I] Create per-display borderless transparent `NSWindow` or
-  nonactivating `NSPanel` overlays, ignore mouse events and exclude them from
-  tiling. Follow focus, scale, work-area, bounds and display changes. Use
-  a normal/floating level only where tested; avoid `screenSaver` level and
-  `.fullScreenAuxiliary`. `canJoinAllSpaces` is available but does not grant
-  reliable z-order over every fullscreen Space. Hide visuals before a game
-  or other fullscreen window becomes active.
+- [V: M5,M24; O: U6; I] Draw in an `NSView` using AppKit paths and Core
+  Graphics into transparent, borderless `NSWindow`/nonactivating `NSPanel`
+  windows. Use mouse transparency and no focus activation; clip one surface
+  per display if a surface straddles separate Spaces. Test a thin border
+  surface and a separate filled underlay plane. One plane cannot be above
+  an active target and below the rest of its group at the same time.
+- [V: M31; I] Layer-backed `NSView`/Core Animation or a Metal-backed view
+  changes how *our* surface is painted, not its placement among foreign
+  windows. Start with paths or layers; compare Metal only if redraw cost
+  justifies it. Screen capture and compositing a fake background would
+  introduce privacy, latency and gaming cost without real z-order [I].
 - [V: M5; I] `orderWindow:relativeTo:` orders our AppKit window at its
   window level using an AppKit `windowNumber`, which Apple distinguishes
   from the WindowServer's global number. It is not a documented way to
@@ -212,14 +259,48 @@ underlay stacking behind foreign windows remains the largest visual unknown.
   to target window IDs using private `SLS*`/SkyLight calls, including copying
   window level/sublevel. Its below-target border is useful evidence of the
   missing public stacking primitive, not a supported dependency.
-- [I: M5,U5,U6] Render the active ring and drop target from portable geometry;
-  for the Meta/Option-held group, test a *true filled underlay* under
-  interleaved foreign windows, dialogs, animation proxies, Mission Control,
-  Stage Manager and two monitors. If public APIs cannot meet the invariant,
-  present explicit choices: accept a less faithful outline/no fill, authorize
-  private APIs with maintenance risk, or hold visual parity. Do not silently
-  substitute an over-app fill. The KWin projected group union remains reusable
-  (`crates/tiler-core/src/active_group.rs:109-164`) [O].
+
+**Collection and switch behavior [V: M24; I where indicated]:** these flags
+describe individual windows, not whether our app appears in Cmd-Tab. They
+do not supply cross-process stacking or immunity from all Space animations.
+
+| Flag / app choice | Documented effect | Overlay implication |
+| --- | --- | --- |
+| `.transient` | [V: M24] Floats in Spaces, hides in Mission Control; default for non-normal window levels. | Candidate to avoid an independent Expose/Mission Control tile; verify disappearance, restore and no ghost thumbnail [I]. |
+| `.ignoresCycle` | [V: M24] Excluded from **Cycle Through Windows**, not documented as a Cmd-Tab exclusion. | Use it, but test Cmd-Tab separately [I]. |
+| `.stationary` | [V: M24] Stays visible and fixed while Mission Control is shown, like the desktop. | Conflicts with hiding visuals during Mission Control; compare with `.transient` instead of assuming both give the desired result [I]. |
+| `.canJoinAllSpaces` | [V: M24] Can appear in every Space. | Helps a persistent status surface, but a border could linger on a Space without its target; avoid or explicitly hide on Space changes until proven [I]. |
+| `.fullScreenAuxiliary` / `.fullScreenNone` | [V: M24] The former joins a fullscreen window's Space; the latter only says **our window cannot enter fullscreen**. | Avoid auxiliary for games; `fullScreenNone` alone does not promise a hidden overlay over fullscreen content. Actively suppress [I]. |
+| Accessory app (`LSUIElement`) | [V: M24] No Dock icon or application menu bar, and may still activate. | Candidate for menu-only operation; AppKit does not document Cmd-Tab exclusion here. Test Cmd-Tab, menu/settings activation and app-owned window cycling [I]. |
+
+[O: U5,M25] JankyBorders follows the target's private Space ID and level,
+hides when the target is not ordered/visible, and orders its own border via
+private `SLSTransactionOrderWindow`. Issue #131 describes borders arriving
+*after* a Space transition and disappearing in Mission Control (observed,
+not guaranteed for other versions). Issue #115 reports interference with
+macOS's own window tiling. AeroSpace's documented workspace technique instead
+parks inactive app windows through AX and documents tiny Mission Control
+previews; its dialog/overlay classification has shown Cmd-Tab/focus
+interference [O: U1,M25]. Neither is evidence that
+our panels will be invisible or perfectly tracked [I].
+
+**Custom-drawing experiment [I: M5,M24,M25,U5,U6]:** build one disposable,
+signed, one-display AppKit panel pair with `NSView`/Core Graphics: a separate
+active ring and a filled group-union surface. Compare `NSPanel` vs `NSWindow`,
+normal vs floating level, `.transient`/`.ignoresCycle` against `.stationary`
+and `.canJoinAllSpaces`, without `.fullScreenAuxiliary`. Measure whether a
+public underlay can remain beneath two target windows, above unrelated lower
+windows and below dialogs while all reorder. Use `CGWindowList` to observe
+our overlay entries and direct screenshots/video to observe transitions;
+check Mission Control/Expose thumbnails, Cmd-Tab, native Spaces switching,
+Stage Manager, fullscreen/game activation and one then two monitors.
+Record focus, stale graphics, click-through and idle cost, then explicitly
+`orderOut` and restore. Apple offers no public compositor drawing hook that
+puts our fill inside another app's window stack [I: M5]. JankyBorders'
+SkyLight approach is a private, version-coupled comparison only [O: U5].
+If the underlay cannot pass, use the user's approved group outline fallback;
+do not draw a fill over window content. Keep the KWin projected group union
+(`crates/tiler-core/src/active_group.rs:109-164`) [O].
 - [I: `VISION.md:41-48`; V: M5] Gaming gate: when a fullscreen or game target
   is active, remove overlays and stop geometry writes, taps and high-frequency
   tracking where possible. Measure frame time, input latency, CPU/wakeups and
@@ -250,15 +331,54 @@ where it measurably reduces AppKit/permission UI friction.
 
 ## Packaging, updates, logging and security
 
-Ship a stable app identity before asking for permanent AX consent. Upgrade
-must not strand any project-parked window.
+Ship a stable app identity before asking for permanent AX consent. A notarized
+DMG is the clear, full-featured path; the Mac App Store cannot be promised on
+the same AX architecture [V: M26; O: M27].
+
+**Mac App Store feasibility [V: M26,M28; O: M27,M29; I]:** Apple's App Review
+rules 2.4.5(i-vii) require sandboxing, a self-contained bundle, consent for
+login launch and Store-managed updates; 2.5.1 requires public APIs, and 2.5.8
+rejects alternate desktop environments (the scope of that clause for logical
+workspaces requires review). An Apple Developer Technical Support reply,
+quoted by a tiler developer, says sandboxed apps cannot use cross-app AX and
+should distribute directly. A test Store build of 941 Tiles reportedly
+returned zero foreign windows despite Accessibility trust. Magnet and
+BetterSnapTool are on the Store; Magnet's FAQ describes Accessibility
+onboarding and both listings describe snapping. Their listings predate
+mandatory sandboxing, and the 941 Tiles developer reports grandfathered
+unsandboxed binaries [O: M27]. Their *current* signing entitlements were
+not independently inspected, so
+their listings prove neither a transferable exemption nor our acceptance.
+Newer Store tilers snApp and 941 Tiles delegate Find/Move/Resize to an
+installed Apple Shortcut with Automation consent [O: M27,M29]; that slower,
+less observable route has not proven continuous AXObserver tiling, reliable
+parking/recovery, or per-display logical workspaces. A reduced-feature Store
+build would not meet the approved feature-complete bar. Do not rely on an
+unsandboxed helper or third-party installer inside a Store app [V: M26].
+
+[V: M12,M26; O: M30; I] This does *not* mean all keyboard input is impossible
+in the sandbox: Apple Developer guidance identifies a **listen-only** session
+`CGEventTap` using Input Monitoring as available to sandboxed apps, and
+Carbon hotkey registration may work for discrete, uncontested shortcuts.
+An event tap that changes/suppresses keys, synthetic input and cross-app AX
+must each be tested in a clean signed sandbox; listen-only success cannot
+establish interception. `SMAppService` bundles login items/agents on 13+,
+subject to user approval and Review rule 2.4.5(iii), but login-item support
+does not bypass sandbox inheritance or AX restrictions [V: M4,M26].
+
+| Channel | What users get and what must be proven | Position |
+| --- | --- | --- |
+| Notarized DMG | [V: M9] Drag-to-Applications app, Developer ID signature, stable TCC identity and manual upgrade; Sparkle only after a safe restore/update proof [O: M17; I]. | Initial full-featured channel [I]. |
+| Homebrew cask | [O: M16; I] Installs the same notarized app for users who prefer Homebrew; separate tap first if public-cask criteria are not met. | Publish alongside the DMG once install/upgrade ownership is tested [I]. |
+| Mac App Store | [V: M26,M28; O: M27,M29] Sandbox, review, Store-only updates and distinct signing/storage identity; Apple Shortcuts delegation is a different window-control architecture. | No feature-complete Store claim unless a *separate* sandboxed parity spike and App Review pass. Reassess later [I]. |
 
 - [V: M9] Outside the Mac App Store, distribute a Developer ID-signed,
   hardened-runtime, notarized `.app`, initially in a drag-to-Applications
   DMG; staple and validate the ticket. A signed flat PKG is an option if
   installer-owned paths are necessary. Developer Program membership is
-  currently US$99/year, subject to region/waiver changes. The App Store
-  sandbox is not the default arbitrary-foreign-window-control route [I].
+  currently US$99/year, subject to region/waiver changes. A Store channel
+  would add a separate signature/bundle/storage/update test path and Review
+  exposure, not replace direct-distribution signing [I].
 - [O: M16; I] Homebrew Cask can point to the signed DMG once its publisher,
   checksum, version and quarantine behavior are proven. Do not treat a cask
   as a signing/notarization bypass. Keep a single installed app/login owner.
@@ -268,6 +388,8 @@ must not strand any project-parked window.
   TCC permission intact. Manual DMG upgrade is a valid first release if that
   gate is not met. Uninstall should unregister the login item, remove only
   project-owned state and restore parked windows while the owner still runs.
+  Store builds, if ever viable, instead update through the App Store
+  [V: M26].
 - [V: M11; O: M11; I] TCC grant stability depends on the signed app identity;
   repeatedly launching ad-hoc-signed changing Mach-O binaries may prompt
   again. Keep bundle ID, signing identity and app path stable during dev;
@@ -319,24 +441,26 @@ owns all permissions, native identity and observed outcomes.
   CLI/helper IPC; do not inherit KWin's JSON/D-Bus process split. Share
   settings, action and visual *intent* when cross-host inputs are proven;
   keep actual overlay z-order and TCC status outside core.
-- [I: M14,M15] Start Rust `objc2`/AX FFI with a native AppKit menu/settings
-  spike; introduce Swift only for a demonstrated UI or framework-binding gap.
-  Propose macOS 15 as the initial minimum and test 15, 26 and current 27;
-  the exact supported versions/architectures are a user decision, not a
-  claim that older releases cannot run the app.
+- [I: M14,M15,M20-M23] Start Rust `objc2`/AX FFI with a native AppKit
+  menu/settings spike; introduce Swift only for a demonstrated UI or
+  framework-binding gap. Propose 15+ on both supported architectures,
+  with the physical 15/26/27 matrix described above. The exact floor
+  remains a user decision after the version and API probes.
 
 ## Phased roadmap (qualitative)
 
-Disposable, signed owned-window probes precede permanent adapter development.
-Every exit gate records refusals as well as successful readbacks.
+**User sequence, 2026-09-30 [O: `docs/decisions.md:26-32`]:** portable policy
+extraction and KWin regression checks first, then Windows. Only then run the
+macOS phases below. Disposable, signed owned-window probes precede the
+permanent macOS adapter; record refusals as well as successful readbacks.
 
 | Phase | Goal / scope | Exit evidence | Throwaway spikes first | Effort / risk |
 | --- | --- | --- | --- | --- |
-| 0. Mac truth | [I] Set hardware, SDK, signing identity and CI matrix. | Physical Mac baseline for focus, animation, games, two displays; reproducible app build and stable TCC consent. | Rust AX/CFRunLoop binding; `SMAppService` vs LaunchAgent; ad-hoc vs stable-signed rebuild grant; Linux cross-link vs Mac build. | Medium / high. |
-| 1. Capability probes | [I] Bound AX, input, Space and overlay authority with owned apps first. | Settable/error/readback matrix; secure-input/tap and hotkey collisions; fullscreen and Stage Manager classifications; measured z-order relative to foreign test windows. | `CGWindowList` identity/privacy; AXObserver loss/app quit; native/fullscreen Space; underlay sandbox of two overlapping windows and dialog; game idle/tap/overlay baseline. | Medium / highest. |
+| 0. Mac truth, after Windows | [I] Reuse proven KDE core/Windows intent seams; set Mac hardware, SDK, signing identity and CI matrix. | Physical Mac baseline for focus, animation, games, two displays; reproducible arm64/x86_64 app build and stable TCC consent; confirm proposed 15+ floor. | Rust AX/CFRunLoop binding; `SMAppService` vs LaunchAgent; ad-hoc vs stable-signed rebuild grant; Linux cross-link vs Mac build. | Medium / high. |
+| 1. Capability probes | [I] Bound AX, input, Space and custom-drawing authority with owned apps first. | Settable/error/readback matrix; secure-input/tap and hotkey collisions; fullscreen and Stage Manager classifications; measured z-order relative to foreign test windows; no overlay in Mission Control/Cmd-Tab or fullscreen game. | `CGWindowList` identity/privacy; AXObserver loss/app quit; native/fullscreen Space; per-display NSPanel vs NSWindow, transient vs stationary, all-Spaces, two-plane underlay/ring, Expose/Cmd-Tab/Space switch; game idle/tap/overlay baseline. | Medium / highest. |
 | 2. Normal tiling | [I] Use Engine on current native Space, complete observations, per-app skips and readback. | Normal windows tile across scale/min-size/animation; permission revoke/wake/fast switching/hotplug recover; no fullscreen-game writes. | Partial AX setter failure; IDE/browser minimum and animation; focused-window rebinding and Stage Manager toggles. | Large / high. |
-| 3. Workspaces and visuals | [I] Only after parking/stacking gates, implement per-display logical sets, focus-safe recovery, active border, group underlay and preview. | Two-display send/switch/trailing empty/background plans, forced-kill and quit restore, Mission Control/Dock/Cmd-Tab acceptance, stable group layering; no game cost. | Corner parking vs minimize/hide shell effects; `spans-displays` on/off; native Space handoff; group z-order under interleaved foreign windows; fullscreen overlay suppression. | Large / highest. |
-| 4. UX and delivery | [I] Native settings/menu, conflict and permission UX, DMG/Cask, update/uninstall. | Live settings/readback, keyboard/reduced motion, notarized install, TCC survival across update, clean login/exit, physical game and Mac CI matrix, including 27. | `NSStatusItem` vs `MenuBarExtra`; Sparkle vs manual upgrade; native Swift UI bridge only if required. | Medium-large / high. |
+| 3. Required workspaces and visuals | [I] Only after parking/stacking gates, implement per-display logical sets, focus-safe recovery, active border, true underlay **or approved group outline** and preview. | Two-display send/switch/trailing empty/background plans, forced-kill and quit restore, Mission Control/Dock/Cmd-Tab acceptance, correct drawing across Space switches; no game cost. | Corner parking vs minimize/hide shell effects; `spans-displays` on/off; native Space handoff; interleaved-window stacking and fallback outline. | Large / highest. |
+| 4. UX and delivery | [I] Native settings/menu, conflict and permission UX, notarized DMG/Cask, update/uninstall. | Live settings/readback, keyboard/reduced motion, TCC survival across update, clean login/exit, physical 15/26/27 and Mac CI matrix. | `NSStatusItem` vs `MenuBarExtra`; Sparkle vs manual upgrade; optional sandboxed Store parity/review spike only if worth separate investment. | Medium-large / high. |
 
 [I] Run pure core tests on NixOS and macOS CI; integration tests require an
 interactive Mac with owned windows. Run permission, login, fullscreen and
@@ -345,16 +469,20 @@ game/input-latency acceptance. Hosted CI cannot establish visual parity.
 
 ## Open user decisions
 
-These recommendations are proposed choices, not approved product behavior.
+The decided rows record the user's direction; open rows identify
+choices that still depend on macOS measurements or a new user decision.
 
-| Decision | Options and consequences | Recommendation |
+| Status / decision | Consequences and evidence | Direction |
 | --- | --- | --- |
-| Host/version investment | [V: M19; I: M1-M3] Apple Silicon Mac plus Mac CI enables real AX/game proof; Linux-only development cannot establish it. macOS 15+ shortens matrix; older versions add signing/API/test paths. Current macOS 27 requires Apple Silicon. | Obtain a physical Mac; test 15, 26 and 27, choose exact floor after probe. |
-| Workspace release bar | [I: M8,U1] Native single-Space scope is smaller but misses per-display features; AX parking enables them only if shell/recovery behavior is accepted. | Require a passing managed-workspace prototype for a feature-complete macOS release; allow limited research builds first. |
-| True group underlay | [I: M5,U5,U6] Public outline/preview is feasible but a true below-foreign-window fill is unproven; private SLS adds OS churn, reduced fidelity needs approval, strict parity may delay release. | Prototype public stacking; if it fails, ask for an explicit fidelity/maintenance decision. |
-| Shortcuts and consent | [V: M12,M13; I] Option defaults avoid system collisions; opt-in event tap may need extra Input Monitoring and cannot replace Lock or Secure Input. | Option-first defaults; explicit tested overrides; preserve lock chord. |
-| Distribution and update | [V: M9; O: M16,M17; I] Signed/notarized DMG + optional Cask costs program membership; Sparkle adds safe parked-window shutdown and key/feed maintenance. | DMG/manual updates first, Sparkle only after restore/update proof. |
-| Native UI mix | [O: M14; V: M15; I] All-Rust AppKit reduces language split but raises binding friction; SwiftUI shim improves native controls at ABI/build cost. | Rust AX spike first, minimal Swift/AppKit UI glue only if needed. |
+| Decided: sequencing | [O: `docs/decisions.md:26-32`] KDE-first portable extraction and KWin checks precede Windows; macOS follows Windows [user 2026-09-30]. | Mac work starts after Windows. |
+| Decided: workspace release bar | [O: `docs/decisions.md:11-13`] Managed per-display workspaces are required before macOS is called feature-complete; single-Space tiling previews remain possible. | Gate release on parking/recovery and shell tests. |
+| Decided: group visual | [O: `docs/decisions.md:17-19`] Custom drawing and true underlay experiment first; outline fallback acceptable if the underlay fails. | Test AppKit layers and Mission Control before using fallback. |
+| Decided: distribution principle | [User 2026-09-30] Make installation obvious and unsurprising; research Store alongside manual install. | Recommend notarized DMG plus cask; Store feasibility remains open. |
+| Open: exact version floor | [O/I: M19-M23] A 15+ minimum covers about 90.2% of Homebrew Mac events, not proven share of unique users; 27 excludes Intel, 14 adds support burden. | Recommend 15+ and physical Intel/arm64 15, 26 and arm64 27 tests; reassess with release-time data. |
+| Open: Mac App Store parity | [V: M26,M28; O: M27,M29] New Store apps are sandboxed; direct AX appears blocked, Shortcuts delegation lacks managed-workspace/observer proof and alternate-desktop review risk remains. | DMG plus cask first; only promise a Store channel after independent full-parity and Review evidence. |
+| Open: shortcuts and consent | [V: M12,M13; O: M30; I] Option defaults avoid system collisions; interception may need additional TCC consent and cannot replace Lock or Secure Input. | Option-first defaults; explicit tested overrides; preserve lock chord. |
+| Open: update route | [V: M26; O: M17; I] Sparkle adds safe parked-window shutdown and key/feed maintenance; manual DMG upgrade is simpler; Store builds would use Store updates. | DMG/manual initially, Sparkle after restore/update proof. |
+| Open: native UI mix | [O: M14; V: M15; I] All-Rust AppKit reduces language split but raises binding friction; SwiftUI shim improves native controls at ABI/build cost. | Rust AX spike first, minimal Swift/AppKit glue only if needed. |
 
 ## Risks
 
@@ -371,8 +499,10 @@ stacking is a separate fidelity gate.
 | Native Space/display interaction | High; fullscreen Space, separate-Spaces toggle, hotplug [V: M8; O: U1]. | Two-monitor, native Space and reconnection matrix with focus/readback [I]. |
 | Shortcut conflict or stalled event tap | High; system chord, Secure Input, tap timeout [V: M12,M13]. | Non-system defaults, consent/conflict state, tap revalidation, preserve lock and game input [I]. |
 | Signing or update resets permission | High; bundle/identity change or update before restore [V: M9; O: M11,M17]. | Stable designated signature, signed feed/DMG, rebuild/update/TCC and rollback probes [I]. |
+| Mission Control/Cmd-Tab polluted by overlays or parked windows | High; transient/stationary/all-Spaces conflict, or AX corner parking distorts overview [V: M24; O: M25,U1]. | Separate overlay flag matrix, direct Space/Expose/Cmd-Tab observations, disable affected visual and compare approved outline [I]. |
+| Store build misses foreign windows or is rejected | High; mandatory sandbox, Store Review 2.5.8 and AX restriction [V: M26,M28; O: M27]. | Direct DMG/cask path; no Store claim before signed sandbox parity and Review [I]. |
 
-## Sources (accessed 2026-09-29)
+## Sources (accessed 2026-09-29 to 2026-09-30)
 
 - M1: Apple [macOS Tahoe license](https://www.apple.com/legal/sla/docs/macOSTahoe.pdf),
   [software licenses](https://www.apple.com/legal/sla/),
@@ -426,6 +556,45 @@ stacking is a separate fidelity gate.
   [`Logger`](https://developer.apple.com/documentation/os/logger).
 - M19: Apple [macOS 27 release and security update](https://support.apple.com/en-us/149035),
   [supported Mac models](https://www.apple.com/os/macos/).
+- M20: Homebrew [30-day OS-version events, start 2026-08-30](https://formulae.brew.sh/analytics/os-version/30d/),
+  accessed 2026-09-30; percentages above divide by Mac rows only, not all
+  operating-system events. This rolling page's snapshot values are dated.
+- M21: TelemetryDeck [macOS version survey, updated 2026-09-01](https://telemetrydeck.com/survey/apple/macOS/versions/),
+  [weekly top-ten CSV](https://cdn.sanity.io/files/8botbl6i/production/3dbe5fa09bf396ff12676cb223577560632031a3.csv),
+  [sample bias](https://telemetrydeck.com/survey/apple/surveyBiases).
+- M22: Statcounter [August 2026 macOS version chart](https://gs.statcounter.com/os-version-market-share/macos/desktop/worldwide),
+  including its explicit version-reporting warning.
+- M23: Apple [App Store platform adoption page](https://developer.apple.com/support/app-store/),
+  checked 2026-09-30 (iOS/iPadOS only).
+- M24: Apple [`NSWindow.CollectionBehavior`](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct.md):
+  [`transient`](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct/transient.md),
+  [`ignoresCycle`](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct/ignorescycle.md),
+  [`stationary`](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct/stationary.md),
+  [`canJoinAllSpaces`](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct/canjoinallspaces.md),
+  [`fullScreenAuxiliary`](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct/fullscreenauxiliary.md),
+  [`fullScreenNone`](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct/fullScreenNone.md),
+  [`accessory` app policy](https://developer.apple.com/documentation/appkit/nsapplication/activationpolicy-swift.enum/accessory.md).
+- M25: JankyBorders [`src/border.c` private ordering/Space filter](https://github.com/FelixKratz/JankyBorders/blob/main/src/border.c),
+  [Space transition/Mission Control issue #131](https://github.com/FelixKratz/JankyBorders/issues/131),
+  [native tiling issue #115](https://github.com/FelixKratz/JankyBorders/issues/115);
+  AeroSpace [Mission Control guide](https://nikitabobko.github.io/AeroSpace/guide#a-note-on-mission-control),
+  [tiny previews issue #315](https://github.com/nikitabobko/AeroSpace/issues/315),
+  [Cmd-Tab/overlay issue #1568](https://github.com/nikitabobko/AeroSpace/issues/1568).
+- M26: Apple [App Review Guidelines 2.4.5, 2.5.1, 2.5.8](https://developer.apple.com/app-store/review/guidelines/),
+  [App Sandbox required for Store apps](https://developer.apple.com/documentation/security/app-sandbox.md).
+- M27: 941 Tiles developer's [July 2026 sandbox/Shortcuts account](https://blakecrosley.com/blog/window-manager-mac-app-store-sandbox),
+  quoting [Apple DTS forum thread 805556](https://developer.apple.com/forums/thread/805556).
+  The author's runtime and grandfathered-entitlement claims are upstream
+  reports, not independently verified Store binary audits.
+- M28: Apple Store listings: [Magnet](https://apps.apple.com/us/app/magnet/id441258766),
+  [BetterSnapTool](https://apps.apple.com/us/app/bettersnaptool/id417375580),
+  and Magnet's [Accessibility onboarding FAQ](https://magnet.crowdcafe.com/faq.html).
+- M29: [snApp source and Shortcuts architecture](https://github.com/OmChachad/snApp),
+  [941 Tiles listing](https://apps.apple.com/app/941-tiles/id6758425339).
+- M30: Apple Developer Forums [sandboxed listen-only event tap guidance](https://developer.apple.com/forums/thread/811443)
+  and [AeroSpace issue citing earlier Apple guidance](https://github.com/nikitabobko/AeroSpace/issues/1012);
+  a listen-only tap is not an interception proof.
+- M31: Apple [`NSView.wantsLayer` and Core Animation backing](https://developer.apple.com/documentation/appkit/nsview/wantslayer.md).
 - U1: AeroSpace [MIT license](https://github.com/nikitabobko/AeroSpace/blob/main/LICENSE.txt),
   [workspace guide](https://nikitabobko.github.io/AeroSpace/guide#emulation-of-virtual-workspaces),
   [pinned AX parking](https://github.com/nikitabobko/AeroSpace/blob/0431b6b4cfe8ec9afa6cac72f08777b667f00efc/Sources/AppBundle/tree/MacWindow.swift).

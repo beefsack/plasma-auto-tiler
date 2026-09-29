@@ -3,6 +3,34 @@
 Only active, user-approved product and project choices are recorded here.
 Historical implementation detail is recoverable in Git history.
 
+## Windows Port
+
+User decisions 2026-09-30. These select goals and sequencing, not untested
+Windows API behavior; see [Windows plan](research/windows-port/plan.md).
+
+- Support Windows 11 x64 only initially; this can be revisited.
+- Managed per-monitor workspaces are required before Windows or macOS is
+  called feature-complete. Tiling-only development previews are allowed.
+- Use non-Win default shortcuts. Win+Arrow is opt-in after proof and must work
+  before Windows is feature-complete for this user. Win+L is explicit opt-in
+  only; neither override is yet proven.
+- Experiment with custom drawing and a real group underlay, including Task
+  View and Alt+Tab behavior. An outline fallback is acceptable if the
+  underlay fails; the underlay mechanism remains unselected.
+- Windows distribution should be the most obvious and unsurprising for users.
+  Store availability alongside manual installation is research scope, not a
+  selected package or update channel.
+- Develop directly on the Windows 11 PC, not a VM. Keep the NixOS/Linux flow
+  intact; account for the PC also serving as the KDE multi-output test host.
+
+## Cross-Platform Core
+
+- User decision 2026-09-30: portable core extraction is the immediate priority
+  and precedes Windows implementation. Do it under KDE first, with KWin
+  fixtures and applicable live checks establishing no regressions. Windows
+  visibility evidence must inform the later workspace-model shape; moving the
+  full logical workspace model in the KDE-first phase remains an open choice.
+
 ## Architecture Direction
 
 User-approved 2026-09-24 from the

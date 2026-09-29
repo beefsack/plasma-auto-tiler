@@ -10,18 +10,36 @@ decisions of 2026-09-24 are under
 
 ## Open work
 
-- P1 | Windows port | User focus from 2026-09-29 (KDE work paused).
-  Research plan done offline: one per-user Rust process on Windows 11 x64,
-  documented Win32 APIs, project-managed per-monitor workspaces gated on a
-  reversible hide/reveal prototype, underlay via z-order insertion behind the
-  group. Next: user decisions (plan "Open user decisions"), then a Windows 11
-  VM plus a physical Windows host for the Phase 0-1 throwaway spikes.
+- P0 | Portable core extraction under KDE | User priority (2026-09-30):
+  immediate next work, before any Windows implementation. Phases K0-K3 in the
+  audit: K0 baseline fixtures; K1 visual predicates and geometry (active
+  border, group underlay extension, drop preview) into Rust; K2 settings
+  validation and shortcut action intent; K3 pure difference comparison only
+  if fixtures justify it. Each step writes fixtures first, keeps KWin
+  behavior identical and ends with named user live checks on KDE. Open user
+  decision: whether to move the logical workspace model now (recommendation:
+  stop before it; shape it from Windows visibility spikes).
+  [audit](research/cross-platform-core/extraction.md)
+  [decision](decisions.md#cross-platform-core)
+- P1 | Windows port | After the KDE-first extraction. User decisions
+  (2026-09-30): Windows 11 x64 only; managed per-monitor workspaces required
+  for feature-complete; non-Win default shortcuts with Win+Arrow required for
+  the user (opt-in after proof) and Win+L explicit opt-in; custom-drawing
+  underlay experiment with outline fallback; most obvious distribution
+  (Store plus signed installer plus winget under evaluation); develop
+  natively on the user's Windows 11 PC (also the KDE multi-output PC). Open:
+  elevated (administrator) windows policy; final package/update channel.
+  Next: Phase 0-1 throwaway spikes on the PC.
   [plan](research/windows-port/plan.md)
-  [core audit](research/cross-platform-core/extraction.md)
-- P2 | macOS port | Research plan done offline: one signed per-login Rust app,
-  public Accessibility APIs, AeroSpace-style offscreen parking prototype for
-  per-display workspaces, no private Spaces APIs or reduced SIP. Next: user
-  decisions, then an Apple Silicon Mac for Phase 0-1 signed spikes.
+  [decision](decisions.md#windows-port)
+- P2 | macOS port | After Windows. Research plan done offline: one signed
+  per-login Rust app, public Accessibility APIs, AeroSpace-style offscreen
+  parking prototype for per-display workspaces, no private Spaces APIs or
+  reduced SIP. Proposed floor macOS 15+ (~90% by Homebrew analytics,
+  2026-08/09; re-measure at release). Notarized DMG plus Homebrew cask
+  first; full-featured Mac App Store unproven. Open: exact floor and Intel
+  coverage, App Store investment, shortcut consent, updates, Swift glue.
+  Needs an Apple Silicon Mac.
   [plan](research/macos-port/plan.md)
 - P1 | Tray tiling/floating workspace toggle | Shipped `e407531`; user
   confirmed live (2026-09-29) that toggling a workspace floating and back to

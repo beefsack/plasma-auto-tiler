@@ -1,20 +1,22 @@
 # Windows port: decision plan
 
-Status: research proposal, 2026-09-29. Builds on
+Status: research updated 2026-09-30. User-selected directions are in
+`docs/decisions.md`; unproven APIs remain spikes. Builds on
 [cross-platform feasibility](../cross-platform-support/feasibility.md) and the
 [portable-policy audit](../cross-platform-core/extraction.md). `VISION.md`
 requires tiling, groups, borders, shortcuts and workspaces, with no impact on
 fullscreen gaming. Existing KWin decisions remain in `docs/decisions.md`.
-This plan recommends Windows choices; none has been approved or tested live.
+This plan distinguishes approved goals from untested implementation choices.
 The matching [macOS plan](../macos-port/plan.md) compares host constraints;
 the [core extraction audit](../cross-platform-core/extraction.md) now includes
 a three-host capability and sharing comparison.
 
-**Recommendation [I: W1-W6]:** start on Windows 11 x64 with one per-user Rust
-process. Prove geometry, shortcuts and game exclusion on real Windows. Build
-per-monitor logical workspaces if a reversible hide/reveal prototype passes
-taskbar, Alt+Tab and crash recovery. Do not require private virtual-desktop
-or shell-cloaking APIs for release.
+**Answer [user decision 2026-09-30]:** Windows 11 x64, developed on the
+physical Windows PC after KDE-first core extraction. Managed per-monitor
+workspaces are required for feature completeness. Win+Arrow is opt-in but
+must work for this user's feature-complete experience. Keep Win+L and a real
+underlay as experiments, with explicit Win+L opt-in and an accepted group
+outline fallback. Private virtual-desktop APIs remain out of the release path.
 
 ## Evidence key and baseline correction
 
@@ -31,34 +33,52 @@ needs a first-class workspace gate, and Win+L needs a separate policy choice.
   scope is a good prototype but does not deliver per-output workspaces.
   KDE's Lock Session relocation does not by itself prove Win+L can be
   relocated; see the policy options below.
-- [V: W21] Windows 10 Home/Pro support ended 2025-10-14. Windows 11 is the
-  proposed release floor; Windows 10 is an optional compatibility experiment.
+- [V: W21; user decision 2026-09-30] Windows 10 Home/Pro support ended
+  2025-10-14. Windows 11 x64 is the selected target; the user may revisit it.
 
 ## Development and iteration
 
-Use a Windows VM for fast, reversible iteration and physical Windows for
-games and final visual acceptance. Desktop Window Manager (DWM) is Windows'
-compositor; its behavior in a virtual GPU is not a physical-GPU guarantee.
-User Account Control (UAC) prompts switch to a separate secure desktop.
+Develop natively on the selected Windows 11 PC. It is also the KDE
+multi-output host (DP-6 and HDMI-A-2), so changes to its boot setup and test
+session must be explicit. A VM is optional, not the safety net.
 
-| Route | Use and limits | Decision |
-| --- | --- | --- |
-| Windows machine or dual boot | Real DWM, Explorer, UAC, games, sleep, mixed-DPI and driver paths; dual boot interrupts the NixOS edit loop [I: W1,W7]. | **Required acceptance host**; a separate Windows box with remote file transfer is preferable to repeated reboot [I]. |
-| Local KVM/QEMU VM | Fast disposable snapshots and real Windows guest API; virtual GPU/RDP/display-driver path may differ from physical game/overlay behavior [I: W7]. GPU passthrough improves representativeness but costs hardware/host isolation; no equivalence claimed [I]. | Main interactive integration lab, physical Windows for game/frame-time sign-off. |
-| NixOS cross-build | `cargo xwin build --target x86_64-pc-windows-msvc` uses MSVC-compatible SDK/import libs with clang/linker tooling [V: W7]; evaluate `x86_64-pc-windows-gnu`/mingw only as fallback, especially when native dependencies differ [I]. | Keep Nix `devenv.nix` unchanged until an approved build spike identifies dependencies. Pin Windows target/tool versions in CI; never install host dependencies ad hoc (`AGENTS.md`). |
-| Wine | Useful for launch/protocol smoke; Wine's LL hook and shell implementation is not Windows Explorer, secure desktop, Snap, DWM or anti-cheat [O: W8; I]. | No behavior acceptance. |
-| GitHub Windows runner | Compile, test, lint, package; hosted runner is not a logged-in interactive DWM/game acceptance environment [V: W9; O: W9]. | Gate source/release builds on a pinned `windows-2025` or `windows-2022` image, not `windows-latest`; self-hosted interactive VM for optional regression matrix [I]. |
-
-**Iteration loop [I: W7,W9,W20]:** edit and test core on NixOS with
-`cargo test -p tiler-core -p tiler-protocol`, then cross-build or build on the
-Windows VM. A proposed Windows-only `just win-dev` action asks the running
-tiler to restore windows and exit, waits, deploys the artifact, starts it,
-checks readiness/tray registration and prints the log path. `just win-dev
-trace` adds bounded event detail; `just win-dev stop` restores visibility and
-owned border changes. Reject replacement if restore is uncertain. Keep the
-existing Linux `just dev` path independent. Release CI builds/tests a locked
-tagged source, signs its artifact and smoke-tests install/update in a fresh
-VM; physical hardware supplies game and accessibility acceptance.
+- [V: W33] Install the official `rustup` MSVC x64 toolchain, Visual Studio
+  Build Tools with **Desktop development with C++** and the Windows SDK.
+  Install `just` using its documented Windows distribution, with versions
+  pinned alongside the future Windows build contract. The Linux toolchain
+  remains managed by `devenv.nix`; no Windows build tools go into it.
+- [I] Keep separate NixOS and Windows working copies and synchronize *source*
+  through Git; do not share `target/`, live settings, ownership receipts or
+  compiled effects across operating systems. If this is a dual-boot PC,
+  Windows and KDE cannot be tested concurrently: switch sessions deliberately
+  and re-establish each OS baseline. A separate Windows install/PC avoids
+  rebooting but does not make Windows monitor IDs equal to KDE's DP-6 and
+  HDMI-A-2. Verify both Windows display identities on the actual PC.
+- [I: `justfile:16,27-29`] Plan a Windows-specific PowerShell justfile:
+  `just --justfile windows.justfile dev` builds with
+  `cargo build -p tiler-windows`, asks the verified dev owner to restore and
+  exit, starts the new build, checks ready state and prints the log path.
+  `just --justfile windows.justfile dev trace` adds redacted tracing;
+  `just --justfile windows.justfile stop` releases hooks and overlays and
+  restores owned windows. The existing root `justfile` sets `bash` globally
+  and uses Linux-specific tools; do not route Windows through it unchanged.
+- [I] On the daily desktop, start with a separate ordinary test account or
+  dedicated test apps where practical; first experiments must not hide real
+  user windows. Keep a desktop/Start recovery shortcut outside the hotkey
+  hook: `tiler-windows restore` reads the owner-tagged visibility ledger and
+  reveals only verified project-hidden windows, even if the primary process
+  has exited. `tiler-windows stop` requests graceful release; if unresponsive,
+  an emergency stop targets only a verified dev-process identity, then runs
+  the standalone restore path. Disable dev login startup before testing an
+  intentionally crashing build. Prove recovery before allowing ordinary
+  apps, workspace hiding or restart automation.
+- [I: W7-W9] Native Windows handles DWM, Explorer, Snap, User Account
+  Control (UAC), games and physical shortcut acceptance. Linux cross-compile
+  (`cargo-xwin`) and Wine are optional smoke paths, not prerequisites.
+  GitHub Windows runners gate build, Rust tests and release artifacts but
+  cannot replace interactive desktop checks. An optional VM can isolate
+  dangerous policy experiments if available; without one, defer Win+L policy
+  writes until an equally safe reversible test environment exists.
 
 ## Process, authority and lifecycle
 
@@ -111,6 +131,19 @@ the requested rectangle.
   allocations, and do not classify an output-sized rectangle as fullscreen
   solely by its dimensions.
 
+**Elevated windows [V: W4; I]:** an app launched with "Run as
+administrator" runs at a higher integrity level than the ordinary tiler.
+Examples include an administrator PowerShell/Terminal, Registry Editor,
+Task Manager when elevated, installers and an administrator file manager.
+The UAC confirmation screen itself is a separate secure desktop. If these
+windows remain unmanaged, the user sees them float at their native position
+without automatic tiling, group underlay or managed workspace hiding; other
+normal windows continue tiling. A shortcut pressed while one is focused may
+be observed, but its requested focus/geometry action may fail. Test each
+operation rather than assuming UIPI blocks every call. Whether to support
+elevated apps stays a user decision; this document recommends excluding them
+from the first implementation, not selecting that product limitation.
+
 ## Shortcuts and host-setting conflicts
 
 Many Win-key shortcuts can be overridden, but there are two distinct routes:
@@ -139,23 +172,33 @@ security path; an ordinary keyboard hook cannot replace it [V: W12].
 | Win+D | [V: W12; O: U11] OS Show Desktop; AutoHotkey supports overriding built-in Win hotkeys generally. A verified hook-based `#d::` result is still missing. | Observed-overridable class; test actual method and shell suppression. |
 | Win+Tab | [V: W12; O: U11] OS Task View; AutoHotkey's documented generic Win-key override applies, but no per-chord hook guarantee was found. | Same: probe `#Tab::` with and without forced hook. |
 | Win+1..9 | [V: W12; O: U11] OS taskbar activation; generic override precedent, not a verified `#1::` hook result. | Same: probe each digit and taskbar result. |
-| Win+L | [V: W12; O: U12] Lock path persists despite ordinary AutoHotkey interception. Enabling the **per-user lock-disabling policy** can free the chord, but removes other locking paths too. | Two explicit options below; default preserves locking. |
+| Win+L | [V: W12; O: U12] Lock path persists despite ordinary AutoHotkey interception. A per-user policy disables locking, but whether a hook can then claim Win+L is unproven. | Explicit opt-in option and isolation spike below; default preserves locking. |
 | Win+Z, Win+G, Ctrl+Alt+Del | [V: W3,W12] Snap layouts, Game Bar, secure attention respectively. | Avoid by default; do not promise SAS takeover. |
 | Other user chords | [V: W3] `RegisterHotKey` reports collisions rather than transferring ownership. | Configurable non-Win default, e.g. `Alt+H/J/K/L` after conflict testing. |
+
+**Win+Arrow is a first-class acceptance gate [user decision 2026-09-30]:**
+the defaults remain non-Win, but this user depends on a reliable opt-in
+override. The early physical-PC spike must prove key-down/up delivery,
+suppression of Snap/Start side effects, reversal when disabled, operation
+with focus on normal windows and no game interference. Do not call the
+Windows experience feature-complete for them until the override passes a
+real Win11 session check. FancyZones proves an override exists in at least
+one product, not that our hook, every direction or every Windows build works
+[O: U3].
 
 **Win+L policy choice.** Windows maps "Remove Lock Computer" to
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System`, value
 `DisableLockWorkstation=1` (DWORD). This is a *user-scoped* policy, not an
-administrator-only HKLM
-change [V: W12]. Normal HKCU writes need no elevation when the key's access
-control list allows `KEY_SET_VALUE`; organizational policy can deny or
-overwrite the value [V: W30]. Windows documents that enabling it prevents
+HKLM-wide administrator setting [V: W12]. Normal HKCU writes need no
+elevation when the key's access control list allows `KEY_SET_VALUE`;
+organizational policy can deny or overwrite the value [V: W30]. Windows
+documents that enabling it prevents
 workstation locking, including the Ctrl+Alt+Del Lock route [V: W12].
 
 | Option | Consequence | Recommendation |
 | --- | --- | --- |
 | Keep lock policy unset; bind focus-right elsewhere | [V: W12] Win+L remains a reliable user lock action. | Default. |
-| User explicitly opts into Win+L; set policy to 1 only after snapshot/readback | [V: W12; O: U12] Policy prevents locking; community reports say the Ctrl+Alt+Del Lock entry disappears and `LockWorkStation()` may also fail. Simply moving lock to another chord is **not established**. | Offer only if a reversible VM proof finds a functioning replacement lock and a reliable restore path. |
+| User explicitly opts into Win+L; set policy to 1 only after snapshot/readback | [V: W12; O: U12] Policy prevents locking; community reports say the Ctrl+Alt+Del Lock entry disappears and `LockWorkStation()` may also fail. Neither freeing Win+L nor moving lock to another chord is established. | Offer only if a safely isolated, reversible experiment proves hook delivery, replacement lock and restore. |
 
 The policy documentation does not specify whether a registry write takes
 effect without logoff or whether `LockWorkStation()` still works. Community
@@ -210,9 +253,9 @@ candidate, contingent on crash and task-switcher behavior.
 
 ## Border, underlay and drop preview
 
-An independently stacked window can draw a real group underlay. The leading
-candidate is a non-topmost layered window inserted immediately **behind**
-the group's lowest member, rather than a topmost fill drawn over the group.
+Z-order insertion is a candidate for a real group underlay, not a proven
+solution. Test a non-topmost layered window immediately **behind** the
+group's lowest member and its behavior in Task View before selecting it.
 
 | Surface | Option and limitation | Recommended order |
 | --- | --- | --- |
@@ -220,6 +263,44 @@ the group's lowest member, rather than a topmost fill drawn over the group.
 | Configurable active outline / drag fill | [V: W6,W16; O: U1,U3] Own layered click-through `WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE` window; PowerToys uses per-monitor preview windows and komorebi uses separate border windows. | Place active outline above its target but below owned dialogs when possible; preview exists only during drag. Test focus/input and stacking. |
 | Group **underlay** | [V: W2,W31; I] `SetWindowPos(underlay, lowest_member, ..., SWP_NOACTIVATE|SWP_NOMOVE|SWP_NOSIZE|SWP_NOOWNERZORDER)` inserts the underlay *after* (behind) that member in Z order. If group members occupy a contiguous non-topmost block, it is behind them and above lower non-group windows. | Leading candidate. Recheck membership and Z order on foreground/reorder events; measure lag, topmost and modal failure modes. |
 | Per-window child / DirectComposition | Child of a foreign HWND, compositor injection or reparenting changes app ownership/input and is outside supported first path; DirectComposition can improve owned-layer rendering but adds complexity [V: W6; I]. | Do not use to bypass window-manager boundary. |
+
+### Shell visibility and custom drawing
+
+Tool-window styles should keep the underlay out of Alt+Tab and the taskbar.
+No public API found guarantees that an overlay cannot appear in Task View or
+in a *different window's thumbnail*. Test that in the actual Win11 shell.
+
+| Route | Established behavior and limitation | Experiment |
+| --- | --- | --- |
+| Unowned top-level `WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE` | [V: W34] `TOOLWINDOW` excludes the taskbar and Alt+Tab; `NOACTIVATE` avoids focus and also omits a taskbar button by default. `WS_EX_APPWINDOW` would force one; do not set it. Task View and Win+Tab thumbnail behavior are undocumented for this combination. | Create a non-topmost, click-through layered underlay. Verify no separate taskbar, Alt+Tab or Task View entry, no target-window thumbnail contamination and no keyboard focus. |
+| Overlay owned by our hidden host | [V: W34] A hidden owner is a documented alternative to suppress a taskbar button. Owned windows have owner-relative Z-order constraints [V: W2]. Ownership by a group member belonging to another process is not the same as our own hidden owner. | Compare with the unowned tool window for dialog stacking, Task View and desktop switching. Do not assume ownership improves underlay Z order. |
+| DirectComposition / `Windows.UI.Composition` visuals | [V: W35] DirectComposition binds a visual tree only to an HWND owned by the caller; foreign HWND returns `DCOMPOSITION_ERROR_ACCESS_DENIED`. WinRT Composition examples create `DesktopWindowTarget` for the app's HWND. Better painting within our own surface, not permission to paint beneath foreign apps without a host window. | Animate multiple visuals within one owned window; compare latency and Task View behavior with a layered bitmap. |
+| `DwmRegisterThumbnail` | [V: W36] Copies a top-level source window image into our top-level destination, or into the desktop window. The desktop exception avoids our own HWND but stays behind ordinary windows; it cannot place custom group color between arbitrary apps. | No underlay prototype; relevant only if a separate thumbnail preview is chosen later. |
+| Magnification API | [V: W37] A magnifier control redraws sampled screen content inside a layered *host window*. It is for magnification, not injecting colored group geometry into DWM. | Reject for underlay; adds capture/composition and cannot remove the host HWND. |
+| One monitor-sized transparent surface | [V: W34; I] One owned layered top-level HWND per monitor can draw active ring, filled group region and drop preview together. It reduces window count, not shell visibility or Z-order conflicts: one Z plane cannot simultaneously draw a ring above a group and an underlay beneath it. | Compare one surface with per-visual windows; test click-through, repaint cost, topmost dialogs, fullscreen, Task View and mixed-DPI monitors. Split underlay and ring into two planes if needed. |
+
+[O: U1,U2,U3,W38] komorebi creates border HWNDs with `TOOLWINDOW`,
+`NOACTIVATE` and initial `TOPMOST` styles; GlazeWM's Windows 11 focus border
+uses `DWMWA_BORDER_COLOR` on the target app instead of a border HWND;
+FancyZones creates unowned `WS_EX_TOOLWINDOW` zone windows per work area,
+shows them only while needed with `SW_SHOWNA`, then hides/pools them. Those
+choices explain their taskbar/Alt+Tab approach, **not** proven Task View
+absence for a persistent underlay.
+
+[I: W34-W38] Throwaway experiment: owned Notepad-like test windows, one
+then two monitors. Compare unowned and own-host-owned tool overlays, one
+full-monitor surface and per-visual HWNDs while opening/closing Task View
+(Win+Tab), cycling Alt+Tab, switching native virtual desktops and launching
+Explorer's Snap/Task View animations. Record separate overlay entries,
+thumbnails, visual bleed/flash, focus, Z order, CPU and teardown. Test whether
+`IVirtualDesktopManager::IsWindowOnCurrentVirtualDesktop` reports the overlay
+as expected on each switch [V: W5]. No public Task View enter/leave callback
+has been established, so do not build correctness on one; compare hiding on
+observed focus/desktop change against leaving a passive overlay visible.
+Repeat after Explorer restart and with a fullscreen game. If underlay
+placement or Task View is unacceptable, use the user-approved outline.
+Cross-process composition attachment, foreign-window reparenting, Explorer
+injection and undocumented shell APIs are excluded [V: W35; I].
 
 **Z-order failure cases:** placement is only as stable as the current stack.
 
@@ -306,32 +387,77 @@ If the previous value cannot be read, do not change a foreign HWND [I].
 
 ## Packaging, signing, updates and observability
 
-Prefer per-user installation and an update path that restores hidden windows
-before replacing the process. Packaging must not create a second tiler owner.
+**Store is an option.** Pursue the obvious set for Windows users: a Microsoft
+Store listing, a signed per-user installer on GitHub Releases and a `winget`
+manifest for that installer. Store MSIX is preferable *if* desktop hooks,
+login startup, workspace recovery and update/revert survive packaging proof.
+Otherwise the Store can list the same signed MSI/EXE, with our updater rather
+than Store-managed updates [I: W19,W20,W39-W42]. No second running owner.
 
 | Path | Fit | Recommendation |
 | --- | --- | --- |
-| MSIX + App Installer / Store | Signed package identity, per-user registration, startup-task extension and update channel; packaging/runtime/extension behavior needs a proof [V: W19,W20]. Store-submitted MSIX is signed by Microsoft [V: W20]. | Investigate after host and startup proof; do not assume classic Run/installer hooks work identically. |
-| WiX MSI / Inno Setup EXE | Conventional per-user or machine installer, explicit startup/revert and repair, but no automatic update built in [V: W19; O: U8]. | Signed per-user installer is preferred; compare WiX enterprise MSI vs simpler Inno EXE after updater proof [I]. |
-| Portable zip | Fast dev and manually started trial, no guaranteed login, uninstall, host-setting cleanup or updater [I]. | Provide a signed portable channel only with restore/stop CLI and clear owner precedence [I]. |
+| Store MSIX (preferred test) | [V: W19,W20,W39,W40,W46] Package a classic desktop app with `runFullTrust` (restricted capability requiring Store approval), `packagedClassicApp` and `mediumIL`, not a sandboxed UWP controller. User-controlled `windows.startupTask` supports login. Store signs/hosts MSIX at no cert charge and delivers updates. The package is per-user and has different storage/lifecycle behavior. | Prove window hooks, startup, registry/settings, restore on update/uninstall, capability approval, policy compliance and no side-by-side owner. Store updates only; do not run Velopack in this channel. |
+| Store listing of MSI/EXE | [V: W39,W41] Store accepts a publisher-hosted, offline, silent, signed installer at an immutable versioned HTTPS URL. The installer **and all PE binaries** need a CA-trusted Authenticode signature; a self-signed certificate does not qualify. Store does not update existing installations. | Fallback Store route if MSIX proof fails; use the same signed installer and explicit updater as GitHub. |
+| Signed direct installer + winget | [V: W20,W28; O: W42] Standard per-user WiX MSI or Inno EXE downloadable from GitHub; `winget` adds a command-line discovery/upgrade route. PowerToys documents Store, GitHub and `winget` together. | Ship the same publisher identity across channels; ensure install/update cannot create duplicate tiler owners. |
+| Portable zip | [I] Manual launch with no guaranteed login/startup, update or uninstall revert. | Development/trial route only, with standalone restore/stop CLI. |
+
+**Channel costs [V: W20,W39-W42]:** Store MSIX provides Microsoft signing,
+hosting and updates without a signing-certificate purchase; Partner Center
+developer registration is listed as free, but packaging and certification
+still cost development time. Direct GitHub installers and Store-listed
+MSI/EXE need a CA-trusted signer for the publisher path: Azure Artifact
+Signing starts near US$9.99/month for eligible identities; an OV certificate
+is roughly US$150-300/year plus hardware key storage. The Store-listed
+MSI/EXE also needs publisher-hosted versioned binaries. `winget` adds a
+manifest, not a second signing service, and uses the signed installer;
+GitHub release hosting is separate from Store hosting. Actual eligibility
+and ongoing delivery cost remain to be checked before publication [I].
+
+**Store technical boundary:** a Win32 Store listing is possible, but
+certification of this tiler's input and settings behavior remains unproven.
+
+- [V: W3,W43] `WH_KEYBOARD_LL` is a user-session hook with callbacks on its
+  own thread, not DLL injection into other apps. Microsoft documents hook
+  delivery involving packaged Store apps, not certification of our override.
+- [V: W46] A medium-integrity MSIX desktop app declares restricted
+  `runFullTrust` and explains it for Store approval. The separate restricted
+  `inputObservation`/`inputSuppression` capabilities refer to partner-only
+  input APIs; they are not a substitute for a Win32 low-level hook.
+- [V: W40] Packaged AppData and registry redirection depend on runtime
+  behavior. A medium-integrity classic desktop process is distinct from an
+  AppContainer process; packaging still needs a settings/recovery test.
+- [V: W44] The effective Store policy is version 7.19 (since 2025-10-14).
+  It requires supported methods and consent for changing Windows settings
+  and forbids disabling platform safety features. Version 7.20 has been
+  published but takes effect only on 2026-10-22.
+- [I: W19,W39-W44] Prove packaged Win+Arrow hook behavior, user-enabled
+  startup task and independent recovery. The Win+L lock-disabling policy
+  might block Store acceptance even if the user opts in; do not promise it
+  in the Store build. MSI/EXE login startup also requires separate consent.
+- [O: W42,W45] PowerToys with FancyZones is in the Store and also offers
+  GitHub and `winget`; FancyWM and an AutoHotkey v2 Store Edition have
+  listings. This proves distribution precedents, not approval of our hook,
+  Win+L policy or managed workspaces.
 
 [V: W27] Velopack has a Rust client and HTTP update/packaging flow. Its
 `vpk` CLI needs .NET SDK 8 on the Windows release runner, not the NixOS dev
 shell. [I] Test update with a running owner, hidden-window restore, rollback
-and signing order before choosing it. Compare `winget`-driven/manual upgrades
-and MSIX App Installer. Publish signed GitHub releases and a `winget`
-manifest; Scoop/Chocolatey may carry community-maintained packages [V: W28].
-Keep Windows CI independent of Nix/KDE delivery. Pin source/tools, record
-hashes and signing identity, and check unsigned payload determinism separately
-from timestamped signed packages [I].
+and signing order before choosing it for the installer channel. Do not run
+two auto-updaters against one installation: Store MSIX uses Store updates,
+Store-listed MSI/EXE and GitHub installers use the chosen app/installer update
+path, and `winget upgrade` remains user-invoked. Scoop/Chocolatey can be
+community-maintained alternatives [V: W28]. Keep Windows CI independent of
+Nix/KDE delivery. Pin tools, record hashes and signing identity, and compare
+unsigned payloads separately from timestamped signed packages [I].
 
 [V: W20] Azure Artifact Signing (formerly Trusted Signing) costs about
 US$9.99/month at the basic tier and limits individual eligibility by region.
 Organization-validated certificates run roughly US$150-300/year plus hardware
 key storage; extended validation costs more and no longer immediately clears
-SmartScreen. Microsoft signs Store-submitted MSIX packages. [I] Check the
-owner's eligibility before buying signing, and keep publisher identity stable
-across EXE, installer and update metadata.
+SmartScreen. Microsoft signs Store-submitted MSIX packages, but a direct
+download of the same MSIX still needs its own trusted signature [V: W20].
+[I] Check the owner's signing eligibility before purchasing; keep publisher
+identity stable across EXE, installer and update metadata.
 
 [I: `docs/principles.md:50-66`, W29] Write bounded structured `tracing`
 summaries under `%LOCALAPPDATA%\plasma-auto-tiler\logs`; enable redacted
@@ -383,35 +509,45 @@ called in its adapter; no KWin processes or effect library are transplanted.
 
 ## Phased roadmap (qualitative)
 
-Capability spikes come before permanent Windows adapter work. Each phase
-needs a visible result, including negative results where an API refuses.
+**KDE-first core extraction is Phase 0 [user decision 2026-09-30].** Windows
+development starts only after its KWin fixtures and applicable user live
+checks pass. Then use disposable owned apps on the physical Windows 11 PC;
+make restore/stop work before hiding an ordinary desktop window.
 
 | Phase | Goal / scope | Exit evidence | Throwaway spikes first | Effort / risk |
 | --- | --- | --- | --- | --- |
-| 0. Host truth | Choose Windows 11 build/hardware, Dev VM and CI loop; capture benchmark of unmodified games, Snap, DPI. | Cross-compile and Windows runner produce same-version smoke binary; VM deploy/restart/log read, physical game baseline recorded. | MSVC `cargo-xwin` vs Windows-native build; QEMU virtual GPU vs passthrough; Wine launch vs real DWM. | Small-medium / medium. |
-| 1. Capability probes | Establish input, visibility, geometry, z-order and game gates on disposable owned windows. | Return-value/readback matrix on two DPI monitors; observed shell, app and elevated-window behavior. | `RegisterHotKey` vs forced hook for Win+D/Tab/number/Arrow/Shift; Start menu mask; isolated VM Win+L policy write, immediate readback, Ctrl+Alt+Del Lock and `LockWorkStation()`, restore; `SetWindowPos` underlay insertion/contiguity/owned popups; DWM transitions flag on owned and foreign windows; hide/crash recovery and game overlays. | Medium / highest. |
-| 2. Normal-window tiling | Windows adapter into existing Engine, foreground and hidden-domain observation, focus and recovery; separate UI from control. | Owned-app and representative real-app tiling/readback, 3-strike/evidence policy decision, sleep/hotplug/RDP/Explorer restart, no game writes. | WinEvent missed-event/reconciliation and DPI clamp; UWP/owned-modal eligibility; hook thread overload/silent removal. | Large / high. |
-| 3. First-class workspaces and visuals | If visibility passes, per-monitor switch/send and recovery; active border, inserted group underlay and drop preview. | Two independent monitors, trailing empty, no focus theft, taskbar/Alt+Tab behavior accepted, crash restores windows, underlay stable under focus and dialog churn; no game impact. | Forced-kill visibility ledger; shell cloak only for comparison; underlay `GW_HWNDNEXT` verification across topmost/owned/noncontiguous windows; DirectComposition vs layered preview; no-op setter flicker. | Large / highest. |
-| 4. Settings, delivery and release | Live settings, shortcut/Snap conflict Fix/Revert, tray, signing, auto-update, recovery/uninstall. | Narrator/contrast/dark/light, keyboard/tray Explorer restart, clean per-user install/update/uninstall + owned-setting restore, signed release and Windows CI gates. | Win32/tray-icon vs WinUI/Slint UI; Scheduler vs HKCU Run vs MSIX startup; Velopack atomic update/rollback; Azure signing eligibility/SmartScreen. | Medium-large / high. |
+| 0. KDE-first extraction | Move only proven portable policy; preserve current KWin behavior before Windows implementation. | KWin fixtures and user live checks for each extraction step, as specified in [extraction](../cross-platform-core/extraction.md); no Windows product build. | KWin pure-policy fixtures before edits; no Windows host mutation. | Medium / controlled KWin regression risk. |
+| 1. Physical host + input/recovery | Install Windows toolchain, record two-monitor baseline, prove independent restore command and Win+Arrow. | Native build, dev restart/log loop and verified kill/restore on owned windows. **Win+Arrow opt-in works on the user's physical Win11 PC** with Snap/Start suppression and reversal; otherwise user-specific feature completeness is blocked. | `RegisterHotKey` vs `WH_KEYBOARD_LL` all four Win+Arrows, key-up masking, game disable; Win+L policy only in a safe disposable environment, not on an unrecoverable daily desktop; forced-crash restore. | Medium / highest input risk. |
+| 2. Window geometry | Wire Windows observation/actuation to the extracted Engine for normal windows; retain evidence-based convergence. | Owned apps then representative desktop apps tile/read back with DPI, focus, sleep, display change and Explorer restart; no game writes. | WinEvent dropped-event, DWM invisible-frame/min-size and UWP/owned-dialog probes; hook timeout detection. | Large / high. |
+| 3. Required workspaces + visuals | After visibility proof, implement per-monitor logical workspaces, borders, group visual and drop preview. | Two monitors with independent workspaces, trailing empty, taskbar/Alt+Tab/Task View accepted, crash recovery and gaming pass. True underlay **or approved outline fallback** works without shell pollution. | `ShowWindow` hide/reveal ledger and forced loss; underlay inserted behind group; owned/unowned tool HWND vs single custom-drawn monitor surface through Win+Tab, desktop switch, Explorer animation and fullscreen; private cloak only comparative. | Large / highest recovery and rendering risk. |
+| 4. Settings + distribution | Live apply, consented conflict/revert, tray, Store proof, signed manual install and updates. | Store package feasibility or documented installer-listing fallback; `winget` manifest, signed GitHub release, clean install/update/uninstall and owner restoration; user accessibility journey. **Win+Arrow remains a feature-complete exit gate.** | Packaged full-trust hook/startup/install test; Store certification preflight; Win32/tray UI; MSIX vs signed MSI/EXE updater channel; signing identity and SmartScreen. | Medium-large / high. |
 
-[I: W9] Test portable Rust behavior on Linux and Windows, headless contracts
-on hosted CI, window/event journeys in the interactive VM and secure desktop,
-fast switching, sleep, remote desktop and games on physical Windows. Hosted
-CI passing does not establish fullscreen or anti-cheat behavior.
+[I: W9] Test portable Rust behavior on Linux and Windows and headless
+contracts on hosted CI. Run owner-verified interactive journeys on the user's
+physical PC with project restore available, then physical/manual game, UAC,
+fast-user-switch, sleep and remote-desktop checks. A VM is optional for
+isolation, not assumed available. Hosted CI passing cannot prove hooks,
+fullscreen or anti-cheat compatibility.
 
 ## Open user decisions
 
-These product choices remain with the user after the disposable spikes; the
-recommendations below are starting positions, not approved behavior.
+Windows 11 x64, managed-workspace release bar, shortcut defaults and
+Win+Arrow gate, explicit Win+L opt-in, group-outline fallback, KDE-first
+sequencing, physical-PC development and unsurprising distribution are user
+decisions of 2026-09-30. The technology behind them still needs proof.
 
-| Decision | Options and consequences | Recommendation |
+| Status / decision | Options and consequences | Recommendation |
 | --- | --- | --- |
-| Windows target | Win11-only simplifies DWM native border/Mica and avoids ended Win10 Home/Pro support; Win10 needs distinct visual/fallback/test obligations [V: W6,W21]. | Win11 x64 only initially; choose exact minimum build after spike. |
-| Workspace release bar | Native-current-desktop only is simpler but violates first-class per-monitor workspaces; project-managed is harder and needs a recovery/shell contract [I: W5,W6]. | Require managed per-monitor proof before calling Windows feature-complete; permit tiling-only development previews. |
-| Reserved shortcuts | [V: W3,W12; O: U11] Native Win chords can be overridden in some cases. Opt-in Win+L requires a policy that may disable every lock route, unlike KDE's isolated shortcut relocation. | Non-Win defaults; offer proven Win overrides. Present Win+L policy opt-in only if replacement locking and exact revert pass. |
-| Windows visual parity | [V: W2,W31; I] A non-topmost underlay inserted below the bottom member is feasible for contiguous normal groups, but ownership/topmost/restacking can break it. | Prototype true underlay first; consider reduced outline only if the user accepts measured failure cases. |
-| Distribution + signing | MSIX/Store cleaner identity but startup limits to validate; signed installer + winget + optional Velopack offers classic desktop control and signing cost; portable lacks lifecycle [V: W19,W20,W27]. | Prototype per-user signed classic installer, defer selecting updater/signing purchase until proof and eligibility. |
-| Elevated windows | Exclusion preserves medium-integrity boundary but not full-app parity; UIAccess/signed elevated helper adds security/maintenance cost [V: W4; I]. | Explicit unmanaged state, no elevated helper first release. |
+| Decided: OS and workspaces | [User 2026-09-30] Win11 x64; managed per-monitor workspaces before Windows or macOS feature-complete. | Tiling-only previews can precede the workspace gate. |
+| Decided: shortcuts | [User 2026-09-30] Non-Win defaults, proven opt-in Win+Arrow, explicit opt-in Win+L. Win+Arrow is required for this user's feature-complete experience. | Keep Win+L policy behavior as an unproven spike, not a promise. |
+| Decided: group visual | [User 2026-09-30] Test custom drawing and shell pollution; outline fallback accepted if the underlay fails. | Choose a renderer only after Task View/Alt+Tab evidence. |
+| Decided: development and distribution goal | [User 2026-09-30] Native physical Windows PC after KDE-first extraction; distribution should feel obvious. | Test Store MSIX alongside signed installer and winget, without promising MSIX certification. |
+| Open: elevated apps | [V: W4; I] Leave administrator apps floating/unmanaged, or add UIAccess/elevated helper with signing, privilege and maintenance costs. | Exclude initially pending user choice after a concrete normal/admin-window demo. |
+| Open: Store implementation if both pass | [V: W39-W41; I] Store MSIX has Store signing/updates but differs in process/storage behavior; Store-listed MSI/EXE shares the manual installer and updater, but needs publisher signing and hosting. | Prefer MSIX only if desktop hooks, login, policy and recovery pass; otherwise list the signed installer. Resolve any user-visible updater/channel tradeoff with the user. |
+
+The KDE-first logical workspace extraction choice is open in
+[cross-platform extraction](../cross-platform-core/extraction.md); its shape
+depends on Windows visibility evidence.
 
 ## Risks
 
@@ -424,13 +560,19 @@ policy-based Win+L and overlay stacking add separate UX risks.
 | Game latency/anti-cheat or fullscreen overlay | Critical; hook or HWND overlap on game | Physically measured exclusive/borderless/anti-cheat matrix, immediate event-gated disable, no overlay/writes while game active [V: W3,W22; I]. |
 | Private COM API churn | High; internal desktops/shell cloak changes | Avoid as required path; build matrix only for comparison [O: U1,U6]. |
 | Lost shortcuts / Start/Snap interference | High; Win chords conflict or silent LL removal | Non-Win defaults; hook matrix and recovery; explicit Fix/Revert with settings preimage [V: W3; I]. |
-| Lock action disabled by Win+L policy | Critical; no remaining keyboard/API lock route | Do not enable before verifying alternate lock, readback, effect timing, policy owner and exact revert in a VM [V: W12; O: U12; I]. |
-| Underlay above dialog or lost behind group | High; topmost, owned or non-contiguous members | Insert behind lowest member, walk Z order, react to reorder; suppress only the affected visual when invariant fails [V: W31; O: U13; I]. |
+| Win+Arrow override fails or hurts games | Critical for this user's feature-complete goal | Physical-PC hook/Snap/Start/game matrix before claiming support; non-Win defaults and immediate revert remain usable for previews [O: U3; I]. |
+| Lock action disabled by Win+L policy | Critical; no remaining keyboard/API lock route | Do not write on an unrecoverable daily desktop; prove alternate lock, refresh timing, policy owner and exact revert in an isolated account/VM first [V: W12; O: U12; I]. |
+| Underlay pollutes Task View or covers dialogs | High; shell includes overlay, topmost or non-contiguous members | Compare unowned/owned tool windows and custom-drawn per-monitor surface during Win+Tab and desktop switches; suppress failed visual and use approved outline fallback [V: W34,W35; O: U13; I]. |
+| Daily-PC recovery fails | Critical; hide/restart/shortcut loop strands desktop | Independent restore command and out-of-hook kill switch verified before real windows; disable startup for crash probes [I]. |
+| Store package lacks control or certification | High; hook/startup/Win+L policy refused | MSIX full-trust/startup/certification experiment, same signed MSI/EXE Store-listing fallback, channel-specific updates [V: W39-W44; I]. |
 | DPI/client refusal/UWP/mixed IL | High; geometry/readback mismatch | Per-monitor-v2, physical frame conversion, complete observation, explicit skip with reason, app matrix [V: W4,W16; I]. |
 | Explorer, sleep, RDP, fast-user switching | High; stale handles/work area | WTS/power/display/taskbar signals, fresh enumeration and controlled rebind, interactive VM/physical journey [V: W10,W13; I]. |
 | Signing/update trust and supply chain | Medium-high; broken updater or SmartScreen | Locked CI, signed package and metadata, staged update rollback/recovery, channel separation [V: W20,W27; I]. |
 
-## Sources (accessed 2026-09-29)
+## Sources (W1-W32/U1-U15 checked 2026-09-29; W33-W46 checked 2026-09-30)
+
+The source keys above distinguish documented API behavior from upstream
+implementations and untested Windows outcomes.
 
 - W1: [Microsoft, interactive services / Session 0](https://learn.microsoft.com/en-us/windows/win32/services/interactive-services). W2: [SetWindowPos](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos), [DeferWindowPos](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-deferwindowpos), [SetWinEventHook](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwineventhook).
 - W3: [RegisterHotKey](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey), [LowLevelKeyboardProc](https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelkeyboardproc), [disabling game shortcut keys](https://learn.microsoft.com/en-us/windows/win32/dxtecharts/disabling-shortcut-keys-in-games), [Windows Snap guide](https://support.microsoft.com/en-us/windows/experience/snap-your-windows). W4: [mandatory integrity control](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control), [SetForegroundWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow), [UIAccess policy](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/user-account-control-only-elevate-uiaccess-applications-that-are-installed-in-secure-locations).
@@ -450,3 +592,17 @@ policy-based Win+L and overlay stacking add separate UX risks.
 - U13: komorebi [border Z-order implementation](https://github.com/LGUG2Z/komorebi/blob/master/komorebi/src/border_manager/mod.rs), [border positioning](https://github.com/LGUG2Z/komorebi/blob/master/komorebi/src/border_manager/border.rs), [popup-overdraw issue #971](https://github.com/LGUG2Z/komorebi/issues/971), [border tracking issue #1607](https://github.com/LGUG2Z/komorebi/issues/1607).
 - U14: komorebi [JetBrains flicker #781](https://github.com/LGUG2Z/komorebi/issues/781) and [no-op position fix](https://github.com/LGUG2Z/komorebi/commit/54c58be858ebe62acb329bd96ea2d60950dfb46f); GlazeWM [JetBrains flicker #1401](https://github.com/glzr-io/glazewm/issues/1401) and [border-flicker fix #752](https://github.com/glzr-io/glazewm/pull/752).
 - U15: komorebi [Firefox focus theft #1235](https://github.com/LGUG2Z/komorebi/issues/1235); GlazeWM [focus-stealing request #793](https://github.com/glzr-io/glazewm/issues/793) and [unmerged Files workspace-switch PR #1160](https://github.com/glzr-io/glazewm/pull/1160).
+- W33: [Microsoft Windows Rust setup (MSVC/rustup)](https://learn.microsoft.com/en-us/windows/dev-environment/rust/setup), [just Windows installation](https://github.com/casey/just#installation).
+- W34: [Microsoft extended window styles](https://learn.microsoft.com/en-us/windows/win32/winmsg/extended-window-styles), [taskbar button ownership/styles](https://learn.microsoft.com/en-us/windows/win32/shell/taskbar), [layered window painting and hit testing](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features).
+- W35: [DirectComposition foreign-HWND denial](https://learn.microsoft.com/en-us/windows/win32/api/dcomp/nf-dcomp-idcompositiondevice-createtargetforhwnd), [Windows.UI.Composition Win32 host](https://learn.microsoft.com/en-us/windows/uwp/composition/using-the-visual-layer-with-win32).
+- W36: [DwmRegisterThumbnail destination ownership](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmregisterthumbnail).
+- W37: [Magnification API host window](https://learn.microsoft.com/en-us/windows/win32/winauto/magapi/magapi-intro).
+- W38: [FancyZones `WorkArea.cpp` toolwindow](https://github.com/microsoft/PowerToys/blob/main/src/modules/fancyzones/FancyZonesLib/WorkArea.cpp), [overlay rendering and hide](https://github.com/microsoft/PowerToys/blob/main/src/modules/fancyzones/FancyZonesLib/ZonesOverlay.cpp), [komorebi border HWND styles](https://github.com/LGUG2Z/komorebi/blob/master/komorebi/src/windows_api.rs), [GlazeWM native window](https://github.com/glzr-io/GlazeWM/blob/main/packages/wm-platform/src/native_window.rs).
+- W39: [Microsoft Win32 Store paths and update ownership](https://learn.microsoft.com/en-us/windows/apps/distribute-through-store/how-to-distribute-your-win32-app-through-microsoft-store), [distribution comparison](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/choose-distribution-path).
+- W40: [MSIX packagedClassicApp/mediumIL](https://learn.microsoft.com/en-us/windows/msix/desktop/desktop-to-uwp-behind-the-scenes), [desktop startup task](https://learn.microsoft.com/en-us/uwp/schemas/appxpackage/uapmanifestschema/element-desktop-startuptask), [application manifest](https://learn.microsoft.com/en-us/uwp/schemas/appxpackage/uapmanifestschema/element-f-application).
+- W41: [Store MSI/EXE signing, silent install and immutable URL](https://learn.microsoft.com/en-us/windows/apps/publish/publish-your-app/msi/app-package-requirements), [Store signing costs](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options).
+- W42: [PowerToys Store, GitHub and winget installation](https://learn.microsoft.com/en-us/windows/powertoys/install).
+- W43: [SetWindowsHookEx: Store-app hook delivery](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowshookexw), [low-level callback](https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelkeyboardproc).
+- W44: [Store policy 7.19 (effective 2025-10-14)](https://learn.microsoft.com/en-us/windows/apps/publish/store-policy-archive/store-policy-7-19), [7.20 date and policy history](https://learn.microsoft.com/en-us/windows/apps/publish/store-policies-change-history).
+- W45: [PowerToys listing](https://apps.microsoft.com/detail/xp89dcgq3k6vld), [FancyWM listing](https://apps.microsoft.com/detail/9p1741lkhqs9), [AutoHotkey v2 Store Edition listing](https://apps.microsoft.com/detail/9plqfdg8hh9d).
+- W46: [MSIX full-trust capability and Store approval](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/app-capability-declarations#which-kinds-of-apps-do-app-capabilities-apply-to), [restricted input API limits](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/app-capability-declarations#restricted-capability-list).
