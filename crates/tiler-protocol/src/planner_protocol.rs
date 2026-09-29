@@ -609,12 +609,14 @@ pub fn summarize_adoption_fit(
     outcome: &str,
     windows: usize,
     reason: &str,
+    centre_splits: usize,
 ) -> String {
     format!(
-        "{ADOPTION_FIT_PREFIX} outcome={} windows={} reason={} correlation={}",
+        "{ADOPTION_FIT_PREFIX} outcome={} windows={} reason={} centre_splits={} correlation={}",
         adoption_token(Some(outcome)),
         windows,
         adoption_token(Some(reason)),
+        centre_splits,
         summary_correlation(Some(correlation)),
     )
 }
@@ -633,6 +635,7 @@ fn emit_engine_adoption_fit(engine: &Engine) {
                 report.outcome,
                 report.windows,
                 report.reason,
+                report.centre_splits,
             )
         );
     }
@@ -6637,7 +6640,8 @@ mod tests {
 
     #[test]
     fn reconcile_fresh_fallback_seeds_deterministic_geometry() {
-        // Heavily overlapping rectangles use deterministic spatial seeding.
+        // Identical centres on both axes have no cut: fallback to the normal
+        // deterministic seed with zero centre splits.
         let mut planner = Planner::new();
         let reply = parse_reply(&planner.evaluate(&retained_request(
             "fresh-seed-rec",
@@ -6657,7 +6661,10 @@ mod tests {
             ]),
             "{reply}"
         );
-        assert_eq!(planner.engine.last_adoption_fit().unwrap().reason, "no_cut");
+        let report = planner.engine.last_adoption_fit().expect("fallback logs");
+        assert_eq!(report.outcome, "fallback", "{reply}");
+        assert_eq!(report.reason, "no_cut", "{reply}");
+        assert_eq!(report.centre_splits, 0, "{reply}");
         assert_eq!(planner.retained_domains(), 1);
     }
 
@@ -9318,6 +9325,7 @@ mod tests {
             assert_eq!(report.outcome, "fitted", "{reply}");
             assert_eq!(report.reason, "ok", "{reply}");
             assert_eq!(report.windows, 3, "{reply}");
+            assert_eq!(report.centre_splits, 0, "{reply}");
         }
     }
 
@@ -9409,10 +9417,10 @@ mod tests {
     }
 
     #[test]
-    fn adoption_fit_overlap_within_tolerance_fits_and_beyond_falls_back() {
+    fn adoption_fit_overlap_within_tolerance_fits_and_beyond_centre_splits() {
         // Domain 1200 wide: tolerance is max(0, 36) = 36. A 5px cross-cut
-        // overlap still fits; a 200px overlap has no valid cut and falls
-        // back to the deterministic seed.
+        // overlap still fits clean; a 200px overlap has no valid cut and
+        // centre-splits on the largest sorted centre gap.
         let mut fitted_planner = Planner::new();
         let fitted = parse_reply(&fitted_planner.evaluate(&retained_request(
             "adopt-tol-1",
@@ -9434,9 +9442,10 @@ mod tests {
         let report = fitted_planner.engine.last_adoption_fit().expect("fit logs");
         assert_eq!(report.outcome, "fitted", "{fitted}");
         assert_eq!(report.reason, "ok", "{fitted}");
+        assert_eq!(report.centre_splits, 0, "{fitted}");
 
-        let mut fallback_planner = Planner::new();
-        let fallback = parse_reply(&fallback_planner.evaluate(&retained_request(
+        let mut split_planner = Planner::new();
+        let fallback = parse_reply(&split_planner.evaluate(&retained_request(
             "adopt-tol-2",
             "owner-1",
             "gen-1",
@@ -9453,28 +9462,159 @@ mod tests {
             ]),
             "{fallback}"
         );
-        let fallback_report = fallback_planner
+        let fallback_report = split_planner
             .engine
             .last_adoption_fit()
-            .expect("fallback logs");
-        assert_eq!(fallback_report.outcome, "fallback", "{fallback}");
-        assert_eq!(fallback_report.reason, "no_cut", "{fallback}");
+            .expect("split logs");
+        assert_eq!(fallback_report.outcome, "fitted", "{fallback}");
+        assert_eq!(fallback_report.reason, "ok", "{fallback}");
+        assert_eq!(fallback_report.centre_splits, 1, "{fallback}");
+    }
+
+    #[test]
+    fn adoption_fit_cascade_orders_spatially_with_centre_splits() {
+        // Overlapping cascades with both x/y offsets centre-split and project
+        // in spatial order regardless of focus or input order.
+        let horizontal = [
+            ("win-1", 0, 0, 600, 600),
+            ("win-2", 200, 50, 600, 600),
+            ("win-3", 400, 100, 600, 600),
+            ("win-4", 600, 150, 600, 600),
+        ];
+        let vertical = [
+            ("win-1", 0, 0, 1000, 400),
+            ("win-2", 50, 150, 1000, 400),
+            ("win-3", 100, 300, 1000, 400),
+        ];
+        for (tag, windows, horizontal_axis) in [
+            ("adopt-cascade-h", horizontal.as_slice(), true),
+            ("adopt-cascade-v", vertical.as_slice(), false),
+        ] {
+            let mut baseline = None;
+            for focused in windows.iter().map(|w| w.0) {
+                for reversed in [false, true] {
+                    let mut ordered = windows.to_vec();
+                    if reversed {
+                        ordered.reverse();
+                    }
+                    let mut planner = Planner::new();
+                    let reply = parse_reply(&planner.evaluate(&retained_request(
+                        tag,
+                        "owner-1",
+                        "gen-1",
+                        focused,
+                        &ordered,
+                        serde_json::json!({"op": "reconcile"}),
+                    )));
+                    assert_eq!(reply["outcome"], "planned", "{reply}");
+                    let got = geometry_by_window(&reply);
+                    let names: Vec<&str> = windows.iter().map(|w| w.0).collect();
+                    assert_geometry_covers(&reply, &names);
+                    if horizontal_axis {
+                        let mut last_x = -1;
+                        for name in names {
+                            let (x, _, _, _) = got[name];
+                            assert!(x > last_x, "{reply} focused={focused}");
+                            last_x = x;
+                        }
+                    } else {
+                        let mut last_y = -1;
+                        for name in names {
+                            let (_, y, _, _) = got[name];
+                            assert!(y > last_y, "{reply} focused={focused}");
+                            last_y = y;
+                        }
+                    }
+                    if let Some(first) = &baseline {
+                        assert_eq!(&got, first, "focused={focused} reversed={reversed}");
+                    } else {
+                        baseline = Some(got);
+                    }
+                    let report = planner.engine.last_adoption_fit().expect("fit logs");
+                    assert_eq!(report.outcome, "fitted", "{reply}");
+                    assert!(report.centre_splits > 0, "{reply}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn adoption_fit_big_small_projects_proportional_and_focus_independent() {
+        // Overlapping big/small pairs project proportional widths/heights,
+        // not equal splits, identically for either focus choice.
+        for (tag, windows, horizontal_axis) in [
+            (
+                "adopt-sizes-h",
+                [
+                    ("win-big", 0, 0, 1000, 800),
+                    ("win-small", 800, 0, 300, 800),
+                ]
+                .as_slice(),
+                true,
+            ),
+            (
+                "adopt-sizes-v",
+                [
+                    ("win-big", 0, 0, 1200, 600),
+                    ("win-small", 0, 500, 1200, 200),
+                ]
+                .as_slice(),
+                false,
+            ),
+        ] {
+            let mut baseline = None;
+            for focused in ["win-big", "win-small"] {
+                let mut planner = Planner::new();
+                let reply = parse_reply(&planner.evaluate(&retained_request(
+                    tag,
+                    "owner-1",
+                    "gen-1",
+                    focused,
+                    windows,
+                    serde_json::json!({"op": "reconcile"}),
+                )));
+                assert_eq!(reply["outcome"], "planned", "{reply}");
+                let got = geometry_by_window(&reply);
+                assert_geometry_covers(&reply, &["win-big", "win-small"]);
+                let big = got["win-big"];
+                let small = got["win-small"];
+                if horizontal_axis {
+                    assert!(big.2 > small.2, "{reply} focused={focused}");
+                    assert!(big.2 > 600 && small.2 < 600, "{reply}");
+                    assert_eq!(big.2 + small.2, 1200, "{reply}");
+                    assert_eq!((big.0, small.0), (0, big.2), "{reply}");
+                } else {
+                    assert!(big.3 > small.3, "{reply} focused={focused}");
+                    assert!(big.3 > 400 && small.3 < 400, "{reply}");
+                    assert_eq!(big.3 + small.3, 800, "{reply}");
+                    assert_eq!((big.1, small.1), (0, big.3), "{reply}");
+                }
+                if let Some(first) = &baseline {
+                    assert_eq!(&got, first, "focused={focused}");
+                } else {
+                    baseline = Some(got);
+                }
+                let report = planner.engine.last_adoption_fit().expect("fit logs");
+                assert_eq!(report.outcome, "fitted", "{reply}");
+                assert!(report.centre_splits > 0, "{reply}");
+            }
+        }
     }
 
     #[test]
     fn adoption_fit_summary_is_correlated_bounded_and_single_per_attempt() {
-        let line = summarize_adoption_fit("adopt-log-1", "fitted", 3, "ok");
+        let line = summarize_adoption_fit("adopt-log-1", "fitted", 3, "ok", 0);
         assert_eq!(
             line,
-            "plasma-auto-tiler:adoption-fit outcome=fitted windows=3 reason=ok correlation=adopt-log-1"
+            "plasma-auto-tiler:adoption-fit outcome=fitted windows=3 reason=ok centre_splits=0 correlation=adopt-log-1"
         );
-        let fallback = summarize_adoption_fit("adopt-log-2", "fallback", 2, "single_window");
+        let fallback = summarize_adoption_fit("adopt-log-2", "fallback", 2, "single_window", 0);
         assert!(fallback.contains("outcome=fallback"), "{fallback}");
         assert!(fallback.contains("windows=2"), "{fallback}");
         assert!(fallback.contains("reason=single_window"), "{fallback}");
         assert!(fallback.contains("correlation=adopt-log-2"), "{fallback}");
         assert!(!fallback.contains("win-1"), "{fallback}");
-        let garbage = summarize_adoption_fit("evil!!", "FITTED!!", 2, "evil reason!!");
+        let garbage = summarize_adoption_fit("evil!!", "FITTED!!", 2, "evil reason!!", 0);
         assert!(!garbage.contains("evil"), "{garbage}");
         assert!(garbage.contains("correlation=-"), "{garbage}");
 
@@ -9498,8 +9638,9 @@ mod tests {
                 single_report.outcome,
                 single_report.windows,
                 single_report.reason,
+                single_report.centre_splits,
             ),
-            "plasma-auto-tiler:adoption-fit outcome=fallback windows=1 reason=single_window correlation=adopt-log-single-1"
+            "plasma-auto-tiler:adoption-fit outcome=fallback windows=1 reason=single_window centre_splits=0 correlation=adopt-log-single-1"
         );
 
         let mut excluded = Planner::new();

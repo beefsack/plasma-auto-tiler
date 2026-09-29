@@ -10,6 +10,15 @@ decisions of 2026-09-24 are under
 
 ## Open work
 
+- P1 | Tray tiling/floating workspace toggle (next, user 2026-09-29) | Tray
+  icon click opens a menu instead of Settings directly: Settings item,
+  toggle tiling/floating for the current workspace, and a toggle for the
+  default of new workspaces (tiling by default). Only the default persists;
+  a new session applies it to all workspaces (user, 2026-09-29). Orchestrator
+  defaults: switching to floating leaves windows in place; switching back to
+  tiling re-adopts via the adoption fit.
+  [cosmic menu](reference-cosmic-tray-menu.md)
+
 - P1 | Ghostty/local native alignment | The ~56 px shortfall is unexplained
   (source-only baseline fix is in; needs a fresh `just dev trace` local-move
   plus follow-on command trace), and one requested `2032x1092` became
@@ -223,13 +232,14 @@ All items below shipped offline with no live result claimed.
   8 px gaps, one planned-applied result, no immediate reconcile.
   [decision](decisions.md#production-interactive-edge-drag)
 - Startup adoption recursive-cut fit (user decision 2026-09-29, replaces the
-  near-strip fit): restart the tiler over a previously tiled nested layout
-  (e.g. one left, two stacked right) with each member focused in turn, and
-  after resizing/moving tiles. Expect `[planner]
-  plasma-auto-tiler:adoption-fit outcome=fitted ... reason=ok`,
-  `disposition=skip-already-equal` for unchanged tiles and no window swaps.
-  Red flags: `reason=no_cut` on a normal tiled layout, swaps, repeated
-  writes after settling.
+  near-strip fit): user confirmed live (2026-09-29) it works really well
+  restarting over a previously tiled workspace. Remaining: confirmed
+  Planner-loss fresh session; centre-split fallback for overlapping
+  free-floating windows (user option B, shipped offline): two overlapping
+  windows tile in position order with proportionate shares, `adoption-fit
+  outcome=fitted ... centre_splits=1`; restarting over the result logs
+  `centre_splits=0` with equal-rect skips. Red flags: fallback for distinct
+  centres, reversed order, centre splits on clean tiles.
   [record](changes/placement-aware-startup-adoption.md)
 - KWin controller silent unload (diagnostic only): attribute only with
   before/after `isScriptLoaded`, exact `Script<ID>`, and KWin PID/start

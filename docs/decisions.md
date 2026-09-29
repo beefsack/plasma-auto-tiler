@@ -376,6 +376,16 @@ the corresponding item ships; each such entry names its replacement.
   fit exclusions, lifecycle and canonical configured-gap projection remain
   unchanged; a flat strip is just a one-level fit. This still selects no
   exhaustive search or historical topology reconstruction.
+  User decision 2026-09-29, option B: eligible free-positioned overlapping
+  windows also receive a near-position fit instead of declining to the normal
+  seed spiral. Keep it simple, with no complex edge-case handling. Orchestrator
+  defaults: prefer existing tolerance-valid cuts; if a multi-window piece has
+  none on either axis, binary-split at the largest adjacent gap between sorted
+  window centres, choosing the axis with the larger gap (horizontal tie).
+  Child shares use each side's largest observed member span on that axis; recurse
+  normally. If both centre gaps are zero, decline the whole fit and keep the
+  existing seed fallback. The correlated adoption-fit summary counts centre
+  splits. Cleanly tiled layouts retain their current fit and exception rules.
 
 ## Live KWin/Plasma Boundary
 

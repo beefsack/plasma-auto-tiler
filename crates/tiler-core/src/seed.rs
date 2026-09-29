@@ -70,6 +70,14 @@ pub fn try_recursive_cut_fit(
     domain: &OutputDomain,
     windows: &[EngineWindow],
 ) -> Result<(Node, Vec<WindowLink>), FitDeclineReason> {
+    try_recursive_cut_fit_with_centre_count(domain, windows).map(|(tree, links, _)| (tree, links))
+}
+
+/// Fit plus the committed centre-split count (0 for clean fits).
+pub fn try_recursive_cut_fit_with_centre_count(
+    domain: &OutputDomain,
+    windows: &[EngineWindow],
+) -> Result<(Node, Vec<WindowLink>, usize), FitDeclineReason> {
     if windows.len() < 2 {
         return Err(FitDeclineReason::SingleWindow);
     }
@@ -108,6 +116,12 @@ pub fn try_recursive_cut_fit(
             Axis::Vertical => i64::from(rect.y) + i64::from(rect.h),
         }
     }
+    fn primary_span(rect: Rect, axis: Axis) -> i64 {
+        match axis {
+            Axis::Horizontal => i64::from(rect.w),
+            Axis::Vertical => i64::from(rect.h),
+        }
+    }
     fn sort_for_axis(items: &mut [(WindowId, Rect)], axis: Axis) {
         match axis {
             Axis::Horizontal => items.sort_by_key(|a| (a.1.x, a.1.y, a.1.w, a.1.h)),
@@ -123,77 +137,92 @@ pub fn try_recursive_cut_fit(
     struct Alloc {
         next_leaf: usize,
         next_group: usize,
+        centre_splits: usize,
     }
-    // Collect every valid cut on this axis; each child tries the other axis.
-    fn build_region(
-        domain: &OutputDomain,
-        members: &[(WindowId, Rect)],
-        axis: Axis,
-        alloc: &mut Alloc,
-    ) -> Option<(Node, Vec<WindowLink>)> {
+    fn valid_cuts(members: &[(WindowId, Rect)], axis: Axis, tol: i64) -> Vec<usize> {
         let mut ordered: Vec<(WindowId, Rect)> = members.to_vec();
         sort_for_axis(&mut ordered, axis);
-        let tol = tolerance(domain, axis);
-        let mut prefix_max: Vec<i64> = Vec::with_capacity(ordered.len());
-        let mut running = i64::MIN;
+        let mut prefix = i64::MIN;
+        let mut prefix_max = Vec::with_capacity(ordered.len());
         for (_, rect) in &ordered {
-            running = running.max(primary_end(*rect, axis));
-            prefix_max.push(running);
+            prefix = prefix.max(primary_end(*rect, axis));
+            prefix_max.push(prefix);
         }
-        let mut suffix_min: Vec<i64> = vec![0; ordered.len()];
         let mut floor = i64::MAX;
+        let mut suffix_min = vec![0; ordered.len()];
         for (index, (_, rect)) in ordered.iter().enumerate().rev() {
             floor = floor.min(primary_start(*rect, axis));
             suffix_min[index] = floor;
         }
-        let mut cuts: Vec<usize> = Vec::new();
-        for index in 0..ordered.len() - 1 {
-            // A midpoint cut exists when neither side crosses it by more
-            // than the tolerance, including when their extents overlap.
-            if prefix_max[index] - suffix_min[index + 1] <= 2 * tol {
-                cuts.push(index);
+        (0..ordered.len().saturating_sub(1))
+            .filter(|i| prefix_max[*i] - suffix_min[*i + 1] <= 2 * tol)
+            .collect()
+    }
+    fn centre_gap(members: &[(WindowId, Rect)], axis: Axis) -> (i64, usize) {
+        let mut keys: Vec<(i64, i64, i64)> = members
+            .iter()
+            .map(|(_, r)| {
+                let s = primary_start(*r, axis);
+                let span = primary_span(*r, axis);
+                (2 * s + span, s, span)
+            })
+            .collect();
+        keys.sort();
+        let mut best = (0, 0);
+        for i in 0..keys.len().saturating_sub(1) {
+            let gap = keys[i + 1].0 - keys[i].0;
+            if gap > best.0 {
+                best = (gap, i);
             }
         }
-        if cuts.is_empty() {
-            return None;
-        }
+        best
+    }
+    fn max_span(members: &[(WindowId, Rect)], axis: Axis) -> i64 {
+        members
+            .iter()
+            .map(|(_, r)| primary_span(*r, axis))
+            .max()
+            .unwrap_or(0)
+    }
+    fn build_clean(
+        domain: &OutputDomain,
+        members: &[(WindowId, Rect)],
+        axis: Axis,
+        cuts: &[usize],
+        alloc: &mut Alloc,
+    ) -> Option<(Node, Vec<WindowLink>)> {
+        let mut ordered: Vec<(WindowId, Rect)> = members.to_vec();
+        sort_for_axis(&mut ordered, axis);
         let group = NodeId(format!("fit-g{}", alloc.next_group));
         alloc.next_group += 1;
         let mut boundaries: Vec<usize> = vec![0];
         boundaries.extend(cuts.iter().map(|c| c + 1));
         boundaries.push(ordered.len());
-        let mut children: Vec<Node> = Vec::with_capacity(boundaries.len() - 1);
-        let mut shares: Vec<u64> = Vec::with_capacity(boundaries.len() - 1);
-        let mut links: Vec<WindowLink> = Vec::with_capacity(ordered.len());
+        let mut children = Vec::with_capacity(boundaries.len() - 1);
+        let mut shares = Vec::with_capacity(boundaries.len() - 1);
+        let mut links = Vec::with_capacity(ordered.len());
         for pair in boundaries.windows(2) {
-            let group_members = &ordered[pair[0]..pair[1]];
+            let part = &ordered[pair[0]..pair[1]];
             let mut start = i64::MAX;
             let mut end = i64::MIN;
-            for (_, rect) in group_members {
+            for (_, rect) in part {
                 start = start.min(primary_start(*rect, axis));
                 end = end.max(primary_end(*rect, axis));
             }
-            let span = end - start;
-            if span <= 0 {
-                return None;
-            }
-            let Ok(share) = u64::try_from(span) else {
-                return None;
-            };
+            let share = u64::try_from(end - start).ok().filter(|s| *s > 0)?;
             shares.push(share);
-            if group_members.len() == 1 {
+            if part.len() == 1 {
                 let leaf = NodeId(format!("fit-l{}", alloc.next_leaf));
                 alloc.next_leaf += 1;
                 links.push(WindowLink {
-                    window: group_members[0].0.clone(),
+                    window: part[0].0.clone(),
                     leaf: leaf.clone(),
                     output: domain.id.clone(),
                     workspace: domain.workspace.clone(),
                 });
                 children.push(Node::Leaf { id: leaf });
             } else {
-                let (child, child_links) =
-                    build_region(domain, group_members, orthogonal(axis), alloc)?;
+                let (child, child_links) = build_region(domain, part, orthogonal(axis), alloc)?;
                 links.extend(child_links);
                 children.push(child);
             }
@@ -208,23 +237,98 @@ pub fn try_recursive_cut_fit(
             links,
         ))
     }
-    for axis in [Axis::Horizontal, Axis::Vertical] {
-        let mut alloc = Alloc {
-            next_leaf: 0,
-            next_group: 0,
+    fn build_region(
+        domain: &OutputDomain,
+        members: &[(WindowId, Rect)],
+        axis: Axis,
+        alloc: &mut Alloc,
+    ) -> Option<(Node, Vec<WindowLink>)> {
+        if members.len() < 2 {
+            return None;
+        }
+        let cuts = valid_cuts(members, axis, tolerance(domain, axis));
+        if !cuts.is_empty() {
+            return build_clean(domain, members, axis, &cuts, alloc);
+        }
+        let other = orthogonal(axis);
+        let other_cuts = valid_cuts(members, other, tolerance(domain, other));
+        if !other_cuts.is_empty() {
+            return build_clean(domain, members, other, &other_cuts, alloc);
+        }
+        let (h_gap, h_at) = centre_gap(members, Axis::Horizontal);
+        let (v_gap, v_at) = centre_gap(members, Axis::Vertical);
+        if h_gap <= 0 && v_gap <= 0 {
+            return None;
+        }
+        let (split_axis, at) = if h_gap >= v_gap {
+            (Axis::Horizontal, h_at)
+        } else {
+            (Axis::Vertical, v_at)
         };
-        if let Some((tree, links)) = build_region(domain, &items, axis, &mut alloc) {
-            let projected = project(&tree, domain.bounds, domain.gap).ok();
-            let Some(projected) = projected else {
-                return Err(FitDeclineReason::ProjectionInvalid);
-            };
+        let mut ordered: Vec<(WindowId, Rect)> = members.to_vec();
+        match split_axis {
+            Axis::Horizontal => {
+                ordered.sort_by_key(|a| (2 * i64::from(a.1.x) + i64::from(a.1.w), a.1.x, a.1.y))
+            }
+            Axis::Vertical => {
+                ordered.sort_by_key(|a| (2 * i64::from(a.1.y) + i64::from(a.1.h), a.1.y, a.1.x))
+            }
+        }
+        let (left, right) = ordered.split_at(at + 1);
+        let shares = [max_span(left, split_axis), max_span(right, split_axis)];
+        if shares.iter().any(|s| *s <= 0) {
+            return None;
+        }
+        let group = NodeId(format!("fit-g{}", alloc.next_group));
+        alloc.next_group += 1;
+        alloc.centre_splits += 1;
+        let mut links = Vec::with_capacity(ordered.len());
+        let mut children = Vec::with_capacity(2);
+        for part in [left, right] {
+            if part.len() == 1 {
+                let leaf = NodeId(format!("fit-l{}", alloc.next_leaf));
+                alloc.next_leaf += 1;
+                links.push(WindowLink {
+                    window: part[0].0.clone(),
+                    leaf: leaf.clone(),
+                    output: domain.id.clone(),
+                    workspace: domain.workspace.clone(),
+                });
+                children.push(Node::Leaf { id: leaf });
+            } else {
+                let (child, child_links) =
+                    build_region(domain, part, orthogonal(split_axis), alloc)?;
+                links.extend(child_links);
+                children.push(child);
+            }
+        }
+        Some((
+            Node::Group {
+                id: group,
+                axis: split_axis,
+                children,
+                shares: shares.iter().map(|s| *s as u64).collect(),
+            },
+            links,
+        ))
+    }
+    let mut alloc = Alloc {
+        next_leaf: 0,
+        next_group: 0,
+        centre_splits: 0,
+    };
+    match build_region(domain, &items, Axis::Horizontal, &mut alloc) {
+        Some((tree, links)) => {
+            let projected = project(&tree, domain.bounds, domain.gap)
+                .ok()
+                .ok_or(FitDeclineReason::ProjectionInvalid)?;
             if projected.len() != items.len() {
                 return Err(FitDeclineReason::ProjectionInvalid);
             }
-            return Ok((tree, links));
+            Ok((tree, links, alloc.centre_splits))
         }
+        None => Err(FitDeclineReason::NoCut),
     }
-    Err(FitDeclineReason::NoCut)
 }
 
 /// Admission seed order: spatial `(y, x, h, w)` sort with the focused window
@@ -749,29 +853,38 @@ mod tests {
     }
 
     #[test]
-    fn overlap_beyond_tolerance_declines_no_cut() {
+    fn overlap_beyond_tolerance_centre_splits() {
         let domain = domain();
         let windows = vec![window("a", 0, 0, 100, 100), window("b", 80, 0, 100, 100)];
-        assert_eq!(
-            try_recursive_cut_fit(&domain, &windows),
-            Err(FitDeclineReason::NoCut)
-        );
+        let (tree, links, splits) =
+            try_recursive_cut_fit_with_centre_count(&domain, &windows).expect("centre splits");
+        match &tree {
+            Node::Group { axis, shares, .. } => {
+                assert_eq!(*axis, Axis::Horizontal);
+                assert_eq!(*shares, vec![100, 100]);
+            }
+            Node::Leaf { .. } => panic!("expected group"),
+        }
+        let ids: Vec<&str> = links.iter().map(|l| l.window.0.as_str()).collect();
+        assert_eq!(ids, vec!["a", "b"]);
+        assert_eq!(splits, 1);
     }
 
     #[test]
     fn configured_gap_can_allow_a_wider_cross_cut_overlap() {
         let windows = vec![window("a", 0, 0, 100, 100), window("b", 70, 0, 100, 100)];
-        assert_eq!(
-            try_recursive_cut_fit(&domain(), &windows),
-            Err(FitDeclineReason::NoCut)
-        );
+        let (_, _, splits) =
+            try_recursive_cut_fit_with_centre_count(&domain(), &windows).expect("centre splits");
+        assert_eq!(splits, 1);
         let mut with_gap = domain();
         with_gap.gap = 20;
-        assert!(try_recursive_cut_fit(&with_gap, &windows).is_ok());
+        let (_, _, gap_splits) =
+            try_recursive_cut_fit_with_centre_count(&with_gap, &windows).expect("gap fits");
+        assert_eq!(gap_splits, 0);
     }
 
     #[test]
-    fn pinwheel_without_guillotine_cut_declines() {
+    fn pinwheel_without_guillotine_cut_centre_splits() {
         let domain = OutputDomain {
             id: OutputId("out".to_owned()),
             workspace: WorkspaceId("ws".to_owned()),
@@ -790,6 +903,69 @@ mod tests {
             window("c", 40, 60, 60, 40),
             window("d", 0, 40, 40, 60),
         ];
+        let (tree, links, splits) =
+            try_recursive_cut_fit_with_centre_count(&domain, &windows).expect("centre splits");
+        assert!(splits > 0);
+        assert_eq!(links.len(), 4);
+        match &tree {
+            Node::Group { children, .. } => assert_eq!(children.len(), 2),
+            Node::Leaf { .. } => panic!("expected group"),
+        }
+    }
+
+    #[test]
+    fn cascading_overlap_preserves_left_top_order() {
+        let domain = domain();
+        let windows = vec![
+            window("a", 0, 0, 100, 100),
+            window("b", 50, 10, 100, 80),
+            window("c", 100, 20, 100, 60),
+            window("d", 150, 30, 100, 50),
+        ];
+        let (tree, links, splits) =
+            try_recursive_cut_fit_with_centre_count(&domain, &windows).expect("cascade fits");
+        assert!(splits > 0);
+        let ids: Vec<&str> = links.iter().map(|l| l.window.0.as_str()).collect();
+        assert_eq!(ids, vec!["a", "b", "c", "d"]);
+        match &tree {
+            Node::Group { axis, .. } => assert_eq!(*axis, Axis::Horizontal),
+            Node::Leaf { .. } => panic!("expected group"),
+        }
+    }
+
+    #[test]
+    fn big_vs_small_overlap_yields_proportional_shares() {
+        let domain = domain();
+        let windows = vec![
+            window("big", 0, 0, 200, 100),
+            window("small", 150, 0, 60, 100),
+        ];
+        let (tree, links, splits) =
+            try_recursive_cut_fit_with_centre_count(&domain, &windows).expect("sizes fit");
+        assert_eq!(splits, 1);
+        match &tree {
+            Node::Group { shares, .. } => assert_eq!(*shares, vec![200, 60]),
+            Node::Leaf { .. } => panic!("expected group"),
+        }
+        let ids: Vec<&str> = links.iter().map(|l| l.window.0.as_str()).collect();
+        assert_eq!(ids, vec!["big", "small"]);
+    }
+
+    #[test]
+    fn clean_fit_is_identical_with_zero_splits() {
+        let domain = domain();
+        let windows = vec![window("b", 100, 0, 100, 100), window("a", 0, 0, 100, 100)];
+        let plain = try_recursive_cut_fit(&domain, &windows).expect("clean fits");
+        let (tree, links, splits) =
+            try_recursive_cut_fit_with_centre_count(&domain, &windows).expect("clean fits");
+        assert_eq!((tree, links), plain);
+        assert_eq!(splits, 0);
+    }
+
+    #[test]
+    fn identical_centres_fallback() {
+        let domain = domain();
+        let windows = vec![window("a", 0, 0, 100, 100), window("b", 0, 0, 100, 100)];
         assert_eq!(
             try_recursive_cut_fit(&domain, &windows),
             Err(FitDeclineReason::NoCut)

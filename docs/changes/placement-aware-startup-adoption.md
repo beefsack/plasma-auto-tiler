@@ -223,4 +223,20 @@
   line reports each fresh fit attempt; retained reconciles do not repeat it.
   No adapter or native changes. Offline tests cover focus-independent exact
   nested adoption, resized shares, N-ary axes, configured gaps and tolerance
-  success/failure. Live restart and confirmed-loss acceptance remain pending.
+  success/failure. The user confirmed live that restarting over a previously
+  tiled workspace works well; the confirmed-loss journey remains pending.
+
+## Centre-Split Outcome 2026-09-29
+
+- User option B extends the recursive fit to eligible overlapping layouts.
+  Orchestrator defaults: if neither axis has a tolerance-valid cut in a piece,
+  choose the widest adjacent centre gap (horizontal on axis tie), split that
+  piece in two, use each side's maximum observed member span as its share, and
+  recurse. Identical centres on both axes decline to the unchanged seed path.
+  Clean cuts still take priority; intentional floating and other fit-excluded
+  members remain outside this fit.
+- Rust carries a `centre_splits` count into the correlated normal-level
+  `adoption-fit` line: clean fits and fallbacks report 0. Offline behavior
+  tests cover 3-4 overlapping cascades, size-proportional big/small allocation,
+  focus and input-order independence, clean nested geometry and identical-centre
+  fallback. Live floating-layout adoption has not yet been checked.

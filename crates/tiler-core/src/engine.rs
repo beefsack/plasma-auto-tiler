@@ -114,6 +114,8 @@ pub struct EngineAdoptionFitReport {
     /// `fit_excluded`, `invalid_geometry`, `no_cut`, `projection_invalid`,
     /// or `commit_failed` when fit geometry succeeded but commit did not).
     pub reason: &'static str,
+    /// Centre splits in the committed fit (0 for clean fits and fallbacks).
+    pub centre_splits: usize,
 }
 
 /// Single-domain convergence routing: absent sessions run the existing seed
@@ -843,8 +845,11 @@ impl Engine {
             && window.0 == event.focused_window.0
             && self.session(&event.domain_key).is_none();
         if fresh_attempt {
-            match crate::seed::try_recursive_cut_fit(&event.domain, &event.windows) {
-                Ok((tree, links)) => {
+            match crate::seed::try_recursive_cut_fit_with_centre_count(
+                &event.domain,
+                &event.windows,
+            ) {
+                Ok((tree, links, centre_splits)) => {
                     let focus_leaf = links
                         .iter()
                         .find(|l| l.window.0 == window.0)
@@ -900,6 +905,7 @@ impl Engine {
                             outcome: "fitted",
                             windows: event.windows.len(),
                             reason: "ok",
+                            centre_splits,
                         });
                         return typed;
                     }
@@ -908,6 +914,7 @@ impl Engine {
                         outcome: "fallback",
                         windows: event.windows.len(),
                         reason: "commit_failed",
+                        centre_splits: 0,
                     });
                 }
                 Err(reason) => {
@@ -916,6 +923,7 @@ impl Engine {
                         outcome: "fallback",
                         windows: event.windows.len(),
                         reason: reason.as_str(),
+                        centre_splits: 0,
                     });
                 }
             }
