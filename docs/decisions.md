@@ -106,10 +106,13 @@ the corresponding item ships; each such entry names its replacement.
   prove that the running compositor applied the value.
   Startup and ordinary settings Save never change these host keys. Existing
   shortcut Apply/Force/Revert remains the sole key-binding correction flow.
-  Alerts are settings-page-only for now; a tray indicator/icon opening the
-  normal settings page is a later, unimplemented direction. The user wants
-  uninstall to restore defaults for our overridden host settings, but how
-  each delivery route can do that without tracking is still unselected; no
+  User decision 2026-09-29, option A: host conflicts add a warning overlay to
+  the tray icon and a top menu row, "Conflicting KDE settings...", opening the
+  existing unified Settings page. Left-click keeps opening the tray menu, and
+  snapshot loss keeps its separate NeedsAttention status. No notification or
+   direct Settings-on-icon-click. The user wants uninstall to restore defaults
+   for our overridden host settings; the route-specific mechanism without
+   tracking is still unselected, and no
   uninstall reset is implemented. Stateless uninstall would also reset a
   user-made value that equals our fix value.
 - Threat model (AR13, shipped offline): processes of the same user are trusted.
@@ -1029,6 +1032,15 @@ the corresponding item ships; each such entry names its replacement.
   KWin publisher reports `enabled=true`; a fresh authenticated snapshot shows
   Active, while a missing or stale snapshot shows NeedsAttention. No
   readiness-bound status.
+- Tray host-conflict indicator (user decision 2026-09-29, option A; offline,
+  live acceptance pending): KDE `OverlayIconName=dialog-warning` indicates
+  effective `kwinrc [Windows]` conflicts without changing SNI Status. The top
+  "Conflicting KDE settings..." menu row uses the normal Settings launch
+   action; icon click still opens the menu. The tray directly checks the
+   three settings-page keys against their KDE defaults and fixed values. It
+   rereads the user's `kwinrc` at startup and on a changed file mtime during
+   the existing watchdog, so Fix/Revert and user-file edits appear without a tray
+  restart, and logs one normal-level line only when the conflict state changes.
 - Tray delivery (user decision 2026-09-28, option 2): Home Manager installs a
   systemd user unit wanted by and bound to `graphical-session.target`, using
   the immutable store tray binary with `Restart=on-failure`, replacing XDG
@@ -1048,8 +1060,8 @@ the corresponding item ships; each such entry names its replacement.
   Dev worktree tray builds bake the absolute `kcmshell6` path when available;
   without it, the tray still builds and Settings reports unavailable. Settings
   launch outcomes emit fixed, redacted tray diagnostics.
-- The tray MVP provides basic status and Settings only. It has no direct tiling
-  controls and no expansion of the helper boundary.
+- The tray retains the unified Settings path and the workspace tiling controls
+  selected above; host-conflict warning is separate from tiling status.
 - Tray live runs claim no KWin snapshot authority, panel visual behavior,
   session boundary, watcher-ordering/login/systemd delivery, native
   ABI/plugin load, baseline-restoration proof, KWin Script1 identity or

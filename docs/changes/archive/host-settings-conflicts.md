@@ -1,4 +1,4 @@
-# Host Settings Conflicts (2026-09-29)
+# Host Settings Conflicts (2026-09-29, offline complete)
 
 ## Goal and boundary
 
@@ -51,6 +51,14 @@ surface or rewrite them on this evidence.
 
 ## Selected design and outcome
 
+User decision 2026-09-29 (option A, tray follow-up): keep icon left-click
+opening the existing menu. While any of the settings-page host conflicts is
+present, add a warning overlay and a top-row "Conflicting KDE settings..."
+that opens the existing Settings path; remove both when resolved, including
+changes made without restarting the tray. Keep snapshot-loss NeedsAttention
+status, existing menu rows, and their behavior. No one-time notification or
+change to icon click behavior. Shipped offline; panel visuals remain to check.
+
 User decisions 2026-09-29: Fix all three `[Windows]` keys above; Revert restores
 KDE defaults with **no** preimage, ownership tracking, journal, or stale
 refusal. Orchestrator simplification: delete the local key for either boolean
@@ -82,6 +90,46 @@ Offline evidence: `just build-native-effect` passed; host-matched separate
 readback, failure display and one log per operation); KWin `npm test`
 **805/805** and `npm run typecheck` passed. No Rust or install scripts changed.
 No live KWin behavior or configuration was mutated or accepted.
+
+## Tray indicator outcome (offline)
+
+The tray checks the same three stable KDE keys and defaults as
+`kwin/native-effect/unifiedsettings_module.cpp` directly.
+There is no shared artifact or native settings-page change. Rust reads
+effective `kwinrc [Windows]` values with KDE's `kreadconfig6` from the existing
+KConfig package; missing keys use KDE defaults. It reads unconditionally at
+startup. On the existing one-second watchdog, it checks the user `kwinrc`
+mtime and rereads only when that changes (including file creation/removal);
+read failures keep the last known indicator. System-wide-only config edits
+may wait until the user file changes. KCM Fix/Revert and user-file edits are
+visible without restarting the tray. Detection stays separate from
+authenticated KWin snapshot freshness and workspace toggle.
+
+Boolean reads use `kreadconfig6 --type bool --default true` exit status
+(0=true, 1=false). Read-only host inspection found the typed integer form
+emits no stdout, so the user selected the typeless `--default 0` form for
+`ElectricBorders`. Its stdout is parsed as an integer; spawn or parse failure
+means unknown and keeps the last known indicator.
+
+On conflict, the SNI advertises `OverlayIconName=dialog-warning` and the
+existing DBusMenu gets a visible top "Conflicting KDE settings..." row opening
+the same unified Settings command as the normal Settings item. Without
+conflict, the overlay name is empty and the row hidden. Plasma 6.7.5
+[system tray source](https://raw.githubusercontent.com/KDE/plasma-workspace/v6.7.5/applets/systemtray/statusnotifieritemsource.cpp)
+reads the overlay for normal and attention icons and refreshes on
+`NewOverlayIcon`; the [SNI specification](https://specifications.freedesktop.org/status-notifier-item/latest/status-notifier-item.html)
+keeps OverlayIconName independent of Status. No `NewStatus` is emitted for a
+conflict-only change. Snapshot loss still reports NeedsAttention; left-click
+still opens the menu. The tray emits one
+`plasma-auto-tiler:route-diag component=tray-endpoint stage=projection
+event=projected outcome=conflict-updated conflict=<true|false>` line per
+observed transition, never per heartbeat; no clean-start false transition.
+
+Rust workspace tests, fmt, strict clippy and
+`nix flake check --no-build --offline` are the tray change's offline checks;
+native KCM files match HEAD. No live tray or KWin test is claimed. The user
+confirmed settings-page Fix works live; Revert and panel overlay transitions
+remain user-owned live checks.
 
 ## Uninstall feasibility (research only)
 
@@ -138,3 +186,15 @@ changing these keys, a success claim on a failed request, more than one
 operation log per click, or native preview persisting after a successful
 reconfigure plus confirmed effective value. A queued request alone is not
 live behavior proof; no live mutation is authorized by this note.
+
+With a single current KWin snapshot, fresh KDE default host values show the
+warning overlay and top conflict row; left-click still opens the menu. Click
+the row: it opens the same unified settings page as Settings. Fix both edge
+booleans (and `ElectricBorders` if nonzero): without a tray restart, the row
+and warning disappear, with one tray `outcome=conflict-updated conflict=false`
+line. Revert either boolean: row and warning return, with one corresponding
+`conflict=true` line. No repeated line on the next heartbeat. Lose the KWin
+snapshot naturally: tray Status remains NeedsAttention even if the conflict
+warning remains. Red flags: changing `Status` solely for a host conflict,
+left-click opening Settings directly, stale row/overlay after effective values
+change, or repeated conflict logs while values are steady.

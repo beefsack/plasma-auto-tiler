@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::io;
 use std::process::{Child, Command};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -24,6 +24,7 @@ const STATUS_NOTIFIER_ITEM_INTERFACE: &str = "org.kde.StatusNotifierItem";
 const DBUS_PROPERTIES_INTERFACE: &str = "org.freedesktop.DBus.Properties";
 const DBUS_MENU_INTERFACE: &str = "com.canonical.dbusmenu";
 const NEW_STATUS_SIGNAL: &str = "NewStatus";
+const NEW_OVERLAY_ICON_SIGNAL: &str = "NewOverlayIcon";
 const PROPERTIES_CHANGED_SIGNAL: &str = "PropertiesChanged";
 const LAYOUT_UPDATED_SIGNAL: &str = "LayoutUpdated";
 const SETTINGS_EXECUTABLE: Option<&str> = option_env!("PLASMA_AUTO_TILER_KCMSHELL6");
@@ -122,10 +123,22 @@ pub const MENU_ID_TILE_TOGGLE: i32 = 3;
 pub const MENU_ID_DEFAULT_HEADING: i32 = 4;
 pub const MENU_ID_DEFAULT_TILED: i32 = 5;
 pub const MENU_ID_DEFAULT_FLOATING: i32 = 6;
+pub const MENU_ID_CONFLICT: i32 = 7;
+pub const CONFLICT_LABEL: &str = "Conflicting KDE settings...";
+/// Idiomatic KDE/Freedesktop warning overlay for the SNI `OverlayIconName`
+/// while the `[Windows]` edge settings conflict. Empty otherwise.
+pub const OVERLAY_ICON_WARNING: &str = "dialog-warning";
 
 fn toggle_outcome_line(outcome: &str) -> String {
     format!(
         "plasma-auto-tiler:route-diag component=tray-endpoint stage=toggle event=invoke outcome={outcome}"
+    )
+}
+
+/// Conflict transition record: once per change on success, silent otherwise.
+fn conflict_projected_line(conflict: bool) -> String {
+    format!(
+        "plasma-auto-tiler:route-diag component=tray-endpoint stage=projection event=projected outcome=conflict-updated conflict={conflict}"
     )
 }
 
@@ -162,6 +175,73 @@ fn kwriteconfig_argv_for(executable: &str, default_tiled: bool) -> Vec<String> {
         DEFAULT_TILED_KEY.to_owned(),
         if default_tiled { "true" } else { "false" }.to_owned(),
     ]
+}
+
+/// Host-conflict detection for `kwinrc [Windows]` edge settings. Read-only.
+/// Other owner: `kwin/native-effect/unifiedsettings_module.cpp`.
+pub const WINDOW_CONFLICT_GROUP: &str = "Windows";
+pub const KREADCONFIG_EXECUTABLE: &str = "kreadconfig6";
+const KREADCONFIG_BAKED: Option<&str> = option_env!("PLASMA_AUTO_TILER_KREADCONFIG6");
+
+fn kreadconfig_executable() -> &'static str {
+    KREADCONFIG_BAKED
+        .filter(|path| std::path::Path::new(path).is_absolute())
+        .unwrap_or(KREADCONFIG_EXECUTABLE)
+}
+
+fn read_kwin_bool(key: &str, default: bool) -> Option<bool> {
+    let status = std::process::Command::new(kreadconfig_executable())
+        .args([
+            "--file",
+            "kwinrc",
+            "--group",
+            WINDOW_CONFLICT_GROUP,
+            "--key",
+            key,
+            "--type",
+            "bool",
+            "--default",
+            if default { "true" } else { "false" },
+            "--include-globals",
+        ])
+        .status()
+        .ok()?;
+    match status.code() {
+        Some(0) => Some(true),
+        Some(1) => Some(false),
+        _ => None,
+    }
+}
+
+fn read_kwin_int(key: &str, default: i64) -> Option<i64> {
+    let output = std::process::Command::new(kreadconfig_executable())
+        .args([
+            "--file",
+            "kwinrc",
+            "--group",
+            WINDOW_CONFLICT_GROUP,
+            "--key",
+            key,
+            "--default",
+            &default.to_string(),
+            "--include-globals",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout).ok()?.trim().parse().ok()
+}
+
+/// Effective `[Windows]` conflict: `Some(true)` on conflict, `Some(false)`
+/// when all match, `None` when unavailable.
+pub fn read_window_conflicts() -> Option<bool> {
+    Some(
+        read_kwin_bool("ElectricBorderTiling", true)?
+            || read_kwin_bool("ElectricBorderMaximize", true)?
+            || read_kwin_int("ElectricBorders", 0)? != 0,
+    )
 }
 
 /// Real KGlobalAccel toggle dispatch: resolve the `kwin` component, then
@@ -338,6 +418,8 @@ pub struct TrayProjection {
     started: Instant,
     last_status: Arc<Mutex<Option<String>>>,
     last_menu: Arc<Mutex<Option<(String, bool, bool)>>>,
+    conflict: Arc<AtomicBool>,
+    last_conflict: Arc<Mutex<Option<bool>>>,
     notification_lock: Arc<async_lock::Mutex<()>>,
     menu_revision: Arc<AtomicU32>,
     settings_process: Arc<Mutex<Option<Child>>>,
@@ -359,10 +441,20 @@ impl TrayProjection {
             started,
             last_status,
             last_menu: Arc::new(Mutex::new(None)),
+            conflict: Arc::new(AtomicBool::new(false)),
+            // Clean startup already agrees with no-warning: a first
+            // `Some(false)` stays silent, while an initial `true` logs once.
+            last_conflict: Arc::new(Mutex::new(Some(false))),
             notification_lock: Arc::new(async_lock::Mutex::new(())),
             menu_revision: Arc::new(AtomicU32::new(0)),
             settings_process: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Latest `[Windows]` conflict from the caller. Pure store; emission and
+    /// logging stay change-driven in `emit_guarded`.
+    pub fn set_conflict(&self, conflict: bool) {
+        self.conflict.store(conflict, Ordering::Relaxed);
     }
 
     pub(crate) fn launch_settings(&self) -> zbus::fdo::Result<()> {
@@ -549,6 +641,22 @@ impl TrayProjection {
         lock_poisoned_option(&self.settings_process)
     }
 
+    fn conflict_state(&self) -> bool {
+        self.conflict.load(Ordering::Relaxed)
+    }
+
+    fn should_emit_conflict(&self, conflict: bool) -> bool {
+        lock_poisoned_option(&self.last_conflict).as_ref() != Some(&conflict)
+    }
+
+    fn remember_conflict(&self, conflict: bool) {
+        *lock_poisoned_option(&self.last_conflict) = Some(conflict);
+    }
+
+    fn overlay_icon_name_for(conflict: bool) -> &'static str {
+        if conflict { OVERLAY_ICON_WARNING } else { "" }
+    }
+
     fn view(&self) -> crate::tray_endpoint::StateView {
         let now_ms = self.started.elapsed().as_millis().min(u64::MAX as u128) as u64;
         lock_tray_state(&self.state).view(now_ms)
@@ -614,7 +722,7 @@ impl TrayProjection {
         *self.lock_last_menu() = fingerprint;
     }
 
-    fn sni_changed(&self, status: &str) -> HashMap<String, OwnedValue> {
+    fn sni_changed(&self, status: &str, conflict: bool) -> HashMap<String, OwnedValue> {
         let label = Self::status_label_for(status);
         let mut changed = HashMap::new();
         changed.insert("Status".to_owned(), owned_string(status));
@@ -623,28 +731,41 @@ impl TrayProjection {
             owned_string(&format!("Plasma Auto Tiler - {label}")),
         );
         changed.insert("IconName".to_owned(), owned_string(ICON_NAME));
+        changed.insert(
+            "OverlayIconName".to_owned(),
+            owned_string(Self::overlay_icon_name_for(conflict)),
+        );
         changed.insert("ToolTip".to_owned(), owned_tooltip(label));
         changed
     }
 
-    /// Locked projection step for emission and tests: remembers status and
-    /// menu only on success; steady state stays silent.
+    /// Locked projection step for emission and tests: remembers status,
+    /// menu, and conflict only on success; steady state stays silent.
     async fn emit_guarded<F, Fut>(&self, timeout: Duration, send: F) -> zbus::Result<()>
     where
-        F: FnOnce(String, Option<(String, bool, bool)>, bool, bool) -> Fut,
+        F: FnOnce(String, Option<(String, bool, bool)>, bool, bool, bool, bool) -> Fut,
         Fut: Future<Output = zbus::Result<()>>,
     {
         let _notification_guard = self.notification_lock.lock().await;
         let status = self.status().to_owned();
         let menu = self.menu_fingerprint();
+        let conflict = self.conflict_state();
         let status_changed = self.should_emit_status(&status);
         let menu_changed = self.should_emit_menu(&menu);
-        if !status_changed && !menu_changed {
+        let conflict_changed = self.should_emit_conflict(conflict);
+        if !status_changed && !menu_changed && !conflict_changed {
             return Ok(());
         }
         with_emit_deadline(
             timeout,
-            send(status.clone(), menu.clone(), status_changed, menu_changed),
+            send(
+                status.clone(),
+                menu.clone(),
+                conflict,
+                status_changed,
+                menu_changed,
+                conflict_changed,
+            ),
         )
         .await?;
 
@@ -657,8 +778,10 @@ impl TrayProjection {
             None => "plasma-auto-tiler:route-diag component=tray-endpoint stage=projection event=projected outcome=menu-updated stale=true"
                 .to_string(),
         });
+        let conflict_line = conflict_changed.then(|| conflict_projected_line(conflict));
         self.remember_status(status);
         self.remember_menu(menu);
+        self.remember_conflict(conflict);
         drop(_notification_guard);
         if let Some(line) = status_line {
             emit_tray_diag(&line);
@@ -666,16 +789,90 @@ impl TrayProjection {
         if let Some(line) = menu_line {
             emit_tray_diag(&line);
         }
+        if let Some(line) = conflict_line {
+            emit_tray_diag(&line);
+        }
         Ok(())
     }
 
     pub async fn emit_changed(&self, connection: &zbus::Connection) -> zbus::Result<()> {
-        // Status changes keep the four-signal block; menu-only changes emit
-        // LayoutUpdated alone.
+        // Status changes keep the SNI block; conflict changes add the overlay
+        // block; menu-only changes emit LayoutUpdated alone.
         self.emit_guarded(
             NOTIFICATION_TIMEOUT,
-            |status, _menu, status_changed, _menu_changed| async move {
-                if !status_changed {
+            |status, _menu, conflict, status_changed, menu_changed, conflict_changed| async move {
+                if status_changed {
+                    let changed = self.sni_changed(&status, conflict);
+                    connection
+                        .emit_signal(
+                            None::<&str>,
+                            STATUS_NOTIFIER_ITEM_OBJECT,
+                            DBUS_PROPERTIES_INTERFACE,
+                            PROPERTIES_CHANGED_SIGNAL,
+                            &(
+                                STATUS_NOTIFIER_ITEM_INTERFACE,
+                                changed,
+                                Vec::<String>::new(),
+                            ),
+                        )
+                        .await?;
+                    let mut menu_status_changed = HashMap::new();
+                    menu_status_changed
+                        .insert("Status".to_owned(), owned_string(menu_status(&status)));
+                    connection
+                        .emit_signal(
+                            None::<&str>,
+                            MENU_OBJECT,
+                            DBUS_PROPERTIES_INTERFACE,
+                            PROPERTIES_CHANGED_SIGNAL,
+                            &(
+                                DBUS_MENU_INTERFACE,
+                                menu_status_changed,
+                                Vec::<String>::new(),
+                            ),
+                        )
+                        .await?;
+                    connection
+                        .emit_signal(
+                            None::<&str>,
+                            STATUS_NOTIFIER_ITEM_OBJECT,
+                            STATUS_NOTIFIER_ITEM_INTERFACE,
+                            NEW_STATUS_SIGNAL,
+                            &(status.as_str(),),
+                        )
+                        .await?;
+                } else if conflict_changed {
+                    let mut overlay_changed = HashMap::new();
+                    overlay_changed.insert(
+                        "OverlayIconName".to_owned(),
+                        owned_string(Self::overlay_icon_name_for(conflict)),
+                    );
+                    connection
+                        .emit_signal(
+                            None::<&str>,
+                            STATUS_NOTIFIER_ITEM_OBJECT,
+                            DBUS_PROPERTIES_INTERFACE,
+                            PROPERTIES_CHANGED_SIGNAL,
+                            &(
+                                STATUS_NOTIFIER_ITEM_INTERFACE,
+                                overlay_changed,
+                                Vec::<String>::new(),
+                            ),
+                        )
+                        .await?;
+                }
+                if conflict_changed {
+                    connection
+                        .emit_signal(
+                            None::<&str>,
+                            STATUS_NOTIFIER_ITEM_OBJECT,
+                            STATUS_NOTIFIER_ITEM_INTERFACE,
+                            NEW_OVERLAY_ICON_SIGNAL,
+                            &(),
+                        )
+                        .await?;
+                }
+                if status_changed || menu_changed || conflict_changed {
                     connection
                         .emit_signal(
                             None::<&str>,
@@ -685,51 +882,7 @@ impl TrayProjection {
                             &(self.next_menu_revision(), 0_i32),
                         )
                         .await?;
-                    return Ok(());
                 }
-                let changed = self.sni_changed(&status);
-                connection
-                    .emit_signal(
-                        None::<&str>,
-                        STATUS_NOTIFIER_ITEM_OBJECT,
-                        DBUS_PROPERTIES_INTERFACE,
-                        PROPERTIES_CHANGED_SIGNAL,
-                        &(
-                            STATUS_NOTIFIER_ITEM_INTERFACE,
-                            changed,
-                            Vec::<String>::new(),
-                        ),
-                    )
-                    .await?;
-                let mut menu_changed = HashMap::new();
-                menu_changed.insert("Status".to_owned(), owned_string(menu_status(&status)));
-                connection
-                    .emit_signal(
-                        None::<&str>,
-                        MENU_OBJECT,
-                        DBUS_PROPERTIES_INTERFACE,
-                        PROPERTIES_CHANGED_SIGNAL,
-                        &(DBUS_MENU_INTERFACE, menu_changed, Vec::<String>::new()),
-                    )
-                    .await?;
-                connection
-                    .emit_signal(
-                        None::<&str>,
-                        STATUS_NOTIFIER_ITEM_OBJECT,
-                        STATUS_NOTIFIER_ITEM_INTERFACE,
-                        NEW_STATUS_SIGNAL,
-                        &(status.as_str(),),
-                    )
-                    .await?;
-                connection
-                    .emit_signal(
-                        None::<&str>,
-                        MENU_OBJECT,
-                        DBUS_MENU_INTERFACE,
-                        LAYOUT_UPDATED_SIGNAL,
-                        &(self.next_menu_revision(), 0_i32),
-                    )
-                    .await?;
                 Ok(())
             },
         )
@@ -799,7 +952,7 @@ impl StatusNotifierItem {
 
     #[zbus(property)]
     fn overlay_icon_name(&self) -> &'static str {
-        ""
+        TrayProjection::overlay_icon_name_for(self.projection.conflict_state())
     }
 
     #[zbus(property)]
@@ -856,6 +1009,9 @@ impl StatusNotifierItem {
 
     #[zbus(signal)]
     async fn new_status(emitter: SignalEmitter<'_>, status: &str) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn new_overlay_icon(emitter: SignalEmitter<'_>) -> zbus::Result<()>;
 }
 
 #[derive(Clone, Debug, Serialize, Type)]
@@ -882,6 +1038,7 @@ impl DbusMenu {
             id: 0,
             properties: HashMap::new(),
             children: vec![
+                menu_value(self.conflict_item()),
                 menu_value(self.status_item()),
                 menu_value(self.tile_toggle_item()),
                 menu_value(self.default_heading_item()),
@@ -889,6 +1046,19 @@ impl DbusMenu {
                 menu_value(self.default_floating_item()),
                 menu_value(self.menu_item()),
             ],
+        }
+    }
+
+    fn conflict_item(&self) -> MenuLayout {
+        let conflict = self.projection.conflict_state();
+        MenuLayout {
+            id: MENU_ID_CONFLICT,
+            properties: HashMap::from([
+                ("label".to_owned(), owned_string(CONFLICT_LABEL)),
+                ("enabled".to_owned(), OwnedValue::from(true)),
+                ("visible".to_owned(), OwnedValue::from(conflict)),
+            ]),
+            children: Vec::new(),
         }
     }
 
@@ -994,6 +1164,7 @@ fn is_menu_event(id: i32, event_id: &str) -> bool {
         && matches!(
             id,
             MENU_ID_SETTINGS
+                | MENU_ID_CONFLICT
                 | MENU_ID_TILE_TOGGLE
                 | MENU_ID_DEFAULT_TILED
                 | MENU_ID_DEFAULT_FLOATING
@@ -1031,6 +1202,7 @@ impl DbusMenu {
         let mut layout = match parent_id {
             0 => self.layout(),
             MENU_ID_SETTINGS => self.menu_item(),
+            MENU_ID_CONFLICT => self.conflict_item(),
             MENU_ID_STATUS => self.status_item(),
             MENU_ID_TILE_TOGGLE => self.tile_toggle_item(),
             MENU_ID_DEFAULT_HEADING => self.default_heading_item(),
@@ -1056,6 +1228,13 @@ impl DbusMenu {
         }
         match id {
             MENU_ID_SETTINGS => self.projection.launch_settings(),
+            MENU_ID_CONFLICT => {
+                // The row is hidden without conflict; ignore stray clicks.
+                if !self.projection.conflict_state() {
+                    return Ok(());
+                }
+                self.projection.launch_settings()
+            }
             MENU_ID_TILE_TOGGLE => self.projection.request_toggle(),
             MENU_ID_DEFAULT_TILED => self.projection.request_default(true),
             MENU_ID_DEFAULT_FLOATING => self.projection.request_default(false),
@@ -1241,9 +1420,11 @@ mod tests {
         // fresh projection retries; the retry then remembers normally.
         let made = projection(Some(true), Instant::now());
         assert!(made.should_emit_status("Active"));
-        let hung = zbus::block_on(made.emit_guarded(Duration::from_millis(20), |_, _, _, _| {
-            std::future::pending::<zbus::Result<()>>()
-        }));
+        let hung = zbus::block_on(
+            made.emit_guarded(Duration::from_millis(20), |_, _, _, _, _, _| {
+                std::future::pending::<zbus::Result<()>>()
+            }),
+        );
         assert!(hung.is_err(), "hung emission must time out");
         assert!(
             made.notification_lock.try_lock().is_some(),
@@ -1253,8 +1434,10 @@ mod tests {
             made.should_emit_status("Active"),
             "timed-out status stays unremembered for a later retry"
         );
-        zbus::block_on(made.emit_guarded(Duration::from_secs(2), |_, _, _, _| async { Ok(()) }))
-            .expect("later fresh projection retries");
+        zbus::block_on(
+            made.emit_guarded(Duration::from_secs(2), |_, _, _, _, _, _| async { Ok(()) }),
+        )
+        .expect("later fresh projection retries");
         assert!(!made.should_emit_status("Active"));
     }
 
@@ -1321,7 +1504,14 @@ mod tests {
     #[test]
     fn menu_layout_has_status_toggle_default_radios_and_settings() {
         let menu = projection_full(Some(true), Some(true), Some(true), Instant::now()).menu();
-        assert_eq!(menu.layout().children.len(), 6);
+        assert_eq!(menu.layout().children.len(), 7);
+        // Conflict row stays hidden without conflict; old ids keep order.
+        let conflict = menu.conflict_item();
+        assert_eq!(conflict.id, MENU_ID_CONFLICT);
+        assert_eq!(
+            conflict.properties["visible"].downcast_ref::<bool>().ok(),
+            Some(false)
+        );
         let status = menu.status_item();
         assert_eq!(
             status.properties["label"].downcast_ref::<String>().ok(),
@@ -1693,7 +1883,7 @@ mod tests {
             (None, "NeedsAttention", "Unavailable"),
         ] {
             let made = projection(enabled, Instant::now());
-            let changed = made.sni_changed(status);
+            let changed = made.sni_changed(status, false);
             assert_eq!(
                 changed["Status"].downcast_ref::<String>().ok(),
                 Some(status.to_owned())
@@ -1705,6 +1895,11 @@ mod tests {
             assert_eq!(
                 changed["IconName"].downcast_ref::<String>().ok(),
                 Some(ICON_NAME.to_owned())
+            );
+            assert_eq!(
+                changed["OverlayIconName"].downcast_ref::<String>().ok(),
+                Some(String::new()),
+                "no conflict means no overlay"
             );
             let tooltip = changed.get("ToolTip").expect("ToolTip is signalled");
             assert_eq!(tooltip.value_signature().to_string(), "(sa(iiay)ss)");
@@ -1733,6 +1928,7 @@ mod tests {
     #[test]
     fn menu_events_accept_toggle_default_and_settings_only() {
         assert!(is_menu_event(MENU_ID_SETTINGS, "clicked"));
+        assert!(is_menu_event(MENU_ID_CONFLICT, "clicked"));
         assert!(is_menu_event(MENU_ID_TILE_TOGGLE, "clicked"));
         assert!(is_menu_event(MENU_ID_DEFAULT_TILED, "clicked"));
         assert!(is_menu_event(MENU_ID_DEFAULT_FLOATING, "clicked"));
@@ -1740,6 +1936,7 @@ mod tests {
         assert!(!is_menu_event(MENU_ID_DEFAULT_HEADING, "clicked"));
         assert!(!is_menu_event(0, "clicked"));
         assert!(!is_menu_event(MENU_ID_SETTINGS, "pressed"));
+        assert!(!is_menu_event(MENU_ID_CONFLICT, "pressed"));
         assert!(!is_menu_event(MENU_ID_SETTINGS, ""));
         let menu = projection(Some(true), Instant::now()).menu();
         assert!(
@@ -2024,7 +2221,7 @@ mod tests {
         let made = TrayProjection::new(Arc::clone(&state), Instant::now());
         let mut sends = 0;
         zbus::block_on(
-            made.emit_guarded(Duration::from_secs(2), |status, menu, _, _| {
+            made.emit_guarded(Duration::from_secs(2), |status, menu, _, _, _, _| {
                 sends += 1;
                 assert_eq!(status, "Active");
                 assert_eq!(menu, Some(("ws-1".to_owned(), true, true)));
@@ -2035,7 +2232,7 @@ mod tests {
         assert_eq!(sends, 1);
         // Steady state: same status and same menu stays silent.
         zbus::block_on(
-            made.emit_guarded(Duration::from_secs(2), |_, _, _, _| async {
+            made.emit_guarded(Duration::from_secs(2), |_, _, _, _, _, _| async {
                 panic!("steady state must not send");
                 #[allow(unreachable_code)]
                 Ok(())
@@ -2048,7 +2245,7 @@ mod tests {
         assert_eq!(made.status(), "Active");
         let mut menu_sends = 0;
         zbus::block_on(
-            made.emit_guarded(Duration::from_secs(2), |status, menu, _, _| {
+            made.emit_guarded(Duration::from_secs(2), |status, menu, _, _, _, _| {
                 menu_sends += 1;
                 assert_eq!(status, "Active");
                 assert_eq!(menu, Some(("ws-1".to_owned(), false, true)));
@@ -2059,7 +2256,7 @@ mod tests {
         assert_eq!(menu_sends, 1, "tiled-only change must emit menu update");
         // Duplicate after remembering stays silent again.
         zbus::block_on(
-            made.emit_guarded(Duration::from_secs(2), |_, _, _, _| async {
+            made.emit_guarded(Duration::from_secs(2), |_, _, _, _, _, _| async {
                 panic!("duplicate menu must stay silent");
                 #[allow(unreachable_code)]
                 Ok(())
@@ -2069,11 +2266,13 @@ mod tests {
         // Scope-only change also emits.
         publish_fresh(&state, 2, "ws-2", false, true);
         let mut scope_sends = 0;
-        zbus::block_on(made.emit_guarded(Duration::from_secs(2), |_, menu, _, _| {
-            scope_sends += 1;
-            assert_eq!(menu, Some(("ws-2".to_owned(), false, true)));
-            async { Ok(()) }
-        }))
+        zbus::block_on(
+            made.emit_guarded(Duration::from_secs(2), |_, menu, _, _, _, _| {
+                scope_sends += 1;
+                assert_eq!(menu, Some(("ws-2".to_owned(), false, true)));
+                async { Ok(()) }
+            }),
+        )
         .unwrap();
         assert_eq!(scope_sends, 1);
     }
@@ -2192,7 +2391,7 @@ mod tests {
         // First emission is both status and menu (fresh cache).
         let mut first = None;
         zbus::block_on(
-            made.emit_guarded(Duration::from_secs(2), |status, menu, sc, mc| {
+            made.emit_guarded(Duration::from_secs(2), |status, menu, _, sc, mc, _| {
                 first = Some((status, menu, sc, mc));
                 async { Ok(()) }
             }),
@@ -2205,7 +2404,7 @@ mod tests {
         publish_fresh(&state, 1, "ws-1", false, true);
         let mut second = None;
         zbus::block_on(
-            made.emit_guarded(Duration::from_secs(2), |status, menu, sc, mc| {
+            made.emit_guarded(Duration::from_secs(2), |status, menu, _, sc, mc, _| {
                 second = Some((status, menu, sc, mc));
                 async { Ok(()) }
             }),
@@ -2237,5 +2436,128 @@ mod tests {
             "argv must use the resolved writer"
         );
         assert_eq!(KWRITECONFIG_EXECUTABLE, "kwriteconfig6");
+    }
+
+    fn conflict_visible(menu: &DbusMenu) -> Option<bool> {
+        menu.conflict_item().properties["visible"]
+            .downcast_ref::<bool>()
+            .ok()
+    }
+
+    #[test]
+    fn conflict_overlay_menu_and_status() {
+        let made = projection(Some(true), Instant::now());
+        assert_eq!(made.status_notifier_item().overlay_icon_name(), "");
+        assert_eq!(conflict_visible(&made.menu()), Some(false));
+        made.set_conflict(true);
+        assert_eq!(
+            made.status_notifier_item().overlay_icon_name(),
+            OVERLAY_ICON_WARNING
+        );
+        assert_eq!(conflict_visible(&made.menu()), Some(true));
+        assert_eq!(made.status(), "Active");
+        // A stale snapshot keeps the warning without changing status.
+        let stale = projection(None, Instant::now());
+        stale.set_conflict(true);
+        assert_eq!(stale.status(), "NeedsAttention");
+        assert_eq!(
+            stale.status_notifier_item().overlay_icon_name(),
+            OVERLAY_ICON_WARNING
+        );
+        assert_eq!(conflict_visible(&stale.menu()), Some(true));
+        made.set_conflict(false);
+        assert_eq!(made.status_notifier_item().overlay_icon_name(), "");
+        assert_eq!(conflict_visible(&made.menu()), Some(false));
+    }
+
+    #[test]
+    fn conflict_refresh_progression_emits_only_on_change() {
+        let made = projection(Some(true), Instant::now());
+        // Settle status/menu; clean startup already agrees on no-warning.
+        zbus::block_on(
+            made.emit_guarded(Duration::from_secs(2), |_, _, _, _, _, _| async { Ok(()) }),
+        )
+        .unwrap();
+        // One watchdog tick: store on Some (None keeps state), then emit.
+        let tick = |read: Option<bool>| {
+            if let Some(conflict) = read {
+                made.set_conflict(conflict);
+            }
+            let mut sent = false;
+            zbus::block_on(
+                made.emit_guarded(Duration::from_secs(2), |_, _, _, _, _, _| {
+                    sent = true;
+                    async { Ok(()) }
+                }),
+            )
+            .unwrap();
+            sent
+        };
+
+        assert!(tick(Some(true)));
+        assert_eq!(
+            made.status_notifier_item().overlay_icon_name(),
+            OVERLAY_ICON_WARNING
+        );
+        assert!(!tick(Some(true)), "identical repeat must stay silent");
+        assert!(!tick(None), "unknown read must keep state silently");
+        assert_eq!(
+            made.status_notifier_item().overlay_icon_name(),
+            OVERLAY_ICON_WARNING
+        );
+        assert!(tick(Some(false)));
+        assert_eq!(made.status_notifier_item().overlay_icon_name(), "");
+        assert!(!tick(Some(false)));
+        assert!(tick(Some(true)));
+        assert_eq!(made.status(), "Active");
+        let line = conflict_projected_line(true);
+        assert!(line.contains("outcome=conflict-updated"));
+        assert!(line.contains("conflict=true"));
+        assert!(!line.contains('\n'));
+    }
+
+    #[test]
+    fn sni_payload_uses_captured_conflict_not_live_state() {
+        // The emission snapshot must win over a mid-send shared-state flip.
+        let made = projection(Some(true), Instant::now());
+        made.set_conflict(true);
+        let captured_clear = made.sni_changed("Active", false);
+        assert_eq!(
+            captured_clear["OverlayIconName"]
+                .downcast_ref::<String>()
+                .ok(),
+            Some(String::new()),
+            "captured false must render no overlay even while shared is set"
+        );
+        made.set_conflict(false);
+        let captured_set = made.sni_changed("Active", true);
+        assert_eq!(
+            captured_set["OverlayIconName"]
+                .downcast_ref::<String>()
+                .ok(),
+            Some(OVERLAY_ICON_WARNING.to_owned()),
+            "captured true must render the warning even after shared clears"
+        );
+    }
+
+    #[test]
+    fn conflict_row_routes_to_settings() {
+        assert!(is_menu_event(MENU_ID_CONFLICT, "clicked"));
+        assert!(!is_menu_event(MENU_ID_CONFLICT, "pressed"));
+        let menu = projection(Some(true), Instant::now()).menu();
+        assert!(menu.get_layout(MENU_ID_CONFLICT, -1, Vec::new()).is_ok());
+    }
+
+    #[test]
+    fn hidden_conflict_click_is_ignored() {
+        // No conflict: the row is hidden, so a stray click must not route
+        // to Settings (in dev this would otherwise surface a launcher
+        // error; with a baked launcher it would spawn).
+        let menu = projection(Some(true), Instant::now()).menu();
+        assert_eq!(conflict_visible(&menu), Some(false));
+        assert!(
+            menu.event(MENU_ID_CONFLICT, "clicked", owned_string("x"), 0)
+                .is_ok()
+        );
     }
 }

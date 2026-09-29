@@ -212,6 +212,8 @@
             "${pkgs.kdePackages.kcmutils}/bin/kcmshell6";
           env.PLASMA_AUTO_TILER_KWRITECONFIG6 =
             "${pkgs.kdePackages.kconfig}/bin/kwriteconfig6";
+          env.PLASMA_AUTO_TILER_KREADCONFIG6 =
+            "${pkgs.kdePackages.kconfig}/bin/kreadconfig6";
           # Shared compile-time identity: self.rev or local-dev.
           env.PLASMA_AUTO_TILER_SOURCE_REV = sourceRev;
           preCheck = ''

@@ -43,21 +43,6 @@ decisions of 2026-09-24 are under
   cut advisory `hover_prior` validation, lag-only fences, verbose comments;
   net deletion, no behavior change.
   [change](changes/archive/cross-output-drag-preview.md)
-- P2 | Conflicting host settings detection | User direction (2026-09-29):
-  detect KDE/KWin/Plasma settings that conflict with the tiler (e.g. native
-  edge/quick tiling, conflicting key bindings), alert via tray icon state or
-  a notification, and offer settings-page helpers to correct and ideally
-  revert them. Evidence: native edge tiling fired on an off-screen drag
-  (trace `~/Downloads/plasma-auto-tiler-dev.H28tD1.log`; our tiler retiled
-  correctly after drop) and competed visibly with our Meta-drag preview.
-  Interim (user, 2026-09-29): leave as is. Research done. User decisions
-  (2026-09-29): Fix buttons for as many conflicting settings as possible;
-  Revert restores KDE defaults; no stored prior values or tracking of user
-  changes; alerts on the settings page first, later a tray indicator/icon
-  whose click opens the normal settings page. Settings-page Fix/Revert for
-  the three `kwinrc [Windows]` edge settings shipped; Fix confirmed live by
-  the user (2026-09-29). Remaining: tray indicator. Uninstall revert parked under Future.
-  [change](changes/host-settings-conflicts.md)
 - P2 | Live sibling reflow while dragging | Deferred, not light (est. several
   hundred to ~1,000 lines, write-fighting risk); research done.
   [research](research/drag-and-drop-reorganisation.md)
@@ -133,7 +118,7 @@ Unprioritised ideas; not scheduled.
   possibly via package manager hooks; no verified per-user hook exists for
   Nix/Home Manager, KDE Store or distro packages. Users can use the
   settings-page Revert buttons meanwhile.
-  [research](changes/host-settings-conflicts.md)
+  [research](changes/archive/host-settings-conflicts.md)
 
 ## Pending live checks
 
@@ -150,10 +135,17 @@ All items below shipped offline with no live result claimed.
   without confirmed release, `native-failed` sends, a physical key bound to
   the keyless action.
   [change](changes/archive/tray-workspace-toggle.md)
-- Host settings Revert: Fix confirmed live by the user (2026-09-29).
-  Remaining: Revert removes the local key and native edge previews return;
-  one `op=revert setting=<key> outcome=ok reason=ok` log line per click.
-  [change](changes/host-settings-conflicts.md)
+- Host settings Revert and tray conflict indicator: Fix confirmed live by the
+  user (2026-09-29). Remaining: Revert removes the local key and native edge
+  previews return (one `op=revert setting=<key> outcome=ok reason=ok` line
+  per click). Tray (fresh session): with a conflict, a `dialog-warning`
+  overlay on the icon and a top "Conflicting KDE settings..." menu row that
+  opens Settings; Fix clears both without a tray restart and logs one
+  `outcome=conflict-updated conflict=false`; Revert brings them back with one
+  `conflict=true`. Red flags: stale overlay/row, repeated conflict lines on
+  heartbeats, left-click no longer opening the menu, snapshot-loss
+  `NeedsAttention` changed.
+  [change](changes/archive/host-settings-conflicts.md)
 
 - Confirmed live by the user (2026-09-29): tiling gap Save re-spaces tiles
   without restart and the unified settings page shows everything (closes the

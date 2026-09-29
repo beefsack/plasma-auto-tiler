@@ -933,6 +933,28 @@ impl TrayEndpoint {
     }
 }
 
+fn user_kwinrc_path_for(xdg_config_home: Option<&str>, home: Option<&str>) -> std::path::PathBuf {
+    if let Some(dir) = xdg_config_home.filter(|dir| !dir.is_empty()) {
+        return std::path::PathBuf::from(dir).join("kwinrc");
+    }
+    std::path::PathBuf::from(home.unwrap_or_default())
+        .join(".config")
+        .join("kwinrc")
+}
+
+fn user_kwinrc_path() -> std::path::PathBuf {
+    user_kwinrc_path_for(
+        std::env::var("XDG_CONFIG_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )
+}
+
+fn user_kwinrc_mtime(path: &std::path::Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+}
+
 /// Single-instance tray endpoint. Acquires `org.plasmaautotiler.Tray` with
 /// `DoNotQueue`: a taken name means another tray is already serving, so this
 /// instance logs one bounded record and exits 0. No PID records, no locks, no
@@ -985,6 +1007,11 @@ pub fn run() -> zbus::Result<()> {
         }
     }
     let projection = endpoint.projection();
+    let kwinrc_path = user_kwinrc_path();
+    let last_kwinrc_mtime = user_kwinrc_mtime(&kwinrc_path);
+    if let Some(conflict) = crate::tray::read_window_conflicts() {
+        projection.set_conflict(conflict);
+    }
     connection.object_server().at(OBJECT, endpoint.clone())?;
     connection.object_server().at(
         StatusNotifierItem::OBJECT,
@@ -1039,12 +1066,21 @@ pub fn run() -> zbus::Result<()> {
     let watchdog_projection = projection.clone();
     let watchdog_connection = connection.clone();
     let watchdog_watcher_owner = Arc::clone(&registered_watcher_owner);
+    let watchdog_kwinrc_path = kwinrc_path;
     let watchdog = thread::spawn(move || {
         let mut emission_failed = false;
+        let mut last_kwinrc_mtime = last_kwinrc_mtime;
         while !watchdog_stop.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_secs(1));
             if watchdog_stop.load(Ordering::Relaxed) {
                 break;
+            }
+            let current_kwinrc_mtime = user_kwinrc_mtime(&watchdog_kwinrc_path);
+            if last_kwinrc_mtime != current_kwinrc_mtime {
+                last_kwinrc_mtime = current_kwinrc_mtime;
+                if let Some(conflict) = crate::tray::read_window_conflicts() {
+                    watchdog_projection.set_conflict(conflict);
+                }
             }
             if zbus::block_on(watchdog_projection.emit_changed(watchdog_connection.inner()))
                 .is_err()
@@ -1471,8 +1507,9 @@ mod tests {
         owner_signal_malformed_line, poll_watcher_once, publish_early_refusal_line,
         publish_outcome_line, retry_registration, sender_is_current_kwin_owner,
         service_name_acquired_line, service_name_lost_line, service_name_taken_line,
-        startup_owner_outcome, status_projected_line, tray_name_lost, watcher_lost_line,
-        watcher_query_failed_line, watcher_registered_line, watcher_registration_failed_line,
+        startup_owner_outcome, status_projected_line, tray_name_lost, user_kwinrc_path_for,
+        watcher_lost_line, watcher_query_failed_line, watcher_registered_line,
+        watcher_registration_failed_line,
     };
 
     #[test]
@@ -2566,6 +2603,18 @@ mod tests {
         let (owner, failed) = startup_owner_outcome(Ok(None));
         assert_eq!(owner, None);
         assert!(!failed);
+    }
+
+    #[test]
+    fn user_kwinrc_path_prefers_xdg_over_home() {
+        assert_eq!(
+            user_kwinrc_path_for(Some("/cfg"), Some("/home/u")),
+            std::path::PathBuf::from("/cfg/kwinrc")
+        );
+        assert_eq!(
+            user_kwinrc_path_for(None, Some("/home/u")),
+            std::path::PathBuf::from("/home/u/.config/kwinrc")
+        );
     }
 
     #[test]
