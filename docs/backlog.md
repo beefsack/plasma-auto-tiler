@@ -135,6 +135,15 @@ All items below shipped offline with no live result claimed.
   without confirmed release, `native-failed` sends, a physical key bound to
   the keyless action.
   [change](changes/archive/tray-workspace-toggle.md)
+- Active border skips Plasma applet popups (user option A, 2026-09-29;
+  KRunner out of scope for now): with an ordinary bordered window active,
+  opening the Application Launcher or a tray popup hides the border and logs
+  `active-border:visible vis=0 reason=applet-popup appletPopup=1`; closing
+  it and refocusing restores `vis=1 reason=eligible appletPopup=0`; ordinary
+  dialogs and tool windows keep the border. Red flags: border on the
+  launcher, `appletPopup=0` while the launcher is active. If more shell
+  surfaces still get the border, tighten further.
+  [decision](decisions.md#native-active-border)
 - Host settings Revert and tray conflict indicator: Fix confirmed live by the
   user (2026-09-29). Remaining: Revert removes the local key and native edge
   previews return (one `op=revert setting=<key> outcome=ok reason=ok` line
