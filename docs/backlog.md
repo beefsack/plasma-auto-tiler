@@ -27,6 +27,7 @@ decisions of 2026-09-24 are under
   package/update channel. Next: Phase 0-1 throwaway spikes on the PC.
   [plan](research/windows-port/plan.md)
   [decision](decisions.md#windows-port)
+  Day-one setup and pending governance: [Windows development environment](windows-dev-environment.md).
 - P2 | macOS port | After Windows. Research plan done offline: one signed
   per-login Rust app, public Accessibility APIs, AeroSpace-style offscreen
   parking prototype for per-display workspaces, no private Spaces APIs or

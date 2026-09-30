@@ -38,6 +38,8 @@ needs a first-class workspace gate, and Win+L needs a separate policy choice.
 
 ## Development and iteration
 
+Day-one native setup, governance decisions and verification: [Windows development environment](../../windows-dev-environment.md).
+
 Develop natively on the selected Windows 11 PC. It is also the KDE
 multi-output host (DP-6 and HDMI-A-2), so changes to its boot setup and test
 session must be explicit. A VM is optional, not the safety net.
