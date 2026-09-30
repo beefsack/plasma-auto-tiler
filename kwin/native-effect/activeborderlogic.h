@@ -3,15 +3,29 @@
 #include <QColor>
 #include <QRectF>
 
+#include <cstdint>
+
+#include "visual_policy_ffi.h"
+
 namespace KWin
 {
 
-inline constexpr double ACTIVE_BORDER_THICKNESS = 3.0;
+inline VisualPolicyRect visualPolicyRectFromQRectF(const QRectF &rect)
+{
+    return {rect.x(), rect.y(), rect.width(), rect.height()};
+}
+
+inline QRectF qrectFFromVisualPolicyRect(const VisualPolicyRect &rect)
+{
+    return {rect.x, rect.y, rect.w, rect.h};
+}
 
 inline QColor activeBorderColor(const QColor &themeColor, const QColor &fallbackColor, bool useThemeColor)
 {
-    // A transparent theme brush is not usable for a visible border.
-    if (useThemeColor && themeColor.isValid() && themeColor.alpha() > 0) {
+    // Preserve Qt's quantized alpha and original QColor representation.
+    const bool themeValid = themeColor.isValid();
+    const int themeAlpha = themeValid ? themeColor.alpha() : 0;
+    if (visual_border_use_theme(useThemeColor ? 1 : 0, themeValid ? 1 : 0, static_cast<int32_t>(themeAlpha)) != 0) {
         return themeColor;
     }
     return fallbackColor;
@@ -19,7 +33,7 @@ inline QColor activeBorderColor(const QColor &themeColor, const QColor &fallback
 
 inline QRectF activeBorderInnerRect(const QRectF &frameGeometry, double gap)
 {
-    return frameGeometry.adjusted(-gap, -gap, gap, gap);
+    return qrectFFromVisualPolicyRect(visual_border_inner_rect(visualPolicyRectFromQRectF(frameGeometry), gap));
 }
 
 struct ActiveBorderState
@@ -30,14 +44,14 @@ struct ActiveBorderState
 
 inline bool activeBorderIsMaximized(bool horizontal, bool vertical)
 {
-    return horizontal || vertical;
+    return visual_border_is_maximized(horizontal ? 1 : 0, vertical ? 1 : 0) != 0;
 }
 
 // Direct-read observation seed from the native committed maximizeMode()
 // (KWin::MaximizeMode: 0 restore, 1 vertical, 2 horizontal, 3 full). Any
 // nonzero axis suppresses both borders; fullscreen stays suppressed
 // independently via the live isFullScreen() observation. No script handoff,
-// no epoch, no polling.
+// no epoch, no polling. Host-specific decoding stays in C++.
 inline bool activeBorderSeedMaximized(int maximizeMode)
 {
     return maximizeMode != 0;
@@ -46,10 +60,9 @@ inline bool activeBorderSeedMaximized(int maximizeMode)
 inline ActiveBorderState activeBorderState(bool hasWindow, const QRectF &frameGeometry, bool deleted, bool minimized, bool fullScreen, bool maximized,
     bool appletPopup)
 {
-    if (!hasWindow || deleted || minimized || fullScreen || maximized || appletPopup) {
-        return {false, QRectF()};
-    }
-    return {true, frameGeometry};
+    const VisualPolicyBorderState state = visual_border_state(hasWindow ? 1 : 0, visualPolicyRectFromQRectF(frameGeometry),
+        deleted ? 1 : 0, minimized ? 1 : 0, fullScreen ? 1 : 0, maximized ? 1 : 0, appletPopup ? 1 : 0);
+    return {state.visible != 0, qrectFFromVisualPolicyRect(state.inner)};
 }
 
 // Independent drag-target preview policy (screen-space, window-agnostic):
@@ -59,18 +72,16 @@ inline ActiveBorderState activeBorderState(bool hasWindow, const QRectF &frameGe
 // explicitly cleared": never gated on Meta, focus, or the group outline.
 inline bool dragPreviewRectValid(int x, int y, int w, int h)
 {
-    constexpr int coordBound = 16384;
-    if (w < 1 || h < 1 || w > coordBound || h > coordBound) {
-        return false;
-    }
-    return x >= -coordBound && x <= coordBound && y >= -coordBound && y <= coordBound;
+    return visual_drag_preview_rect_valid(
+        static_cast<int32_t>(x), static_cast<int32_t>(y), static_cast<int32_t>(w), static_cast<int32_t>(h))
+        != 0;
 }
 
 // Group underlay extension default: sentinel -1 means "match the current
 // configured border width". Explicit values (including 0) render as-is.
 inline double groupUnderlayEffectiveExtension(double extension, double borderWidth)
 {
-    return extension < 0.0 ? borderWidth : extension;
+    return visual_group_underlay_effective_extension(extension, borderWidth);
 }
 
 // Group underlay outer geometry: the Rust-carried union bounds expanded by
@@ -79,8 +90,8 @@ inline double groupUnderlayEffectiveExtension(double extension, double borderWid
 // reconfigure stays testable without KWin.
 inline QRectF groupUnderlayOuterRect(const QRectF &unionRect, double gap, double borderWidth, double extension)
 {
-    const double pad = gap + borderWidth + extension;
-    return unionRect.adjusted(-pad, -pad, pad, pad);
+    return qrectFFromVisualPolicyRect(
+        visual_group_underlay_outer_rect(visualPolicyRectFromQRectF(unionRect), gap, borderWidth, extension));
 }
 
 } // namespace KWin

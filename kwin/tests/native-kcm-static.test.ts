@@ -267,9 +267,10 @@ describe("native KCM static contract", () => {
         assert.match(effect, /activeBorderColor\(themeColor, fallback, useThemeColor\)/);
         assert.doesNotMatch(unified, /UseThemeColor/);
         assert.match(effect, /KColorScheme::isColorSetSupported\(colorConfig, KColorScheme::Selection\)/);
-        assert.match(logic, /themeColor\.isValid\(\) && themeColor\.alpha\(\) > 0/);
         assert.match(logic, /activeBorderColor\(const QColor &themeColor, const QColor &fallbackColor, bool useThemeColor\)/);
-        assert.match(logic, /useThemeColor && themeColor\.isValid/);
+        assert.match(logic, /#include "visual_policy_ffi\.h"/);
+        assert.match(logic, /themeValid \? themeColor\.alpha\(\) : 0/);
+        assert.match(logic, /visual_border_use_theme\(useThemeColor \? 1 : 0, themeValid \? 1 : 0/);
         assert.match(logic, /QRectF activeBorderInnerRect\(/);
         assert.match(effect, /const QRectF innerRect = activeBorderInnerRect\(state\.innerRect, gap\)/);
         assert.match(effect, /setInnerRect\(window \? window->windowItem\(\)->mapFromScene\(innerRect\) : RectF\(\)\)/);

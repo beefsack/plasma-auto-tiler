@@ -16,3 +16,4 @@ pub mod reconcile;
 pub mod seed;
 pub mod session;
 pub mod size_hints;
+pub mod visual;

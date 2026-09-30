@@ -83,8 +83,10 @@ add_custom_command(
         "${EFFECT_FFI_CRATE_DIR}/src/lib.rs"
         "${EFFECT_FFI_CRATE_DIR}/src/group_highlight.rs"
         "${EFFECT_FFI_CRATE_DIR}/src/drag_oracle.rs"
+        "${EFFECT_FFI_CRATE_DIR}/src/visual.rs"
         "${EFFECT_WORKSPACE_ROOT}/crates/tiler-core/Cargo.toml"
         "${EFFECT_WORKSPACE_ROOT}/crates/tiler-core/src/lib.rs"
+        "${EFFECT_WORKSPACE_ROOT}/crates/tiler-core/src/visual.rs"
         "${EFFECT_WORKSPACE_ROOT}/crates/tiler-core/src/ids.rs"
         "${EFFECT_WORKSPACE_ROOT}/crates/tiler-core/src/bounds.rs"
         "${EFFECT_WORKSPACE_ROOT}/crates/tiler-core/src/geometry.rs"
@@ -100,6 +102,7 @@ kcoreaddons_add_plugin(plasma-auto-tiler-active-border
         activewindowborder.cpp
         drag_oracle_ffi.h
         group_highlight_ffi.h
+        visual_policy_ffi.h
         ${config_SOURCES}
 )
 add_dependencies(plasma-auto-tiler-active-border plasma-auto-tiler-effect-ffi-rs)
@@ -178,7 +181,12 @@ if(BUILD_TESTING)
     add_executable(plasma-auto-tiler-active-border-logic-test
         activeborderlogic_test.cpp
     )
-    target_link_libraries(plasma-auto-tiler-active-border-logic-test PRIVATE Qt6::Core Qt6::Gui)
+    add_dependencies(plasma-auto-tiler-active-border-logic-test plasma-auto-tiler-effect-ffi-rs)
+    target_link_libraries(plasma-auto-tiler-active-border-logic-test PRIVATE
+        "${EFFECT_STATICLIB}"
+        Threads::Threads
+        ${CMAKE_DL_LIBS}
+        Qt6::Core Qt6::Gui)
     target_compile_options(plasma-auto-tiler-active-border-logic-test PRIVATE -Wall -Wextra -Werror)
 
     add_test(NAME native-effect-logic
@@ -211,7 +219,11 @@ if(BUILD_TESTING)
     add_executable(plasma-auto-tiler-active-border-kcm-config-test
         ${kcm_config_test_SOURCES}
     )
+    add_dependencies(plasma-auto-tiler-active-border-kcm-config-test plasma-auto-tiler-effect-ffi-rs)
     target_link_libraries(plasma-auto-tiler-active-border-kcm-config-test PRIVATE
+        "${EFFECT_STATICLIB}"
+        Threads::Threads
+        ${CMAKE_DL_LIBS}
         KF6::CoreAddons
         KF6::ConfigCore
         KF6::ConfigGui

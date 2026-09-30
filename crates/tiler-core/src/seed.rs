@@ -871,6 +871,53 @@ mod tests {
     }
 
     #[test]
+    fn vertical_overlap_beyond_tolerance_centre_splits() {
+        let domain = square_domain();
+        let windows = vec![window("a", 0, 0, 100, 100), window("b", 0, 80, 100, 100)];
+        for input in [windows.clone(), windows.into_iter().rev().collect()] {
+            let (tree, links, splits) =
+                try_recursive_cut_fit_with_centre_count(&domain, &input).expect("centre splits");
+            assert_eq!(splits, 1);
+            let projected = project(&tree, domain.bounds, domain.gap).expect("projectable");
+            assert_eq!(projected.len(), 2);
+            let geometry: Vec<_> = links
+                .iter()
+                .map(|link| {
+                    let rect = projected
+                        .iter()
+                        .find(|p| p.leaf == link.leaf)
+                        .expect("leaf")
+                        .rect;
+                    (link.window.0.as_str(), rect)
+                })
+                .collect();
+            assert_eq!(
+                geometry,
+                vec![
+                    (
+                        "a",
+                        Rect {
+                            x: 0,
+                            y: 0,
+                            w: 300,
+                            h: 150
+                        }
+                    ),
+                    (
+                        "b",
+                        Rect {
+                            x: 0,
+                            y: 150,
+                            w: 300,
+                            h: 150
+                        }
+                    ),
+                ]
+            );
+        }
+    }
+
+    #[test]
     fn configured_gap_can_allow_a_wider_cross_cut_overlap() {
         let windows = vec![window("a", 0, 0, 100, 100), window("b", 70, 0, 100, 100)];
         let (_, _, splits) =

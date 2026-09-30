@@ -103,7 +103,8 @@ describe("active-group native static contract", () => {
         assert.match(effectImpl, /m_metaHeld/);
         assert.match(effectImpl, /group_highlight_is_visible/);
         assert.match(effectImpl, /group_highlight_focus_eligible/);
-        assert.match(rust, /has_group && meta_held && first_signal_seen && focus_ok && endpoint_usable/);
+        assert.match(rust, /first_signal_seen\s*&& endpoint_usable\s*&& tiler_core::visual::group_visible\(has_group, meta_held, focus_ok\)/);
+        assert.match(rust, /tiler_core::visual::group_focus_eligible\(/);
         // Fullscreen/minimized/hidden/deleted hide via owned tracked signals
         // without pointer movement.
         assert.match(effectImpl, /minimizedChanged/);

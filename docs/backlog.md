@@ -18,8 +18,15 @@ decisions of 2026-09-24 are under
   if fixtures justify it. Each step writes fixtures first, keeps KWin
   behavior identical and ends with named user live checks on KDE. Stops
   before the logical workspace model (user 2026-09-30); its shape is refined
-  during Windows spiking.
+  during Windows spiking. K0 done offline (2026-09-30): existing coverage
+  already pinned the baseline except vertical overlapping adoption, now
+  fixtured; test-only, so no new live checks. K1 done offline (2026-09-30):
+  `tiler-core::visual` owns border, preview and underlay policy; the effect
+  calls it through the existing FFI staticlib; user live checks pending.
+  Next: K2.
   [audit](research/cross-platform-core/extraction.md)
+  [K0](changes/archive/portable-core-k0-baseline.md)
+  [K1](changes/archive/portable-core-k1-visual-policy.md)
   [decision](decisions.md#cross-platform-core)
 - P1 | Windows port | After the KDE-first extraction. User decisions
   (2026-09-30): Windows 11 x64 only; managed per-monitor workspaces required
@@ -163,6 +170,16 @@ All items below shipped offline with no live result claimed.
 
 ### Single-output laptop
 
+- Core extraction K1 (visual policy now in Rust; behavior must be
+  unchanged): active border colour/offset/thickness as before, incl. theme
+  on/off; suppressed on fullscreen, each maximize axis and applet popups
+  (`active-border:visible vis=0 reason=fullscreen|maximized|applet-popup`),
+  restored on ordinary focus; Meta over a nested group shows the underlay,
+  lone leaf logs `group-highlight:cleared reason=no-parent-group`; underlay
+  padding follows border width at extension default and shrinks at explicit
+  0; drag preview shows and clears on drop/cancel
+  (`drag-preview-shown` / `drag-preview-cleared`). PC: repeat across outputs.
+  [change](changes/archive/portable-core-k1-visual-policy.md)
 - Tray workspace toggle: floating/tiled toggling confirmed live by the user
   (2026-09-29). Remaining: default change logs `stage=persist
   ... outcome=written`, `plan:config-reloaded stage=default-tiled`, applies

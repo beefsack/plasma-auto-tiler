@@ -1,4 +1,4 @@
-//! KWin native-effect FFI policy: group highlight plus drag oracle.
+//! KWin native-effect FFI policy: group highlight plus drag oracle plus visual policy.
 //!
 //! Cargo workspace staticlib behind a minimal POD C ABI (AR10). No Qt/KWin
 //! types cross this boundary; every exported callback catches panics before
@@ -18,3 +18,4 @@
 
 pub mod drag_oracle;
 pub mod group_highlight;
+pub mod visual;

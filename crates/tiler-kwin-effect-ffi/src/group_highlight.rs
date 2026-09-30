@@ -504,7 +504,9 @@ pub fn focus_eligible(
     hidden: bool,
     maximized: bool,
 ) -> bool {
-    has_window && !deleted && !minimized && !fullscreen && !hidden && !maximized
+    tiler_core::visual::group_focus_eligible(
+        has_window, deleted, minimized, fullscreen, hidden, maximized,
+    )
 }
 
 pub fn should_show(
@@ -514,7 +516,9 @@ pub fn should_show(
     focus_ok: bool,
     endpoint_usable: bool,
 ) -> bool {
-    has_group && meta_held && first_signal_seen && focus_ok && endpoint_usable
+    first_signal_seen
+        && endpoint_usable
+        && tiler_core::visual::group_visible(has_group, meta_held, focus_ok)
 }
 
 // Apply codes: 1 accepted (display updated), 2 ignored stale/out-of-order
