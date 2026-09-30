@@ -47,6 +47,12 @@ decisions of 2026-09-24 are under
   rest kept as earning its place.
   [change](changes/archive/tray-workspace-toggle.md)
   [review](changes/archive/tray-toggle-simplicity.md)
+- P1 | Group underlay on window movement only | User (2026-09-30): show the
+  underlay only while moving windows, replacing Meta-held. Staged: A
+  Meta+Shift hold; B focused-window interactive move (Meta+drag, title-bar
+  drag); C unfocused dragged-window support. Move-only, hard-coded. Stop and
+  report if any stage (especially C) grows complex. Next: stage A.
+  [change](changes/group-underlay-move-trigger.md)
 - P1 | Ghostty/local native alignment | The ~56 px shortfall is unexplained
   (source-only baseline fix is in; needs a fresh `just dev trace` local-move
   plus follow-on command trace), and one requested `2032x1092` became
