@@ -38,6 +38,11 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   KDE-first phase stops before the logical workspace model (user
   2026-09-30); its core shape is refined during Windows spiking, then
   extracted with matching KWin fixtures.
+- User decision 2026-09-30: the KDE-first extraction ends at K1 (visual
+  policy in `tiler-core::visual`). K2 settings/action intent and K3
+  difference classification stay in the KWin script, because sharing them
+  needs a new JS-to-Rust route; they are revisited when the Windows port
+  needs a shared contract. Next: Windows spikes.
 
 ## Architecture Direction
 

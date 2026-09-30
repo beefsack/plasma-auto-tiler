@@ -10,35 +10,21 @@ decisions of 2026-09-24 are under
 
 ## Open work
 
-- P0 | Portable core extraction under KDE | User priority (2026-09-30):
-  immediate next work, before any Windows implementation. Phases K0-K3 in the
-  audit: K0 baseline fixtures; K1 visual predicates and geometry (active
-  border, group underlay extension, drop preview) into Rust; K2 settings
-  validation and shortcut action intent; K3 pure difference comparison only
-  if fixtures justify it. Each step writes fixtures first, keeps KWin
-  behavior identical and ends with named user live checks on KDE. Stops
-  before the logical workspace model (user 2026-09-30); its shape is refined
-  during Windows spiking. K0 done offline (2026-09-30): existing coverage
-  already pinned the baseline except vertical overlapping adoption, now
-  fixtured; test-only, so no new live checks. K1 done offline (2026-09-30):
-  `tiler-core::visual` owns border, preview and underlay policy; the effect
-  calls it through the existing FFI staticlib; user live checks pending.
-  Next: K2.
-  [audit](research/cross-platform-core/extraction.md)
-  [K0](changes/archive/portable-core-k0-baseline.md)
-  [K1](changes/archive/portable-core-k1-visual-policy.md)
-  [decision](decisions.md#cross-platform-core)
-- P1 | Windows port | After the KDE-first extraction. User decisions
-  (2026-09-30): Windows 11 x64 only; managed per-monitor workspaces required
-  for feature-complete; non-Win default shortcuts with Win+Arrow required for
+- P0 | Windows port | KDE-first core extraction finished at K1 (user
+  2026-09-30; K2/K3 deferred until Windows needs a shared contract, see
+  [extraction](research/cross-platform-core/extraction.md),
+  [K2 audit](changes/archive/portable-core-k2-settings-actions.md)).
+  User decisions (2026-09-30): Windows 11 x64 only; managed per-monitor
+  workspaces required for feature-complete; non-Win default shortcuts with Win+Arrow required for
   the user (opt-in after proof) and Win+L explicit opt-in; custom-drawing
   underlay experiment with outline fallback; most obvious distribution
   (Store plus signed installer plus winget under evaluation); develop
   natively on the user's Windows 11 PC (also the KDE multi-output PC);
   elevated (administrator) windows unmanaged by default, a user-chosen
   run-elevated option possible later; logical workspace model refined in the
-  spikes. Open: final package/update channel.
-  Next: Phase 0-1 throwaway spikes on the PC.
+  spikes; shared settings/action intent (deferred K2) and difference
+  classification (deferred K3) shaped when Windows needs them. Open: final
+  package/update channel. Next: Phase 0-1 throwaway spikes on the PC.
   [plan](research/windows-port/plan.md)
   [decision](decisions.md#windows-port)
 - P2 | macOS port | After Windows. Research plan done offline: one signed
@@ -170,16 +156,6 @@ All items below shipped offline with no live result claimed.
 
 ### Single-output laptop
 
-- Core extraction K1 (visual policy now in Rust; behavior must be
-  unchanged): active border colour/offset/thickness as before, incl. theme
-  on/off; suppressed on fullscreen, each maximize axis and applet popups
-  (`active-border:visible vis=0 reason=fullscreen|maximized|applet-popup`),
-  restored on ordinary focus; Meta over a nested group shows the underlay,
-  lone leaf logs `group-highlight:cleared reason=no-parent-group`; underlay
-  padding follows border width at extension default and shrinks at explicit
-  0; drag preview shows and clears on drop/cancel
-  (`drag-preview-shown` / `drag-preview-cleared`). PC: repeat across outputs.
-  [change](changes/archive/portable-core-k1-visual-policy.md)
 - Tray workspace toggle: floating/tiled toggling confirmed live by the user
   (2026-09-29). Remaining: default change logs `stage=persist
   ... outcome=written`, `plan:config-reloaded stage=default-tiled`, applies
@@ -314,6 +290,11 @@ All items below shipped offline with no live result claimed.
 
 ### Multi-output PC
 
+- Core extraction K1 visual policy: laptop confirmed by the user
+  (2026-09-30: active border, fullscreen/maximise suppression, group
+  underlay, drag preview). Remaining: border, underlay and preview remap
+  correctly across outputs with differing scales/origins.
+  [change](changes/archive/portable-core-k1-visual-policy.md)
 - Born-fullscreen dogfood: game fullscreen beside tiles (no gap,
   `initial-fullscreen-held`), exit (fresh tile, `initial-fullscreen-released`),
   re-enter/exit (slot retained); optionally close before first exit.
