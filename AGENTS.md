@@ -8,13 +8,19 @@
 
 ## Dependency Management
 
-- System and toolchain dependencies for this project are managed by
+- Linux: system and toolchain dependencies for this project are managed by
   `devenv.nix` (devenv + Nix). Do not install dependencies globally or
   ad hoc.
-- When a new system dependency is required, `devenv.nix` must be updated
-  to add it.
+- When a new Linux system dependency is required, `devenv.nix` must be
+  updated to add it.
 - After `devenv.nix` is changed, advise the user to restart the session
   so the new dependencies are loaded into the environment. Do not assume
   the dependency is available until that has happened.
-- Rust crate dependencies belong in `Cargo.toml`. `devenv.nix` is for
-  system-level and toolchain dependencies only.
+- Windows: native dependencies, their install commands and the pinned Rust
+  version are listed in
+  [docs/windows-dev-environment.md](docs/windows-dev-environment.md). Use
+  only listed tools. A new Windows dependency is added to that list first,
+  with user approval. The user performs installs; ask before installing
+  anything. Never add Windows tools to `devenv.nix`.
+- Rust crate dependencies belong in `Cargo.toml`. `devenv.nix` and the
+  Windows list are for system-level and toolchain dependencies only.

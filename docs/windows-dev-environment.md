@@ -22,10 +22,10 @@
 
 | Decision | Options and consequences | Recommendation (P) |
 | --- | --- | --- |
-| Root AGENTS.md dependency rule | Amend for a Windows contract, or leave the Nix-only rule and have the user perform setup. The current rule forbids agent ad-hoc/global installs, including on Windows. | Approve a Windows-specific exception preserving Linux `devenv.nix` authority; record tools, versions and sources before agent installation. |
-| Dependency declaration file | Keep the reviewed version/command list here, or add `.config/configuration.winget` with VS workload declaration. DSC improves repeatability but adds resource/module maintenance. | Use this runbook for day one; approve a small WinGet Configuration later if repeated provisioning warrants it. Keep rustup selection and Coreutils disabling explicit, not custom DSC machinery. |
+| Root AGENTS.md dependency rule | **Decided (user 2026-09-30):** root `AGENTS.md` keeps `devenv.nix` for Linux; on Windows this document is the dependency list. New Windows tools are added here first with user approval; the user performs installs. | Done. |
+| Dependency declaration file | **Decided (user 2026-09-30):** this runbook for now. A WinGet Configuration (`.config/configuration.winget`) may follow once the setup is proven on the PC. | Revisit after day one. |
 | `.gitattributes` | **Decided (user 2026-09-30): repository-wide LF policy**, the contract below, added on the laptop before the Windows clone. Renormalization changed no tracked file. | Done. |
-| Rust pinning | Document an exact Windows Rust version matching Nix, or introduce `rust-toolchain.toml`. A TOML file controls rustup but does not automatically control the current direct Nix toolchain. | Document parity first (local rustc is 1.98.1); verify that exact official MSVC release is available. Defer a shared TOML pin until its Nix/CI integration is reviewed. |
+| Rust pinning | **Decided (user 2026-09-30):** Windows Rust is pinned in this document to the Linux baseline, 1.98.1; no `rust-toolchain.toml` (it would not control the Nix toolchain or CI). Update the pin here when `devenv.yaml` moves Rust. | Done. |
 | Windows live-testing governance | User-only experiments, or approve an equivalent to `live-kwin-testing.md` with explicit Windows authority/recovery. A setup guide cannot authorize hooks or desktop/policy mutation. | Approve a Windows live-testing document before agent-run experiments; outline below. Until then, build/test only inspected non-live targets. |
 
 ### During the first Windows session
@@ -88,8 +88,8 @@ UTF-8 without BOM for project text. Future CMD/batch files check out as CRLF.
 
 ## Day-one setup, in order
 
-Commands are for the **user on the PC**, after the decisions above. Agents
-need the approved dependency contract before installation. Use an ordinary
+Commands are for the **user on the PC**. This list is the Windows dependency
+contract (root `AGENTS.md`); agents ask before any install. Use an ordinary
 account/terminal; allow installer UAC only where required. Reopen Terminal
 after installers change PATH; restart opencode after configuration changes.
 
@@ -217,9 +217,9 @@ winget install --exact --id Microsoft.VisualStudio.2022.BuildTools --source wing
 winget install --exact --id Rustlang.Rustup --source winget --override "-y --default-host x86_64-pc-windows-msvc --default-toolchain none --profile minimal"
 ```
 
-Reopen PS7 at the checkout. Set `$RustVersion` to the user-approved exact
-version; 1.98.1 is the laptop baseline, its rustup availability is **U**.
-Stop/report an unavailable pin; do not silently select newer stable.
+Reopen PS7 at the checkout. The pinned version is 1.98.1 (Linux baseline);
+its rustup availability is **U**. Stop/report an unavailable pin; do not
+silently select newer stable.
 
 ```powershell
 $RustVersion = 'USER-APPROVED-VERSION'
@@ -389,7 +389,7 @@ git status --short
 
 ### Verification checklist
 
-- [ ] Approved Windows dependency contract, Rust pin and live-test boundary.
+- [ ] Windows live-test boundary decided; installed tools match this list and the Rust pin.
 - [ ] Agent tool call: Core PS7, correct `$PSHOME`, native executable paths.
 - [ ] `rustc -vV`: x86_64-pc-windows-msvc; approved version active in checkout.
 - [ ] Native build/test/fmt/strict clippy pass; required Linux gates identified.
@@ -416,7 +416,7 @@ dependency/live-testing amendments remain separate user decisions.
 - No WSL, MSYS/Git Bash default shell or GNU Rust target for native builds.
 - Use dedicated read/search/edit tools; otherwise PowerShell and named native tools.
   Call .exe explicitly when PowerShell aliases would change semantics. No assumed sed/awk.
-- Dependencies require the approved Windows contract; ask before installs, git-config,
+- Dependencies follow the repo's Windows list; ask before installs, git-config,
   PATH, profile, registry/policy, security-setting or external-file changes.
 - Build/test portable packages explicitly; root justfile/KWin/Nix gates run on Linux.
   Shared changes need applicable Linux evidence before acceptance.
@@ -517,7 +517,7 @@ should specify, before any relevant agent execution:
 | --- | --- | --- | --- |
 | CRLF/normalization churn | Git installer defaults or editor conversion | Proposed attributes, per-clone LF before checkout | Config origins, attributes, ls-files --eol, diff check |
 | Wrong linker/native tool | Coreutils/Git usr-bin ahead in dev PATH; explicit override | Disable Coreutils link; Git Cmd PATH; VS discovery | Ordinary build plus first MSVC linker in x64 VS shell |
-| Dependency/pin drift | Nix-only rule on Windows; rustup stable | User-approved Windows contract and parity pin | Versions/paths, workload/SDK inventory, both OS gates |
+| Dependency/pin drift | Nix-only rule on Windows; rustup stable | Windows list in this doc, pinned 1.98.1 | Versions/paths, workload/SDK inventory, both OS gates |
 | Deep target path failure | Rust dependencies/build script uses legacy path API | Short repo/cache paths; Git longpaths is partial | Actual native build, OS policy readback |
 | Desktop/input stranded | Hook hang, hiding, forced crash | Owned windows, independent restore/kill proven first | User live protocol and crash-recovery readbacks |
 | Lock loss / invalid guest evidence | Win+L policy or redirected keyboard | Guest-only policy; no host writes; defer if unavailable | Guest exact restore; physical chord remains unproven |
