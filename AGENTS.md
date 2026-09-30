@@ -23,8 +23,8 @@
 - After `devenv.nix` is changed, advise the user to restart the session
   so the new dependencies are loaded into the environment. Do not assume
   the dependency is available until that has happened.
-- Windows: native dependencies, their install commands and the pinned Rust
-  version are listed in
+- Windows: native dependencies, their install commands and Rust policy
+  (pre-1.0 track latest stable, revisit at 1.0) are listed in
   [docs/windows-dev-environment.md](docs/windows-dev-environment.md). Use
   only listed tools. A new Windows dependency is added to that list first,
   with user approval. The user performs installs; ask before installing

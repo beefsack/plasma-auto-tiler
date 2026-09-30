@@ -37,6 +37,10 @@ decisions of 2026-09-24 are under
   Intel coverage, App Store, shortcut consent, updates, Swift glue) deferred
   by the user until macOS spiking starts. Needs an Apple Silicon Mac.
   [plan](research/macos-port/plan.md)
+- P1 | Rust toolchain tracking (recurring) | User (2026-09-30): track latest
+  stable Rust pre-1.0 and fix breakage. Windows uses rustup `stable`; Linux
+  and CI get Rust from the nixpkgs pin in `devenv.yaml`, which must be bumped
+  regularly to stay close to stable. Revisit the upgrade process at 1.0.
 - P1 | Tray tiling/floating workspace toggle | Shipped `e407531`; user
   confirmed live (2026-09-29) that toggling a workspace floating and back to
   tiled behaves as expected. Remaining live: default change, cross-boundary

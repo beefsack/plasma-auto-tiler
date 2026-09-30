@@ -22,6 +22,11 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   selected package or update channel.
 - Develop directly on the Windows 11 PC, not a VM. Keep the NixOS/Linux flow
   intact; account for the PC also serving as the KDE multi-output test host.
+- User decision 2026-09-30, option A: pre-1.0 track latest stable Rust and
+  fix breakage. Windows uses rustup stable default with rustfmt/clippy, no
+  directory override and no `rust-toolchain.toml`. Linux and existing Linux
+  CI take Rust from the regularly bumped nixpkgs pin in `devenv.yaml`.
+  Revisit the upgrade process at 1.0.
 - Elevated (administrator) windows stay unmanaged by default: they float at
   their native position while other windows keep tiling. A future opt-in
   where the user chooses to run the tiler elevated may be considered; it is

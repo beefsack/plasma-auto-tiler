@@ -78,3 +78,23 @@ jobs:
             done
             rm -f -- "$log"
           '
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust toolchain
+        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - name: Build portable crates
+        run: cargo +stable build --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi
+      - name: Test portable crates
+        run: cargo +stable test --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi
+      - name: Rust format
+        run: cargo +stable fmt --all -- --check
+      - name: Rust strict Clippy
+        run: cargo +stable clippy --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi --all-targets -- -D warnings
+      - name: Check for whitespace errors
+        run: git diff --check

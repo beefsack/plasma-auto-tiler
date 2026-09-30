@@ -42,7 +42,9 @@ Day-one native setup, governance decisions and verification: [Windows developmen
 
 Develop natively on the selected Windows 11 PC. It is also the KDE
 multi-output host (DP-6 and HDMI-A-2), so changes to its boot setup and test
-session must be explicit. A VM is optional, not the safety net.
+session must be explicit. **Settled (user 2026-09-30):** this PC dual-boots
+Windows 11 Pro x64 build 26200 and NixOS nixos-unstable. A VM is optional,
+not the safety net.
 
 - [V: W33] Install the official `rustup` MSVC x64 toolchain, Visual Studio
   Build Tools with **Desktop development with C++** and the Windows SDK.
@@ -51,11 +53,11 @@ session must be explicit. A VM is optional, not the safety net.
   remains managed by `devenv.nix`; no Windows build tools go into it.
 - [I] Keep separate NixOS and Windows working copies and synchronize *source*
   through Git; do not share `target/`, live settings, ownership receipts or
-  compiled effects across operating systems. If this is a dual-boot PC,
-  Windows and KDE cannot be tested concurrently: switch sessions deliberately
-  and re-establish each OS baseline. A separate Windows install/PC avoids
-  rebooting but does not make Windows monitor IDs equal to KDE's DP-6 and
-  HDMI-A-2. Verify both Windows display identities on the actual PC.
+  compiled effects across operating systems. Windows and KDE cannot be tested
+  concurrently: switch sessions deliberately and re-establish each OS
+  baseline. A separate Windows install/PC avoids rebooting but does not make
+  Windows monitor IDs equal to KDE's DP-6 and HDMI-A-2. Verify both Windows
+  display identities on the actual PC.
 - [I: `justfile:16,27-29`] Plan a Windows-specific PowerShell justfile:
   `just --justfile windows.justfile dev` builds with
   `cargo build -p tiler-windows`, asks the verified dev owner to restore and
@@ -64,12 +66,12 @@ session must be explicit. A VM is optional, not the safety net.
   `just --justfile windows.justfile stop` releases hooks and overlays and
   restores owned windows. The existing root `justfile` sets `bash` globally
   and uses Linux-specific tools; do not route Windows through it unchanged.
-- [I] On the daily desktop, start with a separate ordinary test account or
-  dedicated test apps where practical; first experiments must not hide real
-  user windows. Keep a desktop/Start recovery shortcut outside the hotkey
-  hook: `tiler-windows restore` reads the owner-tagged visibility ledger and
-  reveals only verified project-hidden windows, even if the primary process
-  has exited. `tiler-windows stop` requests graceful release; if unresponsive,
+- [I] On the daily desktop, start with dedicated test apps where practical;
+  first experiments must not hide real user windows. Keep a desktop/Start
+  recovery shortcut outside the hotkey hook: `tiler-windows restore` reads
+  the owner-tagged visibility ledger and reveals only verified project-hidden
+  windows, even if the primary process has exited. `tiler-windows stop`
+  requests graceful release; if unresponsive,
   an emergency stop targets only a verified dev-process identity, then runs
   the standalone restore path. Disable dev login startup before testing an
   intentionally crashing build. Prove recovery before allowing ordinary
@@ -78,9 +80,9 @@ session must be explicit. A VM is optional, not the safety net.
   Control (UAC), games and physical shortcut acceptance. Linux cross-compile
   (`cargo-xwin`) and Wine are optional smoke paths, not prerequisites.
   GitHub Windows runners gate build, Rust tests and release artifacts but
-  cannot replace interactive desktop checks. An optional VM can isolate
-  dangerous policy experiments if available; without one, defer Win+L policy
-  writes until an equally safe reversible test environment exists.
+  cannot replace interactive desktop checks. **Settled (user 2026-09-30):**
+  Sandbox is enabled, installed and rebooted, not launched. Win+L policy
+  experiments are guest-only in Sandbox; defer if isolation is unavailable.
 
 ## Process, authority and lifecycle
 
@@ -564,7 +566,7 @@ policy-based Win+L and overlay stacking add separate UX risks.
 | Private COM API churn | High; internal desktops/shell cloak changes | Avoid as required path; build matrix only for comparison [O: U1,U6]. |
 | Lost shortcuts / Start/Snap interference | High; Win chords conflict or silent LL removal | Non-Win defaults; hook matrix and recovery; explicit Fix/Revert with settings preimage [V: W3; I]. |
 | Win+Arrow override fails or hurts games | Critical for this user's feature-complete goal | Physical-PC hook/Snap/Start/game matrix before claiming support; non-Win defaults and immediate revert remain usable for previews [O: U3; I]. |
-| Lock action disabled by Win+L policy | Critical; no remaining keyboard/API lock route | Do not write on an unrecoverable daily desktop; prove alternate lock, refresh timing, policy owner and exact revert in an isolated account/VM first [V: W12; O: U12; I]. |
+| Lock action disabled by Win+L policy | Critical; no remaining keyboard/API lock route | Guest-only Sandbox experiment only; prove alternate lock, refresh timing, policy owner and exact revert there, defer if unavailable [V: W12; O: U12; I]. |
 | Underlay pollutes Task View or covers dialogs | High; shell includes overlay, topmost or non-contiguous members | Compare unowned/owned tool windows and custom-drawn per-monitor surface during Win+Tab and desktop switches; suppress failed visual and use approved outline fallback [V: W34,W35; O: U13; I]. |
 | Daily-PC recovery fails | Critical; hide/restart/shortcut loop strands desktop | Independent restore command and out-of-hook kill switch verified before real windows; disable startup for crash probes [I]. |
 | Store package lacks control or certification | High; hook/startup/Win+L policy refused | MSIX full-trust/startup/certification experiment, same signed MSI/EXE Store-listing fallback, channel-specific updates [V: W39-W44; I]. |
