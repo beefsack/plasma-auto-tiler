@@ -6,6 +6,13 @@
   [docs/live-kwin-testing.md](docs/live-kwin-testing.md). It does not grant
   mutation authorization.
 
+## Live Windows Testing
+
+- Before any live Windows testing (input hooks, moving/hiding/restyling other
+  windows, desktop overlays, forced-crash recovery probes, or registry/policy
+  writes), read and follow [docs/live-windows-testing.md](docs/live-windows-testing.md).
+  It does not grant mutation authorization.
+
 ## Dependency Management
 
 - Linux: system and toolchain dependencies for this project are managed by

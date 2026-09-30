@@ -26,7 +26,7 @@
 | Dependency declaration file | **Decided (user 2026-09-30):** this runbook for now. A WinGet Configuration (`.config/configuration.winget`) may follow once the setup is proven on the PC. | Revisit after day one. |
 | `.gitattributes` | **Decided (user 2026-09-30): repository-wide LF policy**, the contract below, added on the laptop before the Windows clone. Renormalization changed no tracked file. | Done. |
 | Rust pinning | **Decided (user 2026-09-30):** Windows Rust is pinned in this document to the Linux baseline, 1.98.1; no `rust-toolchain.toml` (it would not control the Nix toolchain or CI). Update the pin here when `devenv.yaml` moves Rust. | Done. |
-| Windows live-testing governance | User-only experiments, or approve an equivalent to `live-kwin-testing.md` with explicit Windows authority/recovery. A setup guide cannot authorize hooks or desktop/policy mutation. | Approve a Windows live-testing document before agent-run experiments; outline below. Until then, build/test only inspected non-live targets. |
+| Windows live-testing governance | **Decided (user 2026-09-30, option A):** write [live Windows testing](live-windows-testing.md) on the laptop before the first Windows session. Each experiment class still needs user authorization. | Done; follow the protocol before live work. |
 
 ### During the first Windows session
 
@@ -222,7 +222,7 @@ its rustup availability is **U**. Stop/report an unavailable pin; do not
 silently select newer stable.
 
 ```powershell
-$RustVersion = 'USER-APPROVED-VERSION'
+$RustVersion = '1.98.1'
 rustup toolchain install "${RustVersion}-x86_64-pc-windows-msvc" --profile minimal --component rustfmt --component clippy
 rustup override set "${RustVersion}-x86_64-pc-windows-msvc"
 rustup show
@@ -486,30 +486,9 @@ also add `allow` entries for `cat.exe *`, `head.exe *`, `tail.exe *`,
   Registry/lock experiments are user-run inside the guest, not permission
   exceptions for the host agent. Restart opencode after saving.
 
-## Windows live-testing document: required outline
+## Windows live testing
 
-**P:** the Windows counterpart to [live KWin testing](live-kwin-testing.md)
-should specify, before any relevant agent execution:
-
-- Authority: user-approved operation/environment/resources, duration, owned
-  test windows first; no inherited KWin authorization, autostart or elevation.
-- Baseline: executable/hash, PID/start identity, user/session/integrity,
-  displays/DPI, window ownership/geometry/visibility and policy preimages.
-- Recovery: prove graceful stop, exact-identity emergency kill, independent
-  owner-verified restore and mouse/shortcut access outside the hook before
-  any hide or ordinary-app experiment; startup disabled for crash probes.
-  HWND/PID reuse must not authorize restoring unrelated windows.
-- Input: dedicated message-pump thread, immediate callback return, no waits
-  or raw-keystroke logs. **V: W12:** LowLevelHooksTimeout can silently remove
-  a hook on Win7+; Win10 1709+ caps it at 1000 ms. Never change that timeout
-  or pause an active hooking process in a debugger (**P**, timeout consequence).
-  Timeout is not hidden-window recovery. User recovery includes Ctrl+Alt+Del
-  secure attention/Task Manager; an ordinary hook cannot replace SAS.
-- Policy: no writes outside Sandbox; exact preimage/readback/restore inside
-  guest, no claim that disabling locking simply relocates Win+L. No game,
-  elevated-app or secure-desktop takeover. Physical observations are user-owned.
-- Failure: stop on ambiguous identity, authority, residue or failed restoration;
-  preserve evidence and report, not broad cleanup or retry loops.
+Before live Windows work, read and follow [live Windows testing](live-windows-testing.md); it does not grant mutation authorization.
 
 ## Risk table
 
