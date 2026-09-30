@@ -29,6 +29,27 @@ remains in [Windows decisions](decisions.md#windows-port).
   outside these experiments. Run at ordinary medium integrity, not elevated.
   Stop the experiment if those classes enter its scope; do not probe takeover.
 
+## Standing authorization (user 2026-09-30)
+
+- Exact bounds live in [windows-phase1-implementation](changes/windows-phase1-implementation.md).
+  Within those bounds it replaces per-class stop-and-ask; it grants no blanket
+  permission for future unrelated work. Per-run preflight, identity, recovery
+  and evidence below still apply.
+- Covered only: tiler-owned chords including Win+Arrow, movement/resize/hide/restyle,
+  overlays, intentional loss of the exact verified dev tiler process, Sandbox launch
+  with read-only mappings. Registry/policy writes guest-only; no host
+  settings/autostart/boot/logoff/restart/security/display changes.
+- Only owned disposable test windows; never launch/manage other user apps.
+  Always exclude the Windows Terminal hosting opencode and its processes:
+  never hide/minimize/close/restyle/kill them. Prove graceful plus forced
+  restore before any broader hiding.
+- Ordinary medium integrity only; no games, elevation, protected apps or secure
+  desktop. Bound hook durations, keep out-of-hook recovery. Injected input is
+  smoke evidence only; physical acceptance stays user-pending.
+- End each unit with all owned tiler/test processes stopped, identity verified,
+  windows restored/closed, ledger clean or residue reported. Stop immediately on
+  ambiguous restore, unowned effects, or lost control.
+
 ## Required Preflight
 
 - Read the approved experiment scope and inspect its executable entry points,

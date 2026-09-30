@@ -11,10 +11,23 @@
   the KDE multi-output host (DP-6 and HDMI-A-2). **Settled (user 2026-09-30):**
   Windows 11 Pro x64 build 26200 dual-boots NixOS nixos-unstable; do not
   change the boot arrangement. Windows monitor IDs differ.
+- **Accepted baseline (user 2026-09-30, this dev PC):** one display only.
+  Historical KDE DP-6/HDMI-A-2 assertions above are unchanged; single Windows
+  display vs historical KDE multi-output is not proof of a present wiring
+  change (flagged contradiction, not resolved). Windows multi-monitor work
+  moves to the user's other Win11 PC.
+
+| Item | Accepted value |
+| --- | --- |
+| Display | ONE Gigabyte M27Q, `\\.\DISPLAY1`, `DISPLAY\GBT270D\5&35A435C3&5&UID41221`, primary, origin 0,0 |
+| Mode | 2560x1440 @170Hz, 125%, calculated effective DPI 120 |
+| Work area | DPI-unaware query logical 0,0-2048,1104; inferred physical 0,0-2560,1380 NOT directly queried |
+
 - **R:** KDE-first extraction ended at K1. Start Windows Phase 1 with native
-  build/tests, two-monitor baseline, independent stop/restore on owned test
-  windows, then physical Win+Arrow proof. `tiler-windows` and its restore/stop
-  commands do not exist yet. This runbook grants no live-testing authority.
+  build/tests, single-display baseline above, independent stop/restore on owned test
+  windows, then physical Win+Arrow proof. `tiler-windows` currently provides
+  offline ledger validation/storage only; live restore/stop are not implemented.
+  This runbook grants no live-testing authority.
 
 ## Decisions needed from the user
 
@@ -387,7 +400,7 @@ git status --short
 | Clean binary startup; owned-window hide/reveal and forced-process-loss recovery | Sandbox first, then owned-window user repeat physically. Discarding the guest is containment, not proof the independent restore path works. |
 | Win+L policy | Guest-only snapshot/write/readback/locking-API/restore experiment. **U:** redirected Win+L may reach the host; no primary guarantee of guest chord delivery or reliable guest unlock. Never modify host policy; defer if isolation is unavailable. |
 | Win+Arrow, Snap/Start suppression, down/up and disable reversal | User's physical desktop; guest hooks see redirected input, not equivalent shell behavior. All four directions, ordinary integrity and game-disable proof. |
-| Two monitors, mixed DPI, games/anti-cheat, UAC/secure desktop | Physical PC. Sandbox's one guest display is not the host's two-output topology (**U:** exact current display/input limits); vGPU/RDP is not physical game compatibility. |
+| Two monitors, mixed DPI, games/anti-cheat, UAC/secure desktop | Other Win11 PC (not this dev PC). Sandbox's one guest display is not the host's topology; vGPU/RDP is not physical game compatibility. |
 
 ### Verification checklist
 
@@ -402,7 +415,7 @@ git status --short
 - [x] processed-beef skills and fresh `muse-spark` Worker routing work with transferred config.
 - [x] Dual-boot confirmed: Win11 Pro build 26200 + NixOS nixos-unstable.
 - [x] Sandbox enabled, installed and rebooted; not launched.
-- [ ] Physical displays/scale/work areas confirmed by user; report awaiting acceptance.
+- [x] Single-display M27Q baseline accepted 2026-09-30 (see top of this doc); multi-monitor moves to the other Win11 PC. Physical input/display/game acceptance remains pending.
 - [ ] Clean-runtime and independent recovery evidence obtained when a runnable
   Windows spike exists; no extra runtime install needed. Host input/game gates
   remain pending until user-tested.

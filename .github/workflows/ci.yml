@@ -89,12 +89,12 @@ jobs:
       - name: Install stable Rust toolchain
         run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
       - name: Build portable crates
-        run: cargo +stable build --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi
+        run: cargo +stable build --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows
       - name: Test portable crates
-        run: cargo +stable test --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi
+        run: cargo +stable test --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows
       - name: Rust format
         run: cargo +stable fmt --all -- --check
       - name: Rust strict Clippy
-        run: cargo +stable clippy --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi --all-targets -- -D warnings
+        run: cargo +stable clippy --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows --all-targets -- -D warnings
       - name: Check for whitespace errors
         run: git diff --check

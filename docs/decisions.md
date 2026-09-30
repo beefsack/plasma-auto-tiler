@@ -31,6 +31,14 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   their native position while other windows keep tiling. A future opt-in
   where the user chooses to run the tiler elevated may be considered; it is
   not a sensible default now.
+- Approved route (user 2026-09-30): one normal single per-user/session
+  `tiler-windows` executable with standalone stop/restore, public hide/reveal,
+  owned disposable test binary, `RegisterHotKey` vs `WH_KEYBOARD_LL` comparison,
+  proof order offline then Sandbox clean/lifecycle then owned hide/crash-restore
+  then physical repeat then physical input. Live proof remains pending.
+- Accepted baseline (user 2026-09-30, this dev PC): one Gigabyte M27Q only
+  (see [runbook](windows-dev-environment.md)); Windows multi-monitor moves to the
+  user's other Win11 PC. Historical KDE multi-output host assertions are unchanged.
 - macOS decisions (version floor, App Store, shortcut consent, updates, UI
   language) are deferred until macOS spiking starts.
 
