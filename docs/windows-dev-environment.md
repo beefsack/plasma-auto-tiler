@@ -25,8 +25,9 @@
 
 - **R:** KDE-first extraction ended at K1. Start Windows Phase 1 with native
   build/tests, single-display baseline above, independent stop/restore on owned test
-  windows, then physical Win+Arrow proof. `tiler-windows` currently provides
-  offline ledger validation/storage only; live restore/stop are not implemented.
+  windows, then physical Win+Arrow proof. Native dev/stop, exact-owner emergency
+  exit and independent owned-window restore are now machine-proven on this PC;
+  input proof remains pending (see the [active record](changes/windows-phase1-implementation.md)).
   This runbook grants no live-testing authority.
 
 ## Decisions needed from the user
@@ -49,7 +50,7 @@
 | Credentials | **Settled (user 2026-09-30):** HTTPS + GCM. | Done; do not copy credentials into the runbook. |
 | CLI scope | **Settled (user 2026-09-30):** Git, rg, PS7, rustup, MSVC Build Tools 2022 + SDK, just, jq, yq, gh. No Coreutils; qsv skipped. | Done. |
 | opencode configuration and plugin version | **Settled (user 2026-09-30):** opencode via winget, known-working config transferred; PS7 Store/MSIX, not MSI, and no explicit shell path in opencode. Routing proved by first fresh muse-spark Worker; available identity model family is muse-spark with no independent provider introspection. | Smoke-test skills and `gpt-sol` -> `muse-spark` routing before work. Stop/report incompatibility rather than silently changing routing/plugins. |
-| Isolation | **Settled (user 2026-09-30):** Sandbox enabled, installed and rebooted, not launched. Guest-only policy/crash probes; never host policy writes. | Sandbox for clean runtime and guest-only policy/crash probes. If unavailable, defer Win+L policy writes; no policy experiments on the daily desktop. |
+| Isolation | **Settled (user 2026-09-30):** Sandbox enabled, installed and rebooted, then closed 2026-09-30 after a failed preflight (user dismissed the WM_CLOSE confirmation; no processes remain). Phase 1-3 live proof is physical-desktop owned windows first; Sandbox is deferred to Phase 4 clean runtime plus Win+L guest-only policy. Never host policy writes. | Physical first under the live protocol. Sandbox only for Phase 4 clean runtime and guest-only Win+L; if unavailable, defer those; no policy experiments on the daily desktop. |
 
 ### Line-ending contract
 
@@ -261,6 +262,7 @@ where.exe cargo
 | --- | --- |
 | `tiler-core`, `tiler-protocol` | Build/test: pure Rust policy; zero normal core dependencies, protocol serde/serde_json. |
 | `tiler-kwin-effect-ffi` | Include Rust tests/staticlib build: only portable Rust/core/serde/POD exports. Its Qt/KWin C++ consumer is Linux-only. |
+| `tiler-windows` | Include build/tests/clippy; native APIs are Windows-gated, ledger tests portable. Build also produces the owned test-window binary. |
 | `plasma-auto-tiler` | Exclude: unguarded `rustix::process::geteuid` plus D-Bus/KDE service/tray integration. It cannot compile as-is on MSVC; Windows needs its own adapter. |
 | fmt / strict clippy | fmt all packages without compilation; clippy only the allowlist. |
 | KWin npm | `npm ci` and `typecheck` can use native Node >= 24. Current build/test scripts use POSIX `rm -rf`/`VAR=value`; tests also invoke `npx` with `execFileSync` (Windows `.cmd` issue). Keep build/tests on Linux unchanged. |
@@ -270,16 +272,16 @@ where.exe cargo
   offline `cargo check --target x86_64-pc-windows-msvc` was run or installed.
   **P:** explicit package flags are the smallest reliable boundary; changing
   `default-members` changes Linux defaults, while target-gating dependencies
-  alone cannot repair unguarded Linux source. No Cargo changes are selected.
+  alone cannot repair unguarded Linux source.
 
 From ordinary PS7:
 
 ```powershell
 where.exe link
-cargo build --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi
-cargo test --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi
+cargo +stable build --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows
+cargo +stable test --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows
 cargo fmt --all -- --check
-cargo clippy --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi --all-targets -- -D warnings
+cargo +stable clippy --locked -p tiler-core -p tiler-protocol -p tiler-kwin-effect-ffi -p tiler-windows --all-targets -- -D warnings
 ```
 
 - **V: R3:** rustc's MSVC discovery normally finds an absolute VS linker and
@@ -311,16 +313,22 @@ $env:INCLUDE
 - **P:** first linker must be Microsoft's MSVC `Hostx64\x64\link.exe`.
   Do not permanently add SDK/MSVC or Git `usr\bin` to PATH; do not set an
   arbitrary Cargo linker override to hide incomplete installation.
-- **P:** proposed Windows CI job: `windows-latest`, `shell: pwsh`, checkout,
+- **R:** Windows CI job: `windows-latest`, `shell: pwsh`, checkout,
   latest stable MSVC Rust + rustfmt/clippy, the four commands above, then
-  `git diff --check`. Add `-p tiler-windows` only once that package exists.
+  `git diff --check`, with the four explicit packages above.
   No Nix/KWin/live tests in this job. Hosted runner preinstalled tools are
   **not** clean-runtime evidence [W10].
 - **P:** Windows sessions touching shared code must pass these native gates
   plus all applicable Linux gates via user-authorized push/CI or the laptop.
   Report Linux gates pending until green; physical KDE/Windows acceptance is
   user-owned. Do not claim deferred gates passed. Root `just dev` remains
-  Linux-only; a future PowerShell justfile is a Phase 1 proposal, not present.
+  Linux-only. Native loop: `just --justfile windows.justfile dev`, `dev trace`,
+  `stop`; bounded owned-window journey: `proof`, under recorded live authority.
+- The dev loop copies binaries before launch so builds do not overwrite running
+  images. Explorer's desktop `Document.Application` broker keeps dev/test actors
+  outside the protected Terminal tree; plain Shell.Application is caller-context.
+  CLI `stop`/`emergency-stop` exit the verified owner only; call `restore` next
+  (the Just `stop` recipe does both). Recovery state is per-user LocalAppData/session.
 
 ### 6. Configure opencode and smoke-test the actual agent environment
 
@@ -387,8 +395,9 @@ git status --short
 - **P:** map only the exact shipped-payload directory read-only, disable
   networking/clipboard in `.wsb`, copy payload into guest-local storage and
   run without installing Rust, Git, PS7 or build tools. Repeat on a clean
-  machine if Sandbox is unavailable. Test startup/stop/restore there before
-  general windows. **U:** actual runtime dependency closure is not yet proven.
+  machine if Sandbox is unavailable. Phase 1-3 proves startup/stop/restore on
+  owned windows on the physical desktop first; Phase 4 repeats clean
+  runtime there. **U:** actual runtime dependency closure is not yet proven.
 - **V: W11:** closing Sandbox discards guest state; guest restarts retain it
   on Win11 22H2+, but writable mapped folders persist host changes. Avoid
   writable mappings. Win11 24H2 does not guarantee inbox Notepad/Terminal;
@@ -397,8 +406,8 @@ git status --short
 
 | Phase 1 experiment | Environment and evidence limits |
 | --- | --- |
-| Clean binary startup; owned-window hide/reveal and forced-process-loss recovery | Sandbox first, then owned-window user repeat physically. Discarding the guest is containment, not proof the independent restore path works. |
-| Win+L policy | Guest-only snapshot/write/readback/locking-API/restore experiment. **U:** redirected Win+L may reach the host; no primary guarantee of guest chord delivery or reliable guest unlock. Never modify host policy; defer if isolation is unavailable. |
+| Clean binary startup; owned-window hide/reveal and forced-process-loss recovery | Physical desktop with owned disposable windows first (Phase 1-3). Phase 4 repeats clean-install/runtime in Sandbox when available. Discarding a guest is containment, not proof the independent restore path works. |
+| Win+L policy | Deferred to Phase 4 Sandbox guest-only snapshot/write/readback/locking-API/restore experiment. **U:** redirected Win+L may reach the host; no primary guarantee of guest chord delivery or reliable guest unlock. Never modify host policy. |
 | Win+Arrow, Snap/Start suppression, down/up and disable reversal | User's physical desktop; guest hooks see redirected input, not equivalent shell behavior. All four directions, ordinary integrity and game-disable proof. |
 | Two monitors, mixed DPI, games/anti-cheat, UAC/secure desktop | Other Win11 PC (not this dev PC). Sandbox's one guest display is not the host's topology; vGPU/RDP is not physical game compatibility. |
 
@@ -414,11 +423,12 @@ git status --short
   paths, clean status and `git diff --check`; no mass conversion.
 - [x] processed-beef skills and fresh `muse-spark` Worker routing work with transferred config.
 - [x] Dual-boot confirmed: Win11 Pro build 26200 + NixOS nixos-unstable.
-- [x] Sandbox enabled, installed and rebooted; not launched.
+- [x] Sandbox enabled, installed, rebooted, then closed 2026-09-30 after a failed preflight (user-dismissed WM_CLOSE; no processes remain); deferred to Phase 4 + Win+L guest-only. See [Phase 1 note](changes/windows-phase1-implementation.md).
 - [x] Single-display M27Q baseline accepted 2026-09-30 (see top of this doc); multi-monitor moves to the other Win11 PC. Physical input/display/game acceptance remains pending.
 - [ ] Clean-runtime and independent recovery evidence obtained when a runnable
-  Windows spike exists; no extra runtime install needed. Host input/game gates
-  remain pending until user-tested.
+  Windows spike exists; static CRT/OS imports are supporting, not proof. No
+  Sandbox again this assignment. Host input/game gates remain pending until
+  user-tested.
 
 ## Proposed PC global AGENTS.md section
 

@@ -61,13 +61,14 @@ not the safety net.
   baseline. A separate Windows install/PC avoids rebooting but does not make
   Windows monitor IDs equal to KDE's DP-6 and HDMI-A-2. Verify the single Windows
   display identity on this PC; verify multi-monitor identities only on the other Win11 PC.
-- [I: `justfile:16,27-29`] Plan a Windows-specific PowerShell justfile:
+- [R: milestone 2] Windows-specific PowerShell justfile:
   `just --justfile windows.justfile dev` builds with
-  `cargo build -p tiler-windows`, asks the verified dev owner to restore and
-  exit, starts the new build, checks ready state and prints the log path.
+  `cargo build -p tiler-windows`, exits the verified dev owner, restores,
+  copies the new payload, starts via Explorer's desktop broker, checks ready
+  state and prints the log path. This keeps actors outside the protected Terminal tree.
   `just --justfile windows.justfile dev trace` adds redacted tracing;
-  `just --justfile windows.justfile stop` releases hooks and overlays and
-  restores owned windows. The existing root `justfile` sets `bash` globally
+  `just --justfile windows.justfile stop` exits the owner then independently
+  restores owned windows. Hooks and overlays are not implemented yet. The existing root `justfile` sets `bash` globally
   and uses Linux-specific tools; do not route Windows through it unchanged.
 - [I] On the daily desktop, start with dedicated test apps where practical;
   first experiments must not hide real user windows. Keep a desktop/Start
@@ -84,8 +85,10 @@ not the safety net.
   (`cargo-xwin`) and Wine are optional smoke paths, not prerequisites.
   GitHub Windows runners gate build, Rust tests and release artifacts but
   cannot replace interactive desktop checks. **Settled (user 2026-09-30):**
-  Sandbox is enabled, installed and rebooted, not launched. Win+L policy
-  experiments are guest-only in Sandbox; defer if isolation is unavailable.
+  Sandbox is enabled, installed, rebooted, then closed after a failed
+  preflight (user-dismissed WM_CLOSE; no processes remain). Phase 1-3 live
+  proof is physical-desktop owned windows first; Win+L policy
+  experiments are deferred to Phase 4 Sandbox guest-only.
 
 ## Process, authority and lifecycle
 
@@ -524,7 +527,7 @@ make restore/stop work before hiding an ordinary desktop window.
 | Phase | Goal / scope | Exit evidence | Throwaway spikes first | Effort / risk |
 | --- | --- | --- | --- | --- |
 | 0. KDE-first extraction | Move only proven portable policy; preserve current KWin behavior before Windows implementation. | KWin fixtures and user live checks for each extraction step, as specified in [extraction](../cross-platform-core/extraction.md); no Windows product build. | KWin pure-policy fixtures before edits; no Windows host mutation. | Medium / controlled KWin regression risk. |
-| 1. Physical host + input/recovery | Install Windows toolchain, record single-display baseline (this PC), prove independent restore command and Win+Arrow. | Native build, dev restart/log loop and verified kill/restore on owned windows. **Win+Arrow opt-in works on the user's physical Win11 PC** with Snap/Start suppression and reversal; otherwise user-specific feature completeness is blocked. | `RegisterHotKey` vs `WH_KEYBOARD_LL` all four Win+Arrows, key-up masking, game disable; Win+L policy only in a safe disposable environment, not on an unrecoverable daily desktop; forced-crash restore. | Medium / highest input risk. |
+| 1. Physical host + input/recovery | Install Windows toolchain, record single-display baseline (this PC), prove independent restore command and Win+Arrow. | Native build, dev restart/log loop and verified kill/restore on owned windows. **Win+Arrow opt-in works on the user's physical Win11 PC** with Snap/Start suppression and reversal; otherwise user-specific feature completeness is blocked. | `RegisterHotKey` vs `WH_KEYBOARD_LL` all four Win+Arrows, key-up masking, game disable; forced-crash restore on owned windows. Win+L policy is deferred to Phase 4 Sandbox guest-only. | Medium / highest input risk. |
 | 2. Window geometry | Wire Windows observation/actuation to the extracted Engine for normal windows; retain evidence-based convergence. | Owned apps then representative desktop apps tile/read back with DPI, focus, sleep, display change and Explorer restart; no game writes. | WinEvent dropped-event, DWM invisible-frame/min-size and UWP/owned-dialog probes; hook timeout detection. | Large / high. |
 | 3. Required workspaces + visuals | After visibility proof, implement per-monitor logical workspaces, borders, group visual and drop preview. | Two monitors with independent workspaces (other Win11 PC), trailing empty, taskbar/Alt+Tab/Task View accepted, crash recovery and gaming pass. True underlay **or approved outline fallback** works without shell pollution. | `ShowWindow` hide/reveal ledger and forced loss; underlay inserted behind group; owned/unowned tool HWND vs single custom-drawn monitor surface through Win+Tab, desktop switch, Explorer animation and fullscreen; private cloak only comparative. | Large / highest recovery and rendering risk. |
 | 4. Settings + distribution | Live apply, consented conflict/revert, tray, Store proof, signed manual install and updates. | Store package feasibility or documented installer-listing fallback; `winget` manifest, signed GitHub release, clean install/update/uninstall and owner restoration; user accessibility journey. **Win+Arrow remains a feature-complete exit gate.** | Packaged full-trust hook/startup/install test; Store certification preflight; Win32/tray UI; MSIX vs signed MSI/EXE updater channel; signing identity and SmartScreen. | Medium-large / high. |
@@ -569,7 +572,7 @@ policy-based Win+L and overlay stacking add separate UX risks.
 | Private COM API churn | High; internal desktops/shell cloak changes | Avoid as required path; build matrix only for comparison [O: U1,U6]. |
 | Lost shortcuts / Start/Snap interference | High; Win chords conflict or silent LL removal | Non-Win defaults; hook matrix and recovery; explicit Fix/Revert with settings preimage [V: W3; I]. |
 | Win+Arrow override fails or hurts games | Critical for this user's feature-complete goal | Physical-PC hook/Snap/Start/game matrix before claiming support; non-Win defaults and immediate revert remain usable for previews [O: U3; I]. |
-| Lock action disabled by Win+L policy | Critical; no remaining keyboard/API lock route | Guest-only Sandbox experiment only; prove alternate lock, refresh timing, policy owner and exact revert there, defer if unavailable [V: W12; O: U12; I]. |
+| Lock action disabled by Win+L policy | Critical; no remaining keyboard/API lock route | Deferred to Phase 4 guest-only Sandbox experiment; prove alternate lock, refresh timing, policy owner and exact revert there [V: W12; O: U12; I]. |
 | Underlay pollutes Task View or covers dialogs | High; shell includes overlay, topmost or non-contiguous members | Compare unowned/owned tool windows and custom-drawn per-monitor surface during Win+Tab and desktop switches; suppress failed visual and use approved outline fallback [V: W34,W35; O: U13; I]. |
 | Daily-PC recovery fails | Critical; hide/restart/shortcut loop strands desktop | Independent restore command and out-of-hook kill switch verified before real windows; disable startup for crash probes [I]. |
 | Store package lacks control or certification | High; hook/startup/Win+L policy refused | MSIX full-trust/startup/certification experiment, same signed MSI/EXE Store-listing fallback, channel-specific updates [V: W39-W44; I]. |

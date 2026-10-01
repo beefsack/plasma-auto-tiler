@@ -36,6 +36,14 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   owned disposable test binary, `RegisterHotKey` vs `WH_KEYBOARD_LL` comparison,
   proof order offline then Sandbox clean/lifecycle then owned hide/crash-restore
   then physical repeat then physical input. Live proof remains pending.
+- Sandbox closed 2026-09-30 (user dismissed the WM_CLOSE close confirmation;
+  no Sandbox processes remain): Phase 1-3 live proof runs on the physical
+  desktop with owned disposable windows first; Sandbox is deferred to Phase 4
+  clean-install/runtime plus Win+L guest-only policy. Clean runtime stays
+  pending (static CRT/OS imports are supporting, not proof). Route detail stays
+  in [Windows plan](research/windows-port/plan.md); preflight hashes and the
+  removed `target/sandbox-preflight/` payload record stay in
+  [Phase 1 note](changes/windows-phase1-implementation.md).
 - Accepted baseline (user 2026-09-30, this dev PC): one Gigabyte M27Q only
   (see [runbook](windows-dev-environment.md)); Windows multi-monitor moves to the
   user's other Win11 PC. Historical KDE multi-output host assertions are unchanged.

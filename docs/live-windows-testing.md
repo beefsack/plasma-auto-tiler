@@ -3,8 +3,8 @@
 Read this guide before planning or running live Windows work. It is the
 repository's safety and operational contract; it does not grant mutation
 authorization. The user selected writing it before the first Windows session
-(2026-09-30, option A). No Windows live evidence exists yet; revise the guide
-from Phase 1 spike findings, without treating untested recovery as proven.
+  (2026-09-30, option A). Owned-window graceful/forced-loss restore is machine-
+  proven on the physical PC; input and broader app acceptance remain pending.
 
 For native tools, permissions and Sandbox limitations, use the
 [Windows development environment](windows-dev-environment.md). Product scope
@@ -28,27 +28,6 @@ remains in [Windows decisions](decisions.md#windows-port).
 - Games/anti-cheat, elevated or protected windows and the secure desktop are
   outside these experiments. Run at ordinary medium integrity, not elevated.
   Stop the experiment if those classes enter its scope; do not probe takeover.
-
-## Standing authorization (user 2026-09-30)
-
-- Exact bounds live in [windows-phase1-implementation](changes/windows-phase1-implementation.md).
-  Within those bounds it replaces per-class stop-and-ask; it grants no blanket
-  permission for future unrelated work. Per-run preflight, identity, recovery
-  and evidence below still apply.
-- Covered only: tiler-owned chords including Win+Arrow, movement/resize/hide/restyle,
-  overlays, intentional loss of the exact verified dev tiler process, Sandbox launch
-  with read-only mappings. Registry/policy writes guest-only; no host
-  settings/autostart/boot/logoff/restart/security/display changes.
-- Only owned disposable test windows; never launch/manage other user apps.
-  Always exclude the Windows Terminal hosting opencode and its processes:
-  never hide/minimize/close/restyle/kill them. Prove graceful plus forced
-  restore before any broader hiding.
-- Ordinary medium integrity only; no games, elevation, protected apps or secure
-  desktop. Bound hook durations, keep out-of-hook recovery. Injected input is
-  smoke evidence only; physical acceptance stays user-pending.
-- End each unit with all owned tiler/test processes stopped, identity verified,
-  windows restored/closed, ledger clean or residue reported. Stop immediately on
-  ambiguous restore, unowned effects, or lost control.
 
 ## Required Preflight
 
@@ -75,6 +54,11 @@ remains in [Windows decisions](decisions.md#windows-port).
   proposed `tiler-windows` commands are not evidence that they exist or work.
 
 ## Recovery Ladder
+
+Current CLI: `stop` requests verified owner exit; `emergency-stop` forces only
+that exact verified owner. Both leave recovery state for independent `restore`.
+`just --justfile windows.justfile stop` performs graceful stop then restore.
+Dev/test actors use Explorer's desktop broker, not the protected Terminal tree.
 
 1. Request graceful stop of the verified experiment owner. Check that hooks
    and overlays are released and affected owned windows return to baseline.
@@ -109,10 +93,11 @@ do not broaden cleanup or repeatedly restart the experiment.
   disable/reversal evidence. Sandbox redirected input or injected events do
   not prove the physical desktop's shortcut behavior.
 
-## Sandbox Registry And Policy Experiments
+## Sandbox Registry And Policy Experiments (deferred to Phase 4)
 
 - Registry/policy mutations are allowed only inside Windows Sandbox and only
-  for the separately approved experiment. Confirm the command/process and
+  for the separately approved experiment. Sandbox closed 2026-09-30 after a
+  failed preflight; no Sandbox again this assignment. Confirm the command/process and
   target registry belong to the guest, not the host. If Sandbox is unavailable,
   defer; a separate account on the daily host is not this isolation boundary.
 - Record the exact key/value preimage, including absence, type and contents.
