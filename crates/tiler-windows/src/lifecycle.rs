@@ -1,7 +1,16 @@
 pub const DEFAULT_RUN_SECONDS: u64 = 120;
 pub const MAX_RUN_SECONDS: u64 = 600;
 pub const STOP_REQUEST_FILE: &str = "stop.request";
-pub const RUN_LOG_FILE: &str = "run.log";
+/// Pointer to the current per-run log file name (never geometry).
+pub const RUN_CURRENT_FILE: &str = "run-current.txt";
+
+/// Per-run unique log file name keyed by owner process creation. Historical
+/// logs are never overwritten: each owner run writes its own file and updates
+/// the current pointer. `creation` must be nonempty hex from process times.
+#[must_use]
+pub fn run_log_file_name(creation: &str) -> String {
+    format!("run-{creation}.log")
+}
 
 pub const MEDIUM_RID_MIN: u32 = 8192;
 pub const MEDIUM_RID_MAX: u32 = 12288;
@@ -76,7 +85,9 @@ pub fn stop_request_matches(contents: &str, owner_creation: &str) -> bool {
 
 #[cfg(windows)]
 pub mod sys {
-    use super::{RUN_LOG_FILE, STOP_REQUEST_FILE, is_medium_rid, stop_request_matches};
+    use super::{
+        RUN_CURRENT_FILE, STOP_REQUEST_FILE, is_medium_rid, run_log_file_name, stop_request_matches,
+    };
     use crate::model::{LEDGER_SCHEMA_VERSION, RecoveryLedger, parse_ledger, restore_eligibility};
     use crate::native::{
         HeldProcess, IdentityError, current_exe_path, current_identity, current_integrity_level,
@@ -97,20 +108,38 @@ pub mod sys {
         Box::new(std::io::Error::other(msg.into()))
     }
 
-    fn write_log(dir: &Path, line: &str, truncate: bool) -> Result<()> {
+    fn write_log_at(path: &Path, line: &str, first: bool) -> Result<()> {
         use std::io::Write;
-        let mut file = if truncate {
-            std::fs::File::create(dir.join(RUN_LOG_FILE))
+        let mut file = if first {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
         } else {
             std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(dir.join(RUN_LOG_FILE))
+                .open(path)
         }
         .map_err(|e| err(format!("error: log write: {e}")))?;
         writeln!(file, "{line}").map_err(|e| err(format!("error: log write: {e}")))?;
         file.flush()
             .map_err(|e| err(format!("error: log write: {e}")))
+    }
+
+    /// Per-run unique log path persisted via the owner creation. Historical
+    /// logs are never overwritten: each run owns `run-<creation>.log`.
+    pub fn log_path_for(dir: &Path, creation: &str) -> PathBuf {
+        dir.join(run_log_file_name(creation))
+    }
+
+    fn write_log_for(dir: &Path, creation: &str, line: &str, first: bool) -> Result<()> {
+        write_log_at(&log_path_for(dir, creation), line, first)
+    }
+
+    fn point_current(dir: &Path, creation: &str) -> Result<()> {
+        std::fs::write(dir.join(RUN_CURRENT_FILE), run_log_file_name(creation))
+            .map_err(|e| err(format!("error: log pointer write: {e}")))
     }
 
     fn medium_caller() -> Result<crate::model::ProcessIdentity> {
@@ -162,10 +191,6 @@ pub mod sys {
             Err(SnapshotError::Absent(_)) => Ok(None),
             Err(SnapshotError::Failed(msg)) => Err(err(format!("error: {msg}"))),
         }
-    }
-
-    fn log_path(dir: &Path) -> String {
-        dir.join(RUN_LOG_FILE).to_string_lossy().into_owned()
     }
 
     /// Snapshot must equal the ledger entry; `visible` is the expected state.
@@ -244,23 +269,65 @@ pub mod sys {
 
     pub fn cmd_run(seconds: u64, trace: bool, hide_hwnd: Option<u64>) -> Result<String> {
         run_with_callback(seconds, trace, hide_hwnd, |dir, me| {
-            poll_stop(dir, me, seconds)
+            let deadline = Some(Instant::now() + Duration::from_secs(seconds));
+            poll_stop(dir, me, deadline)
         })
     }
 
-    fn poll_stop(dir: &Path, me: &crate::model::ProcessIdentity, seconds: u64) -> Result<bool> {
-        let deadline = Instant::now() + Duration::from_secs(seconds);
+    fn poll_stop(
+        dir: &Path,
+        me: &crate::model::ProcessIdentity,
+        deadline: Option<Instant>,
+    ) -> Result<bool> {
         loop {
-            match read_stop(dir)? {
-                Some(text) if stop_request_matches(&text, &me.process_creation) => {
-                    return Ok(true);
-                }
-                Some(_) | None => {}
+            if stop_requested(dir, me)? {
+                return Ok(true);
             }
-            if Instant::now() >= deadline {
+            if deadline.is_some_and(|end| Instant::now() >= end) {
                 return Ok(false);
             }
             std::thread::sleep(Duration::from_millis(POLL_MS));
+        }
+    }
+
+    /// Non-blocking exact-owner stop check for product loops that poll on
+    /// their own schedule.
+    pub fn stop_requested(dir: &Path, me: &crate::model::ProcessIdentity) -> Result<bool> {
+        match read_stop(dir)? {
+            Some(text) if stop_request_matches(&text, &me.process_creation) => Ok(true),
+            Some(_) | None => Ok(false),
+        }
+    }
+
+    /// Product tiling loop seam: same owner lease/commit/stop checks as
+    /// `run_with_callback`, but untimed (body returns on exact-owner stop),
+    /// never hides, and commits an empty window ledger. The body must poll
+    /// [`stop_requested`] itself and return when it observes a request.
+    pub fn run_product(
+        trace: bool,
+        body: impl FnOnce(&Path, &crate::model::ProcessIdentity) -> Result<()>,
+    ) -> Result<String> {
+        let dir = ledger_directory().map_err(|e| err(format!("error: ledger dir: {e}")))?;
+        let me = medium_caller()?;
+        if has_terminal_ancestor(me.pid).map_err(|e| err(format!("error: ancestry {e}")))? {
+            return Err(err("refuse: terminal-ancestor"));
+        }
+        match run_guarded(&dir, &me, 0, trace, None, true, |dir, me| {
+            body(dir, me)?;
+            Ok(true)
+        }) {
+            Ok(out) => Ok(out),
+            Err(e) => {
+                // Post-lease failures append to the per-run log; pre-lease
+                // refusals (no file yet) surface without writing.
+                let path = log_path_for(&dir, &me.process_creation);
+                if path.exists() {
+                    let msg = e.to_string();
+                    let line = serde_json::json!({"event": "run-error", "error": msg}).to_string();
+                    write_log_at(&path, &line, false)?;
+                }
+                Err(e)
+            }
         }
     }
 
@@ -276,11 +343,14 @@ pub mod sys {
         if has_terminal_ancestor(me.pid).map_err(|e| err(format!("error: ancestry {e}")))? {
             return Err(err("refuse: terminal-ancestor"));
         }
-        match run_guarded(&dir, &me, seconds, trace, hide_hwnd, body) {
+        match run_guarded(&dir, &me, seconds, trace, hide_hwnd, false, body) {
             Ok(out) => Ok(out),
             Err(e) => {
-                let msg = e.to_string();
-                write_log(&dir, &format!("run failed: {msg}"), false)?;
+                let path = log_path_for(&dir, &me.process_creation);
+                if path.exists() {
+                    let msg = e.to_string();
+                    write_log_at(&path, &format!("run failed: {msg}"), false)?;
+                }
                 Err(e)
             }
         }
@@ -309,8 +379,9 @@ pub mod sys {
         if !snap_matches(&back, expect, hwnd, false) {
             return Err(err("refuse: hide readback mismatch"));
         }
-        write_log(
+        write_log_for(
             dir,
+            &me.process_creation,
             &format!("run hide hwnd={hwnd} tag={}", expect.tag),
             false,
         )
@@ -322,6 +393,7 @@ pub mod sys {
         seconds: u64,
         trace: bool,
         hide_hwnd: Option<u64>,
+        product: bool,
         body: impl FnOnce(&Path, &crate::model::ProcessIdentity) -> Result<bool>,
     ) -> Result<String> {
         let store = open_store(dir)?;
@@ -344,14 +416,32 @@ pub mod sys {
         } else {
             Vec::new()
         };
-        write_log(
-            dir,
-            &format!("run start pid={} seconds={seconds}", me.pid),
-            true,
-        )?;
-        if trace {
-            write_log(
-                dir,
+        let span = if seconds == 0 {
+            "untimed".to_owned()
+        } else {
+            format!("seconds={seconds}")
+        };
+        // Per-run unique log: refuse when the file already exists so one
+        // owner run can never overwrite another. The ledger (committed below)
+        // persists the owner creation, and `cmd_ready` derives the same path.
+        let log_file = log_path_for(dir, &me.process_creation);
+        if log_file.exists() {
+            return Err(err("refuse: log preexists, will not overwrite"));
+        }
+        if product {
+            // Product log vocabulary: structured JSON, no native ids (no pid,
+            // creation, SID, or session). Legacy spike/dev lines stay below.
+            write_log_at(
+                &log_file,
+                "{\"event\":\"run-start\",\"mode\":\"product\"}",
+                true,
+            )?;
+        } else {
+            write_log_at(&log_file, &format!("run start pid={} {span}", me.pid), true)?;
+        }
+        if trace && !product {
+            write_log_at(
+                &log_file,
                 &format!(
                     "run owner pid={} creation={} sid={} session={}",
                     me.pid, me.process_creation, me.user_sid, me.session_id
@@ -359,6 +449,7 @@ pub mod sys {
                 false,
             )?;
         }
+        point_current(dir, &me.process_creation)?;
         let record = RecoveryLedger {
             v: LEDGER_SCHEMA_VERSION,
             owner: (*me).clone(),
@@ -375,14 +466,27 @@ pub mod sys {
             hide_once(dir, hwnd, me, expect)?;
         }
         let stopped = body(dir, me)?;
-        let log_path = log_path(dir);
-        let (status, message) = if stopped {
-            ("stopped", "run stop-request observed")
+        let log_path = log_file.to_string_lossy().into_owned();
+        if product {
+            let status = if stopped { "stopped" } else { "expired" };
+            write_log_at(
+                &log_file,
+                &format!("{{\"event\":\"run-end\",\"status\":\"{status}\"}}"),
+                false,
+            )?;
+            Ok(serde_json::json!({"status": status, "log_path": log_path}).to_string())
         } else {
-            ("expired", "run deadline expired")
-        };
-        write_log(dir, message, false)?;
-        Ok(serde_json::json!({"status": status, "owner": me, "log_path": log_path}).to_string())
+            let (status, message) = if stopped {
+                ("stopped", "run stop-request observed")
+            } else {
+                ("expired", "run deadline expired")
+            };
+            write_log_at(&log_file, message, false)?;
+            Ok(
+                serde_json::json!({"status": status, "owner": me, "log_path": log_path})
+                    .to_string(),
+            )
+        }
     }
 
     fn caller_owns(me: &crate::model::ProcessIdentity, record: &RecoveryLedger) -> Result<bool> {
@@ -450,7 +554,9 @@ pub mod sys {
                 }
             }
         }
-        let log_path = log_path(&dir);
+        let log_path = log_path_for(&dir, &record.owner.process_creation)
+            .to_string_lossy()
+            .into_owned();
         Ok(
             serde_json::json!({"ready": true, "owner": record.owner, "log_path": log_path})
                 .to_string(),

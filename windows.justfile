@@ -14,6 +14,20 @@ stop:
 proof:
     pwsh -NoProfile -File scripts/windows-dev.ps1 -Action proof
 
+# Normal user tiling only (physical, medium, no hooks/hide). Requires
+# explicit --user-start, e.g. `just tile --user-start --trace`. Agents never
+# run this path; proof uses tiling-proof-owned (tile-proof, never normal).
+tile *args:
+    pwsh -NoProfile -File scripts/windows-dev.ps1 -Action tile -TileArgs "{{args}}"
+
+tile-stop:
+    pwsh -NoProfile -File scripts/windows-dev.ps1 -Action stop
+
+# Scoped Phase 2 owned-helpers-only tiling proof (physical, medium, no
+# hooks/hide/activate). Never runs by default; never touches non-owned windows.
+tiling-proof-owned:
+    pwsh -NoProfile -File scripts/windows-tiling.ps1
+
 # Bounded Win+Arrow spike (physical, medium, owned helper only). Not run by default.
 winarrow:
     pwsh -NoProfile -File scripts/windows-winarrow.ps1

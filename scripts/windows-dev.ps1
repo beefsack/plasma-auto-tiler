@@ -1,7 +1,8 @@
 param(
-  [ValidateSet("dev", "stop", "proof")]
+  [ValidateSet("dev", "stop", "proof", "tile")]
   [string]$Action = "dev",
-  [string]$Mode = ""
+  [string]$Mode = "",
+  [string]$TileArgs = ""
 )
 $ErrorActionPreference = "Stop"
 $Repo = Split-Path -Parent $PSScriptRoot
@@ -100,11 +101,11 @@ function Stop-OwnerVerified([string]$Payload, [bool]$Force, [string]$Tag) {
 # Dot-source guard: reusable helpers above stay available when sourced;
 # direct -File execution continues to the action blocks below.
 if ("$($MyInvocation.InvocationName)" -eq ".") { return }
-if ($Action -eq "dev" -or $Action -eq "stop") {
+if ($Action -eq "dev" -or $Action -eq "stop" -or $Action -eq "tile") {
   if (-not (Test-Path $Target)) { Fail "missing target/ parent" }
   if (-not (Test-Path $Scripts)) { Fail "missing scripts/ parent" }
   $payload = Join-Path $DevDir $OwnerName
-  if ($Action -eq "dev") {
+  if ($Action -eq "dev" -or $Action -eq "tile") {
     $trace = ($Mode -eq "trace")
     & cargo build --locked -p tiler-windows
     if ($LASTEXITCODE -ne 0) { Fail "cargo build failed" }
@@ -112,10 +113,26 @@ if ($Action -eq "dev" -or $Action -eq "stop") {
     New-Item -ItemType Directory -Force -Path $DevDir | Out-Null
     Copy-Item (Join-Path $Target "debug\$OwnerName") $payload -Force
     Copy-Item (Join-Path $Target "debug\$HelperName") (Join-Path $DevDir $HelperName) -Force
-    $runArgs = "run --seconds 600"
-    if ($trace) { $runArgs += " --trace" }
+    if ($Action -eq "tile") {
+      # Normal user tiling only (explicit user dogfood): requires
+      # `--user-start` in TileArgs and refuses any `--allowlist`. Proof uses
+      # `tile-proof` via scripts/windows-tiling.ps1 so lost arguments can
+      # never fall back to tiling the whole desktop.
+      if ($TileArgs -notmatch "(^|\s)--user-start(\s|$)") {
+        Fail "refuse: tile requires explicit --user-start in TileArgs"
+      }
+      if ($TileArgs -match "(^|\s)--allowlist(\s|$)") {
+        Fail "refuse: tile never takes --allowlist; proof uses tile-proof"
+      }
+      $runArgs = "tile $TileArgs"
+      $tag = "tile"
+    } else {
+      $runArgs = "run --seconds 600"
+      if ($trace) { $runArgs += " --trace" }
+      $tag = "dev"
+    }
     Start-ExplorerGui $payload $runArgs $DevDir
-    $ready = Assert-OwnerReady $payload "dev"
+    $ready = Assert-OwnerReady $payload $tag
     Write-Output "log_path=$($ready.log_path)"
     Write-Output "owner=$($ready.owner | ConvertTo-Json -Compress)"
     Write-Output "ready=true"
@@ -193,7 +210,7 @@ function Proof-Hide([string]$Payload, [string]$HBin, [object]$Base, [bool]$Force
 }
 Proof-Hide $devPayload $hBin $hsnap $false
 Proof-Hide $devPayload $hBin $hsnap $true
-$closed = Invoke-Native $hBin @("close", "$($hsnap.hwnd)") | ConvertFrom-Json
+$closed = Invoke-Native $hBin @("close", "$($hsnap.hwnd)", "--tag", "$($hsnap.tag)") | ConvertFrom-Json
 Rec "helper-close" $closed
 $exitDeadline = (Get-Date).AddSeconds(5)
 while ($true) {

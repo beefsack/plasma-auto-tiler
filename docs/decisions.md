@@ -11,14 +11,25 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
 - Support Windows 11 x64 only initially; this can be revisited.
 - Managed per-monitor workspaces are required before Windows or macOS is
   called feature-complete. Tiling-only development previews are allowed.
-- Use non-Win default shortcuts. Win+Arrow is opt-in and must work before
-  Windows is feature-complete for this user.
+- User decision 2026-10-01, option A: Meta/Win shortcuts are defaults across
+  platforms, matching KDE: Win+Arrow navigates focus and Win+Shift+Arrow moves
+  windows. Windows takes over native Snap shortcuts by default, with a visible
+  setting to turn takeover off, following KDE Apply/Revert behavior.
   Product input mechanism (user-accepted 2026-10-01 on this PC):
   `WH_KEYBOARD_LL` with `vkE8` menu-mask at Win key-up while Win held,
   consuming only approved foreground chords; `RegisterHotKey` rejected after
   all four chords returned 1409 (owner unknown) on this PC. Win+L stays
   explicit opt-in only and remains unproven. Evidence in
   [Phase 1 note](changes/windows-phase1-implementation.md).
+- While a workspace is tiled, prevent Windows Snap through both keyboard and
+  mouse paths (edge dragging, Snap Layouts and shake as relevant). Keyboard
+  prevention belongs to the shortcut slice using the selected LL hook. User
+  decision 2026-10-01: try mouse option A first in that slice, session-only
+  `SPI_SETWINARRANGING FALSE` while tiling is active, with visible Apply/Revert,
+  exact preimage capture/readback and conditional restoration on stop. The
+  desktop-wide effect is accepted for the experiment; Windows 11 Snap Layouts
+  flyout/Snap Assist coverage remains to be proven. Snap prevention does not
+  block the tiling-only preview.
 - Experiment with custom drawing and a real group underlay, including Task
   View and Alt+Tab behavior. An outline fallback is acceptable if the
   underlay fails; the underlay mechanism remains unselected.
@@ -56,6 +67,20 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   user's other Win11 PC. Historical KDE multi-output host assertions are unchanged.
 - macOS decisions (version floor, App Store, shortcut consent, updates, UI
   language) are deferred until macOS spiking starts.
+
+## Cross-Platform Behavior
+
+- User decision 2026-10-01: keyboard bindings and window/workspace behavior
+  must be consistent across Linux, Windows and macOS so workflows transfer.
+  Meta+Arrow navigates focus; Meta+Shift+Arrow moves windows. The KDE shortcut
+  catalog and behavior are the reference until a shared functional
+  specification exists. macOS modifier mapping is decided when macOS starts.
+  Meta/Win shortcuts are defaults; Windows Snap takeover has a visible off
+  setting with Apply/Revert parity. macOS modifier mapping remains deferred.
+- Windows first dogfood slice is automatic tiling only, without shortcuts or
+  hooks. Stop/crash leaves windows in place, like KDE; no geometry recovery
+  ledger and no window hiding. Next slice adds the focus/move chords above;
+  Windows workspaces are the next major item after the tiling preview.
 
 ## Cross-Platform Core
 

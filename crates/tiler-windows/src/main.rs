@@ -21,7 +21,7 @@ fn real_main() -> Result<(), (i32, String)> {
     let output = match command {
         "--help" | "-h" | "help" => {
             println!(
-                "tiler-windows commands:\n  identity  print current process identity as JSON\n  run --seconds N [--trace] [--hide HWND]  bounded owner run\n  ready  report owner readiness as JSON\n  restore  standalone reveal of owned hidden windows and ledger cleanup after owner exit (call explicitly after stop)\n  stop  request graceful exit of verified owner only; leaves ledger/windows for standalone restore\n  emergency-stop  terminate verified owner only; leaves ledger/windows for standalone restore"
+                "tiler-windows commands:\n  identity  print current process identity as JSON\n  run --seconds N [--trace] [--hide HWND]  bounded owner run\n  ready  report owner readiness as JSON\n  restore  standalone reveal of owned hidden windows and ledger cleanup after owner exit (call explicitly after stop)\n  stop  request graceful exit of verified owner only; leaves ledger/windows for standalone restore\n  emergency-stop  terminate verified owner only; leaves ledger/windows for standalone restore\n  tile --user-start [--seconds N] [--trace]  normal user tiling loop until stop (no hide, geometry left in place)\n  tile-proof --allowlist PATH [--seconds N] [--trace]  owned-helpers-only proof loop (refuses without a valid allowlist, never falls back to normal)\n  capture --out PATH --hwnd HWND [--hwnd HWND ...]  read-only frozen-allowlist capture of explicitly listed owned helpers\n  inventory  read-only top-level window list for selecting capture targets (no titles)\n  children --hwnd HWND [--hwnd HWND ...]  read-only child-window report with verified process identity (no titles)\n  inspect --allowlist PATH  read-only fresh-state report for exactly the frozen allowlist (no titles)"
             );
             return Ok(());
         }
@@ -59,6 +59,38 @@ fn real_main() -> Result<(), (i32, String)> {
             }
             tiler_windows::lifecycle::sys::cmd_stop(false).map_err(|e| (1, e.to_string()))?
         }
+        "tile" => {
+            let options =
+                tiler_windows::tiling::parse_tile_args(rest).map_err(|message| (2, message))?;
+            tiler_windows::tiling_sys::cmd_tile(&options).map_err(|e| (1, e.to_string()))?
+        }
+        "tile-proof" => {
+            let options = tiler_windows::tiling::parse_tile_proof_args(rest)
+                .map_err(|message| (2, message))?;
+            tiler_windows::tiling_sys::cmd_tile_proof(&options, rest)
+                .map_err(|e| (1, e.to_string()))?
+        }
+        "capture" => {
+            let options =
+                tiler_windows::tiling::parse_capture_args(rest).map_err(|message| (2, message))?;
+            tiler_windows::tiling_sys::cmd_capture(&options).map_err(|e| (1, e.to_string()))?
+        }
+        "inventory" => {
+            if !rest.is_empty() {
+                return Err((2, "usage: tiler-windows inventory".to_owned()));
+            }
+            tiler_windows::tiling_sys::cmd_inventory().map_err(|e| (1, e.to_string()))?
+        }
+        "children" => {
+            let options =
+                tiler_windows::tiling::parse_children_args(rest).map_err(|message| (2, message))?;
+            tiler_windows::tiling_sys::cmd_children(&options).map_err(|e| (1, e.to_string()))?
+        }
+        "inspect" => {
+            let options =
+                tiler_windows::tiling::parse_inspect_args(rest).map_err(|message| (2, message))?;
+            tiler_windows::tiling_sys::cmd_inspect(&options).map_err(|e| (1, e.to_string()))?
+        }
         "emergency-stop" => {
             if !rest.is_empty() {
                 return Err((2, "usage: tiler-windows emergency-stop".to_owned()));
@@ -68,7 +100,7 @@ fn real_main() -> Result<(), (i32, String)> {
         _ => {
             return Err((
                 2,
-                "usage: tiler-windows identity|run --seconds N [--trace] [--hide HWND]|ready|restore|stop|emergency-stop"
+                "usage: tiler-windows identity|run --seconds N [--trace] [--hide HWND]|ready|restore|stop|emergency-stop|tile --user-start [--seconds N] [--trace]|tile-proof --allowlist PATH [--seconds N] [--trace]|capture --out PATH --hwnd HWND|inventory|children --hwnd HWND|inspect --allowlist PATH"
                     .to_owned(),
             ));
         }

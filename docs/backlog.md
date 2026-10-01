@@ -15,8 +15,9 @@ decisions of 2026-09-24 are under
   [extraction](research/cross-platform-core/extraction.md),
   [K2 audit](changes/archive/portable-core-k2-settings-actions.md)).
   User decisions (2026-09-30): Windows 11 x64 only; managed per-monitor
-  workspaces required for feature-complete; non-Win default shortcuts with Win+Arrow required for
-  the user (opt-in after proof) and Win+L explicit opt-in; custom-drawing
+  workspaces required for feature-complete; Meta/Win default shortcuts matching
+  KDE (2026-10-01), Windows Snap takeover with a visible off setting, and Win+L
+  explicit opt-in; custom-drawing
   underlay experiment with outline fallback; most obvious distribution
   (Store plus signed installer plus winget under evaluation); develop
   natively on the user's Windows 11 PC (also the KDE multi-output PC);
@@ -25,11 +26,31 @@ decisions of 2026-09-24 are under
   spikes; shared settings/action intent (deferred K2) and difference
   classification (deferred K3) shaped when Windows needs them. Open: final
   package/update channel. Status 2026-10-01: Phase 1 lifecycle/recovery plus
-  WH_KEYBOARD_LL input done and accepted on this single-display PC; next
-  Phase 2 Engine-driven tiling.
+  WH_KEYBOARD_LL input done and accepted on this single-display PC; Phase 2
+  automatic Engine-driven tiling-only dogfood preview verified (no shortcuts,
+  input hooks or hiding; stop/crash leaves windows in place). Next slice:
+  Meta+Arrow focus and Meta+Shift+Arrow move, plus prevention of keyboard and
+  mouse Snap while a workspace is tiled. First mouse experiment: session-only
+  `SPI_SETWINARRANGING FALSE`, visible Apply/Revert, exact preimage/readback and
+  conditional stop restoration; desktop-wide effects accepted, Windows 11
+  flyout/Assist coverage pending. Not a dogfood-preview blocker. Next major item:
+  Windows workspaces.
+  Full owned-helper proof passed `20261001-222611-6068`: 8/8 gaps at 125%,
+  minimize/restore, close reflow, graceful/emergency stop preserving frames,
+  11 owned writes and zero foreign writes; clean recovery. Normal-mode smoke
+  `20261001-223101-30052` passed Notepad/Calculator/Paint/Terminal admission,
+  true new-window open/close, Calculator minimize/restore and unchanged stop
+  frames. Paint held 617px against a 543px plan, causing 66px overlap; minimum-
+  size neighbour replanning remains a preview limitation. Standard native gates
+  passed; multi-monitor/mixed-DPI, gestures and games remain unaccepted.
+  See [Phase 2 record](changes/archive/windows-phase2-tiling.md).
   [plan](research/windows-port/plan.md)
   [decision](decisions.md#windows-port)
   Day-one setup and pending governance: [Windows development environment](windows-dev-environment.md).
+- P1 | Cross-platform functional specification | After the Windows tiling
+  dogfood slice, define window/workspace behavior and keyboard shortcuts as
+  the single source of truth for Linux, Windows and macOS. KDE is the current
+  behavioral reference; macOS modifier mapping is decided when macOS starts.
 - P2 | macOS port | After Windows. Research plan done offline: one signed
   per-login Rust app, public Accessibility APIs, AeroSpace-style offscreen
   parking prototype for per-display workspaces, no private Spaces APIs or

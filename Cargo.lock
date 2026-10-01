@@ -637,6 +637,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "tiler-core",
  "windows-sys",
 ]
 

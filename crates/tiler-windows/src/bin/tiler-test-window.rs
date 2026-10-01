@@ -21,23 +21,25 @@ fn real_main() -> Result<(), (i32, String)> {
     let output = match command {
         "--help" | "-h" | "help" => {
             println!(
-                "tiler-test-window commands:\n  run --receipt PATH [--seconds N]  create owned test window\n  close HWND  post WM_CLOSE to owned window\n  inspect HWND  print owned window snapshot JSON"
+                "tiler-test-window commands:\n  run --receipt PATH [--seconds N] [--passive]  create owned test window (passive stays hidden until show)\n  close HWND [--tag TAG]  post WM_CLOSE to owned window (proof always passes the captured tag; bare form stays for the WinArrow harness)\n  inspect HWND  print owned window snapshot JSON\n  show HWND --tag TAG  admit a passive helper without activation or z-order change (no hide)\n  minimize HWND --tag TAG  minimize without activating\n  restore HWND --tag TAG  restore a minimized helper without activating"
             );
             return Ok(());
         }
         "run" => {
             let opts = tiler_windows::test_window::parse_helper_run_args(rest)
                 .map_err(|message| (2, message))?;
-            tiler_windows::test_window::sys::run_owned_window(&opts.receipt, opts.seconds)
-                .map_err(|e| (1, e.to_string()))?
+            tiler_windows::test_window::sys::run_owned_window(
+                &opts.receipt,
+                opts.seconds,
+                opts.passive,
+            )
+            .map_err(|e| (1, e.to_string()))?
         }
         "close" => {
-            if rest.len() != 1 {
-                return Err((2, "usage: tiler-test-window close HWND".to_owned()));
-            }
-            let hwnd = tiler_windows::test_window::parse_hwnd(&rest[0])
-                .ok_or((2, "usage: tiler-test-window close HWND".to_owned()))?;
-            tiler_windows::test_window::sys::close_owned(hwnd).map_err(|e| (1, e.to_string()))?
+            let (hwnd, tag) = tiler_windows::test_window::parse_close_args(rest)
+                .map_err(|message| (2, message))?;
+            tiler_windows::test_window::sys::close_owned(hwnd, tag.as_deref())
+                .map_err(|e| (1, e.to_string()))?
         }
         "inspect" => {
             if rest.len() != 1 {
@@ -47,10 +49,22 @@ fn real_main() -> Result<(), (i32, String)> {
                 .ok_or((2, "usage: tiler-test-window inspect HWND".to_owned()))?;
             tiler_windows::test_window::sys::inspect_owned(hwnd).map_err(|e| (1, e.to_string()))?
         }
+        "show" | "minimize" | "restore" => {
+            let tagged = tiler_windows::test_window::parse_tagged_hwnd_args(command, rest)
+                .map_err(|message| (2, message))?;
+            match command {
+                "show" => tiler_windows::test_window::sys::show_owned(tagged.hwnd, &tagged.tag),
+                "minimize" => {
+                    tiler_windows::test_window::sys::minimize_owned(tagged.hwnd, &tagged.tag)
+                }
+                _ => tiler_windows::test_window::sys::restore_owned(tagged.hwnd, &tagged.tag),
+            }
+            .map_err(|e| (1, e.to_string()))?
+        }
         _ => {
             return Err((
                 2,
-                "usage: tiler-test-window run --receipt PATH [--seconds N]|close HWND|inspect HWND"
+                "usage: tiler-test-window run --receipt PATH [--seconds N] [--passive]|close HWND [--tag TAG]|inspect HWND|show HWND --tag TAG|minimize HWND --tag TAG|restore HWND --tag TAG"
                     .to_owned(),
             ));
         }

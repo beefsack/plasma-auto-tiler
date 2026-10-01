@@ -17,8 +17,8 @@ remains in [Windows decisions](decisions.md#windows-port).
   and intentional process loss. Record the permitted environment, resources,
   operations and end condition before execution. KWin authorization does not
   carry over; a build, successful preflight or this guide grants no live scope.
-- Start with identified, owned disposable test windows. Ordinary user windows
-  require separate approval after recovery works on the test windows. A
+- Agent tests use identified, owned disposable test windows only. Ordinary
+  application acceptance is user-run dogfooding (user decision 2026-10-01). A
   global hook is a session-wide effect even when testing only one window;
   approval must bound the intercepted chords and test duration.
 - Preserve unrelated windows, applications, displays, settings and processes.
@@ -88,9 +88,9 @@ do not broaden cleanup or repeatedly restart the experiment.
   timeout at 1000 ms. Do not change the timeout registry setting. Silent
   removal is neither a reliable recovery mechanism nor evidence of release;
   verify disable/exit behavior and physical delivery separately.
-- Consume only the approved test chords. Defaults remain non-Win; Win+Arrow
-  takeover needs explicit opt-in and physical Snap/Start, key-down/up and
-  disable/reversal evidence. Sandbox redirected input or injected events do
+- Consume only the approved test chords. Product Meta/Win bindings take over
+  Snap by default with a visible off setting; physical Snap/Start, key-down/up
+  and disable/reversal evidence remain required. Sandbox redirected input or injected events do
   not prove the physical desktop's shortcut behavior.
 
 ## Sandbox Registry And Policy Experiments (deferred to Phase 4)
