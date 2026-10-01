@@ -925,6 +925,118 @@ pub fn parse_tile_proof_args(args: &[String]) -> Result<TileProofOptions, String
     })
 }
 
+/// CLI options for the proof-only `hide-proof` command (owned helpers only,
+/// product nonce mechanism). Requires a nonempty valid `--allowlist`; the
+/// owner verifies every frozen entry as an owned helper BEFORE touching the
+/// ordinary product nonce APIs, and never falls back to normal mode.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HideProofOptions {
+    pub seconds: Option<u64>,
+    pub trace: bool,
+    pub allowlist: PathBuf,
+}
+
+/// Parse `hide-proof --allowlist PATH [--seconds N] [--trace]`.
+pub fn parse_hide_proof_args(args: &[String]) -> Result<HideProofOptions, String> {
+    let usage = "usage: hide-proof --allowlist PATH [--seconds N] [--trace]";
+    let mut seconds: Option<u64> = None;
+    let mut trace = false;
+    let mut allowlist: Option<PathBuf> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--trace" => {
+                trace = true;
+                i += 1;
+            }
+            "--seconds" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                let parsed: u64 = value.parse().map_err(|_| usage.to_owned())?;
+                if parsed == 0 || parsed > crate::lifecycle::MAX_RUN_SECONDS {
+                    return Err(format!(
+                        "refuse: seconds must be 1..={}",
+                        crate::lifecycle::MAX_RUN_SECONDS
+                    ));
+                }
+                seconds = Some(parsed);
+                i += 1;
+            }
+            "--allowlist" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                if value.trim().is_empty() {
+                    return Err("refuse: empty allowlist".to_owned());
+                }
+                allowlist = Some(PathBuf::from(value));
+                i += 1;
+            }
+            _ => return Err(usage.to_owned()),
+        }
+    }
+    let Some(allowlist) = allowlist else {
+        return Err("refuse: hide-proof requires --allowlist".to_owned());
+    };
+    Ok(HideProofOptions {
+        seconds,
+        trace,
+        allowlist,
+    })
+}
+
+/// Verify the raw received argv against the parsed `hide-proof` options.
+/// Every delivery flag must be evidenced; any inconsistency refuses before
+/// any lease or write, never falls back.
+pub fn verify_hide_proof_argv_consistency(
+    raw: &[String],
+    parsed: &HideProofOptions,
+) -> Result<(), String> {
+    let usage = "usage: hide-proof --allowlist PATH [--seconds N] [--trace]";
+    let mut allowlist: Option<&str> = None;
+    let mut seconds: Option<&str> = None;
+    let mut trace = false;
+    let mut i = 0;
+    while i < raw.len() {
+        match raw[i].as_str() {
+            "--trace" => {
+                trace = true;
+                i += 1;
+            }
+            "--seconds" => {
+                i += 1;
+                seconds = Some(raw.get(i).ok_or_else(|| usage.to_owned())?.as_str());
+                i += 1;
+            }
+            "--allowlist" => {
+                i += 1;
+                allowlist = Some(raw.get(i).ok_or_else(|| usage.to_owned())?.as_str());
+                i += 1;
+            }
+            _ => return Err(usage.to_owned()),
+        }
+    }
+    let Some(allowlist) = allowlist else {
+        return Err("refuse: hide-proof requires --allowlist".to_owned());
+    };
+    if parsed.allowlist.as_path() != std::path::Path::new(allowlist) {
+        return Err("error: argv/parsed allowlist mismatch (impossible)".to_owned());
+    }
+    if parsed.trace != trace {
+        return Err("error: argv/parsed trace mismatch (impossible)".to_owned());
+    }
+    match (parsed.seconds, seconds) {
+        (None, None) => {}
+        (Some(want), Some(got)) => {
+            let got: u64 = got.parse().map_err(|_| usage.to_owned())?;
+            if want != got {
+                return Err("error: argv/parsed seconds mismatch (impossible)".to_owned());
+            }
+        }
+        _ => return Err("error: argv/parsed seconds mismatch (impossible)".to_owned()),
+    }
+    Ok(())
+}
+
 /// CLI options for the proof-only `shortcut-proof` command (owned helpers
 /// only, automated synthetic-input verification). Requires a nonempty valid
 /// `--allowlist` at parse and at native start; missing/empty/malformed input

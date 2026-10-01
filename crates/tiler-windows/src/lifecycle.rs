@@ -91,7 +91,7 @@ pub mod sys {
     use crate::model::{
         LEDGER_SCHEMA_VERSION, MouseSnapPreimage, MouseSnapRestoreDecision, MouseSnapSetupDecision,
         RecoveryLedger, mouse_snap_owned, mouse_snap_restore_decision, mouse_snap_setup_decision,
-        parse_ledger, restore_eligibility,
+        parse_ledger, restore_eligibility, watcher_may_restore,
     };
     use crate::native::{
         HeldProcess, IdentityError, current_exe_path, current_identity, current_integrity_level,
@@ -304,13 +304,18 @@ pub mod sys {
     }
 
     /// Product tiling loop seam: same owner lease/commit/stop checks as
-    /// `run_with_callback`, but untimed (body returns on exact-owner stop),
-    /// never hides, and commits an empty window ledger. The body must poll
-    /// [`stop_requested`] itself and return when it observes a request. The
-    /// owner lease (`store`) is held throughout the body so the loop can
-    /// persist fresh Snap preimages across suspend/resume. `snap_prevention`
-    /// enables the default-on session-only `SPI_SETWINARRANGING FALSE` effect
-    /// with ledger-backed conditional restoration.
+    /// `run_with_callback`, but untimed (body returns on exact-owner stop).
+    /// The body must poll [`stop_requested`] itself and return when it
+    /// observes a request. The owner lease (`store`) is held throughout the
+    /// body so the loop can persist fresh Snap preimages across
+    /// suspend/resume. `snap_prevention` enables the default-on session-only
+    /// `SPI_SETWINARRANGING FALSE` effect with ledger-backed conditional
+    /// restoration.
+    ///
+    /// Dead-owner residue is reclaimed before the new owner commits. The
+    /// crash watcher is managed centrally by the guarded run below: spawned
+    /// before the body, stopped after the reveal, and left running when the
+    /// reveal keeps residue so owner exit still triggers recovery.
     pub fn run_product(
         trace: bool,
         snap_prevention: bool,
@@ -321,6 +326,7 @@ pub mod sys {
         if has_terminal_ancestor(me.pid).map_err(|e| err(format!("error: ancestry {e}")))? {
             return Err(err("refuse: terminal-ancestor"));
         }
+        crate::product_hide::sys::reclaim_dead_residue()?;
         match run_guarded(
             &dir,
             &me,
@@ -653,6 +659,41 @@ pub mod sys {
         snap_prevention: bool,
     }
 
+    /// Graceful product teardown: reveal product claims on success AND error
+    /// paths. Helper claims are never touched here (Phase 1 proof semantics
+    /// leave them for independent restore). Structured JSON only, no native
+    /// ids. Never fails hard: the caller's result is preserved. Returns true
+    /// when residue was kept (the watcher must stay running in that case so
+    /// owner exit still triggers recovery).
+    fn teardown_product_claims(
+        dir: &Path,
+        me: &crate::model::ProcessIdentity,
+        store: &LedgerStore,
+    ) -> bool {
+        let (outcomes, _) = crate::product_hide::sys::reveal_all_product(store, me);
+        if outcomes.is_empty() {
+            return false;
+        }
+        let summary: Vec<&str> = outcomes
+            .iter()
+            .map(|o| match o {
+                crate::product_hide::ProductTeardown::Revealed => "revealed",
+                crate::product_hide::ProductTeardown::AlreadyVisible => "already-visible",
+                crate::product_hide::ProductTeardown::Retired => "retired",
+                crate::product_hide::ProductTeardown::Uncertain => "uncertain",
+            })
+            .collect();
+        let uncertain = crate::product_hide::teardown_keep_ledger(&outcomes);
+        let line = serde_json::json!({
+            "event": "product-hide-teardown",
+            "outcomes": summary,
+            "residue": uncertain,
+        })
+        .to_string();
+        let _ = write_log_for(dir, &me.process_creation, &line, false);
+        uncertain
+    }
+
     fn run_guarded(
         dir: &Path,
         me: &crate::model::ProcessIdentity,
@@ -682,6 +723,7 @@ pub mod sys {
                 hwnd: snap.hwnd,
                 process: snap.process.clone(),
                 tag: snap.tag.clone(),
+                kind: crate::model::WindowClaimKind::Helper,
             }]
         } else {
             Vec::new()
@@ -729,6 +771,19 @@ pub mod sys {
         store
             .commit(&record)
             .map_err(|e| err(format!("error: ledger commit: {e}")))?;
+        // Product crash watcher starts after the commit and before the body
+        // (no hide can precede it) so a crash past any later commit still
+        // auto-reveals. Spike/proof runs never spawn one.
+        let mut watcher: Option<std::process::Child> = None;
+        if product {
+            match crate::product_hide::sys::spawn_watcher(me, dir) {
+                Ok(child) => watcher = Some(child),
+                Err(e) => {
+                    let _ = std::fs::remove_file(dir.join(LEDGER_FILE_NAME));
+                    return Err(e);
+                }
+            }
+        }
         // Mouse prevention is deferred until the loop observes an actual
         // active tick or resume: setup here must not disable while a
         // fullscreen foreground is already holding the session, only to have
@@ -749,6 +804,19 @@ pub mod sys {
         let body_result = body(dir, me, &store);
         if snap_want {
             snap_drive_restore(dir, me, &store, "teardown");
+        }
+        // The watcher stops only after the reveal: killing it first would
+        // leave a crash window with committed hides and no recovery. When
+        // the reveal keeps residue the watcher stays running so owner exit
+        // still triggers recovery.
+        let mut keep_recovery = false;
+        if product {
+            keep_recovery = teardown_product_claims(dir, me, &store);
+        }
+        if let Some(mut child) = watcher
+            && !keep_recovery
+        {
+            crate::product_hide::sys::stop_watcher(&mut child, dir, &me.process_creation);
         }
         let stopped = body_result?;
         let log_path = log_file.to_string_lossy().into_owned();
@@ -825,6 +893,20 @@ pub mod sys {
             let helper_exe =
                 crate::test_window::sys::sibling_helper_exe().map_err(|e| err(e.to_string()))?;
             for w in &record.windows {
+                if w.kind == crate::model::WindowClaimKind::Product {
+                    let snap =
+                        match crate::product_hide::sys::query_candidate(w.hwnd, &record.owner) {
+                            Ok(s) => s,
+                            Err(_) => return not_ready(),
+                        };
+                    if snap.process != w.process
+                        || snap.nonce.as_deref() != Some(w.tag.as_str())
+                        || snap.visible
+                    {
+                        return not_ready();
+                    }
+                    continue;
+                }
                 let Some(snap) = owned_opt(
                     w.hwnd,
                     &helper_exe,
@@ -894,19 +976,37 @@ pub mod sys {
         Ok(())
     }
 
-    /// Dead-owner independent restore: verified hidden windows plus the
-    /// optional Snap preimage. Returns the window count and whether a Snap
-    /// `TRUE` write with readback ran. Snap restores only while live is still
-    /// our `FALSE`; drift or read failures retain the ledger (drift preserves
-    /// without writing, uncertainty errors without cleaning).
-    fn restore_locked() -> Result<(usize, bool)> {
+    /// Strict owner-death check: absent pid or identity is dead; access and
+    /// other failures are errors (never treated as absent or alive).
+    fn owner_dead(expected: &crate::model::ProcessIdentity) -> Result<bool> {
+        let held = match HeldProcess::open(expected.pid) {
+            Ok(h) => h,
+            Err(IdentityError::Absent) => return Ok(true),
+            Err(e) => return Err(err(format!("error: owner {e}"))),
+        };
+        let live = match held.identity() {
+            Ok(l) => l,
+            Err(IdentityError::Absent) => return Ok(true),
+            Err(e) => return Err(err(format!("error: owner {e}"))),
+        };
+        Ok(live != *expected || !held.is_alive())
+    }
+
+    /// Dead-owner independent restore under an already-held lease: verified
+    /// hidden windows (helper and product claims) plus the optional Snap
+    /// preimage. `expected` binds the exact owner while the lock is held; a
+    /// replacement ledger refuses with `owner-replaced` instead of touching
+    /// it. Product nonces leave only after a verified reveal or release;
+    /// missing/destroyed/recycled windows retire with no writes; uncertain
+    /// identities refuse and retain the ledger. Returns the window count and
+    /// whether a Snap write ran.
+    pub(crate) fn restore_under_lease(
+        store: &LedgerStore,
+        expected: Option<&crate::model::ProcessIdentity>,
+    ) -> Result<(usize, bool)> {
         let dir = ledger_directory().map_err(|e| err(format!("error: ledger dir: {e}")))?;
-        if !dir.exists() {
-            return Ok((0, false));
-        }
         let me = medium_caller()?;
-        let store = open_store(&dir)?;
-        let Some(record) = committed_or_none(&store)? else {
+        let Some(record) = committed_or_none(store)? else {
             match read_stop(&dir)? {
                 Some(text) if !stop_request_matches(&text, &me.process_creation) => {
                     return Err(err("refuse: orphan stop.request"));
@@ -919,16 +1019,33 @@ pub mod sys {
         if !caller_owns(&me, &record)? {
             return Err(err("refuse: owner mismatch"));
         }
-        // Owner must be dead; PID reuse with different full identity is dead.
-        if let Some((held, live)) = held_live(record.owner.pid, false)?
-            && live == record.owner
-            && held.is_alive()
+        if let Some(want) = expected
+            && !watcher_may_restore(want, &record.owner)
         {
+            return Err(err("refuse: owner-replaced"));
+        }
+        // Owner must be dead; PID reuse with different full identity is dead.
+        if !owner_dead(&record.owner)? {
             return Err(err("refuse: owner still active"));
         }
         let helper_exe =
             crate::test_window::sys::sibling_helper_exe().map_err(|e| err(e.to_string()))?;
         for w in &record.windows {
+            if w.kind == crate::model::WindowClaimKind::Product {
+                match crate::product_hide::sys::reveal_product_claim(store, &record.owner, w) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        let msg = e.to_string();
+                        // Retired claims already cleaned their ledger note;
+                        // uncertain identities keep the residue.
+                        if msg.starts_with("uncertain:") || msg.starts_with("error:") {
+                            return Err(e);
+                        }
+                        return Err(err(format!("refuse: restore hwnd={} {msg}", w.hwnd)));
+                    }
+                }
+                continue;
+            }
             let ctx = format!("restore hwnd={} ", w.hwnd);
             let snap = owned(
                 w.hwnd,
@@ -942,6 +1059,7 @@ pub mod sys {
                     hwnd: snap.hwnd,
                     process: snap.process.clone(),
                     tag: snap.tag.clone(),
+                    kind: crate::model::WindowClaimKind::Helper,
                 },
                 visible: snap.visible,
             };
@@ -982,6 +1100,15 @@ pub mod sys {
         std::fs::remove_file(dir.join(LEDGER_FILE_NAME))
             .map_err(|e| err(format!("error: ledger cleanup: {e}")))?;
         Ok((count, snap_restored))
+    }
+
+    fn restore_locked() -> Result<(usize, bool)> {
+        let dir = ledger_directory().map_err(|e| err(format!("error: ledger dir: {e}")))?;
+        if !dir.exists() {
+            return Ok((0, false));
+        }
+        let store = open_store(&dir)?;
+        restore_under_lease(&store, None)
     }
 
     pub fn cmd_restore() -> Result<String> {

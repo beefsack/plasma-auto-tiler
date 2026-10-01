@@ -233,7 +233,7 @@ fn v1_without_snap_parses_to_no_work_v1_with_snap_refused() {
 
 #[test]
 fn old_v1_only_reader_refuses_v2_so_no_silent_snap_loss() {
-    // Old binaries validate `v == 1` only: a v2 write with Snap work must
+    // Old binaries validate `v == 1` only: a current write with Snap work must
     // refuse there instead of parsing without the field, restoring windows,
     // and deleting the ledger while leaving the setting off.
     fn old_validate(value: &serde_json::Value) -> Result<(), LedgerError> {
@@ -242,13 +242,27 @@ fn old_v1_only_reader_refuses_v2_so_no_silent_snap_loss() {
         }
         Ok(())
     }
-    let v2 = serde_json::to_value(ledger_with(Some(owned_preimage()))).expect("value");
-    assert_eq!(v2.get("v").and_then(|v| v.as_u64()), Some(2));
-    assert_eq!(old_validate(&v2), Err(LedgerError::UnsupportedVersion));
-    // And the new reader accepts that same v2 payload.
-    let json = serde_json::to_string(&v2).expect("json");
+    // Old v2-only binaries likewise refuse v3 product-schema writes.
+    fn old_v2_validate(value: &serde_json::Value) -> Result<(), LedgerError> {
+        if !matches!(value.get("v").and_then(|v| v.as_u64()), Some(1) | Some(2)) {
+            return Err(LedgerError::UnsupportedVersion);
+        }
+        Ok(())
+    }
+    let current = serde_json::to_value(ledger_with(Some(owned_preimage()))).expect("value");
+    assert_eq!(
+        current.get("v").and_then(|v| v.as_u64()),
+        Some(u64::from(LEDGER_SCHEMA_VERSION))
+    );
+    assert_eq!(old_validate(&current), Err(LedgerError::UnsupportedVersion));
+    assert_eq!(
+        old_v2_validate(&current),
+        Err(LedgerError::UnsupportedVersion)
+    );
+    // And the new reader accepts that same current payload.
+    let json = serde_json::to_string(&current).expect("json");
     assert!(mouse_snap_owned(
-        parse_ledger(&json).expect("v2 parses").mouse_snap
+        parse_ledger(&json).expect("current parses").mouse_snap
     ));
 }
 

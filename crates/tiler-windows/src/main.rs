@@ -76,6 +76,12 @@ fn real_main() -> Result<(), (i32, String)> {
             tiler_windows::tiling_sys::cmd_shortcut_proof(&options, rest)
                 .map_err(|e| (1, e.to_string()))?
         }
+        "hide-proof" => {
+            let options = tiler_windows::tiling::parse_hide_proof_args(rest)
+                .map_err(|message| (2, message))?;
+            tiler_windows::tiling_sys::cmd_hide_proof(&options, rest)
+                .map_err(|e| (1, e.to_string()))?
+        }
         "capture" => {
             let options =
                 tiler_windows::tiling::parse_capture_args(rest).map_err(|message| (2, message))?;
@@ -103,16 +109,34 @@ fn real_main() -> Result<(), (i32, String)> {
             }
             tiler_windows::lifecycle::sys::cmd_stop(true).map_err(|e| (1, e.to_string()))?
         }
+        "watch-owner" => {
+            let (pid, creation) = parse_watch_owner_args(rest)?;
+            tiler_windows::product_hide::sys::cmd_watch_owner(pid, &creation)
+                .map_err(|e| (1, e.to_string()))?
+        }
         _ => {
             return Err((
                 2,
-                "usage: tiler-windows identity|run --seconds N [--trace] [--hide HWND]|ready|restore|stop|emergency-stop|tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention]|tile-proof --allowlist PATH [--seconds N] [--trace]|shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]|capture --out PATH --hwnd HWND|inventory|children --hwnd HWND|inspect --allowlist PATH"
+                "usage: tiler-windows identity|run --seconds N [--trace] [--hide HWND]|ready|restore|stop|emergency-stop|watch-owner --pid PID --creation HEX|tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention]|tile-proof --allowlist PATH [--seconds N] [--trace]|shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]|hide-proof --allowlist PATH [--seconds N] [--trace]|capture --out PATH --hwnd HWND|inventory|children --hwnd HWND|inspect --allowlist PATH"
                     .to_owned(),
             ));
         }
     };
     println!("{output}");
     Ok(())
+}
+
+#[cfg(windows)]
+fn parse_watch_owner_args(rest: &[String]) -> Result<(u32, String), (i32, String)> {
+    let usage = "usage: tiler-windows watch-owner --pid PID --creation HEX".to_owned();
+    if rest.len() != 4 || rest[0] != "--pid" || rest[2] != "--creation" || rest[3].is_empty() {
+        return Err((2, usage));
+    }
+    let pid: u32 = rest[1].parse().map_err(|_| (2, usage.clone()))?;
+    if pid == 0 {
+        return Err((2, usage));
+    }
+    Ok((pid, rest[3].clone()))
 }
 
 #[cfg(windows)]

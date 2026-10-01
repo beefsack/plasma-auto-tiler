@@ -1,6 +1,6 @@
 use tiler_windows::model::{
-    ObservedWindow, ProcessIdentity, RefuseReason, RestoreDecision, WindowIdentity,
-    restore_eligibility,
+    ObservedWindow, ProcessIdentity, RefuseReason, RestoreDecision, WindowClaimKind,
+    WindowIdentity, restore_eligibility,
 };
 
 fn process() -> ProcessIdentity {
@@ -18,6 +18,7 @@ fn record() -> WindowIdentity {
         hwnd: 0xABCD,
         process: process(),
         tag: "tag-1".to_owned(),
+        kind: WindowClaimKind::Helper,
     }
 }
 

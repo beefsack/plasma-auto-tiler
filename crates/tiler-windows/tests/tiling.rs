@@ -6,9 +6,9 @@ use tiler_windows::tiling::{
     ObservedTargetRef, ReadbackOutcome, RefusedTracker, SkipReason, StatelessVerdict, TokenMap,
     WindowFacts, allow_match, allowlist_digest, build_reconcile_event, classify, classify_gesture,
     fingerprint, inspect_stateless_verdict, is_borderless_fullscreen, parse_allowlist,
-    parse_capture_args, parse_children_args, parse_inspect_args, parse_tile_args,
-    parse_tile_proof_args, readback_outcome, tick_summary_signature, tiling_domain_bounds,
-    verify_proof_argv_consistency,
+    parse_capture_args, parse_children_args, parse_hide_proof_args, parse_inspect_args,
+    parse_tile_args, parse_tile_proof_args, readback_outcome, tick_summary_signature,
+    tiling_domain_bounds, verify_hide_proof_argv_consistency, verify_proof_argv_consistency,
 };
 
 fn rect(x: i32, y: i32, w: i32, h: i32) -> Rect {
@@ -519,6 +519,55 @@ fn proof_argv_consistency_evidences_every_flag() {
     assert!(verify_proof_argv_consistency(&raw_bogus, &parsed).is_err());
     // Missing allowlist never verifies.
     assert!(verify_proof_argv_consistency(&strings(&["--trace"]), &parsed).is_err());
+}
+
+#[test]
+fn hide_proof_args_require_allowlist() {
+    assert!(parse_hide_proof_args(&[]).is_err());
+    assert!(parse_hide_proof_args(&strings(&["--trace"])).is_err());
+    assert!(parse_hide_proof_args(&strings(&["--allowlist", ""])).is_err());
+    let options = parse_hide_proof_args(&strings(&["--allowlist", "a.json"])).expect("proof");
+    assert_eq!(options.allowlist, std::path::PathBuf::from("a.json"));
+    assert_eq!(options.seconds, None);
+    assert!(!options.trace);
+    let options = parse_hide_proof_args(&strings(&[
+        "--allowlist",
+        "a.json",
+        "--seconds",
+        "60",
+        "--trace",
+    ]))
+    .expect("parsed");
+    assert_eq!(options.seconds, Some(60));
+    assert!(options.trace);
+    assert!(parse_hide_proof_args(&strings(&["--allowlist", "a.json", "--bogus"])).is_err());
+    // Never falls back: unknown flags and bad seconds refuse.
+    assert!(parse_hide_proof_args(&strings(&["--allowlist", "a.json", "--seconds", "0"])).is_err());
+}
+
+#[test]
+fn hide_proof_argv_consistency_evidences_every_flag() {
+    let raw = strings(&[
+        "--allowlist",
+        "C:\\my dir\\a.json",
+        "--seconds",
+        "300",
+        "--trace",
+    ]);
+    let parsed = parse_hide_proof_args(&raw).expect("parsed");
+    assert!(verify_hide_proof_argv_consistency(&raw, &parsed).is_ok());
+    let raw = strings(&["--allowlist", "a.json", "--trace"]);
+    let parsed = parse_hide_proof_args(&raw).expect("parsed");
+    assert!(verify_hide_proof_argv_consistency(&raw, &parsed).is_ok());
+    let parsed_no_trace =
+        parse_hide_proof_args(&strings(&["--allowlist", "a.json"])).expect("parsed");
+    assert!(verify_hide_proof_argv_consistency(&raw, &parsed_no_trace).is_err());
+    let raw_full = strings(&["--allowlist", "a.json", "--seconds", "300", "--trace"]);
+    assert!(verify_hide_proof_argv_consistency(&raw_full, &parsed).is_err());
+    let raw_other = strings(&["--allowlist", "b.json", "--trace"]);
+    assert!(verify_hide_proof_argv_consistency(&raw_other, &parsed).is_err());
+    let raw_bogus = strings(&["--allowlist", "a.json", "--bogus"]);
+    assert!(verify_hide_proof_argv_consistency(&raw_bogus, &parsed).is_err());
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -46,6 +46,13 @@ shortcuts-mock:
 shortcuts-stop run_dir:
     pwsh -NoProfile -File scripts/windows-shortcuts.ps1 -Stop -RunDir {{run_dir}}
 
+# Bounded owned-helper visibility proof over the product nonce mechanism
+# (physical, medium, no hooks/policy). Never runs by default; never touches
+# non-owned windows. Callable by the next worker:
+# `pwsh -NoProfile -File scripts/windows-hide-proof.ps1`.
+hide-proof:
+    pwsh -NoProfile -File scripts/windows-hide-proof.ps1
+
 # Out-of-hook recovery for the spike; works from a separate shell with the exact printed RunDir.
 winarrow-stop run_dir:
     pwsh -NoProfile -File scripts/windows-winarrow.ps1 -Stop -RunDir {{run_dir}}

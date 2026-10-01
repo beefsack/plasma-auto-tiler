@@ -50,7 +50,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 use crate::lifecycle::{
     is_medium_rid,
-    sys::{snap_resume, snap_suspend, stop_requested},
+    sys::{log_path_for, snap_resume, snap_suspend, stop_requested},
 };
 use crate::model::ProcessIdentity;
 use crate::native::{HeldProcess, has_terminal_ancestor};
@@ -60,12 +60,12 @@ use crate::snapkey::{
 };
 use crate::storage::LedgerStore;
 use crate::tiling::{
-    AllowEntry, CaptureOptions, ChildrenOptions, FrameInsets, GestureIntent, INNER_GAP,
-    InspectOptions, OUTER_GAP, OWNER_ID, ObservedTarget, ObservedTargetRef, ReadbackOutcome,
-    RefusedTracker, SkipReason, StatelessVerdict, TileOptions, TileProofOptions, TokenMap,
-    WindowFacts, allow_match, allowlist_digest, build_reconcile_event, classify, classify_gesture,
-    fingerprint, inspect_stateless_verdict, is_borderless_fullscreen, parse_allowlist,
-    readback_outcome, tick_summary_signature, tiling_domain_bounds,
+    AllowEntry, CaptureOptions, ChildrenOptions, FrameInsets, GestureIntent, HideProofOptions,
+    INNER_GAP, InspectOptions, OUTER_GAP, OWNER_ID, ObservedTarget, ObservedTargetRef,
+    ReadbackOutcome, RefusedTracker, SkipReason, StatelessVerdict, TileOptions, TileProofOptions,
+    TokenMap, WindowFacts, allow_match, allowlist_digest, build_reconcile_event, classify,
+    classify_gesture, fingerprint, inspect_stateless_verdict, is_borderless_fullscreen,
+    parse_allowlist, readback_outcome, tick_summary_signature, tiling_domain_bounds,
 };
 
 type DynError = Box<dyn std::error::Error>;
@@ -2653,6 +2653,150 @@ pub fn cmd_shortcut_proof(
             },
         )
     })
+}
+
+/// `hide-proof` command: owned-helpers-only visibility proof over the product
+/// nonce mechanism. Requires a nonempty valid `--allowlist`; every frozen
+/// entry is verified as an owned helper (sibling exe/class/lifetime-tag plus
+/// Terminal exclusion, via [`verify_proof_owned`]) BEFORE the ordinary
+/// product nonce APIs run, so helper-only gates are never weakened. Each
+/// verified helper is admitted with a fresh product nonce and hidden with a
+/// write-before-hide ledger commit (schema v3) under the central product
+/// watcher; graceful stop auto-reveals via the guarded teardown, and
+/// emergency loss auto-reveals via the watcher with idempotent independent
+/// restore. Installs no hook, takes no Snap setting, moves no geometry.
+pub fn cmd_hide_proof(options: &HideProofOptions, raw_argv: &[String]) -> Result<String> {
+    let text = std::fs::read_to_string(&options.allowlist)
+        .map_err(|e| err(format!("error: allowlist read: {e}")))?;
+    let entries = parse_allowlist(&text).map_err(err)?;
+    if entries.is_empty() {
+        return Err(err("refuse: empty allowlist"));
+    }
+    crate::tiling::verify_hide_proof_argv_consistency(raw_argv, options).map_err(err)?;
+    let trace = options.trace;
+    let seconds = options.seconds;
+    let raw_argv = raw_argv.to_vec();
+    // No Snap prevention, no hook, no geometry: visibility proof only.
+    crate::lifecycle::sys::run_product(trace, false, move |dir, me, store| {
+        run_hide_proof_loop(dir, me, store, entries, seconds, trace, raw_argv)
+    })
+}
+
+fn run_hide_proof_loop(
+    dir: &Path,
+    me: &ProcessIdentity,
+    store: &LedgerStore,
+    entries: Vec<AllowEntry>,
+    seconds: Option<u64>,
+    trace: bool,
+    raw_argv: Vec<String>,
+) -> Result<()> {
+    ensure_pm_v2()?;
+    let log_path = log_path_for(dir, &me.process_creation);
+    let audit_path = dir.join(format!("proof-audit-{}.jsonl", me.process_creation));
+    if audit_path.exists() {
+        return Err(err("refuse: audit preexists, will not overwrite"));
+    }
+    let digest = allowlist_digest(&entries);
+    let count = entries.len();
+    log_json_at(
+        &audit_path,
+        serde_json::json!({
+            "event": "proof-start",
+            "argv": raw_argv,
+            "seconds": seconds,
+            "trace": trace,
+            "mode": "hide-proof",
+            "allowlist_digest": digest,
+            "allowlist_count": count,
+        }),
+    );
+    // Frozen-helper gate BEFORE any product nonce API: every entry must verify
+    // as an owned helper, never an ordinary window.
+    for entry in &entries {
+        verify_proof_owned(entry.hwnd, entry, me).map_err(|reason| {
+            err(format!(
+                "refuse: hide-proof allowlist non-owned hwnd={} {reason}",
+                entry.hwnd
+            ))
+        })?;
+    }
+    let frozen: Vec<serde_json::Value> = entries
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "hwnd": e.hwnd,
+                "pid": e.pid,
+                "process_creation": e.process_creation,
+                "exe_path": e.exe_path,
+                "user_sid": e.user_sid,
+                "session_id": e.session_id,
+                "tag": e.tag,
+            })
+        })
+        .collect();
+    log_json_at(
+        &audit_path,
+        serde_json::json!({"event": "proof-frozen", "windows": frozen}),
+    );
+    let areas = all_monitors()?;
+    let monitor = areas[0];
+    log_json_at(
+        &log_path,
+        serde_json::json!({
+            "event": "hide-proof-start",
+            "mode": "hide-proof",
+            "trace": trace,
+            "monitors": areas.len(),
+            "work": [monitor.work.x, monitor.work.y, monitor.work.w, monitor.work.h],
+            "full": [monitor.full.x, monitor.full.y, monitor.full.w, monitor.full.h],
+            "allowlist_digest": digest,
+            "allowlist_count": count,
+        }),
+    );
+    // Admit + hide each verified helper via the ordinary product APIs.
+    // Write-before-hide holds per window: the ledger commit precedes the hide.
+    let mut hidden = 0usize;
+    for entry in &entries {
+        let claim = crate::product_hide::sys::admit_product_target(entry.hwnd, me)
+            .map_err(|e| err(format!("error: hide-proof admit hwnd={} {e}", entry.hwnd)))?;
+        crate::product_hide::sys::hide_committed_product(store, me, &claim, dir)
+            .map_err(|e| err(format!("error: hide-proof hide hwnd={} {e}", entry.hwnd)))?;
+        hidden += 1;
+        log_json_at(
+            &log_path,
+            serde_json::json!({"event": "hide-proof-hide", "index": hidden, "count": count}),
+        );
+        log_json_at(
+            &audit_path,
+            serde_json::json!({
+                "event": "hide-proof-hide",
+                "hwnd": entry.hwnd,
+                "pid": entry.pid,
+                "process_creation": entry.process_creation,
+                "tag": entry.tag,
+            }),
+        );
+    }
+    // Ledger receipt check: v3 with exactly the hidden product claims.
+    match store.committed() {
+        Ok(Some(record)) => {
+            if record.v != crate::model::LEDGER_SCHEMA_VERSION || record.windows.len() != count {
+                return Err(err("error: hide-proof ledger receipt mismatch"));
+            }
+        }
+        _ => return Err(err("error: hide-proof ledger receipt missing")),
+    }
+    let deadline = seconds.map(|s| Instant::now() + Duration::from_secs(s));
+    loop {
+        if stop_requested(dir, me)? {
+            return Ok(());
+        }
+        if deadline.is_some_and(|end| Instant::now() >= end) {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
 }
 
 /// `capture` command: read-only frozen-allowlist capture of explicitly listed

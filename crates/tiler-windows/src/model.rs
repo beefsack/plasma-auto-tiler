@@ -1,6 +1,29 @@
 use serde::{Deserialize, Serialize};
 
-pub const LEDGER_SCHEMA_VERSION: u32 = 2;
+pub const LEDGER_SCHEMA_VERSION: u32 = 3;
+
+/// Project-specific window-lifetime property backing product (ordinary-app)
+/// hide claims. Distinct from the helper `PlasmaAutoTilerLifetime` property so
+/// helper-only gates never mistake a product nonce for helper ownership.
+pub const PRODUCT_CLAIM_PROP: &str = "PlasmaAutoTilerProductClaim";
+
+/// Ownership domain of one hidden-window claim. Helper claims use the owned
+/// test-window lifetime property and helper-only gates; product claims use the
+/// product nonce property on ordinary windows. Serde default is helper so
+/// ledgers written before product work (v1/v2, no `kind` field) still parse as
+/// helper-only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowClaimKind {
+    #[default]
+    Helper,
+    Product,
+}
+
+#[must_use]
+pub fn default_claim_kind() -> WindowClaimKind {
+    WindowClaimKind::Helper
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProcessIdentity {
@@ -16,6 +39,8 @@ pub struct WindowIdentity {
     pub hwnd: u64,
     pub process: ProcessIdentity,
     pub tag: String,
+    #[serde(default = "default_claim_kind")]
+    pub kind: WindowClaimKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,9 +71,10 @@ pub struct RecoveryLedger {
     pub owner: ProcessIdentity,
     pub windows: Vec<WindowIdentity>,
     /// Optional so ledgers written before mouse-Snap prevention still parse
-    /// (missing means no Snap work). Writes use schema v2; an older v1-only
-    /// reader refuses v2 outright, so it can never silently ignore the field,
-    /// restore windows, and delete the ledger while leaving the setting off.
+    /// (missing means no Snap work). Writes use schema v3; older v1/v2-only
+    /// readers refuse v3 outright, so they can never silently ignore the field
+    /// or a product claim, restore windows, and delete the ledger while
+    /// leaving the setting off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mouse_snap: Option<MouseSnapPreimage>,
 }
@@ -155,10 +181,29 @@ pub fn validate_ledger(ledger: &RecoveryLedger) -> Result<(), LedgerError> {
             if ledger.mouse_snap.is_some() {
                 return Err(LedgerError::UnsupportedVersion);
             }
+            if ledger
+                .windows
+                .iter()
+                .any(|w| w.kind != WindowClaimKind::Helper)
+            {
+                return Err(LedgerError::UnsupportedVersion);
+            }
         }
-        // Current writes. v2 may carry or omit the Snap preimage (omitted
-        // means no Snap work yet).
-        2 => {}
+        // v2 helper-only writes. A v2 tag carrying a product claim is version
+        // confusion and must not parse as helper evidence.
+        2 => {
+            if ledger
+                .windows
+                .iter()
+                .any(|w| w.kind != WindowClaimKind::Helper)
+            {
+                return Err(LedgerError::UnsupportedVersion);
+            }
+        }
+        // Current writes: helper and product claims. Older v1/v2-only readers
+        // refuse v3 outright via the version gate, so they can never silently
+        // ignore a product claim and delete the ledger.
+        3 => {}
         _ => return Err(LedgerError::UnsupportedVersion),
     }
     for window in &ledger.windows {
@@ -166,6 +211,18 @@ pub fn validate_ledger(ledger: &RecoveryLedger) -> Result<(), LedgerError> {
             || window.process.session_id != ledger.owner.session_id
         {
             return Err(LedgerError::OwnerWindowMismatch);
+        }
+        // v3 binds the window-lifetime nonce: a product tag must be a nonzero
+        // 16-digit lowercase hex token, otherwise it cannot distinguish
+        // same-process HWND reuse and must never commit.
+        if ledger.v == 3 {
+            if window.kind == WindowClaimKind::Product {
+                if !valid_claim_tag(&window.tag) {
+                    return Err(LedgerError::Malformed);
+                }
+            } else if window.tag.is_empty() {
+                return Err(LedgerError::Malformed);
+            }
         }
     }
     let mut seen = std::collections::HashSet::new();
@@ -181,6 +238,61 @@ pub fn parse_ledger(json: &str) -> Result<RecoveryLedger, LedgerError> {
     let ledger: RecoveryLedger = serde_json::from_str(json).map_err(|_| LedgerError::Malformed)?;
     validate_ledger(&ledger)?;
     Ok(ledger)
+}
+
+/// Opaque window-lifetime nonce format: 16 lowercase hex digits, nonzero.
+/// Shared by helper lifetime tokens and product claim tags; the property name
+/// (helper vs [`PRODUCT_CLAIM_PROP`]) separates the domains, never the format.
+#[must_use]
+pub fn valid_claim_tag(tag: &str) -> bool {
+    if tag.len() != 16 {
+        return false;
+    }
+    if !tag.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return false;
+    }
+    if tag.bytes().all(|b| b == b'0') {
+        return false;
+    }
+    tag.bytes().all(|b| !b.is_ascii_uppercase())
+}
+
+/// Portable per-hide nonce: time nanos folded with pid and an atomic counter
+/// via FNV-1a, rendered as 16 lowercase hex, never zero. Uniqueness per hide
+/// (not secrecy) is the binding property: a recycled HWND in the same process
+/// starts without our window-lifetime property, so its missing/different tag
+/// fails closed. Retries once on the all-zero corner.
+#[must_use]
+pub fn generate_claim_tag(pid: u32) -> String {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0x9e3779b97f4a7c15);
+    let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for word in [
+        nanos,
+        u64::from(pid),
+        count.wrapping_mul(0x9e3779b97f4a7c15),
+        0x241ed0d125c3d4b,
+    ] {
+        hash ^= word;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    if hash == 0 {
+        hash = 0x9e3779b97f4a7c15;
+    }
+    format!("{hash:016x}")
+}
+
+/// Exact-owner binding for the crash watcher: only a ledger owned by the exact
+/// captured owner (full process tuple) may be restored by that watcher. A
+/// late watcher observing a replacement owner must exit without touching
+/// state. Used by the under-lease restore guard.
+#[must_use]
+pub fn watcher_may_restore(captured: &ProcessIdentity, ledger_owner: &ProcessIdentity) -> bool {
+    captured == ledger_owner
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

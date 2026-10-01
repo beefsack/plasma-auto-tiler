@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use tiler_windows::model::{
-    LEDGER_SCHEMA_VERSION, ProcessIdentity, RecoveryLedger, WindowIdentity,
+    LEDGER_SCHEMA_VERSION, ProcessIdentity, RecoveryLedger, WindowClaimKind, WindowIdentity,
 };
 use tiler_windows::storage::{LedgerStore, StorageError};
 
@@ -53,6 +53,7 @@ fn window(hwnd: u64, tag: &str) -> WindowIdentity {
             exe_path: "C:\\apps\\a.exe".to_owned(),
         },
         tag: tag.to_owned(),
+        kind: WindowClaimKind::Helper,
     }
 }
 
