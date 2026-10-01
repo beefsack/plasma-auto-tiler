@@ -83,3 +83,14 @@
   one causal key-name oracle repair produced the pass. No semantic live failure.
 - Recovery fixture is `just --justfile windows.justfile hide-proof`. Ordinary
   apps and workspace dispatch remain untested at this milestone.
+
+## Accepted portable policy milestone
+
+- Dependency-free tiler-core workspace policy resolves existing ordinals,
+  trailing-empty maintenance, protected occupancy/visibility/retention and
+  minimum-two floors, plus disconnect-time survivor choice. KDE-reference Rust
+  fixtures establish these semantics without changing KDE's TS authority.
+- Windows session tables retain hidden membership, workspace last focus,
+  active-ID-preserving cleanup and whole-workspace displacement/return. Digit
+  decoding and hook bookkeeping remain Windows-local; production hook/Engine
+  wiring is the next unit. Portable package tests and strict clippy pass.

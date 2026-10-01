@@ -11,3 +11,4 @@ pub mod tiling;
 #[cfg(windows)]
 pub mod tiling_sys;
 pub mod winarrow;
+pub mod workspace;
