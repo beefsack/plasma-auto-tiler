@@ -1763,7 +1763,7 @@ pub mod sys {
             SPIKE_LEDGER_SECONDS,
             false,
             None,
-            move |dir, me| spike_body(dir, me, helper_hwnd, &report),
+            move |dir, me, _store| spike_body(dir, me, helper_hwnd, &report),
         )
     }
 

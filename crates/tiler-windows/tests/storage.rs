@@ -1,5 +1,7 @@
 use std::path::PathBuf;
-use tiler_windows::model::{ProcessIdentity, RecoveryLedger, WindowIdentity};
+use tiler_windows::model::{
+    LEDGER_SCHEMA_VERSION, ProcessIdentity, RecoveryLedger, WindowIdentity,
+};
 use tiler_windows::storage::{LedgerStore, StorageError};
 
 static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -56,9 +58,10 @@ fn window(hwnd: u64, tag: &str) -> WindowIdentity {
 
 fn ledger() -> RecoveryLedger {
     RecoveryLedger {
-        v: 1,
+        v: LEDGER_SCHEMA_VERSION,
         owner: owner(),
         windows: vec![window(0xABCD, "tag-1")],
+        mouse_snap: None,
     }
 }
 

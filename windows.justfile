@@ -14,7 +14,7 @@ stop:
 proof:
     pwsh -NoProfile -File scripts/windows-dev.ps1 -Action proof
 
-# Normal user tiling only (physical, medium, no hooks/hide). Requires
+# Normal user tiling (physical, medium, default-on shortcut/Snap takeover, no hide). Requires
 # explicit --user-start, e.g. `just tile --user-start --trace`. Agents never
 # run this path; proof uses tiling-proof-owned (tile-proof, never normal).
 tile *args:
@@ -31,6 +31,20 @@ tiling-proof-owned:
 # Bounded Win+Arrow spike (physical, medium, owned helper only). Not run by default.
 winarrow:
     pwsh -NoProfile -File scripts/windows-winarrow.ps1
+
+# Bounded shortcut-proof verification (physical, medium, owned helpers).
+# Stages: OwnedFocusMove, OwnedMove (moves only, honestly skips focus rows), SpiGraceful, SpiCrash, NormalSmoke, All. Mock first:
+# `just shortcuts-mock`. Live needs explicit `-Live`, e.g.
+# `just shortcuts -Stage OwnedFocusMove -Live`. Never runs by default.
+shortcuts *args:
+    pwsh -NoProfile -File scripts/windows-shortcuts.ps1 {{args}}
+
+shortcuts-mock:
+    pwsh -NoProfile -File scripts/windows-shortcuts.ps1 -Mock
+
+# Out-of-hook exact-owner cleanup from a persisted run dir.
+shortcuts-stop run_dir:
+    pwsh -NoProfile -File scripts/windows-shortcuts.ps1 -Stop -RunDir {{run_dir}}
 
 # Out-of-hook recovery for the spike; works from a separate shell with the exact printed RunDir.
 winarrow-stop run_dir:

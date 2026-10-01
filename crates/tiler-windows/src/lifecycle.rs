@@ -88,7 +88,11 @@ pub mod sys {
     use super::{
         RUN_CURRENT_FILE, STOP_REQUEST_FILE, is_medium_rid, run_log_file_name, stop_request_matches,
     };
-    use crate::model::{LEDGER_SCHEMA_VERSION, RecoveryLedger, parse_ledger, restore_eligibility};
+    use crate::model::{
+        LEDGER_SCHEMA_VERSION, MouseSnapPreimage, MouseSnapRestoreDecision, MouseSnapSetupDecision,
+        RecoveryLedger, mouse_snap_owned, mouse_snap_restore_decision, mouse_snap_setup_decision,
+        parse_ledger, restore_eligibility,
+    };
     use crate::native::{
         HeldProcess, IdentityError, current_exe_path, current_identity, current_integrity_level,
         has_terminal_ancestor, ledger_directory,
@@ -268,7 +272,7 @@ pub mod sys {
     }
 
     pub fn cmd_run(seconds: u64, trace: bool, hide_hwnd: Option<u64>) -> Result<String> {
-        run_with_callback(seconds, trace, hide_hwnd, |dir, me| {
+        run_with_callback(seconds, trace, hide_hwnd, |dir, me, _store| {
             let deadline = Some(Instant::now() + Duration::from_secs(seconds));
             poll_stop(dir, me, deadline)
         })
@@ -302,20 +306,36 @@ pub mod sys {
     /// Product tiling loop seam: same owner lease/commit/stop checks as
     /// `run_with_callback`, but untimed (body returns on exact-owner stop),
     /// never hides, and commits an empty window ledger. The body must poll
-    /// [`stop_requested`] itself and return when it observes a request.
+    /// [`stop_requested`] itself and return when it observes a request. The
+    /// owner lease (`store`) is held throughout the body so the loop can
+    /// persist fresh Snap preimages across suspend/resume. `snap_prevention`
+    /// enables the default-on session-only `SPI_SETWINARRANGING FALSE` effect
+    /// with ledger-backed conditional restoration.
     pub fn run_product(
         trace: bool,
-        body: impl FnOnce(&Path, &crate::model::ProcessIdentity) -> Result<()>,
+        snap_prevention: bool,
+        body: impl FnOnce(&Path, &crate::model::ProcessIdentity, &LedgerStore) -> Result<()>,
     ) -> Result<String> {
         let dir = ledger_directory().map_err(|e| err(format!("error: ledger dir: {e}")))?;
         let me = medium_caller()?;
         if has_terminal_ancestor(me.pid).map_err(|e| err(format!("error: ancestry {e}")))? {
             return Err(err("refuse: terminal-ancestor"));
         }
-        match run_guarded(&dir, &me, 0, trace, None, true, |dir, me| {
-            body(dir, me)?;
-            Ok(true)
-        }) {
+        match run_guarded(
+            &dir,
+            &me,
+            GuardConfig {
+                seconds: 0,
+                trace,
+                hide_hwnd: None,
+                product: true,
+                snap_prevention,
+            },
+            |dir, me, store| {
+                body(dir, me, store)?;
+                Ok(true)
+            },
+        ) {
             Ok(out) => Ok(out),
             Err(e) => {
                 // Post-lease failures append to the per-run log; pre-lease
@@ -331,19 +351,32 @@ pub mod sys {
         }
     }
 
-    /// Owner setup/commit/log seam; body runs on the calling thread.
+    /// Owner setup/commit/log seam; body runs on the calling thread. The spike
+    /// path never takes Snap prevention: the store is passed only so the
+    /// guarded lease stays shared with the product path.
     pub fn run_with_callback(
         seconds: u64,
         trace: bool,
         hide_hwnd: Option<u64>,
-        body: impl FnOnce(&Path, &crate::model::ProcessIdentity) -> Result<bool>,
+        body: impl FnOnce(&Path, &crate::model::ProcessIdentity, &LedgerStore) -> Result<bool>,
     ) -> Result<String> {
         let dir = ledger_directory().map_err(|e| err(format!("error: ledger dir: {e}")))?;
         let me = medium_caller()?;
         if has_terminal_ancestor(me.pid).map_err(|e| err(format!("error: ancestry {e}")))? {
             return Err(err("refuse: terminal-ancestor"));
         }
-        match run_guarded(&dir, &me, seconds, trace, hide_hwnd, false, body) {
+        match run_guarded(
+            &dir,
+            &me,
+            GuardConfig {
+                seconds,
+                trace,
+                hide_hwnd,
+                product: false,
+                snap_prevention: false,
+            },
+            body,
+        ) {
             Ok(out) => Ok(out),
             Err(e) => {
                 let path = log_path_for(&dir, &me.process_creation);
@@ -387,15 +420,252 @@ pub mod sys {
         )
     }
 
-    fn run_guarded(
+    /// Session-only Snap prevention helpers. The ledger is the coordination
+    /// state between setup, the active loop (suspend/resume), teardown, and
+    /// crash recovery: every helper re-reads the committed preimage plus a
+    /// fresh live value, so in-process and independent restore always agree.
+    /// Structured JSON only, no native ids: `{"event":"mouse-snap",
+    /// "phase":..., "outcome":...}`.
+    fn snap_log(dir: &Path, me: &crate::model::ProcessIdentity, phase: &str, outcome: &str) {
+        let line = serde_json::json!({
+            "event": "mouse-snap",
+            "phase": phase,
+            "outcome": outcome,
+        })
+        .to_string();
+        let _ = write_log_for(dir, &me.process_creation, &line, false);
+    }
+
+    /// Same-owner Snap ledger note preserving the committed windows. Refuses
+    /// when the committed owner changed under the lease so a stale ledger can
+    /// never overwrite another owner's preimage. `Some` records a preimage
+    /// claim; `None` relinquishes the claim after a completed activation
+    /// (verified restore or observed drift), permitting a later fresh
+    /// recapture of the exact live preimage.
+    fn snap_note(
+        store: &LedgerStore,
+        owner: &crate::model::ProcessIdentity,
+        preimage: Option<MouseSnapPreimage>,
+    ) -> Result<()> {
+        let committed = committed_or_none(store)?;
+        let Some(existing) = committed else {
+            return Err(err("refuse: ledger missing under owner lease"));
+        };
+        if existing.owner != *owner {
+            return Err(err("refuse: ledger owner changed under lease"));
+        }
+        let updated = RecoveryLedger {
+            v: LEDGER_SCHEMA_VERSION,
+            owner: owner.clone(),
+            windows: existing.windows,
+            mouse_snap: preimage,
+        };
+        store.commit(&updated).map_err(|e| match e {
+            crate::storage::StorageError::DifferentOwner => {
+                err("refuse: ledger owner changed under lease")
+            }
+            crate::storage::StorageError::Ledger(_) => err("refuse: corrupt ledger"),
+            crate::storage::StorageError::LockContended => {
+                err("refuse: another owner holds the store")
+            }
+            crate::storage::StorageError::Io(io) => err(format!("error: ledger commit: {io}")),
+        })
+    }
+
+    /// Drive toward the `FALSE` effect: exact preimage capture, durable
+    /// intent note before the first setter (write-before-effect), setter with
+    /// exact readback. Failures degrade narrowly (tiling continues) with an
+    /// honest outcome log; an uncertain readback retains the intent claim for
+    /// later independent restore instead of downgrading it.
+    fn snap_drive_disabled(
         dir: &Path,
         me: &crate::model::ProcessIdentity,
+        store: &LedgerStore,
+        phase: &str,
+    ) {
+        let live = match crate::mouse_snap::sys::get() {
+            Ok(value) => value,
+            Err(_) => {
+                snap_log(dir, me, phase, "unavailable");
+                return;
+            }
+        };
+        let committed = match committed_or_none(store) {
+            Ok(value) => value,
+            Err(_) => {
+                snap_log(dir, me, phase, "unavailable");
+                return;
+            }
+        };
+        let claimed = committed.as_ref().and_then(|record| record.mouse_snap);
+        if mouse_snap_owned(claimed) && !live {
+            // Already our verified effect; quiet.
+            return;
+        }
+        match mouse_snap_setup_decision(Some(live)) {
+            MouseSnapSetupDecision::AlreadyOff => {
+                // Preserve the exact recorded preimage: an earlier activation
+                // that captured original TRUE (mismatch downgrade or
+                // unverified attempt) must never be overwritten by a later
+                // AlreadyOff note. Only a successfully completed lifecycle
+                // followed by an explicit recapture may replace it; this drive
+                // is a retry within the same lease, not a new activation.
+                if claimed.is_some_and(|record| record.original) {
+                    snap_log(dir, me, phase, "preserve-preimage");
+                    return;
+                }
+                if snap_note(
+                    store,
+                    me,
+                    Some(MouseSnapPreimage {
+                        original: false,
+                        owned: false,
+                    }),
+                )
+                .is_err()
+                {
+                    snap_log(dir, me, phase, "note-failed");
+                    return;
+                }
+                snap_log(dir, me, phase, "already-off");
+            }
+            MouseSnapSetupDecision::Disable => {
+                // Intent claim precedes the setter: a crash past this commit
+                // still recovers (live `TRUE` then reads as drift-preserve,
+                // live `FALSE` as ours to restore).
+                if snap_note(
+                    store,
+                    me,
+                    Some(MouseSnapPreimage {
+                        original: true,
+                        owned: true,
+                    }),
+                )
+                .is_err()
+                {
+                    snap_log(dir, me, phase, "note-failed");
+                    return;
+                }
+                match crate::mouse_snap::sys::set_verified(false) {
+                    Ok(false) => snap_log(dir, me, phase, "disabled"),
+                    Ok(true) => {
+                        let _ = snap_note(
+                            store,
+                            me,
+                            Some(MouseSnapPreimage {
+                                original: true,
+                                owned: false,
+                            }),
+                        );
+                        snap_log(dir, me, phase, "mismatch");
+                    }
+                    Err(_) => snap_log(dir, me, phase, "unverified"),
+                }
+            }
+            MouseSnapSetupDecision::UnknownRetain => {
+                snap_log(dir, me, phase, "unavailable");
+            }
+        }
+    }
+
+    /// Conditional restoration: writes the exact original `TRUE` only while
+    /// the live value is still our verified `FALSE`, then relinquishes the
+    /// claim (`None`) under the lease so a later resume recaptures the exact
+    /// live preimage instead of mistaking foreign `FALSE` for our effect.
+    /// Foreign `TRUE` drift is preserved without a write and likewise
+    /// relinquished. A failed relinquish retains the old claim with
+    /// uncertainty logged, never implying safe recapture. Read failures
+    /// retain the ledger for a later independent restore. Never fails hard:
+    /// the caller's result is preserved and recovery evidence is kept while
+    /// uncertain.
+    fn snap_drive_restore(
+        dir: &Path,
+        me: &crate::model::ProcessIdentity,
+        store: &LedgerStore,
+        phase: &str,
+    ) {
+        let committed = match committed_or_none(store) {
+            Ok(value) => value,
+            Err(_) => {
+                snap_log(dir, me, phase, "unavailable");
+                return;
+            }
+        };
+        let preimage = committed.as_ref().and_then(|record| record.mouse_snap);
+        if !mouse_snap_owned(preimage) {
+            return;
+        }
+        let live = crate::mouse_snap::sys::get().ok();
+        match mouse_snap_restore_decision(preimage, live) {
+            MouseSnapRestoreDecision::Restore => match crate::mouse_snap::sys::set_verified(true) {
+                Ok(true) => {
+                    snap_log(dir, me, phase, "restored");
+                    // Verified TRUE write completes this activation:
+                    // relinquish atomically under the lease. A failed clear
+                    // retains the claim with uncertainty (never imply safe
+                    // recapture while history is uncertain); the next drive
+                    // retries from the retained claim.
+                    if snap_note(store, me, None).is_err() {
+                        snap_log(dir, me, phase, "note-failed");
+                    }
+                }
+                Ok(false) => snap_log(dir, me, phase, "mismatch"),
+                Err(_) => snap_log(dir, me, phase, "unavailable"),
+            },
+            MouseSnapRestoreDecision::PreserveDrift => {
+                // Foreign TRUE drift ends this activation without a write;
+                // relinquish so the completed original-TRUE claim never
+                // blocks a later AlreadyOff recapture of FALSE.
+                if snap_note(store, me, None).is_err() {
+                    snap_log(dir, me, phase, "note-failed");
+                } else {
+                    snap_log(dir, me, phase, "preserved-drift");
+                }
+            }
+            MouseSnapRestoreDecision::NoOwnedMutation => {}
+            MouseSnapRestoreDecision::UncertainRetain => {
+                snap_log(dir, me, phase, "unavailable");
+            }
+        }
+    }
+
+    /// Suspend entry for an inactive loop (fullscreen foreground): restore
+    /// conditionally while tiling holds no geometry. Resume re-drives through
+    /// [`snap_drive_disabled`] with a fresh preimage when the setting drifted.
+    /// No-ops unless prevention was armed for this run.
+    pub fn snap_suspend(dir: &Path, me: &crate::model::ProcessIdentity, store: &LedgerStore) {
+        snap_drive_restore(dir, me, store, "suspend");
+    }
+
+    /// Resume entry: fresh preimage capture plus re-disable when the setting
+    /// drifted during suspension (or setup degraded earlier). Retries only at
+    /// these meaningful transitions, never per tick.
+    pub fn snap_resume(dir: &Path, me: &crate::model::ProcessIdentity, store: &LedgerStore) {
+        snap_drive_disabled(dir, me, store, "resume");
+    }
+
+    /// Bundled owner-run setup so the guarded entry keeps a narrow signature.
+    struct GuardConfig {
         seconds: u64,
         trace: bool,
         hide_hwnd: Option<u64>,
         product: bool,
-        body: impl FnOnce(&Path, &crate::model::ProcessIdentity) -> Result<bool>,
+        snap_prevention: bool,
+    }
+
+    fn run_guarded(
+        dir: &Path,
+        me: &crate::model::ProcessIdentity,
+        config: GuardConfig,
+        body: impl FnOnce(&Path, &crate::model::ProcessIdentity, &LedgerStore) -> Result<bool>,
     ) -> Result<String> {
+        let GuardConfig {
+            seconds,
+            trace,
+            hide_hwnd,
+            product,
+            snap_prevention,
+        } = config;
         let store = open_store(dir)?;
         if committed_or_none(&store)?.is_some() {
             return Err(err("refuse: ledger committed until stopped cleanup"));
@@ -454,10 +724,18 @@ pub mod sys {
             v: LEDGER_SCHEMA_VERSION,
             owner: (*me).clone(),
             windows,
+            mouse_snap: None,
         };
         store
             .commit(&record)
             .map_err(|e| err(format!("error: ledger commit: {e}")))?;
+        // Mouse prevention is deferred until the loop observes an actual
+        // active tick or resume: setup here must not disable while a
+        // fullscreen foreground is already holding the session, only to have
+        // the loop immediately restore. The loop drives the first effect via
+        // resume/setup phases; teardown below plus crash restore keep the
+        // lease-held guarantee. Proof and spike paths pass false.
+        let snap_want = product && snap_prevention;
         if let Some(hwnd) = hide_hwnd {
             let expect = record
                 .windows
@@ -465,7 +743,14 @@ pub mod sys {
                 .ok_or_else(|| err("error: ledger empty"))?;
             hide_once(dir, hwnd, me, expect)?;
         }
-        let stopped = body(dir, me)?;
+        // Scope-guard/finalizer shape: teardown runs on ordinary errors too.
+        // It only restores while the live value is still ours and never
+        // overwrites the body's result; uncertain reads retain the ledger.
+        let body_result = body(dir, me, &store);
+        if snap_want {
+            snap_drive_restore(dir, me, &store, "teardown");
+        }
+        let stopped = body_result?;
         let log_path = log_file.to_string_lossy().into_owned();
         if product {
             let status = if stopped { "stopped" } else { "expired" };
@@ -609,10 +894,15 @@ pub mod sys {
         Ok(())
     }
 
-    fn restore_locked() -> Result<usize> {
+    /// Dead-owner independent restore: verified hidden windows plus the
+    /// optional Snap preimage. Returns the window count and whether a Snap
+    /// `TRUE` write with readback ran. Snap restores only while live is still
+    /// our `FALSE`; drift or read failures retain the ledger (drift preserves
+    /// without writing, uncertainty errors without cleaning).
+    fn restore_locked() -> Result<(usize, bool)> {
         let dir = ledger_directory().map_err(|e| err(format!("error: ledger dir: {e}")))?;
         if !dir.exists() {
-            return Ok(0);
+            return Ok((0, false));
         }
         let me = medium_caller()?;
         let store = open_store(&dir)?;
@@ -624,7 +914,7 @@ pub mod sys {
                 Some(_) => cleanup_own_stop(&dir, &me.process_creation)?,
                 None => {}
             }
-            return Ok(0);
+            return Ok((0, false));
         };
         if !caller_owns(&me, &record)? {
             return Err(err("refuse: owner mismatch"));
@@ -665,19 +955,44 @@ pub mod sys {
                 }
             }
         }
+        let mut snap_restored = false;
+        if mouse_snap_owned(record.mouse_snap) {
+            let live = crate::mouse_snap::sys::get().ok();
+            match mouse_snap_restore_decision(record.mouse_snap, live) {
+                MouseSnapRestoreDecision::Restore => {
+                    match crate::mouse_snap::sys::set_verified(true) {
+                        Ok(true) => snap_restored = true,
+                        Ok(false) => {
+                            return Err(err("error: mouse-snap restore mismatch"));
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+                // Foreign `TRUE` drift: preserve it, clean the resolved claim
+                // with the windows below. No write under any drift.
+                MouseSnapRestoreDecision::PreserveDrift => {}
+                MouseSnapRestoreDecision::NoOwnedMutation => {}
+                MouseSnapRestoreDecision::UncertainRetain => {
+                    return Err(err("error: mouse-snap preimage read failed"));
+                }
+            }
+        }
         let count = record.windows.len();
         cleanup_own_stop(&dir, &record.owner.process_creation)?;
         std::fs::remove_file(dir.join(LEDGER_FILE_NAME))
             .map_err(|e| err(format!("error: ledger cleanup: {e}")))?;
-        Ok(count)
+        Ok((count, snap_restored))
     }
 
     pub fn cmd_restore() -> Result<String> {
-        let windows = restore_locked()?;
-        Ok(
-            serde_json::json!({"restored": true, "windows": windows, "ledger_cleaned": true})
-                .to_string(),
-        )
+        let (windows, snap_restored) = restore_locked()?;
+        Ok(serde_json::json!({
+            "restored": true,
+            "windows": windows,
+            "ledger_cleaned": true,
+            "mouse_snap_restored": snap_restored,
+        })
+        .to_string())
     }
 
     pub fn cmd_stop(terminate: bool) -> Result<String> {

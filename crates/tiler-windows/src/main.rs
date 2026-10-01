@@ -21,7 +21,7 @@ fn real_main() -> Result<(), (i32, String)> {
     let output = match command {
         "--help" | "-h" | "help" => {
             println!(
-                "tiler-windows commands:\n  identity  print current process identity as JSON\n  run --seconds N [--trace] [--hide HWND]  bounded owner run\n  ready  report owner readiness as JSON\n  restore  standalone reveal of owned hidden windows and ledger cleanup after owner exit (call explicitly after stop)\n  stop  request graceful exit of verified owner only; leaves ledger/windows for standalone restore\n  emergency-stop  terminate verified owner only; leaves ledger/windows for standalone restore\n  tile --user-start [--seconds N] [--trace]  normal user tiling loop until stop (no hide, geometry left in place)\n  tile-proof --allowlist PATH [--seconds N] [--trace]  owned-helpers-only proof loop (refuses without a valid allowlist, never falls back to normal)\n  capture --out PATH --hwnd HWND [--hwnd HWND ...]  read-only frozen-allowlist capture of explicitly listed owned helpers\n  inventory  read-only top-level window list for selecting capture targets (no titles)\n  children --hwnd HWND [--hwnd HWND ...]  read-only child-window report with verified process identity (no titles)\n  inspect --allowlist PATH  read-only fresh-state report for exactly the frozen allowlist (no titles)"
+                "tiler-windows commands:\n  identity  print current process identity as JSON\n  run --seconds N [--trace] [--hide HWND]  bounded owner run\n  ready  report owner readiness as JSON\n  restore  standalone reveal of owned hidden windows and ledger cleanup after owner exit (call explicitly after stop)\n  stop  request graceful exit of verified owner only; leaves ledger/windows for standalone restore\n  emergency-stop  terminate verified owner only; leaves ledger/windows for standalone restore\n  tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention]  normal user tiling loop until stop (no hide, geometry left in place; keyboard takeover on by default, unshifted Win+L needs --allow-win-l; session-only mouse-Snap prevention on by default)\n  tile-proof --allowlist PATH [--seconds N] [--trace]  owned-helpers-only proof loop (refuses without a valid allowlist, never falls back to normal)\n  shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]  owned-helpers-only automated shortcut proof with test-only marked synthetic-input acceptance (never falls back to normal; Win+L stays gated off)\n  capture --out PATH --hwnd HWND [--hwnd HWND ...]  read-only frozen-allowlist capture of explicitly listed owned helpers\n  inventory  read-only top-level window list for selecting capture targets (no titles)\n  children --hwnd HWND [--hwnd HWND ...]  read-only child-window report with verified process identity (no titles)\n  inspect --allowlist PATH  read-only fresh-state report for exactly the frozen allowlist (no titles)"
             );
             return Ok(());
         }
@@ -70,6 +70,12 @@ fn real_main() -> Result<(), (i32, String)> {
             tiler_windows::tiling_sys::cmd_tile_proof(&options, rest)
                 .map_err(|e| (1, e.to_string()))?
         }
+        "shortcut-proof" => {
+            let options = tiler_windows::tiling::parse_shortcut_proof_args(rest)
+                .map_err(|message| (2, message))?;
+            tiler_windows::tiling_sys::cmd_shortcut_proof(&options, rest)
+                .map_err(|e| (1, e.to_string()))?
+        }
         "capture" => {
             let options =
                 tiler_windows::tiling::parse_capture_args(rest).map_err(|message| (2, message))?;
@@ -100,7 +106,7 @@ fn real_main() -> Result<(), (i32, String)> {
         _ => {
             return Err((
                 2,
-                "usage: tiler-windows identity|run --seconds N [--trace] [--hide HWND]|ready|restore|stop|emergency-stop|tile --user-start [--seconds N] [--trace]|tile-proof --allowlist PATH [--seconds N] [--trace]|capture --out PATH --hwnd HWND|inventory|children --hwnd HWND|inspect --allowlist PATH"
+                "usage: tiler-windows identity|run --seconds N [--trace] [--hide HWND]|ready|restore|stop|emergency-stop|tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention]|tile-proof --allowlist PATH [--seconds N] [--trace]|shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]|capture --out PATH --hwnd HWND|inventory|children --hwnd HWND|inspect --allowlist PATH"
                     .to_owned(),
             ));
         }

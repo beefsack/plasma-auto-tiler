@@ -27,10 +27,14 @@ use windows_sys::Win32::Graphics::Dwm::DwmGetWindowAttribute;
 use windows_sys::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
 };
+use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows_sys::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows_sys::Win32::UI::HiDpi::{
     AreDpiAwarenessContextsEqual, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow,
     GetThreadDpiAwarenessContext, SetProcessDpiAwarenessContext,
+};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::MsgWaitForMultipleObjectsEx;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -39,13 +43,22 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZESTART, EnumChildWindows, EnumWindows, GW_OWNER,
     GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetCursorPos, GetForegroundWindow, GetWindow,
     GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindowVisible, IsZoomed,
-    MSG, PM_REMOVE, PeekMessageW, QS_ALLINPUT, SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos,
-    TranslateMessage, WINEVENT_OUTOFCONTEXT, WS_CAPTION, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    MSG, PM_REMOVE, PeekMessageW, QS_ALLINPUT, SWP_NOACTIVATE, SWP_NOZORDER, SetForegroundWindow,
+    SetWindowPos, TranslateMessage, WINEVENT_OUTOFCONTEXT, WS_CAPTION, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW,
 };
 
-use crate::lifecycle::{is_medium_rid, sys::stop_requested};
+use crate::lifecycle::{
+    is_medium_rid,
+    sys::{snap_resume, snap_suspend, stop_requested},
+};
 use crate::model::ProcessIdentity;
 use crate::native::{HeldProcess, has_terminal_ancestor};
+use crate::snapkey::{
+    KeyboardConfig, MAX_DISPATCH_PER_TICK, OriginVerdict, QueuedSnapEvent, SnapOp, SnapOrigin,
+    VK_MASK, direction_name, resolve_origin,
+};
+use crate::storage::LedgerStore;
 use crate::tiling::{
     AllowEntry, CaptureOptions, ChildrenOptions, FrameInsets, GestureIntent, INNER_GAP,
     InspectOptions, OUTER_GAP, OWNER_ID, ObservedTarget, ObservedTargetRef, ReadbackOutcome,
@@ -70,6 +83,11 @@ const MONITORINFOF_PRIMARY: u32 = 1;
 const OBJID_WINDOW: i32 = 0;
 const TICK_POLL_MS: u32 = 100;
 const SLOW_POLL_MS: u64 = 2000;
+// Pumped focus-settle bound: re-reads of `GetForegroundWindow` after an
+// accepted setter, 50 ms pumped each so the LL-hook message pump stays live.
+// No foreign wait: `pump_wait` only services the owner's own queue.
+const FOCUS_SETTLE_ROUNDS: u32 = 10;
+const FOCUS_SETTLE_POLL_MS: u32 = 50;
 
 /// Shell classes that are never tile targets.
 fn is_shell_class(class: &str) -> bool {
@@ -552,6 +570,19 @@ struct TileLoop {
     last_summary: Option<String>,
     log_path: std::path::PathBuf,
     audit_path: Option<std::path::PathBuf>,
+    /// Product keyboard policy for this run (takeover switch + Win+L opt-in).
+    keyboard: KeyboardConfig,
+    /// Last published snap-queue loss count, for explicit drop evidence.
+    snap_dropped: u32,
+    /// Chord-time origin snapshots for the keyboard callback, refreshed with
+    /// every complete observation alongside `managed`.
+    snap_origins: HashMap<u64, SnapOrigin>,
+    /// Verified own-focus continuation across bounded drains. Set only on an
+    /// exact verified owner actuation (`focus-ok`); cleared on external
+    /// focus, lifetime mismatch, suspension, or gesture. Lets a stale chord
+    /// origin continue from our own advance within and across batches, never
+    /// a permissive retarget.
+    snap_advance: Option<SnapOrigin>,
     /// Raw `EnumWindows` count from the latest observation (targets seen
     /// before any eligibility filtering, including zero).
     last_enumerated: usize,
@@ -687,6 +718,32 @@ impl TileLoop {
     }
 }
 
+/// Chord-time origin snapshot for one managed window: HWND plus the
+/// process-lifetime evidence the owner rechecks. Only the token may enter logs.
+fn snap_origin_of(window: &ObservedWindow) -> SnapOrigin {
+    SnapOrigin {
+        hwnd: window.hwnd,
+        token: window.token.clone(),
+        pid: window.identity.pid,
+        creation: window.identity.process_creation.clone(),
+    }
+}
+
+/// Refresh cached management state from a complete observation: managed set,
+/// stable rects, gesture retention, and the origin map the keyboard callback
+/// binds chords against. Exactness stays with the per-intent owner recheck.
+fn publish_managed(state: &mut TileLoop, observed: &[ObservedWindow]) {
+    state.managed = observed.iter().map(|w| w.hwnd).collect();
+    state.stable = observed.iter().map(|w| (w.hwnd, w.visible)).collect();
+    state
+        .gesture_before
+        .retain(|hwnd, _| state.managed.contains(hwnd));
+    state.snap_origins = observed
+        .iter()
+        .map(|w| (w.hwnd, snap_origin_of(w)))
+        .collect();
+}
+
 /// Revalidate one write target immediately before `SetWindowPos`: fresh
 /// eligibility, fresh full identity compared against the cached expectation
 /// and the frozen allowlist, with the process held open across the write.
@@ -789,6 +846,8 @@ fn desired_entries(reply: &CoreReply) -> Option<Vec<DesiredEntry>> {
         CoreReply::Projection(plan) => Some(map(&plan.geometry)),
         CoreReply::Tiled(plan) => Some(map(&plan.geometry)),
         CoreReply::Resize(plan) => Some(map(&plan.geometry)),
+        CoreReply::MoveDirectional(plan) => Some(map(&plan.geometry)),
+        CoreReply::FocusDirectional(plan) => Some(map(&plan.geometry)),
         _ => None,
     }
 }
@@ -808,11 +867,7 @@ fn reconcile_tick(state: &mut TileLoop, me: &ProcessIdentity, fulls: &[Rect], do
         );
         return;
     };
-    state.managed = observed.iter().map(|w| w.hwnd).collect();
-    state.stable = observed.iter().map(|w| (w.hwnd, w.visible)).collect();
-    state
-        .gesture_before
-        .retain(|hwnd, _| state.managed.contains(hwnd));
+    publish_managed(state, &observed);
     // Structured observer tick before Engine dispatch: full EnumWindows
     // success with the raw enumerated count and the managed (eligible,
     // allowlisted) count, including zero. A zero managed set is a completed
@@ -874,6 +929,7 @@ fn reconcile_tick(state: &mut TileLoop, me: &ProcessIdentity, fulls: &[Rect], do
             observed: &observed,
             op: "reconcile",
             tick,
+            correlation: correlation.as_str(),
             skipped,
         },
     );
@@ -887,7 +943,18 @@ struct ApplyInput<'a> {
     observed: &'a [ObservedWindow],
     op: &'a str,
     tick: u64,
+    correlation: &'a str,
     skipped: Vec<(String, String)>,
+}
+
+/// Settled result of one geometry application pass: verified writes,
+/// readback mismatches, and whether the independent readback observation ran
+/// at all. Callers map this to their action outcome vocabulary instead of
+/// assuming success.
+struct ApplySummary {
+    applied: usize,
+    mismatched: usize,
+    readback_ok: bool,
 }
 
 fn audit_json(state: &TileLoop, value: serde_json::Value) {
@@ -896,7 +963,7 @@ fn audit_json(state: &TileLoop, value: serde_json::Value) {
     }
 }
 
-fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) {
+fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> ApplySummary {
     let ApplyInput {
         me,
         fulls,
@@ -904,9 +971,15 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) {
         observed,
         op,
         tick,
+        correlation,
         mut skipped,
     } = input;
     let log_path = state.log_path.clone();
+    let settled = |applied: usize, mismatched: usize, readback_ok: bool| ApplySummary {
+        applied,
+        mismatched,
+        readback_ok,
+    };
     let Some(desired) = desired_entries(reply) else {
         let outcome = match reply {
             CoreReply::Rejected { kind, .. } => ("rejected", *kind),
@@ -919,12 +992,13 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) {
             serde_json::json!({
                 "event": "reply",
                 "tick": tick,
+                "correlation": correlation,
                 "op": op,
                 "outcome": outcome.0,
                 "kind": outcome.1,
             }),
         );
-        return;
+        return settled(0, 0, true);
     };
     let by_token: HashMap<&str, &ObservedWindow> =
         observed.iter().map(|w| (w.token.as_str(), w)).collect();
@@ -1082,6 +1156,7 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) {
                 serde_json::json!({
                     "event": "write",
                     "tick": tick,
+                    "correlation": correlation,
                     "op": op,
                     "window": entry.window.0,
                     "desired": [entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h],
@@ -1106,6 +1181,7 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) {
             serde_json::json!({
                 "event": "plan",
                 "tick": tick,
+                "correlation": correlation,
                 "op": op,
                 "entries": plan,
             }),
@@ -1120,14 +1196,12 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) {
     let mut reread_skipped = Vec::new();
     let reread = state.observe(me, &reread_fulls, &mut reread_skipped);
     let mut mismatched = 0usize;
+    let mut readback_ok = false;
     if let Some(reread) = reread {
+        readback_ok = true;
         // Stable pre-gesture state follows the AFTER-actuation observation,
         // never the pre-apply frame the Engine just consumed.
-        state.managed = reread.iter().map(|w| w.hwnd).collect();
-        state.stable = reread.iter().map(|w| (w.hwnd, w.visible)).collect();
-        state
-            .gesture_before
-            .retain(|hwnd, _| state.managed.contains(hwnd));
+        publish_managed(state, &reread);
         let reread_by_token: HashMap<&str, Rect> = reread
             .iter()
             .map(|w| (w.token.as_str(), w.visible))
@@ -1184,6 +1258,7 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) {
                 serde_json::json!({
                     "event": "readback-detail",
                     "tick": tick,
+                    "correlation": correlation,
                     "op": op,
                     "entries": detail,
                 }),
@@ -1197,6 +1272,7 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) {
             serde_json::json!({
                 "event": "readback",
                 "tick": tick,
+                "correlation": correlation,
                 "op": op,
                 "mismatched": mismatched,
             }),
@@ -1229,13 +1305,559 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) {
                 "event": "tick",
                 "tick": tick,
                 "op": op,
-                "correlation": format!("tick-{tick}"),
+                "correlation": correlation,
                 "windows": observed.len(),
                 "applied": applied,
                 "mismatched": mismatched,
                 "skipped": skipped_json,
             }),
         );
+    }
+    settled(applied, mismatched, readback_ok)
+}
+
+/// Closed outcome vocabulary for a directional Engine reply that is not a
+/// success plan: edge no-ops and refusals actuate nothing.
+fn reply_outcome(reply: &CoreReply) -> &'static str {
+    match reply {
+        CoreReply::Rejected { kind, .. } => kind,
+        CoreReply::Diverged(reason) => reason.as_str(),
+        CoreReply::SnapshotInvalid { detail, .. } => detail,
+        _ => "unexpected-reply",
+    }
+}
+
+/// Outcome of one Engine focus actuation plus setter/readback trace.
+/// `setter_accepted` is the raw `SetForegroundWindow` BOOL (never trusted as
+/// proof); `prime_inserted` is the bounded `SendInput` accepted-event count
+/// for the E8 last-input prime (0..=2, never trusted as proof);
+/// `attach_ok` reports the bounded `AttachThreadInput` coupling to the
+/// pre-call foreground thread (never trusted as proof); `eventual` is true
+/// only when the exact-foreground readback matched after the pumped settle
+/// rather than immediately (never trusted beyond the readback itself);
+/// `deferred` stays false: no synchronous foreign message waits, the
+/// callback remains promptly available. Token-safe ints/bools for the
+/// production log: no native ids.
+struct FocusActuation {
+    outcome: &'static str,
+    setter_accepted: bool,
+    prime_inserted: u8,
+    attach_ok: bool,
+    eventual: bool,
+    deferred: bool,
+}
+
+/// Acquire last-input rights immediately before `SetForegroundWindow`: one
+/// unassigned E8 down/up pair (`VK_MASK`, `dwExtraInfo` 0) via `SendInput`.
+/// The OS grants foreground rights to the last input provider, and E8 carries
+/// no modifier, character, or Start-menu side effect (same technique as the
+/// accepted Win-up mask). Zero means the prime contributed nothing; the caller
+/// still attempts the setter and the exact foreground readback decides.
+/// A partial single insert runs one bounded E8-up release so no virtual key
+/// stays held. Runs on the owner loop thread, never in the LL callback, with
+/// no wait, no `AttachThreadInput`, no Alt, and no policy/registry effect.
+fn prime_foreground_rights() -> u8 {
+    let inserted = unsafe {
+        let mut pair: [INPUT; 2] = std::mem::zeroed();
+        pair[0].r#type = INPUT_KEYBOARD;
+        pair[0].Anonymous.ki = KEYBDINPUT {
+            wVk: VK_MASK as u16,
+            wScan: 0,
+            dwFlags: 0,
+            time: 0,
+            dwExtraInfo: 0,
+        };
+        pair[1].r#type = INPUT_KEYBOARD;
+        pair[1].Anonymous.ki = KEYBDINPUT {
+            wVk: VK_MASK as u16,
+            wScan: 0,
+            dwFlags: KEYEVENTF_KEYUP,
+            time: 0,
+            dwExtraInfo: 0,
+        };
+        let size = std::mem::size_of::<INPUT>() as i32;
+        SendInput(2, pair.as_ptr(), size)
+    };
+    if inserted == 1 {
+        // Bounded release of the lone E8 down; the count stays 1 (no clean
+        // pair) so evidence never claims a full prime.
+        unsafe {
+            let mut up: INPUT = std::mem::zeroed();
+            up.r#type = INPUT_KEYBOARD;
+            up.Anonymous.ki = KEYBDINPUT {
+                wVk: VK_MASK as u16,
+                wScan: 0,
+                dwFlags: KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: 0,
+            };
+            let size = std::mem::size_of::<INPUT>() as i32;
+            SendInput(1, &up, size);
+        }
+    }
+    inserted.min(u32::from(u8::MAX)) as u8
+}
+
+/// Actuate one Engine focus plan on the exact target window: fresh
+/// revalidation with the process held open across the call, one bounded E8
+/// `SendInput` last-input prime, a bounded `AttachThreadInput` coupling of
+/// the owner thread to the pre-call foreground thread, then exactly one
+/// `SetForegroundWindow` with immediate detach, an exact immediate
+/// `GetForegroundWindow` readback, and - on an immediate miss - a bounded
+/// pumped settle (own queue only, hook stays live) distinguishing deferred
+/// delivery from no transfer. The prime count, the attach result, and the
+/// setter return are never trusted; only an exact foreground readback settles
+/// `focus-ok`. There is no Alt injection and no `SendMessageTimeoutW` wait.
+/// Proof mode keeps the frozen-allowlist gate; normal mode skips it.
+///
+/// This runs on the loop thread, never inside the low-level hook callback.
+/// No call here waits on foreign input: `AttachThreadInput` only links
+/// queues, `SetForegroundWindow` returns without waiting, detach runs
+/// immediately after the single setter, and the settle only pumps the owner's
+/// own queue. Revalidation is identity/liveness, not responsiveness - a hung
+/// target cannot stall these calls because none of them blocks on it.
+fn actuate_focus(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    fulls: &[Rect],
+    observed: &[ObservedWindow],
+    to_token: &str,
+) -> FocusActuation {
+    let unsettled = |outcome: &'static str| FocusActuation {
+        outcome,
+        setter_accepted: false,
+        prime_inserted: 0,
+        attach_ok: false,
+        eventual: false,
+        deferred: false,
+    };
+    let Some(expected) = observed.iter().find(|w| w.token == to_token) else {
+        return unsettled("vanished");
+    };
+    let proof_mode = state.allowlist.is_some();
+    let target = match revalidate_target(
+        expected,
+        me,
+        fulls,
+        &mut state.tokens,
+        proof_mode,
+        state.allowlist.as_ref(),
+    ) {
+        Ok(target) => target,
+        Err(reason) => return unsettled(reason),
+    };
+    let hwnd = target.window.hwnd as isize as HWND;
+    if unsafe { GetForegroundWindow() } as usize as u64 == target.window.hwnd {
+        // Already exact foreground: no input and no setter needed.
+        return FocusActuation {
+            outcome: "focus-ok",
+            setter_accepted: false,
+            prime_inserted: 0,
+            attach_ok: false,
+            eventual: false,
+            deferred: false,
+        };
+    }
+    let prime_inserted = prime_foreground_rights();
+    // Couple the owner input queue to the pre-call foreground thread so the
+    // single setter below runs attached (AHK ladder rung one). Skipped when
+    // there is no foreground thread or it is already ours. No wait, no Alt.
+    // `GetWindowThreadProcessId` RETURNS the thread id and writes the process
+    // id to its out-param: the tid comes from the return value, never from
+    // the pid slot (a pid-as-tid attach was the 024139 false negative).
+    let current_tid = unsafe { GetCurrentThreadId() };
+    let foreground_before = unsafe { GetForegroundWindow() };
+    let foreground_tid = if foreground_before.is_null() {
+        0
+    } else {
+        unsafe { GetWindowThreadProcessId(foreground_before, std::ptr::null_mut()) }
+    };
+    let attach_ok = foreground_tid != 0
+        && foreground_tid != current_tid
+        && unsafe { AttachThreadInput(current_tid, foreground_tid, 1) } != 0;
+    let setter_accepted = unsafe { SetForegroundWindow(hwnd) } != 0;
+    if attach_ok {
+        unsafe {
+            AttachThreadInput(current_tid, foreground_tid, 0);
+        }
+    }
+    // The held process keeps liveness authority across the call; recheck the
+    // HWND pid afterward against recycling.
+    let _ = &target.held;
+    if !pid_current(target.window.hwnd, target.window.identity.pid) {
+        return FocusActuation {
+            outcome: "pid-changed",
+            setter_accepted,
+            prime_inserted,
+            attach_ok,
+            eventual: false,
+            deferred: false,
+        };
+    }
+    if unsafe { GetForegroundWindow() } as usize as u64 == target.window.hwnd {
+        return FocusActuation {
+            outcome: "focus-ok",
+            setter_accepted,
+            prime_inserted,
+            attach_ok,
+            eventual: false,
+            deferred: false,
+        };
+    }
+    // Immediate miss with an accepted setter does not establish no transfer:
+    // the system can deliver foreground after the call returns. Pump the
+    // owner's own queue (new intents queue bounded for the next drain; the
+    // hook callback stays prompt) and re-read, bounded with no foreign wait.
+    let mut eventual = false;
+    for _ in 0..FOCUS_SETTLE_ROUNDS {
+        pump_wait(FOCUS_SETTLE_POLL_MS);
+        if unsafe { GetForegroundWindow() } as usize as u64 == target.window.hwnd {
+            eventual = true;
+            break;
+        }
+    }
+    // Recycled-HWND guard covers the settle window too.
+    if !pid_current(target.window.hwnd, target.window.identity.pid) {
+        return FocusActuation {
+            outcome: "pid-changed",
+            setter_accepted,
+            prime_inserted,
+            attach_ok,
+            eventual: false,
+            deferred: false,
+        };
+    }
+    if eventual {
+        return FocusActuation {
+            outcome: "focus-ok",
+            setter_accepted,
+            prime_inserted,
+            attach_ok,
+            eventual,
+            deferred: false,
+        };
+    }
+    if !setter_accepted {
+        return FocusActuation {
+            outcome: "focus-unverified",
+            setter_accepted,
+            prime_inserted,
+            attach_ok,
+            eventual: false,
+            deferred: false,
+        };
+    }
+    FocusActuation {
+        outcome: "focus-unverified",
+        setter_accepted,
+        prime_inserted,
+        attach_ok,
+        eventual: false,
+        deferred: false,
+    }
+}
+
+/// Drain one bounded batch of product keyboard intents against fresh complete
+/// observations through the retained Engine.
+///
+/// While `blocked` is set (fullscreen suspension, an open managed gesture, or
+/// a just-ended gesture settling) every intent drops safely with one bounded
+/// stale line and nothing dispatches. Otherwise each consumed down/repeat
+/// carries its chord-time origin (opaque token plus HWND/process-lifetime
+/// evidence bound by the callback) and must re-resolve against fresh
+/// observation: a chord consumed for A never acts on unrelated B after an
+/// external focus change. The only retarget is an explicitly verified
+/// owner-caused continuation within the same batch (a prior actuation moved
+/// focus and the fresh foreground is exactly that target), so rapid repeated
+/// navigation survives while external focus moves reject loudly. Focus intents
+/// actuate the Engine `FocusDirectional` target with an exact foreground
+/// readback; move intents apply the `MoveDirectional` geometry through the
+/// shared write path and report its settled summary. Key-ups close the pair
+/// and passed intents never dispatch: both are trace-only so held-key traffic
+/// stays out of normal logs. Every settled action carries its correlation;
+/// enumeration failure settles the action as failed. Log vocabulary is tokens
+/// plus op/direction/edge/disposition/outcome/correlation only: no titles, raw
+/// native ids, or keys.
+fn keyboard_tick(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    fulls: &[Rect],
+    domain: Rect,
+    events: Vec<QueuedSnapEvent>,
+    blocked: Option<&'static str>,
+) {
+    let log_path = state.log_path.clone();
+    let dropped = crate::snapkey::sys::queue_dropped();
+    if dropped > state.snap_dropped {
+        log_json_at(
+            &log_path,
+            serde_json::json!({"event":"snap-drop","lost": dropped - state.snap_dropped}),
+        );
+        state.snap_dropped = dropped;
+    }
+    if let Some(cause) = blocked {
+        // Suspension and gestures invalidate any own-focus chain: the next
+        // batch starts without continuation.
+        state.snap_advance = None;
+        let mut stale = 0u32;
+        for ev in events {
+            match ev {
+                QueuedSnapEvent::Mask(mask) => {
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "snap-mask",
+                            "mask": crate::snapkey::sys::mask_evidence(&mask),
+                        }),
+                    );
+                }
+                QueuedSnapEvent::Intent(_) => stale += 1,
+            }
+        }
+        if stale > 0 {
+            log_json_at(
+                &log_path,
+                serde_json::json!({"event":"snap-stale","cause": cause, "dropped": stale}),
+            );
+        }
+        return;
+    }
+    // Owner-caused focus advances verified across batches live on the loop:
+    // the only retarget a chord origin may take, so rapid repeated
+    // navigation survives bounded drains while external focus moves reject.
+    // Cleared on external focus, lifetime mismatch, suspension, or gesture.
+    for ev in events {
+        match ev {
+            QueuedSnapEvent::Mask(mask) => {
+                log_json_at(
+                    &log_path,
+                    serde_json::json!({
+                        "event": "snap-mask",
+                        "mask": crate::snapkey::sys::mask_evidence(&mask),
+                    }),
+                );
+            }
+            QueuedSnapEvent::Intent(intent) => {
+                if !intent.consumed || !intent.announce {
+                    // Key-ups close the pair and passed chords never dispatch:
+                    // trace-only, so held-key traffic stays out of normal logs.
+                    if state.trace {
+                        log_json_at(
+                            &log_path,
+                            serde_json::json!({
+                                "event": "snap",
+                                "tick": state.tick,
+                                "op": intent.op.as_str(),
+                                "direction": direction_name(intent.direction),
+                                "edge": intent.edge.as_str(),
+                                "disposition": if intent.consumed { "consumed" } else { "passed" },
+                                "outcome": if intent.consumed { "key-up" } else { "passed" },
+                            }),
+                        );
+                    }
+                    continue;
+                }
+                // Fresh complete observation per intent. The chord-time origin
+                // must re-resolve: stale intents die here, never on a cached
+                // rectangle.
+                state.tick += 1;
+                let tick = state.tick;
+                let correlation = state.correlation();
+                let Some(origin) = intent.origin.clone() else {
+                    // Consumed without an origin cannot happen through the
+                    // callback gate; settle defensively without dispatch.
+                    state.snap_advance = None;
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "snap",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "op": intent.op.as_str(),
+                            "direction": direction_name(intent.direction),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": "origin-vanished",
+                        }),
+                    );
+                    continue;
+                };
+                let mut skipped: Vec<(String, String)> = Vec::new();
+                let Some(observed) = state.observe(me, fulls, &mut skipped) else {
+                    // Enumeration failure settles the action as failed; the
+                    // Engine keeps retained state and the next tick retries.
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "snap",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "op": intent.op.as_str(),
+                            "direction": direction_name(intent.direction),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": "observation-failed",
+                            "origin": origin.token,
+                        }),
+                    );
+                    continue;
+                };
+                publish_managed(state, &observed);
+                let fresh: Vec<SnapOrigin> = observed.iter().map(snap_origin_of).collect();
+                let foreground_hwnd = Some(unsafe { GetForegroundWindow() } as usize as u64);
+                let (from, continued) = match resolve_origin(
+                    &origin,
+                    foreground_hwnd,
+                    &fresh,
+                    state.snap_advance.as_ref(),
+                ) {
+                    OriginVerdict::Dispatch { token, continued } => (token, continued),
+                    OriginVerdict::Reject(reason) => {
+                        // External focus or lifetime mismatch invalidates the
+                        // chain; never carry a stale advance forward.
+                        state.snap_advance = None;
+                        log_json_at(
+                            &log_path,
+                            serde_json::json!({
+                                "event": "snap",
+                                "tick": tick,
+                                "correlation": correlation.as_str(),
+                                "op": intent.op.as_str(),
+                                "direction": direction_name(intent.direction),
+                                "edge": intent.edge.as_str(),
+                                "disposition": "consumed",
+                                "outcome": reason,
+                                "origin": origin.token,
+                            }),
+                        );
+                        continue;
+                    }
+                };
+                let pairs: Vec<(String, Rect)> = observed
+                    .iter()
+                    .map(|w| (w.token.clone(), w.visible))
+                    .collect();
+                let fp = fingerprint(&pairs);
+                let windows: Vec<(WindowId, Rect)> = observed
+                    .iter()
+                    .map(|w| (WindowId(w.token.clone()), w.visible))
+                    .collect();
+                // `from` is the origin-verified token, never blind foreground.
+                let from = WindowId(from);
+                let mut event = build_reconcile_event(&crate::tiling::ReconcileInput {
+                    owner: &state.owner,
+                    generation: &state.generation,
+                    correlation: &correlation,
+                    revision: state.revision(),
+                    fingerprint: fp,
+                    domain_bounds: domain,
+                    windows: &windows,
+                    focused: Some(&from),
+                });
+                let direction = direction_name(intent.direction).to_owned();
+                event.command = match intent.op {
+                    SnapOp::Focus => CoreCommand::Focus {
+                        window: from.0.clone(),
+                        direction,
+                        cross_output_transfer: false,
+                    },
+                    SnapOp::Move => CoreCommand::Move {
+                        window: from.0.clone(),
+                        direction,
+                        cross_output_transfer: false,
+                    },
+                };
+                // Single-domain observations run the local retained
+                // propose/commit path; Core owns direction semantics.
+                let reply = state.engine.handle(&event);
+                let outcome = match intent.op {
+                    SnapOp::Focus => {
+                        if let CoreReply::FocusDirectional(plan) = &reply {
+                            let to = plan.to_window.0.clone();
+                            let actuation = actuate_focus(state, me, fulls, &observed, &to);
+                            let outcome = actuation.outcome;
+                            if outcome == "focus-ok" {
+                                // Verified own advance: later intents in this
+                                // batch and across bounded drains may continue
+                                // from it; cleared on external focus,
+                                // mismatch, suspension, or gesture.
+                                state.snap_advance =
+                                    observed.iter().find(|w| w.token == to).map(snap_origin_of);
+                            } else {
+                                state.snap_advance = None;
+                            }
+                            log_json_at(
+                                &log_path,
+                                serde_json::json!({
+                                    "event": "snap",
+                                    "tick": tick,
+                                    "correlation": correlation.as_str(),
+                                    "op": intent.op.as_str(),
+                                    "direction": direction_name(intent.direction),
+                                    "edge": intent.edge.as_str(),
+                                    "disposition": "consumed",
+                                    "outcome": outcome,
+                                    "setter_accepted": actuation.setter_accepted,
+                                    "prime_inserted": actuation.prime_inserted,
+                                    "attach_ok": actuation.attach_ok,
+                                    "eventual": actuation.eventual,
+                                    "deferred": actuation.deferred,
+                                    "origin": origin.token,
+                                    "window": from.0,
+                                    "continued": continued,
+                                }),
+                            );
+                            continue;
+                        }
+                        reply_outcome(&reply)
+                    }
+                    SnapOp::Move => {
+                        if let CoreReply::MoveDirectional(_) = &reply {
+                            let summary = apply_geometry(
+                                state,
+                                ApplyInput {
+                                    me,
+                                    fulls,
+                                    reply: &reply,
+                                    observed: &observed,
+                                    op: "move",
+                                    tick,
+                                    correlation: correlation.as_str(),
+                                    skipped,
+                                },
+                            );
+                            if !summary.readback_ok {
+                                "move-unverified"
+                            } else if summary.mismatched > 0 {
+                                "move-mismatch"
+                            } else if summary.applied > 0 {
+                                "move-applied"
+                            } else {
+                                "move-noop"
+                            }
+                        } else {
+                            reply_outcome(&reply)
+                        }
+                    }
+                };
+                log_json_at(
+                    &log_path,
+                    serde_json::json!({
+                        "event": "snap",
+                        "tick": tick,
+                        "correlation": correlation.as_str(),
+                        "op": intent.op.as_str(),
+                        "direction": direction_name(intent.direction),
+                        "edge": intent.edge.as_str(),
+                        "disposition": "consumed",
+                        "outcome": outcome,
+                        "origin": origin.token,
+                        "window": from.0,
+                        "continued": continued,
+                    }),
+                );
+            }
+        }
     }
 }
 
@@ -1339,6 +1961,7 @@ fn gesture_tick(
                         observed: &observed,
                         op,
                         tick,
+                        correlation: correlation.as_str(),
                         skipped: Vec::new(),
                     },
                 );
@@ -1380,15 +2003,44 @@ fn foreground_fullscreen(fulls: &[Rect]) -> bool {
     rect_from_win(visible_raw).is_some_and(|visible| is_borderless_fullscreen(true, visible, fulls))
 }
 
-fn run_tile_loop(
-    dir: &Path,
-    me: &ProcessIdentity,
+/// Owned inputs for one `run_tile_loop` invocation. Bundled so the loop
+/// entry keeps a narrow signature as keyboard policy joins the run.
+/// `mouse_snap` arms session-only `SPI_SETWINARRANGING FALSE` prevention for
+/// product runs; proof runs always pass false (no settings changes).
+struct TileRun {
     seconds: Option<u64>,
     trace: bool,
     allowlist: Option<Vec<AllowEntry>>,
     proof: bool,
+    /// `shortcut-proof` only: proof geometry gate stays on, but the owner
+    /// installs the hook with test-only marker acceptance and drives the same
+    /// keyboard dispatcher plus session-only mouse routines. Product `tile`
+    /// and `tile-proof` always pass false.
+    shortcut_proof: bool,
     raw_argv: Vec<String>,
+    keyboard: KeyboardConfig,
+    mouse_snap: bool,
+}
+
+fn run_tile_loop(
+    dir: &Path,
+    me: &ProcessIdentity,
+    store: &LedgerStore,
+    run: TileRun,
 ) -> Result<()> {
+    let TileRun {
+        seconds,
+        trace,
+        allowlist,
+        proof,
+        shortcut_proof,
+        raw_argv,
+        keyboard,
+        mouse_snap,
+    } = run;
+    // Prevention needs an active loop: proof never arms it, and the guarded
+    // setup already captured the preimage plus the initial effect.
+    let snap_want = mouse_snap && (!proof || shortcut_proof);
     ensure_pm_v2()?;
     let owner = OwnerId::parse(OWNER_ID).expect("static owner token is valid");
     let generation =
@@ -1418,7 +2070,7 @@ fn run_tile_loop(
             "argv": raw_argv,
             "seconds": seconds,
             "trace": trace,
-            "mode": "proof",
+            "mode": if shortcut_proof { "shortcut-proof" } else { "proof" },
             "allowlist_digest": digest,
             "allowlist_count": count,
         });
@@ -1480,16 +2132,25 @@ fn run_tile_loop(
         last_summary: None,
         log_path: log_path.clone(),
         audit_path: audit_path.clone(),
+        keyboard,
+        snap_dropped: 0,
+        snap_origins: HashMap::new(),
+        snap_advance: None,
         last_enumerated: 0,
     };
     state.engine.sync_binding(&owner, &generation);
     let mut areas = all_monitors()?;
     let (mut monitor, mut monitor_count) = (areas[0], areas.len());
-    let mode = if state.allowlist.is_some() {
+    let mode = if shortcut_proof {
+        "shortcut-proof"
+    } else if state.allowlist.is_some() {
         "proof"
     } else {
         "normal"
     };
+    // Visible takeover state: default on, explicit off, proof never hooks
+    // except shortcut-proof with its test-only marker acceptance.
+    let takeover = (state.keyboard.takeover && !proof) || shortcut_proof;
     log_json_at(
         &log_path,
         serde_json::json!({
@@ -1501,6 +2162,8 @@ fn run_tile_loop(
             "full": [monitor.full.x, monitor.full.y, monitor.full.w, monitor.full.h],
             "inner": INNER_GAP,
             "outer": OUTER_GAP,
+            "keyboard": {"takeover": takeover, "allow_win_l": state.keyboard.allow_win_l},
+            "mouse_snap_prevention": snap_want,
         }),
     );
     // Hook on this thread; this thread pumps messages, so callbacks run here.
@@ -1560,21 +2223,43 @@ fn run_tile_loop(
         }
         return Err(err("error: SetWinEventHook failed"));
     }
+    // Product keyboard takeover on the loop thread: the callback runs during
+    // pump_wait on this same thread, so install/uninstall bracket the loop
+    // with no join. Plain proof mode never installs a hook; shortcut-proof
+    // installs with test-only marker acceptance. Install is best-effort with
+    // bounded backoff retries below: failure degrades to keyboard-unavailable
+    // (nothing consumes) while tiling continues, never a refused run.
+    let mut snap_hook = None;
+    let mut snap_failures: u32 = 0;
+    let mut snap_retry_at: Option<Instant> = None;
     let deadline = seconds.map(|s| Instant::now() + Duration::from_secs(s));
     let mut slow_last = Instant::now();
     let result = (|| -> Result<()> {
         let fulls = monitor_fulls(&areas);
+        // Mouse prevention is deferred until an actual active tick or resume:
+        // an initial fullscreen must not disable only to immediately restore.
+        // The first active tick, resume, or work-area change drives the
+        // effect; teardown and crash restore keep the lease-held guarantee.
+        let mut snap_primed = false;
         // Fullscreen guard applies before the initial tick as well.
         if foreground_fullscreen(&fulls) {
             state.suspended = true;
+            state.snap_advance = None;
             log_json_at(
                 &log_path,
                 serde_json::json!({"event":"suspend","cause":"fullscreen-foreground"}),
             );
+            if snap_want {
+                snap_suspend(dir, me, store);
+            }
         } else {
             let Some(domain) = tiling_domain_bounds(monitor.work) else {
                 return Err(err("error: work area cannot carry outer gap"));
             };
+            if snap_want {
+                snap_resume(dir, me, store);
+                snap_primed = true;
+            }
             reconcile_tick(&mut state, me, &fulls, domain);
         }
         loop {
@@ -1611,6 +2296,100 @@ fn run_tile_loop(
             }
             let now = Instant::now();
             let slow = now.duration_since(slow_last).as_millis() >= u128::from(SLOW_POLL_MS);
+            // Best-effort keyboard hook with bounded backoff retries (5s
+            // doubling, 60s cap): failure logs one `snap-unavailable` per
+            // attempt, never per-poll noise, and the loop keeps tiling with
+            // nothing consuming. Resume and work-area changes re-arm an
+            // immediate retry; there is no permanent disable.
+            if takeover && snap_hook.is_none() && snap_retry_at.is_none_or(|at| now >= at) {
+                let installed = if shortcut_proof {
+                    crate::snapkey::sys::install_proof(keyboard)
+                } else {
+                    crate::snapkey::sys::install(keyboard)
+                };
+                match installed {
+                    Ok(hook) => {
+                        snap_hook = Some(hook);
+                        snap_failures = 0;
+                        snap_retry_at = None;
+                        log_json_at(&log_path, serde_json::json!({"event":"snap-available"}));
+                    }
+                    Err(message) => {
+                        snap_failures += 1;
+                        let backoff = (5u64 << snap_failures.min(4)).min(60);
+                        snap_retry_at = Some(now + Duration::from_secs(backoff));
+                        log_json_at(
+                            &log_path,
+                            serde_json::json!({
+                                "event": "snap-unavailable",
+                                "attempt": snap_failures,
+                                "retry_secs": backoff,
+                                "cause": message,
+                            }),
+                        );
+                    }
+                }
+            }
+            // Cached keyboard gate for the callback (exactness stays with the
+            // per-intent owner recheck), then one bounded intent batch. A
+            // pending batch wakes the loop even with no other event.
+            let snap_gate_active = state.keyboard.takeover
+                && !state.suspended
+                && !state.active.iter().any(|hwnd| state.managed.contains(hwnd));
+            let snap_events = if snap_hook.is_some() {
+                crate::snapkey::sys::publish_gate(&state.snap_origins, snap_gate_active);
+                let batch = crate::snapkey::sys::drain_up_to(MAX_DISPATCH_PER_TICK);
+                if !batch.is_empty() {
+                    woke = true;
+                }
+                batch
+            } else {
+                Vec::new()
+            };
+            // Proof-only callback diagnostics for shortcut-proof: accepted
+            // marked events as the callback saw them, drained to the proof
+            // audit (never production logs) so live runs can distinguish
+            // actual modifier delivery from classifier state. Product `tile`
+            // never records or writes these.
+            if shortcut_proof && snap_hook.is_some() {
+                let diag = crate::snapkey::sys::drain_marked_diag();
+                if !diag.is_empty()
+                    && let Some(audit) = state.audit_path.as_ref()
+                {
+                    let entries: Vec<serde_json::Value> = diag
+                        .iter()
+                        .map(crate::snapkey::marked_diag_evidence)
+                        .collect();
+                    log_json_at(
+                        audit,
+                        serde_json::json!({
+                            "event": "proof-keys",
+                            "entries": entries,
+                            "dropped": crate::snapkey::sys::marked_diag_dropped(),
+                        }),
+                    );
+                }
+                // Proof-only complement: non-marked modifier traffic
+                // (injected-filtered plus physical, modifiers only) drained
+                // to the proof audit under its own event, so the actual
+                // callback modifier sequence is complete. Product `tile`
+                // never records or writes these.
+                let mods = crate::snapkey::sys::drain_mod_diag();
+                if !mods.is_empty()
+                    && let Some(audit) = state.audit_path.as_ref()
+                {
+                    let entries: Vec<serde_json::Value> =
+                        mods.iter().map(crate::snapkey::mod_diag_evidence).collect();
+                    log_json_at(
+                        audit,
+                        serde_json::json!({
+                            "event": "proof-mods",
+                            "entries": entries,
+                            "dropped": crate::snapkey::sys::mod_diag_dropped(),
+                        }),
+                    );
+                }
+            }
             if slow {
                 slow_last = now;
                 let fresh = all_monitors()?;
@@ -1619,6 +2398,13 @@ fn run_tile_loop(
                     monitor = areas[0];
                     monitor_count = areas.len();
                     log_json_at(&log_path, serde_json::json!({"event":"work-area-changed"}));
+                    snap_retry_at = None;
+                    // A changed work area is a meaningful retry point for a
+                    // degraded Snap setup; quiet when the effect holds.
+                    if snap_want && !state.suspended {
+                        snap_resume(dir, me, store);
+                        snap_primed = true;
+                    }
                     woke = true;
                 }
             }
@@ -1636,9 +2422,25 @@ fn run_tile_loop(
             if foreground_fullscreen(&fulls) {
                 if !state.suspended {
                     state.suspended = true;
+                    state.snap_advance = None;
                     log_json_at(
                         &log_path,
                         serde_json::json!({"event":"suspend","cause":"fullscreen-foreground"}),
+                    );
+                    if snap_want {
+                        snap_suspend(dir, me, store);
+                    }
+                } else {
+                    state.snap_advance = None;
+                }
+                if !snap_events.is_empty() {
+                    keyboard_tick(
+                        &mut state,
+                        me,
+                        &fulls,
+                        domain,
+                        snap_events,
+                        Some("suspended"),
                     );
                 }
                 state.gesture_before.clear();
@@ -1648,6 +2450,21 @@ fn run_tile_loop(
             if state.suspended {
                 state.suspended = false;
                 log_json_at(&log_path, serde_json::json!({"event":"resume"}));
+                // A fresh foreground may accept the hook now: retry soon.
+                snap_retry_at = None;
+                // Fresh Snap preimage when the setting drifted during
+                // suspension (or setup degraded earlier); quiet when the
+                // effect is still ours. This is also the deferred initial
+                // effect when the run started suspended.
+                if snap_want {
+                    snap_resume(dir, me, store);
+                    snap_primed = true;
+                }
+            } else if snap_want && !snap_primed {
+                // Deferred initial effect: the run started active but setup
+                // no longer disables. Drive once on the first active tick.
+                snap_resume(dir, me, store);
+                snap_primed = true;
             }
             // Only gestures on managed windows pause tiling; unrelated
             // windows never stall the loop.
@@ -1664,11 +2481,28 @@ fn run_tile_loop(
             state.active.retain(|hwnd| state.managed.contains(hwnd));
             let paused = state.active.iter().any(|hwnd| state.managed.contains(hwnd));
             if paused {
+                // A managed gesture holds the loop and invalidates any
+                // own-focus chain; keyboard intents of this batch are stale
+                // and drop safely.
+                state.snap_advance = None;
+                if !snap_events.is_empty() {
+                    keyboard_tick(&mut state, me, &fulls, domain, snap_events, Some("gesture"));
+                }
                 continue;
             }
             if ended.is_empty() {
-                reconcile_tick(&mut state, me, &fulls, domain);
+                if snap_events.is_empty() {
+                    reconcile_tick(&mut state, me, &fulls, domain);
+                } else {
+                    keyboard_tick(&mut state, me, &fulls, domain, snap_events, None);
+                }
             } else {
+                // A just-ended managed gesture settles before keyboard
+                // continuation resumes.
+                state.snap_advance = None;
+                if !snap_events.is_empty() {
+                    keyboard_tick(&mut state, me, &fulls, domain, snap_events, Some("gesture"));
+                }
                 gesture_tick(&mut state, me, &fulls, domain, &ended);
             }
         }
@@ -1677,6 +2511,16 @@ fn run_tile_loop(
         unsafe {
             UnhookWinEvent(hook);
         }
+    }
+    if let Some(mut snap) = snap_hook {
+        // Honest release accounting: process exit releases the hook in any
+        // case, but success is recorded, never fabricated.
+        let ok = crate::snapkey::sys::uninstall(&mut snap);
+        let mut release = serde_json::json!({"event":"snap-release","ok": ok});
+        if !ok {
+            release["note"] = serde_json::json!("release failed; process exit releases the hook");
+        }
+        log_json_at(&log_path, release);
     }
     log_json_at(
         &log_path,
@@ -1687,15 +2531,38 @@ fn run_tile_loop(
 
 /// `tile` command: normal user tiling only (explicit `--user-start`).
 /// Geometry is left in place on stop; nothing is hidden or restored.
-/// Includes Terminal targets; agents never run this path.
+/// Includes Terminal targets; agents never run this path. Product keyboard
+/// takeover follows the parsed options (default on, visible off switch,
+/// Win+L opt-in). Session-only mouse-Snap prevention is default on with the
+/// visible `--no-mouse-snap-prevention` off switch; the exact preimage is
+/// restored conditionally on stop.
 pub fn cmd_tile(options: &TileOptions) -> Result<String> {
     if !options.user_start {
         return Err(err("refuse: tile requires explicit --user-start"));
     }
     let trace = options.trace;
     let seconds = options.seconds;
-    crate::lifecycle::sys::run_product(trace, move |dir, me| {
-        run_tile_loop(dir, me, seconds, trace, None, false, Vec::new())
+    let keyboard = KeyboardConfig {
+        takeover: !options.no_keyboard_snap_takeover,
+        allow_win_l: options.allow_win_l,
+    };
+    let mouse_snap = !options.no_mouse_snap_prevention;
+    crate::lifecycle::sys::run_product(trace, mouse_snap, move |dir, me, store| {
+        run_tile_loop(
+            dir,
+            me,
+            store,
+            TileRun {
+                seconds,
+                trace,
+                allowlist: None,
+                proof: false,
+                shortcut_proof: false,
+                raw_argv: Vec::new(),
+                keyboard,
+                mouse_snap,
+            },
+        )
     })
 }
 
@@ -1706,7 +2573,8 @@ pub fn cmd_tile(options: &TileOptions) -> Result<String> {
 /// parsed options into the proof-only audit (never production logs) with a
 /// parsed/raw consistency check, so flag delivery is evidenced. Every setter
 /// carries a proof audit record (requested/native target plus flags/outcome);
-/// production logs stay token-only.
+/// production logs stay token-only. Proof installs no keyboard hook; automated
+/// synthetic-input verification uses the separate `shortcut-proof` command.
 pub fn cmd_tile_proof(options: &TileProofOptions, raw_argv: &[String]) -> Result<String> {
     let text = std::fs::read_to_string(&options.allowlist)
         .map_err(|e| err(format!("error: allowlist read: {e}")))?;
@@ -1718,8 +2586,72 @@ pub fn cmd_tile_proof(options: &TileProofOptions, raw_argv: &[String]) -> Result
     let trace = options.trace;
     let seconds = options.seconds;
     let raw_argv = raw_argv.to_vec();
-    crate::lifecycle::sys::run_product(trace, move |dir, me| {
-        run_tile_loop(dir, me, seconds, trace, Some(entries), true, raw_argv)
+    let keyboard = KeyboardConfig::disabled();
+    // Proof installs no keyboard hook and takes no Snap setting: the proof
+    // contract is unchanged unless a future explicit opt-in lands.
+    crate::lifecycle::sys::run_product(trace, false, move |dir, me, store| {
+        run_tile_loop(
+            dir,
+            me,
+            store,
+            TileRun {
+                seconds,
+                trace,
+                allowlist: Some(entries),
+                proof: true,
+                shortcut_proof: false,
+                raw_argv,
+                keyboard,
+                mouse_snap: false,
+            },
+        )
+    })
+}
+
+/// `shortcut-proof` command: owned-helpers-only automated shortcut proof.
+/// Same frozen-allowlist geometry gate as `tile-proof` (never falls back to
+/// normal), but the owner installs the hook with test-only acceptance of
+/// exactly [`crate::snapkey::SHORTCUT_PROOF_MARKER`] in `dwExtraInfo` and
+/// drives the same keyboard dispatcher (fresh observation per intent, Engine
+/// focus/move, native readback) plus the same session-only mouse routines.
+/// Unshifted Win+L stays gated off (no flag offers it): live runs must never
+/// send Win+L. Raw argv travels into the proof-only audit with a consistency
+/// check; production logs stay token-only.
+pub fn cmd_shortcut_proof(
+    options: &crate::tiling::ShortcutProofOptions,
+    raw_argv: &[String],
+) -> Result<String> {
+    let text = std::fs::read_to_string(&options.allowlist)
+        .map_err(|e| err(format!("error: allowlist read: {e}")))?;
+    let entries = parse_allowlist(&text).map_err(err)?;
+    if entries.is_empty() {
+        return Err(err("refuse: empty allowlist"));
+    }
+    crate::tiling::verify_shortcut_proof_argv_consistency(raw_argv, options).map_err(err)?;
+    let trace = options.trace;
+    let seconds = options.seconds;
+    let mouse_snap = !options.no_mouse_snap_prevention;
+    let raw_argv = raw_argv.to_vec();
+    let keyboard = KeyboardConfig {
+        takeover: true,
+        allow_win_l: false,
+    };
+    crate::lifecycle::sys::run_product(trace, mouse_snap, move |dir, me, store| {
+        run_tile_loop(
+            dir,
+            me,
+            store,
+            TileRun {
+                seconds,
+                trace,
+                allowlist: Some(entries),
+                proof: true,
+                shortcut_proof: true,
+                raw_argv,
+                keyboard,
+                mouse_snap,
+            },
+        )
     })
 }
 

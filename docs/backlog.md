@@ -29,16 +29,19 @@ decisions of 2026-09-24 are under
   WH_KEYBOARD_LL input done and accepted on this single-display PC; Phase 2
   automatic Engine-driven tiling-only dogfood preview verified (no shortcuts,
   input hooks or hiding; stop/crash leaves windows in place). Shortcut slice
-  implemented in the working tree but not delivered: native focus setter
-  refused; two synthetic Shift encodings routed as focus instead of move.
-  Corrected session-only `SPI_SETWINARRANGING FALSE` graceful/crash restoration
-  and normal default-on/both-off smoke passed. Initial SPI target mix-up was
-  recovered; arranging is 1 and pen visualization 35. Native gates pass, but
-  focus/move live acceptance and feature CI remain blocked. Windows settings UI
-  Apply/Revert, physical shortcuts and Snap Layouts/Assist/shake coverage remain
-  pending. Next: native-focus mechanism decision and modifier-delivery diagnosis;
-  Windows workspaces follow completed shortcut acceptance.
-  [Shortcut slice and handover](changes/windows-shortcut-slice.md).
+  completed with retained-Engine focus/move, default-on keyboard takeover and
+  session-only mouse prevention plus explicit CLI off switches. Exact native
+  foreground and geometry proof passed the full owned-helper journey
+  `20261002-040025-21256`; graceful/crash setting restore and ordinary-app
+  default-on/both-off smoke passed. Foreground lock is handled by E8 prime plus
+  temporary foreground-thread attachment; the synthetic Shift misrouting was
+  a proof-arrow extended-key encoding defect, corrected without changing
+  product filtering. Native gates and independent mutation review pass.
+  Initial SPI target mix-up was recovered; final arranging is 1 and pen is 35.
+  Windows settings UI Apply/Revert, physical shortcuts and Snap
+  Layouts/bar/Assist/shake coverage remain pending. Next: Windows workspaces,
+  with identity-safe hide/restore-ledger integration.
+  [Shortcut slice and handover](changes/archive/windows-shortcut-slice.md).
   Full owned-helper proof passed `20261001-222611-6068`: 8/8 gaps at 125%,
   minimize/restore, close reflow, graceful/emergency stop preserving frames,
   11 owned writes and zero foreign writes; clean recovery. Normal-mode smoke

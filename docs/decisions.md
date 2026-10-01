@@ -53,7 +53,9 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   comparison (hook selected, registration rejected), proof order offline then
   Sandbox clean/lifecycle then owned hide/crash-restore then physical repeat
   then physical input. Lifecycle/recovery plus input proof accepted on this
-  single-display PC; Engine-driven tiling is next.
+  single-display PC; Engine-driven tiling and the focus/move shortcut preview
+  now have automated native evidence. Managed Windows workspaces follow;
+  physical shortcut and proper settings UI Apply/Revert checks remain pending.
 - Sandbox closed 2026-09-30 (user dismissed the WM_CLOSE close confirmation;
   no Sandbox processes remain): Phase 1-3 live proof runs on the physical
   desktop with owned disposable windows first; Sandbox is deferred to Phase 4
