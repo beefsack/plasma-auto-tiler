@@ -47,6 +47,9 @@ function Test-ProcessAliveSameCreation([int]$ProcessId, [string]$ExpectedCreatio
   return $false
 }
 function Start-ExplorerGui([string]$Exe, [string]$ArgString, [string]$WorkDir) {
+  if (-not [IO.Path]::IsPathFullyQualified($Exe)) { Fail "refuse: exe not fully qualified: $Exe" }
+  if (-not [IO.Path]::IsPathFullyQualified($WorkDir)) { Fail "refuse: workdir not fully qualified: $WorkDir" }
+  if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) { Fail "refuse: missing exe: $Exe" }
   $shell = New-Object -ComObject Shell.Application
   $desktopHandle = 0
   # SWC_DESKTOP + SWFO_NEEDDISPATCH selects Explorer's broker, not the caller's.
@@ -94,6 +97,9 @@ function Stop-OwnerVerified([string]$Payload, [bool]$Force, [string]$Tag) {
   if (-not $st.owner_exited) { Fail "$Tag stop no exit" }
   return $st
 }
+# Dot-source guard: reusable helpers above stay available when sourced;
+# direct -File execution continues to the action blocks below.
+if ("$($MyInvocation.InvocationName)" -eq ".") { return }
 if ($Action -eq "dev" -or $Action -eq "stop") {
   if (-not (Test-Path $Target)) { Fail "missing target/ parent" }
   if (-not (Test-Path $Scripts)) { Fail "missing scripts/ parent" }

@@ -243,12 +243,40 @@ pub mod sys {
     }
 
     pub fn cmd_run(seconds: u64, trace: bool, hide_hwnd: Option<u64>) -> Result<String> {
+        run_with_callback(seconds, trace, hide_hwnd, |dir, me| {
+            poll_stop(dir, me, seconds)
+        })
+    }
+
+    fn poll_stop(dir: &Path, me: &crate::model::ProcessIdentity, seconds: u64) -> Result<bool> {
+        let deadline = Instant::now() + Duration::from_secs(seconds);
+        loop {
+            match read_stop(dir)? {
+                Some(text) if stop_request_matches(&text, &me.process_creation) => {
+                    return Ok(true);
+                }
+                Some(_) | None => {}
+            }
+            if Instant::now() >= deadline {
+                return Ok(false);
+            }
+            std::thread::sleep(Duration::from_millis(POLL_MS));
+        }
+    }
+
+    /// Owner setup/commit/log seam; body runs on the calling thread.
+    pub fn run_with_callback(
+        seconds: u64,
+        trace: bool,
+        hide_hwnd: Option<u64>,
+        body: impl FnOnce(&Path, &crate::model::ProcessIdentity) -> Result<bool>,
+    ) -> Result<String> {
         let dir = ledger_directory().map_err(|e| err(format!("error: ledger dir: {e}")))?;
         let me = medium_caller()?;
         if has_terminal_ancestor(me.pid).map_err(|e| err(format!("error: ancestry {e}")))? {
             return Err(err("refuse: terminal-ancestor"));
         }
-        match run_guarded(&dir, &me, seconds, trace, hide_hwnd) {
+        match run_guarded(&dir, &me, seconds, trace, hide_hwnd, body) {
             Ok(out) => Ok(out),
             Err(e) => {
                 let msg = e.to_string();
@@ -294,6 +322,7 @@ pub mod sys {
         seconds: u64,
         trace: bool,
         hide_hwnd: Option<u64>,
+        body: impl FnOnce(&Path, &crate::model::ProcessIdentity) -> Result<bool>,
     ) -> Result<String> {
         let store = open_store(dir)?;
         if committed_or_none(&store)?.is_some() {
@@ -345,17 +374,7 @@ pub mod sys {
                 .ok_or_else(|| err("error: ledger empty"))?;
             hide_once(dir, hwnd, me, expect)?;
         }
-        let deadline = Instant::now() + Duration::from_secs(seconds);
-        let stopped = loop {
-            match read_stop(dir)? {
-                Some(text) if stop_request_matches(&text, &me.process_creation) => break true,
-                Some(_) | None => {}
-            }
-            if Instant::now() >= deadline {
-                break false;
-            }
-            std::thread::sleep(Duration::from_millis(POLL_MS));
-        };
+        let stopped = body(dir, me)?;
         let log_path = log_path(dir);
         let (status, message) = if stopped {
             ("stopped", "run stop-request observed")

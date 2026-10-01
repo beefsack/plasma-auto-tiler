@@ -4,3 +4,4 @@ pub mod model;
 pub mod native;
 pub mod storage;
 pub mod test_window;
+pub mod winarrow;

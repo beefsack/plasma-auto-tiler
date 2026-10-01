@@ -24,7 +24,9 @@ decisions of 2026-09-24 are under
   run-elevated option possible later; logical workspace model refined in the
   spikes; shared settings/action intent (deferred K2) and difference
   classification (deferred K3) shaped when Windows needs them. Open: final
-  package/update channel. Next: Phase 0-1 throwaway spikes on the PC.
+  package/update channel. Status 2026-10-01: Phase 1 lifecycle/recovery plus
+  WH_KEYBOARD_LL input done and accepted on this single-display PC; next
+  Phase 2 Engine-driven tiling.
   [plan](research/windows-port/plan.md)
   [decision](decisions.md#windows-port)
   Day-one setup and pending governance: [Windows development environment](windows-dev-environment.md).

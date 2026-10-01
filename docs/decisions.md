@@ -11,9 +11,14 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
 - Support Windows 11 x64 only initially; this can be revisited.
 - Managed per-monitor workspaces are required before Windows or macOS is
   called feature-complete. Tiling-only development previews are allowed.
-- Use non-Win default shortcuts. Win+Arrow is opt-in after proof and must work
-  before Windows is feature-complete for this user. Win+L is explicit opt-in
-  only; neither override is yet proven.
+- Use non-Win default shortcuts. Win+Arrow is opt-in and must work before
+  Windows is feature-complete for this user.
+  Product input mechanism (user-accepted 2026-10-01 on this PC):
+  `WH_KEYBOARD_LL` with `vkE8` menu-mask at Win key-up while Win held,
+  consuming only approved foreground chords; `RegisterHotKey` rejected after
+  all four chords returned 1409 (owner unknown) on this PC. Win+L stays
+  explicit opt-in only and remains unproven. Evidence in
+  [Phase 1 note](changes/windows-phase1-implementation.md).
 - Experiment with custom drawing and a real group underlay, including Task
   View and Alt+Tab behavior. An outline fallback is acceptable if the
   underlay fails; the underlay mechanism remains unselected.
@@ -33,9 +38,11 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   not a sensible default now.
 - Approved route (user 2026-09-30): one normal single per-user/session
   `tiler-windows` executable with standalone stop/restore, public hide/reveal,
-  owned disposable test binary, `RegisterHotKey` vs `WH_KEYBOARD_LL` comparison,
-  proof order offline then Sandbox clean/lifecycle then owned hide/crash-restore
-  then physical repeat then physical input. Live proof remains pending.
+  owned disposable test binary, completed `RegisterHotKey` vs `WH_KEYBOARD_LL`
+  comparison (hook selected, registration rejected), proof order offline then
+  Sandbox clean/lifecycle then owned hide/crash-restore then physical repeat
+  then physical input. Lifecycle/recovery plus input proof accepted on this
+  single-display PC; Engine-driven tiling is next.
 - Sandbox closed 2026-09-30 (user dismissed the WM_CLOSE close confirmation;
   no Sandbox processes remain): Phase 1-3 live proof runs on the physical
   desktop with owned disposable windows first; Sandbox is deferred to Phase 4
