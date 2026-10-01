@@ -557,7 +557,7 @@ called a failure."
 Additional plan constraints honored: no live-session interaction or state
 change of any kind (no install, no settings read/write, no script load, no
 compositor restart); no edits outside this report's scope; no
-`sustained-workload-validation` contact; no commit.
+`sustained-workload-validation` contact.
 
 ## 8. Risks and Notes
 

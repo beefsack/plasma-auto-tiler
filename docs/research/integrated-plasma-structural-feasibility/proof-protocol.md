@@ -672,7 +672,7 @@ No source application edits. `spec.md`, `plan.md`, `state.md`, `log.md`
 dependencies, and `devenv.nix` were not edited beyond this protocol, the
 staged harness under `proof/`, and the plan/state/log updates authorized for
 this attempt. No live interaction occurred: no live-session or host query, no
-D-Bus call, no script load, no window, no config or package change, no commit.
+D-Bus call, no script load, no window, no config or package change.
 `unit-04/attempt-01` runtime artifacts under `results/` are preserved untouched
 and are not evidence. No architecture, package manager, or implementation
 language was selected.

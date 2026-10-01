@@ -14,7 +14,7 @@ Recover narrowly from ordinary KWin observation and actuation faults while keepi
 
 ## Units and acceptance
 
-One fresh Worker per bounded area, in the order I, G, A, move hold, then T/D/F/K/L. Review each actual diff and targeted regression evidence before acceptance. At each green point record result here. Full KWin `npm test` and typecheck at completion; Rust workspace tests if Rust changes. Update audit rows and authorized durable decisions at completion, then archive this note. No commit or push.
+One fresh Worker per bounded area, in the order I, G, A, move hold, then T/D/F/K/L. Review each actual diff and targeted regression evidence before acceptance. At each green point record result here. Full KWin `npm test` and typecheck at completion; Rust workspace tests if Rust changes. Update audit rows and authorized durable decisions at completion, then archive this note.
 
 ## Evidence and outcome
 

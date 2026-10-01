@@ -29,7 +29,7 @@ is removed, including send-to-workspace, against `cosmic-comp`
 
 1. Audit upstream removal and focus code.
 2. Audit and test the portable implementation against the established rule.
-3. Update durable records, verify, commit, and push.
+3. Update durable records and verify.
 
 ## Evidence
 

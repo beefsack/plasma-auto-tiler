@@ -758,7 +758,7 @@ Additional plan constraints honored: no live-session interaction or state change
 of any kind (no install, no config write/read, no compositor run, no output or
 window change); no edits outside this report's scope (no separate
 `bspwm-structural-reference.md` was created; the bounded reference is recorded
-within this report); no `sustained-workload-validation` contact; no commit.
+within this report); no `sustained-workload-validation` contact.
 
 ## 8. Risks and Notes
 

@@ -392,7 +392,7 @@ diagnostic artifacts as restoration or transport evidence.
   before and after. No configuration, process, service, or probe residue
   remains. Retained `/tmp/opencode` diagnostic captures are
   `w3-load-reply.json`, `planner-w3.log`, `planner-w3.log.pid`, and
-  `w3-cursor-before.txt`; no commit or push occurred.
+  `w3-cursor-before.txt`.
 - The ready-only result identified a static trigger-installation defect:
   KWin's `loadScript` QJSEngine has `globalThis` absent, while the probe used
   it as its only global acquisition route. The manual entry now falls back to

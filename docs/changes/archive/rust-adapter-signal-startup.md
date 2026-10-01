@@ -37,7 +37,7 @@ adapters on KWin 6.7.4 without changing Rust authority policy or activation.
 1. Share a narrow callable-QObject-signal connector across the four entries.
 2. Cover live QV4 function-shaped signals, optional guards, required refusal,
    idempotent detach, packaged construction, and authority startup.
-3. Run focused static verification, package build, review, commit, and push.
+3. Run focused static verification, package build and review.
 
 ## Evidence
 

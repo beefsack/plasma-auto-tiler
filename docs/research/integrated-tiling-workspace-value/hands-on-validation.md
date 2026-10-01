@@ -14,7 +14,7 @@
   introspection of pinned source clones. No install, no live session, no config
   or window/output/desktop/shortcut/script/plugin/process change.
 - Scope: only the three disputed, verdict-relevant claims below. No edits to
-  `spec.md`, `plan.md`, `state.md`, `log.md`; no commit.
+  `spec.md`, `plan.md`, `state.md`, `log.md`.
 
 ## Evidence base (read-only, pinned)
 

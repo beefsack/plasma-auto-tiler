@@ -54,9 +54,7 @@ production behavior through incremental opt-in promotion.
    secrets, `/run` or `/tmp` runtime evidence, generated bundles
    `dist/plasma-auto-tiler-kwin.kwinscript*` and
    `kwin/contents/code/main.js`, unrelated controller/conformance/research/tray
-   work, and mode-only script changes unless separately justified. Commit and
-   push that reviewed checkpoint. This is the first action of the next
-   autonomous session.
+   work, and mode-only script changes unless separately justified.
 2. Stabilize the Rust core module boundaries and portable model: `ids`, snapshots,
    ordered N-ary model, `cosmic_v1` policy, plans/preconditions/capabilities,
    geometry projection, reconciliation, and trace replay. Gate with deterministic

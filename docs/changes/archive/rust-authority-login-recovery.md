@@ -36,8 +36,8 @@ login or KCM Apply.
 
 1. Correct KCM authority wording and its static contract.
 2. Record the bounded development-mode and recovery decision.
-3. Run focused KWin, package, Rust Planner, and Nix checks; review, commit, and
-   push only attributable files.
+3. Run focused KWin, package, Rust Planner, and Nix checks; review only
+   attributable files.
 
 ## Evidence
 

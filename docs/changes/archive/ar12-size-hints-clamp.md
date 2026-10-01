@@ -23,7 +23,7 @@ and partial-observation membership skew. Gates and native code remain intact.
   transport, gating, and diagnostic records.
 - Verify requested Rust workspace/offline, format, Clippy and portable checks,
   KWin typecheck/tests/build; independent core/protocol/adapter review. No live
-  mutation, host changes, staging or commit. Archive this note at completion.
+  mutation or host changes. Archive this note at completion.
 
 ## Units and evidence
 

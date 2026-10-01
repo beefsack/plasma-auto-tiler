@@ -3,7 +3,7 @@
 - Goal: settle native setup records, prove current stable portable gates, add
   Windows CI, report read-only displays and propose the Phase 1 recovery/input route.
 - Scope: docs and one Windows CI job; no product code, installs, configuration
-  changes, live experiments, Git index writes or commits. Preserve backlog edits.
+  changes or live experiments. Preserve backlog edits.
 - Acceptance: user decisions recorded; stable version and build/test/fmt/clippy
   plus whitespace evidence; unchanged Linux jobs; display table awaiting user
   confirmation; concise route/options with explicit future authorization boundaries.

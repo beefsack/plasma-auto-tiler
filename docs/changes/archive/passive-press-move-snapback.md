@@ -27,8 +27,7 @@ floating moves remain untouched. Drag-to-reorganise is a later backlog item.
   mid-move reconcile or parking and one drop restoration; floating moves.
 - Verify host-matched native build and native tests; Rust workspace tests,
   format, Clippy, portable check; KWin typecheck, tests and build. Independent
-  native-to-adapter/freshness/marker review. No live mutation, Git staging or
-  commit.
+  native-to-adapter/freshness/marker review. No live mutation.
 
 ## Outcome and evidence
 
@@ -69,7 +68,7 @@ release and regressions). Live KWin press-to-effect delivery is unverified.
 Checks: Rust workspace 593 passed; cargo fmt, Clippy (pre-existing warnings
 only), portable check passed; KWin typecheck/build and 808 tests passed;
 host-matched native build and 27 native CTests passed. No session/native
-installation, host mutation, Git staging or commit. For live acceptance, deliver
+installation or host mutation. For live acceptance, deliver
 the rebuilt unified effect using the reviewed project dev path, log out and
 back in (no native hot reload), then check Meta+right shallow left+down,
 physical corners, configured binding/fallback logs, tiled Kate move snap-back

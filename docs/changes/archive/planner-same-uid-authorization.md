@@ -55,5 +55,5 @@ unauthorized request as a bounded in-band rejection.
 
 ## Next Action
 
-- Commit and push, then hot-swap only the Planner under the authorized live
+- Hot-swap only the Planner under the authorized live
   procedure.

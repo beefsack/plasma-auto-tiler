@@ -4,7 +4,7 @@
 - Scope: nested splits/gaps, adoption fit with overlapping-window centre fallback, complete membership/float convergence and incomplete-observation refusal.
 - Non-goals: product changes, new wrappers/dependencies, K1 visual policy, Windows work, agent-run live KDE checks.
 - Acceptance: audit existing coverage; add only missing behavioral evidence; retain the no-normal-dependencies guard; pass all requested offline gates; hand off source-verified manual KDE checks.
-- Approach: one fresh bounded muse-spark Worker at a time; Lead reviews diffs and records accepted evidence. Preserve the user's `devenv.nix` change; no staging or commits.
+- Approach: one fresh bounded muse-spark Worker at a time; Lead reviews diffs and records accepted evidence. Preserve the user's `devenv.nix` change.
 - Units: coverage audit, vertical overlapping-adoption fixture and refusal-coverage confirmation, source-verified live-check handover, offline verification (all complete).
 - Audit decision: existing exact nested projections and convergence lifecycle fixtures establish those baselines. Do not add arbitrary-depth, convergence-count or primitive-binding tests merely to exercise internals. Vertical overlapping adoption lacks a matching behavioral projection fixture.
 - Verification: CI Rust workspace tests, fmt and strict clippy; `just check-portable`; devenv KWin tests/typecheck; offline no-build flake check; diff whitespace check. Native build/CTest only if native files change.

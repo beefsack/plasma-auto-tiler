@@ -28,7 +28,7 @@ All final commands rerun after simplification passed (exit 0):
 - `git diff --check`
 
 - Repairs: formatted one new assertion; direct devenv native rebuild lacked Qt includes, so rebuilt in the existing host SDK environment above. Discarded the stale CTest result after the failed build; accepted only the post-rebuild 30/30 run. Prior static-pin/range-lint repairs remain resolved. No semantic failures or toolchain changes.
-- Verified the four K0 index hashes unchanged: seed `0776d21`, backlog `268e565`, K0 note `4973c62`, extraction `7033846`. No staging/commits or live agent tests; user's `devenv.nix` untouched.
+- Verified the four K0 index hashes unchanged: seed `0776d21`, backlog `268e565`, K0 note `4973c62`, extraction `7033846`. No live agent tests; user's `devenv.nix` untouched.
 
 ## User K1 KDE handover
 
