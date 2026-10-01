@@ -858,6 +858,7 @@ impl MarkedDiagBuf {
         self.inner.drain(..).collect()
     }
 
+    #[cfg(windows)]
     fn back_mut(&mut self) -> Option<&mut MarkedKeyDiag> {
         self.inner.back_mut()
     }
