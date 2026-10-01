@@ -25,16 +25,20 @@ decisions of 2026-09-24 are under
   run-elevated option possible later; logical workspace model refined in the
   spikes; shared settings/action intent (deferred K2) and difference
   classification (deferred K3) shaped when Windows needs them. Open: final
-  package/update channel. Status 2026-10-01: Phase 1 lifecycle/recovery plus
+  package/update channel. Status 2026-10-02: Phase 1 lifecycle/recovery plus
   WH_KEYBOARD_LL input done and accepted on this single-display PC; Phase 2
   automatic Engine-driven tiling-only dogfood preview verified (no shortcuts,
-  input hooks or hiding; stop/crash leaves windows in place). Next slice:
-  Meta+Arrow focus and Meta+Shift+Arrow move, plus prevention of keyboard and
-  mouse Snap while a workspace is tiled. First mouse experiment: session-only
-  `SPI_SETWINARRANGING FALSE`, visible Apply/Revert, exact preimage/readback and
-  conditional stop restoration; desktop-wide effects accepted, Windows 11
-  flyout/Assist coverage pending. Not a dogfood-preview blocker. Next major item:
-  Windows workspaces.
+  input hooks or hiding; stop/crash leaves windows in place). Shortcut slice
+  implemented in the working tree but not delivered: native focus setter
+  refused; two synthetic Shift encodings routed as focus instead of move.
+  Corrected session-only `SPI_SETWINARRANGING FALSE` graceful/crash restoration
+  and normal default-on/both-off smoke passed. Initial SPI target mix-up was
+  recovered; arranging is 1 and pen visualization 35. Native gates pass, but
+  focus/move live acceptance and feature CI remain blocked. Windows settings UI
+  Apply/Revert, physical shortcuts and Snap Layouts/Assist/shake coverage remain
+  pending. Next: native-focus mechanism decision and modifier-delivery diagnosis;
+  Windows workspaces follow completed shortcut acceptance.
+  [Shortcut slice and handover](changes/windows-shortcut-slice.md).
   Full owned-helper proof passed `20261001-222611-6068`: 8/8 gaps at 125%,
   minimize/restore, close reflow, graceful/emergency stop preserving frames,
   11 owned writes and zero foreign writes; clean recovery. Normal-mode smoke
