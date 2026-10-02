@@ -65,6 +65,7 @@ function Assert-LedgerClean([string]$Payload) {
   $ld = Get-LedgerDir $Payload
   if (Test-Path (Join-Path $ld "ledger.json")) { Fail "ledger not clean" }
   if (Test-Path (Join-Path $ld "stop.request")) { Fail "stop.request residue" }
+  if (Test-Path (Join-Path $ld "workspace.request")) { Fail "workspace.request residue" }
 }
 function Stop-PayloadOwner([string]$Payload) {
   $s = Invoke-Native $Payload @("stop") | ConvertFrom-Json

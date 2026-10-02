@@ -69,6 +69,155 @@ fn atomic_replace(from: &Path, to: &Path) -> Result<(), StorageError> {
     std::fs::rename(from, to).map_err(StorageError::Io)
 }
 
+/// Bounded single-pending publish failure: either the final name is already
+/// taken (another request pending) or a real I/O error occurred.
+#[derive(Debug)]
+pub enum PublishError {
+    /// The final name already exists: the pending queue is full. The caller's
+    /// temp body was dropped; the existing final bytes are untouched.
+    Pending,
+    Io(std::io::Error),
+}
+
+impl std::fmt::Display for PublishError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pending => f.write_str("pending"),
+            Self::Io(_) => f.write_str("io-error"),
+        }
+    }
+}
+
+impl std::error::Error for PublishError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Pending => None,
+            Self::Io(inner) => Some(inner),
+        }
+    }
+}
+
+fn publish_tmp_name(final_name: &str, tmp_tag: &str, attempt: u64) -> String {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(1);
+    let tag: String = tmp_tag
+        .bytes()
+        .filter(|b| b.is_ascii_alphanumeric() || *b == b'-' || *b == b'_' || *b == b'.')
+        .take(32)
+        .map(char::from)
+        .collect();
+    format!(
+        "{final_name}.{}-{nanos}-{count}-{attempt}.tmp",
+        if tag.is_empty() {
+            std::process::id().to_string()
+        } else {
+            format!("{}-{tag}", std::process::id())
+        }
+    )
+}
+
+/// Publish `bytes` to `dir/final_name` without ever exposing a partial body
+/// and without overwriting an existing final: the body is written and synced
+/// to a same-directory unique temp (created with `create_new`) and only then
+/// published atomically with no-replace semantics (Windows `MoveFileExW`
+/// without `REPLACE_EXISTING`; elsewhere a `hard_link`). A lost publish race
+/// reports [`PublishError::Pending`] with the existing final untouched. The
+/// caller's own temp is removed on every error path; only the winner's bytes
+/// ever appear under the final name, complete and synced.
+pub fn publish_no_overwrite(
+    dir: &Path,
+    final_name: &str,
+    bytes: &[u8],
+    tmp_tag: &str,
+) -> Result<(), PublishError> {
+    if final_name.is_empty()
+        || final_name.contains(['/', '\\'])
+        || final_name == "."
+        || final_name == ".."
+    {
+        return Err(PublishError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid final name",
+        )));
+    }
+    std::fs::create_dir_all(dir).map_err(PublishError::Io)?;
+    let mut attempt = 0u64;
+    let tmp = loop {
+        let name = publish_tmp_name(final_name, tmp_tag, attempt);
+        let path = dir.join(&name);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                if let Err(e) = (|| -> std::io::Result<()> {
+                    use std::io::Write;
+                    file.write_all(bytes)?;
+                    file.sync_all()?;
+                    Ok(())
+                })() {
+                    drop(file);
+                    let _ = std::fs::remove_file(&path);
+                    return Err(PublishError::Io(e));
+                }
+                drop(file);
+                break path;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempt < 8 => {
+                attempt += 1;
+            }
+            Err(e) => return Err(PublishError::Io(e)),
+        }
+    };
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_WRITE_THROUGH, MoveFileExW};
+        let from_w: Vec<u16> = tmp.as_os_str().encode_wide().chain([0]).collect();
+        let to_w: Vec<u16> = dir
+            .join(final_name)
+            .as_os_str()
+            .encode_wide()
+            .chain([0])
+            .collect();
+        // No REPLACE_EXISTING: a present final fails here instead of being
+        // overwritten, so the queued body is never torn or replaced.
+        let ok = unsafe { MoveFileExW(from_w.as_ptr(), to_w.as_ptr(), MOVEFILE_WRITE_THROUGH) };
+        if ok != 0 {
+            return Ok(());
+        }
+        let e = std::io::Error::last_os_error();
+        let _ = std::fs::remove_file(&tmp);
+        if e.kind() == std::io::ErrorKind::AlreadyExists || e.raw_os_error() == Some(183) {
+            return Err(PublishError::Pending);
+        }
+        Err(PublishError::Io(e))
+    }
+    #[cfg(not(windows))]
+    {
+        let final_path = dir.join(final_name);
+        match std::fs::hard_link(&tmp, &final_path) {
+            Ok(()) => {
+                let _ = std::fs::remove_file(&tmp);
+                Ok(())
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    Err(PublishError::Pending)
+                } else {
+                    Err(PublishError::Io(e))
+                }
+            }
+        }
+    }
+}
+
 pub struct LedgerStore {
     dir: PathBuf,
     _lock: File,

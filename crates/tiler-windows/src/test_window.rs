@@ -150,7 +150,6 @@ pub mod sys {
     use crate::model::ProcessIdentity;
     use crate::native::{
         HeldProcess, IdentityError, current_exe_path, current_identity, current_integrity_level,
-        has_terminal_ancestor,
     };
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -185,15 +184,6 @@ pub mod sys {
             return Err(absent(format!("target integrity {rid} is not medium")));
         }
         Ok(())
-    }
-
-    fn no_terminal_or_fail(pid: u32) -> SResult<()> {
-        match has_terminal_ancestor(pid) {
-            Ok(true) => Err(absent(format!("target pid={pid} terminal-ancestor"))),
-            Ok(false) => Ok(()),
-            Err(IdentityError::Absent) => Err(absent(format!("target pid={pid} absent"))),
-            Err(e) => Err(failed(format!("target ancestry {e}"))),
-        }
     }
 
     fn class_of(hwnd: HWND) -> SResult<String> {
@@ -266,7 +256,6 @@ pub mod sys {
             return Err(absent("peer exe mismatch"));
         }
         medium_or_fail(pid, &held)?;
-        no_terminal_or_fail(pid)?;
         let class = class_of(hwnd)?;
         if class != super::TEST_WINDOW_CLASS {
             return Err(absent("class mismatch"));
@@ -303,11 +292,7 @@ pub mod sys {
         if !crate::lifecycle::is_medium_rid(rid) {
             return Err(absent(format!("integrity {rid} is not medium")));
         }
-        match has_terminal_ancestor(me.pid) {
-            Ok(true) => Err(absent("terminal-ancestor")),
-            Ok(false) => Ok(me),
-            Err(e) => Err(failed(format!("ancestry {e}"))),
-        }
+        Ok(me)
     }
 
     fn held_matches(pid: u32, expected: &ProcessIdentity) -> SResult<HeldProcess> {

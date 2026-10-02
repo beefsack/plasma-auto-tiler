@@ -618,7 +618,13 @@ impl Engine {
         let Ok((source, target)) = pair.split_canonical_pair() else {
             return false;
         };
-        let target_outer_gap = self.outer_gaps.get(&target_key).copied().unwrap_or(0);
+        // New destinations inherit the carried outer gap; existing
+        // destinations keep their retained gap.
+        let target_outer_gap = self
+            .outer_gaps
+            .get(&target_key)
+            .copied()
+            .unwrap_or(source_outer_gap);
         self.store_committed(source_key, source, source_outer_gap);
         if let Some(target) = target {
             self.store_committed(target_key, target, target_outer_gap);

@@ -1,6 +1,11 @@
 pub const DEFAULT_RUN_SECONDS: u64 = 120;
 pub const MAX_RUN_SECONDS: u64 = 600;
 pub const STOP_REQUEST_FILE: &str = "stop.request";
+/// Exact-owner out-of-hook workspace request (normal `tile` only): one JSON
+/// object naming the owner creation plus a digit index 0..=9. The owner loop
+/// validates the full owner binding and consumes the file once through the
+/// existing `workspace_do_select` resolver; the CLI never actuates windows.
+pub const WORKSPACE_REQUEST_FILE: &str = "workspace.request";
 /// Pointer to the current per-run log file name (never geometry).
 pub const RUN_CURRENT_FILE: &str = "run-current.txt";
 
@@ -95,7 +100,7 @@ pub mod sys {
     };
     use crate::native::{
         HeldProcess, IdentityError, current_exe_path, current_identity, current_integrity_level,
-        has_terminal_ancestor, ledger_directory,
+        ledger_directory,
     };
     use crate::storage::{LEDGER_FILE_NAME, LedgerStore};
     use crate::test_window::{SnapshotError, WindowSnapshot};
@@ -251,6 +256,29 @@ pub mod sys {
         }
     }
 
+    /// Remove a stale out-of-hook workspace request left by a dead owner. Only
+    /// called when no ledger is committed (no live owner), so any residue is
+    /// dead and safe to drop; the live single-pending queue is never touched
+    /// under a lease.
+    fn cleanup_stale_workspace_request(dir: &Path) {
+        let _ = std::fs::remove_file(dir.join(super::WORKSPACE_REQUEST_FILE));
+    }
+
+    /// Remove the owner's own workspace request marker (exact creation match
+    /// only). Malformed or foreign bodies are left for the owner loop's
+    /// consume-once refusal, never deleted blindly here.
+    fn cleanup_own_workspace_request(dir: &Path, own_creation: &str) {
+        let path = dir.join(super::WORKSPACE_REQUEST_FILE);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        if let Ok(request) = crate::tiling::parse_workspace_request(text.trim())
+            && request.creation == own_creation
+        {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+
     fn hold_helper_verified(
         pid: u32,
         expected: &crate::model::ProcessIdentity,
@@ -323,9 +351,6 @@ pub mod sys {
     ) -> Result<String> {
         let dir = ledger_directory().map_err(|e| err(format!("error: ledger dir: {e}")))?;
         let me = medium_caller()?;
-        if has_terminal_ancestor(me.pid).map_err(|e| err(format!("error: ancestry {e}")))? {
-            return Err(err("refuse: terminal-ancestor"));
-        }
         crate::product_hide::sys::reclaim_dead_residue()?;
         match run_guarded(
             &dir,
@@ -368,9 +393,6 @@ pub mod sys {
     ) -> Result<String> {
         let dir = ledger_directory().map_err(|e| err(format!("error: ledger dir: {e}")))?;
         let me = medium_caller()?;
-        if has_terminal_ancestor(me.pid).map_err(|e| err(format!("error: ancestry {e}")))? {
-            return Err(err("refuse: terminal-ancestor"));
-        }
         match run_guarded(
             &dir,
             &me,
@@ -421,7 +443,7 @@ pub mod sys {
         write_log_for(
             dir,
             &me.process_creation,
-            &format!("run hide hwnd={hwnd} tag={}", expect.tag),
+            &format!("run hide tag={}", expect.tag),
             false,
         )
     }
@@ -712,6 +734,9 @@ pub mod sys {
             return Err(err("refuse: ledger committed until stopped cleanup"));
         }
         cleanup_own_stop(dir, &me.process_creation)?;
+        // No live owner holds the lease here: any workspace request residue is
+        // dead and must not block the new owner.
+        cleanup_stale_workspace_request(dir);
         let windows = if let Some(hwnd) = hide_hwnd {
             let helper_exe =
                 crate::test_window::sys::sibling_helper_exe().map_err(|e| err(e.to_string()))?;
@@ -724,6 +749,7 @@ pub mod sys {
                 process: snap.process.clone(),
                 tag: snap.tag.clone(),
                 kind: crate::model::WindowClaimKind::Helper,
+                show: crate::model::WindowShowState::default(),
             }]
         } else {
             Vec::new()
@@ -780,6 +806,7 @@ pub mod sys {
                 Ok(child) => watcher = Some(child),
                 Err(e) => {
                     let _ = std::fs::remove_file(dir.join(LEDGER_FILE_NAME));
+                    cleanup_stale_workspace_request(dir);
                     return Err(e);
                 }
             }
@@ -802,6 +829,10 @@ pub mod sys {
         // It only restores while the live value is still ours and never
         // overwrites the body's result; uncertain reads retain the ledger.
         let body_result = body(dir, me, &store);
+        // The request queue never outlives its owner: drop our own pending
+        // marker (exact creation match) on every teardown path so stop and
+        // restore observe no residue.
+        cleanup_own_workspace_request(dir, &me.process_creation);
         if snap_want {
             snap_drive_restore(dir, me, &store, "teardown");
         }
@@ -850,10 +881,7 @@ pub mod sys {
         Ok(super::exe_paths_equal(&exe, &record.owner.exe_path))
     }
 
-    fn target_verified(held: &HeldProcess, pid: u32) -> Result<()> {
-        if has_terminal_ancestor(pid).map_err(|e| err(format!("error: target ancestry {e}")))? {
-            return Err(err("refuse: target terminal-ancestor"));
-        }
+    fn target_verified(held: &HeldProcess, _pid: u32) -> Result<()> {
         let rid = held
             .integrity()
             .map_err(|e| err(format!("error: target integrity {e}")))?;
@@ -894,11 +922,14 @@ pub mod sys {
                 crate::test_window::sys::sibling_helper_exe().map_err(|e| err(e.to_string()))?;
             for w in &record.windows {
                 if w.kind == crate::model::WindowClaimKind::Product {
-                    let snap =
-                        match crate::product_hide::sys::query_candidate(w.hwnd, &record.owner) {
-                            Ok(s) => s,
-                            Err(_) => return not_ready(),
-                        };
+                    // Hidden claims verify identity-only: a safely hidden
+                    // retained member may read maximized or captionless, which
+                    // the strict admission gates would refuse.
+                    let snap = match crate::product_hide::sys::query_recovery(w.hwnd, &record.owner)
+                    {
+                        Ok(s) => s,
+                        Err(_) => return not_ready(),
+                    };
                     if snap.process != w.process
                         || snap.nonce.as_deref() != Some(w.tag.as_str())
                         || snap.visible
@@ -1014,6 +1045,7 @@ pub mod sys {
                 Some(_) => cleanup_own_stop(&dir, &me.process_creation)?,
                 None => {}
             }
+            cleanup_own_workspace_request(&dir, &me.process_creation);
             return Ok((0, false));
         };
         if !caller_owns(&me, &record)? {
@@ -1060,6 +1092,7 @@ pub mod sys {
                     process: snap.process.clone(),
                     tag: snap.tag.clone(),
                     kind: crate::model::WindowClaimKind::Helper,
+                    show: crate::model::WindowShowState::default(),
                 },
                 visible: snap.visible,
             };
@@ -1097,6 +1130,7 @@ pub mod sys {
         }
         let count = record.windows.len();
         cleanup_own_stop(&dir, &record.owner.process_creation)?;
+        cleanup_own_workspace_request(&dir, &record.owner.process_creation);
         std::fs::remove_file(dir.join(LEDGER_FILE_NAME))
             .map_err(|e| err(format!("error: ledger cleanup: {e}")))?;
         Ok((count, snap_restored))
@@ -1147,6 +1181,10 @@ pub mod sys {
         if !exited {
             return Err(err("error: owner exit timeout"));
         }
+        // The owner loop consumes its request once, but a stop racing a
+        // pending dispatch must leave no marker behind: drop the exact
+        // owner's residue (creation match only) after a verified exit.
+        cleanup_own_workspace_request(&dir, &record.owner.process_creation);
         Ok(stop_json(terminate, true, true))
     }
 

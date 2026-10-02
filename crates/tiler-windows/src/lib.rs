@@ -12,3 +12,4 @@ pub mod tiling;
 pub mod tiling_sys;
 pub mod winarrow;
 pub mod workspace;
+pub mod workspace_owner;

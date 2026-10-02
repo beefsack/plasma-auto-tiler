@@ -1,6 +1,6 @@
 //! Per-output-local managed workspaces plus digit classification.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use tiler_core::workspace as policy;
 
 pub const VK_LWIN: u32 = 91;
@@ -17,21 +17,10 @@ pub const VK_RALT: u32 = 165;
 pub const VK_0: u32 = 0x30;
 pub const VK_9: u32 = 0x39;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DigitOp {
-    Select,
-    Send,
-}
-
-impl DigitOp {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Select => "select",
-            Self::Send => "send",
-        }
-    }
-}
+/// Digit op shared with the unified hook classifier: unshifted selects,
+/// Shift sends. Single authority lives in `snapkey::WorkspaceOp`; this alias
+/// keeps the portable session-policy vocabulary stable.
+pub use crate::snapkey::WorkspaceOp as DigitOp;
 
 /// Decode one Win+digit chord. Shift selects send; Ctrl/Alt or missing Win
 /// refuse. Symbol aliases share the digit VK on the same physical key.
@@ -60,12 +49,17 @@ pub const fn is_digit_vk(vk: u32) -> bool {
     vk >= VK_0 && vk <= VK_9
 }
 
+/// Stable session member identity: HWND plus process-lifetime evidence.
+/// Deliberately carries no product nonce: the nonce exists only while hidden
+/// and is removed on reveal, so visible membership keyed by nonce would flap.
+/// Hidden claims bind the ephemeral nonce separately in the owner table and
+/// the ledger; same-process HWND reuse fences on `(hwnd, creation)` plus the
+/// live nonce check before any effect.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct WindowKey {
     pub hwnd: u64,
     pub pid: u32,
     pub creation: String,
-    pub tag: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,6 +140,19 @@ impl ManagedWorkspaces {
         self.outputs
             .get(output)
             .and_then(|o| o.order.get(o.active).map(|w| w.id.clone()))
+    }
+
+    /// Activate one workspace by id without disturbing order. Returns false
+    /// when the output or workspace is unknown.
+    pub fn activate(&mut self, output: &str, workspace: &str) -> bool {
+        let Some(state) = self.outputs.get_mut(output) else {
+            return false;
+        };
+        let Some(pos) = state.order.iter().position(|e| e.id == workspace) else {
+            return false;
+        };
+        state.active = pos;
+        true
     }
 
     pub fn select(&mut self, output: &str, index: u8) -> Option<String> {
@@ -286,6 +293,30 @@ impl ManagedWorkspaces {
             return Some(last.clone());
         }
         entry.members.iter().find(|w| visible.contains(*w)).cloned()
+    }
+
+    /// Post-reveal eligible visible set for focus: non-hidden members whose
+    /// Engine token is present in the fresh eligible observation. Pure so the
+    /// fresh-focus regression pins it without native calls: pre-switch
+    /// membership alone is never fresh enough, and retained/minimized members
+    /// without a fresh frame never take focus.
+    #[must_use]
+    pub fn eligible_focus_set(
+        &self,
+        members: &BTreeSet<WindowKey>,
+        member_tokens: &BTreeMap<WindowKey, String>,
+        fresh_tokens: &HashSet<String>,
+    ) -> BTreeSet<WindowKey> {
+        members
+            .iter()
+            .filter(|k| !self.is_hidden(k))
+            .filter(|k| {
+                member_tokens
+                    .get(*k)
+                    .is_some_and(|t| fresh_tokens.contains(t))
+            })
+            .cloned()
+            .collect()
     }
 
     #[must_use]
@@ -471,6 +502,54 @@ impl ManagedWorkspaces {
     }
 
     #[must_use]
+    pub fn workspace_members(&self, output: &str, workspace: &str) -> BTreeSet<WindowKey> {
+        self.outputs
+            .get(output)
+            .and_then(|s| s.order.iter().find(|e| e.id == workspace))
+            .map(|e| e.members.clone())
+            .unwrap_or_default()
+    }
+
+    #[must_use]
+    pub fn output_keys(&self) -> Vec<String> {
+        self.outputs.keys().cloned().collect()
+    }
+
+    #[must_use]
+    pub fn workspace_ids(&self, output: &str) -> Vec<String> {
+        self.outputs
+            .get(output)
+            .map(|s| s.order.iter().map(|e| e.id.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    #[must_use]
+    pub fn active_index(&self, output: &str) -> Option<usize> {
+        self.outputs.get(output).map(|s| s.active)
+    }
+
+    /// Forget one window everywhere (close cleanup). Hidden retention is
+    /// owned by the caller ledger table; this only drops session membership.
+    /// Returns true when the window was known.
+    pub fn remove_window(&mut self, window: &WindowKey) -> bool {
+        let mut known = false;
+        for state in self.outputs.values_mut() {
+            for entry in &mut state.order {
+                if entry.members.remove(window) {
+                    known = true;
+                }
+                if entry.last_focus.as_ref() == Some(window) {
+                    entry.last_focus = None;
+                }
+            }
+        }
+        if self.membership.remove(window).is_some() {
+            known = true;
+        }
+        known
+    }
+
+    #[must_use]
     pub fn displaced_snapshot(&self) -> BTreeMap<String, DisplacedRecord> {
         self.displaced.clone()
     }
@@ -502,289 +581,6 @@ pub fn verify_send_follow(
     !source_members.contains(mover) && target_members.contains(mover)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DigitEdge {
-    Down,
-    Up,
-    Repeat,
-}
-
-impl DigitEdge {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Down => "down",
-            Self::Up => "up",
-            Self::Repeat => "repeat",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DigitIntent {
-    pub op: DigitOp,
-    pub index: u8,
-    pub edge: DigitEdge,
-    pub foreground: bool,
-    pub consumed: bool,
-    pub announce: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DigitClassify {
-    win_l: bool,
-    win_r: bool,
-    shift: bool,
-    ctrl: bool,
-    alt: bool,
-    digit_down: [bool; 10],
-    digit_origin: [bool; 10],
-    digit_op: [Option<DigitOp>; 10],
-    pub enabled: bool,
-    pub session_active: bool,
-    pub down: [u32; 10],
-    pub up: [u32; 10],
-    pub repeat: [u32; 10],
-    pub consumed: [u32; 10],
-    pub passed: [u32; 10],
-}
-
-impl DigitClassify {
-    #[must_use]
-    pub fn new(enabled: bool, session_active: bool) -> Self {
-        Self {
-            win_l: false,
-            win_r: false,
-            shift: false,
-            ctrl: false,
-            alt: false,
-            digit_down: [false; 10],
-            digit_origin: [false; 10],
-            digit_op: [None; 10],
-            enabled,
-            session_active,
-            down: [0; 10],
-            up: [0; 10],
-            repeat: [0; 10],
-            consumed: [0; 10],
-            passed: [0; 10],
-        }
-    }
-
-    pub fn set_session(&mut self, enabled: bool, session_active: bool) {
-        self.enabled = enabled;
-        self.session_active = session_active;
-    }
-
-    pub fn push(
-        &mut self,
-        vk: u32,
-        is_up: bool,
-        foreground: bool,
-        injected: bool,
-    ) -> Option<DigitIntent> {
-        if injected {
-            return None;
-        }
-        if vk == VK_LWIN || vk == VK_RWIN {
-            if is_up {
-                if vk == VK_LWIN {
-                    self.win_l = false;
-                } else {
-                    self.win_r = false;
-                }
-            } else if vk == VK_LWIN {
-                self.win_l = true;
-            } else {
-                self.win_r = true;
-            }
-            return None;
-        }
-        if matches!(vk, VK_SHIFT | VK_LSHIFT | VK_RSHIFT) {
-            self.shift = !is_up;
-            return None;
-        }
-        if matches!(vk, VK_CTRL | VK_LCTRL | VK_RCTRL) {
-            self.ctrl = !is_up;
-            return None;
-        }
-        if matches!(vk, VK_ALT | VK_LALT | VK_RALT) {
-            self.alt = !is_up;
-            return None;
-        }
-        if !is_digit_vk(vk) {
-            return None;
-        }
-        let slot = (vk - VK_0) as usize;
-        if is_up {
-            if !self.digit_down[slot] {
-                return None;
-            }
-            self.digit_down[slot] = false;
-            let origin = self.digit_origin[slot];
-            self.digit_origin[slot] = false;
-            let op = self.digit_op[slot].unwrap_or(DigitOp::Select);
-            self.digit_op[slot] = None;
-            self.up[slot] += 1;
-            if self.enabled && self.session_active && origin {
-                self.consumed[slot] += 1;
-                return Some(DigitIntent {
-                    op,
-                    index: slot as u8,
-                    edge: DigitEdge::Up,
-                    foreground,
-                    consumed: true,
-                    announce: false,
-                });
-            }
-            self.passed[slot] += 1;
-            return Some(DigitIntent {
-                op,
-                index: slot as u8,
-                edge: DigitEdge::Up,
-                foreground,
-                consumed: false,
-                announce: false,
-            });
-        }
-        if self.ctrl || self.alt || !(self.win_l || self.win_r) {
-            return None;
-        }
-        let op = if self.shift {
-            DigitOp::Send
-        } else {
-            DigitOp::Select
-        };
-        if self.digit_down[slot] {
-            self.repeat[slot] += 1;
-            let op = self.digit_op[slot].unwrap_or(op);
-            if self.enabled && self.session_active && self.digit_origin[slot] {
-                self.consumed[slot] += 1;
-                return Some(DigitIntent {
-                    op,
-                    index: slot as u8,
-                    edge: DigitEdge::Repeat,
-                    foreground,
-                    consumed: true,
-                    announce: true,
-                });
-            }
-            self.passed[slot] += 1;
-            return Some(DigitIntent {
-                op,
-                index: slot as u8,
-                edge: DigitEdge::Repeat,
-                foreground,
-                consumed: false,
-                announce: false,
-            });
-        }
-        self.digit_down[slot] = true;
-        let origin = self.enabled && self.session_active;
-        self.digit_origin[slot] = origin;
-        self.digit_op[slot] = Some(op);
-        self.down[slot] += 1;
-        if origin {
-            self.consumed[slot] += 1;
-            Some(DigitIntent {
-                op,
-                index: slot as u8,
-                edge: DigitEdge::Down,
-                foreground,
-                consumed: true,
-                announce: true,
-            })
-        } else {
-            self.passed[slot] += 1;
-            Some(DigitIntent {
-                op,
-                index: slot as u8,
-                edge: DigitEdge::Down,
-                foreground,
-                consumed: false,
-                announce: false,
-            })
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct DigitQueue {
-    inner: std::collections::VecDeque<DigitIntent>,
-    pub dropped: u32,
-}
-
-impl DigitQueue {
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            inner: std::collections::VecDeque::with_capacity(512),
-            dropped: 0,
-        }
-    }
-
-    #[must_use]
-    pub fn is_full(&self) -> bool {
-        self.inner.len() >= 512
-    }
-
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.inner.len()
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
-    }
-
-    pub fn push(&mut self, intent: DigitIntent) -> bool {
-        if self.is_full() {
-            self.dropped += 1;
-            return false;
-        }
-        self.inner.push_back(intent);
-        true
-    }
-
-    pub fn record_drop(&mut self) {
-        self.dropped += 1;
-    }
-
-    pub fn pop_front(&mut self) -> Option<DigitIntent> {
-        self.inner.pop_front()
-    }
-}
-
-pub fn classify_and_queue_digit(
-    machine: &mut DigitClassify,
-    queue: &mut DigitQueue,
-    vk: u32,
-    is_up: bool,
-    foreground: bool,
-    injected: bool,
-) -> Option<bool> {
-    let saturated = queue.is_full();
-    let saved_enabled = machine.enabled;
-    let saved_session = machine.session_active;
-    if saturated {
-        machine.set_session(false, false);
-    }
-    let intent = machine.push(vk, is_up, foreground, injected);
-    machine.set_session(saved_enabled, saved_session);
-    let intent = intent?;
-    if saturated {
-        queue.record_drop();
-        return Some(false);
-    }
-    if queue.push(intent) {
-        Some(intent.consumed)
-    } else {
-        queue.record_drop();
-        Some(false)
-    }
-}
-
 #[must_use]
 pub fn workspace_event(
     output_token: &str,
@@ -812,7 +608,6 @@ mod tests {
             hwnd,
             pid: 1000 + hwnd as u32,
             creation: format!("c{hwnd:016x}"),
-            tag: format!("{hwnd:016x}"),
         }
     }
 
@@ -922,6 +717,42 @@ mod tests {
     }
 
     #[test]
+    fn activate_by_id_covers_trailing_past_ordinals() {
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        // Fill every workspace so trailing appends past the Win1..9 range.
+        for i in 0..10 {
+            let ids = order_ids(&m, "mon-1");
+            for ws in &ids {
+                let occupied = m
+                    .outputs
+                    .get("mon-1")
+                    .expect("o")
+                    .order
+                    .iter()
+                    .find(|e| &e.id == ws)
+                    .expect("e")
+                    .members
+                    .is_empty();
+                if occupied {
+                    assert!(m.assign(key(900 + i), "mon-1", ws, false));
+                    break;
+                }
+            }
+            let _ = m.select_trailing("mon-1");
+        }
+        assert!(m.workspace_count("mon-1") > 9);
+        let last = order_ids(&m, "mon-1").last().cloned().expect("last");
+        let first = order_ids(&m, "mon-1").first().cloned().expect("first");
+        assert!(m.activate("mon-1", &last));
+        assert_eq!(m.active_id("mon-1").as_deref(), Some(last.as_str()));
+        assert!(m.activate("mon-1", &first));
+        assert_eq!(m.active_id("mon-1").as_deref(), Some(first.as_str()));
+        assert!(!m.activate("mon-1", "ws-missing"));
+        assert!(!m.activate("mon-missing", &first));
+    }
+
+    #[test]
     fn per_output_isolation() {
         let mut m = ManagedWorkspaces::new();
         m.ensure_output("mon-1");
@@ -982,58 +813,64 @@ mod tests {
     }
 
     #[test]
-    fn digit_classifier_modifier_up_repeat_global() {
-        let mut c = DigitClassify::new(true, true);
-        c.push(VK_LWIN, false, true, false);
-        c.push(VK_CTRL, false, true, false);
-        assert_eq!(c.push(VK_0 + 1, false, true, false), None);
-        c.push(VK_CTRL, true, true, false);
-        assert_eq!(c.push(VK_0 + 2, true, true, false), None);
-        c.push(VK_SHIFT, false, true, false);
-        let down = c.push(VK_0 + 3, false, true, false).expect("send down");
-        assert_eq!((down.op, down.index), (DigitOp::Send, 3));
-        assert!(down.consumed && down.announce);
-        c.push(VK_SHIFT, true, true, false);
-        let up = c.push(VK_0 + 3, true, true, false).expect("send up");
-        assert_eq!((up.op, up.consumed), (DigitOp::Send, true));
-        assert_eq!(up.edge, DigitEdge::Up);
-        let mut c = DigitClassify::new(true, true);
-        c.push(VK_LWIN, false, false, false);
-        let down = c.push(VK_0 + 4, false, false, false).expect("global down");
-        assert!(down.consumed);
-        let repeat = c.push(VK_0 + 4, false, false, false).expect("repeat");
-        assert_eq!(repeat.edge, DigitEdge::Repeat);
-        assert!(repeat.consumed && repeat.announce);
-        let mut c = DigitClassify::new(true, false);
-        c.push(VK_LWIN, false, true, false);
-        let down = c.push(VK_0 + 5, false, true, false).expect("inactive down");
-        assert!(!down.consumed);
-        c.set_session(true, true);
-        let repeat = c.push(VK_0 + 5, false, true, false).expect("repeat");
-        assert!(!repeat.consumed);
+    fn cleanup_floor_keeps_minimum_two() {
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        let active = m.active_id("mon-1").expect("active");
+        // Both workspaces empty and invisible: the floor keeps both.
+        let (removed, append) = m.plan_cleanup("mon-1", &[], &[]);
+        m.apply_cleanup("mon-1", &removed, append);
+        assert!(m.workspace_count("mon-1") >= policy::MIN_WORKSPACES);
+        assert!(m.active_id("mon-1").is_some());
+        let _ = active;
     }
 
     #[test]
-    fn digit_queue_saturation_fails_closed() {
-        let mut c = DigitClassify::new(true, true);
-        let mut q = DigitQueue::new();
-        c.push(VK_LWIN, false, true, false);
-        for _ in 0..512 {
-            let _ = q.push(DigitIntent {
-                op: DigitOp::Select,
-                index: 1,
-                edge: DigitEdge::Down,
-                foreground: true,
-                consumed: true,
-                announce: true,
-            });
-        }
-        assert!(q.is_full());
-        assert_eq!(
-            classify_and_queue_digit(&mut c, &mut q, VK_0 + 1, false, true, false),
-            Some(false)
-        );
-        assert!(q.dropped >= 1);
+    fn hidden_members_retain_workspace_through_cleanup() {
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        let ws2 = m.resolve_send("mon-1", 2).expect("ws2");
+        let w = key(77);
+        assert!(m.assign(w.clone(), "mon-1", &ws2, false));
+        m.set_hidden(&w, true);
+        let active = m.active_id("mon-1").expect("active");
+        // The hidden-occupied workspace is protected from pruning.
+        let (removed, append) = m.plan_cleanup("mon-1", std::slice::from_ref(&active), &[]);
+        assert!(!removed.contains(&ws2));
+        m.apply_cleanup("mon-1", &removed, append);
+        assert_eq!(m.member_loc(&w).expect("loc").workspace, ws2);
+        assert!(m.is_hidden(&w));
+    }
+
+    #[test]
+    fn last_focus_is_per_workspace() {
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        let ws1 = m.resolve_send("mon-1", 1).expect("ws1");
+        let ws2 = m.resolve_send("mon-1", 2).expect("ws2");
+        let a = key(101);
+        let b = key(102);
+        assert!(m.assign(a.clone(), "mon-1", &ws1, false));
+        assert!(m.assign(b.clone(), "mon-1", &ws2, false));
+        m.note_foreground(&a);
+        m.note_foreground(&b);
+        let visible_a: BTreeSet<WindowKey> = [a.clone()].into_iter().collect();
+        let visible_b: BTreeSet<WindowKey> = [b.clone()].into_iter().collect();
+        assert_eq!(m.focus_target("mon-1", &ws1, &visible_a), Some(a));
+        assert_eq!(m.focus_target("mon-1", &ws2, &visible_b), Some(b));
+    }
+
+    #[test]
+    fn remove_window_cleans_membership_and_focus() {
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        let ws1 = m.resolve_send("mon-1", 1).expect("ws1");
+        let w = key(21);
+        assert!(m.assign(w.clone(), "mon-1", &ws1, false));
+        m.note_foreground(&w);
+        assert!(m.remove_window(&w));
+        assert!(m.member_loc(&w).is_none());
+        assert!(!m.remove_window(&w));
     }
 
     #[test]
@@ -1068,5 +905,64 @@ mod tests {
         assert_eq!(ev["members"], serde_json::Value::from(3));
         let text = ev.to_string();
         assert!(!text.contains("hwnd") && !text.contains("pid"));
+    }
+
+    #[test]
+    fn select_resolution_does_not_preactivate() {
+        // Regression for `workspace_tick` mutating ACTIVE via
+        // `select`/`select_trailing` before `workspace_do_select` reads
+        // current (which then reports `already-active` with no native
+        // effects). Select targets must resolve without activating; only the
+        // transition itself activates after hide/reveal.
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        let before = m.active_id("mon-1").expect("active");
+        let target = m.resolve_send("mon-1", 2).expect("resolve");
+        assert_ne!(before, target);
+        assert_eq!(
+            m.active_id("mon-1").as_deref(),
+            Some(before.as_str()),
+            "resolve_send must not preactivate"
+        );
+        let before = m.active_id("mon-1").expect("active");
+        let (trailing, _) = m.resolve_send_trailing("mon-1").expect("trailing");
+        assert_eq!(
+            m.active_id("mon-1").as_deref(),
+            Some(before.as_str()),
+            "resolve_send_trailing must not preactivate"
+        );
+        assert!(m.activate("mon-1", &trailing));
+        assert_eq!(m.active_id("mon-1").as_deref(), Some(trailing.as_str()));
+    }
+
+    #[test]
+    fn eligible_focus_uses_only_fresh_observation() {
+        // Post-reveal focus must use the fresh eligible observation, never the
+        // pre-switch membership alone: hidden and frameless members without a
+        // fresh token never take focus, and the last appropriate fresh member
+        // wins.
+        use std::collections::{BTreeMap, HashSet};
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        let ws2 = m.resolve_send("mon-1", 2).expect("ws2");
+        let a = key(1);
+        let b = key(2);
+        assert!(m.assign(a.clone(), "mon-1", &ws2, false));
+        assert!(m.assign(b.clone(), "mon-1", &ws2, false));
+        m.note_foreground(&a);
+        m.set_hidden(&a, true);
+        let mut member_tokens: BTreeMap<WindowKey, String> = BTreeMap::new();
+        member_tokens.insert(a.clone(), "tok-a".to_owned());
+        member_tokens.insert(b.clone(), "tok-b".to_owned());
+        // Only `b` is freshly observed eligible; `a` stays hidden.
+        let fresh: HashSet<String> = ["tok-b".to_owned()].into_iter().collect();
+        let members: BTreeSet<WindowKey> = [a.clone(), b.clone()].into_iter().collect();
+        let eligible = m.eligible_focus_set(&members, &member_tokens, &fresh);
+        assert_eq!(eligible, [b.clone()].into_iter().collect());
+        assert_eq!(m.focus_target("mon-1", &ws2, &eligible), Some(b));
+        // Empty fresh observation means an empty target: no focus.
+        let empty = m.eligible_focus_set(&members, &member_tokens, &HashSet::new());
+        assert!(empty.is_empty());
+        assert_eq!(m.focus_target("mon-1", &ws2, &empty), None);
     }
 }

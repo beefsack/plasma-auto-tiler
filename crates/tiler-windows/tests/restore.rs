@@ -19,6 +19,7 @@ fn record() -> WindowIdentity {
         process: process(),
         tag: "tag-1".to_owned(),
         kind: WindowClaimKind::Helper,
+        show: tiler_windows::model::WindowShowState::default(),
     }
 }
 

@@ -39,8 +39,15 @@ decisions of 2026-09-24 are under
   product filtering. Native gates and independent mutation review pass.
   Initial SPI target mix-up was recovered; final arranging is 1 and pen is 35.
   Windows settings UI Apply/Revert, physical shortcuts and Snap
-  Layouts/bar/Assist/shake coverage remain pending. Next: Windows workspaces,
-  with identity-safe hide/restore-ledger integration.
+  Layouts/bar/Assist/shake coverage remain pending. Managed workspaces now pass
+  current-artifact helper and scoped Notepad/Calculator/Paint journeys: existing
+  ordinals, send/follow, trailing empty, independent layouts, identity-safe
+  hiding and graceful/crash recovery. Terminal is an ordinary managed app by
+  default. The physical send trace exposed a new-target outer-gap mismatch;
+  fixed with both-domain regression coverage. Fresh independent review and
+  native gates pass. Physical retest and integration CI remain pending.
+  Next: active window border, then group underlay.
+  [Managed workspaces](changes/archive/windows-managed-workspaces.md).
   [Shortcut slice and handover](changes/archive/windows-shortcut-slice.md).
   Full owned-helper proof passed `20261001-222611-6068`: 8/8 gaps at 125%,
   minimize/restore, close reflow, graceful/emergency stop preserving frames,
@@ -54,6 +61,17 @@ decisions of 2026-09-24 are under
   [plan](research/windows-port/plan.md)
   [decision](decisions.md#windows-port)
   Day-one setup and pending governance: [Windows development environment](windows-dev-environment.md).
+- P1 | Windows minimum-size handling | After active border and group underlay,
+  honor application minimum width/height and adjust neighbours to avoid overlap,
+  matching KDE. Paint currently holds a larger frame than its allocation.
+  Design pending; separate from workspace delivery.
+- P1 | Windows action latency | Measure during dogfood and use structured action
+  lifecycle evidence to diagnose the latency the user felt. No cause established.
+- P2 | Windows workspace overview | Visible taskbar or other workspace overview;
+  discuss design with the user later. No presentation mechanism selected.
+- P2 | Hidden-workspace Alt+Tab option | Investigate whether official Windows
+  APIs can include hidden-workspace windows in Alt+Tab. Future optional behavior,
+  not critical; no design selected.
 - P1 | Cross-platform functional specification | After the Windows tiling
   dogfood slice, define window/workspace behavior and keyboard shortcuts as
   the single source of truth for Linux, Windows and macOS. KDE is the current

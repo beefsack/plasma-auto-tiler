@@ -287,10 +287,13 @@ function Assert-OcclusionClear([uint64]$Ancestor, [uint64]$FrozenHwnd, [string]$
 }
 
 function Assert-SpiPreimageOwned($Ledger, [string]$Tag) {
-  # Ledger v2 with an owned original-TRUE claim: the only state authorizing
-  # restoration. Anything else refuses the crash stage.
-  if ([int]$Ledger.v -ne 2) {
-    Fail-Shortcut "$Tag ledger v$($Ledger.v) != v2"
+  # Ledger v4 with an owned original-TRUE claim: the only state authorizing
+  # restoration. Anything else refuses the crash stage. v4 keeps the exact
+  # v2 preimage semantics (mouse_snap.original/owned); only the schema
+  # version moved (LEDGER_SCHEMA_VERSION=4 in model.rs), so the gate moves
+  # with it while owner/pid/SID/session checks stay in the caller.
+  if ([int]$Ledger.v -ne 4) {
+    Fail-Shortcut "$Tag ledger v$($Ledger.v) != v4"
   }
   if ($null -eq $Ledger.mouse_snap) {
     Fail-Shortcut "$Tag no snap preimage"
@@ -725,6 +728,29 @@ function Invoke-ExactHelperActivate($Snap, $Frozen, [string]$HelperBin, [string]
   return @{ hwnd = "$($Frozen.hwnd)"; rect = $postRect; method = $method; prime_inserted = $primeInserted; attach_ok = $attachOk; foreground = "$fgRaised"; ancestor = "$anc"; topmost = $false }
 }
 
+function Invoke-OwnedFocusEnsure($Snap, $Frozen, [string]$HelperBin, [string]$Tag) {
+  # Occlusion-safe replacement for the caption click in the directional flow:
+  # when an unrelated window (e.g. the user's Terminal) covers the helper,
+  # the click guard must refuse, so focus is ensured with the non-click
+  # raise/attach activation instead. Same gates: full identity before and
+  # after, unchanged rect, exact-foreground readback, caption-point ancestor
+  # proof. Already-foreground short-circuits with the same readbacks (no
+  # setter call at all). No click, no pointer motion, no cursor writes.
+  Assert-FullIdentityMatches $Snap $Frozen $Tag
+  $pre = Invoke-Native $HelperBin @("inspect", "$($Frozen.hwnd)") | ConvertFrom-Json
+  Assert-FullIdentityMatches $pre $Frozen "$Tag-preactivate"
+  $fgEntry = [ShortcutProofNative]::GetForegroundWindow().ToInt64()
+  if ([uint64]$fgEntry -eq [uint64]$Frozen.hwnd) {
+    $postRect = "$($pre.left),$($pre.top),$($pre.right),$($pre.bottom)"
+    $cx = [int](([int]$pre.left + [int]$pre.right) / 2)
+    $cy = [int]$pre.top + 10
+    $anc = [ShortcutProofNative]::WindowAncestorAt($cx, $cy)
+    Assert-OcclusionClear ([uint64]$anc) ([uint64]$Frozen.hwnd) "$Tag-already"
+    return @{ hwnd = "$($Frozen.hwnd)"; rect = $postRect; method = "already-foreground"; prime_inserted = 0; attach_ok = $false; foreground = "$fgEntry"; ancestor = "$anc"; topmost = $false }
+  }
+  return Invoke-ExactHelperActivate $Snap $Frozen $HelperBin $Tag
+}
+
 function Send-MarkedChord([int]$Vk, [bool]$WithShift, [bool]$WithControl, [uint64]$WantForeground, [int]$RepeatExtra, [bool]$Unmarked) {
   # Bounded synthetic chord. Foreground is read freshly immediately before
   # the first down and must equal the intended target. Each SendInput
@@ -1112,10 +1138,16 @@ function Invoke-ShortcutMock {
   } catch {
     $rejected += 1
   }
-  $ledger = @{ v = 2; mouse_snap = @{ original = $true; owned = $true } }
+  $ledger = @{ v = 4; mouse_snap = @{ original = $true; owned = $true } }
   Assert-SpiPreimageOwned $ledger "mock-spi"
   try {
-    Assert-SpiPreimageOwned @{ v = 2; mouse_snap = @{ original = $true; owned = $false } } "mock-negative-spi"
+    Assert-SpiPreimageOwned @{ v = 2; mouse_snap = @{ original = $true; owned = $true } } "mock-negative-spi-version"
+    Fail-Shortcut "negative spi version did not throw"
+  } catch {
+    $rejected += 1
+  }
+  try {
+    Assert-SpiPreimageOwned @{ v = 4; mouse_snap = @{ original = $true; owned = $false } } "mock-negative-spi"
     Fail-Shortcut "negative spi did not throw"
   } catch {
     $rejected += 1
@@ -1188,9 +1220,9 @@ function Invoke-ShortcutMock {
       $rejected += 1
     }
   }
-  Rec-Shortcut "mock-negative-rejections" @{ proven = $rejected; want = 20 }
-  if ($rejected -ne 20) {
-    Fail-Shortcut "mock rejection count $rejected != 20"
+  Rec-Shortcut "mock-negative-rejections" @{ proven = $rejected; want = 21 }
+  if ($rejected -ne 21) {
+    Fail-Shortcut "mock rejection count $rejected != 21"
   }
   return @{ status = "pass"; stage = "Mock"; steps = $ShortcutSteps }
 }
@@ -1347,6 +1379,7 @@ function Invoke-OwnedFocusMoveLive($Ctx, [switch]$SkipFocus) {
   Rec-Shortcut "adopted-dpi" @{ dpi = $dpi }
   $sentAccepted = 0
   $clickAccepted = 0
+  $activateAccepted = 0
   # Focus journey: per-row valid source from the canonical adopted geometry
   # (extremal window with a geometric neighbor in the row direction, so the
   # Engine holds a directional candidate), guarded mouse-activated for real
@@ -1365,9 +1398,9 @@ function Invoke-OwnedFocusMoveLive($Ctx, [switch]$SkipFocus) {
   foreach ($row in $focusRows) {
     $src = Get-DirectionalSource $ownerCopy $allowPath $row.direction @($h1, $h2, $h3) "$($row.name)-source"
     $srcSnap = Invoke-Native $helperCopy @("inspect", "$($src.hwnd)") | ConvertFrom-Json
-    $clicked = Invoke-GuardedHelperClick $srcSnap $src $helperCopy "$($row.name)-activate"
-    $clickAccepted += [int]$clicked.accepted
-    Rec-Shortcut "click-$($row.name)" $clicked
+    $activated = Invoke-OwnedFocusEnsure $srcSnap $src $helperCopy "$($row.name)-activate"
+    $activateAccepted += [int]$activated.prime_inserted
+    Rec-Shortcut "activate-$($row.name)" $activated
     $pre = Get-InspectFrames $ownerCopy $allowPath
     $preFg = [uint64]$src.hwnd
     if ([uint64]$pre.inspect.foreground -ne $preFg) {
@@ -1412,9 +1445,9 @@ function Invoke-OwnedFocusMoveLive($Ctx, [switch]$SkipFocus) {
   foreach ($row in $moveRows) {
     $src = Get-DirectionalSource $ownerCopy $allowPath $row.direction @($h1, $h2, $h3) "$($row.name)-source"
     $srcSnap = Invoke-Native $helperCopy @("inspect", "$($src.hwnd)") | ConvertFrom-Json
-    $clicked = Invoke-GuardedHelperClick $srcSnap $src $helperCopy "$($row.name)-activate"
-    $clickAccepted += [int]$clicked.accepted
-    Rec-Shortcut "click-$($row.name)" $clicked
+    $activated = Invoke-OwnedFocusEnsure $srcSnap $src $helperCopy "$($row.name)-activate"
+    $activateAccepted += [int]$activated.prime_inserted
+    Rec-Shortcut "activate-$($row.name)" $activated
     $pre = Get-InspectFrames $ownerCopy $allowPath
     $preFg = [uint64]$src.hwnd
     if ([uint64]$pre.inspect.foreground -ne $preFg) {
@@ -1453,9 +1486,9 @@ function Invoke-OwnedFocusMoveLive($Ctx, [switch]$SkipFocus) {
     $repSrc = $h1
   }
   $repSnap = Invoke-Native $helperCopy @("inspect", "$($repSrc.hwnd)") | ConvertFrom-Json
-  $clicked = Invoke-GuardedHelperClick $repSnap $repSrc $helperCopy "repeat-activate"
-  $clickAccepted += [int]$clicked.accepted
-  Rec-Shortcut "click-repeat-down-j" $clicked
+  $activated = Invoke-OwnedFocusEnsure $repSnap $repSrc $helperCopy "repeat-activate"
+  $activateAccepted += [int]$activated.prime_inserted
+  Rec-Shortcut "activate-repeat-down-j" $activated
   $preFg = [uint64]$repSrc.hwnd
   $sendMark = (Get-CompleteLinesLocal $logPath).Count
   $sent = Send-MarkedChord ([int]$repRow.vk) $false $false $preFg ([int]$repRow.repeats) $false
@@ -1482,36 +1515,60 @@ function Invoke-OwnedFocusMoveLive($Ctx, [switch]$SkipFocus) {
     Fail-Shortcut "repeat edges down=$downs repeat=$reps, need >=1 each"
   }
   Rec-Shortcut "journey-repeat-down-j" @{ down = $downs; repeat = $reps; synthetic = $true }
-  # Edge noop: single eligible window cannot focus outward. Minimize two
-  # helpers (exact tags, foreground untouched), converge to one, inject.
-  # The repeat click and this edge click can target the same helper title-bar
-  # point back-to-back (20261002-033854-5228: both at 768,16), which the OS
-  # reads as a title-bar double-click and maximizes the source, leaving zero
-  # eligible windows. One bounded pause past the Windows double-click time
-  # (default 500 ms) breaks the pair; nothing else changes.
-  Start-Sleep -Milliseconds 1200
-  $edgeSnap = Invoke-Native $helperCopy @("inspect", "$($h1.hwnd)") | ConvertFrom-Json
-  $clicked = Invoke-GuardedHelperClick $edgeSnap $h1 $helperCopy "edge-source"
-  $clickAccepted += [int]$clicked.accepted
-  Rec-Shortcut "click-edge-source" $clicked
-  $min2 = Invoke-Native $helperCopy @("minimize", "$($h2.hwnd)", "--tag", "$($h2.tag)") | ConvertFrom-Json
-  if ([uint64]$min2.foreground -eq [uint64]$h2.hwnd) {
-    Fail-Shortcut "minimize focused helper2"
+  # Edge noop: true geometric boundary with all three members retained.
+  # Minimized members keep Engine membership via retained rows (last-known
+  # snapshot), so minimizing can never converge to a single-entry plan
+  # (desired stays 3 while readback shows 1). Instead pick the geometrically
+  # verified left edge among the three eligible rects (no strict left
+  # neighbor with perpendicular overlap), focus it non-click, and assert a
+  # true unchanged noop: consumed focus/left outcome unchanged, geometry
+  # equal, foreground pinned. No minimize/restore and no pointer input.
+  $edgeRow = (Get-ShortcutJourney) | Where-Object { $_.family -eq "edge-noop" } | Select-Object -First 1
+  $edgeLayout = Invoke-Native $ownerCopy @("inspect", "--allowlist", $AllowPath) | ConvertFrom-Json
+  $edgeElig = @($edgeLayout.windows | Where-Object { $_.eligible -eq $true })
+  if ($edgeElig.Count -ne 3) {
+    Fail-Shortcut "edge layout eligible $($edgeElig.Count) != 3"
   }
-  $min3 = Invoke-Native $helperCopy @("minimize", "$($h3.hwnd)", "--tag", "$($h3.tag)") | ConvertFrom-Json
-  if ([uint64]$min3.foreground -eq [uint64]$h3.hwnd) {
-    Fail-Shortcut "minimize focused helper3"
+  $edgeCands = @()
+  foreach ($w in $edgeElig) {
+    $x = [int]$w.visible[0]; $y = [int]$w.visible[1]; $ww = [int]$w.visible[2]; $hh = [int]$w.visible[3]
+    $hasLeft = $false
+    foreach ($o in $edgeElig) {
+      if ([uint64]$o.hwnd -eq [uint64]$w.hwnd) {
+        continue
+      }
+      $ox = [int]$o.visible[0]; $oy = [int]$o.visible[1]; $ow = [int]$o.visible[2]; $oh = [int]$o.visible[3]
+      if ((($ox + $ow) -le $x) -and (($y -lt ($oy + $oh)) -and ($oy -lt ($y + $hh)))) {
+        $hasLeft = $true
+      }
+    }
+    if (-not $hasLeft) {
+      $edgeCands += $w
+    }
   }
+  if ($edgeCands.Count -eq 0) {
+    $rects = (@($edgeElig | ForEach-Object { "$($_.hwnd)=$($_.visible -join ',')" }) -join " ")
+    Fail-Shortcut "edge-noop-left no left-edge candidate in layout: $rects"
+  }
+  $edgePick = @($edgeCands | Sort-Object { [int]$_.visible[0] } | Select-Object -First 1)[0]
+  $edgeSrc = @($h1, $h2, $h3) | Where-Object { [uint64]$_.hwnd -eq [uint64]$edgePick.hwnd } | Select-Object -First 1
+  if ($null -eq $edgeSrc) {
+    Fail-Shortcut "edge-noop-left picked $($edgePick.hwnd) left the frozen set"
+  }
+  $edgeSnap = Invoke-Native $helperCopy @("inspect", "$($edgeSrc.hwnd)") | ConvertFrom-Json
+  $activated = Invoke-OwnedFocusEnsure $edgeSnap $edgeSrc $helperCopy "edge-source"
+  $activateAccepted += [int]$activated.prime_inserted
+  Rec-Shortcut "activate-edge-source" $activated
   $edgeMark = (Get-CompleteLinesLocal $logPath).Count
-  $single = Wait-ConvergedFrames $ownerCopy $allowPath @($h1.hwnd) $logPath $edgeMark 20 "edge-single"
-  Rec-Shortcut "edge-single" @{ tick = $single.tick; desired = $single.desired }
-  $fgNow = [uint64](Invoke-Native $ownerCopy @("inspect", "--allowlist", $allowPath) | ConvertFrom-Json).foreground
-  if ($fgNow -ne [uint64]$h1.hwnd) {
+  $edgeConv = Wait-ConvergedFrames $ownerCopy $allowPath @($h1.hwnd, $h2.hwnd, $h3.hwnd) $logPath $edgeMark 20 "edge-base"
+  Rec-Shortcut "edge-base" @{ tick = $edgeConv.tick; desired = $edgeConv.desired; edge_hwnd = "$($edgeSrc.hwnd)"; edge_rect = ($edgePick.visible -join ",") }
+  $fgNow = [uint64](Invoke-Native $ownerCopy @("inspect", "--allowlist", $AllowPath) | ConvertFrom-Json).foreground
+  if ($fgNow -ne [uint64]$edgeSrc.hwnd) {
     Fail-Shortcut "edge source lost foreground"
   }
   $preFrames = (Get-InspectFrames $ownerCopy $allowPath).frames
   $sendMark = (Get-CompleteLinesLocal $logPath).Count
-  $sent = Send-MarkedChord $VK_LEFT $false $false ([uint64]$h1.hwnd) 0 $false
+  $sent = Send-MarkedChord ([int]$edgeRow.vk) ([bool]$edgeRow.shift) ([bool]$edgeRow.ctrl) ([uint64]$edgeSrc.hwnd) 0 $false
   $sentAccepted += [int]$sent.accepted
   Rec-Shortcut "send-edge-noop-left" $sent
   $ev = Wait-SnapAfter $logPath $sendMark "focus" "left" 20 "edge-noop-left"
@@ -1520,29 +1577,20 @@ function Invoke-OwnedFocusMoveLive($Ctx, [switch]$SkipFocus) {
   }
   $post = Get-InspectFrames $ownerCopy $allowPath
   Assert-FramesEqual $preFrames $post.frames "edge-noop-geometry"
-  if ([uint64]$post.inspect.foreground -ne [uint64]$h1.hwnd) {
+  if ([uint64]$post.inspect.foreground -ne [uint64]$edgeSrc.hwnd) {
     Fail-Shortcut "edge noop moved foreground"
   }
-  Rec-Shortcut "journey-edge-noop-left" @{ outcome = "$($ev.outcome)"; foreground = "$($post.inspect.foreground)" }
-  $rst2 = Invoke-Native $helperCopy @("restore", "$($h2.hwnd)", "--tag", "$($h2.tag)") | ConvertFrom-Json
-  if ([uint64]$rst2.foreground -eq [uint64]$h2.hwnd) {
-    Fail-Shortcut "restore focused helper2"
-  }
-  $rst3 = Invoke-Native $helperCopy @("restore", "$($h3.hwnd)", "--tag", "$($h3.tag)") | ConvertFrom-Json
-  if ([uint64]$rst3.foreground -eq [uint64]$h3.hwnd) {
-    Fail-Shortcut "restore focused helper3"
-  }
-  $backMark = (Get-CompleteLinesLocal $logPath).Count
-  $backConv = Wait-ConvergedFrames $ownerCopy $allowPath @($h1.hwnd, $h2.hwnd, $h3.hwnd) $logPath $backMark 20 "edge-restore"
-  Rec-Shortcut "edge-restored" @{ tick = $backConv.tick }
+  $postSnap = Invoke-Native $helperCopy @("inspect", "$($edgeSrc.hwnd)") | ConvertFrom-Json
+  Assert-FullIdentityMatches $postSnap $edgeSrc "edge-noop-target"
+  Rec-Shortcut "journey-edge-noop-left" @{ outcome = "$($ev.outcome)"; foreground = "$($post.inspect.foreground)"; edge_hwnd = "$($edgeSrc.hwnd)" }
   # Pass-through: Win+Ctrl+H is OS-harmless (no binding) and classifier-clean
   # (extra modifier forces untracked). Foreground is a frozen helper first,
   # then the out-of-allowlist background helper. Bound input only.
   $preFrames = (Get-InspectFrames $ownerCopy $allowPath).frames
   $passSnap = Invoke-Native $helperCopy @("inspect", "$($h1.hwnd)") | ConvertFrom-Json
-  $clicked = Invoke-GuardedHelperClick $passSnap $h1 $helperCopy "passthrough-target"
-  $clickAccepted += [int]$clicked.accepted
-  Rec-Shortcut "click-passthrough-extra-modifier" $clicked
+  $activated = Invoke-OwnedFocusEnsure $passSnap $h1 $helperCopy "passthrough-target"
+  $activateAccepted += [int]$activated.prime_inserted
+  Rec-Shortcut "activate-passthrough-extra-modifier" $activated
   $sendMark = (Get-CompleteLinesLocal $logPath).Count
   $sent = Send-MarkedChord $VK_H $false $true ([uint64]$h1.hwnd) 0 $false
   $sentAccepted += [int]$sent.accepted
@@ -1601,11 +1649,12 @@ function Invoke-OwnedFocusMoveLive($Ctx, [switch]$SkipFocus) {
   $gateChanged = ("$($gatePre.left),$($gatePre.top),$($gatePre.right),$($gatePre.bottom)" -cne "$($gatePost.left),$($gatePost.top),$($gatePost.right),$($gatePost.bottom)")
   Rec-Shortcut "journey-passthrough-background-plain" @{ outcome = "passed"; foreground = "$fgGate"; native_effect = $gateChanged; note = "no geometry oracle; SPI prevention may suppress native snap; residue closed at cleanup" }
   $parkSnap = Invoke-Native $helperCopy @("inspect", "$($h1.hwnd)") | ConvertFrom-Json
-  $parked = Invoke-GuardedHelperClick $parkSnap $h1 $helperCopy "background-gate-park"
-  $clickAccepted += [int]$parked.accepted
-  Rec-Shortcut "click-background-gate-park" $parked
+  $parked = Invoke-OwnedFocusEnsure $parkSnap $h1 $helperCopy "background-gate-park"
+  $activateAccepted += [int]$parked.prime_inserted
+  Rec-Shortcut "activate-background-gate-park" $parked
   Rec-Shortcut "sendinput-accepted-total" @{ accepted = $sentAccepted; note = "accepted counts only; effects asserted from owner logs plus inspect readback" }
   Rec-Shortcut "click-accepted-total" @{ accepted = $clickAccepted; unmarked = $true; note = "guarded title-bar mouse clicks only; no click on occluded/foreign target" }
+  Rec-Shortcut "activate-accepted-total" @{ accepted = $activateAccepted; note = "non-click owned-helper focus ensures; prime_inserted counts E8 attach primes only (raise path sends zero input)" }
   # Mask evidence: at least one clean pair stamped inserted==2.
   $tailAll = Get-LogEventsAfter $logPath 0
   $masks = @($tailAll.events | Where-Object { $_.event -eq "snap-mask" })
@@ -1628,9 +1677,9 @@ function Invoke-OwnedFocusMoveLive($Ctx, [switch]$SkipFocus) {
     Fail-Shortcut "owner still ready after stop"
   }
   $relSnap = Invoke-Native $helperCopy @("inspect", "$($h1.hwnd)") | ConvertFrom-Json
-  $clicked = Invoke-GuardedHelperClick $relSnap $h1 $helperCopy "release-target"
-  $clickAccepted += [int]$clicked.accepted
-  Rec-Shortcut "click-release-target" $clicked
+  $activated = Invoke-OwnedFocusEnsure $relSnap $h1 $helperCopy "release-target"
+  $activateAccepted += [int]$activated.prime_inserted
+  Rec-Shortcut "activate-release-target" $activated
   $relPre = @("$($relSnap.left),$($relSnap.top),$($relSnap.right),$($relSnap.bottom)")
   $relSent = Send-MarkedChord $VK_LEFT $false $false ([uint64]$h1.hwnd) 0 $true
   Rec-Shortcut "release-tap" @{ accepted = $relSent.accepted; unmarked = $true }
@@ -1664,9 +1713,9 @@ function Invoke-OwnedFocusMoveLive($Ctx, [switch]$SkipFocus) {
   # EnumWindows alone and physical-key acceptance is never claimed.
   $laySnap = Invoke-Native $helperCopy @("inspect", "$($h1.hwnd)") | ConvertFrom-Json
   Assert-FullIdentityMatches $laySnap $h1 "layouts-prefocus"
-  $layClicked = Invoke-GuardedHelperClick $laySnap $h1 $helperCopy "layouts-target"
-  $clickAccepted += [int]$layClicked.accepted
-  Rec-Shortcut "click-layouts-target" $layClicked
+  $layActivated = Invoke-OwnedFocusEnsure $laySnap $h1 $helperCopy "layouts-target"
+  $activateAccepted += [int]$layActivated.prime_inserted
+  Rec-Shortcut "activate-layouts-target" $layActivated
   $maxX = [int]$laySnap.right - 20
   $maxY = [int]$laySnap.top + 12
   $maxAnc = [ShortcutProofNative]::WindowAncestorAt($maxX, $maxY)
@@ -1796,7 +1845,7 @@ function Invoke-SpiCrashLive($Ctx) {
   $mark = (Get-CompleteLinesLocal $logPath).Count
   $conv = Wait-ConvergedFrames $ownerCopy $allowPath @($snap.hwnd) $logPath $mark 20 "spicrash-adopt"
   Rec-Shortcut "spicrash-adopted" @{ tick = $conv.tick }
-  # Pre-crash proof: live still ours (FALSE) plus ledger v2 owned preimage.
+  # Pre-crash proof: live still ours (FALSE) plus ledger v4 owned preimage.
   $midLive = Read-SpiArranging
   if ($preLive -and ($midLive -ne $false)) {
     Fail-Shortcut "SPI effect not active before crash"
@@ -2195,7 +2244,11 @@ function Invoke-NormalSmokeLive($Ctx) {
   Rec-Shortcut "normal-preflight" @{ arranging = $preSpi; pen = $prePen }
   $np = Get-ExistingNotepadSnapshot "normal-pre"
   Rec-Shortcut "normal-notepad-pre" $np
-  Start-ExplorerGui $ownerCopy "tile --user-start --seconds 20 --trace" $binDir
+  # Explicit test scope on every normal tile launch (product default manages
+  # everything including Terminal): Notepad + Calculator host + Paint, with
+  # the Calculator host-child fence. Never unscoped.
+  $normalScopeArgs = " --scope-exe notepad.exe --scope-exe ApplicationFrameHost.exe --scope-exe mspaint.exe --scope-host-child ApplicationFrameHost.exe=CalculatorApp.exe"
+  Start-ExplorerGui $ownerCopy "tile --user-start --seconds 20 --trace$normalScopeArgs" $binDir
   $ready = Assert-OwnerReady $ownerCopy "normal-smoke"
   $Ctx.ownerFrozen = $ready.owner
   $Ctx.ownerRunning = $true
@@ -2213,10 +2266,13 @@ function Invoke-NormalSmokeLive($Ctx) {
     Fail-Shortcut "normal tile-start missing"
   }
   Assert-TileStartMode $start "normal" $true $false "normal-smoke"
+  if ([int]$start.scope_count -ne 3) {
+    Fail-Shortcut "normal-smoke scope_count $($start.scope_count) != 3 (explicit test scope required)"
+  }
   if ([bool]$start.mouse_snap_prevention -ne $true) {
     Fail-Shortcut "normal-smoke prevention not default-on"
   }
-  Rec-Shortcut "normal-tile-start" @{ mode = "$($start.mode)"; takeover = $start.keyboard.takeover; prevention = $start.mouse_snap_prevention; ticks = $ticks }
+  Rec-Shortcut "normal-tile-start" @{ mode = "$($start.mode)"; takeover = $start.keyboard.takeover; prevention = $start.mouse_snap_prevention; ticks = $ticks; scope_count = $start.scope_count }
   $ledgerText = Get-Content -LiteralPath (Join-Path $ledgerDir "ledger.json") -Raw | ConvertFrom-Json
   Assert-SpiPreimageOwned $ledgerText "normal-preimage"
   $midLive = Read-SpiArranging
@@ -2238,7 +2294,7 @@ function Invoke-NormalSmokeLive($Ctx) {
   }
   Rec-Shortcut "normal-default-on" @{ pre = $preSpi; post = $postLive; stop = $stopped.stop.owner_exited }
   Assert-NotepadIntact $np "normal-mid"
-  Start-ExplorerGui $ownerCopy "tile --user-start --seconds 20 --trace --no-keyboard-snap-takeover --no-mouse-snap-prevention" $binDir
+  Start-ExplorerGui $ownerCopy "tile --user-start --seconds 20 --trace --no-keyboard-snap-takeover --no-mouse-snap-prevention$normalScopeArgs" $binDir
   $ready2 = Assert-OwnerReady $ownerCopy "normal-off"
   $Ctx.ownerFrozen = $ready2.owner
   $Ctx.ownerRunning = $true
@@ -2255,12 +2311,15 @@ function Invoke-NormalSmokeLive($Ctx) {
     Fail-Shortcut "normal-off tile-start missing"
   }
   Assert-TileStartMode $start2 "normal" $false $false "normal-off"
+  if ([int]$start2.scope_count -ne 3) {
+    Fail-Shortcut "normal-off scope_count $($start2.scope_count) != 3 (explicit test scope required)"
+  }
   if ([bool]$start2.mouse_snap_prevention -ne $false) {
     Fail-Shortcut "normal-off prevention not off"
   }
   $ledger2 = Get-Content -LiteralPath (Join-Path $ledgerDir "ledger.json") -Raw | ConvertFrom-Json
-  if ([int]$ledger2.v -ne 2) {
-    Fail-Shortcut "normal-off ledger v$($ledger2.v) != v2"
+  if ([int]$ledger2.v -ne 4) {
+    Fail-Shortcut "normal-off ledger v$($ledger2.v) != v4"
   }
   if ($null -ne $ledger2.mouse_snap) {
     Fail-Shortcut "normal-off ledger mouse_snap present"

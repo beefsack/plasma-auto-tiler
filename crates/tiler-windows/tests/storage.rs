@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use tiler_windows::model::{
     LEDGER_SCHEMA_VERSION, ProcessIdentity, RecoveryLedger, WindowClaimKind, WindowIdentity,
 };
-use tiler_windows::storage::{LedgerStore, StorageError};
+use tiler_windows::storage::{LedgerStore, PublishError, StorageError, publish_no_overwrite};
 
 static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -54,6 +54,7 @@ fn window(hwnd: u64, tag: &str) -> WindowIdentity {
         },
         tag: tag.to_owned(),
         kind: WindowClaimKind::Helper,
+        show: tiler_windows::model::WindowShowState::default(),
     }
 }
 
@@ -132,4 +133,83 @@ fn lock_contention() {
     assert!(matches!(err, StorageError::LockContended));
     drop(first);
     LedgerStore::open(&temp.path).expect("reopen");
+}
+
+fn dir_entries(dir: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .expect("read dir")
+        .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn publish_second_writer_pending_keeps_first_bytes() {
+    let temp = Temp::new("publish-pending");
+    let first = b"{\"v\":1,\"index\":2}".to_vec();
+    publish_no_overwrite(&temp.path, "workspace.request", &first, "a-1").expect("first publish");
+    assert_eq!(
+        std::fs::read(temp.path.join("workspace.request")).expect("bytes"),
+        first
+    );
+    let second = b"{\"v\":1,\"index\":1}".to_vec();
+    assert!(matches!(
+        publish_no_overwrite(&temp.path, "workspace.request", &second, "b-2").expect_err("pending"),
+        PublishError::Pending
+    ));
+    // Existing final untouched, caller temp cleaned: only the final remains.
+    assert_eq!(
+        std::fs::read(temp.path.join("workspace.request")).expect("bytes"),
+        first
+    );
+    assert_eq!(
+        dir_entries(&temp.path),
+        vec!["workspace.request".to_owned()]
+    );
+}
+
+#[test]
+fn publish_concurrent_single_winner_full_body() {
+    let temp = Temp::new("publish-race");
+    let bodies: Vec<Vec<u8>> = (0..8u8)
+        .map(|i| {
+            let mut body = format!("{{\"v\":1,\"index\":{},\"pad\":\"", i % 3).into_bytes();
+            body.extend(std::iter::repeat_n(i + 0x41, 65536));
+            body.extend(b"\"}".iter());
+            body
+        })
+        .collect();
+    let dir = &temp.path;
+    let results: Vec<_> = std::thread::scope(|scope| {
+        bodies
+            .iter()
+            .enumerate()
+            .map(|(i, body)| {
+                scope.spawn(move || {
+                    publish_no_overwrite(dir, "workspace.request", body, &format!("t-{i}"))
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|h| h.join().expect("thread"))
+            .collect()
+    });
+    let wins = results.iter().filter(|r| r.is_ok()).count();
+    let pending = results
+        .iter()
+        .filter(|r| matches!(r, Err(PublishError::Pending)))
+        .count();
+    assert_eq!(wins, 1, "exactly one publisher wins");
+    assert_eq!(pending, results.len() - 1, "losers refuse as pending");
+    // Final is byte-for-byte one complete body: never partial, never mixed.
+    let final_bytes = std::fs::read(temp.path.join("workspace.request")).expect("bytes");
+    assert!(
+        bodies.iter().any(|b| b == &final_bytes),
+        "final must equal one full published body"
+    );
+    assert_eq!(
+        dir_entries(&temp.path),
+        vec!["workspace.request".to_owned()]
+    );
 }

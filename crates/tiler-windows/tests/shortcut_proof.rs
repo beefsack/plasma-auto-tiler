@@ -2,8 +2,8 @@ use tiler_windows::snapkey::{
     KeyboardConfig, SHORTCUT_PROOF_MARKER, SnapClassify, VK_LWIN, accept_proof_injected,
 };
 use tiler_windows::tiling::{
-    parse_shortcut_proof_args, parse_tile_args, parse_tile_proof_args,
-    verify_shortcut_proof_argv_consistency,
+    parse_shortcut_proof_args, parse_tile_args, parse_tile_proof_args, parse_workspace_proof_args,
+    verify_shortcut_proof_argv_consistency, verify_workspace_proof_argv_consistency,
 };
 
 fn strings(args: &[&str]) -> Vec<String> {
@@ -149,6 +149,44 @@ fn unshifted_win_l_stays_gated_without_live_lock() {
     machine.push(VK_LWIN, false, true, false);
     assert_eq!(machine.push(0x4C, false, true, false), None);
     assert_eq!(machine.push(0x4C, true, true, false), None);
+}
+
+#[test]
+fn workspace_proof_requires_allowlist_never_normal() {
+    // Separate command from shortcut-proof: same shape, own argv contract,
+    // never a silent normal run and never widened product input acceptance.
+    assert!(parse_workspace_proof_args(&strings(&[])).is_err());
+    assert!(parse_workspace_proof_args(&strings(&["--trace"])).is_err());
+    assert!(
+        parse_workspace_proof_args(&strings(&["--allowlist", "a.json", "--allow-win-l"])).is_err()
+    );
+    assert!(
+        parse_workspace_proof_args(&strings(&["--allowlist", "a.json", "--user-start"])).is_err()
+    );
+    let ok = parse_workspace_proof_args(&strings(&[
+        "--allowlist",
+        "a.json",
+        "--seconds",
+        "60",
+        "--trace",
+        "--no-mouse-snap-prevention",
+    ]))
+    .expect("parsed");
+    assert_eq!(ok.allowlist.to_str().expect("path"), "a.json");
+    assert_eq!(ok.seconds, Some(60));
+    assert!(ok.trace && ok.no_mouse_snap_prevention);
+    let raw = strings(&[
+        "--allowlist",
+        "a.json",
+        "--seconds",
+        "60",
+        "--trace",
+        "--no-mouse-snap-prevention",
+    ]);
+    assert!(verify_workspace_proof_argv_consistency(&raw, &ok).is_ok());
+    assert!(
+        verify_workspace_proof_argv_consistency(&strings(&["--allowlist", "b.json"]), &ok).is_err()
+    );
 }
 
 #[test]

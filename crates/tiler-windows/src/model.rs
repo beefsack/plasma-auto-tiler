@@ -1,11 +1,20 @@
 use serde::{Deserialize, Serialize};
 
-pub const LEDGER_SCHEMA_VERSION: u32 = 3;
+pub const LEDGER_SCHEMA_VERSION: u32 = 4;
 
 /// Project-specific window-lifetime property backing product (ordinary-app)
 /// hide claims. Distinct from the helper `PlasmaAutoTilerLifetime` property so
 /// helper-only gates never mistake a product nonce for helper ownership.
 pub const PRODUCT_CLAIM_PROP: &str = "PlasmaAutoTilerProductClaim";
+
+/// Project-specific window-lifetime property backing visible workspace
+/// membership. Stamped once at admission with a random tag (never trusted
+/// across runs, never removed: the property dies with the window). A
+/// same-process HWND reuse starts without it, so the stored tag fails closed
+/// exactly where HWND/PID/creation all still agree. Distinct from
+/// [`PRODUCT_CLAIM_PROP`] (hidden claims) and the helper lifetime property so
+/// the three domains never mistake each other's tags.
+pub const MEMBER_TAG_PROP: &str = "PlasmaAutoTilerMember";
 
 /// Ownership domain of one hidden-window claim. Helper claims use the owned
 /// test-window lifetime property and helper-only gates; product claims use the
@@ -41,6 +50,51 @@ pub struct WindowIdentity {
     pub tag: String,
     #[serde(default = "default_claim_kind")]
     pub kind: WindowClaimKind,
+    /// Native show-state preimage captured fresh before hide (no geometry):
+    /// whether the window was iconic (minimized) and whether it was
+    /// maximized. Missing on ledgers written before show-state capture means
+    /// a normal restore. Drives the nonactivating reveal choice so retained
+    /// minimized/maximized members return to their pre-hide state even when
+    /// only the durable ledger (watcher, standalone restore, graceful
+    /// teardown) is available.
+    #[serde(default)]
+    pub show: WindowShowState,
+}
+
+/// Minimal show-state preimage for one product claim: iconic and maximized at
+/// hide time. No geometry, no placement, no style bits.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowShowState {
+    #[serde(default)]
+    pub minimized: bool,
+    #[serde(default)]
+    pub maximized: bool,
+}
+
+/// Closed reveal vocabulary for one show-state preimage. Minimized takes
+/// precedence: a preimage claiming both (corrupt or raced) still restores
+/// minimized rather than unminimizing. Maximized and normal both reveal with
+/// the nonactivating show that preserves native placement; only minimized
+/// needs its own command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductShowRestore {
+    ShowNormal,
+    ShowMinimized,
+    ShowMaximized,
+}
+
+/// Decide the reveal of one show-state preimage. Identity fencing and drift
+/// handling (already-visible, retired) stay with the caller; this maps only
+/// the durable pre-hide state to its restore intent.
+#[must_use]
+pub const fn product_show_restore(show: WindowShowState) -> ProductShowRestore {
+    if show.minimized {
+        ProductShowRestore::ShowMinimized
+    } else if show.maximized {
+        ProductShowRestore::ShowMaximized
+    } else {
+        ProductShowRestore::ShowNormal
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,10 +125,12 @@ pub struct RecoveryLedger {
     pub owner: ProcessIdentity,
     pub windows: Vec<WindowIdentity>,
     /// Optional so ledgers written before mouse-Snap prevention still parse
-    /// (missing means no Snap work). Writes use schema v3; older v1/v2-only
-    /// readers refuse v3 outright, so they can never silently ignore the field
+    /// (missing means no Snap work). Writes use schema v4; older v1/v2/v3-only
+    /// readers refuse v4 outright, so they can never silently ignore the field
     /// or a product claim, restore windows, and delete the ledger while
-    /// leaving the setting off.
+    /// leaving the setting off. The same version gate protects the v4
+    /// show-state preimage: a v3-only reader refuses v4 instead of ignoring
+    /// the preimage and unminimizing retained windows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mouse_snap: Option<MouseSnapPreimage>,
 }
@@ -188,6 +244,13 @@ pub fn validate_ledger(ledger: &RecoveryLedger) -> Result<(), LedgerError> {
             {
                 return Err(LedgerError::UnsupportedVersion);
             }
+            if ledger
+                .windows
+                .iter()
+                .any(|w| w.show != WindowShowState::default())
+            {
+                return Err(LedgerError::UnsupportedVersion);
+            }
         }
         // v2 helper-only writes. A v2 tag carrying a product claim is version
         // confusion and must not parse as helper evidence.
@@ -199,11 +262,24 @@ pub fn validate_ledger(ledger: &RecoveryLedger) -> Result<(), LedgerError> {
             {
                 return Err(LedgerError::UnsupportedVersion);
             }
+            if ledger
+                .windows
+                .iter()
+                .any(|w| w.show != WindowShowState::default())
+            {
+                return Err(LedgerError::UnsupportedVersion);
+            }
         }
-        // Current writes: helper and product claims. Older v1/v2-only readers
-        // refuse v3 outright via the version gate, so they can never silently
-        // ignore a product claim and delete the ledger.
+        // Previous product writes without a show-state preimage: missing
+        // `show` parses as a normal restore. Older v1/v2-only readers refuse
+        // v3 outright via the version gate, so they can never silently ignore
+        // a product claim and delete the ledger.
         3 => {}
+        // Current writes: helper and product claims plus the show-state
+        // preimage. Older v3-only readers refuse v4 outright via the version
+        // gate, so they can never silently ignore the preimage, restore
+        // retained windows unminimized, and delete the ledger.
+        4 => {}
         _ => return Err(LedgerError::UnsupportedVersion),
     }
     for window in &ledger.windows {
@@ -212,10 +288,10 @@ pub fn validate_ledger(ledger: &RecoveryLedger) -> Result<(), LedgerError> {
         {
             return Err(LedgerError::OwnerWindowMismatch);
         }
-        // v3 binds the window-lifetime nonce: a product tag must be a nonzero
+        // v3/v4 binds the window-lifetime nonce: a product tag must be a nonzero
         // 16-digit lowercase hex token, otherwise it cannot distinguish
         // same-process HWND reuse and must never commit.
-        if ledger.v == 3 {
+        if ledger.v == 3 || ledger.v == 4 {
             if window.kind == WindowClaimKind::Product {
                 if !valid_claim_tag(&window.tag) {
                     return Err(LedgerError::Malformed);

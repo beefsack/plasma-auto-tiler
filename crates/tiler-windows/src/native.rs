@@ -2,7 +2,7 @@ use crate::model::ProcessIdentity;
 use std::os::windows::ffi::OsStringExt;
 use std::path::PathBuf;
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE, LocalFree, WAIT_FAILED, WAIT_OBJECT_0,
+    CloseHandle, GetLastError, HANDLE, LocalFree, WAIT_FAILED, WAIT_OBJECT_0,
 };
 use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
 use windows_sys::Win32::Security::{
@@ -10,9 +10,6 @@ use windows_sys::Win32::Security::{
     TOKEN_QUERY, TOKEN_USER, TokenIntegrityLevel, TokenUser,
 };
 use windows_sys::Win32::System::Com::CoTaskMemFree;
-use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
-};
 use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows_sys::Win32::System::Threading::{
     GetCurrentProcess, GetCurrentProcessId, GetProcessTimes, OpenProcess, OpenProcessToken,
@@ -333,67 +330,4 @@ impl HeldProcess {
 
 pub fn current_exe_path() -> Result<String, IdentityError> {
     image_path(unsafe { GetCurrentProcess() })
-}
-
-fn entry_exe(entry: &PROCESSENTRY32W) -> String {
-    let raw = &entry.szExeFile;
-    let len = raw.iter().position(|c| *c == 0).unwrap_or(raw.len());
-    String::from_utf16_lossy(&raw[..len])
-}
-
-fn is_terminal_base(name: &str) -> bool {
-    let base = name.rsplit(['\\', '/']).next().unwrap_or(name);
-    base.eq_ignore_ascii_case("WindowsTerminal.exe")
-        || base.eq_ignore_ascii_case("WindowsTerminalPreview.exe")
-}
-
-/// True when pid or any ancestor exe is a Windows Terminal host.
-/// Absent parents end the walk; cycles or snapshot failure are unknown.
-pub fn has_terminal_ancestor(pid: u32) -> Result<bool, IdentityError> {
-    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
-    if snapshot == INVALID_HANDLE_VALUE {
-        let code = last_error();
-        if code == 5 {
-            return Err(IdentityError::AccessDenied);
-        }
-        return Err(IdentityError::Win32(code));
-    }
-    let snapshot = Handle(snapshot);
-    let mut map: std::collections::HashMap<u32, (u32, String)> = std::collections::HashMap::new();
-    let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
-    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
-    let mut ok = unsafe { Process32FirstW(snapshot.get(), &mut entry) };
-    if ok == 0 {
-        return Err(IdentityError::Win32(last_error()));
-    }
-    loop {
-        map.insert(
-            entry.th32ProcessID,
-            (entry.th32ParentProcessID, entry_exe(&entry)),
-        );
-        ok = unsafe { Process32NextW(snapshot.get(), &mut entry) };
-        if ok == 0 {
-            break;
-        }
-    }
-    let mut current = pid;
-    let mut visited = std::collections::HashSet::new();
-    loop {
-        if !visited.insert(current) {
-            return Err(IdentityError::Win32(87));
-        }
-        let Some((parent, exe)) = map.get(&current) else {
-            if current == pid {
-                return Err(IdentityError::Absent);
-            }
-            return Ok(false);
-        };
-        if is_terminal_base(exe) {
-            return Ok(true);
-        }
-        if *parent == 0 || *parent == current {
-            return Ok(false);
-        }
-        current = *parent;
-    }
 }

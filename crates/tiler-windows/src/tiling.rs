@@ -101,6 +101,20 @@ impl TokenMap {
         token
     }
 
+    /// Mint a fresh token for an already-known `(HWND, creation)` pair after
+    /// a same-process HWND reuse repair: the new window generation must never
+    /// inherit the previous generation's Engine identity, layout slot, or
+    /// focus. The caller patches the current tick's rows to the returned
+    /// token; later ticks mint it back stably via [`TokenMap::token_for`].
+    #[must_use]
+    pub fn reissue(&mut self, hwnd: u64, process_creation: &str) -> String {
+        self.next += 1;
+        let token = format!("w{}", self.next);
+        self.by_window
+            .insert((hwnd, process_creation.to_owned()), token.clone());
+        token
+    }
+
     /// Forget entries for windows no longer enumerated so the map stays
     /// bounded. Identity is `(hwnd, creation)` pairs, never HWND alone.
     pub fn retain(&mut self, live: &[ObservedTargetRef<'_>]) {
@@ -151,7 +165,6 @@ pub struct WindowFacts {
     pub tool_window: bool,
     pub owned: bool,
     pub captionless_fullscreen: bool,
-    pub terminal_ancestor: bool,
     pub no_activate: bool,
     /// Generic Win32 dialog class (`#32770`) without an owner window.
     /// Owned dialogs are reported as `OwnedDialog` instead.
@@ -172,7 +185,6 @@ pub enum SkipReason {
     /// Unowned generic dialog (`#32770`): never a tile target.
     Dialog,
     Fullscreen,
-    Terminal,
     NoActivate,
     Unreadable,
     /// Frozen-allowlist identity stopped matching (vanished HWND, recycled
@@ -195,7 +207,6 @@ impl SkipReason {
             Self::OwnedDialog => "owned-dialog",
             Self::Dialog => "dialog",
             Self::Fullscreen => "fullscreen",
-            Self::Terminal => "terminal",
             Self::NoActivate => "no-activate",
             Self::Unreadable => "unreadable",
             Self::IdentityChanged => "identity-changed",
@@ -203,11 +214,11 @@ impl SkipReason {
     }
 }
 
-/// Eligibility gate. Normal user tiling includes Terminal targets; test mode
-/// always excludes the Terminal tree. Dimensions alone never classify
+/// Eligibility gate. Terminal windows are ordinary tile targets (KDE
+/// parity): no ancestry Schrödinger here. Dimensions alone never classify
 /// fullscreen: `captionless_fullscreen` requires a captionless style covering
 /// the monitor.
-pub fn classify(facts: &WindowFacts, test_mode: bool) -> Result<(), SkipReason> {
+pub fn classify(facts: &WindowFacts) -> Result<(), SkipReason> {
     if !facts.visible {
         return Err(SkipReason::Hidden);
     }
@@ -241,9 +252,6 @@ pub fn classify(facts: &WindowFacts, test_mode: bool) -> Result<(), SkipReason> 
     if facts.no_activate {
         return Err(SkipReason::NoActivate);
     }
-    if test_mode && facts.terminal_ancestor {
-        return Err(SkipReason::Terminal);
-    }
     Ok(())
 }
 
@@ -255,7 +263,7 @@ pub fn classify(facts: &WindowFacts, test_mode: bool) -> Result<(), SkipReason> 
 /// non-matching identity is a true unknown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatelessVerdict {
-    /// Terminal for this pass: report identity state with this skip and
+    /// Verdict for this pass: report identity state with this skip and
     /// perform no geometry read and no actuation.
     Report {
         identity_match: bool,
@@ -312,7 +320,6 @@ pub struct ObservedTarget {
     pub exe_path: String,
     pub user_sid: String,
     pub session_id: u32,
-    pub terminal_ancestor: bool,
     pub tag: String,
 }
 
@@ -684,6 +691,56 @@ pub struct ReconcileInput<'a> {
     pub focused: Option<&'a WindowId>,
 }
 
+/// Build a `Reconcile` event for one explicit `(output, workspace)` domain.
+/// Rectangles are the current visible observations plus hidden snapshots for
+/// that domain; `revision` is the last Engine-accepted revision for it.
+/// Hidden Engine membership is preserved by inclusion: a retained member that
+/// is invisible, minimized, maximized, or fullscreen rides its last-known
+/// rectangle instead of vanishing from the observation.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn build_reconcile_event_for(
+    owner: &OwnerId,
+    generation: &GenerationId,
+    correlation: &CorrelationId,
+    revision: u64,
+    fingerprint: u64,
+    domain: &OutputDomain,
+    domain_key: &DomainKey,
+    outer_gap: i32,
+    windows: &[(WindowId, Rect)],
+    focused: Option<&WindowId>,
+) -> CoreEvent {
+    CoreEvent {
+        owner: owner.clone(),
+        generation: generation.clone(),
+        correlation: correlation.clone(),
+        revision,
+        fingerprint,
+        domain: domain.clone(),
+        domain_key: domain_key.clone(),
+        outer_gap,
+        focused_window: focused.cloned().unwrap_or(WindowId(String::new())),
+        windows: windows
+            .iter()
+            .map(|(window, rect)| EngineWindow {
+                window: window.clone(),
+                output: domain_key.output.clone(),
+                workspace: domain_key.workspace.clone(),
+                rect: *rect,
+                floating: false,
+                fit_excluded: false,
+                hints: tiler_core::size_hints::WindowSizeHints::none(),
+            })
+            .collect(),
+        directional: None,
+        directional_target_outer_gap: None,
+        target_domain: None,
+        target_windows: Vec::new(),
+        command: CoreCommand::Reconcile,
+    }
+}
+
 /// Build the single-domain `Reconcile` event for one tick. Rectangles are the
 /// current visible observations; `revision` is the last Engine-accepted
 /// revision for the domain.
@@ -778,10 +835,17 @@ pub fn parse_capture_args(args: &[String]) -> Result<CaptureOptions, String> {
 }
 
 /// CLI options for the normal `tile` command (user dogfood only).
-/// `seconds: None` runs until an exact-owner stop request. Normal tiling
-/// includes Terminal targets and requires explicit `--user-start`: agents
+/// `seconds: None` runs until an exact-owner stop request. Terminal windows
+/// are ordinary tile targets and require explicit `--user-start`: agents
 /// never run this path. `--allowlist` is refused here; proof uses
 /// `tile-proof` so lost arguments can never fall back to normal mode.
+///
+/// Optional repeatable `--scope-exe NAME` restricts management to the named
+/// executables (top-level exe basename, case-insensitive; `Calculator` means
+/// its `ApplicationFrameHost.exe` host). Empty (default) means no filter:
+/// every eligible window is managed. A scoped run fences observation,
+/// geometry writes, workspace hide/reveal membership, and focus actuation to
+/// the named exes; anything else is reported `scope-excluded` with no writes.
 ///
 /// Keyboard takeover defaults ON (Win+H/J/K/L and Win+arrows focus, Shift
 /// variants move, per the KDE catalog): `--no-keyboard-snap-takeover` turns it
@@ -802,19 +866,103 @@ pub struct TileOptions {
     pub no_keyboard_snap_takeover: bool,
     pub allow_win_l: bool,
     pub no_mouse_snap_prevention: bool,
+    pub scope_exes: Vec<String>,
+    /// Explicit host-to-child scope pairs (repeatable `--scope-host-child
+    /// HOST=CHILD`). Empty (default) means no child constraint. A listed host
+    /// passes observation and hide admission only while a live hosted child
+    /// matches, so a newly appearing hosted app can never ride another app's
+    /// host executable into management.
+    pub scope_hosts: Vec<ScopeHostChild>,
 }
 
-/// Parse `tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention]`.
+/// Basename of one exe path for scope matching: after the last `\` or `/`,
+/// lowercased. Empty input maps to empty.
+#[must_use]
+pub fn scope_exe_basename(exe_path: &str) -> String {
+    exe_path
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or(exe_path)
+        .to_ascii_lowercase()
+}
+
+/// True when `exe_path` passes the explicit scope filter. An empty scope
+/// allows everything (no default filter); a nonempty scope allows only the
+/// named basenames (case-insensitive, slash-insensitive).
+#[must_use]
+pub fn scope_allows(scope: &[String], exe_path: &str) -> bool {
+    if scope.is_empty() {
+        return true;
+    }
+    let base = scope_exe_basename(exe_path);
+    scope.iter().any(|entry| scope_exe_basename(entry) == base)
+}
+
+/// One explicit host-to-child scope pair: top-level windows of `host` pass
+/// only while at least one live hosted (different-process) child matches
+/// `child`. Stored raw; matching normalizes basenames. Empty pair list means
+/// no constraint; a top-level executable that names no pair is unconstrained.
+/// A listed host with zero matching hosted children fails closed (a bare
+/// host frame shows no app and manages nothing).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopeHostChild {
+    pub host: String,
+    pub child: String,
+}
+
+/// True when a top-level window passes the explicit hosted-child fence.
+/// `hosted` carries the live different-process child executable paths of the
+/// top-level window (unreadable children contribute nothing, never a match).
+#[must_use]
+pub fn hosted_child_allows(top_exe: &str, hosted: &[String], pairs: &[ScopeHostChild]) -> bool {
+    if pairs.is_empty() {
+        return true;
+    }
+    let top = scope_exe_basename(top_exe);
+    let mut constrained = false;
+    for pair in pairs {
+        if scope_exe_basename(&pair.host) != top {
+            continue;
+        }
+        constrained = true;
+        if hosted
+            .iter()
+            .any(|exe| scope_exe_basename(exe) == scope_exe_basename(&pair.child))
+        {
+            return true;
+        }
+    }
+    !constrained
+}
+
+/// Parse one `--scope-host-child HOST=CHILD` value into its normalized pair.
+/// Exactly one `=` with non-empty sides; anything else is a refusal.
+pub fn parse_scope_host_child(value: &str) -> Result<ScopeHostChild, String> {
+    let (host, child) = value
+        .split_once('=')
+        .ok_or_else(|| "refuse: --scope-host-child needs HOST=CHILD".to_owned())?;
+    let host = host.trim().to_owned();
+    let child = child.trim().to_owned();
+    if host.is_empty() || child.is_empty() || child.contains('=') {
+        return Err("refuse: --scope-host-child needs HOST=CHILD".to_owned());
+    }
+    Ok(ScopeHostChild { host, child })
+}
+
+/// Parse `tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention] [--scope-exe NAME ...] [--scope-host-child HOST=CHILD ...]`.
 /// Missing `--user-start` or any `--allowlist` is a refusal, never a silent
-/// normal run.
+/// normal run. An empty `--scope-exe` value is a refusal, never a wildcard.
+/// A malformed `--scope-host-child` value is a refusal, never a widened scope.
 pub fn parse_tile_args(args: &[String]) -> Result<TileOptions, String> {
-    let usage = "usage: tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention]";
+    let usage = "usage: tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention] [--scope-exe NAME ...] [--scope-host-child HOST=CHILD ...]";
     let mut seconds: Option<u64> = None;
     let mut trace = false;
     let mut user_start = false;
     let mut no_keyboard_snap_takeover = false;
     let mut allow_win_l = false;
     let mut no_mouse_snap_prevention = false;
+    let mut scope_exes: Vec<String> = Vec::new();
+    let mut scope_hosts: Vec<ScopeHostChild> = Vec::new();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -836,6 +984,33 @@ pub fn parse_tile_args(args: &[String]) -> Result<TileOptions, String> {
             }
             "--no-mouse-snap-prevention" => {
                 no_mouse_snap_prevention = true;
+                i += 1;
+            }
+            "--scope-exe" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                if value.trim().is_empty() {
+                    return Err("refuse: empty --scope-exe".to_owned());
+                }
+                let normalized = value.trim().to_owned();
+                if !scope_exes
+                    .iter()
+                    .any(|entry| scope_exe_basename(entry) == scope_exe_basename(&normalized))
+                {
+                    scope_exes.push(normalized);
+                }
+                i += 1;
+            }
+            "--scope-host-child" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                let pair = parse_scope_host_child(value.trim())?;
+                if !scope_hosts.iter().any(|entry| {
+                    scope_exe_basename(&entry.host) == scope_exe_basename(&pair.host)
+                        && scope_exe_basename(&entry.child) == scope_exe_basename(&pair.child)
+                }) {
+                    scope_hosts.push(pair);
+                }
                 i += 1;
             }
             "--seconds" => {
@@ -864,6 +1039,8 @@ pub fn parse_tile_args(args: &[String]) -> Result<TileOptions, String> {
         no_keyboard_snap_takeover,
         allow_win_l,
         no_mouse_snap_prevention,
+        scope_exes,
+        scope_hosts,
     })
 }
 
@@ -1234,6 +1411,138 @@ pub fn verify_proof_argv_consistency(
     Ok(())
 }
 
+/// CLI options for the proof-only `workspace-proof` command (owned helpers
+/// only, automated synthetic-input verification for workspace digits).
+/// Same frozen-allowlist geometry gate as `shortcut-proof` (never falls back
+/// to normal), but the owner additionally drives the workspace dispatcher
+/// (select/send/follow with hide/reveal) for exactly the allowlisted helpers:
+/// every hide verifies `verify_proof_owned` fresh before the write, and the
+/// hook accepts exactly [`crate::snapkey::SHORTCUT_PROOF_MARKER`].
+/// `shortcut-proof` never hides for workspace intents; `tile-proof` installs
+/// no hook at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceProofOptions {
+    pub seconds: Option<u64>,
+    pub trace: bool,
+    pub allowlist: PathBuf,
+    pub no_mouse_snap_prevention: bool,
+}
+
+/// Parse `workspace-proof --allowlist PATH [--seconds N] [--trace]
+/// [--no-mouse-snap-prevention]`. Any keyboard flag, `--user-start`, or
+/// unknown flag is a refusal, never a silent normal run.
+pub fn parse_workspace_proof_args(args: &[String]) -> Result<WorkspaceProofOptions, String> {
+    let usage = "usage: workspace-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]";
+    let mut seconds: Option<u64> = None;
+    let mut trace = false;
+    let mut allowlist: Option<PathBuf> = None;
+    let mut no_mouse_snap_prevention = false;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--trace" => {
+                trace = true;
+                i += 1;
+            }
+            "--no-mouse-snap-prevention" => {
+                no_mouse_snap_prevention = true;
+                i += 1;
+            }
+            "--seconds" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                let parsed: u64 = value.parse().map_err(|_| usage.to_owned())?;
+                if parsed == 0 || parsed > crate::lifecycle::MAX_RUN_SECONDS {
+                    return Err(format!(
+                        "refuse: seconds must be 1..={}",
+                        crate::lifecycle::MAX_RUN_SECONDS
+                    ));
+                }
+                seconds = Some(parsed);
+                i += 1;
+            }
+            "--allowlist" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                if value.trim().is_empty() {
+                    return Err("refuse: empty allowlist".to_owned());
+                }
+                allowlist = Some(PathBuf::from(value));
+                i += 1;
+            }
+            _ => return Err(usage.to_owned()),
+        }
+    }
+    let Some(allowlist) = allowlist else {
+        return Err("refuse: workspace-proof requires --allowlist".to_owned());
+    };
+    Ok(WorkspaceProofOptions {
+        seconds,
+        trace,
+        allowlist,
+        no_mouse_snap_prevention,
+    })
+}
+
+/// Verify the raw received argv against the parsed `workspace-proof` options.
+pub fn verify_workspace_proof_argv_consistency(
+    raw: &[String],
+    parsed: &WorkspaceProofOptions,
+) -> Result<(), String> {
+    let usage = "usage: workspace-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]";
+    let mut allowlist: Option<&str> = None;
+    let mut seconds: Option<&str> = None;
+    let mut trace = false;
+    let mut no_mouse = false;
+    let mut i = 0;
+    while i < raw.len() {
+        match raw[i].as_str() {
+            "--trace" => {
+                trace = true;
+                i += 1;
+            }
+            "--no-mouse-snap-prevention" => {
+                no_mouse = true;
+                i += 1;
+            }
+            "--seconds" => {
+                i += 1;
+                seconds = Some(raw.get(i).ok_or_else(|| usage.to_owned())?.as_str());
+                i += 1;
+            }
+            "--allowlist" => {
+                i += 1;
+                allowlist = Some(raw.get(i).ok_or_else(|| usage.to_owned())?.as_str());
+                i += 1;
+            }
+            _ => return Err(usage.to_owned()),
+        }
+    }
+    let Some(allowlist) = allowlist else {
+        return Err("refuse: workspace-proof requires --allowlist".to_owned());
+    };
+    if parsed.allowlist.as_path() != std::path::Path::new(allowlist) {
+        return Err("error: argv/parsed allowlist mismatch (impossible)".to_owned());
+    }
+    if parsed.trace != trace {
+        return Err("error: argv/parsed trace mismatch (impossible)".to_owned());
+    }
+    if parsed.no_mouse_snap_prevention != no_mouse {
+        return Err("error: argv/parsed mouse mismatch (impossible)".to_owned());
+    }
+    match (parsed.seconds, seconds) {
+        (None, None) => {}
+        (Some(want), Some(got)) => {
+            let got: u64 = got.parse().map_err(|_| usage.to_owned())?;
+            if want != got {
+                return Err("error: argv/parsed seconds mismatch (impossible)".to_owned());
+            }
+        }
+        _ => return Err("error: argv/parsed seconds mismatch (impossible)".to_owned()),
+    }
+    Ok(())
+}
+
 /// CLI options for the read-only `children` command: explicit top-level
 /// targets whose child windows are reported with verified process identity.
 /// Never reads titles.
@@ -1295,6 +1604,114 @@ pub fn parse_inspect_args(args: &[String]) -> Result<InspectOptions, String> {
         return Err(usage.to_owned());
     };
     Ok(InspectOptions { allowlist })
+}
+
+/// CLI options for the exact-owner `workspace --select INDEX` control
+/// (normal `tile` only): one digit index 0..=9. The CLI only queues a bounded
+/// single-pending request file; the owner loop validates the full owner
+/// binding and dispatches through the existing `workspace_do_select`
+/// resolver. No synthetic input, no keyboard acceptance, never a proof path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceSelectOptions {
+    pub index: u8,
+}
+
+/// Parse `workspace --select INDEX`. Exactly one `--select` with a digit
+/// 0..=9; anything else (including a missing value) is a refusal.
+pub fn parse_workspace_select_args(args: &[String]) -> Result<WorkspaceSelectOptions, String> {
+    let usage = "usage: workspace --select INDEX";
+    let mut index: Option<u8> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--select" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                if index.is_some() {
+                    return Err(usage.to_owned());
+                }
+                let parsed: u8 = value.parse().map_err(|_| usage.to_owned())?;
+                if parsed > 9 {
+                    return Err("refuse: select index must be 0..=9".to_owned());
+                }
+                index = Some(parsed);
+                i += 1;
+            }
+            _ => return Err(usage.to_owned()),
+        }
+    }
+    let Some(index) = index else {
+        return Err(usage.to_owned());
+    };
+    Ok(WorkspaceSelectOptions { index })
+}
+
+/// Verify the raw received argv against the parsed `workspace --select`
+/// options: exactly `--select INDEX` with matching value, no unknown flags.
+pub fn verify_workspace_select_argv_consistency(
+    raw: &[String],
+    parsed: &WorkspaceSelectOptions,
+) -> Result<(), String> {
+    let usage = "usage: workspace --select INDEX";
+    if raw.len() != 2 || raw[0] != "--select" {
+        return Err(usage.to_owned());
+    }
+    let got: u8 = raw[1].parse().map_err(|_| usage.to_owned())?;
+    if got != parsed.index {
+        return Err("error: argv/parsed select mismatch (impossible)".to_owned());
+    }
+    Ok(())
+}
+
+/// Versioned exact-owner workspace request body. `creation`/`pid`/`exe_path`/
+/// `user_sid`/`session_id` bind the exact ledger owner; `index` is the digit;
+/// `correlation` is a client-generated opaque token the owner echoes in its
+/// dispatch log. No titles, no geometry, no secrets.
+pub const WORKSPACE_REQUEST_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WorkspaceRequest {
+    pub v: u32,
+    pub creation: String,
+    pub pid: u32,
+    pub exe_path: String,
+    pub user_sid: String,
+    pub session_id: u32,
+    pub index: u8,
+    pub correlation: String,
+}
+
+/// Render one workspace request body. Bounds only; full owner equality stays
+/// with the owner-side check.
+pub fn render_workspace_request(request: &WorkspaceRequest) -> String {
+    serde_json::to_string(request).unwrap_or_default()
+}
+
+/// Parse and bound one workspace request body. Refuses malformed JSON,
+/// version drift, empty identity, out-of-range index, and invalid
+/// correlation tokens. Owner equality (exact creation/pid/exe/sid/session)
+/// stays with the caller, which holds the live owner identity.
+pub fn parse_workspace_request(json: &str) -> Result<WorkspaceRequest, String> {
+    let request: WorkspaceRequest =
+        serde_json::from_str(json).map_err(|_| "refuse: malformed workspace request".to_owned())?;
+    if request.v != WORKSPACE_REQUEST_VERSION {
+        return Err("refuse: workspace request version".to_owned());
+    }
+    if request.creation.is_empty()
+        || request.pid == 0
+        || request.exe_path.is_empty()
+        || request.user_sid.is_empty()
+        || request.correlation.is_empty()
+    {
+        return Err("refuse: malformed workspace request".to_owned());
+    }
+    if request.index > 9 {
+        return Err("refuse: select index must be 0..=9".to_owned());
+    }
+    if tiler_core::ids::CorrelationId::parse(&request.correlation).is_none() {
+        return Err("refuse: malformed workspace request".to_owned());
+    }
+    Ok(request)
 }
 
 /// Central portable borderless-fullscreen predicate: a captionless window

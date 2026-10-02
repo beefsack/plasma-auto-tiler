@@ -54,7 +54,8 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   Sandbox clean/lifecycle then owned hide/crash-restore then physical repeat
   then physical input. Lifecycle/recovery plus input proof accepted on this
   single-display PC; Engine-driven tiling and the focus/move shortcut preview
-  now have automated native evidence. Managed Windows workspaces follow;
+  now have automated native evidence. Managed Windows workspaces also have
+  automated native evidence (2026-10-02);
   physical shortcut and proper settings UI Apply/Revert checks remain pending.
 - Sandbox closed 2026-09-30 (user dismissed the WM_CLOSE close confirmation;
   no Sandbox processes remain): Phase 1-3 live proof runs on the physical
@@ -67,6 +68,22 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
 - Accepted baseline (user 2026-09-30, this dev PC): one Gigabyte M27Q only
   (see [runbook](windows-dev-environment.md)); Windows multi-monitor moves to the
   user's other Win11 PC. Historical KDE multi-output host assertions are unchanged.
+- User decisions 2026-10-02 (Windows managed workspaces): public `SW_HIDE`
+  with nonactivating reveal is approved, preferring official APIs; a simple
+  same-executable watcher is approved, the user is wary of complexity so no
+  added machinery. Default is per-output-local with KDE parity: Win+1..9 select
+  existing workspaces only, Win+Shift+1..9 send only the focused tiled window
+  and follow after verified transfer, `0` reuses or creates the trailing empty.
+  E8 prime plus `AttachThreadInput` plus exact foreground readback is the
+  approved focus mechanism. Session-only `SPI_SETWINARRANGING` prevention is
+  approved; on Win11 build 26200 disabling via pvParam FALSE requires uiParam
+  TRUE. Automation commands are welcome only as needed, not the primary route.
+  Terminal is ordinary by default with no product special-case. Current CLI is
+  `workspace --select N` (existing/trailing) and opt-in tile
+  `--scope-exe`/`--scope-host-child` proof fences with no default filtering.
+  Recovery ledger v4 stores min/max show-state without geometry; readers accept
+  v1-v3. The window-lifetime membership property is inert, remains until window
+  destruction, and is distrusted/replaced on the next run.
 - macOS decisions (version floor, App Store, shortcut consent, updates, UI
   language) are deferred until macOS spiking starts.
 
@@ -79,10 +96,11 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   specification exists. macOS modifier mapping is decided when macOS starts.
   Meta/Win shortcuts are defaults; Windows Snap takeover has a visible off
   setting with Apply/Revert parity. macOS modifier mapping remains deferred.
-- Windows first dogfood slice is automatic tiling only, without shortcuts or
-  hooks. Stop/crash leaves windows in place, like KDE; no geometry recovery
-  ledger and no window hiding. Next slice adds the focus/move chords above;
-  Windows workspaces are the next major item after the tiling preview.
+- The initial Windows tiling-only preview left geometry in place on stop/crash.
+  The current Windows slice adds focus/move shortcuts and managed workspaces:
+  hidden windows are revealed on stop/crash without geometry recovery. Terminal
+  has ordinary application behavior, matching KDE. See
+  [managed workspaces](changes/archive/windows-managed-workspaces.md).
 
 ## Cross-Platform Core
 

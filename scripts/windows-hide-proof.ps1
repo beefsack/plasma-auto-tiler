@@ -208,11 +208,30 @@ function Get-WatcherMarkers([string]$LedgerDir) {
   return @(Get-ChildItem -LiteralPath $LedgerDir -Filter "watcher-*.ready" -ErrorAction SilentlyContinue)
 }
 
-function Assert-LedgerV3Receipt([string]$LedgerDir, $ReadyOwner, [array]$Hwnds, [string]$Tag) {
+function Wait-LedgerClean([string]$Payload, [int]$TimeoutSec, [string]$Tag) {
+  $deadline = (Get-Date).AddSeconds($TimeoutSec)
+  $last = ""
+  while ((Get-Date) -lt $deadline) {
+    try { Assert-LedgerClean $Payload; return $true }
+    catch { $last = "$($_.Exception.Message)"; Start-Sleep -Milliseconds 250; continue }
+  }
+  throw "$Tag ledger still dirty after ${TimeoutSec}s: $last"
+}
+
+function Wait-NoWatcherMarkers([string]$LedgerDir, [int]$TimeoutSec, [string]$Tag) {
+  $deadline = (Get-Date).AddSeconds($TimeoutSec)
+  while ((Get-Date) -lt $deadline) {
+    if ((Get-WatcherMarkers $LedgerDir).Count -eq 0) { return $true }
+    Start-Sleep -Milliseconds 250
+  }
+  throw "$Tag watcher marker residue after ${TimeoutSec}s"
+}
+
+function Assert-LedgerV4Receipt([string]$LedgerDir, $ReadyOwner, [array]$Hwnds, [string]$Tag) {
   $ledgerFile = Join-Path $LedgerDir "ledger.json"
   if (-not (Test-Path -LiteralPath $ledgerFile -PathType Leaf)) { throw "$Tag ledger missing" }
   $record = Get-Content -LiteralPath $ledgerFile -Raw | ConvertFrom-Json
-  if ([int]$record.v -ne 3) { throw "$Tag ledger v=$($record.v), want 3" }
+  if ([int]$record.v -ne 4) { throw "$Tag ledger v=$($record.v), want 4" }
   if ([int]$record.owner.pid -ne [int]$ReadyOwner.pid) { throw "$Tag ledger owner pid changed" }
   if ("$($record.owner.process_creation)" -cne "$($ReadyOwner.process_creation)") { throw "$Tag ledger owner creation changed" }
   $got = @($record.windows | ForEach-Object { [uint64]$_.hwnd } | Sort-Object)
@@ -318,7 +337,7 @@ function Invoke-HideProofStage {
     $hid2 = Wait-HelperVisible $helperCopy $h2 $false 10 "hide-grace-2"
     Assert-HelperMatches $hid1 $h1 "hide-grace-1" $false
     Assert-HelperMatches $hid2 $h2 "hide-grace-2" $false
-    $ledger = Assert-LedgerV3Receipt $ledgerDir $ready.owner @($h1.hwnd, $h2.hwnd) "hide-grace"
+    $ledger = Assert-LedgerV4Receipt $ledgerDir $ready.owner @($h1.hwnd, $h2.hwnd) "hide-grace"
     $markers = Get-WatcherMarkers $ledgerDir
     if ($markers.Count -eq 0) { throw "hide-grace watcher marker missing while hidden" }
     Rec "hide-grace-hidden" @{ ledger_v = $ledger.v; windows = $ledger.windows.Count; watcher_markers = $markers.Count }
@@ -368,7 +387,7 @@ function Invoke-HideProofStage {
     $hid2 = Wait-HelperVisible $helperCopy $h2 $false 10 "hide-forced-2"
     Assert-HelperMatches $hid1 $h1 "hide-forced-1" $false
     Assert-HelperMatches $hid2 $h2 "hide-forced-2" $false
-    $ledger = Assert-LedgerV3Receipt $ledgerDir $ready.owner @($h1.hwnd, $h2.hwnd) "hide-forced"
+    $ledger = Assert-LedgerV4Receipt $ledgerDir $ready.owner @($h1.hwnd, $h2.hwnd) "hide-forced"
     Rec "hide-forced-hidden" @{ ledger_v = $ledger.v; windows = $ledger.windows.Count }
     $frozen = $ready.owner
     $probe = Invoke-Native $ownerCopy @("ready") | ConvertFrom-Json
@@ -383,8 +402,10 @@ function Invoke-HideProofStage {
     $back2 = Wait-HelperVisible $helperCopy $h2 $true 15 "hide-forced-watcher-2"
     Assert-HelperMatches $back1 $h1 "hide-forced-watcher-1" $true
     Assert-HelperMatches $back2 $h2 "hide-forced-watcher-2" $true
-    Assert-LedgerClean $ownerCopy
-    if ((Get-WatcherMarkers $ledgerDir).Count -ne 0) { throw "hide-forced watcher marker residue" }
+    # Watcher ledger/marker cleanup races visibility: poll bounded before
+    # asserting, then keep the idempotent independent restore below.
+    Wait-LedgerClean $ownerCopy 15 "hide-forced-watcher"
+    Wait-NoWatcherMarkers $ledgerDir 15 "hide-forced-watcher"
     Rec "hide-forced-watcher" @{ stop = $st; revealed = @($back1.visible, $back2.visible) }
     # Independent restore after the watcher: idempotent, still succeeds.
     $r = Invoke-Native $ownerCopy @("restore") | ConvertFrom-Json

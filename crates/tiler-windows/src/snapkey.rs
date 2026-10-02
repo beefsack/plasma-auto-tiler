@@ -158,7 +158,7 @@ pub struct SnapIntent {
 }
 
 /// Catalog key index: 0-3 letters H/J/K/L, 4-7 arrows Left/Down/Up/Right.
-fn catalog_index(vk: u32) -> Option<usize> {
+pub(crate) fn catalog_index(vk: u32) -> Option<usize> {
     match vk {
         VK_H => Some(0),
         VK_J => Some(1),
@@ -170,6 +170,24 @@ fn catalog_index(vk: u32) -> Option<usize> {
         VK_RIGHT => Some(7),
         _ => None,
     }
+}
+
+/// Digit virtual keys share the physical key with US shifted symbols:
+/// no separate virtual key exists, Shift only flips select into send.
+pub const VK_0: u32 = 0x30;
+pub const VK_9: u32 = 0x39;
+
+#[must_use]
+pub const fn is_digit_vk(vk: u32) -> bool {
+    vk >= VK_0 && vk <= VK_9
+}
+
+/// True for any chord key the single classifier owns: directional catalog
+/// plus workspace digits. Modifiers, Win keys, and ordinary keys are not
+/// chord keys.
+#[must_use]
+pub fn is_chord_vk(vk: u32) -> bool {
+    catalog_index(vk).is_some() || is_digit_vk(vk)
 }
 
 /// Direction for a catalog index. Letters and arrows are exact aliases.
@@ -216,13 +234,81 @@ pub struct SnapCounts {
     pub passed: u32,
 }
 
+/// Workspace digit op: unshifted selects an existing workspace, Shift sends
+/// the focused tiled window. Single definition for hook dispatch and the
+/// portable session policy (re-exported through `workspace::DigitOp`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceOp {
+    Select,
+    Send,
+}
+
+impl WorkspaceOp {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Select => "select",
+            Self::Send => "send",
+        }
+    }
+}
+
+/// Classifier outcome for one workspace digit event. Edges reuse the snap
+/// vocabulary: only downs and repeats dispatch, ups close the pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceIntent {
+    pub op: WorkspaceOp,
+    pub index: u8,
+    pub edge: SnapEdge,
+    pub foreground: bool,
+    pub consumed: bool,
+    pub announce: bool,
+}
+
+/// Unified classifier outcome: exactly one of directional or workspace.
+/// One machine, one modifier/mask authority; digits share Win/Shift/Ctrl/Alt
+/// tracking, origin pairing, saturation, and the E8 mask with H/J/K/L/arrows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Classified {
+    Snap(SnapIntent),
+    Workspace(WorkspaceIntent),
+}
+
+impl Classified {
+    #[must_use]
+    pub const fn consumed(self) -> bool {
+        match self {
+            Self::Snap(intent) => intent.consumed,
+            Self::Workspace(intent) => intent.consumed,
+        }
+    }
+
+    #[must_use]
+    pub const fn announce(self) -> bool {
+        match self {
+            Self::Snap(intent) => intent.announce,
+            Self::Workspace(intent) => intent.announce,
+        }
+    }
+}
+
+/// Which chord armed the Start-menu mask. Digits arm it exactly like
+/// directional chords: any consumed chord in the Win hold needs the E8 pair
+/// at Win-up, or the OS opens Start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaskTrigger {
+    Snap { op: SnapOp, direction: Direction },
+    Workspace { op: WorkspaceOp, index: u8 },
+}
+
 /// Pure product chord classifier. Tracks both Win keys plus the Shift family
 /// (chord selector) and Ctrl/Alt families (extra modifiers force
 /// pass-through). Per-key down state carries the origin of the hold: only a
 /// hold that started consumed (takeover on, foreground managed) can consume,
 /// so a background-origin sequence never consumes mid-hold and its paired
 /// key-up is never stolen. The op is fixed at down time from the Shift state,
-/// so releasing Shift before the key-up cannot flip focus into move.
+/// so releasing Shift before the key-up cannot flip focus into move (or
+/// select into send).
 ///
 /// `mask_pending` arms the Start-menu mask when a consumed chord lands in the
 /// current Win hold. Unlike the spike, Shift transitions never disarm the
@@ -238,11 +324,21 @@ pub struct SnapClassify {
     key_down: [bool; 8],
     key_origin: [bool; 8],
     key_op: [Option<SnapOp>; 8],
+    digit_down: [bool; 10],
+    digit_origin: [bool; 10],
+    digit_op: [Option<WorkspaceOp>; 10],
     pub enabled: bool,
+    /// Cached session gate published by the owner (takeover plus active,
+    /// non-fullscreen, non-elevated, non-gesture). Distinct from the managed
+    /// origin: selects require this gate, sends additionally require a
+    /// managed origin. Defaults on so pure classifier tests keep working;
+    /// the hook path sets it per event from the cached publish.
+    pub gate_active: bool,
     pub allow_win_l: bool,
     pub counts: [SnapCounts; 8],
+    pub digit_counts: [SnapCounts; 10],
     mask_pending: bool,
-    mask_trigger: Option<(SnapOp, Direction)>,
+    mask_trigger: Option<MaskTrigger>,
     hold_masked: bool,
     pub mask_attempted: u32,
     pub mask_ok: u32,
@@ -262,9 +358,14 @@ impl SnapClassify {
             key_down: [false; 8],
             key_origin: [false; 8],
             key_op: [None; 8],
+            digit_down: [false; 10],
+            digit_origin: [false; 10],
+            digit_op: [None; 10],
             enabled: config.takeover,
+            gate_active: true,
             allow_win_l: config.allow_win_l,
             counts: [SnapCounts::default(); 8],
+            digit_counts: [SnapCounts::default(); 10],
             mask_pending: false,
             mask_trigger: None,
             hold_masked: false,
@@ -277,6 +378,10 @@ impl SnapClassify {
 
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
+    }
+
+    pub fn set_gate_active(&mut self, gate_active: bool) {
+        self.gate_active = gate_active;
     }
 
     /// Tracked modifier state for the callback's preheld check
@@ -294,7 +399,13 @@ impl SnapClassify {
 
     /// Whether a catalog key currently holds a down without its up.
     pub fn key_is_down(&self, vk: u32) -> bool {
-        catalog_index(vk).is_some_and(|idx| self.key_down[idx])
+        if let Some(idx) = catalog_index(vk) {
+            return self.key_down[idx];
+        }
+        if is_digit_vk(vk) {
+            return self.digit_down[(vk - VK_0) as usize];
+        }
+        false
     }
 
     fn note_win_down(&mut self, vk: u32) {
@@ -319,7 +430,7 @@ impl SnapClassify {
     /// chord when the caller must send the E8 pair before passing this Win-up
     /// through. The Win-up itself always passes. `installed` is false on the
     /// state-only path, which updates bookkeeping without arming a send.
-    fn win_up_needs_mask(&mut self, vk: u32, installed: bool) -> Option<(SnapOp, Direction)> {
+    fn win_up_needs_mask(&mut self, vk: u32, installed: bool) -> Option<MaskTrigger> {
         if vk == VK_LWIN {
             self.win_l = false;
         } else {
@@ -348,7 +459,7 @@ impl SnapClassify {
         is_up: bool,
         foreground: bool,
         injected: bool,
-    ) -> Option<SnapIntent> {
+    ) -> Option<Classified> {
         if injected {
             return None;
         }
@@ -381,6 +492,9 @@ impl SnapClassify {
             }
             return None;
         }
+        if is_digit_vk(vk) {
+            return self.push_digit(vk, is_up, foreground);
+        }
         let Some(idx) = catalog_index(vk) else {
             // Ordinary keys reach the OS and disguise Win by themselves.
             self.mask_pending = false;
@@ -397,28 +511,28 @@ impl SnapClassify {
             let op = self.key_op[idx].unwrap_or(SnapOp::Focus);
             self.key_op[idx] = None;
             self.counts[idx].up += 1;
-            if self.enabled && foreground && origin {
+            if self.enabled && self.gate_active && foreground && origin {
                 self.counts[idx].consumed += 1;
-                Some(SnapIntent {
+                Some(Classified::Snap(SnapIntent {
                     op,
                     direction,
                     edge: SnapEdge::Up,
                     foreground,
                     consumed: true,
                     announce: false,
-                })
+                }))
             } else {
                 self.counts[idx].passed += 1;
                 // Passed ups reach the OS, which disguises Win by itself.
                 self.mask_pending = false;
-                Some(SnapIntent {
+                Some(Classified::Snap(SnapIntent {
                     op,
                     direction,
                     edge: SnapEdge::Up,
                     foreground,
                     consumed: false,
                     announce: false,
-                })
+                }))
             }
         } else {
             if self.ctrl || self.alt || !(self.win_l || self.win_r) {
@@ -441,59 +555,191 @@ impl SnapClassify {
             if self.key_down[idx] {
                 self.counts[idx].repeat += 1;
                 let op = self.key_op[idx].unwrap_or(op);
-                if self.enabled && foreground && self.key_origin[idx] {
+                if self.enabled && self.gate_active && foreground && self.key_origin[idx] {
                     self.counts[idx].consumed += 1;
                     self.mask_pending = true;
-                    self.mask_trigger = Some((op, direction));
-                    Some(SnapIntent {
+                    self.mask_trigger = Some(MaskTrigger::Snap { op, direction });
+                    Some(Classified::Snap(SnapIntent {
                         op,
                         direction,
                         edge: SnapEdge::Repeat,
                         foreground,
                         consumed: true,
                         announce: true,
-                    })
+                    }))
                 } else {
                     self.counts[idx].passed += 1;
                     self.mask_pending = false;
-                    Some(SnapIntent {
+                    Some(Classified::Snap(SnapIntent {
                         op,
                         direction,
                         edge: SnapEdge::Repeat,
                         foreground,
                         consumed: false,
                         announce: false,
-                    })
+                    }))
                 }
             } else {
                 self.key_down[idx] = true;
-                let origin = self.enabled && foreground;
+                let origin = self.enabled && self.gate_active && foreground;
                 self.key_origin[idx] = origin;
                 self.key_op[idx] = Some(op);
                 self.counts[idx].down += 1;
                 if origin {
                     self.counts[idx].consumed += 1;
                     self.mask_pending = true;
-                    self.mask_trigger = Some((op, direction));
-                    Some(SnapIntent {
+                    self.mask_trigger = Some(MaskTrigger::Snap { op, direction });
+                    Some(Classified::Snap(SnapIntent {
                         op,
                         direction,
                         edge: SnapEdge::Down,
                         foreground,
                         consumed: true,
                         announce: true,
-                    })
+                    }))
                 } else {
                     self.counts[idx].passed += 1;
                     self.mask_pending = false;
-                    Some(SnapIntent {
+                    Some(Classified::Snap(SnapIntent {
                         op,
                         direction,
                         edge: SnapEdge::Down,
                         foreground,
                         consumed: false,
                         announce: false,
-                    })
+                    }))
+                }
+            }
+        }
+    }
+
+    /// Digit half of the unified classifier: same Win/Ctrl/Alt/origin/mask
+    /// contract as the directional catalog. Shift flips select into send and
+    /// is fixed at down time; the op rides the paired key-up. Select consumes
+    /// on the cached session gate alone (empty workspaces and unmanaged
+    /// foreground) with no managed origin; send additionally requires a
+    /// managed origin. Fullscreen and elevated gating stays with the owner
+    /// dispatch as well, never only here.
+    fn push_digit(&mut self, vk: u32, is_up: bool, foreground: bool) -> Option<Classified> {
+        let slot = (vk - VK_0) as usize;
+        if is_up {
+            if !self.digit_down[slot] {
+                return None;
+            }
+            self.digit_down[slot] = false;
+            let origin = self.digit_origin[slot];
+            self.digit_origin[slot] = false;
+            let op = self.digit_op[slot].unwrap_or(WorkspaceOp::Select);
+            self.digit_op[slot] = None;
+            self.digit_counts[slot].up += 1;
+            let origin_held = origin && (foreground || op == WorkspaceOp::Select);
+            if self.enabled && self.gate_active && origin_held {
+                self.digit_counts[slot].consumed += 1;
+                Some(Classified::Workspace(WorkspaceIntent {
+                    op,
+                    index: slot as u8,
+                    edge: SnapEdge::Up,
+                    foreground,
+                    consumed: true,
+                    announce: false,
+                }))
+            } else {
+                self.digit_counts[slot].passed += 1;
+                self.mask_pending = false;
+                Some(Classified::Workspace(WorkspaceIntent {
+                    op,
+                    index: slot as u8,
+                    edge: SnapEdge::Up,
+                    foreground,
+                    consumed: false,
+                    announce: false,
+                }))
+            }
+        } else {
+            if self.ctrl || self.alt || !(self.win_l || self.win_r) {
+                self.mask_pending = false;
+                return None;
+            }
+            let op = if self.shift {
+                WorkspaceOp::Send
+            } else {
+                WorkspaceOp::Select
+            };
+            if self.digit_down[slot] {
+                self.digit_counts[slot].repeat += 1;
+                let op = self.digit_op[slot].unwrap_or(op);
+                // Select repeats ride the down-time origin like the down
+                // itself: global selects (origin bound without a managed
+                // foreground) keep consuming while the cached gate holds;
+                // send repeats keep the live managed-foreground gate.
+                let origin_held =
+                    self.digit_origin[slot] && (foreground || op == WorkspaceOp::Select);
+                if self.enabled && self.gate_active && origin_held {
+                    self.digit_counts[slot].consumed += 1;
+                    self.mask_pending = true;
+                    self.mask_trigger = Some(MaskTrigger::Workspace {
+                        op,
+                        index: slot as u8,
+                    });
+                    Some(Classified::Workspace(WorkspaceIntent {
+                        op,
+                        index: slot as u8,
+                        edge: SnapEdge::Repeat,
+                        foreground,
+                        consumed: true,
+                        announce: true,
+                    }))
+                } else {
+                    self.digit_counts[slot].passed += 1;
+                    self.mask_pending = false;
+                    Some(Classified::Workspace(WorkspaceIntent {
+                        op,
+                        index: slot as u8,
+                        edge: SnapEdge::Repeat,
+                        foreground,
+                        consumed: false,
+                        announce: false,
+                    }))
+                }
+            } else {
+                self.digit_down[slot] = true;
+                // Global select: unshifted digits consume on the cached
+                // session gate alone (empty workspaces and unmanaged
+                // foreground), with the origin bound for mask/queue
+                // bookkeeping but no managed foreground required. Send keeps
+                // the managed-origin gate; the owner still rechecks identity
+                // before anything moves.
+                let origin =
+                    self.enabled && self.gate_active && (foreground || op == WorkspaceOp::Select);
+                self.digit_origin[slot] = origin;
+                self.digit_op[slot] = Some(op);
+                self.digit_counts[slot].down += 1;
+                if origin {
+                    self.digit_counts[slot].consumed += 1;
+                    self.mask_pending = true;
+                    self.mask_trigger = Some(MaskTrigger::Workspace {
+                        op,
+                        index: slot as u8,
+                    });
+                    Some(Classified::Workspace(WorkspaceIntent {
+                        op,
+                        index: slot as u8,
+                        edge: SnapEdge::Down,
+                        foreground,
+                        consumed: true,
+                        announce: true,
+                    }))
+                } else {
+                    self.digit_counts[slot].passed += 1;
+                    self.mask_pending = false;
+                    Some(Classified::Workspace(WorkspaceIntent {
+                        op,
+                        index: slot as u8,
+                        edge: SnapEdge::Down,
+                        foreground,
+                        consumed: false,
+                        announce: false,
+                    }))
                 }
             }
         }
@@ -505,8 +751,7 @@ impl SnapClassify {
 /// be logged as success.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QueuedMask {
-    pub trigger_op: SnapOp,
-    pub trigger_direction: Direction,
+    pub trigger: MaskTrigger,
     pub tick: std::time::Instant,
     pub inserted: u8,
     pub release_sent: bool,
@@ -590,9 +835,25 @@ pub struct QueuedIntent {
     pub tick: std::time::Instant,
 }
 
+/// One approved workspace chord captured by the callback. `origin` is the
+/// managed identity bound at chord time (`None` means background/inactive or
+/// unmanaged foreground at chord time); select dispatches without an origin
+/// while send requires one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedWorkspaceIntent {
+    pub op: WorkspaceOp,
+    pub index: u8,
+    pub edge: SnapEdge,
+    pub origin: Option<SnapOrigin>,
+    pub consumed: bool,
+    pub announce: bool,
+    pub tick: std::time::Instant,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueuedSnapEvent {
     Intent(QueuedIntent),
+    Workspace(QueuedWorkspaceIntent),
     Mask(QueuedMask),
 }
 
@@ -666,9 +927,12 @@ impl Default for SnapQueue {
 /// always advances, but while the queue is full nothing consumes: the approved
 /// chord is counted as a loss and passed through. Injected and unrelated
 /// inputs never touch the queue or the loss counter. `origin` is the
-/// callback-bound managed identity (`None` when background/inactive); it rides
-/// the queued record so the owner can reject focus changes. Returns whether
-/// the callback must swallow the key event.
+/// callback-bound managed identity (`None` when background/inactive or
+/// unmanaged); `gate_active` is the cached session gate (takeover plus active,
+/// non-fullscreen, non-elevated, non-gesture) published by the owner.
+/// Selects require the gate, sends additionally require an origin. Returns
+/// whether the callback must swallow the key event.
+#[allow(clippy::too_many_arguments)]
 pub fn classify_and_queue(
     machine: &mut SnapClassify,
     queue: &mut SnapQueue,
@@ -677,20 +941,24 @@ pub fn classify_and_queue(
     origin: Option<SnapOrigin>,
     injected: bool,
     tick: std::time::Instant,
+    gate_active: bool,
 ) -> Option<bool> {
     let saturated = queue.is_full();
     let saved = machine.enabled;
+    let saved_gate = machine.gate_active;
     // Preserve an earlier consumed chord's Start-menu mask across saturation:
     // the saturated event passes through (disguising Win by itself), but a
     // redundant E8 pair is safe while a naked Win Start is not. The failing
     // push below disarms via its passed path, so restore the armed state.
     let saved_pending = machine.mask_pending;
     let saved_trigger = machine.mask_trigger;
+    machine.set_gate_active(saved_gate && gate_active);
     if saturated {
         machine.set_enabled(false);
     }
     let ev = machine.push(vk, is_up, origin.is_some(), injected);
     machine.set_enabled(saved);
+    machine.set_gate_active(saved_gate);
     let ev = ev?;
     if saturated {
         if saved_pending {
@@ -702,17 +970,29 @@ pub fn classify_and_queue(
         queue.record_drop();
         return Some(false);
     }
-    let queued = queue.push(QueuedSnapEvent::Intent(QueuedIntent {
-        op: ev.op,
-        direction: ev.direction,
-        edge: ev.edge,
-        origin,
-        consumed: ev.consumed,
-        announce: ev.announce,
-        tick,
-    }));
-    if queued {
-        Some(ev.consumed)
+    let consumed = ev.consumed();
+    let event = match ev {
+        Classified::Snap(intent) => QueuedSnapEvent::Intent(QueuedIntent {
+            op: intent.op,
+            direction: intent.direction,
+            edge: intent.edge,
+            origin,
+            consumed: intent.consumed,
+            announce: intent.announce,
+            tick,
+        }),
+        Classified::Workspace(intent) => QueuedSnapEvent::Workspace(QueuedWorkspaceIntent {
+            op: intent.op,
+            index: intent.index,
+            edge: intent.edge,
+            origin,
+            consumed: intent.consumed,
+            announce: intent.announce,
+            tick,
+        }),
+    };
+    if queue.push(event) {
+        Some(consumed)
     } else {
         queue.record_drop();
         Some(false)
@@ -730,12 +1010,11 @@ pub fn win_up_mask_reserve(
     installed: bool,
     tick: std::time::Instant,
 ) -> bool {
-    let Some((op, direction)) = machine.win_up_needs_mask(vk, installed) else {
+    let Some(trigger) = machine.win_up_needs_mask(vk, installed) else {
         return false;
     };
     if queue.push(QueuedSnapEvent::Mask(QueuedMask {
-        trigger_op: op,
-        trigger_direction: direction,
+        trigger,
         tick,
         inserted: 0,
         release_sent: false,
@@ -749,7 +1028,7 @@ pub fn win_up_mask_reserve(
         if machine.win_l || machine.win_r {
             machine.hold_masked = false;
             machine.mask_pending = true;
-            machine.mask_trigger = Some((op, direction));
+            machine.mask_trigger = Some(trigger);
         }
         false
     }
@@ -1256,7 +1535,7 @@ pub mod sys {
                 let st = s.as_mut()?;
                 let mut async_shift = false;
                 let mut guard_disagree = false;
-                if !is_up && super::catalog_index(vk).is_some() {
+                if !is_up && super::is_chord_vk(vk) {
                     let (ctrl, alt, shift) = st.machine.tracked_modifiers();
                     let async_down = |key: i32| unsafe { GetAsyncKeyState(key) } < 0;
                     let async_ctrl = async_down(VK_CONTROL as i32);
@@ -1286,6 +1565,10 @@ pub mod sys {
                 }
                 let (ctrl_b, alt_b, shift_b) = st.machine.tracked_modifiers();
                 let win_b = st.machine.win_held();
+                // Cached session gate (no syscalls beyond the single
+                // foreground read inside `callback_origin`): selects require
+                // it, sends additionally require the managed origin.
+                let gate = st.active;
                 let fg = callback_origin(st);
                 let tick = Instant::now();
                 // Reaching here with `injected` true means the fixed proof
@@ -1299,10 +1582,11 @@ pub mod sys {
                     fg,
                     false,
                     tick,
+                    gate,
                 );
                 if marked {
                     let (_, _, shift_a) = st.machine.tracked_modifiers();
-                    if !is_up && super::catalog_index(vk).is_some() {
+                    if !is_up && super::is_chord_vk(vk) {
                         // The guard record just pushed is the newest record:
                         // stamp the consume verdict onto it (same borrow, no
                         // interleaving; classify_and_queue cannot push diag).
@@ -1412,13 +1696,20 @@ pub mod sys {
         } else {
             "mask-failed"
         };
-        serde_json::json!({
-            "trigger_op": mask.trigger_op.as_str(),
-            "trigger_direction": super::direction_name(mask.trigger_direction),
-            "inserted": mask.inserted,
-            "release_sent": mask.release_sent,
-            "result": result,
-        })
+        let mut value = match mask.trigger {
+            super::MaskTrigger::Snap { op, direction } => serde_json::json!({
+                "trigger_op": op.as_str(),
+                "trigger_direction": super::direction_name(direction),
+            }),
+            super::MaskTrigger::Workspace { op, index } => serde_json::json!({
+                "trigger_op": op.as_str(),
+                "trigger_index": index,
+            }),
+        };
+        value["inserted"] = serde_json::Value::from(mask.inserted);
+        value["release_sent"] = serde_json::Value::from(mask.release_sent);
+        value["result"] = serde_json::Value::from(result);
+        value
     }
 
     /// Install the low-level hook on the calling thread. The caller must pump

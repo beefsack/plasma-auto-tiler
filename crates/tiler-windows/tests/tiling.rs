@@ -3,12 +3,16 @@ use tiler_core::geometry::Rect;
 use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
 use tiler_windows::tiling::{
     CaptureOptions, FrameInsets, GestureIntent, INNER_GAP, OUTER_GAP, ObservedTarget,
-    ObservedTargetRef, ReadbackOutcome, RefusedTracker, SkipReason, StatelessVerdict, TokenMap,
-    WindowFacts, allow_match, allowlist_digest, build_reconcile_event, classify, classify_gesture,
-    fingerprint, inspect_stateless_verdict, is_borderless_fullscreen, parse_allowlist,
+    ObservedTargetRef, ReadbackOutcome, RefusedTracker, ScopeHostChild, SkipReason,
+    StatelessVerdict, TokenMap, WindowFacts, WorkspaceRequest, allow_match, allowlist_digest,
+    build_reconcile_event, build_reconcile_event_for, classify, classify_gesture, fingerprint,
+    hosted_child_allows, inspect_stateless_verdict, is_borderless_fullscreen, parse_allowlist,
     parse_capture_args, parse_children_args, parse_hide_proof_args, parse_inspect_args,
-    parse_tile_args, parse_tile_proof_args, readback_outcome, tick_summary_signature,
+    parse_scope_host_child, parse_tile_args, parse_tile_proof_args, parse_workspace_proof_args,
+    parse_workspace_request, parse_workspace_select_args, readback_outcome,
+    render_workspace_request, scope_allows, scope_exe_basename, tick_summary_signature,
     tiling_domain_bounds, verify_hide_proof_argv_consistency, verify_proof_argv_consistency,
+    verify_workspace_proof_argv_consistency, verify_workspace_select_argv_consistency,
 };
 
 fn rect(x: i32, y: i32, w: i32, h: i32) -> Rect {
@@ -26,7 +30,6 @@ fn eligible_facts() -> WindowFacts {
         tool_window: false,
         owned: false,
         captionless_fullscreen: false,
-        terminal_ancestor: false,
         no_activate: false,
         dialog: false,
     }
@@ -117,44 +120,243 @@ fn tokens_stable_per_identity_not_hwnd() {
 
 #[test]
 fn eligibility_exclusions() {
-    assert!(classify(&eligible_facts(), false).is_ok());
+    assert!(classify(&eligible_facts()).is_ok());
     let mut facts = eligible_facts();
     facts.minimized = true;
-    assert_eq!(classify(&facts, false), Err(SkipReason::Minimized));
+    assert_eq!(classify(&facts), Err(SkipReason::Minimized));
     let mut facts = eligible_facts();
     facts.maximized = true;
-    assert_eq!(classify(&facts, false), Err(SkipReason::Maximized));
+    assert_eq!(classify(&facts), Err(SkipReason::Maximized));
     let mut facts = eligible_facts();
     facts.cloaked = true;
-    assert_eq!(classify(&facts, false), Err(SkipReason::Cloaked));
+    assert_eq!(classify(&facts), Err(SkipReason::Cloaked));
     let mut facts = eligible_facts();
     facts.elevated = true;
-    assert_eq!(classify(&facts, false), Err(SkipReason::Elevated));
+    assert_eq!(classify(&facts), Err(SkipReason::Elevated));
     let mut facts = eligible_facts();
     facts.owned = true;
-    assert_eq!(classify(&facts, false), Err(SkipReason::OwnedDialog));
+    assert_eq!(classify(&facts), Err(SkipReason::OwnedDialog));
     let mut facts = eligible_facts();
     facts.captionless_fullscreen = true;
-    assert_eq!(classify(&facts, false), Err(SkipReason::Fullscreen));
+    assert_eq!(classify(&facts), Err(SkipReason::Fullscreen));
     let mut facts = eligible_facts();
     facts.no_activate = true;
-    assert_eq!(classify(&facts, false), Err(SkipReason::NoActivate));
+    assert_eq!(classify(&facts), Err(SkipReason::NoActivate));
     let mut facts = eligible_facts();
     facts.dialog = true;
-    assert_eq!(classify(&facts, false), Err(SkipReason::Dialog));
+    assert_eq!(classify(&facts), Err(SkipReason::Dialog));
     // Owned generic dialogs keep the owned-dialog reason.
     let mut facts = eligible_facts();
     facts.owned = true;
     facts.dialog = true;
-    assert_eq!(classify(&facts, false), Err(SkipReason::OwnedDialog));
+    assert_eq!(classify(&facts), Err(SkipReason::OwnedDialog));
 }
 
 #[test]
-fn terminal_included_normally_excluded_in_test() {
-    let mut facts = eligible_facts();
-    facts.terminal_ancestor = true;
-    assert!(classify(&facts, false).is_ok());
-    assert_eq!(classify(&facts, true), Err(SkipReason::Terminal));
+fn no_terminal_skip_reason() {
+    // Terminal windows are ordinary tile targets: eligibility carries no
+    // ancestry gate, and the closed skip vocabulary has no terminal variant.
+    assert!(classify(&eligible_facts()).is_ok());
+    for reason in [
+        SkipReason::Hidden,
+        SkipReason::Minimized,
+        SkipReason::Maximized,
+        SkipReason::Cloaked,
+        SkipReason::Elevated,
+        SkipReason::Shell,
+        SkipReason::Tool,
+        SkipReason::OwnedDialog,
+        SkipReason::Dialog,
+        SkipReason::Fullscreen,
+        SkipReason::NoActivate,
+        SkipReason::Unreadable,
+        SkipReason::IdentityChanged,
+    ] {
+        assert_ne!(reason.as_str(), "terminal");
+    }
+}
+
+#[test]
+fn scope_filter_defaults_open_and_fences_exes() {
+    let empty: Vec<String> = Vec::new();
+    assert!(scope_allows(&empty, "C:\\Windows\\System32\\notepad.exe"));
+    assert!(scope_allows(&empty, "WindowsTerminal.exe"));
+    let scope = vec![
+        "notepad.exe".to_owned(),
+        "ApplicationFrameHost.exe".to_owned(),
+        "mspaint.exe".to_owned(),
+    ];
+    assert!(scope_allows(&scope, "C:\\Windows\\System32\\NOTEPAD.EXE"));
+    assert!(scope_allows(&scope, "C:/Windows/System32/mspaint.exe"));
+    assert!(scope_allows(&scope, "applicationframehost.exe"));
+    // Host-level scope alone cannot distinguish hosted apps (Calculator vs
+    // any other Store app): the exact-target runtime fence is the
+    // `--scope-host-child` pair below, enforced per tick at observation and
+    // fresh at every hide admission.
+    assert!(!scope_allows(
+        &scope,
+        "C:\\Program Files\\WindowsApps\\Microsoft.WindowsTerminal.exe"
+    ));
+    assert!(!scope_allows(&scope, "firefox.exe"));
+    assert_eq!(scope_exe_basename("C:\\a\\NOTEPAD.EXE"), "notepad.exe");
+    assert_eq!(scope_exe_basename("mspaint.exe"), "mspaint.exe");
+}
+
+#[test]
+fn hosted_child_fence_needs_live_matching_child() {
+    let pairs = vec![ScopeHostChild {
+        host: "ApplicationFrameHost.exe".to_owned(),
+        child: "CalculatorApp.exe".to_owned(),
+    }];
+    let calc = vec!["C:\\Program Files\\WindowsApps\\CalculatorApp.exe".to_owned()];
+    let other = vec!["C:\\Program Files\\WindowsApps\\OtherApp.exe".to_owned()];
+    // Empty pairs: no constraint anywhere.
+    assert!(hosted_child_allows("ApplicationFrameHost.exe", &[], &[]));
+    // Unlisted top-level executables are unconstrained by the pairs.
+    assert!(hosted_child_allows("notepad.exe", &[], &pairs));
+    assert!(hosted_child_allows("notepad.exe", &other, &pairs));
+    // Listed host with a live matching hosted child passes (case-insensitive).
+    assert!(hosted_child_allows(
+        "applicationframehost.exe",
+        &calc,
+        &pairs
+    ));
+    // Listed host with only a non-matching hosted app fails closed, even
+    // though the top-level executable itself is scope-listed.
+    assert!(!hosted_child_allows(
+        "ApplicationFrameHost.exe",
+        &other,
+        &pairs
+    ));
+    // Listed host with no hosted children at all fails closed: a bare host
+    // frame shows no app and manages nothing.
+    assert!(!hosted_child_allows(
+        "ApplicationFrameHost.exe",
+        &[],
+        &pairs
+    ));
+    // Unreadable children contribute nothing: no match, no pass.
+    assert!(!hosted_child_allows(
+        "ApplicationFrameHost.exe",
+        &["unknown".to_owned()],
+        &pairs
+    ));
+    // Extra non-matching siblings do not veto a live match (one top-level
+    // window is one app frame).
+    let mixed = vec![
+        "C:\\Program Files\\WindowsApps\\OtherApp.exe".to_owned(),
+        "C:\\Program Files\\WindowsApps\\CalculatorApp.exe".to_owned(),
+    ];
+    assert!(hosted_child_allows(
+        "ApplicationFrameHost.exe",
+        &mixed,
+        &pairs
+    ));
+    // Pairs constrain only their own host: a second pair neither widens nor
+    // narrows the first, and unlisted hosts stay unconstrained.
+    let pairs = vec![
+        ScopeHostChild {
+            host: "ApplicationFrameHost.exe".to_owned(),
+            child: "CalculatorApp.exe".to_owned(),
+        },
+        ScopeHostChild {
+            host: "OtherHost.exe".to_owned(),
+            child: "OtherChild.exe".to_owned(),
+        },
+    ];
+    assert!(hosted_child_allows(
+        "ApplicationFrameHost.exe",
+        &calc,
+        &pairs
+    ));
+    assert!(!hosted_child_allows(
+        "ApplicationFrameHost.exe",
+        &other,
+        &pairs
+    ));
+    assert!(hosted_child_allows(
+        "OtherHost.exe",
+        &["OtherChild.exe".to_owned()],
+        &pairs
+    ));
+    assert!(!hosted_child_allows("OtherHost.exe", &calc, &pairs));
+    assert!(hosted_child_allows("notepad.exe", &[], &pairs));
+}
+
+#[test]
+fn scope_host_child_parses_pairs_and_refuses_malformed() {
+    let pair = parse_scope_host_child("ApplicationFrameHost.exe=CalculatorApp.exe").expect("pair");
+    assert_eq!(pair.host, "ApplicationFrameHost.exe");
+    assert_eq!(pair.child, "CalculatorApp.exe");
+    for bad in [
+        "",
+        "=",
+        "=Child.exe",
+        "Host.exe=",
+        "Host.exe=A=B",
+        "  ",
+        "Host.exe = ",
+    ] {
+        assert!(
+            parse_scope_host_child(bad).is_err(),
+            "refuses {bad:?}, never a widened scope"
+        );
+    }
+}
+
+#[test]
+fn tile_args_accept_scope_host_child_with_dedup() {
+    let args = [
+        "--user-start",
+        "--scope-exe",
+        "ApplicationFrameHost.exe",
+        "--scope-host-child",
+        "ApplicationFrameHost.exe=CalculatorApp.exe",
+        "--scope-host-child",
+        "applicationframehost.exe=calculatorapp.exe",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect::<Vec<_>>();
+    let options = parse_tile_args(&args).expect("tile args");
+    assert_eq!(options.scope_hosts.len(), 1);
+    assert_eq!(options.scope_hosts[0].host, "ApplicationFrameHost.exe");
+    assert_eq!(options.scope_hosts[0].child, "CalculatorApp.exe");
+    // Malformed pair refuses the whole run, never a silent normal run.
+    let bad = [
+        "--user-start",
+        "--scope-host-child",
+        "ApplicationFrameHost.exe",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect::<Vec<_>>();
+    assert!(parse_tile_args(&bad).is_err());
+    // Default stays unconstrained: no pairs without the explicit flag.
+    let plain = ["--user-start".to_owned()];
+    assert!(
+        parse_tile_args(&plain)
+            .expect("plain")
+            .scope_hosts
+            .is_empty()
+    );
+}
+
+#[test]
+fn token_reissue_breaks_engine_identity_after_reuse() {
+    // Same-process HWND reuse keeps (HWND, creation): the stable token would
+    // inherit the previous generation's Engine identity. Reissue mints a
+    // fresh token for the new generation; later ticks resolve it stably.
+    let mut tokens = TokenMap::default();
+    let first = tokens.token_for(0x1234, "creation-1");
+    assert_eq!(tokens.token_for(0x1234, "creation-1"), first);
+    let second = tokens.reissue(0x1234, "creation-1");
+    assert_ne!(second, first);
+    assert_eq!(tokens.token_for(0x1234, "creation-1"), second);
+    // Unrelated windows keep their own stable tokens.
+    let other = tokens.token_for(0x5678, "creation-1");
+    assert_ne!(other, first);
+    assert_ne!(other, second);
 }
 
 #[test]
@@ -175,7 +377,6 @@ fn allowlist_exact_match_and_rejections() {
         exe_path: "c:/apps/helper.exe".to_owned(),
         user_sid: "sid-1".to_owned(),
         session_id: 1,
-        terminal_ancestor: false,
         tag: "18da5b07aae82240".to_owned(),
     };
     assert!(allow_match(&entry, &observed));
@@ -454,15 +655,50 @@ fn tile_args_require_explicit_user_start() {
     assert_eq!(options.seconds, None);
     assert!(!options.trace);
     assert!(options.user_start);
+    assert!(options.scope_exes.is_empty(), "no default scope filter");
     let options =
         parse_tile_args(&strings(&["--user-start", "--seconds", "60", "--trace"])).expect("parsed");
     assert_eq!(options.seconds, Some(60));
     assert!(options.trace);
+    assert!(options.scope_exes.is_empty());
     // Allowlist never rides the normal path: proof uses tile-proof so lost
     // arguments cannot fall back to tiling the whole desktop.
     assert!(parse_tile_args(&strings(&["--user-start", "--allowlist", "a.json"])).is_err());
     assert!(parse_tile_args(&["--seconds".to_owned(), "0".to_owned()]).is_err());
     assert!(parse_tile_args(&["--bogus".to_owned()]).is_err());
+}
+
+#[test]
+fn tile_args_scope_exe_is_explicit_opt_in() {
+    let options = parse_tile_args(&strings(&[
+        "--user-start",
+        "--scope-exe",
+        "notepad.exe",
+        "--scope-exe",
+        "ApplicationFrameHost.exe",
+        "--scope-exe",
+        "mspaint.exe",
+    ]))
+    .expect("scoped");
+    assert_eq!(options.scope_exes.len(), 3);
+    assert!(scope_allows(
+        &options.scope_exes,
+        "C:\\Windows\\System32\\notepad.exe"
+    ));
+    assert!(!scope_allows(&options.scope_exes, "firefox.exe"));
+    // Case-insensitive dedupe: same basename twice stores once.
+    let options = parse_tile_args(&strings(&[
+        "--user-start",
+        "--scope-exe",
+        "notepad.exe",
+        "--scope-exe",
+        "NOTEPAD.EXE",
+    ]))
+    .expect("scoped");
+    assert_eq!(options.scope_exes.len(), 1);
+    // Empty scope value refuses, never a wildcard.
+    assert!(parse_tile_args(&strings(&["--user-start", "--scope-exe", " "])).is_err());
+    assert!(parse_tile_args(&strings(&["--user-start", "--scope-exe"])).is_err());
 }
 
 #[test]
@@ -639,6 +875,68 @@ fn reconcile_event_carries_gaps_and_hints() {
     assert_eq!(event.windows.len(), 1);
     assert!(event.windows[0].hints.is_empty());
     assert!(event.focused_window.0.is_empty());
+}
+
+#[test]
+fn per_workspace_reconcile_binds_domain_key() {
+    // Unified per-(output, workspace) routing: the event carries the exact
+    // domain key, bounds, gap, and rows (visible plus retained snapshots),
+    // and independent domains keep separate sessions with no shared layout.
+    use tiler_core::directional::{OutputId, WorkspaceId};
+    use tiler_core::session::{DomainKey, OutputDomain};
+    let owner = OwnerId::parse("tiler-windows").expect("valid");
+    let generation = GenerationId::parse("abcdef0123456789").expect("valid");
+    let correlation = CorrelationId::parse("tick-1").expect("valid");
+    let key = DomainKey {
+        output: OutputId("mon-a".to_owned()),
+        workspace: WorkspaceId("ws-2".to_owned()),
+    };
+    let domain = OutputDomain {
+        id: OutputId("mon-a".to_owned()),
+        workspace: WorkspaceId("ws-2".to_owned()),
+        bounds: rect(0, 0, 1904, 1032),
+        gap: INNER_GAP,
+        adjacent: std::collections::BTreeMap::new(),
+    };
+    let windows = vec![(WindowId("w1".to_owned()), rect(8, 8, 800, 600))];
+    let event = build_reconcile_event_for(
+        &owner,
+        &generation,
+        &correlation,
+        7,
+        42,
+        &domain,
+        &key,
+        OUTER_GAP,
+        &windows,
+        Some(&WindowId("w1".to_owned())),
+    );
+    assert_eq!(event.domain_key, key);
+    assert_eq!(event.domain, domain);
+    assert_eq!(event.revision, 7);
+    assert_eq!(event.outer_gap, OUTER_GAP);
+    assert_eq!(event.windows.len(), 1);
+    assert_eq!(event.windows[0].output.0, "mon-a");
+    assert_eq!(event.windows[0].workspace.0, "ws-2");
+    assert!(event.target_domain.is_none());
+}
+
+#[test]
+fn workspace_proof_parses_without_widening_product() {
+    let args: Vec<String> = ["--allowlist", "a.json"]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+    let ok = parse_workspace_proof_args(&args).expect("parsed");
+    assert_eq!(ok.allowlist.to_str().expect("path"), "a.json");
+    let raw = args.clone();
+    assert!(verify_workspace_proof_argv_consistency(&raw, &ok).is_ok());
+    // Product tile still refuses allowlists: no fallback into normal mode.
+    let tile: Vec<String> = ["--user-start", "--allowlist", "a.json"]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+    assert!(parse_tile_args(&tile).is_err());
 }
 
 #[test]
@@ -1074,4 +1372,56 @@ fn retain_keeps_known_identities_across_reconcile_passes() {
     }]);
     assert_ne!(map.token_for(22, "creation-minimized"), minimized);
     assert_eq!(map.token_for(11, "creation-eligible"), eligible);
+}
+
+#[test]
+fn workspace_select_cli_parses_single_digit_only() {
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|s| (*s).to_owned()).collect()
+    }
+    let ok = parse_workspace_select_args(&strings(&["--select", "2"])).expect("parsed");
+    assert_eq!(ok.index, 2);
+    assert!(verify_workspace_select_argv_consistency(&strings(&["--select", "2"]), &ok).is_ok());
+    assert!(parse_workspace_select_args(&[]).is_err());
+    assert!(parse_workspace_select_args(&strings(&["--select"])).is_err());
+    assert!(parse_workspace_select_args(&strings(&["--select", "10"])).is_err());
+    assert!(parse_workspace_select_args(&strings(&["--select", "2", "--select", "1"])).is_err());
+    assert!(parse_workspace_select_args(&strings(&["--send", "2"])).is_err());
+    let ok0 = parse_workspace_select_args(&strings(&["--select", "0"])).expect("zero");
+    assert_eq!(ok0.index, 0);
+    let ok9 = parse_workspace_select_args(&strings(&["--select", "9"])).expect("nine");
+    assert_eq!(ok9.index, 9);
+    assert!(verify_workspace_select_argv_consistency(&strings(&["--select", "1"]), &ok).is_err());
+}
+
+#[test]
+fn workspace_request_roundtrip_and_refusals() {
+    let request = WorkspaceRequest {
+        v: 1,
+        creation: "abc123".to_owned(),
+        pid: 4242,
+        exe_path: "C:\\bin\\tiler-windows.exe".to_owned(),
+        user_sid: "S-1-5-21-1".to_owned(),
+        session_id: 1,
+        index: 2,
+        correlation: "cli-4242-ab12".to_owned(),
+    };
+    let body = render_workspace_request(&request);
+    assert!(body.contains("abc123") && body.contains("cli-4242-ab12"));
+    assert!(!body.contains("hwnd"));
+    let parsed = parse_workspace_request(&body).expect("roundtrip");
+    assert_eq!(parsed, request);
+    let mut bad_version = request.clone();
+    bad_version.v = 2;
+    assert!(parse_workspace_request(&render_workspace_request(&bad_version)).is_err());
+    let mut bad_index = request.clone();
+    bad_index.index = 10;
+    assert!(parse_workspace_request(&render_workspace_request(&bad_index)).is_err());
+    let mut bad_corr = request.clone();
+    bad_corr.correlation = "bad corr".to_owned();
+    assert!(parse_workspace_request(&render_workspace_request(&bad_corr)).is_err());
+    let mut bad_owner = request.clone();
+    bad_owner.creation = String::new();
+    assert!(parse_workspace_request(&render_workspace_request(&bad_owner)).is_err());
+    assert!(parse_workspace_request("not json").is_err());
 }

@@ -1,6 +1,7 @@
 use tiler_windows::model::{
-    LEDGER_SCHEMA_VERSION, ProcessIdentity, RecoveryLedger, WindowClaimKind, WindowIdentity,
-    generate_claim_tag, parse_ledger, valid_claim_tag, validate_ledger, watcher_may_restore,
+    LEDGER_SCHEMA_VERSION, ProcessIdentity, ProductShowRestore, RecoveryLedger, WindowClaimKind,
+    WindowIdentity, WindowShowState, generate_claim_tag, parse_ledger, product_show_restore,
+    valid_claim_tag, validate_ledger, watcher_may_restore,
 };
 use tiler_windows::product_hide::{
     ProductTeardown, committed_has_same_claim, parse_watcher_ready, product_claim,
@@ -29,6 +30,7 @@ fn product_window() -> WindowIdentity {
         },
         tag: "0123456789abcde1".to_owned(),
         kind: WindowClaimKind::Product,
+        show: WindowShowState::default(),
     }
 }
 
@@ -129,18 +131,18 @@ fn orphan_cleanup_retains_only_same_hwnd_tag_claim() {
 }
 
 #[test]
-fn v3_roundtrip_and_older_refusal() {
+fn v4_roundtrip_and_older_refusal() {
     let ledger = RecoveryLedger {
         v: LEDGER_SCHEMA_VERSION,
         owner: owner(),
         windows: vec![product_window()],
         mouse_snap: None,
     };
-    assert_eq!(LEDGER_SCHEMA_VERSION, 3);
-    validate_ledger(&ledger).expect("v3 product ledger validates");
+    assert_eq!(LEDGER_SCHEMA_VERSION, 4);
+    validate_ledger(&ledger).expect("v4 product ledger validates");
     let json = serde_json::to_string(&ledger).expect("json");
     assert_eq!(parse_ledger(&json).expect("parse"), ledger);
-    // Empty v3 product tag cannot bind HWND reuse.
+    // Empty v4 product tag cannot bind HWND reuse.
     let mut bad = ledger.clone();
     bad.windows[0].tag.clear();
     assert!(validate_ledger(&bad).is_err());
@@ -160,6 +162,136 @@ fn v3_roundtrip_and_older_refusal() {
     });
     let parsed = parse_ledger(&legacy.to_string()).expect("legacy v2 parses");
     assert_eq!(parsed.windows[0].kind, WindowClaimKind::Helper);
+}
+
+#[test]
+fn v1_v2_v3_parse_with_normal_restore_default() {
+    // Ledgers written before show-state capture carry no `show` field and
+    // restore as normal; the reader accepts every prior version unchanged.
+    // v1/v2 never carried product claims, so their fixtures stay helper-only.
+    let helper_window = serde_json::json!({
+        "hwnd": 1,
+        "process": {
+            "pid": 200, "process_creation": "c-200",
+            "user_sid": "S-owner", "session_id": 1,
+            "exe_path": "C:\\apps\\a.exe"},
+        "tag": "tag-1",
+        "kind": "helper",
+    });
+    let product_window_json = serde_json::json!({
+        "hwnd": 1,
+        "process": {
+            "pid": 200, "process_creation": "c-200",
+            "user_sid": "S-owner", "session_id": 1,
+            "exe_path": "C:\\apps\\a.exe"},
+        "tag": "0123456789abcde3",
+        "kind": "product",
+    });
+    for (v, window) in [
+        (1, helper_window.clone()),
+        (2, helper_window.clone()),
+        (3, product_window_json),
+    ] {
+        let fixture = serde_json::json!({
+            "v": v,
+            "owner": owner(),
+            "windows": [window],
+            "mouse_snap": null,
+        });
+        let parsed = parse_ledger(&fixture.to_string()).expect("prior version parses");
+        assert_eq!(parsed.windows[0].show, WindowShowState::default());
+        assert_eq!(
+            product_show_restore(parsed.windows[0].show),
+            ProductShowRestore::ShowNormal
+        );
+    }
+}
+
+#[test]
+fn v4_show_preimage_roundtrip() {
+    let mut minimized = product_window();
+    minimized.show = WindowShowState {
+        minimized: true,
+        maximized: false,
+    };
+    let mut maximized = product_window();
+    maximized.hwnd = 0xBEEF + 1;
+    maximized.tag = "0123456789abcde2".to_owned();
+    maximized.show = WindowShowState {
+        minimized: false,
+        maximized: true,
+    };
+    let ledger = RecoveryLedger {
+        v: LEDGER_SCHEMA_VERSION,
+        owner: owner(),
+        windows: vec![minimized, maximized],
+        mouse_snap: None,
+    };
+    validate_ledger(&ledger).expect("v4 show preimages validate");
+    let json = serde_json::to_string(&ledger).expect("json");
+    let parsed = parse_ledger(&json).expect("v4 show preimages parse");
+    assert_eq!(parsed, ledger);
+    assert_eq!(
+        product_show_restore(parsed.windows[0].show),
+        ProductShowRestore::ShowMinimized
+    );
+    assert_eq!(
+        product_show_restore(parsed.windows[1].show),
+        ProductShowRestore::ShowMaximized
+    );
+}
+
+#[test]
+fn v3_reader_refuses_v4_show_ledger() {
+    // The v3-era version gate (1/2/3 only) refuses a v4 ledger outright, so
+    // an older reader can never silently ignore the show preimage, restore
+    // retained windows unminimized, and delete the ledger.
+    fn validate_as_v3_reader(ledger: &RecoveryLedger) -> bool {
+        matches!(ledger.v, 1..=3)
+    }
+    let ledger = RecoveryLedger {
+        v: LEDGER_SCHEMA_VERSION,
+        owner: owner(),
+        windows: vec![product_window()],
+        mouse_snap: None,
+    };
+    assert_eq!(LEDGER_SCHEMA_VERSION, 4);
+    assert!(!validate_as_v3_reader(&ledger));
+    let v3 = RecoveryLedger { v: 3, ..ledger };
+    assert!(validate_as_v3_reader(&v3));
+}
+
+#[test]
+fn show_restore_intent_choices() {
+    assert_eq!(
+        product_show_restore(WindowShowState {
+            minimized: false,
+            maximized: false,
+        }),
+        ProductShowRestore::ShowNormal
+    );
+    assert_eq!(
+        product_show_restore(WindowShowState {
+            minimized: true,
+            maximized: false,
+        }),
+        ProductShowRestore::ShowMinimized
+    );
+    assert_eq!(
+        product_show_restore(WindowShowState {
+            minimized: false,
+            maximized: true,
+        }),
+        ProductShowRestore::ShowMaximized
+    );
+    // Corrupt-or-raced both-true preimage stays minimized, never unminimizes.
+    assert_eq!(
+        product_show_restore(WindowShowState {
+            minimized: true,
+            maximized: true,
+        }),
+        ProductShowRestore::ShowMinimized
+    );
 }
 
 #[test]
@@ -186,7 +318,7 @@ fn v3_product_tag_format_enforced() {
             "product tag must be rejected: {bad_tag:?}"
         );
     }
-    // Helper claims keep the nonempty rule on v3.
+    // Helper claims keep the nonempty rule on v4.
     let mut helper = product_window();
     helper.kind = WindowClaimKind::Helper;
     helper.tag = "tag-1".to_owned();

@@ -14,7 +14,7 @@ stop:
 proof:
     pwsh -NoProfile -File scripts/windows-dev.ps1 -Action proof
 
-# Normal user tiling (physical, medium, default-on shortcut/Snap takeover, no hide). Requires
+# Normal user tiling/workspaces (physical, medium, default-on shortcut/Snap takeover). Requires
 # explicit --user-start, e.g. `just tile --user-start --trace`. Agents never
 # run this path; proof uses tiling-proof-owned (tile-proof, never normal).
 tile *args:
@@ -52,6 +52,39 @@ shortcuts-stop run_dir:
 # `pwsh -NoProfile -File scripts/windows-hide-proof.ps1`.
 hide-proof:
     pwsh -NoProfile -File scripts/windows-hide-proof.ps1
+
+# Bounded owned-helper workspace proof (physical, medium, workspace digits
+# with hide/reveal for exactly the frozen allowlist). Never runs by default;
+# never touches non-owned windows. Mock first:
+# `just workspace-proof-mock`. Live needs explicit `-Live`:
+# `just workspace-proof -Live`. Out-of-hook cleanup:
+# `just workspace-proof-stop <run_dir>`.
+workspace-proof *args:
+    pwsh -NoProfile -File scripts/windows-workspace-proof.ps1 {{args}}
+
+workspace-proof-mock:
+    pwsh -NoProfile -File scripts/windows-workspace-proof.ps1 -Mock
+
+# Out-of-hook exact-owner cleanup from a persisted run dir.
+workspace-proof-stop run_dir:
+    pwsh -NoProfile -File scripts/windows-workspace-proof.ps1 -Stop -RunDir {{run_dir}}
+
+# Bounded ordinary-app workspace verification over the normal `tile` loop
+# (physical, medium, exact-owner `workspace --select` CLI only, no synthetic
+# digit input). Never runs by default; only approved Notepad/Calculator/Paint
+# are managed by explicit test scope, other apps are excluded. Mock first:
+# `just workspace-normal-mock`. Live needs explicit `-Live`:
+# `just workspace-normal -Live`. Out-of-hook cleanup:
+# `just workspace-normal-stop <run_dir>`.
+workspace-normal *args:
+    pwsh -NoProfile -File scripts/windows-workspace-normal.ps1 {{args}}
+
+workspace-normal-mock:
+    pwsh -NoProfile -File scripts/windows-workspace-normal.ps1 -Mock
+
+# Out-of-hook exact-owner cleanup from a persisted run dir.
+workspace-normal-stop run_dir:
+    pwsh -NoProfile -File scripts/windows-workspace-normal.ps1 -Stop -RunDir {{run_dir}}
 
 # Out-of-hook recovery for the spike; works from a separate shell with the exact printed RunDir.
 winarrow-stop run_dir:

@@ -25,7 +25,7 @@ use tiler_core::session::DesiredGeometry;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, RECT};
 use windows_sys::Win32::Graphics::Dwm::DwmGetWindowAttribute;
 use windows_sys::Win32::Graphics::Gdi::{
-    EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
+    EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFOEXW,
 };
 use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows_sys::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
@@ -49,24 +49,26 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::lifecycle::{
-    is_medium_rid,
+    WORKSPACE_REQUEST_FILE, exe_paths_equal, is_medium_rid,
     sys::{log_path_for, snap_resume, snap_suspend, stop_requested},
 };
 use crate::model::ProcessIdentity;
-use crate::native::{HeldProcess, has_terminal_ancestor};
+use crate::native::HeldProcess;
 use crate::snapkey::{
     KeyboardConfig, MAX_DISPATCH_PER_TICK, OriginVerdict, QueuedSnapEvent, SnapOp, SnapOrigin,
-    VK_MASK, direction_name, resolve_origin,
+    VK_MASK, WorkspaceOp, direction_name, resolve_origin,
 };
 use crate::storage::LedgerStore;
 use crate::tiling::{
     AllowEntry, CaptureOptions, ChildrenOptions, FrameInsets, GestureIntent, HideProofOptions,
     INNER_GAP, InspectOptions, OUTER_GAP, OWNER_ID, ObservedTarget, ObservedTargetRef,
-    ReadbackOutcome, RefusedTracker, SkipReason, StatelessVerdict, TileOptions, TileProofOptions,
-    TokenMap, WindowFacts, allow_match, allowlist_digest, build_reconcile_event, classify,
-    classify_gesture, fingerprint, inspect_stateless_verdict, is_borderless_fullscreen,
-    parse_allowlist, readback_outcome, tick_summary_signature, tiling_domain_bounds,
+    ReadbackOutcome, RefusedTracker, ScopeHostChild, SkipReason, StatelessVerdict, TileOptions,
+    TileProofOptions, TokenMap, WindowFacts, WorkspaceSelectOptions, allow_match, allowlist_digest,
+    classify, classify_gesture, fingerprint, hosted_child_allows, inspect_stateless_verdict,
+    is_borderless_fullscreen, parse_allowlist, parse_workspace_request, readback_outcome,
+    scope_allows, scope_exe_basename, tick_summary_signature, tiling_domain_bounds,
 };
+use crate::workspace::ManagedWorkspaces;
 
 type DynError = Box<dyn std::error::Error>;
 type Result<T> = std::result::Result<T, DynError>;
@@ -138,8 +140,11 @@ pub(crate) fn ensure_pm_v2() -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct MonitorArea {
+    /// Stable session key: the device name (`szDevice`, e.g. `\\.\DISPLAY1`).
+    /// Rectangles decide placement; this key decides session identity.
+    device: String,
     work: Rect,
     full: Rect,
 }
@@ -151,26 +156,37 @@ unsafe extern "system" fn monitor_enum(
     state: LPARAM,
 ) -> i32 {
     let out = unsafe { &mut *(state as *mut Vec<MonitorArea>) };
-    let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
-    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-    if unsafe { GetMonitorInfoW(monitor, &mut info) } == 0 {
+    let mut info: MONITORINFOEXW = unsafe { std::mem::zeroed() };
+    info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+    if unsafe { GetMonitorInfoW(monitor, (&mut info as *mut MONITORINFOEXW).cast()) } == 0 {
         return 1;
     }
     let work = RECT {
-        left: info.rcWork.left,
-        top: info.rcWork.top,
-        right: info.rcWork.right,
-        bottom: info.rcWork.bottom,
+        left: info.monitorInfo.rcWork.left,
+        top: info.monitorInfo.rcWork.top,
+        right: info.monitorInfo.rcWork.right,
+        bottom: info.monitorInfo.rcWork.bottom,
     };
     let full = RECT {
-        left: info.rcMonitor.left,
-        top: info.rcMonitor.top,
-        right: info.rcMonitor.right,
-        bottom: info.rcMonitor.bottom,
+        left: info.monitorInfo.rcMonitor.left,
+        top: info.monitorInfo.rcMonitor.top,
+        right: info.monitorInfo.rcMonitor.right,
+        bottom: info.monitorInfo.rcMonitor.bottom,
     };
     if let (Some(work), Some(full)) = (rect_from_win(work), rect_from_win(full)) {
-        let area = MonitorArea { work, full };
-        let primary = info.dwFlags & MONITORINFOF_PRIMARY != 0;
+        let end = info
+            .szDevice
+            .iter()
+            .position(|c| *c == 0)
+            .unwrap_or(info.szDevice.len());
+        let device = String::from_utf16_lossy(&info.szDevice[..end]);
+        let device = if device.is_empty() {
+            "display-?".to_owned()
+        } else {
+            device
+        };
+        let area = MonitorArea { device, work, full };
+        let primary = info.monitorInfo.dwFlags & MONITORINFOF_PRIMARY != 0;
         if primary {
             out.insert(0, area);
         } else {
@@ -326,7 +342,6 @@ fn window_identity(hwnd: HWND, hwnd_u64: u64, me: &ProcessIdentity) -> Option<Ob
     if !is_medium_rid(rid) {
         return None;
     }
-    let terminal_ancestor = has_terminal_ancestor(pid).unwrap_or(true);
     Some(ObservedTarget {
         hwnd: hwnd_u64,
         pid,
@@ -334,7 +349,6 @@ fn window_identity(hwnd: HWND, hwnd_u64: u64, me: &ProcessIdentity) -> Option<Ob
         exe_path: ident.exe_path,
         user_sid: ident.user_sid,
         session_id: ident.session_id,
-        terminal_ancestor,
         tag: owned_tag(hwnd),
     })
 }
@@ -360,10 +374,10 @@ fn owned_tag(hwnd: HWND) -> String {
 }
 
 /// Proof-only owned-helper verification: sibling executable, owned class,
-/// lifetime tag, full process identity, medium integrity, and Terminal
-/// ancestry exclusion via [`crate::test_window::sys::query_owned`]. Generic
-/// windows (including otherwise eligible ordinary apps) fail here even when
-/// their rectangles look tileable.
+/// lifetime tag, full process identity, and medium integrity via
+/// [`crate::test_window::sys::query_owned`]. Generic windows (including
+/// otherwise eligible ordinary apps) fail here even when their rectangles
+/// look tileable.
 fn verify_proof_owned(
     hwnd_u64: u64,
     expected: &AllowEntry,
@@ -499,7 +513,6 @@ fn observe_window(
         tool_window: exstyle & WS_EX_TOOLWINDOW != 0,
         owned,
         captionless_fullscreen: is_borderless_fullscreen(captionless, visible, fulls),
-        terminal_ancestor: identity.terminal_ancestor,
         no_activate: exstyle & WS_EX_NOACTIVATE != 0,
         dialog: !owned && class == DIALOG_CLASS,
     };
@@ -565,6 +578,16 @@ struct TileLoop {
     gesture_before: HashMap<u64, Rect>,
     tick: u64,
     allowlist: Option<Vec<AllowEntry>>,
+    /// Explicit normal-mode scope filter (top-level exe basenames,
+    /// normalized at parse). Empty means no filter: every eligible window is
+    /// managed. Nonempty fences observation, geometry writes, workspace
+    /// hide/reveal membership, and focus actuation.
+    scope: Vec<String>,
+    /// Explicit host-to-child scope pairs (empty means no child constraint).
+    /// A listed host passes observation and hide admission only while a live
+    /// hosted child matches, so a newly appearing hosted app can never ride
+    /// another app's host executable into management.
+    scope_hosts: Vec<ScopeHostChild>,
     trace: bool,
     suspended: bool,
     last_summary: Option<String>,
@@ -586,24 +609,76 @@ struct TileLoop {
     /// Raw `EnumWindows` count from the latest observation (targets seen
     /// before any eligibility filtering, including zero).
     last_enumerated: usize,
+    /// Project-owned per-output-local workspaces. Independent Engine domains
+    /// per `(output, workspace)` preserve each layout plus last focus.
+    workspaces: crate::workspace::ManagedWorkspaces,
+    /// Stable session tokens per member key. The token (not the ephemeral
+    /// product nonce) is the Engine identity; the nonce lives only in
+    /// `hidden_claims` plus the ledger while hidden.
+    member_tokens: std::collections::BTreeMap<crate::workspace::WindowKey, String>,
+    /// Last-known rectangles per member token (visible reads plus hidden
+    /// snapshots) so Engine source/target observations stay complete.
+    member_rects: HashMap<String, Rect>,
+    /// Known hidden product claims by stable member key. Retained
+    /// independently of the `IsWindowVisible` observation gate so hidden
+    /// windows are never dropped; the nonce leaves only after verified
+    /// reveal or release. Keyed by the full `(hwnd, pid, creation)` member
+    /// identity, never HWND alone, so a recycled HWND never matches.
+    hidden_claims: std::collections::BTreeMap<crate::workspace::WindowKey, HiddenRecord>,
+    /// Stored full process identity per member key. Hide effects bind to
+    /// this stored identity and refuse recycled HWNDs with no writes.
+    member_identity: std::collections::BTreeMap<crate::workspace::WindowKey, ProcessIdentity>,
+    /// Stored visible-membership lifetime tag per member key, stamped at
+    /// admission onto the window itself. Same-process HWND reuse starts
+    /// without it, so every effect re-verifies live-against-stored before
+    /// trusting HWND/PID/creation. Never serialized, never trusted across
+    /// runs, never removed (the property dies with its window).
+    member_tags: std::collections::BTreeMap<crate::workspace::WindowKey, String>,
+    /// Cached output context for the next select. Updated on every switch
+    /// and refreshed from pointer/foreground context when stale.
+    active_output: String,
+    /// True only for the `workspace-proof` command: workspace hides are
+    /// allowed, but solely for frozen-allowlist helpers verified fresh via
+    /// `verify_proof_owned` before every write. Normal `tile` allows
+    /// ordinary-app hides; `shortcut-proof` and `tile-proof` never hide.
+    workspace_proof: bool,
+    /// Last observed foreground HWND. Only an actual foreground change to a
+    /// hidden member selects its workspace; event-only notifications never do.
+    last_foreground: u64,
+    /// Monitor device keys from the last loop pass, for disconnect/reconnect.
+    known_outputs: Vec<String>,
+    /// Raw `EnumWindows` HWND inventory from the latest enumeration,
+    /// independent of eligibility: close cleanup and retained-occupancy
+    /// decisions never mistake an unclassified window for a closed one.
+    last_hwnds: HashSet<u64>,
+    /// Monitor snapshot from the last loop pass: disconnect-time geometry
+    /// for the survivor chooser, never post-disconnect frames as proxy.
+    last_areas: Vec<MonitorArea>,
+}
+
+/// One hidden member: the committed ledger claim (carrying the durable
+/// show-state preimage, the authority for independent restore) plus the iconic
+/// state at hide time for the in-memory reveal fast path and preimage-less
+/// legacy claims.
+#[derive(Debug, Clone)]
+struct HiddenRecord {
+    claim: crate::model::WindowIdentity,
+    iconic: bool,
+}
+
+/// One retained-occupancy member: identity resolved but no tileable frame
+/// (minimized without a DWM frame) or an ineligible state with a fresh
+/// frame (maximized, fullscreen, cloaked). `rect` is `None` only when no
+/// frame exists; the caller falls back to the last-known snapshot so hidden
+/// Engine membership and layout survive.
+#[derive(Debug, Clone)]
+struct RetainedRow {
+    key: crate::workspace::WindowKey,
+    token: String,
+    rect: Option<Rect>,
 }
 
 impl TileLoop {
-    fn domain_key(&self) -> tiler_core::session::DomainKey {
-        tiler_core::session::DomainKey {
-            output: tiler_core::directional::OutputId(crate::tiling::OUTPUT_ID.to_owned()),
-            workspace: tiler_core::directional::WorkspaceId(crate::tiling::WORKSPACE_ID.to_owned()),
-        }
-    }
-
-    fn revision(&self) -> u64 {
-        let key = self.domain_key();
-        self.engine
-            .session(&key)
-            .map(|s| s.accepted_revision())
-            .unwrap_or(0)
-    }
-
     fn correlation(&self) -> CorrelationId {
         CorrelationId::parse(&format!("tick-{}", self.tick))
             .expect("tick correlation is a valid token")
@@ -613,23 +688,26 @@ impl TileLoop {
     /// frozen-allowlist HWND before any per-window query, so non-owned windows
     /// never mint tokens, churn the map, or enter logs; `EnumWindows` still
     /// yields the complete raw count. Proof mode additionally requires
-    /// frozen-allowlist membership, owned-helper verification (sibling
-    /// exe/class/lifetime-tag plus Terminal exclusion), and excludes the
-    /// Terminal tree (via `classify`); malformed allowlist state is
-    /// unreachable here because `cmd_tile_proof` refuses it before the loop
-    /// starts. Invisible allowlist members stay frozen (not eligible) until an
-    /// exact-bound `show` admission. Returns `None` when enumeration itself
+    /// frozen-allowlist membership plus owned-helper verification (sibling
+    /// exe/class/lifetime-tag); malformed allowlist state is unreachable here
+    /// because `cmd_tile_proof` refuses it before the loop starts. Invisible
+    /// allowlist members stay frozen (not eligible) until an exact-bound
+    /// `show` admission. Normal mode with a nonempty scope additionally
+    /// reports out-of-scope executables as `scope-excluded` with no
+    /// membership, geometry, or focus. Returns `None` when enumeration itself
     /// failed: the tick is skipped with retained Engine state.
     fn observe(
         &mut self,
         me: &ProcessIdentity,
         fulls: &[Rect],
         skipped: &mut Vec<(String, String)>,
+        retained: &mut Vec<RetainedRow>,
     ) -> Option<Vec<ObservedWindow>> {
         use ObserveFailure::{Known, Unknown};
         let proof_mode = self.allowlist.is_some();
         let hwnds = enumerate_hwnds()?;
         self.last_enumerated = hwnds.len();
+        self.last_hwnds = hwnds.iter().map(|raw| *raw as usize as u64).collect();
         let mut out = Vec::new();
         let mut unreadable = 0usize;
         // Every resolved identity pair mints or reuses a token; retain all of
@@ -654,8 +732,24 @@ impl TileLoop {
                     // Identity known: retain it and skip with the accurate
                     // reason (minimized needs no frame; unreadable keeps its
                     // stable token instead of counting as changed identity).
+                    // Retained-occupancy members ride a row with no fresh
+                    // frame so Engine membership survives minimization.
+                    // Out-of-scope executables never retain membership.
                     enumerated.push((known.identity.hwnd, known.identity.process_creation.clone()));
-                    skipped.push((known.token, reason.as_str().to_owned()));
+                    if !scope_allows(&self.scope, &known.identity.exe_path) {
+                        skipped.push((known.token.clone(), "scope-excluded".to_owned()));
+                        continue;
+                    }
+                    skipped.push((known.token.clone(), reason.as_str().to_owned()));
+                    retained.push(RetainedRow {
+                        key: crate::workspace::WindowKey {
+                            hwnd: known.identity.hwnd,
+                            pid: known.identity.pid,
+                            creation: known.identity.process_creation.clone(),
+                        },
+                        token: known.token.clone(),
+                        rect: None,
+                    });
                     continue;
                 }
                 Err(Unknown) => {
@@ -681,24 +775,76 @@ impl TileLoop {
                     continue;
                 }
             }
-            match classify(&window.facts, proof_mode) {
+            match classify(&window.facts) {
                 Ok(()) => {
+                    if !scope_allows(&self.scope, &window.identity.exe_path) {
+                        skipped.push((window.token.clone(), "scope-excluded".to_owned()));
+                        continue;
+                    }
+                    // Listed hosts pass only with a live matching hosted
+                    // child, re-verified every tick: a newly appearing hosted
+                    // app can never ride another app's host executable into
+                    // observation, membership, writes, or focus. Excluded
+                    // members keep their retained snapshot (no membership
+                    // loss) and re-enter when the child set is clean again.
+                    if !hosted_gate_allows(
+                        &window.identity.exe_path,
+                        window.hwnd,
+                        window.identity.pid,
+                        &self.scope_hosts,
+                    ) {
+                        skipped.push((window.token.clone(), "scope-excluded".to_owned()));
+                        retained.push(RetainedRow {
+                            key: crate::workspace::WindowKey {
+                                hwnd: window.identity.hwnd,
+                                pid: window.identity.pid,
+                                creation: window.identity.process_creation.clone(),
+                            },
+                            token: window.token.clone(),
+                            rect: None,
+                        });
+                        continue;
+                    }
                     out.push(window);
                 }
                 Err(reason) => {
                     skipped.push((window.token.clone(), reason.as_str().to_owned()));
+                    // Ineligible but fully observed: the fresh frame keeps
+                    // retained occupancy (maximized, fullscreen, cloaked)
+                    // inside Engine membership with no geometry writes.
+                    retained.push(RetainedRow {
+                        key: crate::workspace::WindowKey {
+                            hwnd: window.hwnd,
+                            pid: window.identity.pid,
+                            creation: window.identity.process_creation.clone(),
+                        },
+                        token: window.token.clone(),
+                        rect: Some(window.visible),
+                    });
                 }
             }
         }
         // Bounded retain over every enumerated pair, never HWND alone and
-        // never eligible-only: skipped identities keep their tokens.
-        let live_refs: Vec<ObservedTargetRef<'_>> = enumerated
+        // never eligible-only: skipped identities keep their tokens. Known
+        // hidden claims are retained too: they never pass the visible gate
+        // but their tokens stay stable across ticks.
+        let mut live_refs: Vec<ObservedTargetRef<'_>> = enumerated
             .iter()
             .map(|(hwnd, creation)| ObservedTargetRef {
                 hwnd: *hwnd,
                 creation,
             })
             .collect();
+        for record in self.hidden_claims.values() {
+            if !live_refs.iter().any(|t| {
+                t.hwnd == record.claim.hwnd && t.creation == record.claim.process.process_creation
+            }) {
+                live_refs.push(ObservedTargetRef {
+                    hwnd: record.claim.hwnd,
+                    creation: &record.claim.process.process_creation,
+                });
+            }
+        }
         self.tokens.retain(&live_refs);
         if unreadable > 0 {
             skipped.push((
@@ -745,14 +891,16 @@ fn publish_managed(state: &mut TileLoop, observed: &[ObservedWindow]) {
 }
 
 /// Revalidate one write target immediately before `SetWindowPos`: fresh
-/// eligibility, fresh full identity compared against the cached expectation
-/// and the frozen allowlist, with the process held open across the write.
-/// Returns the fresh observation plus the held process (liveness guard).
+/// eligibility, scope, fresh full identity compared against the cached
+/// expectation and the frozen allowlist, with the process held open across
+/// the write. Returns the fresh observation plus the held process (liveness
+/// guard).
 struct WriteTarget {
     window: ObservedWindow,
     held: HeldProcess,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn revalidate_target(
     expected: &ObservedWindow,
     me: &ProcessIdentity,
@@ -760,6 +908,9 @@ fn revalidate_target(
     tokens: &mut TokenMap,
     proof_mode: bool,
     allowlist: Option<&Vec<AllowEntry>>,
+    scope: &[String],
+    member_tag: Option<&str>,
+    scope_hosts: &[ScopeHostChild],
 ) -> std::result::Result<WriteTarget, &'static str> {
     let hwnd = expected.hwnd as isize as HWND;
     let mut pid: u32 = 0;
@@ -786,10 +937,32 @@ fn revalidate_target(
     if !is_medium_rid(rid) {
         return Err("integrity-changed");
     }
-    let terminal_ancestor = has_terminal_ancestor(pid).map_err(|_| "identity-changed")?;
-    let mut fresh = observe_window(hwnd, me, fulls, tokens).map_err(|_| "ineligible")?;
-    fresh.identity.terminal_ancestor = terminal_ancestor;
-    fresh.facts.terminal_ancestor = terminal_ancestor;
+    let fresh = observe_window(hwnd, me, fulls, tokens).map_err(|_| "ineligible")?;
+    if !scope_allows(scope, &fresh.identity.exe_path) {
+        return Err("scope-excluded");
+    }
+    // Visible lifetime gate: the live member tag must equal the stored tag,
+    // so a same-process HWND reuse (same HWND/PID/creation, fresh window)
+    // authorizes no geometry write and no focus actuation. Untracked windows
+    // (no stored tag) never pass, only admission stamps.
+    let live_tag = crate::product_hide::sys::read_member_tag(fresh.hwnd);
+    let Some(stored) = member_tag else {
+        return Err("identity-changed");
+    };
+    if !crate::workspace_owner::visible_lifetime_ok(stored, live_tag.as_deref()) {
+        return Err("identity-changed");
+    }
+    // Hosted-child fence, fresh (never from the tick's observation): a newly
+    // appearing hosted app authorizes no geometry write and no focus
+    // actuation under another app's membership.
+    if !hosted_gate_allows(
+        &fresh.identity.exe_path,
+        fresh.hwnd,
+        fresh.identity.pid,
+        scope_hosts,
+    ) {
+        return Err("scope-excluded");
+    }
     if proof_mode {
         let entries = allowlist.ok_or("allowlist-missing")?;
         let Some(entry) = entries
@@ -799,10 +972,10 @@ fn revalidate_target(
             return Err("allowlist-changed");
         };
         // Owned-helper gate immediately before the setter: sibling
-        // exe/class/tag plus Terminal exclusion, no ordinary fallback.
+        // exe/class/tag, no ordinary fallback.
         verify_proof_owned(fresh.hwnd, entry, me)?;
     }
-    classify(&fresh.facts, proof_mode).map_err(|reason| reason.as_str())?;
+    classify(&fresh.facts).map_err(|reason| reason.as_str())?;
     if fresh.token != expected.token {
         return Err("identity-changed");
     }
@@ -852,15 +1025,142 @@ fn desired_entries(reply: &CoreReply) -> Option<Vec<DesiredEntry>> {
     }
 }
 
-/// Run one reconcile tick: enumerate, build the complete observation, handle
-/// through the Engine, apply desired geometry, read back.
-fn reconcile_tick(state: &mut TileLoop, me: &ProcessIdentity, fulls: &[Rect], domain: Rect) {
+/// Assemble complete Engine rows for one `(output, workspace)` domain: the
+/// union of eligible visible members, retained-occupancy members with fresh
+/// frames, frame-less retained members with last-known snapshots, and hidden
+/// snapshots. Refreshes the member token/rect/identity tables for every row
+/// with a fresh read.
+///
+/// Returns `None` when any member lacks a known snapshot: every Engine
+/// handle path must defer with retained state instead of converging a
+/// falsely complete observation that would drop membership and layout.
+fn assemble_domain_rows(
+    state: &mut TileLoop,
+    output: &str,
+    workspace: &str,
+    observed: &[ObservedWindow],
+    retained: &[RetainedRow],
+) -> Option<Vec<crate::workspace_owner::OwnerRow>> {
+    let members = state.workspaces.workspace_members(output, workspace);
+    let by_token: HashMap<&str, &ObservedWindow> =
+        observed.iter().map(|w| (w.token.as_str(), w)).collect();
+    let mut views = Vec::new();
+    for key in &members {
+        if state.workspaces.is_hidden(key) {
+            if let (Some(token), Some(rect)) = (
+                state.member_tokens.get(key).cloned(),
+                state
+                    .member_tokens
+                    .get(key)
+                    .and_then(|t| state.member_rects.get(t).copied()),
+            ) {
+                views.push(crate::workspace_owner::MemberView {
+                    key: key.clone(),
+                    token,
+                    rect,
+                });
+            }
+            continue;
+        }
+        // Eligible visible read first. Out-of-scope members still ride a row
+        // so the observation stays complete: the scope fence lives in
+        // `writable_tokens` (no geometry writes), `workspace_hide_one`, and
+        // the select/send dispatchers (no hides), never in row assembly
+        // (where a missing view would stall convergence as `deferred`).
+        if let Some(token) = state.member_tokens.get(key).cloned()
+            && let Some(window) = by_token.get(token.as_str())
+        {
+            state.member_rects.insert(token.clone(), window.visible);
+            if let Some(identity) = state.member_identity.get_mut(key) {
+                identity.pid = window.identity.pid;
+                identity.process_creation = window.identity.process_creation.clone();
+                identity.exe_path = window.identity.exe_path.clone();
+                identity.user_sid = window.identity.user_sid.clone();
+                identity.session_id = window.identity.session_id;
+            }
+            views.push(crate::workspace_owner::MemberView {
+                key: key.clone(),
+                token: token.clone(),
+                rect: window.visible,
+            });
+            continue;
+        }
+        // Retained occupancy: fresh frame when observed, else last snapshot.
+        if let Some(row) = retained.iter().find(|r| r.key == *key) {
+            if let Some(rect) = row.rect {
+                state.member_rects.insert(row.token.clone(), rect);
+                views.push(crate::workspace_owner::MemberView {
+                    key: key.clone(),
+                    token: row.token.clone(),
+                    rect,
+                });
+            } else if let Some(rect) = state.member_rects.get(&row.token).copied() {
+                views.push(crate::workspace_owner::MemberView {
+                    key: key.clone(),
+                    token: row.token.clone(),
+                    rect,
+                });
+            }
+        }
+    }
+    let mut rows = crate::workspace_owner::domain_rows(&members, &views)?;
+    rows.sort_by(|a, b| a.token.cmp(&b.token));
+    Some(rows)
+}
+
+/// Engine-writable tokens for one domain: eligible observed members only.
+/// Retained and hidden rows converge membership but never take geometry
+/// writes; hidden workspace geometry is not written until reveal.
+fn writable_tokens(
+    state: &TileLoop,
+    output: &str,
+    workspace: &str,
+    observed: &[ObservedWindow],
+) -> HashSet<String> {
+    let members = state.workspaces.workspace_members(output, workspace);
+    let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
+    let mut out = HashSet::new();
+    for key in &members {
+        if state.workspaces.is_hidden(key) {
+            continue;
+        }
+        let Some(window) = by_hwnd.get(&key.hwnd) else {
+            continue;
+        };
+        if !crate::workspace_owner::member_matches(
+            key,
+            window.hwnd,
+            window.identity.pid,
+            &window.identity.process_creation,
+        ) {
+            continue;
+        }
+        if !scope_allows(&state.scope, &window.identity.exe_path) {
+            continue;
+        }
+        out.insert(window.token.clone());
+    }
+    out
+}
+
+/// Run one reconcile tick partitioned per output-local domain: enumerate
+/// once, then converge each monitor's current workspace through its own
+/// retained Engine session with that monitor's `rcWork` bounds. Hidden
+/// workspace sessions are never reconciled, so their membership and layout
+/// survive untouched; no layout reseeds across switches.
+fn reconcile_tick(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+) {
     state.tick += 1;
     let tick = state.tick;
     let correlation = state.correlation();
     let mut skipped: Vec<(String, String)> = Vec::new();
+    let mut retained: Vec<RetainedRow> = Vec::new();
     let log_path = state.log_path.clone();
-    let Some(observed) = state.observe(me, fulls, &mut skipped) else {
+    let Some(mut observed) = state.observe(me, fulls, &mut skipped, &mut retained) else {
         log_json_at(
             &log_path,
             serde_json::json!({"event":"tick-skip","tick":tick,"cause":"enum-failed"}),
@@ -868,6 +1168,8 @@ fn reconcile_tick(state: &mut TileLoop, me: &ProcessIdentity, fulls: &[Rect], do
         return;
     };
     publish_managed(state, &observed);
+    ensure_workspace_assignments(state, me, &mut observed, areas);
+    workspace_close_cleanup(state);
     // Structured observer tick before Engine dispatch: full EnumWindows
     // success with the raw enumerated count and the managed (eligible,
     // allowlisted) count, including zero. A zero managed set is a completed
@@ -899,40 +1201,68 @@ fn reconcile_tick(state: &mut TileLoop, me: &ProcessIdentity, fulls: &[Rect], do
             }),
         );
     }
-    let pairs: Vec<(String, Rect)> = observed
-        .iter()
-        .map(|w| (w.token.clone(), w.visible))
-        .collect();
-    let fp = fingerprint(&pairs);
-    let windows: Vec<(WindowId, Rect)> = observed
-        .iter()
-        .map(|w| (WindowId(w.token.clone()), w.visible))
-        .collect();
-    let focused = state.focused_token(&observed);
-    let event = build_reconcile_event(&crate::tiling::ReconcileInput {
-        owner: &state.owner,
-        generation: &state.generation,
-        correlation: &correlation,
-        revision: state.revision(),
-        fingerprint: fp,
-        domain_bounds: domain,
-        windows: &windows,
-        focused: focused.as_ref(),
-    });
-    let reply = state.engine.handle(&event);
-    apply_geometry(
-        state,
-        ApplyInput {
-            me,
-            fulls,
-            reply: &reply,
-            observed: &observed,
-            op: "reconcile",
-            tick,
-            correlation: correlation.as_str(),
-            skipped,
-        },
-    );
+    for area in areas {
+        let output = area.device.clone();
+        state.workspaces.ensure_output(&output);
+        let Some(active) = state.workspaces.active_id(&output) else {
+            continue;
+        };
+        if tiling_domain_bounds(area.work).is_none() {
+            continue;
+        }
+        // Incomplete snapshot defers with retained Engine state: a falsely
+        // complete observation would drop membership and layout.
+        let Some(rows) = assemble_domain_rows(state, &output, &active, &observed, &retained) else {
+            continue;
+        };
+        let windows: Vec<(WindowId, Rect)> = rows
+            .iter()
+            .map(|r| (WindowId(r.token.clone()), r.rect))
+            .collect();
+        let fp = fingerprint(
+            &rows
+                .iter()
+                .map(|r| (r.token.clone(), r.rect))
+                .collect::<Vec<_>>(),
+        );
+        let focused = state
+            .focused_token(&observed)
+            .filter(|f| windows.iter().any(|(w, _)| w == f));
+        let Some((domain, domain_key)) = workspace_domain_for(&output, &active, areas) else {
+            continue;
+        };
+        let event = crate::tiling::build_reconcile_event_for(
+            &state.owner,
+            &state.generation,
+            &correlation,
+            revision_for(state, &output, &active),
+            fp,
+            &domain,
+            &domain_key,
+            OUTER_GAP,
+            &windows,
+            focused.as_ref(),
+        );
+        let reply = state.engine.handle(&event);
+        let writable = writable_tokens(state, &output, &active, &observed);
+        apply_geometry(
+            state,
+            ApplyInput {
+                me,
+                fulls,
+                reply: &reply,
+                observed: &observed,
+                op: "reconcile",
+                tick,
+                correlation: correlation.as_str(),
+                skipped: skipped.clone(),
+                writable: &writable,
+                output_token: state.workspaces.output_token(&output),
+                workspace_token: state.workspaces.workspace_token(&output, &active),
+                revision: revision_for(state, &output, &active),
+            },
+        );
+    }
 }
 
 /// Bundled inputs for one geometry application pass.
@@ -945,6 +1275,14 @@ struct ApplyInput<'a> {
     tick: u64,
     correlation: &'a str,
     skipped: Vec<(String, String)>,
+    /// Eligible observed tokens in this domain. Retained and hidden rows
+    /// converge Engine membership but never take geometry writes.
+    writable: &'a HashSet<String>,
+    /// Opaque domain tokens for the per-domain tick log (no native ids).
+    output_token: String,
+    workspace_token: String,
+    /// Engine revision of this domain for the tick summary signature.
+    revision: u64,
 }
 
 /// Settled result of one geometry application pass: verified writes,
@@ -973,6 +1311,10 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> ApplySummary {
         tick,
         correlation,
         mut skipped,
+        writable,
+        output_token,
+        workspace_token,
+        revision,
     } = input;
     let log_path = state.log_path.clone();
     let settled = |applied: usize, mismatched: usize, readback_ok: bool| ApplySummary {
@@ -994,6 +1336,8 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> ApplySummary {
                 "tick": tick,
                 "correlation": correlation,
                 "op": op,
+                "output": output_token,
+                "workspace": workspace_token,
                 "outcome": outcome.0,
                 "kind": outcome.1,
             }),
@@ -1017,6 +1361,13 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> ApplySummary {
         }
         if entry.client_clamped {
             skipped.push((entry.window.0.clone(), "client-clamped".to_owned()));
+            continue;
+        }
+        if !writable.contains(entry.window.0.as_str()) {
+            // Retained or hidden rows converge Engine membership but never
+            // take geometry writes: hidden workspace geometry waits for
+            // reveal and minimized/maximized/fullscreen frames stay native.
+            skipped.push((entry.window.0.clone(), "retained".to_owned()));
             continue;
         }
         let Some(expected) = by_token.get(entry.window.0.as_str()) else {
@@ -1050,6 +1401,14 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> ApplySummary {
         } else {
             None
         };
+        // Stored lifetime tag for the write gate: disjoint-field borrows of
+        // `state` coexist with the `&mut state.tokens` below.
+        let member_key = crate::workspace::WindowKey {
+            hwnd: expected.hwnd,
+            pid: expected.identity.pid,
+            creation: expected.identity.process_creation.clone(),
+        };
+        let stored_tag = state.member_tags.get(&member_key).map(String::as_str);
         let target = match revalidate_target(
             expected,
             me,
@@ -1057,6 +1416,9 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> ApplySummary {
             &mut state.tokens,
             proof_mode,
             state.allowlist.as_ref(),
+            &state.scope,
+            stored_tag,
+            &state.scope_hosts,
         ) {
             Ok(target) => target,
             Err(reason) => {
@@ -1194,7 +1556,8 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> ApplySummary {
     // math stays coherent within the tick.
     let reread_fulls = fulls.to_vec();
     let mut reread_skipped = Vec::new();
-    let reread = state.observe(me, &reread_fulls, &mut reread_skipped);
+    let mut reread_retained: Vec<RetainedRow> = Vec::new();
+    let reread = state.observe(me, &reread_fulls, &mut reread_skipped, &mut reread_retained);
     let mut mismatched = 0usize;
     let mut readback_ok = false;
     if let Some(reread) = reread {
@@ -1207,6 +1570,10 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> ApplySummary {
             .map(|w| (w.token.as_str(), w.visible))
             .collect();
         for entry in &desired {
+            if !writable.contains(entry.window.0.as_str()) {
+                // Retained rows never took writes: no readback verdict.
+                continue;
+            }
             match reread_by_token.get(entry.window.0.as_str()) {
                 Some(visible) => {
                     match readback_outcome(
@@ -1290,8 +1657,9 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> ApplySummary {
         &summary_skipped,
         mismatched,
         op,
-        state.revision(),
+        revision,
     );
+    let signature = format!("{output_token}/{workspace_token}|{signature}");
     let changed = state.last_summary.as_ref() != Some(&signature);
     if changed || state.trace {
         state.last_summary = Some(signature);
@@ -1306,6 +1674,8 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> ApplySummary {
                 "tick": tick,
                 "op": op,
                 "correlation": correlation,
+                "output": output_token,
+                "workspace": workspace_token,
                 "windows": observed.len(),
                 "applied": applied,
                 "mismatched": mismatched,
@@ -1435,6 +1805,12 @@ fn actuate_focus(
         return unsettled("vanished");
     };
     let proof_mode = state.allowlist.is_some();
+    let member_key = crate::workspace::WindowKey {
+        hwnd: expected.hwnd,
+        pid: expected.identity.pid,
+        creation: expected.identity.process_creation.clone(),
+    };
+    let stored_tag = state.member_tags.get(&member_key).map(String::as_str);
     let target = match revalidate_target(
         expected,
         me,
@@ -1442,6 +1818,9 @@ fn actuate_focus(
         &mut state.tokens,
         proof_mode,
         state.allowlist.as_ref(),
+        &state.scope,
+        stored_tag,
+        &state.scope_hosts,
     ) {
         Ok(target) => target,
         Err(reason) => return unsettled(reason),
@@ -1582,7 +1961,7 @@ fn keyboard_tick(
     state: &mut TileLoop,
     me: &ProcessIdentity,
     fulls: &[Rect],
-    domain: Rect,
+    areas: &[MonitorArea],
     events: Vec<QueuedSnapEvent>,
     blocked: Option<&'static str>,
 ) {
@@ -1612,6 +1991,7 @@ fn keyboard_tick(
                     );
                 }
                 QueuedSnapEvent::Intent(_) => stale += 1,
+                QueuedSnapEvent::Workspace(_) => stale += 1,
             }
         }
         if stale > 0 {
@@ -1683,7 +2063,9 @@ fn keyboard_tick(
                     continue;
                 };
                 let mut skipped: Vec<(String, String)> = Vec::new();
-                let Some(observed) = state.observe(me, fulls, &mut skipped) else {
+                let mut retained: Vec<RetainedRow> = Vec::new();
+                let Some(mut observed) = state.observe(me, fulls, &mut skipped, &mut retained)
+                else {
                     // Enumeration failure settles the action as failed; the
                     // Engine keeps retained state and the next tick retries.
                     log_json_at(
@@ -1703,6 +2085,7 @@ fn keyboard_tick(
                     continue;
                 };
                 publish_managed(state, &observed);
+                ensure_workspace_assignments(state, me, &mut observed, areas);
                 let fresh: Vec<SnapOrigin> = observed.iter().map(snap_origin_of).collect();
                 let foreground_hwnd = Some(unsafe { GetForegroundWindow() } as usize as u64);
                 let (from, continued) = match resolve_origin(
@@ -1733,27 +2116,155 @@ fn keyboard_tick(
                         continue;
                     }
                 };
-                let pairs: Vec<(String, Rect)> = observed
+                // Route through the origin window's own (output, workspace)
+                // session: directional ops run on the retained per-workspace
+                // domain the mover actually lives in, never a parallel
+                // single-display family.
+                let Some(member_key) = state
+                    .member_tokens
                     .iter()
-                    .map(|w| (w.token.clone(), w.visible))
-                    .collect();
-                let fp = fingerprint(&pairs);
-                let windows: Vec<(WindowId, Rect)> = observed
+                    .find(|(_, token)| token.as_str() == from.as_str())
+                    .map(|(key, _)| key.clone())
+                else {
+                    state.snap_advance = None;
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "snap",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "op": intent.op.as_str(),
+                            "direction": direction_name(intent.direction),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": "unmanaged",
+                            "origin": origin.token,
+                        }),
+                    );
+                    continue;
+                };
+                if !crate::workspace_owner::member_matches(
+                    &member_key,
+                    origin.hwnd,
+                    origin.pid,
+                    &origin.creation,
+                ) {
+                    state.snap_advance = None;
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "snap",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "op": intent.op.as_str(),
+                            "direction": direction_name(intent.direction),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": "origin-vanished",
+                            "origin": origin.token,
+                        }),
+                    );
+                    continue;
+                }
+                let Some(loc) = state.workspaces.member_loc(&member_key).cloned() else {
+                    state.snap_advance = None;
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "snap",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "op": intent.op.as_str(),
+                            "direction": direction_name(intent.direction),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": "unmanaged",
+                            "origin": origin.token,
+                        }),
+                    );
+                    continue;
+                };
+                let Some((domain, domain_key)) =
+                    workspace_domain_for(&loc.output, &loc.workspace, areas)
+                else {
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "snap",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "op": intent.op.as_str(),
+                            "direction": direction_name(intent.direction),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": "unknown-output",
+                            "origin": origin.token,
+                        }),
+                    );
+                    continue;
+                };
+                let Some(rows) =
+                    assemble_domain_rows(state, &loc.output, &loc.workspace, &observed, &retained)
+                else {
+                    state.snap_advance = None;
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "snap",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "op": intent.op.as_str(),
+                            "direction": direction_name(intent.direction),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": "deferred",
+                            "origin": origin.token,
+                        }),
+                    );
+                    continue;
+                };
+                if !rows.iter().any(|r| r.token == from) {
+                    state.snap_advance = None;
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "snap",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "op": intent.op.as_str(),
+                            "direction": direction_name(intent.direction),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": "unmanaged",
+                            "origin": origin.token,
+                        }),
+                    );
+                    continue;
+                }
+                let windows: Vec<(WindowId, Rect)> = rows
                     .iter()
-                    .map(|w| (WindowId(w.token.clone()), w.visible))
+                    .map(|r| (WindowId(r.token.clone()), r.rect))
                     .collect();
+                let fp = fingerprint(
+                    &rows
+                        .iter()
+                        .map(|r| (r.token.clone(), r.rect))
+                        .collect::<Vec<_>>(),
+                );
                 // `from` is the origin-verified token, never blind foreground.
                 let from = WindowId(from);
-                let mut event = build_reconcile_event(&crate::tiling::ReconcileInput {
-                    owner: &state.owner,
-                    generation: &state.generation,
-                    correlation: &correlation,
-                    revision: state.revision(),
-                    fingerprint: fp,
-                    domain_bounds: domain,
-                    windows: &windows,
-                    focused: Some(&from),
-                });
+                let mut event = crate::tiling::build_reconcile_event_for(
+                    &state.owner,
+                    &state.generation,
+                    &correlation,
+                    revision_for(state, &loc.output, &loc.workspace),
+                    fp,
+                    &domain,
+                    &domain_key,
+                    OUTER_GAP,
+                    &windows,
+                    Some(&from),
+                );
                 let direction = direction_name(intent.direction).to_owned();
                 event.command = match intent.op {
                     SnapOp::Focus => CoreCommand::Focus {
@@ -1813,6 +2324,8 @@ fn keyboard_tick(
                     }
                     SnapOp::Move => {
                         if let CoreReply::MoveDirectional(_) = &reply {
+                            let writable =
+                                writable_tokens(state, &loc.output, &loc.workspace, &observed);
                             let summary = apply_geometry(
                                 state,
                                 ApplyInput {
@@ -1824,6 +2337,12 @@ fn keyboard_tick(
                                     tick,
                                     correlation: correlation.as_str(),
                                     skipped,
+                                    writable: &writable,
+                                    output_token: state.workspaces.output_token(&loc.output),
+                                    workspace_token: state
+                                        .workspaces
+                                        .workspace_token(&loc.output, &loc.workspace),
+                                    revision: revision_for(state, &loc.output, &loc.workspace),
                                 },
                             );
                             if !summary.readback_ok {
@@ -1857,26 +2376,1907 @@ fn keyboard_tick(
                     }),
                 );
             }
+            QueuedSnapEvent::Workspace(intent) => {
+                // Routed to workspace_tick by the caller; defensive drop here
+                // stays trace-only so held-key traffic never pollutes logs.
+                if state.trace {
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "workspace",
+                            "tick": state.tick,
+                            "op": intent.op.as_str(),
+                            "index": intent.index,
+                            "edge": intent.edge.as_str(),
+                            "disposition": "rerouted",
+                            "outcome": "workspace-tick",
+                        }),
+                    );
+                }
+            }
         }
     }
+}
+
+/// Stable output key for a rectangle center: the monitor containing the
+/// center wins; otherwise the largest overlap; otherwise the primary.
+/// Rectangles decide placement, device names decide session identity.
+fn output_for_rect(areas: &[MonitorArea], rect: &Rect) -> String {
+    let cx = rect.x + rect.w / 2;
+    let cy = rect.y + rect.h / 2;
+    for area in areas {
+        let r = area.full;
+        if cx >= r.x && cx < r.x + r.w && cy >= r.y && cy < r.y + r.h {
+            return area.device.clone();
+        }
+    }
+    let mut best: Option<(&MonitorArea, i64)> = None;
+    for area in areas {
+        let r = area.full;
+        let ox = (rect.x.min(r.x + r.w) - rect.x.max(r.x)).max(0) as i64;
+        let oy = (rect.y.min(r.y + r.h) - rect.y.max(r.y)).max(0) as i64;
+        let overlap = ox * oy;
+        if best.as_ref().is_none_or(|(_, d)| overlap > *d) {
+            best = Some((area, overlap));
+        }
+    }
+    best.map(|(a, _)| a.device.clone())
+        .or_else(|| areas.first().map(|a| a.device.clone()))
+        .unwrap_or_else(|| "display-?".to_owned())
+}
+
+fn output_for_point(areas: &[MonitorArea], x: i32, y: i32) -> Option<String> {
+    for area in areas {
+        let r = area.full;
+        if x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h {
+            return Some(area.device.clone());
+        }
+    }
+    None
+}
+
+fn foreground_output(areas: &[MonitorArea]) -> Option<String> {
+    let foreground = unsafe { GetForegroundWindow() };
+    if foreground.is_null() {
+        return None;
+    }
+    let mut raw: RECT = unsafe { std::mem::zeroed() };
+    if unsafe { GetWindowRect(foreground, &mut raw) } == 0 {
+        return None;
+    }
+    rect_from_win(raw).map(|r| output_for_rect(areas, &r))
+}
+
+/// Exact output context for a digit chord: cached active output when known,
+/// else the foreground monitor, else the pointer monitor, else ordering.
+fn chord_output(state: &TileLoop, areas: &[MonitorArea]) -> Option<String> {
+    let cached = if state.active_output.is_empty() {
+        None
+    } else {
+        Some(state.active_output.as_str())
+    };
+    let foreground = foreground_output(areas);
+    let pointer = cursor_pos().and_then(|(x, y)| output_for_point(areas, x, y));
+    crate::workspace_owner::output_context(
+        &state.workspaces,
+        cached,
+        foreground.as_deref(),
+        pointer.as_deref(),
+    )
+}
+
+/// Engine revision for one `(output, workspace)` domain.
+fn revision_for(state: &TileLoop, output: &str, workspace: &str) -> u64 {
+    let key = tiler_core::session::DomainKey {
+        output: tiler_core::directional::OutputId(output.to_owned()),
+        workspace: tiler_core::directional::WorkspaceId(workspace.to_owned()),
+    };
+    state
+        .engine
+        .session(&key)
+        .map(|s| s.accepted_revision())
+        .unwrap_or(0)
+}
+
+/// Portable domain value for one workspace on its monitor's work area.
+fn workspace_domain_for(
+    output: &str,
+    workspace: &str,
+    areas: &[MonitorArea],
+) -> Option<(
+    tiler_core::session::OutputDomain,
+    tiler_core::session::DomainKey,
+)> {
+    let area = areas.iter().find(|a| a.device == output)?;
+    let bounds = tiling_domain_bounds(area.work)?;
+    Some(crate::workspace_owner::workspace_domain(
+        output, workspace, bounds, OUTER_GAP,
+    ))
+}
+
+/// Assign newly seen eligible windows to the active workspace of their
+/// monitor output. Hidden-claim HWNDs are never re-admitted into another
+/// domain here. A nonempty scope admits only the named executables.
+///
+/// Visible-membership lifetime: every admitted window carries our inert
+/// window-lifetime tag, verified live against the stored copy on every tick.
+/// A same-process HWND reuse (same HWND/PID/creation, fresh window without
+/// our tag) repairs here as a brand-new window: stale membership, Engine
+/// token, identity, tag, and focus memory drop first, then a fresh tag is
+/// stamped, a fresh Engine token is issued, and the current tick's row is
+/// patched to it, so the new generation inherits no membership, focus, or
+/// layout. Stamping writes only our own property name (dies with the window,
+/// never trusted across runs, never removed by us); a failed stamp skips
+/// admission fail-closed for the tick.
+fn ensure_workspace_assignments(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    observed: &mut [ObservedWindow],
+    areas: &[MonitorArea],
+) {
+    for window in observed.iter_mut() {
+        if !scope_allows(&state.scope, &window.identity.exe_path) {
+            continue;
+        }
+        let key = crate::workspace::WindowKey {
+            hwnd: window.hwnd,
+            pid: window.identity.pid,
+            creation: window.identity.process_creation.clone(),
+        };
+        // Never re-admit a claimed HWND nonce into another domain: any
+        // same-HWND hidden claim blocks assignment regardless of key.
+        if state.hidden_claims.keys().any(|k| k.hwnd == window.hwnd) {
+            continue;
+        }
+        // Same-HWND reuse repair (cross-process): the fresh enumeration read
+        // is authoritative, so stale same-HWND members (a destroyed window
+        // whose number the OS recycled while visible) drop here instead of
+        // stalling Engine convergence with a viewless member. Live hidden
+        // claims never drop here; they retire through the ledger/audit path.
+        let stale = crate::workspace_owner::reused_hwnd_stale(
+            &state.member_tokens.keys().cloned().collect::<Vec<_>>(),
+            &state.hidden_claims.keys().cloned().collect(),
+            &key,
+        );
+        for dead in stale {
+            if let Some(token) = state.member_tokens.remove(&dead) {
+                state.member_rects.remove(&token);
+            }
+            state.member_identity.remove(&dead);
+            state.member_tags.remove(&dead);
+            state.workspaces.remove_window(&dead);
+        }
+        // Visible lifetime gate: the live tag must equal the stored tag. A
+        // mismatch with the same key is a same-process reuse (or an untracked
+        // window): drop every stale table so the admission below treats the
+        // live window as brand new with no inheritance.
+        let live_tag = crate::product_hide::sys::read_member_tag(window.hwnd);
+        let lifetime_ok = state.member_tags.get(&key).is_some_and(|stored| {
+            crate::workspace_owner::visible_lifetime_ok(stored, live_tag.as_deref())
+        });
+        if !lifetime_ok {
+            if let Some(token) = state.member_tokens.remove(&key) {
+                state.member_rects.remove(&token);
+            }
+            state.member_identity.remove(&key);
+            state.member_tags.remove(&key);
+            state.workspaces.remove_window(&key);
+        }
+        if !lifetime_ok || state.workspaces.member_loc(&key).is_none() {
+            // Fresh admission binds the stamp to the expected full identity:
+            // the live window is re-read (identity, eligibility, hosted
+            // children) and exact proof ownership is re-verified before any
+            // SetProp effect. Anything stale or foreign skips fail-closed.
+            let identity = ProcessIdentity {
+                pid: window.identity.pid,
+                process_creation: window.identity.process_creation.clone(),
+                user_sid: window.identity.user_sid.clone(),
+                session_id: window.identity.session_id,
+                exe_path: window.identity.exe_path.clone(),
+            };
+            if let Some(entries) = state.allowlist.as_ref() {
+                let Some(entry) = entries.iter().find(|e| e.hwnd == key.hwnd) else {
+                    continue;
+                };
+                if verify_proof_owned(key.hwnd, entry, me).is_err() {
+                    continue;
+                }
+            }
+            let admitted = match crate::product_hide::sys::classify_candidate(window.hwnd, me) {
+                crate::product_hide::sys::CandidateStatus::Admissible(snap)
+                | crate::product_hide::sys::CandidateStatus::Retained(snap) => snap,
+                _ => continue,
+            };
+            if admitted.pid != identity.pid || admitted.process != identity {
+                continue;
+            }
+            if !hosted_gate_allows(
+                &identity.exe_path,
+                window.hwnd,
+                identity.pid,
+                &state.scope_hosts,
+            ) {
+                continue;
+            }
+            let fresh_tag = match crate::product_hide::sys::install_member_tag(window.hwnd, me.pid)
+            {
+                Ok(tag) => tag,
+                Err(_) => continue,
+            };
+            // Post-stamp postcheck: the expected identity must still be live
+            // with the fresh tag reading back, or no membership is stored.
+            let post_ok = crate::product_hide::sys::hold_target_verified(identity.pid, &identity)
+                .is_ok()
+                && pid_current(window.hwnd, identity.pid)
+                && crate::product_hide::sys::read_member_tag(window.hwnd).as_deref()
+                    == Some(fresh_tag.as_str());
+            if !post_ok {
+                continue;
+            }
+            let fresh_token = state
+                .tokens
+                .reissue(window.hwnd, &window.identity.process_creation);
+            window.token = fresh_token.clone();
+            let output = output_for_rect(areas, &window.visible);
+            state.workspaces.ensure_output(&output);
+            let Some(active) = state.workspaces.active_id(&output) else {
+                continue;
+            };
+            if state
+                .workspaces
+                .assign(key.clone(), &output, &active, false)
+            {
+                state.member_tokens.insert(key.clone(), fresh_token.clone());
+                state.member_rects.insert(fresh_token, window.visible);
+                state.member_identity.insert(key.clone(), identity);
+                state.member_tags.insert(key, fresh_tag);
+            }
+            continue;
+        }
+        let identity = ProcessIdentity {
+            pid: window.identity.pid,
+            process_creation: window.identity.process_creation.clone(),
+            user_sid: window.identity.user_sid.clone(),
+            session_id: window.identity.session_id,
+            exe_path: window.identity.exe_path.clone(),
+        };
+        state
+            .member_tokens
+            .insert(key.clone(), window.token.clone());
+        state
+            .member_rects
+            .insert(window.token.clone(), window.visible);
+        state.member_identity.insert(key, identity);
+    }
+    if state.active_output.is_empty()
+        && let Some(first) = state.workspaces.output_keys().into_iter().next()
+    {
+        state.active_output = first;
+    }
+}
+
+/// Periodic hidden-claim audit: destroyed/recycled claims retire through the
+/// identity-safe reveal path (no foreign writes), then drop session
+/// membership, tokens, identity, and prune emptied workspaces. A merely
+/// invisible window never retires anything: only `query_recovery` decides.
+/// Unknown identities retain with the ledger kept.
+fn audit_hidden_claims(state: &mut TileLoop, me: &ProcessIdentity, store: &LedgerStore) {
+    let keys: Vec<crate::workspace::WindowKey> = state.hidden_claims.keys().cloned().collect();
+    let mut retired_any = false;
+    for key in keys {
+        let Some(record) = state.hidden_claims.get(&key).cloned() else {
+            continue;
+        };
+        let dead = match crate::product_hide::sys::query_recovery(key.hwnd, me) {
+            Ok(snap) => {
+                snap.process != record.claim.process
+                    || snap.nonce.as_deref() != Some(record.claim.tag.as_str())
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.starts_with("absent:") || msg.contains("sid/session mismatch") {
+                    true
+                } else {
+                    // Unknown: retain with the ledger kept.
+                    continue;
+                }
+            }
+        };
+        if !dead {
+            continue;
+        }
+        let _ = crate::product_hide::sys::reveal_product_claim_to(
+            store,
+            me,
+            &record.claim,
+            record.iconic,
+        );
+        state.hidden_claims.remove(&key);
+        if let Some(token) = state.member_tokens.remove(&key) {
+            state.member_rects.remove(&token);
+        }
+        state.member_identity.remove(&key);
+        state.member_tags.remove(&key);
+        state.workspaces.remove_window(&key);
+        retired_any = true;
+    }
+    if retired_any {
+        for output in state.workspaces.output_keys() {
+            let Some(active_id) = state.workspaces.active_id(&output) else {
+                continue;
+            };
+            let displaced: Vec<String> = state
+                .workspaces
+                .displaced_snapshot()
+                .values()
+                .flat_map(|r| r.workspace_ids.clone())
+                .collect();
+            let (removed, append) = state.workspaces.plan_cleanup(
+                &output,
+                std::slice::from_ref(&active_id),
+                &displaced,
+            );
+            state.workspaces.apply_cleanup(&output, &removed, append);
+        }
+    }
+}
+
+/// Drop membership for windows that vanished from the raw enumeration
+/// inventory. Retained-occupancy members (minimized, maximized, fullscreen)
+/// stay enumerated with identity, so only a truly absent HWND cleans up;
+/// hidden claims retire through the reveal path, never here. Unknown
+/// identities (enumeration without resolution) retain membership.
+fn workspace_close_cleanup(state: &mut TileLoop) {
+    let gone: Vec<crate::workspace::WindowKey> = state
+        .member_tokens
+        .keys()
+        .filter(|k| !state.last_hwnds.contains(&k.hwnd) && !state.hidden_claims.contains_key(k))
+        .cloned()
+        .collect();
+    for key in gone {
+        if let Some(token) = state.member_tokens.remove(&key) {
+            state.member_rects.remove(&token);
+        }
+        state.member_identity.remove(&key);
+        state.member_tags.remove(&key);
+        state.workspaces.remove_window(&key);
+    }
+}
+
+/// Hide one managed member bound to its stored full identity: the live
+/// window must equal the stored [`ProcessIdentity`] exactly, so a recycled
+/// HWND refuses with no writes. Fresh proof gate on every write in proof
+/// modes; commit-before-hide through the central watcher/ledger. Outcomes
+/// are typed at the source, never selected by error strings.
+fn workspace_hide_one(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    store: &LedgerStore,
+    dir: &Path,
+    key: &crate::workspace::WindowKey,
+    expected: &ProcessIdentity,
+    iconic: bool,
+) -> &'static str {
+    use crate::product_hide::sys::ManagedAdmitError;
+    if state.allowlist.is_some() && !state.workspace_proof {
+        return "workspace-disabled";
+    }
+    if !scope_allows(&state.scope, &expected.exe_path) {
+        return "scope-excluded";
+    }
+    // Listed hosts hide only with a live matching hosted child, re-verified
+    // fresh here (not from the tick's observation): a newly appearing hosted
+    // app is never hidden under another app's membership.
+    if !hosted_gate_allows(
+        &expected.exe_path,
+        key.hwnd,
+        expected.pid,
+        &state.scope_hosts,
+    ) {
+        return "scope-excluded";
+    }
+    // Visible lifetime gate: the live member tag must equal the stored tag.
+    // A same-process HWND reuse (same HWND/PID/creation, fresh window)
+    // drops its stale membership here with no writes; the next tick
+    // re-admits the live window as brand new.
+    let live_tag = crate::product_hide::sys::read_member_tag(key.hwnd);
+    let stored_tag = state.member_tags.get(key).cloned().unwrap_or_default();
+    if !crate::workspace_owner::visible_lifetime_ok(&stored_tag, live_tag.as_deref()) {
+        if let Some(token) = state.member_tokens.remove(key) {
+            state.member_rects.remove(&token);
+        }
+        state.member_identity.remove(key);
+        state.member_tags.remove(key);
+        state.workspaces.remove_window(key);
+        return "identity-changed";
+    }
+    if let Some(entries) = state.allowlist.as_ref() {
+        let Some(entry) = entries.iter().find(|e| e.hwnd == key.hwnd) else {
+            return "allowlist-changed";
+        };
+        if verify_proof_owned(key.hwnd, entry, me).is_err() {
+            return "identity-changed";
+        }
+    }
+    let claim =
+        match crate::product_hide::sys::admit_managed_claim(key.hwnd, me, expected, &stored_tag) {
+            Ok(claim) => claim,
+            Err(ManagedAdmitError::Absent) => return "origin-vanished",
+            Err(ManagedAdmitError::Uncertain) => return "uncertain",
+            Err(ManagedAdmitError::WrongIdentity) => return "identity-changed",
+            Err(ManagedAdmitError::Refused(_)) => return "refused",
+        };
+    match crate::product_hide::sys::hide_managed_claim(store, me, &claim, dir) {
+        Ok(committed) => {
+            state.hidden_claims.insert(
+                key.clone(),
+                HiddenRecord {
+                    claim: committed,
+                    iconic,
+                },
+            );
+            "hidden"
+        }
+        Err(e) => {
+            // Commit-before-hide appends the durable enriched claim BEFORE the
+            // async visibility post: an already-committed claim must register
+            // in the owner table even when the post-hide readback fails, or
+            // the window is lost (hidden with no claim). Re-read the ledger
+            // for the exact key (full identity plus tag); never re-admit the
+            // claimed HWND nonce and never fabricate a rollback.
+            if let Ok(Some(record)) = store.committed()
+                && record.owner == *me
+                && let Some(durable) = record.windows.iter().find(|w| {
+                    w.hwnd == claim.hwnd
+                        && w.tag == claim.tag
+                        && w.process == claim.process
+                        && w.kind == crate::model::WindowClaimKind::Product
+                })
+            {
+                state.hidden_claims.insert(
+                    key.clone(),
+                    HiddenRecord {
+                        claim: durable.clone(),
+                        iconic,
+                    },
+                );
+            }
+            let msg = e.to_string();
+            if msg.starts_with("absent:") {
+                "origin-vanished"
+            } else if msg.starts_with("uncertain:") {
+                "uncertain"
+            } else {
+                "refused"
+            }
+        }
+    }
+}
+
+/// Fresh proof-owned gate for one reveal write: in proof modes the helper
+/// must verify against the frozen allowlist immediately before the reveal
+/// effect, exactly like the hide path.
+fn workspace_proof_reveal_gate(
+    state: &TileLoop,
+    me: &ProcessIdentity,
+    hwnd: u64,
+) -> std::result::Result<(), &'static str> {
+    let Some(entries) = state.allowlist.as_ref() else {
+        return Ok(());
+    };
+    if !state.workspace_proof {
+        return Err("workspace-disabled");
+    }
+    let Some(entry) = entries.iter().find(|e| e.hwnd == hwnd) else {
+        return Err("allowlist-changed");
+    };
+    verify_proof_owned(hwnd, entry, me).map_err(|_| "identity-changed")
+}
+
+/// Switch the visible set from the output's active workspace to `target`:
+/// hide the prior set, reveal the target set, preserve Engine sessions for
+/// both, prune trailing empties, then re-enumerate fresh, reconcile the
+/// selected domain, and focus the target's last appropriate fresh window with
+/// verified readback. Empty targets hide the prior set and take no focus.
+/// The pre-switch `observed` serves only the hide phase; focus never uses it
+/// because the hidden target set is absent from it by construction.
+#[allow(clippy::too_many_arguments)]
+fn workspace_do_select(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    store: &LedgerStore,
+    dir: &Path,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+    observed: &mut [ObservedWindow],
+    output: &str,
+    target: &str,
+    _op: &'static str,
+) -> &'static str {
+    let Some(current) = state.workspaces.active_id(output) else {
+        return "unknown-output";
+    };
+    if current == target {
+        state.active_output = output.to_owned();
+        return "already-active";
+    }
+    let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
+    let leaving = state.workspaces.workspace_members(output, &current);
+    let mut hide_failed = false;
+    // Windows newly committed to hidden in this transition: on any failure
+    // before activation these are safely revealed back (exact identity) so a
+    // partial never leaves a doubled visible set or a lost claim behind.
+    let mut newly_hidden: Vec<crate::workspace::WindowKey> = Vec::new();
+    for key in &leaving {
+        if state.workspaces.is_hidden(key) {
+            continue;
+        }
+        let Some(expected) = state.member_identity.get(key).cloned() else {
+            continue;
+        };
+        // Explicit scope fences every hide: out-of-scope members stay
+        // visible and keep membership, never hidden.
+        if !scope_allows(&state.scope, &expected.exe_path) {
+            continue;
+        }
+        // Bind the hide to the stored full member identity: a recycled HWND
+        // (same number, fresh process) reconciles membership with no writes.
+        // Members absent from the tiled observation hide through a fresh
+        // identity-only read so retained minimized/maximized/fullscreen
+        // members still leave the visible set.
+        let (live_ok, iconic) = match by_hwnd.get(&key.hwnd) {
+            Some(window) => {
+                let live_ok = crate::workspace_owner::member_matches(
+                    key,
+                    window.hwnd,
+                    window.identity.pid,
+                    &window.identity.process_creation,
+                ) && window.identity.exe_path == expected.exe_path
+                    && window.identity.user_sid == expected.user_sid
+                    && window.identity.session_id == expected.session_id;
+                (live_ok, window.facts.minimized)
+            }
+            None => match crate::product_hide::sys::query_recovery(key.hwnd, me) {
+                Ok(snap) => {
+                    let live_ok = snap.pid == expected.pid
+                        && snap.process == expected
+                        && snap.nonce.is_none();
+                    (live_ok, snap.iconic)
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.starts_with("absent:") || msg.contains("sid/session mismatch") {
+                        if let Some(token) = state.member_tokens.remove(key) {
+                            state.member_rects.remove(&token);
+                        }
+                        state.member_identity.remove(key);
+                        state.member_tags.remove(key);
+                        state.workspaces.remove_window(key);
+                    } else {
+                        hide_failed = true;
+                    }
+                    continue;
+                }
+            },
+        };
+        if !live_ok {
+            // Recycled HWND: drop the stale membership, never touch the new
+            // owner, and retire any same-HWND claim residue without writes.
+            if let Some(token) = state.member_tokens.remove(key) {
+                state.member_rects.remove(&token);
+            }
+            state.member_identity.remove(key);
+            state.member_tags.remove(key);
+            state.workspaces.remove_window(key);
+            continue;
+        }
+        let had_claim = state.hidden_claims.contains_key(key);
+        let outcome = workspace_hide_one(state, me, store, dir, key, &expected, iconic);
+        // A committed claim (exact full identity plus tag) is owned even when
+        // the post-hide readback reports uncertain: the ledger and the owner
+        // table keep it, never a lost window.
+        if state.hidden_claims.contains_key(key) || outcome == "hidden" {
+            state.workspaces.set_hidden(key, true);
+            if !had_claim {
+                newly_hidden.push(key.clone());
+            }
+        } else if outcome == "origin-vanished" || outcome == "identity-changed" {
+            if let Some(token) = state.member_tokens.remove(key) {
+                state.member_rects.remove(&token);
+            }
+            state.member_identity.remove(key);
+            state.member_tags.remove(key);
+            state.workspaces.remove_window(key);
+        } else if outcome == "scope-excluded" {
+            // Explicit scope fence: out-of-scope members stay visible with
+            // membership intact, never hidden, never a failure.
+        } else {
+            hide_failed = true;
+        }
+    }
+    // A failed hide phase never activates: revealing the target beside a
+    // still-visible current set would double the visible set and lose claims.
+    // Narrow recovery reveals exactly the claims committed above (exact
+    // identity, no blind replay, no fabricated rollback) and keeps current.
+    if hide_failed {
+        for key in &newly_hidden {
+            let Some(record) = state.hidden_claims.get(key).cloned() else {
+                continue;
+            };
+            match crate::product_hide::sys::reveal_product_claim_to(
+                store,
+                me,
+                &record.claim,
+                record.iconic,
+            ) {
+                Ok(crate::product_hide::ProductTeardown::Retired) => {
+                    state.hidden_claims.remove(key);
+                    if let Some(token) = state.member_tokens.remove(key) {
+                        state.member_rects.remove(&token);
+                    }
+                    state.member_identity.remove(key);
+                    state.member_tags.remove(key);
+                    state.workspaces.remove_window(key);
+                }
+                Ok(_) => {
+                    state.hidden_claims.remove(key);
+                    state.workspaces.set_hidden(key, false);
+                }
+                Err(_) => {}
+            }
+        }
+        return "partial";
+    }
+    let entering = state.workspaces.workspace_members(output, target);
+    for key in &entering {
+        let Some(record) = state.hidden_claims.get(key).cloned() else {
+            state.workspaces.set_hidden(key, false);
+            continue;
+        };
+        if workspace_proof_reveal_gate(state, me, key.hwnd).is_err() {
+            hide_failed = true;
+            continue;
+        }
+        match crate::product_hide::sys::reveal_product_claim_to(
+            store,
+            me,
+            &record.claim,
+            record.iconic,
+        ) {
+            Ok(crate::product_hide::ProductTeardown::Retired) => {
+                state.hidden_claims.remove(key);
+                if let Some(token) = state.member_tokens.remove(key) {
+                    state.member_rects.remove(&token);
+                }
+                state.member_identity.remove(key);
+                state.member_tags.remove(key);
+                state.workspaces.remove_window(key);
+            }
+            Ok(_) => {
+                state.hidden_claims.remove(key);
+                state.workspaces.set_hidden(key, false);
+            }
+            Err(_) => {
+                hide_failed = true;
+            }
+        }
+    }
+    // A failed reveal phase keeps current as well: the leaving set was
+    // hidden successfully, so the safest known view is restored by revealing
+    // exactly those affected claims (exact identity only). The switch is not
+    // pretended: the outcome stays partial with current kept.
+    if hide_failed {
+        for key in &newly_hidden {
+            let Some(record) = state.hidden_claims.get(key).cloned() else {
+                continue;
+            };
+            match crate::product_hide::sys::reveal_product_claim_to(
+                store,
+                me,
+                &record.claim,
+                record.iconic,
+            ) {
+                Ok(crate::product_hide::ProductTeardown::Retired) => {
+                    state.hidden_claims.remove(key);
+                    if let Some(token) = state.member_tokens.remove(key) {
+                        state.member_rects.remove(&token);
+                    }
+                    state.member_identity.remove(key);
+                    state.member_tags.remove(key);
+                    state.workspaces.remove_window(key);
+                }
+                Ok(_) => {
+                    state.hidden_claims.remove(key);
+                    state.workspaces.set_hidden(key, false);
+                }
+                Err(_) => {}
+            }
+        }
+        return "partial";
+    }
+    // Move active to the target id without disturbing order, including
+    // appended trailing ids past the Win1..9 ordinal range. This is the only
+    // activation point: callers resolve targets without preactivating so the
+    // `current == target` guard above stays accurate. Reached only after the
+    // hide and reveal effects verified, so the switch is real.
+    state.workspaces.activate(output, target);
+    state.active_output = output.to_owned();
+    // Trailing maintenance: keep one empty, minimum two, active preserved.
+    let active_id = state.workspaces.active_id(output).unwrap_or_default();
+    let displaced: Vec<String> = state
+        .workspaces
+        .displaced_snapshot()
+        .values()
+        .flat_map(|r| r.workspace_ids.clone())
+        .collect();
+    let (removed, append) =
+        state
+            .workspaces
+            .plan_cleanup(output, std::slice::from_ref(&active_id), &displaced);
+    state.workspaces.apply_cleanup(output, &removed, append);
+    // Post-reveal fresh observation: the pre-switch `observed` cannot contain
+    // the hidden target set, so focusing from it always misses as `vanished`.
+    // Re-enumerate, republish origins, reconcile the selected domain geometry,
+    // then focus the eligible last/appropriate fresh target. Empty targets
+    // hide the prior set and take no focus.
+    let mut fresh_skipped: Vec<(String, String)> = Vec::new();
+    let mut fresh_retained: Vec<RetainedRow> = Vec::new();
+    let Some(mut fresh_observed) =
+        state.observe(me, fulls, &mut fresh_skipped, &mut fresh_retained)
+    else {
+        return "observation-failed";
+    };
+    publish_managed(state, &fresh_observed);
+    ensure_workspace_assignments(state, me, &mut fresh_observed, areas);
+    workspace_close_cleanup(state);
+    if let Some((domain, domain_key)) = workspace_domain_for(output, target, areas)
+        && let Some(rows) =
+            assemble_domain_rows(state, output, target, &fresh_observed, &fresh_retained)
+    {
+        let windows: Vec<(WindowId, Rect)> = rows
+            .iter()
+            .map(|r| (WindowId(r.token.clone()), r.rect))
+            .collect();
+        let fp = fingerprint(
+            &rows
+                .iter()
+                .map(|r| (r.token.clone(), r.rect))
+                .collect::<Vec<_>>(),
+        );
+        let focused = state
+            .focused_token(&fresh_observed)
+            .filter(|f| windows.iter().any(|(w, _)| w == f));
+        state.tick += 1;
+        let correlation = state.correlation();
+        let tick = state.tick;
+        let event = crate::tiling::build_reconcile_event_for(
+            &state.owner,
+            &state.generation,
+            &correlation,
+            revision_for(state, output, target),
+            fp,
+            &domain,
+            &domain_key,
+            OUTER_GAP,
+            &windows,
+            focused.as_ref(),
+        );
+        let reply = state.engine.handle(&event);
+        let writable = writable_tokens(state, output, target, &fresh_observed);
+        apply_geometry(
+            state,
+            ApplyInput {
+                me,
+                fulls,
+                reply: &reply,
+                observed: &fresh_observed,
+                op: "reconcile",
+                tick,
+                correlation: correlation.as_str(),
+                skipped: fresh_skipped,
+                writable: &writable,
+                output_token: state.workspaces.output_token(output),
+                workspace_token: state.workspaces.workspace_token(output, target),
+                revision: revision_for(state, output, target),
+            },
+        );
+    }
+    let members = state.workspaces.workspace_members(output, target);
+    let fresh_tokens: HashSet<String> = fresh_observed.iter().map(|w| w.token.clone()).collect();
+    let eligible =
+        state
+            .workspaces
+            .eligible_focus_set(&members, &state.member_tokens, &fresh_tokens);
+    if let Some(focus_key) = state.workspaces.focus_target(output, target, &eligible) {
+        let token = state
+            .member_tokens
+            .get(&focus_key)
+            .cloned()
+            .unwrap_or_default();
+        if !token.is_empty() {
+            let actuation = actuate_focus(state, me, fulls, &fresh_observed, &token);
+            if actuation.outcome == "focus-ok" {
+                state.workspaces.note_foreground(&focus_key);
+            }
+        }
+    }
+    // Reached only after verified hide plus verified reveal with current
+    // moved to target: the switch is real. Earlier failures return partial
+    // above with current kept.
+    "ok"
+}
+
+/// Send the focused tiled window to an existing/trailing same-output
+/// workspace through the retained Engine `MoveToWorkspace` route, verify the
+/// project-owned membership transfer, then follow. Refuses unmanaged focus,
+/// no-op/foreign transfers, and proof modes without workspace hides.
+#[allow(clippy::too_many_arguments)]
+fn workspace_do_send(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    store: &LedgerStore,
+    dir: &Path,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+    observed: &mut [ObservedWindow],
+    retained: &[RetainedRow],
+    output: &str,
+    index: u8,
+    mover_hwnd: u64,
+    origin_token: &str,
+    origin_pid: u32,
+    origin_creation: &str,
+) -> &'static str {
+    let mover_key = state
+        .member_tokens
+        .iter()
+        .find(|(_, t)| t.as_str() == origin_token)
+        .map(|(k, _)| k.clone());
+    let Some(mover_key) = mover_key else {
+        return "unmanaged";
+    };
+    // Full chord-time binding: token plus HWND, PID, and process creation.
+    // A recycled HWND or a retargeted token never dispatches.
+    if !crate::workspace_owner::member_matches(&mover_key, mover_hwnd, origin_pid, origin_creation)
+    {
+        return "foreground-changed";
+    }
+    let Some(loc) = state.workspaces.member_loc(&mover_key).cloned() else {
+        return "unmanaged";
+    };
+    if loc.output != output || state.workspaces.is_hidden(&mover_key) {
+        return "unmanaged";
+    }
+    // Explicit scope fences every send before the Engine mutation: an
+    // out-of-scope mover reports without touching Engine sessions,
+    // membership, or layout. The hide path re-fences independently.
+    if let Some(stored) = state.member_identity.get(&mover_key) {
+        if !scope_allows(&state.scope, &stored.exe_path) {
+            return "scope-excluded";
+        }
+        // Listed hosts send only with a live matching hosted child: a newly
+        // appearing hosted app never dispatches under another app's
+        // membership. The hide path re-fences fresh independently.
+        if !hosted_gate_allows(&stored.exe_path, mover_hwnd, stored.pid, &state.scope_hosts) {
+            return "scope-excluded";
+        }
+    }
+    // Visible lifetime gate: the live member tag must equal the stored tag,
+    // so a same-process HWND reuse (same HWND/PID/creation, fresh window)
+    // dispatches nothing. The stale membership drops here; the next tick
+    // re-admits the live window as brand new with no inheritance.
+    let live_tag = crate::product_hide::sys::read_member_tag(mover_hwnd);
+    let lifetime_ok = state.member_tags.get(&mover_key).is_some_and(|stored| {
+        crate::workspace_owner::visible_lifetime_ok(stored, live_tag.as_deref())
+    });
+    if !lifetime_ok {
+        if let Some(token) = state.member_tokens.remove(&mover_key) {
+            state.member_rects.remove(&token);
+        }
+        state.member_identity.remove(&mover_key);
+        state.member_tags.remove(&mover_key);
+        state.workspaces.remove_window(&mover_key);
+        return "identity-changed";
+    }
+    if state.allowlist.is_some() && !state.workspace_proof {
+        return "workspace-disabled";
+    }
+    let target_id = if index == 0 {
+        // Trailing send reuses or creates without switching first.
+        match state.workspaces.resolve_send_trailing(output) {
+            Some((id, _)) => id,
+            None => return "unknown-output",
+        }
+    } else {
+        match state.workspaces.resolve_send(output, index) {
+            Some(id) => id,
+            None => return "unknown-target",
+        }
+    };
+    if target_id == loc.workspace {
+        return "no-op";
+    }
+    // Full source+target observations including hidden snapshots, so the
+    // planned mutation reuses topology instead of remove/reseed. Either side
+    // incomplete defers with retained state, never a falsely complete pair.
+    let Some(source_rows) = assemble_domain_rows(state, output, &loc.workspace, observed, retained)
+    else {
+        return "deferred";
+    };
+    let Some(target_rows) = assemble_domain_rows(state, output, &target_id, observed, retained)
+    else {
+        return "deferred";
+    };
+    if !source_rows.iter().any(|r| r.token == origin_token) {
+        return "unmanaged";
+    }
+    let Some((source_domain, source_key)) = workspace_domain_for(output, &loc.workspace, areas)
+    else {
+        return "unknown-output";
+    };
+    let Some((target_domain, target_key)) = workspace_domain_for(output, &target_id, areas) else {
+        return "unknown-output";
+    };
+    let fingerprint = {
+        let mut pairs: Vec<(String, Rect)> = source_rows
+            .iter()
+            .chain(target_rows.iter())
+            .map(|r| (r.token.clone(), r.rect))
+            .collect();
+        pairs.sort_by(|a, b| a.0.cmp(&b.0));
+        fingerprint(
+            &pairs
+                .iter()
+                .map(|(t, r)| (t.clone(), *r))
+                .collect::<Vec<_>>(),
+        )
+    };
+    state.tick += 1;
+    let correlation = state.correlation();
+    let revision = revision_for(state, output, &loc.workspace);
+    let Some(mut event) = crate::workspace_owner::build_send_event(
+        &state.owner,
+        &state.generation,
+        &correlation,
+        revision,
+        fingerprint,
+        (source_domain, source_key.clone()),
+        (target_domain, target_key.clone()),
+        &source_rows,
+        &target_rows,
+        origin_token,
+        OUTER_GAP,
+    ) else {
+        return "refused";
+    };
+    crate::workspace_owner::stamp_send_target(&mut event, &target_key);
+    let reply = state.engine.handle(&event);
+    let tiler_core::boundary::CoreReply::SendWorkspace(_) = reply else {
+        return match reply {
+            tiler_core::boundary::CoreReply::Rejected { kind, .. } => kind,
+            tiler_core::boundary::CoreReply::Diverged(reason) => reason.as_str(),
+            tiler_core::boundary::CoreReply::SnapshotInvalid { detail, .. } => detail,
+            _ => "refused",
+        };
+    };
+    // Project-owned membership change after revalidation and the planned
+    // Engine mutation: exact identity table update, never HWND alone.
+    let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
+    let Some(fresh) = by_hwnd.get(&mover_hwnd) else {
+        return "origin-vanished";
+    };
+    let Some(stored) = state.member_identity.get(&mover_key).cloned() else {
+        return "unmanaged";
+    };
+    if !crate::workspace_owner::member_matches(
+        &mover_key,
+        fresh.hwnd,
+        fresh.identity.pid,
+        &fresh.identity.process_creation,
+    ) || fresh.identity.exe_path != stored.exe_path
+        || fresh.identity.user_sid != stored.user_sid
+        || fresh.identity.session_id != stored.session_id
+    {
+        return "origin-vanished";
+    }
+    // Post-Engine lifetime recheck: a same-process reuse across the in-memory
+    // mutation still refuses before any membership change or hide.
+    let post_tag = crate::product_hide::sys::read_member_tag(mover_hwnd);
+    if !state
+        .member_tags
+        .get(&mover_key)
+        .is_some_and(|tag| crate::workspace_owner::visible_lifetime_ok(tag, post_tag.as_deref()))
+    {
+        return "identity-changed";
+    }
+    if !state
+        .workspaces
+        .assign(mover_key.clone(), output, &target_id, true)
+    {
+        return "refused";
+    }
+    // Verified transfer before follow: absent source, present target.
+    let source_now = state.workspaces.workspace_members(output, &loc.workspace);
+    let target_now = state.workspaces.workspace_members(output, &target_id);
+    if !crate::workspace_owner::verify_membership_transfer(&mover_key, &source_now, &target_now) {
+        return "unverified";
+    }
+    // Hide the mover from the source view (commit-before-hide), then follow
+    // by selecting the target (which reveals it) and focusing the mover.
+    // A committed claim is owned even on uncertain post-hide readback: flag
+    // it hidden and report the stall without pretending follow success.
+    let hide_outcome = workspace_hide_one(
+        state,
+        me,
+        store,
+        dir,
+        &mover_key,
+        &stored,
+        fresh.facts.minimized,
+    );
+    if state.hidden_claims.contains_key(&mover_key) {
+        state.workspaces.set_hidden(&mover_key, true);
+    }
+    if hide_outcome != "hidden" {
+        return hide_outcome;
+    }
+    let select_outcome = workspace_do_select(
+        state, me, store, dir, fulls, areas, observed, output, &target_id, "send",
+    );
+    if select_outcome != "ok" && select_outcome != "partial" {
+        return select_outcome;
+    }
+    // The reveal inside select shows the mover: re-enumerate post-follow so
+    // the mover focus uses fresh observation, never the pre-switch set.
+    let mut post_skipped: Vec<(String, String)> = Vec::new();
+    let mut post_retained: Vec<RetainedRow> = Vec::new();
+    let Some(mut post_observed) = state.observe(me, fulls, &mut post_skipped, &mut post_retained)
+    else {
+        return "observation-failed";
+    };
+    publish_managed(state, &post_observed);
+    ensure_workspace_assignments(state, me, &mut post_observed, areas);
+    workspace_close_cleanup(state);
+    let token = state
+        .member_tokens
+        .get(&mover_key)
+        .cloned()
+        .unwrap_or_default();
+    if !token.is_empty() {
+        let actuation = actuate_focus(state, me, fulls, &post_observed, &token);
+        if actuation.outcome == "focus-ok" {
+            state.workspaces.note_foreground(&mover_key);
+            return "ok";
+        }
+        return "focus-unverified";
+    }
+    "ok"
+}
+
+/// Exact-owner out-of-hook workspace select: one bounded `workspace.request`
+/// file consumed once through the existing `workspace_do_select` resolver.
+/// Normal `tile` only (proof owners refuse without effect); fullscreen and
+/// elevated foreground gate like the hook path; the keyboard takeover switch
+/// never gates this (out-of-hook dogfood/recovery). The request is deleted
+/// before dispatch so there is no replay; a malformed or mismatched body is
+/// consumed the same way with a `refused` outcome. Production log carries
+/// op/index/edge/outcome only (no HWNDs, tokens, or identity bytes); the
+/// client correlation is opaque and never logged.
+fn poll_workspace_cli_request(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    store: &LedgerStore,
+    dir: &Path,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+) {
+    let path = dir.join(WORKSPACE_REQUEST_FILE);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(_) => return,
+    };
+    // Proof owners never serve the normal control: consume once with an
+    // honest refusal and no native effect so the queue cannot wedge.
+    if state.allowlist.is_some() {
+        let _ = std::fs::remove_file(&path);
+        state.tick += 1;
+        let tick = state.tick;
+        log_json_at(
+            &state.log_path,
+            workspace_log(state, tick, "select", 0, "cli", "refused-proof"),
+        );
+        return;
+    }
+    let parsed = parse_workspace_request(text.trim());
+    // Consume-before-dispatch: exactly once, never replayed, never timed out
+    // and retried. A bad body is still consumed with a refused outcome.
+    let _ = std::fs::remove_file(&path);
+    let request = match parsed {
+        Ok(request) => request,
+        Err(_) => {
+            state.tick += 1;
+            let tick = state.tick;
+            log_json_at(
+                &state.log_path,
+                workspace_log(state, tick, "select", 0, "cli", "refused"),
+            );
+            return;
+        }
+    };
+    if request.creation != me.process_creation
+        || request.pid != me.pid
+        || !exe_paths_equal(&request.exe_path, &me.exe_path)
+        || request.user_sid != me.user_sid
+        || request.session_id != me.session_id
+    {
+        state.tick += 1;
+        let tick = state.tick;
+        log_json_at(
+            &state.log_path,
+            workspace_log(state, tick, "select", request.index, "cli", "refused"),
+        );
+        return;
+    }
+    if foreground_fullscreen(fulls) {
+        state.tick += 1;
+        let tick = state.tick;
+        log_json_at(
+            &state.log_path,
+            workspace_log(state, tick, "select", request.index, "cli", "suspended"),
+        );
+        return;
+    }
+    if foreground_elevated(me) {
+        state.tick += 1;
+        let tick = state.tick;
+        log_json_at(
+            &state.log_path,
+            workspace_log(
+                state,
+                tick,
+                "select",
+                request.index,
+                "cli",
+                "elevated-foreground",
+            ),
+        );
+        return;
+    }
+    let Some(output) = chord_output(state, areas) else {
+        state.tick += 1;
+        let tick = state.tick;
+        log_json_at(
+            &state.log_path,
+            workspace_log(
+                state,
+                tick,
+                "select",
+                request.index,
+                "cli",
+                "unknown-output",
+            ),
+        );
+        return;
+    };
+    state.workspaces.ensure_output(&output);
+    state.tick += 1;
+    let tick = state.tick;
+    let mut skipped: Vec<(String, String)> = Vec::new();
+    let mut retained: Vec<RetainedRow> = Vec::new();
+    let Some(mut observed) = state.observe(me, fulls, &mut skipped, &mut retained) else {
+        log_json_at(
+            &state.log_path,
+            workspace_log(
+                state,
+                tick,
+                "select",
+                request.index,
+                "cli",
+                "observation-failed",
+            ),
+        );
+        return;
+    };
+    publish_managed(state, &observed);
+    ensure_workspace_assignments(state, me, &mut observed, areas);
+    workspace_close_cleanup(state);
+    // Resolve without preactivating (same as the hook select path):
+    // `resolve_send*` never touch ACTIVE; only the transition activates.
+    let target = if request.index == 0 {
+        state
+            .workspaces
+            .resolve_send_trailing(&output)
+            .map(|(id, _)| id)
+    } else {
+        state.workspaces.resolve_send(&output, request.index)
+    };
+    let Some(target) = target else {
+        let outcome = if request.index == 0 {
+            "unknown-output"
+        } else {
+            "unknown-target"
+        };
+        log_json_at(
+            &state.log_path,
+            workspace_log(state, tick, "select", request.index, "cli", outcome),
+        );
+        return;
+    };
+    let outcome = workspace_do_select(
+        state,
+        me,
+        store,
+        dir,
+        fulls,
+        areas,
+        &mut observed,
+        &output,
+        &target,
+        "cli",
+    );
+    log_json_at(
+        &state.log_path,
+        workspace_log(state, tick, "select", request.index, "cli", outcome),
+    );
+}
+
+/// Drain one bounded batch of workspace digit intents. Select works on empty
+/// workspaces and unmanaged foreground; send refuses unmanaged focus. The
+/// `--no-keyboard-snap-takeover` off switch disables all product
+/// interception (the hook is never installed; this is the defensive second
+/// fence). Fullscreen and elevated foreground gate both ops.
+#[allow(clippy::too_many_arguments)]
+fn workspace_tick(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    store: &LedgerStore,
+    dir: &Path,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+    events: Vec<crate::snapkey::QueuedWorkspaceIntent>,
+    blocked: Option<&'static str>,
+) {
+    let log_path = state.log_path.clone();
+    if let Some(cause) = blocked {
+        let stale = events.len() as u32;
+        if stale > 0 {
+            log_json_at(
+                &log_path,
+                serde_json::json!({"event":"workspace-stale","cause": cause, "dropped": stale}),
+            );
+        }
+        return;
+    }
+    if !state.keyboard.takeover {
+        if !events.is_empty() {
+            log_json_at(
+                &log_path,
+                serde_json::json!({"event":"workspace-stale","cause":"takeover-off","dropped": events.len()}),
+            );
+        }
+        return;
+    }
+    for intent in events {
+        if !intent.consumed || !intent.announce {
+            if state.trace {
+                log_json_at(
+                    &log_path,
+                    serde_json::json!({
+                        "event": "workspace",
+                        "tick": state.tick,
+                        "op": intent.op.as_str(),
+                        "index": intent.index,
+                        "edge": intent.edge.as_str(),
+                        "disposition": if intent.consumed { "consumed" } else { "passed" },
+                        "outcome": "key-up",
+                    }),
+                );
+            }
+            continue;
+        }
+        if foreground_fullscreen(fulls) {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "workspace",
+                    "op": intent.op.as_str(),
+                    "index": intent.index,
+                    "edge": intent.edge.as_str(),
+                    "disposition": "consumed",
+                    "outcome": "suspended",
+                }),
+            );
+            continue;
+        }
+        if foreground_elevated(me) {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "workspace",
+                    "op": intent.op.as_str(),
+                    "index": intent.index,
+                    "edge": intent.edge.as_str(),
+                    "disposition": "consumed",
+                    "outcome": "elevated-foreground",
+                }),
+            );
+            continue;
+        }
+        let Some(output) = chord_output(state, areas) else {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "workspace",
+                    "op": intent.op.as_str(),
+                    "index": intent.index,
+                    "edge": intent.edge.as_str(),
+                    "disposition": "consumed",
+                    "outcome": "unknown-output",
+                }),
+            );
+            continue;
+        };
+        state.workspaces.ensure_output(&output);
+        state.tick += 1;
+        let tick = state.tick;
+        let mut skipped: Vec<(String, String)> = Vec::new();
+        let mut retained: Vec<RetainedRow> = Vec::new();
+        let Some(mut observed) = state.observe(me, fulls, &mut skipped, &mut retained) else {
+            log_json_at(
+                &log_path,
+                serde_json::json!({
+                    "event": "workspace",
+                    "tick": tick,
+                    "op": intent.op.as_str(),
+                    "index": intent.index,
+                    "edge": intent.edge.as_str(),
+                    "disposition": "consumed",
+                    "outcome": "observation-failed",
+                }),
+            );
+            continue;
+        };
+        publish_managed(state, &observed);
+        ensure_workspace_assignments(state, me, &mut observed, areas);
+        workspace_close_cleanup(state);
+        let outcome = match intent.op {
+            WorkspaceOp::Select => {
+                // Resolve without preactivating: `select`/`select_trailing`
+                // mutate ACTIVE, which makes `workspace_do_select` see
+                // `current == target` and return `already-active` with no
+                // native effects. `resolve_send`/`resolve_send_trailing`
+                // resolve (and append trailing when needed) without touching
+                // ACTIVE; only the transition activates after hide/reveal.
+                if intent.index == 0 {
+                    match state.workspaces.resolve_send_trailing(&output) {
+                        Some((id, _)) => {
+                            let id_clone = id.clone();
+                            workspace_do_select(
+                                state,
+                                me,
+                                store,
+                                dir,
+                                fulls,
+                                areas,
+                                &mut observed,
+                                &output,
+                                &id_clone,
+                                "select",
+                            )
+                        }
+                        None => "unknown-output",
+                    }
+                } else {
+                    match state.workspaces.resolve_send(&output, intent.index) {
+                        Some(id) => {
+                            let id_clone = id.clone();
+                            workspace_do_select(
+                                state,
+                                me,
+                                store,
+                                dir,
+                                fulls,
+                                areas,
+                                &mut observed,
+                                &output,
+                                &id_clone,
+                                "select",
+                            )
+                        }
+                        None => "unknown-target",
+                    }
+                }
+            }
+            WorkspaceOp::Send => {
+                let foreground_hwnd = unsafe { GetForegroundWindow() } as usize as u64;
+                let origin = intent.origin.clone();
+                match origin.filter(|o| o.hwnd == foreground_hwnd) {
+                    Some(o) if !o.token.is_empty() => workspace_do_send(
+                        state,
+                        me,
+                        store,
+                        dir,
+                        fulls,
+                        areas,
+                        &mut observed,
+                        &retained,
+                        &output,
+                        intent.index,
+                        o.hwnd,
+                        &o.token,
+                        o.pid,
+                        &o.creation,
+                    ),
+                    _ => "unmanaged",
+                }
+            }
+        };
+        log_json_at(
+            &log_path,
+            workspace_log(
+                state,
+                tick,
+                intent.op.as_str(),
+                intent.index,
+                intent.edge.as_str(),
+                outcome,
+            ),
+        );
+    }
+}
+
+/// Bounded workspace log line: opaque output/workspace tokens plus
+/// op/index/edge/outcome only. No HWNDs, tokens, titles, or app data.
+fn workspace_log(
+    state: &TileLoop,
+    tick: u64,
+    op: &str,
+    index: u8,
+    edge: &str,
+    outcome: &str,
+) -> serde_json::Value {
+    let output = if state.active_output.is_empty() {
+        "o?".to_owned()
+    } else {
+        state.workspaces.output_token(&state.active_output)
+    };
+    let workspace = state
+        .workspaces
+        .active_id(&state.active_output)
+        .map(|id| state.workspaces.workspace_token(&state.active_output, &id))
+        .unwrap_or_else(|| "ws?".to_owned());
+    serde_json::json!({
+        "event": "workspace",
+        "tick": tick,
+        "output": output,
+        "workspace": workspace,
+        "op": op,
+        "index": index,
+        "edge": edge,
+        "outcome": outcome,
+    })
+}
+
+/// True when the foreground window's process is not medium integrity:
+/// elevated foreground gates workspace dispatch.
+fn foreground_elevated(me: &ProcessIdentity) -> bool {
+    let foreground = unsafe { GetForegroundWindow() };
+    if foreground.is_null() {
+        return false;
+    }
+    let mut pid: u32 = 0;
+    unsafe {
+        GetWindowThreadProcessId(foreground, &mut pid);
+    }
+    if pid == 0 || pid == me.pid {
+        return false;
+    }
+    let Ok(held) = HeldProcess::open(pid) else {
+        return true;
+    };
+    match held.integrity() {
+        Ok(rid) => !is_medium_rid(rid),
+        Err(_) => true,
+    }
+}
+
+/// Actual-foreground hidden member selects its workspace. Only a real
+/// foreground change to an exactly verified hidden member switches; the
+/// `Wake` event alone never does. Returns the selected outcome or `None`.
+fn poll_foreground_workspace(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    store: &LedgerStore,
+    dir: &Path,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+    observed: &mut [ObservedWindow],
+) -> Option<&'static str> {
+    let foreground = unsafe { GetForegroundWindow() } as usize as u64;
+    if foreground == 0 || foreground == state.last_foreground {
+        return None;
+    }
+    state.last_foreground = foreground;
+    // Keyed by full member identity: find the HWND's key, then guard full
+    // equality before any lookup so a recycled HWND never selects.
+    let key = state
+        .hidden_claims
+        .keys()
+        .find(|k| k.hwnd == foreground)
+        .cloned()?;
+    let record = state.hidden_claims.get(&key).cloned()?;
+    // Exact verification: live PID, full process identity, exact nonce.
+    let snap = crate::product_hide::sys::query_recovery(foreground, me).ok()?;
+    if !crate::workspace_owner::member_matches(
+        &key,
+        foreground,
+        snap.pid,
+        &snap.process.process_creation,
+    ) || snap.process != record.claim.process
+        || snap.nonce.as_deref() != Some(record.claim.tag.as_str())
+    {
+        return None;
+    }
+    // Externally foregrounded: this is genuinely the member's workspace.
+    let loc = state.workspaces.member_loc(&key).cloned()?;
+    if !loc.hidden {
+        return None;
+    }
+    let output = loc.output.clone();
+    let workspace = loc.workspace.clone();
+    Some(workspace_do_select(
+        state,
+        me,
+        store,
+        dir,
+        fulls,
+        areas,
+        observed,
+        &output,
+        &workspace,
+        "foreground",
+    ))
+}
+
+/// Externally revealed hidden claims without foreground return to hidden
+/// under the same claim and identity: never re-admitted, never moved to the
+/// wrong domain. Destroyed/recycled claims retire their ledger notes.
+fn rehide_pass(state: &mut TileLoop, me: &ProcessIdentity, store: &LedgerStore) {
+    let foreground = unsafe { GetForegroundWindow() } as usize as u64;
+    let keys: Vec<crate::workspace::WindowKey> = state.hidden_claims.keys().cloned().collect();
+    for key in keys {
+        if key.hwnd == foreground {
+            continue;
+        }
+        let Some(record) = state.hidden_claims.get(&key).cloned() else {
+            continue;
+        };
+        let visible = unsafe { IsWindowVisible(key.hwnd as isize as HWND) } != 0;
+        if !visible {
+            continue;
+        }
+        // Same-claim guard: only the exact stored identity returns to hidden.
+        let snap = match crate::product_hide::sys::query_recovery(key.hwnd, me) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        if !crate::workspace_owner::member_matches(
+            &key,
+            key.hwnd,
+            snap.pid,
+            &snap.process.process_creation,
+        ) || snap.process != record.claim.process
+            || snap.nonce.as_deref() != Some(record.claim.tag.as_str())
+        {
+            continue;
+        }
+        match crate::product_hide::sys::rehide_known_claim(me, &record.claim) {
+            Ok(true) => {}
+            Ok(false) => {
+                // Retired: drop the ledger note through the identity-safe
+                // reveal path and forget session membership safely.
+                let _ = crate::product_hide::sys::reveal_product_claim_to(
+                    store,
+                    me,
+                    &record.claim,
+                    record.iconic,
+                );
+                state.hidden_claims.remove(&key);
+            }
+            Err(_) => {}
+        }
+    }
+}
+/// Sync monitor arrivals/removals with whole-workspace displacement/return:
+/// displaced layouts are never merged, hidden windows never lost, and on
+/// return the workspaces come back with then-current contents. Focus
+/// preserves the surviving view unless the removed monitor held focus.
+fn sync_monitor_outputs(state: &mut TileLoop, areas: &[MonitorArea]) {
+    let current: Vec<String> = areas.iter().map(|a| a.device.clone()).collect();
+    // Returning displaced origins are recreated by `reconnect_output` without
+    // baseline empties below: never `ensure_output` them here, or a duplicate
+    // trailing/minimum pair appears beside the returning workspaces.
+    let displaced_origins: Vec<String> = state
+        .workspaces
+        .displaced_snapshot()
+        .keys()
+        .cloned()
+        .collect();
+    for key in &current {
+        if displaced_origins.contains(key) {
+            continue;
+        }
+        state.workspaces.ensure_output(key);
+    }
+    let gone: Vec<String> = state
+        .known_outputs
+        .iter()
+        .filter(|k| !current.contains(k))
+        .cloned()
+        .collect();
+    // Actual-foreground member view at disconnect time: when the removed
+    // monitor held focus, the survivor shows that member's workspace instead
+    // of an arbitrary one. Otherwise the surviving view keeps focus untouched.
+    // The foreground key must also pass the visible lifetime gate, so a
+    // same-process HWND reuse racing the disconnect never activates the wrong
+    // workspace.
+    let fg_workspace: Option<(String, String)> = {
+        let fg = unsafe { GetForegroundWindow() } as usize as u64;
+        let fg_tag = crate::product_hide::sys::read_member_tag(fg);
+        state
+            .member_tokens
+            .iter()
+            .find(|(k, _)| {
+                k.hwnd == fg
+                    && state.member_tags.get(*k).is_some_and(|stored| {
+                        crate::workspace_owner::visible_lifetime_ok(stored, fg_tag.as_deref())
+                    })
+            })
+            .and_then(|(k, _)| state.workspaces.member_loc(k).cloned())
+            .map(|loc| (loc.output, loc.workspace))
+    };
+    let mut deferred: Vec<String> = Vec::new();
+    for origin in gone {
+        // Disconnect-time geometry decides the survivor: the origin's own
+        // last-seen rectangle first, never post-disconnect frames as proxy;
+        // then active output, then ordering. Never merge into a new split.
+        let reference = state
+            .last_areas
+            .iter()
+            .find(|a| a.device == origin)
+            .or_else(|| state.last_areas.first())
+            .map(|a| tiler_core::workspace::DisplacedRect {
+                x: a.full.x,
+                y: a.full.y,
+                w: a.full.w,
+                h: a.full.h,
+            });
+        let survivors: Vec<tiler_core::workspace::Survivor> = current
+            .iter()
+            .map(|k| {
+                let rect = areas.iter().find(|a| &a.device == k).map(|a| {
+                    tiler_core::workspace::DisplacedRect {
+                        x: a.full.x,
+                        y: a.full.y,
+                        w: a.full.w,
+                        h: a.full.h,
+                    }
+                });
+                tiler_core::workspace::Survivor {
+                    key: k.clone(),
+                    rect,
+                }
+            })
+            .collect();
+        let active = if state.active_output.is_empty() {
+            None
+        } else {
+            Some(state.active_output.as_str())
+        };
+        if let Some(dest) =
+            tiler_core::workspace::choose_displaced_destination(&survivors, active, reference)
+        {
+            // Relocate retained Engine sessions first so layout trees,
+            // contents, and focus move with the workspaces instead of
+            // reseeding on the survivor. Empty or unusable sessions stay;
+            // the outcome counts below stay opaque.
+            let mut relocated = 0u32;
+            let mut retained_count = 0u32;
+            // Membership entries move below; Engine sessions follow per
+            // workspace id through the existing relocation operation.
+            let before: Vec<String> = state.workspaces.workspace_ids(&origin);
+            for ws in &before {
+                let target_key = tiler_core::session::DomainKey {
+                    output: tiler_core::directional::OutputId(dest.clone()),
+                    workspace: tiler_core::directional::WorkspaceId(ws.clone()),
+                };
+                let bounds = areas
+                    .iter()
+                    .find(|a| a.device == dest)
+                    .and_then(|a| tiling_domain_bounds(a.work));
+                let Some(bounds) = bounds else {
+                    retained_count += 1;
+                    continue;
+                };
+                let target_domain = tiler_core::session::OutputDomain {
+                    id: tiler_core::directional::OutputId(dest.clone()),
+                    workspace: tiler_core::directional::WorkspaceId(ws.clone()),
+                    bounds,
+                    gap: OUTER_GAP,
+                    adjacent: std::collections::BTreeMap::new(),
+                };
+                if state
+                    .engine
+                    .try_relocate_for_target(&target_key, &target_domain, OUTER_GAP)
+                {
+                    relocated += 1;
+                } else {
+                    retained_count += 1;
+                }
+            }
+            state.workspaces.displace_output_to(&origin, &dest);
+            if state.active_output == origin {
+                state.active_output = dest.clone();
+            }
+            // The removed monitor held focus: show that member's workspace on
+            // the survivor with its actual focus preserved. Any other case
+            // keeps the survivor view with no stealing.
+            if let Some((fg_output, fg_workspace)) = fg_workspace.clone()
+                && fg_output == origin
+            {
+                state.workspaces.activate(&dest, &fg_workspace);
+                if let Some(fg_key) = state
+                    .member_tokens
+                    .keys()
+                    .find(|k| {
+                        state
+                            .workspaces
+                            .member_loc(k)
+                            .is_some_and(|l| l.output == dest && l.workspace == fg_workspace)
+                    })
+                    .cloned()
+                {
+                    state.workspaces.note_foreground(&fg_key);
+                }
+            }
+            log_json_at(
+                &state.log_path,
+                serde_json::json!({
+                    "event": "workspace-displace",
+                    "output": state.workspaces.output_token(&dest),
+                    "relocated": relocated,
+                    "retained": retained_count,
+                }),
+            );
+        } else {
+            // No survivor: defer with known origins kept, never drop the
+            // workspaces or their Engine sessions.
+            deferred.push(origin);
+        }
+    }
+    // Reconnect returns displaced workspaces to the exact origin key with
+    // then-current contents; Engine sessions relocate back first so the
+    // returning monitor shows then-current trees, not saved snapshots.
+    // The active view shows the returning workspace only when it holds the
+    // focused window, otherwise the surviving view keeps focus with no
+    // stealing (best-effort: preserve active output).
+    let displaced: Vec<String> = state
+        .workspaces
+        .displaced_snapshot()
+        .keys()
+        .cloned()
+        .collect();
+    for origin in displaced {
+        if current.contains(&origin) {
+            if let Some(record) = state.workspaces.displaced_snapshot().get(&origin).cloned() {
+                let bounds = areas
+                    .iter()
+                    .find(|a| a.device == origin)
+                    .and_then(|a| tiling_domain_bounds(a.work));
+                if let Some(bounds) = bounds {
+                    for ws in &record.workspace_ids {
+                        let target_key = tiler_core::session::DomainKey {
+                            output: tiler_core::directional::OutputId(origin.clone()),
+                            workspace: tiler_core::directional::WorkspaceId(ws.clone()),
+                        };
+                        let target_domain = tiler_core::session::OutputDomain {
+                            id: tiler_core::directional::OutputId(origin.clone()),
+                            workspace: tiler_core::directional::WorkspaceId(ws.clone()),
+                            bounds,
+                            gap: OUTER_GAP,
+                            adjacent: std::collections::BTreeMap::new(),
+                        };
+                        state.engine.try_relocate_for_target(
+                            &target_key,
+                            &target_domain,
+                            OUTER_GAP,
+                        );
+                    }
+                }
+            }
+            state.workspaces.reconnect_output(&origin);
+        }
+    }
+    // Deferred no-survivor origins stay known with their last geometry until
+    // a survivor exists; their workspaces and Engine sessions are untouched.
+    let mut known = current.clone();
+    for origin in &deferred {
+        if !known.contains(origin) {
+            known.push(origin.clone());
+        }
+    }
+    state.known_outputs = known;
+    let mut last = areas.to_vec();
+    for origin in &deferred {
+        if !last.iter().any(|a| &a.device == origin)
+            && let Some(area) = state
+                .last_areas
+                .iter()
+                .find(|a| &a.device == origin)
+                .cloned()
+        {
+            last.push(area);
+        }
+    }
+    state.last_areas = last;
+    if state.active_output.is_empty()
+        && let Some(first) = state.known_outputs.first().cloned()
+    {
+        state.active_output = first;
+    }
+}
+
+/// Per-tick workspace maintenance on quiet ticks: monitor sync, new-window
+/// assignment, close cleanup, foreground-driven select, and same-claim
+/// rehide of externally revealed hidden windows.
+fn workspace_maintenance(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    store: &LedgerStore,
+    dir: &Path,
+    fulls: &[Rect],
+    areas: &[MonitorArea],
+) {
+    sync_monitor_outputs(state, areas);
+    let mut skipped: Vec<(String, String)> = Vec::new();
+    let mut retained: Vec<RetainedRow> = Vec::new();
+    let Some(mut observed) = state.observe(me, fulls, &mut skipped, &mut retained) else {
+        return;
+    };
+    publish_managed(state, &observed);
+    ensure_workspace_assignments(state, me, &mut observed, areas);
+    workspace_close_cleanup(state);
+    // Periodic hidden-claim retirement before any foreground-driven switch so
+    // dead claims never select.
+    audit_hidden_claims(state, me, store);
+    // Foreground-driven select only on an actual foreground change to an
+    // exactly verified hidden member; event-only wakes never switch.
+    if poll_foreground_workspace(state, me, store, dir, fulls, areas, &mut observed).is_some() {
+        return;
+    }
+    rehide_pass(state, me, store);
 }
 
 fn gesture_tick(
     state: &mut TileLoop,
     me: &ProcessIdentity,
     fulls: &[Rect],
-    domain: Rect,
+    areas: &[MonitorArea],
     ended: &[u64],
 ) {
     let log_path = state.log_path.clone();
     let mut skipped: Vec<(String, String)> = Vec::new();
-    let Some(observed) = state.observe(me, fulls, &mut skipped) else {
+    let mut retained: Vec<RetainedRow> = Vec::new();
+    let Some(mut observed) = state.observe(me, fulls, &mut skipped, &mut retained) else {
         log_json_at(
             &log_path,
             serde_json::json!({"event":"tick-skip","tick":state.tick,"cause":"enum-failed"}),
         );
         return;
     };
+    publish_managed(state, &observed);
+    ensure_workspace_assignments(state, me, &mut observed, areas);
     let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
     for hwnd in ended {
         let Some(current) = by_hwnd.get(hwnd) else {
@@ -1893,28 +4293,64 @@ fn gesture_tick(
         let Some(intent) = classify_gesture(&before, &current.visible, cursor_pos()) else {
             continue;
         };
+        // The gesture window's own (output, workspace) session owns this
+        // settle: same per-workspace routing as directional chords.
+        let member_key = state
+            .member_tokens
+            .iter()
+            .find(|(_, token)| token.as_str() == current.token.as_str())
+            .map(|(key, _)| key.clone());
+        let Some(member_key) = member_key else {
+            continue;
+        };
+        if !crate::workspace_owner::member_matches(
+            &member_key,
+            current.hwnd,
+            current.identity.pid,
+            &current.identity.process_creation,
+        ) {
+            continue;
+        }
+        let Some(loc) = state.workspaces.member_loc(&member_key).cloned() else {
+            continue;
+        };
+        let Some((domain, domain_key)) = workspace_domain_for(&loc.output, &loc.workspace, areas)
+        else {
+            continue;
+        };
         state.tick += 1;
         let correlation = state.correlation();
-        let pairs: Vec<(String, Rect)> = observed
+        // Incomplete snapshot defers with retained Engine state.
+        let Some(rows) =
+            assemble_domain_rows(state, &loc.output, &loc.workspace, &observed, &retained)
+        else {
+            continue;
+        };
+        let windows: Vec<(WindowId, Rect)> = rows
             .iter()
-            .map(|w| (w.token.clone(), w.visible))
+            .map(|r| (WindowId(r.token.clone()), r.rect))
             .collect();
-        let fp = fingerprint(&pairs);
-        let windows: Vec<(WindowId, Rect)> = observed
-            .iter()
-            .map(|w| (WindowId(w.token.clone()), w.visible))
-            .collect();
+        let fp = fingerprint(
+            &rows
+                .iter()
+                .map(|r| (r.token.clone(), r.rect))
+                .collect::<Vec<_>>(),
+        );
         let mover = WindowId(current.token.clone());
-        let event = build_reconcile_event(&crate::tiling::ReconcileInput {
-            owner: &state.owner,
-            generation: &state.generation,
-            correlation: &correlation,
-            revision: state.revision(),
-            fingerprint: fp,
-            domain_bounds: domain,
-            windows: &windows,
-            focused: Some(&mover),
-        });
+        let event = crate::tiling::build_reconcile_event_for(
+            &state.owner,
+            &state.generation,
+            &correlation,
+            revision_for(state, &loc.output, &loc.workspace),
+            fp,
+            &domain,
+            &domain_key,
+            OUTER_GAP,
+            &windows,
+            Some(&mover),
+        );
+        // Single-domain observations run the local retained
+        // propose/commit path; Core owns gesture semantics.
         let reply = match intent {
             GestureIntent::MoveDrop { x, y } => {
                 let mut event = event;
@@ -1952,6 +4388,7 @@ fn gesture_tick(
             CoreReply::Tiled(_) | CoreReply::Projection(_) | CoreReply::Resize(_) => {
                 let tick = state.tick;
                 let fulls_owned = fulls.to_vec();
+                let writable = writable_tokens(state, &loc.output, &loc.workspace, &observed);
                 apply_geometry(
                     state,
                     ApplyInput {
@@ -1963,6 +4400,12 @@ fn gesture_tick(
                         tick,
                         correlation: correlation.as_str(),
                         skipped: Vec::new(),
+                        writable: &writable,
+                        output_token: state.workspaces.output_token(&loc.output),
+                        workspace_token: state
+                            .workspaces
+                            .workspace_token(&loc.output, &loc.workspace),
+                        revision: revision_for(state, &loc.output, &loc.workspace),
                     },
                 );
             }
@@ -1970,7 +4413,7 @@ fn gesture_tick(
                 // Refusal converges through the next ordinary reconcile,
                 // matching the KDE restore-marker outcome with no ledger.
                 let fulls_owned = fulls.to_vec();
-                reconcile_tick(state, me, &fulls_owned, domain);
+                reconcile_tick(state, me, &fulls_owned, areas);
             }
         }
     }
@@ -2017,9 +4460,19 @@ struct TileRun {
     /// keyboard dispatcher plus session-only mouse routines. Product `tile`
     /// and `tile-proof` always pass false.
     shortcut_proof: bool,
+    /// `workspace-proof` only: like `shortcut-proof` plus the workspace
+    /// dispatcher (select/send/follow with hide/reveal) for exactly the
+    /// frozen allowlist. Never enabled on the product path.
+    workspace_proof: bool,
     raw_argv: Vec<String>,
     keyboard: KeyboardConfig,
     mouse_snap: bool,
+    /// Explicit normal-mode scope filter (empty means no filter). Proof runs
+    /// always pass empty (frozen allowlist is the gate there).
+    scope: Vec<String>,
+    /// Explicit host-to-child scope pairs (empty means no child constraint).
+    /// Proof runs always pass empty.
+    scope_hosts: Vec<ScopeHostChild>,
 }
 
 fn run_tile_loop(
@@ -2034,13 +4487,16 @@ fn run_tile_loop(
         allowlist,
         proof,
         shortcut_proof,
+        workspace_proof,
         raw_argv,
         keyboard,
         mouse_snap,
+        scope,
+        scope_hosts,
     } = run;
     // Prevention needs an active loop: proof never arms it, and the guarded
     // setup already captured the preimage plus the initial effect.
-    let snap_want = mouse_snap && (!proof || shortcut_proof);
+    let snap_want = mouse_snap && (!proof || shortcut_proof || workspace_proof);
     ensure_pm_v2()?;
     let owner = OwnerId::parse(OWNER_ID).expect("static owner token is valid");
     let generation =
@@ -2070,15 +4526,21 @@ fn run_tile_loop(
             "argv": raw_argv,
             "seconds": seconds,
             "trace": trace,
-            "mode": if shortcut_proof { "shortcut-proof" } else { "proof" },
+            "mode": if workspace_proof {
+                "workspace-proof"
+            } else if shortcut_proof {
+                "shortcut-proof"
+            } else {
+                "proof"
+            },
             "allowlist_digest": digest,
             "allowlist_count": count,
         });
         log_json_at(audit, line);
     }
     // Proof gate before first geometry: every frozen entry must verify as an
-    // owned helper (sibling exe/class/tag, full identity, Terminal excluded).
-    // Invisible passive members verify here and stay frozen until `show`.
+    // owned helper (sibling exe/class/tag plus full identity). Invisible
+    // passive members verify here and stay frozen until `show`.
     if proof {
         let entries = allowlist
             .as_ref()
@@ -2086,11 +4548,10 @@ fn run_tile_loop(
         if entries.is_empty() {
             return Err(err("refuse: empty allowlist"));
         }
-        for entry in entries {
+        for (index, entry) in entries.iter().enumerate() {
             verify_proof_owned(entry.hwnd, entry, me).map_err(|reason| {
                 err(format!(
-                    "refuse: proof allowlist non-owned hwnd={} {reason}",
-                    entry.hwnd
+                    "refuse: proof allowlist non-owned index={index} {reason}"
                 ))
             })?;
         }
@@ -2127,6 +4588,8 @@ fn run_tile_loop(
         gesture_before: HashMap::new(),
         tick: 0,
         allowlist,
+        scope,
+        scope_hosts,
         trace,
         suspended: false,
         last_summary: None,
@@ -2137,11 +4600,26 @@ fn run_tile_loop(
         snap_origins: HashMap::new(),
         snap_advance: None,
         last_enumerated: 0,
+        workspaces: ManagedWorkspaces::new(),
+        member_tokens: std::collections::BTreeMap::new(),
+        member_rects: HashMap::new(),
+        hidden_claims: std::collections::BTreeMap::new(),
+        member_identity: std::collections::BTreeMap::new(),
+        member_tags: std::collections::BTreeMap::new(),
+        active_output: String::new(),
+        workspace_proof: false,
+        last_foreground: 0,
+        known_outputs: Vec::new(),
+        last_hwnds: HashSet::new(),
+        last_areas: Vec::new(),
     };
     state.engine.sync_binding(&owner, &generation);
+    state.workspace_proof = workspace_proof;
     let mut areas = all_monitors()?;
-    let (mut monitor, mut monitor_count) = (areas[0], areas.len());
-    let mode = if shortcut_proof {
+    let (mut monitor, mut monitor_count) = (areas[0].clone(), areas.len());
+    let mode = if workspace_proof {
+        "workspace-proof"
+    } else if shortcut_proof {
         "shortcut-proof"
     } else if state.allowlist.is_some() {
         "proof"
@@ -2149,8 +4627,11 @@ fn run_tile_loop(
         "normal"
     };
     // Visible takeover state: default on, explicit off, proof never hooks
-    // except shortcut-proof with its test-only marker acceptance.
-    let takeover = (state.keyboard.takeover && !proof) || shortcut_proof;
+    // except shortcut-proof/workspace-proof with test-only marker acceptance.
+    let takeover = (state.keyboard.takeover && !proof) || shortcut_proof || workspace_proof;
+    // Per-output-local workspaces start from live monitors: one domain set
+    // per device key, retained Engine sessions per (output, workspace).
+    sync_monitor_outputs(&mut state, &areas);
     log_json_at(
         &log_path,
         serde_json::json!({
@@ -2164,6 +4645,7 @@ fn run_tile_loop(
             "outer": OUTER_GAP,
             "keyboard": {"takeover": takeover, "allow_win_l": state.keyboard.allow_win_l},
             "mouse_snap_prevention": snap_want,
+            "scope_count": state.scope.len(),
         }),
     );
     // Hook on this thread; this thread pumps messages, so callbacks run here.
@@ -2253,14 +4735,14 @@ fn run_tile_loop(
                 snap_suspend(dir, me, store);
             }
         } else {
-            let Some(domain) = tiling_domain_bounds(monitor.work) else {
+            if !areas.iter().any(|a| tiling_domain_bounds(a.work).is_some()) {
                 return Err(err("error: work area cannot carry outer gap"));
-            };
+            }
             if snap_want {
                 snap_resume(dir, me, store);
                 snap_primed = true;
             }
-            reconcile_tick(&mut state, me, &fulls, domain);
+            reconcile_tick(&mut state, me, &fulls, &areas);
         }
         loop {
             if stop_requested(dir, me)? {
@@ -2302,7 +4784,7 @@ fn run_tile_loop(
             // nothing consuming. Resume and work-area changes re-arm an
             // immediate retry; there is no permanent disable.
             if takeover && snap_hook.is_none() && snap_retry_at.is_none_or(|at| now >= at) {
-                let installed = if shortcut_proof {
+                let installed = if shortcut_proof || workspace_proof {
                     crate::snapkey::sys::install_proof(keyboard)
                 } else {
                     crate::snapkey::sys::install(keyboard)
@@ -2332,10 +4814,17 @@ fn run_tile_loop(
             }
             // Cached keyboard gate for the callback (exactness stays with the
             // per-intent owner recheck), then one bounded intent batch. A
-            // pending batch wakes the loop even with no other event.
+            // pending batch wakes the loop even with no other event. The gate
+            // folds the current fullscreen and elevated reads in here so the
+            // hook never swallows a chord during cached suspension; the owner
+            // dispatch rechecks both fresh per intent anyway. Hook-side work
+            // stays cheap reads, never expensive syscalls per key.
+            let gate_fulls = monitor_fulls(&areas);
             let snap_gate_active = state.keyboard.takeover
                 && !state.suspended
-                && !state.active.iter().any(|hwnd| state.managed.contains(hwnd));
+                && !state.active.iter().any(|hwnd| state.managed.contains(hwnd))
+                && !foreground_fullscreen(&gate_fulls)
+                && !foreground_elevated(me);
             let snap_events = if snap_hook.is_some() {
                 crate::snapkey::sys::publish_gate(&state.snap_origins, snap_gate_active);
                 let batch = crate::snapkey::sys::drain_up_to(MAX_DISPATCH_PER_TICK);
@@ -2346,12 +4835,31 @@ fn run_tile_loop(
             } else {
                 Vec::new()
             };
+            // Workspace digits ride the same hook/queue/mask authority but
+            // dispatch through the workspace owner, never the directional
+            // Engine route. Partition here so each batch keeps its verdict
+            // vocabulary; `shortcut-proof` keeps workspace hides disabled
+            // inside `workspace_tick` via the proof gate.
+            let mut workspace_events = Vec::new();
+            let mut directional_events = Vec::new();
+            for event in snap_events {
+                match event {
+                    QueuedSnapEvent::Workspace(intent) => workspace_events.push(intent),
+                    QueuedSnapEvent::Mask(_) | QueuedSnapEvent::Intent(_) => {
+                        directional_events.push(event);
+                    }
+                }
+            }
+            if !workspace_events.is_empty() {
+                woke = true;
+            }
+            let snap_events = directional_events;
             // Proof-only callback diagnostics for shortcut-proof: accepted
             // marked events as the callback saw them, drained to the proof
             // audit (never production logs) so live runs can distinguish
             // actual modifier delivery from classifier state. Product `tile`
             // never records or writes these.
-            if shortcut_proof && snap_hook.is_some() {
+            if (shortcut_proof || workspace_proof) && snap_hook.is_some() {
                 let diag = crate::snapkey::sys::drain_marked_diag();
                 if !diag.is_empty()
                     && let Some(audit) = state.audit_path.as_ref()
@@ -2393,10 +4901,35 @@ fn run_tile_loop(
             if slow {
                 slow_last = now;
                 let fresh = all_monitors()?;
-                if fresh[0].work != monitor.work || fresh.len() != monitor_count {
+                let devices: Vec<String> = areas.iter().map(|a| a.device.clone()).collect();
+                let fresh_devices: Vec<String> = fresh.iter().map(|a| a.device.clone()).collect();
+                let geometry_changed = fresh.len() != monitor_count
+                    || fresh_devices != devices
+                    || fresh.iter().any(|a| {
+                        areas
+                            .iter()
+                            .find(|b| b.device == a.device)
+                            .is_none_or(|b| b.work != a.work || b.full != a.full)
+                    });
+                if geometry_changed {
                     areas = fresh;
-                    monitor = areas[0];
+                    monitor = areas[0].clone();
                     monitor_count = areas.len();
+                    // Arrival/removal relocates whole-workspace Engine
+                    // sessions; bounds-only changes reproject retained
+                    // sessions without touching topology.
+                    sync_monitor_outputs(&mut state, &areas);
+                    for output in state.workspaces.output_keys() {
+                        let Some(active) = state.workspaces.active_id(&output) else {
+                            continue;
+                        };
+                        if let Some((_, key)) = workspace_domain_for(&output, &active, &areas)
+                            && let Some(area) = areas.iter().find(|a| a.device == output)
+                            && let Some(bounds) = tiling_domain_bounds(area.work)
+                        {
+                            state.engine.reproject_retained(&key, bounds);
+                        }
+                    }
                     log_json_at(&log_path, serde_json::json!({"event":"work-area-changed"}));
                     snap_retry_at = None;
                     // A changed work area is a meaningful retry point for a
@@ -2408,17 +4941,17 @@ fn run_tile_loop(
                     woke = true;
                 }
             }
+            // Exact-owner out-of-hook select wakes the loop even with no other
+            // event; the poll itself consumes once and dispatches through the
+            // existing resolver. Checked before the idle skip so a pending
+            // request never waits for an unrelated wake.
+            if dir.join(WORKSPACE_REQUEST_FILE).exists() {
+                woke = true;
+            }
             if !(woke || slow) {
                 continue;
             }
             let fulls = monitor_fulls(&areas);
-            let Some(domain) = tiling_domain_bounds(monitor.work) else {
-                log_json_at(
-                    &log_path,
-                    serde_json::json!({"event":"tick-skip","tick":state.tick,"cause":"domain-inset"}),
-                );
-                continue;
-            };
             if foreground_fullscreen(&fulls) {
                 if !state.suspended {
                     state.suspended = true;
@@ -2438,11 +4971,27 @@ fn run_tile_loop(
                         &mut state,
                         me,
                         &fulls,
-                        domain,
+                        &areas,
                         snap_events,
                         Some("suspended"),
                     );
                 }
+                if !workspace_events.is_empty() {
+                    workspace_tick(
+                        &mut state,
+                        me,
+                        store,
+                        dir,
+                        &fulls,
+                        &areas,
+                        workspace_events,
+                        Some("suspended"),
+                    );
+                }
+                // Out-of-hook select observes the same suspension: consumed
+                // once with a suspended outcome, never applied while a
+                // fullscreen foreground holds the session.
+                poll_workspace_cli_request(&mut state, me, store, dir, &fulls, &areas);
                 state.gesture_before.clear();
                 state.active.clear();
                 continue;
@@ -2486,24 +5035,66 @@ fn run_tile_loop(
                 // and drop safely.
                 state.snap_advance = None;
                 if !snap_events.is_empty() {
-                    keyboard_tick(&mut state, me, &fulls, domain, snap_events, Some("gesture"));
+                    keyboard_tick(&mut state, me, &fulls, &areas, snap_events, Some("gesture"));
+                }
+                if !workspace_events.is_empty() {
+                    workspace_tick(
+                        &mut state,
+                        me,
+                        store,
+                        dir,
+                        &fulls,
+                        &areas,
+                        workspace_events,
+                        Some("gesture"),
+                    );
                 }
                 continue;
             }
             if ended.is_empty() {
-                if snap_events.is_empty() {
-                    reconcile_tick(&mut state, me, &fulls, domain);
+                if snap_events.is_empty() && workspace_events.is_empty() {
+                    reconcile_tick(&mut state, me, &fulls, &areas);
+                    workspace_maintenance(&mut state, me, store, dir, &fulls, &areas);
+                    poll_workspace_cli_request(&mut state, me, store, dir, &fulls, &areas);
                 } else {
-                    keyboard_tick(&mut state, me, &fulls, domain, snap_events, None);
+                    if !snap_events.is_empty() {
+                        keyboard_tick(&mut state, me, &fulls, &areas, snap_events, None);
+                    }
+                    if !workspace_events.is_empty() {
+                        workspace_tick(
+                            &mut state,
+                            me,
+                            store,
+                            dir,
+                            &fulls,
+                            &areas,
+                            workspace_events,
+                            None,
+                        );
+                    }
+                    poll_workspace_cli_request(&mut state, me, store, dir, &fulls, &areas);
                 }
             } else {
                 // A just-ended managed gesture settles before keyboard
                 // continuation resumes.
                 state.snap_advance = None;
                 if !snap_events.is_empty() {
-                    keyboard_tick(&mut state, me, &fulls, domain, snap_events, Some("gesture"));
+                    keyboard_tick(&mut state, me, &fulls, &areas, snap_events, Some("gesture"));
                 }
-                gesture_tick(&mut state, me, &fulls, domain, &ended);
+                if !workspace_events.is_empty() {
+                    workspace_tick(
+                        &mut state,
+                        me,
+                        store,
+                        dir,
+                        &fulls,
+                        &areas,
+                        workspace_events,
+                        Some("gesture"),
+                    );
+                }
+                gesture_tick(&mut state, me, &fulls, &areas, &ended);
+                poll_workspace_cli_request(&mut state, me, store, dir, &fulls, &areas);
             }
         }
     })();
@@ -2531,9 +5122,11 @@ fn run_tile_loop(
 
 /// `tile` command: normal user tiling only (explicit `--user-start`).
 /// Geometry is left in place on stop; nothing is hidden or restored.
-/// Includes Terminal targets; agents never run this path. Product keyboard
-/// takeover follows the parsed options (default on, visible off switch,
-/// Win+L opt-in). Session-only mouse-Snap prevention is default on with the
+/// Terminal windows are ordinary targets; agents never run this path.
+/// Optional repeatable `--scope-exe NAME` restricts management to the named
+/// executables (empty default means no filter). Product keyboard takeover
+/// follows the parsed options (default on, visible off switch, Win+L
+/// opt-in). Session-only mouse-Snap prevention is default on with the
 /// visible `--no-mouse-snap-prevention` off switch; the exact preimage is
 /// restored conditionally on stop.
 pub fn cmd_tile(options: &TileOptions) -> Result<String> {
@@ -2547,6 +5140,8 @@ pub fn cmd_tile(options: &TileOptions) -> Result<String> {
         allow_win_l: options.allow_win_l,
     };
     let mouse_snap = !options.no_mouse_snap_prevention;
+    let scope = options.scope_exes.clone();
+    let scope_hosts = options.scope_hosts.clone();
     crate::lifecycle::sys::run_product(trace, mouse_snap, move |dir, me, store| {
         run_tile_loop(
             dir,
@@ -2558,12 +5153,129 @@ pub fn cmd_tile(options: &TileOptions) -> Result<String> {
                 allowlist: None,
                 proof: false,
                 shortcut_proof: false,
+                workspace_proof: false,
                 raw_argv: Vec::new(),
                 keyboard,
                 mouse_snap,
+                scope,
+                scope_hosts,
             },
         )
     })
+}
+
+/// `workspace --select INDEX` command: exact-owner out-of-hook select for the
+/// normal `tile` loop only. Queues one bounded `workspace.request` file; the
+/// owner validates the full owner binding (creation/pid/exe/sid/session plus
+/// a client correlation) and dispatches once through the existing
+/// `workspace_do_select` resolver. No window actuation here, no synthetic
+/// input, no keyboard acceptance. Refuses when no normal owner runs, when the
+/// caller is not the same medium path (SID/session/exe), when the ledger
+/// owner is a proof run, and when a request is already pending
+/// (single-pending queue, no overwrite, no replay). Stdout reports
+/// `dispatched` (queued) honestly; completion is the owner's `workspace`
+/// log outcome, observed natively by the caller.
+pub fn cmd_workspace_select(options: &WorkspaceSelectOptions) -> Result<String> {
+    use crate::tiling::{WORKSPACE_REQUEST_VERSION, WorkspaceRequest, render_workspace_request};
+    ensure_pm_v2()?;
+    let me = medium_caller()?;
+    // Like `cmd_stop`, the CLI itself may run from any shell; only the
+    // ledger owner liveness plus the same-path medium binding gate below.
+    let dir =
+        crate::native::ledger_directory().map_err(|e| err(format!("error: ledger dir: {e}")))?;
+    let ledger_text =
+        std::fs::read_to_string(dir.join(crate::storage::LEDGER_FILE_NAME)).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                err("refuse: no owner running")
+            } else {
+                err(format!("error: ledger read: {e}"))
+            }
+        })?;
+    let record: crate::model::RecoveryLedger =
+        crate::model::parse_ledger(&ledger_text).map_err(|_| err("refuse: corrupt ledger"))?;
+    // Same-path medium caller check, mirroring `cmd_stop`: SID, session, exe.
+    if me.user_sid != record.owner.user_sid || me.session_id != record.owner.session_id {
+        return Err(err("refuse: owner mismatch"));
+    }
+    let exe = crate::native::current_exe_path().map_err(|e| err(format!("error: exe {e}")))?;
+    if !exe_paths_equal(&exe, &record.owner.exe_path) {
+        return Err(err("refuse: owner mismatch"));
+    }
+    // Proof owners never serve the normal control: a proof audit marker for
+    // this exact owner creation proves proof mode (normal runs write none).
+    let audit = dir.join(format!(
+        "proof-audit-{}.jsonl",
+        record.owner.process_creation
+    ));
+    if audit.exists() {
+        return Err(err("refuse: proof owner"));
+    }
+    // The ledger owner must be exactly alive (full identity, no PID reuse).
+    let held = HeldProcess::open(record.owner.pid).map_err(|e| match e {
+        crate::native::IdentityError::Absent => err("refuse: owner not running"),
+        other => err(format!("error: owner {other}")),
+    })?;
+    let live = held.identity().map_err(|e| match e {
+        crate::native::IdentityError::Absent => err("refuse: owner not running"),
+        other => err(format!("error: owner {other}")),
+    })?;
+    if live != record.owner || !held.is_alive() {
+        return Err(err("refuse: owner not running"));
+    }
+    let rid = held
+        .integrity()
+        .map_err(|e| err(format!("error: target integrity {e}")))?;
+    if !is_medium_rid(rid) {
+        return Err(err(format!("refuse: target integrity {rid} is not medium")));
+    }
+    if options.index > 9 {
+        return Err(err("refuse: select index must be 0..=9"));
+    }
+    let path = dir.join(WORKSPACE_REQUEST_FILE);
+    if path.exists() {
+        return Err(err("refuse: workspace request pending"));
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(1);
+    let correlation = format!("cli-{}-{:x}", me.pid, nanos);
+    if tiler_core::ids::CorrelationId::parse(&correlation).is_none() {
+        return Err(err("error: correlation render"));
+    }
+    let request = WorkspaceRequest {
+        v: WORKSPACE_REQUEST_VERSION,
+        creation: record.owner.process_creation.clone(),
+        pid: record.owner.pid,
+        exe_path: record.owner.exe_path.clone(),
+        user_sid: record.owner.user_sid.clone(),
+        session_id: record.owner.session_id,
+        index: options.index,
+        correlation: correlation.clone(),
+    };
+    let body = render_workspace_request(&request);
+    if body.is_empty() {
+        return Err(err("error: request render"));
+    }
+    // Bounded single-pending queue: the body is written and synced to a
+    // same-directory unique temp first and only then published atomically
+    // with no-overwrite semantics, so the owner never observes a partial
+    // body. A publish race against an already-queued request refuses.
+    match crate::storage::publish_no_overwrite(
+        &dir,
+        WORKSPACE_REQUEST_FILE,
+        body.as_bytes(),
+        &correlation,
+    ) {
+        Ok(()) => {}
+        Err(crate::storage::PublishError::Pending) => {
+            return Err(err("refuse: workspace request pending"));
+        }
+        Err(crate::storage::PublishError::Io(e)) => {
+            return Err(err(format!("error: request write: {e}")));
+        }
+    }
+    Ok(serde_json::json!({"dispatched": true, "index": options.index}).to_string())
 }
 
 /// `tile-proof` command: owned-helpers-only proof loop. Requires a nonempty
@@ -2600,9 +5312,12 @@ pub fn cmd_tile_proof(options: &TileProofOptions, raw_argv: &[String]) -> Result
                 allowlist: Some(entries),
                 proof: true,
                 shortcut_proof: false,
+                workspace_proof: false,
                 raw_argv,
                 keyboard,
                 mouse_snap: false,
+                scope: Vec::new(),
+                scope_hosts: Vec::new(),
             },
         )
     })
@@ -2647,9 +5362,60 @@ pub fn cmd_shortcut_proof(
                 allowlist: Some(entries),
                 proof: true,
                 shortcut_proof: true,
+                workspace_proof: false,
                 raw_argv,
                 keyboard,
                 mouse_snap,
+                scope: Vec::new(),
+                scope_hosts: Vec::new(),
+            },
+        )
+    })
+}
+
+/// `workspace-proof` command: owned-helpers-only automated workspace proof.
+/// Same frozen-allowlist geometry gate as `shortcut-proof` plus the workspace
+/// dispatcher (select/send/follow with hide/reveal) for exactly the
+/// allowlisted helpers. The hook accepts exactly
+/// [`crate::snapkey::SHORTCUT_PROOF_MARKER`]; every workspace hide verifies
+/// `verify_proof_owned` fresh before the write. `shortcut-proof` never hides
+/// for workspace intents and `tile-proof` installs no hook.
+pub fn cmd_workspace_proof(
+    options: &crate::tiling::WorkspaceProofOptions,
+    raw_argv: &[String],
+) -> Result<String> {
+    let text = std::fs::read_to_string(&options.allowlist)
+        .map_err(|e| err(format!("error: allowlist read: {e}")))?;
+    let entries = parse_allowlist(&text).map_err(err)?;
+    if entries.is_empty() {
+        return Err(err("refuse: empty allowlist"));
+    }
+    crate::tiling::verify_workspace_proof_argv_consistency(raw_argv, options).map_err(err)?;
+    let trace = options.trace;
+    let seconds = options.seconds;
+    let mouse_snap = !options.no_mouse_snap_prevention;
+    let raw_argv = raw_argv.to_vec();
+    let keyboard = KeyboardConfig {
+        takeover: true,
+        allow_win_l: false,
+    };
+    crate::lifecycle::sys::run_product(trace, mouse_snap, move |dir, me, store| {
+        run_tile_loop(
+            dir,
+            me,
+            store,
+            TileRun {
+                seconds,
+                trace,
+                allowlist: Some(entries),
+                proof: true,
+                shortcut_proof: false,
+                workspace_proof: true,
+                raw_argv,
+                keyboard,
+                mouse_snap,
+                scope: Vec::new(),
+                scope_hosts: Vec::new(),
             },
         )
     })
@@ -2657,11 +5423,10 @@ pub fn cmd_shortcut_proof(
 
 /// `hide-proof` command: owned-helpers-only visibility proof over the product
 /// nonce mechanism. Requires a nonempty valid `--allowlist`; every frozen
-/// entry is verified as an owned helper (sibling exe/class/lifetime-tag plus
-/// Terminal exclusion, via [`verify_proof_owned`]) BEFORE the ordinary
-/// product nonce APIs run, so helper-only gates are never weakened. Each
-/// verified helper is admitted with a fresh product nonce and hidden with a
-/// write-before-hide ledger commit (schema v3) under the central product
+/// entry is verified as an owned helper (sibling exe/class/lifetime-tag via
+/// [`verify_proof_owned`]) BEFORE the ordinary product nonce APIs run, so
+/// helper-only gates are never weakened. Each verified helper is admitted with a fresh product nonce and hidden with a
+/// write-before-hide ledger commit (schema v4) under the central product
 /// watcher; graceful stop auto-reveals via the guarded teardown, and
 /// emergency loss auto-reveals via the watcher with idempotent independent
 /// restore. Installs no hook, takes no Snap setting, moves no geometry.
@@ -2712,12 +5477,12 @@ fn run_hide_proof_loop(
         }),
     );
     // Frozen-helper gate BEFORE any product nonce API: every entry must verify
-    // as an owned helper, never an ordinary window.
-    for entry in &entries {
+    // as an owned helper, never an ordinary window. Opaque index only in
+    // product errors; raw identity stays in the proof audit below.
+    for (index, entry) in entries.iter().enumerate() {
         verify_proof_owned(entry.hwnd, entry, me).map_err(|reason| {
             err(format!(
-                "refuse: hide-proof allowlist non-owned hwnd={} {reason}",
-                entry.hwnd
+                "refuse: hide-proof allowlist non-owned index={index} {reason}"
             ))
         })?;
     }
@@ -2740,7 +5505,7 @@ fn run_hide_proof_loop(
         serde_json::json!({"event": "proof-frozen", "windows": frozen}),
     );
     let areas = all_monitors()?;
-    let monitor = areas[0];
+    let monitor = areas[0].clone();
     log_json_at(
         &log_path,
         serde_json::json!({
@@ -2755,13 +5520,17 @@ fn run_hide_proof_loop(
         }),
     );
     // Admit + hide each verified helper via the ordinary product APIs.
-    // Write-before-hide holds per window: the ledger commit precedes the hide.
+    // Write-before-hide holds per window: the ledger commit precedes the
+    // hide. Opaque index only in product errors; raw identity stays in the
+    // proof audit below.
     let mut hidden = 0usize;
-    for entry in &entries {
+    let mut admitted: Vec<crate::model::WindowIdentity> = Vec::new();
+    for (index, entry) in entries.iter().enumerate() {
         let claim = crate::product_hide::sys::admit_product_target(entry.hwnd, me)
-            .map_err(|e| err(format!("error: hide-proof admit hwnd={} {e}", entry.hwnd)))?;
+            .map_err(|e| err(format!("error: hide-proof admit index={index} {e}")))?;
         crate::product_hide::sys::hide_committed_product(store, me, &claim, dir)
-            .map_err(|e| err(format!("error: hide-proof hide hwnd={} {e}", entry.hwnd)))?;
+            .map_err(|e| err(format!("error: hide-proof hide index={index} {e}")))?;
+        admitted.push(claim);
         hidden += 1;
         log_json_at(
             &log_path,
@@ -2778,10 +5547,22 @@ fn run_hide_proof_loop(
             }),
         );
     }
-    // Ledger receipt check: v3 with exactly the hidden product claims.
+    // Ledger receipt check: current version with exactly the admitted product
+    // claims, verified field-by-field (kind, HWND, full process, tag), not by
+    // count alone, so a substituted claim cannot pass the receipt.
     match store.committed() {
         Ok(Some(record)) => {
-            if record.v != crate::model::LEDGER_SCHEMA_VERSION || record.windows.len() != count {
+            let exact = record.v == crate::model::LEDGER_SCHEMA_VERSION
+                && record.windows.len() == admitted.len()
+                && admitted.iter().all(|claim| {
+                    record.windows.iter().any(|w| {
+                        w.kind == crate::model::WindowClaimKind::Product
+                            && w.hwnd == claim.hwnd
+                            && w.process == claim.process
+                            && w.tag == claim.tag
+                    })
+                });
+            if !exact {
                 return Err(err("error: hide-proof ledger receipt mismatch"));
             }
         }
@@ -2823,8 +5604,8 @@ pub fn cmd_capture(options: &CaptureOptions) -> Result<String> {
         if window.identity.tag.is_empty() {
             return Err(err("refuse: capture target ineligible"));
         }
-        // Owned-helper binding: sibling exe/class/tag plus Terminal exclusion.
-        // Generic windows never capture even when otherwise eligible.
+        // Owned-helper binding: sibling exe/class/tag. Generic windows never
+        // capture even when otherwise eligible.
         let helper_exe =
             crate::test_window::sys::sibling_helper_exe().map_err(|e| err(e.to_string()))?;
         let snap = crate::test_window::sys::query_owned(
@@ -2837,7 +5618,7 @@ pub fn cmd_capture(options: &CaptureOptions) -> Result<String> {
         if snap.tag != window.identity.tag || snap.tag.is_empty() {
             return Err(err("refuse: capture target ineligible"));
         }
-        if classify(&window.facts, true).is_err() {
+        if classify(&window.facts).is_err() {
             return Err(err("refuse: capture target ineligible"));
         }
         guarded.push((window.hwnd, window.identity.pid));
@@ -2941,6 +5722,60 @@ fn enumerate_child_windows(parent: HWND) -> Option<Vec<isize>> {
         )
     };
     if ok == 0 { None } else { Some(out) }
+}
+
+/// Live executable paths of a top-level window's hosted children: direct
+/// children owned by a different process than the top-level window itself.
+/// Unreadable children contribute nothing (never a match). Scope
+/// classification only: no effects touch child windows. Empty on enumeration
+/// failure, which fails closed for listed hosts at the caller's gate.
+fn hosted_child_exes(parent: HWND, top_pid: u32) -> Vec<String> {
+    let mut out = Vec::new();
+    let Some(children) = enumerate_child_windows(parent) else {
+        return out;
+    };
+    for raw in children {
+        let hwnd = raw as HWND;
+        let mut pid: u32 = 0;
+        unsafe {
+            GetWindowThreadProcessId(hwnd, &mut pid);
+        }
+        if pid == 0 || pid == top_pid {
+            continue;
+        }
+        let exe = HeldProcess::open(pid)
+            .ok()
+            .and_then(|held| held.identity().ok())
+            .filter(|ident| ident.pid == pid)
+            .map(|ident| ident.exe_path);
+        if let Some(exe) = exe {
+            out.push(exe);
+        }
+    }
+    out
+}
+
+/// Fresh hosted-child gate for one top-level window: listed hosts pass only
+/// while a live hosted child matches. Short-circuits before enumerating when
+/// the top-level executable names no pair. Read-only; the caller selects the
+/// refusal outcome.
+fn hosted_gate_allows(
+    top_exe: &str,
+    hwnd_u64: u64,
+    top_pid: u32,
+    pairs: &[ScopeHostChild],
+) -> bool {
+    if pairs.is_empty() {
+        return true;
+    }
+    if !pairs
+        .iter()
+        .any(|pair| scope_exe_basename(&pair.host) == scope_exe_basename(top_exe))
+    {
+        return true;
+    }
+    let hwnd = hwnd_u64 as isize as HWND;
+    hosted_child_allows(top_exe, &hosted_child_exes(hwnd, top_pid), pairs)
 }
 
 fn exe_basename(exe_path: &str) -> String {
@@ -3107,7 +5942,7 @@ pub fn cmd_inspect(options: &InspectOptions) -> Result<String> {
             Ok(window) if allow_match(entry, &window.identity) => {
                 let outer = window.outer;
                 let dpi = unsafe { GetDpiForWindow(hwnd) };
-                let (eligible, skip) = match classify(&window.facts, true) {
+                let (eligible, skip) = match classify(&window.facts) {
                     Ok(()) => (true, None),
                     Err(reason) => (false, Some(reason.as_str().to_owned())),
                 };
@@ -3132,7 +5967,6 @@ pub fn cmd_inspect(options: &InspectOptions) -> Result<String> {
                         "tool_window": window.facts.tool_window,
                         "owned": window.facts.owned,
                         "captionless_fullscreen": window.facts.captionless_fullscreen,
-                        "terminal_ancestor": window.facts.terminal_ancestor,
                         "no_activate": window.facts.no_activate,
                         "dialog": window.facts.dialog,
                     },
