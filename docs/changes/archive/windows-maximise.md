@@ -97,7 +97,10 @@
 
 ## Completion
 
-- Implementation accepted locally; commit/push and hosted CI pending.
+- Delivered as `1be97a1`, pushed to main. Hosted
+  [CI 37041636260](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37041636260)
+  passed Windows, Rust, KWin and shell jobs. This record is archived at scoped
+  completion; physical follow-ups and the provisional choice remain explicit.
 - Backlog proposal: mark item3 maximise delivered with this archived evidence;
   retain physical checks and provisional discrete-toggle choice; next item4
   belongs to a fresh Lead. No further implementation for this change.

@@ -440,7 +440,7 @@ the corresponding item ships; each such entry names its replacement.
   graceful/crash recovery. Physical maximize-button/input/feel and other
   output/DPI arrangements remain user-owned; native system-command and
   double-click paths are machine-proven. Evidence:
-  [Windows maximise](changes/windows-maximise.md).
+  [Windows maximise](changes/archive/windows-maximise.md).
 
 ## Native Integration Boundary
 
