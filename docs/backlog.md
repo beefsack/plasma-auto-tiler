@@ -49,7 +49,11 @@ decisions of 2026-09-24 are under
   ordinary-app recovery/timing: 72-124 ms ordinary-app selects, 171-241 ms
   physical select/send trace; user accepts select/send/follow and drag-resize
   usability. [Latency evidence](changes/archive/windows-workspace-action-latency.md).
-  Integration CI remains pending.
+  Minimum-size hints shipped in 49d4191 and were physically accepted, including
+  send into a populated workspace (2026-10-02). Late directional dogfood moves
+  match KDE/core R2c/R3; minimum-pinned geometry explains zero visible change.
+  [Minimum-size evidence](changes/archive/windows-minimum-size-hints.md).
+  [Directional diagnosis](changes/archive/windows-directional-dogfood-diagnosis.md).
   Next: active window border, then group underlay.
   [Managed workspaces](changes/archive/windows-managed-workspaces.md).
   [Shortcut slice and handover](changes/archive/windows-shortcut-slice.md).
@@ -59,22 +63,13 @@ decisions of 2026-09-24 are under
   `20261001-223101-30052` passed Notepad/Calculator/Paint/Terminal admission,
   true new-window open/close, Calculator minimize/restore and unchanged stop
   frames. Paint held 617px against a 543px plan, causing 66px overlap; minimum-
-  size neighbour replanning remains a preview limitation. Standard native gates
+  size neighbour replanning was an initial preview limitation, resolved by the
+  accepted minimum-size hints. Standard native gates
   passed; multi-monitor/mixed-DPI, gestures and games remain unaccepted.
   See [Phase 2 record](changes/archive/windows-phase2-tiling.md).
   [plan](research/windows-port/plan.md)
   [decision](decisions.md#windows-port)
   Day-one setup and pending governance: [Windows development environment](windows-dev-environment.md).
-- P1 | Windows minimum-size handling | Active (user option A, 2026-10-02):
-  fresh app-declared minimum track sizes feed the existing shared projection;
-  no learning, KDE proportional/overconstrained fallback when infeasible.
-  Native implementation/gates and independent review corrections complete.
-  Scoped live width/height redistribution, 8px gaps, infeasible no-fighting
-  and latency verified on the current artifact. Real workspace send into a
-  hidden destination remains pending physical input; CLI/proof harnesses do
-  not automate ordinary-app send. Keep open until accepted; next Windows
-  product item remains active border, then group underlay.
-  [Minimum-size change](changes/windows-minimum-size-hints.md).
 - P2 | Windows workspace overview | Visible taskbar or other workspace overview;
   discuss design with the user later. No presentation mechanism selected.
 - P2 | Hidden-workspace Alt+Tab option | Investigate whether official Windows

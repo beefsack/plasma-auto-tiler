@@ -1,7 +1,7 @@
 # Windows application-declared minimum sizes
 
-Status: active, feasible geometry and infeasible no-fighting verified; real
-workspace-send acceptance pending, 2026-10-02. Baseline: clean `a442c38`.
+Status: complete, physically accepted including populated-workspace send,
+2026-10-02. Implementation: `49d4191`; baseline: clean `a442c38`.
 
 ## Goal and decision
 
@@ -62,12 +62,13 @@ workspace-send acceptance pending, 2026-10-02. Baseline: clean `a442c38`.
 - Current native four-package build/test/strict clippy, all-package fmt and
   whitespace gates pass. Lead's first budget-constant build hit a u32/u64
   mismatch; the direct cast repair restored the gates. No KDE/core source
-  changes. Current-artifact live evidence is below; send remains pending.
+   changes. Current-artifact live evidence is below; send was pending at that
+   stage and was subsequently physically accepted (see closure).
 - Gate transcript:
   `C:\Users\beefs\.local\share\opencode\tool-output\tool_0fb2522fd001uQtBi2PMJ7Ut4j`.
 - Initial live Worker dispatch failed three times before starting, each with
   backend temporarily overloaded; no desktop experiment ran in that session.
-  Subsequent Workers ran successfully; send acceptance remains pending.
+   Subsequent Workers ran successfully; send acceptance was pending then.
 - Read-only end check, 2026-10-02 16:25:47 +10:00: zero project processes,
   enumerated Notepad/Paint/ApplicationFrameWindow windows visible; arranging
   raw 1, pen raw 35. Session directory has no ledger JSON, stop request or
@@ -121,19 +122,35 @@ workspace-send acceptance pending, 2026-10-02. Baseline: clean `a442c38`.
   (physical visible `(1284,694,630,678)`); stop/recovery restores show-state,
   not pre-tiling geometry. No extra app instances were opened.
 - Workspace select/reveal is verified, including hidden-target observations.
-  Workspace **send is not verified** by either live harness. The normal CLI
+  Workspace **send was not verified** by either live harness. The normal CLI
   exposes select only; normal mode rejects injected chords, and workspace-proof
   requires tagged owned helpers. Do not substitute select evidence for send
   or expand those contracts solely to complete this acceptance.
 
+## Physical acceptance and closure
+
+- User acceptance, 2026-10-02: no overlap; the result looked and felt great.
+  Sending into a populated workspace was exercised during physical dogfood.
+  This closes the pending ordinary-app send acceptance; automated select
+  evidence above remains select evidence, not a substitute for physical send.
+- Dogfood trace: `%LOCALAPPDATA%/plasma-auto-tiler/session-1/`
+  `run-01dd52415c2991a6.log`. Its late directional report was independently
+  diagnosed as KDE/core-conformant R2c/R3 with feasible minimum-pinned geometry,
+  not an overconstraint/refused-tracker failure. See
+  [directional diagnosis](windows-directional-dogfood-diagnosis.md).
+- Final read-only check at `2026-10-02T08:15:05Z`: zero project processes,
+  clean ledger/request state, arranging raw 1, pen raw 35; Notepad, Paint and
+  Calculator main windows visible and unminimized. Evidence:
+  `target/windows-directional-diagnosis/20261002-180400/endstate-verify.json`.
+- Archived; minimum-size backlog item closed. No remaining acceptance action.
+
 ## Succession
 
-- Next action: user-owned physical workspace send into a populated hidden
-  destination on the same staged artifact, with correlated minimum hints and
-  source/target geometry readbacks. Then archive and complete the backlog item.
+- Next action for this item: none.
 - Outstanding evidence risks: send-specific hidden DWM measurements and
-  slow/hung query unknown behavior under load. Linux gates remain pending;
-  no shared core/KWin source changed. No product defect was found in these runs.
+  slow/hung query unknown behavior under load. Native gates are recorded above;
+  Linux integration gates run in CI. No shared core/KWin source changed.
+  No product defect was found in these runs.
 - Windows active border remains the following product item; use existing
   `tiler_core::visual` policy and current visible-frame physical-pixel geometry.
   Native rendering/stacking and suppression need their own scoped evidence.
