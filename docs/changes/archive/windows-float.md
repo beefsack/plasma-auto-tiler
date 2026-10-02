@@ -114,8 +114,9 @@
 
 ## Completion And Handover
 
-- Implementation and evidence committed/pushed after native gates; hosted CI
-  URL/status recorded in the completion follow-up. No Worker remains running.
+- Implementation and evidence delivered as `d8329e3`, pushed to main. Hosted
+  [CI 37069767244](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37069767244)
+  passed Windows, Rust, KWin and shell jobs. No Worker remains running.
 - Backlog proposal: item5 float shipped (Win+G), gated/independently reviewed;
   full live acceptance open under the Explorer activation blocker, crash band
   semantics provisional. Link this archive; next item6 belongs to another Lead.
