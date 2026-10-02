@@ -79,7 +79,13 @@ decisions of 2026-09-24 are under
   (unfocused dragged subject) parked for reassessment with item 7;
   (3) maximise done (`1be97a1`, Win+M; [evidence](changes/archive/windows-maximise.md);
   physical button/input/feel checks remain; discrete one-attempt-per-press
-  Win+M is provisional, to discuss); next (4) fullscreen; (5) float;
+  Win+M is provisional, to discuss); (4) fullscreen shipped (`e84b1a7`,
+  Win+F11; [evidence](changes/archive/windows-fullscreen.md); full live
+  acceptance open: an unidentified cloaked Explorer `ApplicationFrameWindow`
+  takes foreground later and blocks harness activation, plus repeat/refusal/
+  underlay/workspace/crash/approved-app rows and physical dogfood;
+  borderless route and discrete Win+F11 are provisional, to discuss);
+  next (5) float;
   (6) sticky float;
   (7) mouse drag window move; (8) mouse drag drop-zone square (preview);
   (9) multi-output support; (10) taskbar item showing workspaces (design to be
