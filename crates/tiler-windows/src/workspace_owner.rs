@@ -150,6 +150,197 @@ pub fn verify_membership_transfer(
     verify_send_follow(mover, source_members, target_members)
 }
 
+/// Focus-before-geometry gate for a verified workspace transition: establish
+/// the appropriate target focus before geometry only when the transition
+/// verified and no fullscreen/elevated foreground arrived. A real fullscreen
+/// or elevated arrival must never be stolen from just to defeat the geometry
+/// veto; skipping focus there lets the write path veto honestly.
+#[must_use]
+pub const fn focus_before_geometry(
+    transition_verified: bool,
+    fullscreen_foreground: bool,
+    elevated_foreground: bool,
+) -> bool {
+    transition_verified && !fullscreen_foreground && !elevated_foreground
+}
+
+/// Privacy-safe foreground veto reason. Bounded vocabulary only: no titles,
+/// paths, HWNDs, PIDs, or content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForegroundVetoReason {
+    /// No covering window (null foreground, captioned, or small borderless).
+    None,
+    /// Captioned foreground: never borderless fullscreen by construction.
+    Captioned,
+    /// Valid foreground handle that is not visible: invisible windows cannot
+    /// be covering.
+    Nonvisible,
+    /// Exact desktop shell handle (`GetShellWindow`/`GetDesktopWindow`): the
+    /// desktop, not a fullscreen application.
+    Desktop,
+    /// Visible captionless foreground whose frame covers a monitor.
+    Fullscreen,
+    /// Visible foreground whose frame could not be read: fail closed.
+    Unreadable,
+    /// Non-null foreground handle that fails validity: fail closed.
+    Invalid,
+}
+
+impl ForegroundVetoReason {
+    /// Stable log token for the bounded action summary.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Captioned => "captioned",
+            Self::Nonvisible => "nonvisible",
+            Self::Desktop => "desktop",
+            Self::Fullscreen => "fullscreen",
+            Self::Unreadable => "unreadable",
+            Self::Invalid => "invalid",
+        }
+    }
+}
+
+/// Portable foreground facts for the veto classifier. The native caller owns
+/// all reads; this struct carries only booleans plus the already-computed
+/// covering predicate, never handles, paths, or titles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ForegroundFacts {
+    /// Foreground handle passed native validity (`IsWindow`, non-null).
+    pub valid: bool,
+    /// Exact desktop shell identity (`GetShellWindow`/`GetDesktopWindow`).
+    pub is_desktop: bool,
+    /// Fresh `IsWindowVisible` read on the valid handle.
+    pub visible: bool,
+    /// Caption bit (`WS_CAPTION`) from the live style.
+    pub captioned: bool,
+    /// DWM extended-frame-bounds read succeeded.
+    pub dwm_readable: bool,
+    /// Captionless frame covers a monitor full rect (portable predicate).
+    pub covers_monitor: bool,
+}
+
+/// Veto decision plus reason. `block == true` preserves the existing gate:
+/// visible real fullscreen, visible unreadable, and invalid foregrounds veto;
+/// everything else (including valid non-visible and exact desktop) does not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ForegroundVeto {
+    pub block: bool,
+    pub reason: ForegroundVetoReason,
+}
+
+/// Portable fact-based foreground veto policy, used by the actual native path.
+/// Order matters: validity first (fail closed), then exact desktop identity
+/// (classifier correctness, not an intent exception), then fresh visibility
+/// (invisible cannot cover), then readability (visible unknown stays blocked),
+/// then caption, then covering geometry.
+#[must_use]
+pub const fn classify_foreground(facts: ForegroundFacts) -> ForegroundVeto {
+    if !facts.valid {
+        return ForegroundVeto {
+            block: true,
+            reason: ForegroundVetoReason::Invalid,
+        };
+    }
+    if facts.is_desktop {
+        return ForegroundVeto {
+            block: false,
+            reason: ForegroundVetoReason::Desktop,
+        };
+    }
+    if !facts.visible {
+        return ForegroundVeto {
+            block: false,
+            reason: ForegroundVetoReason::Nonvisible,
+        };
+    }
+    if !facts.dwm_readable {
+        return ForegroundVeto {
+            block: true,
+            reason: ForegroundVetoReason::Unreadable,
+        };
+    }
+    if facts.captioned {
+        return ForegroundVeto {
+            block: false,
+            reason: ForegroundVetoReason::Captioned,
+        };
+    }
+    if facts.covers_monitor {
+        return ForegroundVeto {
+            block: true,
+            reason: ForegroundVetoReason::Fullscreen,
+        };
+    }
+    ForegroundVeto {
+        block: false,
+        reason: ForegroundVetoReason::None,
+    }
+}
+
+/// One planned geometry write extracted from an Engine reply: the portable
+/// shape the native write path consumes. Workspace identity stays with the
+/// caller; scoping rides the domain writable set, never a workspace-id
+/// partition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedWrite {
+    pub window: WindowId,
+    pub rect: Rect,
+    pub overconstrained: bool,
+    pub client_clamped: bool,
+}
+
+/// Portable Engine-reply extraction used by the actual native write path.
+/// Returns `None` for non-plan replies so callers serialize null with reason
+/// instead of zeros. Both-domain `SendWorkspace` plans carry source reflow
+/// and target placement together; the domain writable set scopes each pass.
+#[must_use]
+pub fn planned_writes(reply: &tiler_core::boundary::CoreReply) -> Option<Vec<PlannedWrite>> {
+    fn map(geometry: &[tiler_core::session::DesiredGeometry]) -> Vec<PlannedWrite> {
+        geometry
+            .iter()
+            .map(|g| PlannedWrite {
+                window: g.window.clone(),
+                rect: g.rect,
+                overconstrained: g.overconstrained,
+                client_clamped: g.client_clamped,
+            })
+            .collect()
+    }
+    use tiler_core::boundary::CoreReply as R;
+    match reply {
+        R::Projection(plan) => Some(map(&plan.geometry)),
+        R::Tiled(plan) => Some(map(&plan.geometry)),
+        R::Resize(plan) => Some(map(&plan.geometry)),
+        R::MoveDirectional(plan) => Some(map(&plan.geometry)),
+        R::FocusDirectional(plan) => Some(map(&plan.geometry)),
+        R::SendWorkspace(plan) => Some(map(&plan.geometry)),
+        _ => None,
+    }
+}
+
+/// Portable writable-token subset: non-hidden members whose Engine token is
+/// present in the fresh eligible observation. Retained members without a
+/// fresh frame and hidden members never take geometry writes; hidden
+/// workspace geometry waits for reveal. Scope and identity revalidation stay
+/// with the native caller; this pins the hidden/retained exclusion.
+#[must_use]
+pub fn writable_subset(
+    members: &BTreeSet<WindowKey>,
+    is_hidden: impl Fn(&WindowKey) -> bool,
+    token_of: &BTreeMap<WindowKey, String>,
+    fresh_tokens: &std::collections::HashSet<String>,
+) -> std::collections::HashSet<String> {
+    members
+        .iter()
+        .filter(|k| !is_hidden(k))
+        .filter_map(|k| token_of.get(k))
+        .filter(|t| fresh_tokens.contains(*t))
+        .cloned()
+        .collect()
+}
+
 /// Pure owner dispatch gate for one workspace digit, shared by the native
 /// loop and offline tests. `takeover` is the `--no-keyboard-snap-takeover`
 /// switch (off disables all product interception); `suspended` covers
@@ -897,5 +1088,240 @@ mod tests {
             }
             reply => panic!("source converges, got {reply:?}"),
         }
+    }
+
+    #[test]
+    fn send_plan_scopes_source_reflow_through_writable_subset() {
+        // Both-domain send regression through the actual native seams: one
+        // Engine `SendWorkspace` plan carries source survivor reflow plus
+        // target mover placement together (`planned_writes`, the extraction
+        // the native write path consumes), and the domain writable set
+        // (`writable_subset`, which the native `writable_tokens` delegates to)
+        // scopes the pre-hide source pass to the survivor only.
+        use tiler_core::boundary::CoreReply;
+        let mut engine = tiler_core::engine::Engine::new();
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        engine.sync_binding(&owner, &generation);
+        let bounds = rect(0, 0);
+        let source = workspace_domain("mon-a", "ws-1", bounds, 8);
+        let target = workspace_domain("mon-a", "ws-2", bounds, 8);
+        for (key, rows) in [
+            (&source.1, vec![("w1", bounds), ("w2", bounds)]),
+            (&target.1, vec![]),
+        ] {
+            let domain = if key.workspace.0 == "ws-1" {
+                &source.0
+            } else {
+                &target.0
+            };
+            let correlation = CorrelationId::parse("seed").expect("correlation");
+            let event = crate::tiling::build_reconcile_event_for(
+                &owner,
+                &generation,
+                &correlation,
+                0,
+                rows.len() as u64,
+                domain,
+                key,
+                8,
+                &rows
+                    .iter()
+                    .map(|(t, r)| (tiler_core::directional::WindowId((*t).to_owned()), *r))
+                    .collect::<Vec<_>>(),
+                None,
+            );
+            let _ = engine.handle(&event);
+        }
+        let revision = engine
+            .session(&source.1)
+            .map(|s| s.accepted_revision())
+            .unwrap_or(0);
+        let correlation = CorrelationId::parse("tick-1").expect("correlation");
+        let mut event = build_send_event(
+            &owner,
+            &generation,
+            &correlation,
+            revision,
+            42,
+            source.clone(),
+            target.clone(),
+            &[
+                OwnerRow {
+                    token: "w1".to_owned(),
+                    rect: bounds,
+                },
+                OwnerRow {
+                    token: "w2".to_owned(),
+                    rect: bounds,
+                },
+            ],
+            &[],
+            "w1",
+            8,
+        )
+        .expect("event");
+        stamp_send_target(&mut event, &target.1);
+        let reply = engine.handle(&event);
+        let CoreReply::SendWorkspace(plan) = &reply else {
+            panic!("send commits");
+        };
+        // Native extraction seam: the single plan covers both domains.
+        let writes = super::planned_writes(&reply).expect("plan extracts");
+        assert_eq!(writes.len(), plan.geometry.len(), "nothing dropped");
+        assert!(writes.iter().any(|w| w.window.0 == "w1"), "mover placed");
+        assert!(
+            writes.iter().any(|w| w.window.0 == "w2"),
+            "survivor reflowed"
+        );
+        // Domain eligibility seam: after the membership transfer the source
+        // domain holds only the survivor, so the pre-hide source pass writes
+        // exactly the survivor while the moved token is no longer writable
+        // there. Hidden members never take writes.
+        let mover = key(1);
+        let survivor = key(2);
+        let hidden = key(3);
+        let members: BTreeSet<WindowKey> = [mover.clone(), survivor.clone(), hidden.clone()]
+            .into_iter()
+            .collect();
+        let token_of: std::collections::BTreeMap<WindowKey, String> = [
+            (mover.clone(), "w1".to_owned()),
+            (survivor.clone(), "w2".to_owned()),
+            (hidden.clone(), "w3".to_owned()),
+        ]
+        .into_iter()
+        .collect();
+        let hidden_set: BTreeSet<WindowKey> = [hidden.clone()].into_iter().collect();
+        // Fresh observation holds survivor plus mover (still visible pre-hide
+        // in this portable model); the source pass scopes by membership, so
+        // model the post-transfer source membership explicitly.
+        let source_members: BTreeSet<WindowKey> =
+            [survivor.clone(), hidden.clone()].into_iter().collect();
+        let fresh: std::collections::HashSet<String> =
+            ["w1".to_owned(), "w2".to_owned()].into_iter().collect();
+        let writable = super::writable_subset(
+            &source_members,
+            |k| hidden_set.contains(k),
+            &token_of,
+            &fresh,
+        );
+        assert!(writable.contains("w2"), "survivor stays writable");
+        assert!(
+            !writable.contains("w1"),
+            "moved token not writable in source"
+        );
+        assert!(!writable.contains("w3"), "hidden rows never writable");
+        let _ = members;
+        // Non-plan replies extract to `None` so callers serialize null with
+        // reason instead of zeros.
+        let released = tiler_core::boundary::CoreReply::Released;
+        assert!(super::planned_writes(&released).is_none());
+    }
+
+    #[test]
+    fn non_plan_replies_extract_to_none() {
+        use tiler_core::boundary::{CoreReply, NoGroupReason};
+        use tiler_core::contract::DivergenceKind;
+        for reply in [
+            CoreReply::Released,
+            CoreReply::Rejected {
+                kind: "empty",
+                message: "empty domain",
+            },
+            CoreReply::Diverged(DivergenceKind::StaleRevision),
+            CoreReply::SnapshotInvalid {
+                message: "stale",
+                detail: "stale snapshot",
+            },
+            CoreReply::NoGroup {
+                base_revision: None,
+                reason: NoGroupReason::NoSession,
+            },
+        ] {
+            assert!(super::planned_writes(&reply).is_none(), "{reply:?}");
+        }
+    }
+
+    #[test]
+    fn focus_before_geometry_gate_blocks_real_fullscreen_and_elevated() {
+        use super::focus_before_geometry;
+        // Verified transition with a clean foreground focuses before geometry.
+        assert!(focus_before_geometry(true, false, false));
+        // A real fullscreen or elevated arrival must never be stolen from.
+        assert!(!focus_before_geometry(true, true, false));
+        assert!(!focus_before_geometry(true, false, true));
+        assert!(!focus_before_geometry(true, true, true));
+        // An unverified transition never focuses first, even when clean.
+        assert!(!focus_before_geometry(false, false, false));
+    }
+
+    #[test]
+    fn writable_subset_never_includes_hidden_or_stale() {
+        use super::writable_subset;
+        use std::collections::BTreeMap;
+        use std::collections::BTreeSet;
+        let a = key(1);
+        let b = key(2);
+        let c = key(3);
+        let members: BTreeSet<WindowKey> = [a.clone(), b.clone(), c.clone()].into_iter().collect();
+        let token_of: BTreeMap<WindowKey, String> = [
+            (a.clone(), "w1".to_owned()),
+            (b.clone(), "w2".to_owned()),
+            (c.clone(), "w3".to_owned()),
+        ]
+        .into_iter()
+        .collect();
+        // b is hidden; c has no fresh frame (retained without observation).
+        let hidden: BTreeSet<WindowKey> = [b.clone()].into_iter().collect();
+        let fresh: std::collections::HashSet<String> =
+            ["w1".to_owned(), "w2".to_owned()].into_iter().collect();
+        let writable = writable_subset(&members, |k| hidden.contains(k), &token_of, &fresh);
+        assert!(
+            writable.contains("w1"),
+            "visible fresh member stays writable"
+        );
+        assert!(!writable.contains("w2"), "hidden rows never writable");
+        assert!(!writable.contains("w3"), "retained rows never writable");
+    }
+
+    #[test]
+    fn foreground_classifier_keeps_gates_but_fixes_desktop_and_hidden() {
+        use super::{ForegroundFacts, ForegroundVetoReason, classify_foreground};
+        let facts = |valid: bool,
+                     is_desktop: bool,
+                     visible: bool,
+                     captioned: bool,
+                     dwm_readable: bool,
+                     covers_monitor: bool| {
+            classify_foreground(ForegroundFacts {
+                valid,
+                is_desktop,
+                visible,
+                captioned,
+                dwm_readable,
+                covers_monitor,
+            })
+        };
+        // Visible real fullscreen still vetoes.
+        let v = facts(true, false, true, false, true, true);
+        assert!(v.block && v.reason == ForegroundVetoReason::Fullscreen);
+        // Visible unreadable foreground stays blocked (fail closed).
+        let v = facts(true, false, true, false, false, false);
+        assert!(v.block && v.reason == ForegroundVetoReason::Unreadable);
+        // Invalid handle fails closed.
+        let v = facts(false, false, false, false, false, false);
+        assert!(v.block && v.reason == ForegroundVetoReason::Invalid);
+        // Exact desktop shell handle never vetoes, even when covering.
+        let v = facts(true, true, true, false, true, true);
+        assert!(!v.block && v.reason == ForegroundVetoReason::Desktop);
+        // Valid non-visible foreground never vetoes: invisible cannot cover.
+        let v = facts(true, false, false, false, true, true);
+        assert!(!v.block && v.reason == ForegroundVetoReason::Nonvisible);
+        // Captioned foreground never vetoes.
+        let v = facts(true, false, true, true, true, false);
+        assert!(!v.block && v.reason == ForegroundVetoReason::Captioned);
+        // Small visible borderless window never vetoes.
+        let v = facts(true, false, true, false, true, false);
+        assert!(!v.block && v.reason == ForegroundVetoReason::None);
     }
 }

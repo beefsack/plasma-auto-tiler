@@ -211,6 +211,84 @@ function Wait-WorkspaceCliOutcome([string]$LogPath, [int]$Mark, [int]$Index, [in
   return $null
 }
 
+function Get-WorkspaceActionWn([string]$LogPath, [int]$Mark, [int]$Tick, [string]$Op, [int]$Index, [int]$TimeoutSec) {
+  # Action-correlated geometry oracle: the terminal `workspace-action` line for
+  # this exact dispatch tick, plus every correlation-carrying event before it
+  # (the in-action `tick` pass summaries and `write`s, which reuse the parent
+  # `act-<tick>` correlation on inner geometry ticks). A later periodic
+  # reflow carries a different correlation and never lands in `pre`. Returns
+  # $null when the dispatch logs no action line.
+  $corr = "act-$Tick"
+  $deadline = (Get-Date).AddSeconds($TimeoutSec)
+  while ((Get-Date) -lt $deadline) {
+    $lines = Get-CompleteLinesWn $LogPath
+    $found = $null; $foundIdx = -1
+    for ($i = $Mark; $i -lt $lines.Count; $i++) {
+      if ("$($lines[$i])".Trim() -eq "") { continue }
+      $e = $lines[$i] | ConvertFrom-Json
+      if (($e.event -eq "workspace-action") -and ([int]$e.tick -eq [int]$Tick) -and ("$($e.op)" -eq $Op) -and ([int]$e.index -eq [int]$Index)) {
+        $found = $e; $foundIdx = $i; break
+      }
+    }
+    if ($null -ne $found) {
+      $pre = @()
+      for ($i = $Mark; $i -lt $foundIdx; $i++) {
+        if ("$($lines[$i])".Trim() -eq "") { continue }
+        $e = $lines[$i] | ConvertFrom-Json
+        if ("$($e.correlation)" -eq $corr) { $pre += $e }
+      }
+      return @{ event = $found; count = $lines.Count; actionIndex = $foundIdx; pre = $pre }
+    }
+    Start-Sleep -Milliseconds 200
+  }
+  return $null
+}
+
+function Assert-WorkspaceActionWn($Action, [int]$Tick, [string]$Mode, [string]$Tag) {
+  # Strict "select" proves success for ordinary-app selects: outcome `ok`,
+  # the correlated `reconcile` pass before the terminal line, target phase
+  # with readback verified, and no foreground veto (a vetoed pass still
+  # reports readback_ok, so readback alone cannot prove it). Mismatches are
+  # reported but never fail: Paint minimum-size clamps ride the app-clamp
+  # lane with nonzero mismatch by design (separate item). Zero-write
+  # converged selects honestly carry applied zero with the pass summary
+  # present. "settle" records honestly (empty targets, recovery legs).
+  # Timings are reported, never gated: no millisecond thresholds.
+  if ($null -eq $Action) {
+    Fail-Wn "$Tag no workspace-action for tick $Tick (a delayed periodic reflow is not action evidence)"
+  }
+  $e = $Action.event
+  if ("$($e.correlation)" -ne "act-$Tick") { Fail-Wn "$Tag correlation $($e.correlation) != act-$Tick (not the action pass)" }
+  $tgt = $null
+  if ($null -ne $e.target) {
+    $veto = $null
+    if ($null -ne $e.target.veto) { $veto = "$($e.target.veto.reason)" }
+    $tgt = @{ applied = [int]$e.target.applied; mismatched = [int]$e.target.mismatched; readback_ok = [bool]$e.target.readback_ok; veto = $veto }
+  }
+  $srcPresent = ($null -ne $e.source)
+  $preTicks = @($Action.pre | Where-Object { "$($_.event)" -eq "tick" } | ForEach-Object { "$($_.op)" })
+  $preWrites = @($Action.pre | Where-Object { "$($_.event)" -eq "write" } | ForEach-Object { "$($_.op)" })
+  Rec-Wn "$Tag-action" @{
+    tick = $Tick; correlation = "$($e.correlation)"; outcome = "$($e.outcome)"; focus = "$($e.focus)"
+    queue_wait_ms = $e.queue_wait_ms; action_ms = $e.action_ms
+    transition_ms = $e.transition_ms; observation_ms = $e.observation_ms
+    source_plan_ms = $e.source_plan_ms; target_plan_ms = $e.target_plan_ms
+    source_geometry_ms = $e.source_geometry_ms; target_geometry_ms = $e.target_geometry_ms
+    hide_ms = $e.hide_ms; reveal_ms = $e.reveal_ms; focus_ms = $e.focus_ms
+    source_workspace = "$($e.source_workspace)"; target_workspace = "$($e.target_workspace)"
+    source_present = $srcPresent; target = $tgt
+    evidence = @{ tick_ops = $preTicks; write_ops = $preWrites }
+  }
+  if ($Mode -ne "select") { return $Action }
+  if ("$($e.outcome)" -ne "ok") { Fail-Wn "$Tag outcome $($e.outcome) != ok (partial is not success proof)" }
+  if ($null -eq $tgt) { Fail-Wn "$Tag target geometry missing in-action for tick $Tick" }
+  if (-not $tgt.readback_ok) { Fail-Wn "$Tag target readback not verified in-action for tick $Tick" }
+  if ($null -ne $tgt.veto) { Fail-Wn "$Tag target vetoed ($($tgt.veto)) in-action for tick $Tick (vetoed geometry still reports readback_ok)" }
+  if ($preTicks -notcontains "reconcile") { Fail-Wn "$Tag no correlated reconcile pass before terminal line for tick $Tick (delayed reflow is not action evidence)" }
+  if (([int]$tgt.applied -gt 0) -and ($preWrites -notcontains "reconcile")) { Fail-Wn "$Tag target applied $($tgt.applied) with no correlated write before terminal line for tick $Tick" }
+  return $Action
+}
+
 function Send-WorkspaceSelect([string]$OwnerBin, [int]$Index, [string]$Tag) {
   $raw = Invoke-Native $OwnerBin @("workspace", "--select", "$Index")
   $j = $raw | ConvertFrom-Json
@@ -482,10 +560,15 @@ function Invoke-NormalLive {
     # CLI select 2 hides all managed approved apps; out-of-scope Terminal
     # stays visible (explicit scope fence, never hidden).
     $q = Send-WorkspaceSelect $ownerCopy 2 "select-2"
+    $searchMark = $mark
     $ev = Wait-WorkspaceCliOutcome $logPath $mark 2 30 "select-2"
     $mark = $ev.count
     Rec-Wn "select-2" @{ dispatched = $q; outcome = $ev.event.outcome }
     if ("$($ev.event.outcome)" -notin @("ok", "partial")) { Fail-Wn "select-2 outcome $($ev.event.outcome)" }
+    $actTick = [int]$ev.event.tick
+    $act = Get-WorkspaceActionWn $logPath $searchMark $actTick "select" 2 10
+    if (($null -ne $act) -and ([int]$act.count -gt [int]$mark)) { $mark = [int]$act.count }
+    $null = Assert-WorkspaceActionWn $act $actTick "settle" "select-2"
     Start-Sleep -Milliseconds 1500
     $ledger = Assert-LedgerOrdinaryClaims $ledgerDir $snaps $ownerFrozen "select-2"
     Rec-Wn "select-2-ledger" @{ v = $ledger.v; claims = @($ledger.windows | ForEach-Object { $_.hwnd }) }
@@ -496,10 +579,17 @@ function Invoke-NormalLive {
 
     # CLI select 1 reveals the correct identities with layout and focus.
     $q = Send-WorkspaceSelect $ownerCopy 1 "select-1"
+    $searchMark = $mark
     $ev = Wait-WorkspaceCliOutcome $logPath $mark 1 30 "select-1"
     $mark = $ev.count
     Rec-Wn "select-1" @{ dispatched = $q; outcome = $ev.event.outcome }
     if ("$($ev.event.outcome)" -notin @("ok", "partial", "already-active")) { Fail-Wn "select-1 outcome $($ev.event.outcome)" }
+    $actTick = [int]$ev.event.tick
+    $act = Get-WorkspaceActionWn $logPath $searchMark $actTick "select" 1 10
+    if (($null -ne $act) -and ([int]$act.count -gt [int]$mark)) { $mark = [int]$act.count }
+    $actMode = "settle"
+    if ("$($ev.event.outcome)" -eq "ok") { $actMode = "select" }
+    $null = Assert-WorkspaceActionWn $act $actTick $actMode "select-1"
     Start-Sleep -Milliseconds 1500
     foreach ($s in @($snaps)) {
       $live = Get-AppSnapshotWn ([long]$s.hwnd) "reveal-$($s.hwnd)"
@@ -543,11 +633,21 @@ function Invoke-NormalLive {
     $fgNow = [WorkspaceNormalNative]::GetForegroundWindow().ToInt64()
     if ([uint64]$fgNow -eq [uint64]$calcSnap.hwnd) { Set-AppForegroundWn ([long]$focusSnap.hwnd) "min-focus" }
     $q = Send-WorkspaceSelect $ownerCopy 2 "min-hide"
+    $searchMark = $mark
     $ev = Wait-WorkspaceCliOutcome $logPath $mark 2 30 "min-hide"
     $mark = $ev.count
+    $actTick = [int]$ev.event.tick
+    $act = Get-WorkspaceActionWn $logPath $searchMark $actTick "select" 2 10
+    if (($null -ne $act) -and ([int]$act.count -gt [int]$mark)) { $mark = [int]$act.count }
+    $null = Assert-WorkspaceActionWn $act $actTick "settle" "min-hide"
     $q = Send-WorkspaceSelect $ownerCopy 1 "min-reveal"
+    $searchMark = $mark
     $ev = Wait-WorkspaceCliOutcome $logPath $mark 1 30 "min-reveal"
     $mark = $ev.count
+    $actTick = [int]$ev.event.tick
+    $act = Get-WorkspaceActionWn $logPath $searchMark $actTick "select" 1 10
+    if (($null -ne $act) -and ([int]$act.count -gt [int]$mark)) { $mark = [int]$act.count }
+    $null = Assert-WorkspaceActionWn $act $actTick "settle" "min-reveal"
     Start-Sleep -Milliseconds 1000
     $backCalc = Get-AppSnapshotWn ([long]$calcSnap.hwnd) "min-retained"
     if ([int]$backCalc.pid -ne [int]$calcSnap.pid) { Fail-Wn "minimized calculator pid changed" }
@@ -599,7 +699,12 @@ function Invoke-NormalLive {
     Set-AppForegroundWn ([long]$focusSnap.hwnd) "forced-focus"
     $mark2 = (Get-CompleteLinesWn $logPath2).Count
     $q = Send-WorkspaceSelect $ownerCopy 2 "forced-hide"
+    $searchMark2 = $mark2
     $ev = Wait-WorkspaceCliOutcome $logPath2 $mark2 2 30 "forced-hide"
+    $actTick = [int]$ev.event.tick
+    $act = Get-WorkspaceActionWn $logPath2 $searchMark2 $actTick "select" 2 10
+    if (($null -ne $act) -and ([int]$act.count -gt [int]$ev.count)) { $mark2 = [int]$act.count } else { $mark2 = $ev.count }
+    $null = Assert-WorkspaceActionWn $act $actTick "settle" "forced-hide"
     Start-Sleep -Milliseconds 1500
     $hiddenNow = @($snaps | Where-Object { -not [WorkspaceNormalNative]::IsWindowVisible([IntPtr][long]$_.hwnd) })
     if ($hiddenNow.Count -eq 0) { Fail-Wn "forced hide left nothing hidden" }

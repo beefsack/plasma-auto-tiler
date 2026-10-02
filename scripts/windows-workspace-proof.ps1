@@ -325,6 +325,112 @@ function Send-DigitChordRetry([int]$Vk, [bool]$WithShift, [ScriptBlock]$FgOf, [s
   return $null
 }
 
+function Get-WorkspaceActionWs([string]$LogPath, [int]$Mark, [int]$Tick, [string]$Op, [int]$Index, [int]$TimeoutSec) {
+  # Action-correlated geometry oracle: the terminal `workspace-action` line for
+  # this exact dispatch tick, plus every correlation-carrying event before it
+  # (the in-action `tick` pass summaries and `write`s, which reuse the parent
+  # `act-<tick>` correlation on inner geometry ticks). A later periodic
+  # reflow carries a different correlation and never lands in `pre`. Returns
+  # $null when the dispatch logs no action line (unknown-target /
+  # unmanaged-origin paths): the caller decides whether that absence is
+  # honest.
+  $corr = "act-$Tick"
+  $deadline = (Get-Date).AddSeconds($TimeoutSec)
+  while ((Get-Date) -lt $deadline) {
+    $lines = Get-CompleteLinesWs $LogPath
+    $found = $null; $foundIdx = -1
+    for ($i = $Mark; $i -lt $lines.Count; $i++) {
+      if ("$($lines[$i])".Trim() -eq "") { continue }
+      $e = $lines[$i] | ConvertFrom-Json
+      if (($e.event -eq "workspace-action") -and ([int]$e.tick -eq [int]$Tick) -and ("$($e.op)" -eq $Op) -and ([int]$e.index -eq [int]$Index)) {
+        $found = $e; $foundIdx = $i; break
+      }
+    }
+    if ($null -ne $found) {
+      $pre = @()
+      for ($i = $Mark; $i -lt $foundIdx; $i++) {
+        if ("$($lines[$i])".Trim() -eq "") { continue }
+        $e = $lines[$i] | ConvertFrom-Json
+        if ("$($e.correlation)" -eq $corr) { $pre += $e }
+      }
+      return @{ event = $found; count = $lines.Count; actionIndex = $foundIdx; pre = $pre }
+    }
+    Start-Sleep -Milliseconds 200
+  }
+  return $null
+}
+
+function Assert-WorkspaceActionWs($Action, [int]$Tick, [string]$Mode, [string]$Tag, [int]$MinSourceApplied = 0, [int]$MinTargetApplied = 0) {
+  # Strict modes ("send", "select", "select-return") prove latency success for
+  # owned-helper journeys: outcome `ok` with `focus-ok` (partial and
+  # focus-unverified are never latency success), every required phase present
+  # with readback verified, zero veto and zero mismatch (a vetoed pass still
+  # returns readback_ok=true, so readback alone cannot prove it), plus the
+  # correlated `tick` pass summaries and matching `write`s before the
+  # terminal line (a delayed periodic reflow carries another correlation and
+  # never matches). "select-return" additionally requires target applied zero
+  # (source already retiled, return must converge clean): source-return leg
+  # only. MinSource/TargetApplied impose positive writes only where the
+  # fixture guarantees changed geometry (first send); converged selects
+  # honestly carry zero writes. "settle" records honestly (recovery legs,
+  # empty targets with null phases, selects with source null so no source
+  # write is claimed); "absent" requires no action line (unknown-target must
+  # not fabricate geometry); "optional" records presence or honest absence.
+  # Timings are reported, never gated: no millisecond thresholds.
+  if ($Mode -eq "absent") {
+    if ($null -ne $Action) { Fail-Ws "$Tag unexpected workspace-action for tick $Tick (no geometry must run)" }
+    Rec-Ws "$Tag-action" @{ tick = $Tick; present = $false }
+    return $null
+  }
+  if ($null -eq $Action) {
+    if ($Mode -eq "optional") { Rec-Ws "$Tag-action" @{ tick = $Tick; present = $false }; return $null }
+    Fail-Ws "$Tag no workspace-action for tick $Tick (a delayed periodic reflow is not action evidence)"
+  }
+  $e = $Action.event
+  if ("$($e.correlation)" -ne "act-$Tick") { Fail-Ws "$Tag correlation $($e.correlation) != act-$Tick (not the action pass)" }
+  $src = $null; $tgt = $null
+  foreach ($pair in @(@{ name = "source"; value = $e.source }, @{ name = "target"; value = $e.target })) {
+    if ($null -ne $pair.value) {
+      $veto = $null
+      if ($null -ne $pair.value.veto) { $veto = "$($pair.value.veto.reason)" }
+      $phase = @{ applied = [int]$pair.value.applied; mismatched = [int]$pair.value.mismatched; readback_ok = [bool]$pair.value.readback_ok; veto = $veto }
+      if ($pair.name -eq "source") { $src = $phase } else { $tgt = $phase }
+    }
+  }
+  $preTicks = @($Action.pre | Where-Object { "$($_.event)" -eq "tick" } | ForEach-Object { "$($_.op)" })
+  $preWrites = @($Action.pre | Where-Object { "$($_.event)" -eq "write" } | ForEach-Object { "$($_.op)" })
+  Rec-Ws "$Tag-action" @{
+    tick = $Tick; correlation = "$($e.correlation)"; outcome = "$($e.outcome)"; focus = "$($e.focus)"
+    queue_wait_ms = $e.queue_wait_ms; action_ms = $e.action_ms
+    transition_ms = $e.transition_ms; observation_ms = $e.observation_ms
+    source_plan_ms = $e.source_plan_ms; target_plan_ms = $e.target_plan_ms
+    source_geometry_ms = $e.source_geometry_ms; target_geometry_ms = $e.target_geometry_ms
+    hide_ms = $e.hide_ms; reveal_ms = $e.reveal_ms; focus_ms = $e.focus_ms
+    source_workspace = "$($e.source_workspace)"; target_workspace = "$($e.target_workspace)"
+    source = $src; target = $tgt
+    evidence = @{ tick_ops = $preTicks; write_ops = $preWrites }
+  }
+  $strict = ($Mode -eq "send") -or ($Mode -eq "select") -or ($Mode -eq "select-return")
+  if (-not $strict) { return $Action }
+  if ("$($e.outcome)" -ne "ok") { Fail-Ws "$Tag outcome $($e.outcome) != ok (partial is not latency success)" }
+  if ("$($e.focus)" -ne "focus-ok") { Fail-Ws "$Tag focus $($e.focus) != focus-ok (unverified focus is not latency success)" }
+  $need = @()
+  if ($Mode -eq "send") { $need = @(@{ name = "source"; phase = $src; pass_op = "send-source" }, @{ name = "target"; phase = $tgt; pass_op = "reconcile" }) }
+  else { $need = @(@{ name = "target"; phase = $tgt; pass_op = "reconcile" }) }
+  foreach ($n in $need) {
+    if ($null -eq $n.phase) { Fail-Ws "$Tag $($n.name) geometry missing in-action for tick $Tick" }
+    if (-not $n.phase.readback_ok) { Fail-Ws "$Tag $($n.name) readback not verified in-action for tick $Tick" }
+    if ($null -ne $n.phase.veto) { Fail-Ws "$Tag $($n.name) vetoed ($($n.phase.veto)) in-action for tick $Tick (vetoed geometry still reports readback_ok)" }
+    if ([int]$n.phase.mismatched -ne 0) { Fail-Ws "$Tag $($n.name) mismatched $($n.phase.mismatched) in-action for tick $Tick" }
+    if ($preTicks -notcontains $n.pass_op) { Fail-Ws "$Tag no correlated $($n.pass_op) pass before terminal line for tick $Tick (delayed reflow is not action evidence)" }
+    if (([int]$n.phase.applied -gt 0) -and ($preWrites -notcontains $n.pass_op)) { Fail-Ws "$Tag $($n.name) applied $($n.phase.applied) with no correlated write before terminal line for tick $Tick" }
+  }
+  if ($null -ne $src -and ([int]$src.applied -lt [int]$MinSourceApplied)) { Fail-Ws "$Tag source applied $($src.applied) < $MinSourceApplied for tick $Tick" }
+  if ($null -ne $tgt -and ([int]$tgt.applied -lt [int]$MinTargetApplied)) { Fail-Ws "$Tag target applied $($tgt.applied) < $MinTargetApplied for tick $Tick" }
+  if (($Mode -eq "select-return") -and ($null -ne $tgt) -and ([int]$tgt.applied -ne 0)) { Fail-Ws "$Tag return target applied $($tgt.applied) != 0 for tick $Tick (source already retiled, return must converge clean)" }
+  return $Action
+}
+
 function Send-DigitChord([int]$Vk, [bool]$WithShift, [uint64]$WantForeground) {
   $markerValue = [uint64]$WORKSPACE_MARKER
   $fg = [WorkspaceProofNative]::GetForegroundWindow().ToInt64()
@@ -556,10 +662,19 @@ function Invoke-WorkspaceLive {
     # Focus A, send focused to existing ws2 with follow.
     Set-WsForeground $helperCopy $hA "send-focus-A"
     $r = Send-DigitChord (($VK_0 + 2)) $true ([uint64]$hA.hwnd)
+    $searchMark = $mark
     $ev = Wait-WorkspaceOutcome $logPath $mark "send" 2 20 "send-ws2"
     $mark = $ev.count
     Rec-Ws "send-ws2" @{ outcome = $ev.event.outcome; send = $r }
     if ("$($ev.event.outcome)" -notin @("ok", "partial", "focus-unverified")) { Fail-Ws "send-ws2 outcome $($ev.event.outcome)" }
+    $actTick = [int]$ev.event.tick
+    $act = Get-WorkspaceActionWs $logPath $searchMark $actTick "send" 2 10
+    if (($null -ne $act) -and ([int]$act.count -gt [int]$mark)) { $mark = [int]$act.count }
+    # First send moves real pixels: three converged helpers lose the mover
+    # (source survivors must reflow) and the empty target must place it, so
+    # both sides owe at least one write. Applied counts land in the report
+    # row for live confirmation.
+    $null = Assert-WorkspaceActionWs $act $actTick "send" "send-ws2" 1 1
     Start-Sleep -Milliseconds 1500
     $insp = Get-WsInspect $ownerCopy $allowPath
     $fg = [WorkspaceProofNative]::GetForegroundWindow().ToInt64()
@@ -569,10 +684,15 @@ function Invoke-WorkspaceLive {
     # Select ws1: hides others, reveals correct set + last focus.
     Set-WsForeground $helperCopy $hA "select-focus-A"
     $r = Send-DigitChord (($VK_0 + 1)) $false ([uint64]$hA.hwnd)
+    $searchMark = $mark
     $ev = Wait-WorkspaceOutcome $logPath $mark "select" 1 20 "select-ws1"
     $mark = $ev.count
     Rec-Ws "select-ws1" @{ outcome = $ev.event.outcome }
     if ("$($ev.event.outcome)" -notin @("ok", "partial", "already-active")) { Fail-Ws "select-ws1 outcome $($ev.event.outcome)" }
+    $actTick = [int]$ev.event.tick
+    $act = Get-WorkspaceActionWs $logPath $searchMark $actTick "select" 1 10
+    if (($null -ne $act) -and ([int]$act.count -gt [int]$mark)) { $mark = [int]$act.count }
+    $null = Assert-WorkspaceActionWs $act $actTick "select-return" "select-ws1"
     Start-Sleep -Milliseconds 1500
     $insp = Get-WsInspect $ownerCopy $allowPath
     $fg = [WorkspaceProofNative]::GetForegroundWindow().ToInt64()
@@ -582,20 +702,30 @@ function Invoke-WorkspaceLive {
     $beforeCount = (Get-WsInspect $ownerCopy $allowPath).windows.Count
     $fgBefore = [WorkspaceProofNative]::GetForegroundWindow().ToInt64()
     $r = Send-DigitChord (($VK_0 + 9)) $false ([uint64]$fgBefore)
+    $searchMark = $mark
     $ev = Wait-WorkspaceOutcome $logPath $mark "select" 9 20 "absent-9"
     $mark = $ev.count
     Rec-Ws "absent-9" @{ outcome = $ev.event.outcome }
     if ("$($ev.event.outcome)" -ne "unknown-target") { Fail-Ws "absent-9 outcome $($ev.event.outcome) != unknown-target" }
+    $actTick = [int]$ev.event.tick
+    $act = Get-WorkspaceActionWs $logPath $searchMark $actTick "select" 9 5
+    if (($null -ne $act) -and ([int]$act.count -gt [int]$mark)) { $mark = [int]$act.count }
+    $null = Assert-WorkspaceActionWs $act $actTick "absent" "absent-9"
     $afterCount = (Get-WsInspect $ownerCopy $allowPath).windows.Count
     if ($afterCount -ne $beforeCount) { Fail-Ws "absent-9 changed window count" }
 
     # Trailing 0: reuse-or-create from managed, then back.
     $fgNow = [WorkspaceProofNative]::GetForegroundWindow().ToInt64()
     $r = Send-DigitChord ($VK_0) $false ([uint64]$fgNow)
+    $searchMark = $mark
     $ev = Wait-WorkspaceOutcome $logPath $mark "select" 0 20 "select-0"
     $mark = $ev.count
     Rec-Ws "select-0" @{ outcome = $ev.event.outcome }
     if ("$($ev.event.outcome)" -notin @("ok", "partial")) { Fail-Ws "select-0 outcome $($ev.event.outcome)" }
+    $actTick = [int]$ev.event.tick
+    $act = Get-WorkspaceActionWs $logPath $searchMark $actTick "select" 0 10
+    if (($null -ne $act) -and ([int]$act.count -gt [int]$mark)) { $mark = [int]$act.count }
+    $null = Assert-WorkspaceActionWs $act $actTick "settle" "select-0"
     $trailingFg = [WorkspaceProofNative]::GetForegroundWindow().ToInt64()
     # Back to ws1 from the (possibly empty) trailing workspace: the GLOBAL
     # unmanaged/empty-fg path. Foreground is the FOURTH OWNED helper, which
@@ -613,9 +743,16 @@ function Invoke-WorkspaceLive {
     Assert-WsIdentity $postD $hD "global-fg-postactivate"
     Rec-Ws "global-fg" @{ hwnd = $hD.hwnd; pid = $hD.process.pid; tag = $hD.tag; owned_unmanaged = $true; in_allowlist = $false; foreground = $fgCheck }
     $ev = Send-DigitChordRetry ($VK_0 + 1) $false { [WorkspaceProofNative]::GetForegroundWindow().ToInt64() } "select" 1 $logPath $mark 20 "select-1-back"
+    $searchMark = $mark
     $mark = $ev.count
     Rec-Ws "select-1-back" @{ outcome = $ev.event.outcome; attempt = $ev.attempt }
     if ("$($ev.event.outcome)" -notin @("ok", "partial", "already-active")) { Fail-Ws "select-1-back outcome $($ev.event.outcome)" }
+    $actTick = [int]$ev.event.tick
+    $act = Get-WorkspaceActionWs $logPath $searchMark $actTick "select" 1 10
+    if (($null -ne $act) -and ([int]$act.count -gt [int]$mark)) { $mark = [int]$act.count }
+    # Source return: ws1 was retiled by the first send and nothing moved it
+    # since, so the return target pass must converge with zero writes.
+    $null = Assert-WorkspaceActionWs $act $actTick "select-return" "select-1-back"
     Start-Sleep -Milliseconds 1500
     # Deterministic managed focus before the trailing send: click-focus a
     # visible helper and verify the foreground readback (the empty-trailing
@@ -629,10 +766,18 @@ function Invoke-WorkspaceLive {
     # Shift+0 trailing send (reuse-or-create), min-2/prune floor holds.
     $fgNow = [WorkspaceProofNative]::GetForegroundWindow().ToInt64()
     $r = Send-DigitChord ($VK_0) $true ([uint64]$fgNow)
+    $searchMark = $mark
     $ev = Wait-WorkspaceOutcome $logPath $mark "send" 0 20 "send-0"
     $mark = $ev.count
     Rec-Ws "send-0" @{ outcome = $ev.event.outcome }
     if ("$($ev.event.outcome)" -notin @("ok", "partial", "no-op", "unmanaged", "focus-unverified")) { Fail-Ws "send-0 outcome $($ev.event.outcome)" }
+    $actTick = [int]$ev.event.tick
+    $act = Get-WorkspaceActionWs $logPath $searchMark $actTick "send" 0 10
+    if (($null -ne $act) -and ([int]$act.count -gt [int]$mark)) { $mark = [int]$act.count }
+    $actMode = "settle"
+    if ("$($ev.event.outcome)" -eq "ok") { $actMode = "send" }
+    elseif ("$($ev.event.outcome)" -eq "unmanaged") { $actMode = "optional" }
+    $null = Assert-WorkspaceActionWs $act $actTick $actMode "send-0"
 
     # Digit US Shift alias: Shift+1 uses the same digit VK as unshifted 1.
     if ((($VK_0 + 1) -eq 0x31) -ne $true) { Fail-Ws "digit alias VK mismatch" }
@@ -643,8 +788,13 @@ function Invoke-WorkspaceLive {
     foreach ($idx in @(2, 1, 2)) {
       $fgNow = [WorkspaceProofNative]::GetForegroundWindow().ToInt64()
       $r = Send-DigitChord (($VK_0 + $idx)) $false ([uint64]$fgNow)
+      $searchMark = $mark
       $ev = Wait-WorkspaceOutcome $logPath $mark "select" $idx 20 "repeat-$idx"
       $mark = $ev.count
+      $actTick = [int]$ev.event.tick
+      $act = Get-WorkspaceActionWs $logPath $searchMark $actTick "select" $idx 10
+      if (($null -ne $act) -and ([int]$act.count -gt [int]$mark)) { $mark = [int]$act.count }
+      $null = Assert-WorkspaceActionWs $act $actTick "select" "repeat-$idx"
       Start-Sleep -Milliseconds 1000
       $repInsp = Get-WsInspect $ownerCopy $allowPath
       $repFg = [WorkspaceProofNative]::GetForegroundWindow().ToInt64()
@@ -702,12 +852,22 @@ function Invoke-WorkspaceLive {
     if ([uint64]$fgNow -eq [uint64]$hB.hwnd) { Set-WsForeground $helperCopy $hA "min-focus-A" }
     $fgNow = [WorkspaceProofNative]::GetForegroundWindow().ToInt64()
     $r = Send-DigitChord (($VK_0 + 2)) $false ([uint64]$fgNow)
+    $searchMark = $mark
     $ev = Wait-WorkspaceOutcome $logPath $mark "select" 2 20 "min-hide"
     $mark = $ev.count
+    $actTick = [int]$ev.event.tick
+    $act = Get-WorkspaceActionWs $logPath $searchMark $actTick "select" 2 10
+    if (($null -ne $act) -and ([int]$act.count -gt [int]$mark)) { $mark = [int]$act.count }
+    $null = Assert-WorkspaceActionWs $act $actTick "settle" "min-hide"
     $fgNow = [WorkspaceProofNative]::GetForegroundWindow().ToInt64()
     $r = Send-DigitChord (($VK_0 + 1)) $false ([uint64]$fgNow)
+    $searchMark = $mark
     $ev = Wait-WorkspaceOutcome $logPath $mark "select" 1 20 "min-reveal"
     $mark = $ev.count
+    $actTick = [int]$ev.event.tick
+    $act = Get-WorkspaceActionWs $logPath $searchMark $actTick "select" 1 10
+    if (($null -ne $act) -and ([int]$act.count -gt [int]$mark)) { $mark = [int]$act.count }
+    $null = Assert-WorkspaceActionWs $act $actTick "settle" "min-reveal"
     $backB = Invoke-Native $helperCopy @("inspect", "$($hB.hwnd)") | ConvertFrom-Json
     Assert-WsIdentity $backB $hB "minimized-B"
     Rec-Ws "minimized-retained" @{ hwnd = $hB.hwnd; visible = $backB.visible; iconic = ([WorkspaceProofNative]::IsIconic([IntPtr][long]$hB.hwnd)); geometry = "$($backB.left),$($backB.top),$($backB.right),$($backB.bottom)" }
@@ -720,12 +880,22 @@ function Invoke-WorkspaceLive {
     if (-not [WorkspaceProofNative]::IsZoomed([IntPtr][long]$hC.hwnd)) { Fail-Ws "helper C not maximized after SW_MAXIMIZE" }
     Set-WsForeground $helperCopy $hA "max-focus-A"
     $r = Send-DigitChord (($VK_0 + 2)) $false ([uint64]$hA.hwnd)
+    $searchMark = $mark
     $ev = Wait-WorkspaceOutcome $logPath $mark "select" 2 20 "max-hide"
     $mark = $ev.count
+    $actTick = [int]$ev.event.tick
+    $act = Get-WorkspaceActionWs $logPath $searchMark $actTick "select" 2 10
+    if (($null -ne $act) -and ([int]$act.count -gt [int]$mark)) { $mark = [int]$act.count }
+    $null = Assert-WorkspaceActionWs $act $actTick "settle" "max-hide"
     $fgNow = [WorkspaceProofNative]::GetForegroundWindow().ToInt64()
     $r = Send-DigitChord (($VK_0 + 1)) $false ([uint64]$fgNow)
+    $searchMark = $mark
     $ev = Wait-WorkspaceOutcome $logPath $mark "select" 1 20 "max-reveal"
     $mark = $ev.count
+    $actTick = [int]$ev.event.tick
+    $act = Get-WorkspaceActionWs $logPath $searchMark $actTick "select" 1 10
+    if (($null -ne $act) -and ([int]$act.count -gt [int]$mark)) { $mark = [int]$act.count }
+    $null = Assert-WorkspaceActionWs $act $actTick "settle" "max-reveal"
     $backC = Invoke-Native $helperCopy @("inspect", "$($hC.hwnd)") | ConvertFrom-Json
     Assert-WsIdentity $backC $hC "maximized-C"
     Rec-Ws "maximized-retained" @{ hwnd = $hC.hwnd; visible = $backC.visible; zoomed = ([WorkspaceProofNative]::IsZoomed([IntPtr][long]$hC.hwnd)); geometry = "$($backC.left),$($backC.top),$($backC.right),$($backC.bottom)" }
@@ -735,8 +905,13 @@ function Invoke-WorkspaceLive {
     # Close a hidden helper: retire safely with cleanup.
     $fgNow = [WorkspaceProofNative]::GetForegroundWindow().ToInt64()
     $r = Send-DigitChord (($VK_0 + 2)) $false ([uint64]$fgNow)
+    $searchMark = $mark
     $ev = Wait-WorkspaceOutcome $logPath $mark "select" 2 20 "closehide-goto2"
     $mark = $ev.count
+    $actTick = [int]$ev.event.tick
+    $act = Get-WorkspaceActionWs $logPath $searchMark $actTick "select" 2 10
+    if (($null -ne $act) -and ([int]$act.count -gt [int]$mark)) { $mark = [int]$act.count }
+    $null = Assert-WorkspaceActionWs $act $actTick "settle" "closehide-goto2"
     Start-Sleep -Milliseconds 1200
     $hidB = Wait-WsVisible $helperCopy $hB $false 10 "closehide-B"
     $c = Invoke-Native $helperCopy @("close", "$($hB.hwnd)", "--tag", "$($hB.tag)") | ConvertFrom-Json
@@ -746,15 +921,25 @@ function Invoke-WorkspaceLive {
     Rec-Ws "close-hidden-inspect" @{ windows = @($insp.windows | ForEach-Object { @{ hwnd = $_.hwnd; match = $_.identity_match; skip = $_.skip } }) }
     $fgNow = [WorkspaceProofNative]::GetForegroundWindow().ToInt64()
     $r = Send-DigitChord (($VK_0 + 1)) $false ([uint64]$fgNow)
+    $searchMark = $mark
     $ev = Wait-WorkspaceOutcome $logPath $mark "select" 1 20 "closehide-back1"
     $mark = $ev.count
+    $actTick = [int]$ev.event.tick
+    $act = Get-WorkspaceActionWs $logPath $searchMark $actTick "select" 1 10
+    if (($null -ne $act) -and ([int]$act.count -gt [int]$mark)) { $mark = [int]$act.count }
+    $null = Assert-WorkspaceActionWs $act $actTick "settle" "closehide-back1"
 
     # External ShowWindow alone (no foreground) rehides; with activation it
     # switches workspace. Use remaining hidden member on ws2.
     $fgNow = [WorkspaceProofNative]::GetForegroundWindow().ToInt64()
     $r = Send-DigitChord (($VK_0 + 2)) $false ([uint64]$fgNow)
+    $searchMark = $mark
     $ev = Wait-WorkspaceOutcome $logPath $mark "select" 2 20 "ext-goto2"
     $mark = $ev.count
+    $actTick = [int]$ev.event.tick
+    $act = Get-WorkspaceActionWs $logPath $searchMark $actTick "select" 2 10
+    if (($null -ne $act) -and ([int]$act.count -gt [int]$mark)) { $mark = [int]$act.count }
+    $null = Assert-WorkspaceActionWs $act $actTick "settle" "ext-goto2"
     Start-Sleep -Milliseconds 1200
     $probe = Get-WsInspect $ownerCopy $allowPath
     $hiddenOne = @($probe.windows | Where-Object { $_.identity_match -eq $true -and $_.eligible -eq $false }) | Select-Object -First 1
@@ -864,8 +1049,13 @@ function Invoke-WorkspaceLive {
     Rec-Ws "forced-global-fg" @{ hwnd = $hD.hwnd; pid = $hD.process.pid; tag = $hD.tag; owned_unmanaged = $true; in_allowlist = $false; foreground = $fgCheck2 }
     $mark2 = (Get-CompleteLinesWs $logPath2).Count
     $ev = Send-DigitChordRetry (($VK_0 + 2)) $false { [WorkspaceProofNative]::GetForegroundWindow().ToInt64() } "select" 2 $logPath2 $mark2 20 "forced-hide"
+    $searchMark2 = $mark2
     $mark2 = $ev.count
     Rec-Ws "forced-hide" @{ outcome = $ev.event.outcome; attempt = $ev.attempt }
+    $actTick = [int]$ev.event.tick
+    $act = Get-WorkspaceActionWs $logPath2 $searchMark2 $actTick "select" 2 10
+    if (($null -ne $act) -and ([int]$act.count -gt [int]$mark2)) { $mark2 = [int]$act.count }
+    $null = Assert-WorkspaceActionWs $act $actTick "settle" "forced-hide"
     if ("$($ev.event.outcome)" -notin @("ok", "partial")) { Fail-Ws "forced-hide outcome $($ev.event.outcome)" }
     Start-Sleep -Milliseconds 1500
     # Durable v4 show-preimage gate while hidden: exact owner binding plus

@@ -21,8 +21,7 @@ use tiler_core::directional::WindowId;
 use tiler_core::engine::Engine;
 use tiler_core::geometry::Rect;
 use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
-use tiler_core::session::DesiredGeometry;
-use windows_sys::Win32::Foundation::{HWND, LPARAM, RECT};
+use windows_sys::Win32::Foundation::{GetLastError, HWND, LPARAM, RECT, SetLastError};
 use windows_sys::Win32::Graphics::Dwm::DwmGetWindowAttribute;
 use windows_sys::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFOEXW,
@@ -41,11 +40,11 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, EVENT_OBJECT_CREATE, EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE,
     EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_SHOW, EVENT_SYSTEM_FOREGROUND,
     EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZESTART, EnumChildWindows, EnumWindows, GW_OWNER,
-    GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetCursorPos, GetForegroundWindow, GetWindow,
-    GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindowVisible, IsZoomed,
-    MSG, PM_REMOVE, PeekMessageW, QS_ALLINPUT, SWP_NOACTIVATE, SWP_NOZORDER, SetForegroundWindow,
-    SetWindowPos, TranslateMessage, WINEVENT_OUTOFCONTEXT, WS_CAPTION, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW,
+    GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetCursorPos, GetDesktopWindow, GetForegroundWindow,
+    GetShellWindow, GetWindow, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, IsIconic,
+    IsWindow, IsWindowVisible, IsZoomed, MSG, PM_REMOVE, PeekMessageW, QS_ALLINPUT, SWP_NOACTIVATE,
+    SWP_NOZORDER, SetForegroundWindow, SetWindowPos, TranslateMessage, WINEVENT_OUTOFCONTEXT,
+    WS_CAPTION, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
 
 use crate::lifecycle::{
@@ -995,34 +994,10 @@ fn pid_current(hwnd_u64: u64, pid: u32) -> bool {
     current != 0 && current == pid
 }
 
-/// Geometry-bearing plan entries with Engine constraint flags.
-struct DesiredEntry {
-    window: WindowId,
-    rect: Rect,
-    overconstrained: bool,
-    client_clamped: bool,
-}
+type DesiredEntry = crate::workspace_owner::PlannedWrite;
 
 fn desired_entries(reply: &CoreReply) -> Option<Vec<DesiredEntry>> {
-    fn map(geometry: &[DesiredGeometry]) -> Vec<DesiredEntry> {
-        geometry
-            .iter()
-            .map(|g| DesiredEntry {
-                window: g.window.clone(),
-                rect: g.rect,
-                overconstrained: g.overconstrained,
-                client_clamped: g.client_clamped,
-            })
-            .collect()
-    }
-    match reply {
-        CoreReply::Projection(plan) => Some(map(&plan.geometry)),
-        CoreReply::Tiled(plan) => Some(map(&plan.geometry)),
-        CoreReply::Resize(plan) => Some(map(&plan.geometry)),
-        CoreReply::MoveDirectional(plan) => Some(map(&plan.geometry)),
-        CoreReply::FocusDirectional(plan) => Some(map(&plan.geometry)),
-        _ => None,
-    }
+    crate::workspace_owner::planned_writes(reply)
 }
 
 /// Assemble complete Engine rows for one `(output, workspace)` domain: the
@@ -1111,6 +1086,11 @@ fn assemble_domain_rows(
 /// Engine-writable tokens for one domain: eligible observed members only.
 /// Retained and hidden rows converge membership but never take geometry
 /// writes; hidden workspace geometry is not written until reveal.
+///
+/// Native HWND/PID/creation plus scope gates pre-filter here; the portable
+/// hidden/fresh exclusion rides [`crate::workspace_owner::writable_subset`],
+/// the same seam the portable regression covers, so production and tests
+/// share one rule without weakening any native check.
 fn writable_tokens(
     state: &TileLoop,
     output: &str,
@@ -1119,11 +1099,9 @@ fn writable_tokens(
 ) -> HashSet<String> {
     let members = state.workspaces.workspace_members(output, workspace);
     let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
-    let mut out = HashSet::new();
+    let mut eligible: std::collections::BTreeMap<crate::workspace::WindowKey, String> =
+        std::collections::BTreeMap::new();
     for key in &members {
-        if state.workspaces.is_hidden(key) {
-            continue;
-        }
         let Some(window) = by_hwnd.get(&key.hwnd) else {
             continue;
         };
@@ -1138,9 +1116,15 @@ fn writable_tokens(
         if !scope_allows(&state.scope, &window.identity.exe_path) {
             continue;
         }
-        out.insert(window.token.clone());
+        eligible.insert(key.clone(), window.token.clone());
     }
-    out
+    let fresh: HashSet<String> = observed.iter().map(|w| w.token.clone()).collect();
+    crate::workspace_owner::writable_subset(
+        &members,
+        |k| state.workspaces.is_hidden(k),
+        &eligible,
+        &fresh,
+    )
 }
 
 /// Run one reconcile tick partitioned per output-local domain: enumerate
@@ -1287,12 +1271,28 @@ struct ApplyInput<'a> {
 
 /// Settled result of one geometry application pass: verified writes,
 /// readback mismatches, and whether the independent readback observation ran
-/// at all. Callers map this to their action outcome vocabulary instead of
-/// assuming success.
+/// at all, plus the first privacy-safe veto diagnostic when a write vetoed.
+/// Callers map this to their action outcome vocabulary instead of assuming
+/// success. `veto` is `None` when no write vetoed: the action line serializes
+/// null with reason, never zeros implying applied.
+#[derive(Debug, Clone, Copy)]
 struct ApplySummary {
     applied: usize,
     mismatched: usize,
     readback_ok: bool,
+    veto: Option<VetoDiag>,
+}
+
+/// Bounded privacy-safe veto diagnostic: reason token plus the three native
+/// booleans behind it. No handles, paths, PIDs, titles, or content; opaque
+/// managed tokens only travel in the existing skip list.
+#[derive(Debug, Clone, Copy)]
+struct VetoDiag {
+    reason: &'static str,
+    desktop: bool,
+    visible: bool,
+    captioned: bool,
+    dwm_readable: bool,
 }
 
 fn audit_json(state: &TileLoop, value: serde_json::Value) {
@@ -1301,7 +1301,7 @@ fn audit_json(state: &TileLoop, value: serde_json::Value) {
     }
 }
 
-fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> ApplySummary {
+fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> Option<ApplySummary> {
     let ApplyInput {
         me,
         fulls,
@@ -1317,11 +1317,6 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> ApplySummary {
         revision,
     } = input;
     let log_path = state.log_path.clone();
-    let settled = |applied: usize, mismatched: usize, readback_ok: bool| ApplySummary {
-        applied,
-        mismatched,
-        readback_ok,
-    };
     let Some(desired) = desired_entries(reply) else {
         let outcome = match reply {
             CoreReply::Rejected { kind, .. } => ("rejected", *kind),
@@ -1342,7 +1337,7 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> ApplySummary {
                 "kind": outcome.1,
             }),
         );
-        return settled(0, 0, true);
+        return None;
     };
     let by_token: HashMap<&str, &ObservedWindow> =
         observed.iter().map(|w| (w.token.as_str(), w)).collect();
@@ -1350,6 +1345,9 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> ApplySummary {
     let proof_mode = state.allowlist.is_some();
     let now = Instant::now();
     let mut applied = 0usize;
+    // First veto diagnostic in this pass for the bounded action summary; the
+    // per-window skip list keeps the existing `fullscreen-foreground` token.
+    let mut veto_diag: Option<VetoDiag> = None;
     // Tokens whose setter succeeded this tick. Only these may enter the
     // app-clamp lane on readback mismatch; failed or skipped setters keep
     // the transient/backoff lanes intact.
@@ -1443,9 +1441,20 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> ApplySummary {
             skipped.push((entry.window.0.clone(), "frame-overflow".to_owned()));
             continue;
         };
-        // User safety across the tick: a fullscreen foreground that arrived
-        // after the loop guard must veto this write, not ride along.
-        if foreground_fullscreen(fulls) {
+        // User safety across the tick: a vetoing foreground that arrived
+        // after the loop guard must veto this write, not ride along. The
+        // first veto pins the bounded diagnostic for the action summary.
+        let read = foreground_read(fulls);
+        if read.veto.block {
+            if veto_diag.is_none() {
+                veto_diag = Some(VetoDiag {
+                    reason: read.veto.reason.as_str(),
+                    desktop: read.desktop,
+                    visible: read.visible,
+                    captioned: read.captioned,
+                    dwm_readable: read.dwm_readable,
+                });
+            }
             skipped.push((entry.window.0.clone(), "fullscreen-foreground".to_owned()));
             continue;
         }
@@ -1683,7 +1692,12 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> ApplySummary {
             }),
         );
     }
-    settled(applied, mismatched, readback_ok)
+    Some(ApplySummary {
+        applied,
+        mismatched,
+        readback_ok,
+        veto: veto_diag,
+    })
 }
 
 /// Closed outcome vocabulary for a directional Engine reply that is not a
@@ -1838,6 +1852,20 @@ fn actuate_focus(
         };
     }
     let prime_inserted = prime_foreground_rights();
+    // Real fullscreen arrival fence immediately before the native setter: a
+    // vetoing foreground (or an elevated foreground) that arrived during
+    // validation/priming is never stolen from. The geometry path below then
+    // vetoes honestly instead of riding along. No wait, no retry.
+    if foreground_read(fulls).veto.block || foreground_elevated(me) {
+        return FocusActuation {
+            outcome: "focus-skipped-fence",
+            setter_accepted: false,
+            prime_inserted,
+            attach_ok: false,
+            eventual: false,
+            deferred: false,
+        };
+    }
     // Couple the owner input queue to the pre-call foreground thread so the
     // single setter below runs attached (AHK ladder rung one). Skipped when
     // there is no foreground thread or it is already ours. No wait, no Alt.
@@ -2345,14 +2373,12 @@ fn keyboard_tick(
                                     revision: revision_for(state, &loc.output, &loc.workspace),
                                 },
                             );
-                            if !summary.readback_ok {
-                                "move-unverified"
-                            } else if summary.mismatched > 0 {
-                                "move-mismatch"
-                            } else if summary.applied > 0 {
-                                "move-applied"
-                            } else {
-                                "move-noop"
+                            match summary {
+                                Some(s) if !s.readback_ok => "move-unverified",
+                                Some(s) if s.mismatched > 0 => "move-mismatch",
+                                Some(s) if s.applied > 0 => "move-applied",
+                                Some(_) => "move-noop",
+                                None => reply_outcome(&reply),
                             }
                         } else {
                             reply_outcome(&reply)
@@ -2875,11 +2901,16 @@ fn workspace_proof_reveal_gate(
 
 /// Switch the visible set from the output's active workspace to `target`:
 /// hide the prior set, reveal the target set, preserve Engine sessions for
-/// both, prune trailing empties, then re-enumerate fresh, reconcile the
-/// selected domain, and focus the target's last appropriate fresh window with
-/// verified readback. Empty targets hide the prior set and take no focus.
+/// both, prune trailing empties, then re-enumerate fresh, establish the
+/// appropriate target focus BEFORE geometry (with fullscreen/elevated fences
+/// retained so a real arrival is never stolen from), then reconcile the
+/// selected domain geometry with verified readback. Empty targets hide the
+/// prior set and take no focus.
 /// The pre-switch `observed` serves only the hide phase; focus never uses it
 /// because the hidden target set is absent from it by construction.
+/// `ctx` carries the stable action correlation even when inner ticks
+/// increment; `focus_hint` (send-follow mover) wins when eligible so the
+/// caller can reuse the fresh focus without a redundant enumeration.
 #[allow(clippy::too_many_arguments)]
 fn workspace_do_select(
     state: &mut TileLoop,
@@ -2891,15 +2922,34 @@ fn workspace_do_select(
     observed: &mut [ObservedWindow],
     output: &str,
     target: &str,
-    _op: &'static str,
-) -> &'static str {
+    ctx: &ActionCtx,
+    focus_hint: Option<&crate::workspace::WindowKey>,
+) -> SelectEffect {
+    let none =
+        |outcome: &'static str, source_workspace: String, target_workspace: String| SelectEffect {
+            outcome,
+            geometry: None,
+            focus: "none",
+            transition_ms: 0,
+            observation_ms: 0,
+            geometry_ms: 0,
+            hide_ms: 0,
+            reveal_ms: 0,
+            focus_ms: 0,
+            plan_ms: 0,
+            source_workspace,
+            target_workspace,
+        };
     let Some(current) = state.workspaces.active_id(output) else {
-        return "unknown-output";
+        return none("unknown-output", "ws?".to_owned(), "ws?".to_owned());
     };
     if current == target {
         state.active_output = output.to_owned();
-        return "already-active";
+        let token = state.workspaces.workspace_token(output, target);
+        return none("already-active", token.clone(), token);
     }
+    let source_token = state.workspaces.workspace_token(output, &current);
+    let target_token = state.workspaces.workspace_token(output, target);
     let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
     let leaving = state.workspaces.workspace_members(output, &current);
     let mut hide_failed = false;
@@ -2907,6 +2957,7 @@ fn workspace_do_select(
     // before activation these are safely revealed back (exact identity) so a
     // partial never leaves a doubled visible set or a lost claim behind.
     let mut newly_hidden: Vec<crate::workspace::WindowKey> = Vec::new();
+    let hide_start = Instant::now();
     for key in &leaving {
         if state.workspaces.is_hidden(key) {
             continue;
@@ -2998,6 +3049,7 @@ fn workspace_do_select(
     // still-visible current set would double the visible set and lose claims.
     // Narrow recovery reveals exactly the claims committed above (exact
     // identity, no blind replay, no fabricated rollback) and keeps current.
+    let hide_ms = hide_start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
     if hide_failed {
         for key in &newly_hidden {
             let Some(record) = state.hidden_claims.get(key).cloned() else {
@@ -3025,9 +3077,16 @@ fn workspace_do_select(
                 Err(_) => {}
             }
         }
-        return "partial";
+        return SelectEffect {
+            outcome: "partial",
+            hide_ms,
+            source_workspace: source_token.clone(),
+            target_workspace: target_token.clone(),
+            ..none("partial", source_token.clone(), target_token.clone())
+        };
     }
     let entering = state.workspaces.workspace_members(output, target);
+    let reveal_start = Instant::now();
     for key in &entering {
         let Some(record) = state.hidden_claims.get(key).cloned() else {
             state.workspaces.set_hidden(key, false);
@@ -3065,6 +3124,7 @@ fn workspace_do_select(
     // hidden successfully, so the safest known view is restored by revealing
     // exactly those affected claims (exact identity only). The switch is not
     // pretended: the outcome stays partial with current kept.
+    let reveal_ms = reveal_start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
     if hide_failed {
         for key in &newly_hidden {
             let Some(record) = state.hidden_claims.get(key).cloned() else {
@@ -3092,7 +3152,14 @@ fn workspace_do_select(
                 Err(_) => {}
             }
         }
-        return "partial";
+        return SelectEffect {
+            outcome: "partial",
+            hide_ms,
+            reveal_ms,
+            source_workspace: source_token.clone(),
+            target_workspace: target_token.clone(),
+            ..none("partial", source_token.clone(), target_token.clone())
+        };
     }
     // Move active to the target id without disturbing order, including
     // appended trailing ids past the Win1..9 ordinal range. This is the only
@@ -3116,19 +3183,91 @@ fn workspace_do_select(
     state.workspaces.apply_cleanup(output, &removed, append);
     // Post-reveal fresh observation: the pre-switch `observed` cannot contain
     // the hidden target set, so focusing from it always misses as `vanished`.
-    // Re-enumerate, republish origins, reconcile the selected domain geometry,
-    // then focus the eligible last/appropriate fresh target. Empty targets
-    // hide the prior set and take no focus.
+    // Re-enumerate, republish origins, establish the appropriate target focus
+    // BEFORE geometry (fenced), then reconcile the selected domain geometry
+    // with verified readback. Empty targets hide the prior set and take no
+    // focus.
+    let transition_ms = ctx.start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    let observation_start = Instant::now();
     let mut fresh_skipped: Vec<(String, String)> = Vec::new();
     let mut fresh_retained: Vec<RetainedRow> = Vec::new();
     let Some(mut fresh_observed) =
         state.observe(me, fulls, &mut fresh_skipped, &mut fresh_retained)
     else {
-        return "observation-failed";
+        let observation_ms = observation_start
+            .elapsed()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64;
+        return SelectEffect {
+            outcome: "observation-failed",
+            transition_ms,
+            observation_ms,
+            hide_ms,
+            reveal_ms,
+            source_workspace: source_token.clone(),
+            target_workspace: target_token.clone(),
+            ..none(
+                "observation-failed",
+                source_token.clone(),
+                target_token.clone(),
+            )
+        };
     };
+    let observation_ms = observation_start
+        .elapsed()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64;
     publish_managed(state, &fresh_observed);
     ensure_workspace_assignments(state, me, &mut fresh_observed, areas);
     workspace_close_cleanup(state);
+    // Focus-before-geometry on the verified transition: the revealed target
+    // must hold foreground before writes so a transient foreground cannot
+    // veto eligible writes on the next tick. All fences retained: a real
+    // fullscreen or elevated arrival is never stolen from, and identity,
+    // lifetime, scope, and observation gates inside `actuate_focus` still
+    // apply. Skipping focus there lets geometry veto honestly.
+    let members = state.workspaces.workspace_members(output, target);
+    let fresh_tokens: HashSet<String> = fresh_observed.iter().map(|w| w.token.clone()).collect();
+    let eligible =
+        state
+            .workspaces
+            .eligible_focus_set(&members, &state.member_tokens, &fresh_tokens);
+    let focus_key = focus_hint
+        .filter(|hint| eligible.contains(*hint))
+        .cloned()
+        .or_else(|| state.workspaces.focus_target(output, target, &eligible));
+    let mut focus_outcome: &'static str = "no-focus";
+    // Focus duration covers the bounded pumped settle when it runs, so a
+    // dominating 500 ms settle attributes to focus, not geometry.
+    let mut focus_ms: u64 = 0;
+    if let Some(ref focus_key) = focus_key {
+        let token = state
+            .member_tokens
+            .get(focus_key)
+            .cloned()
+            .unwrap_or_default();
+        if !token.is_empty() {
+            if crate::workspace_owner::focus_before_geometry(
+                true,
+                foreground_fullscreen(fulls),
+                foreground_elevated(me),
+            ) {
+                let focus_start = Instant::now();
+                let actuation = actuate_focus(state, me, fulls, &fresh_observed, &token);
+                focus_ms = focus_start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+                focus_outcome = actuation.outcome;
+                if actuation.outcome == "focus-ok" {
+                    state.workspaces.note_foreground(focus_key);
+                }
+            } else {
+                // Fenced: a real fullscreen/elevated foreground arrived
+                // during the transition. Never steal; geometry below vetoes
+                // honestly instead of riding along.
+                focus_outcome = "focus-skipped-fence";
+            }
+        }
+    }
+    let mut geometry: Option<ApplySummary> = None;
     if let Some((domain, domain_key)) = workspace_domain_for(output, target, areas)
         && let Some(rows) =
             assemble_domain_rows(state, output, target, &fresh_observed, &fresh_retained)
@@ -3143,12 +3282,16 @@ fn workspace_do_select(
                 .map(|r| (r.token.clone(), r.rect))
                 .collect::<Vec<_>>(),
         );
+        // Foreground read after the focus above, so the Engine sees the
+        // established target focus when eligible.
         let focused = state
             .focused_token(&fresh_observed)
             .filter(|f| windows.iter().any(|(w, _)| w == f));
         state.tick += 1;
-        let correlation = state.correlation();
         let tick = state.tick;
+        let correlation =
+            CorrelationId::parse(&ctx.correlation).expect("action correlation is a valid token");
+        let plan_start = Instant::now();
         let event = crate::tiling::build_reconcile_event_for(
             &state.owner,
             &state.generation,
@@ -3162,8 +3305,10 @@ fn workspace_do_select(
             focused.as_ref(),
         );
         let reply = state.engine.handle(&event);
+        let plan_ms = plan_start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
         let writable = writable_tokens(state, output, target, &fresh_observed);
-        apply_geometry(
+        let geometry_start = Instant::now();
+        let summary = apply_geometry(
             state,
             ApplyInput {
                 me,
@@ -3172,7 +3317,7 @@ fn workspace_do_select(
                 observed: &fresh_observed,
                 op: "reconcile",
                 tick,
-                correlation: correlation.as_str(),
+                correlation: ctx.correlation.as_str(),
                 skipped: fresh_skipped,
                 writable: &writable,
                 output_token: state.workspaces.output_token(output),
@@ -3180,36 +3325,56 @@ fn workspace_do_select(
                 revision: revision_for(state, output, target),
             },
         );
+        let geometry_ms = geometry_start
+            .elapsed()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64;
+        geometry = summary;
+        return SelectEffect {
+            outcome: "ok",
+            geometry,
+            focus: focus_outcome,
+            transition_ms,
+            observation_ms,
+            geometry_ms,
+            hide_ms,
+            reveal_ms,
+            focus_ms,
+            plan_ms,
+            source_workspace: source_token.clone(),
+            target_workspace: target_token.clone(),
+        };
     }
-    let members = state.workspaces.workspace_members(output, target);
-    let fresh_tokens: HashSet<String> = fresh_observed.iter().map(|w| w.token.clone()).collect();
-    let eligible =
-        state
-            .workspaces
-            .eligible_focus_set(&members, &state.member_tokens, &fresh_tokens);
-    if let Some(focus_key) = state.workspaces.focus_target(output, target, &eligible) {
-        let token = state
-            .member_tokens
-            .get(&focus_key)
-            .cloned()
-            .unwrap_or_default();
-        if !token.is_empty() {
-            let actuation = actuate_focus(state, me, fulls, &fresh_observed, &token);
-            if actuation.outcome == "focus-ok" {
-                state.workspaces.note_foreground(&focus_key);
-            }
-        }
+    SelectEffect {
+        outcome: "ok",
+        geometry,
+        focus: focus_outcome,
+        transition_ms,
+        observation_ms,
+        geometry_ms: 0,
+        hide_ms,
+        reveal_ms,
+        focus_ms,
+        plan_ms: 0,
+        source_workspace: source_token.clone(),
+        target_workspace: target_token.clone(),
     }
-    // Reached only after verified hide plus verified reveal with current
-    // moved to target: the switch is real. Earlier failures return partial
-    // above with current kept.
-    "ok"
 }
 
 /// Send the focused tiled window to an existing/trailing same-output
 /// workspace through the retained Engine `MoveToWorkspace` route, verify the
 /// project-owned membership transfer, then follow. Refuses unmanaged focus,
 /// no-op/foreign transfers, and proof modes without workspace hides.
+///
+/// Source reflow consumes the existing `SendWorkspace` plan while the source
+/// survivors are still visible and eligible in the same action (scoped by the
+/// source writable set; hidden/retained rows never take writes). The follow
+/// select then reveals the target, establishes mover focus before geometry
+/// with all fences retained, and reconciles the destination in the same
+/// action. The select's fresh focus/observation is reused: no redundant
+/// post-follow enumeration. Real fullscreen/unreadable/identity/incomplete
+/// observation continues to block writes honestly; `ok` never implies
+/// applied.
 #[allow(clippy::too_many_arguments)]
 fn workspace_do_send(
     state: &mut TileLoop,
@@ -3226,39 +3391,57 @@ fn workspace_do_send(
     origin_token: &str,
     origin_pid: u32,
     origin_creation: &str,
-) -> &'static str {
+    ctx: &ActionCtx,
+) -> SendEffect {
+    let fail = |outcome: &'static str| SendEffect {
+        outcome,
+        focus: "none",
+        source: None,
+        target: None,
+        transition_ms: 0,
+        observation_ms: 0,
+        source_geometry_ms: 0,
+        target_geometry_ms: 0,
+        hide_ms: 0,
+        reveal_ms: 0,
+        focus_ms: 0,
+        source_plan_ms: 0,
+        target_plan_ms: 0,
+        source_workspace: "ws?".to_owned(),
+        target_workspace: "ws?".to_owned(),
+    };
     let mover_key = state
         .member_tokens
         .iter()
         .find(|(_, t)| t.as_str() == origin_token)
         .map(|(k, _)| k.clone());
     let Some(mover_key) = mover_key else {
-        return "unmanaged";
+        return fail("unmanaged");
     };
     // Full chord-time binding: token plus HWND, PID, and process creation.
     // A recycled HWND or a retargeted token never dispatches.
     if !crate::workspace_owner::member_matches(&mover_key, mover_hwnd, origin_pid, origin_creation)
     {
-        return "foreground-changed";
+        return fail("foreground-changed");
     }
     let Some(loc) = state.workspaces.member_loc(&mover_key).cloned() else {
-        return "unmanaged";
+        return fail("unmanaged");
     };
     if loc.output != output || state.workspaces.is_hidden(&mover_key) {
-        return "unmanaged";
+        return fail("unmanaged");
     }
     // Explicit scope fences every send before the Engine mutation: an
     // out-of-scope mover reports without touching Engine sessions,
     // membership, or layout. The hide path re-fences independently.
     if let Some(stored) = state.member_identity.get(&mover_key) {
         if !scope_allows(&state.scope, &stored.exe_path) {
-            return "scope-excluded";
+            return fail("scope-excluded");
         }
         // Listed hosts send only with a live matching hosted child: a newly
         // appearing hosted app never dispatches under another app's
         // membership. The hide path re-fences fresh independently.
         if !hosted_gate_allows(&stored.exe_path, mover_hwnd, stored.pid, &state.scope_hosts) {
-            return "scope-excluded";
+            return fail("scope-excluded");
         }
     }
     // Visible lifetime gate: the live member tag must equal the stored tag,
@@ -3276,46 +3459,65 @@ fn workspace_do_send(
         state.member_identity.remove(&mover_key);
         state.member_tags.remove(&mover_key);
         state.workspaces.remove_window(&mover_key);
-        return "identity-changed";
+        return fail("identity-changed");
     }
     if state.allowlist.is_some() && !state.workspace_proof {
-        return "workspace-disabled";
+        return fail("workspace-disabled");
     }
     let target_id = if index == 0 {
         // Trailing send reuses or creates without switching first.
         match state.workspaces.resolve_send_trailing(output) {
             Some((id, _)) => id,
-            None => return "unknown-output",
+            None => return fail("unknown-output"),
         }
     } else {
         match state.workspaces.resolve_send(output, index) {
             Some(id) => id,
-            None => return "unknown-target",
+            None => return fail("unknown-target"),
         }
     };
     if target_id == loc.workspace {
-        return "no-op";
+        return fail("no-op");
     }
+    let source_token = state.workspaces.workspace_token(output, &loc.workspace);
+    let target_token = state.workspaces.workspace_token(output, &target_id);
+    let fail_at = |outcome: &'static str| SendEffect {
+        outcome,
+        focus: "none",
+        source: None,
+        target: None,
+        transition_ms: 0,
+        observation_ms: 0,
+        source_geometry_ms: 0,
+        target_geometry_ms: 0,
+        hide_ms: 0,
+        reveal_ms: 0,
+        focus_ms: 0,
+        source_plan_ms: 0,
+        target_plan_ms: 0,
+        source_workspace: source_token.clone(),
+        target_workspace: target_token.clone(),
+    };
     // Full source+target observations including hidden snapshots, so the
     // planned mutation reuses topology instead of remove/reseed. Either side
     // incomplete defers with retained state, never a falsely complete pair.
     let Some(source_rows) = assemble_domain_rows(state, output, &loc.workspace, observed, retained)
     else {
-        return "deferred";
+        return fail_at("deferred");
     };
     let Some(target_rows) = assemble_domain_rows(state, output, &target_id, observed, retained)
     else {
-        return "deferred";
+        return fail_at("deferred");
     };
     if !source_rows.iter().any(|r| r.token == origin_token) {
-        return "unmanaged";
+        return fail_at("unmanaged");
     }
     let Some((source_domain, source_key)) = workspace_domain_for(output, &loc.workspace, areas)
     else {
-        return "unknown-output";
+        return fail_at("unknown-output");
     };
     let Some((target_domain, target_key)) = workspace_domain_for(output, &target_id, areas) else {
-        return "unknown-output";
+        return fail_at("unknown-output");
     };
     let fingerprint = {
         let mut pairs: Vec<(String, Rect)> = source_rows
@@ -3331,13 +3533,13 @@ fn workspace_do_send(
                 .collect::<Vec<_>>(),
         )
     };
-    state.tick += 1;
-    let correlation = state.correlation();
+    let action_correlation =
+        CorrelationId::parse(&ctx.correlation).expect("action correlation is a valid token");
     let revision = revision_for(state, output, &loc.workspace);
     let Some(mut event) = crate::workspace_owner::build_send_event(
         &state.owner,
         &state.generation,
-        &correlation,
+        &action_correlation,
         revision,
         fingerprint,
         (source_domain, source_key.clone()),
@@ -3347,26 +3549,32 @@ fn workspace_do_send(
         origin_token,
         OUTER_GAP,
     ) else {
-        return "refused";
+        return fail_at("refused");
     };
     crate::workspace_owner::stamp_send_target(&mut event, &target_key);
+    let source_plan_start = Instant::now();
     let reply = state.engine.handle(&event);
+    let source_plan_ms = source_plan_start
+        .elapsed()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64;
     let tiler_core::boundary::CoreReply::SendWorkspace(_) = reply else {
-        return match reply {
+        let outcome: &'static str = match reply {
             tiler_core::boundary::CoreReply::Rejected { kind, .. } => kind,
             tiler_core::boundary::CoreReply::Diverged(reason) => reason.as_str(),
             tiler_core::boundary::CoreReply::SnapshotInvalid { detail, .. } => detail,
             _ => "refused",
         };
+        return fail_at(outcome);
     };
     // Project-owned membership change after revalidation and the planned
     // Engine mutation: exact identity table update, never HWND alone.
     let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
     let Some(fresh) = by_hwnd.get(&mover_hwnd) else {
-        return "origin-vanished";
+        return fail_at("origin-vanished");
     };
     let Some(stored) = state.member_identity.get(&mover_key).cloned() else {
-        return "unmanaged";
+        return fail_at("unmanaged");
     };
     if !crate::workspace_owner::member_matches(
         &mover_key,
@@ -3377,7 +3585,7 @@ fn workspace_do_send(
         || fresh.identity.user_sid != stored.user_sid
         || fresh.identity.session_id != stored.session_id
     {
-        return "origin-vanished";
+        return fail_at("origin-vanished");
     }
     // Post-Engine lifetime recheck: a same-process reuse across the in-memory
     // mutation still refuses before any membership change or hide.
@@ -3387,24 +3595,56 @@ fn workspace_do_send(
         .get(&mover_key)
         .is_some_and(|tag| crate::workspace_owner::visible_lifetime_ok(tag, post_tag.as_deref()))
     {
-        return "identity-changed";
+        return fail_at("identity-changed");
     }
     if !state
         .workspaces
         .assign(mover_key.clone(), output, &target_id, true)
     {
-        return "refused";
+        return fail_at("refused");
     }
     // Verified transfer before follow: absent source, present target.
     let source_now = state.workspaces.workspace_members(output, &loc.workspace);
     let target_now = state.workspaces.workspace_members(output, &target_id);
     if !crate::workspace_owner::verify_membership_transfer(&mover_key, &source_now, &target_now) {
-        return "unverified";
+        return fail_at("unverified");
     }
+    // Consume the existing source plan while the survivors are still visible
+    // and eligible in the same action. The writable set scopes to the source
+    // domain (mover already transferred out, hidden/retained rows never
+    // writable), so target entries skip honestly as retained and hidden
+    // geometry is never written. All write fences stay inside
+    // `apply_geometry` (identity/lifetime/scope, fullscreen veto, readback).
+    // The internal tick reuses the parent action correlation.
+    let source_writable = writable_tokens(state, output, &loc.workspace, observed);
+    state.tick += 1;
+    let source_tick = state.tick;
+    let source_start = Instant::now();
+    let source_summary = apply_geometry(
+        state,
+        ApplyInput {
+            me,
+            fulls,
+            reply: &reply,
+            observed,
+            op: "send-source",
+            tick: source_tick,
+            correlation: ctx.correlation.as_str(),
+            skipped: Vec::new(),
+            writable: &source_writable,
+            output_token: state.workspaces.output_token(output),
+            workspace_token: state.workspaces.workspace_token(output, &loc.workspace),
+            revision: revision_for(state, output, &loc.workspace),
+        },
+    );
+    let source_ms = source_start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    let source = source_summary;
     // Hide the mover from the source view (commit-before-hide), then follow
-    // by selecting the target (which reveals it) and focusing the mover.
-    // A committed claim is owned even on uncertain post-hide readback: flag
-    // it hidden and report the stall without pretending follow success.
+    // by selecting the target (which reveals it). The select reuses the mover
+    // as its focus hint and returns its fresh focus/observation: no redundant
+    // post-follow enumeration here. A committed claim is owned even on
+    // uncertain post-hide readback: flag it hidden and report the stall
+    // without pretending follow success.
     let hide_outcome = workspace_hide_one(
         state,
         me,
@@ -3418,39 +3658,78 @@ fn workspace_do_send(
         state.workspaces.set_hidden(&mover_key, true);
     }
     if hide_outcome != "hidden" {
-        return hide_outcome;
+        return SendEffect {
+            outcome: hide_outcome,
+            focus: "none",
+            source,
+            target: None,
+            transition_ms: 0,
+            observation_ms: 0,
+            source_geometry_ms: source_ms,
+            target_geometry_ms: 0,
+            hide_ms: 0,
+            reveal_ms: 0,
+            focus_ms: 0,
+            source_plan_ms,
+            target_plan_ms: 0,
+            source_workspace: source_token.clone(),
+            target_workspace: target_token.clone(),
+        };
     }
-    let select_outcome = workspace_do_select(
-        state, me, store, dir, fulls, areas, observed, output, &target_id, "send",
+    let select = workspace_do_select(
+        state,
+        me,
+        store,
+        dir,
+        fulls,
+        areas,
+        observed,
+        output,
+        &target_id,
+        ctx,
+        Some(&mover_key),
     );
-    if select_outcome != "ok" && select_outcome != "partial" {
-        return select_outcome;
+    if select.outcome != "ok" {
+        return SendEffect {
+            outcome: select.outcome,
+            focus: select.focus,
+            source,
+            target: select.geometry,
+            transition_ms: select.transition_ms,
+            observation_ms: select.observation_ms,
+            source_geometry_ms: source_ms,
+            target_geometry_ms: select.geometry_ms,
+            hide_ms: select.hide_ms,
+            reveal_ms: select.reveal_ms,
+            focus_ms: select.focus_ms,
+            source_plan_ms,
+            target_plan_ms: select.plan_ms,
+            source_workspace: source_token.clone(),
+            target_workspace: select.target_workspace.clone(),
+        };
     }
-    // The reveal inside select shows the mover: re-enumerate post-follow so
-    // the mover focus uses fresh observation, never the pre-switch set.
-    let mut post_skipped: Vec<(String, String)> = Vec::new();
-    let mut post_retained: Vec<RetainedRow> = Vec::new();
-    let Some(mut post_observed) = state.observe(me, fulls, &mut post_skipped, &mut post_retained)
-    else {
-        return "observation-failed";
+    let outcome: &'static str = if select.focus == "focus-ok" {
+        "ok"
+    } else {
+        "focus-unverified"
     };
-    publish_managed(state, &post_observed);
-    ensure_workspace_assignments(state, me, &mut post_observed, areas);
-    workspace_close_cleanup(state);
-    let token = state
-        .member_tokens
-        .get(&mover_key)
-        .cloned()
-        .unwrap_or_default();
-    if !token.is_empty() {
-        let actuation = actuate_focus(state, me, fulls, &post_observed, &token);
-        if actuation.outcome == "focus-ok" {
-            state.workspaces.note_foreground(&mover_key);
-            return "ok";
-        }
-        return "focus-unverified";
+    SendEffect {
+        outcome,
+        focus: select.focus,
+        source,
+        target: select.geometry,
+        transition_ms: select.transition_ms,
+        observation_ms: select.observation_ms,
+        source_geometry_ms: source_ms,
+        target_geometry_ms: select.geometry_ms,
+        hide_ms: select.hide_ms,
+        reveal_ms: select.reveal_ms,
+        focus_ms: select.focus_ms,
+        source_plan_ms,
+        target_plan_ms: select.plan_ms,
+        source_workspace: source_token.clone(),
+        target_workspace: select.target_workspace.clone(),
     }
-    "ok"
 }
 
 /// Exact-owner out-of-hook workspace select: one bounded `workspace.request`
@@ -3562,6 +3841,10 @@ fn poll_workspace_cli_request(
     state.workspaces.ensure_output(&output);
     state.tick += 1;
     let tick = state.tick;
+    // Dispatch beginning for the CLI path: the clock starts before the
+    // initial observation. No queued chord here, so the queue wait stays
+    // zero by construction.
+    let start = Instant::now();
     let mut skipped: Vec<(String, String)> = Vec::new();
     let mut retained: Vec<RetainedRow> = Vec::new();
     let Some(mut observed) = state.observe(me, fulls, &mut skipped, &mut retained) else {
@@ -3603,7 +3886,13 @@ fn poll_workspace_cli_request(
         );
         return;
     };
-    let outcome = workspace_do_select(
+    let ctx = ActionCtx {
+        correlation: format!("act-{tick}"),
+        tick,
+        queued_at: start,
+        start,
+    };
+    let effect = workspace_do_select(
         state,
         me,
         store,
@@ -3613,11 +3902,39 @@ fn poll_workspace_cli_request(
         &mut observed,
         &output,
         &target,
-        "cli",
+        &ctx,
+        None,
     );
     log_json_at(
         &state.log_path,
-        workspace_log(state, tick, "select", request.index, "cli", outcome),
+        workspace_log(state, tick, "select", request.index, "cli", effect.outcome),
+    );
+    log_workspace_action(
+        state,
+        &state.log_path.clone(),
+        &ActionLine {
+            ctx: &ctx,
+            op: "select",
+            index: request.index,
+            edge: "cli",
+            outcome: effect.outcome,
+            focus: effect.focus,
+            timings: &ActionTimings {
+                transition_ms: effect.transition_ms,
+                observation_ms: effect.observation_ms,
+                source_plan_ms: 0,
+                target_plan_ms: effect.plan_ms,
+                source_geometry_ms: 0,
+                target_geometry_ms: effect.geometry_ms,
+                hide_ms: effect.hide_ms,
+                reveal_ms: effect.reveal_ms,
+                focus_ms: effect.focus_ms,
+            },
+            source_workspace: &effect.source_workspace,
+            target_workspace: &effect.target_workspace,
+            source: None,
+            target: effect.geometry.as_ref(),
+        },
     );
 }
 
@@ -3675,6 +3992,10 @@ fn workspace_tick(
             }
             continue;
         }
+        // Dispatch beginning: the action clock starts here, before the
+        // initial observation, so queue-to-effect latency includes the
+        // observation itself. `queued_at` stays the cheap callback stamp.
+        let dispatch_start = Instant::now();
         if foreground_fullscreen(fulls) {
             log_json_at(
                 &log_path,
@@ -3740,7 +4061,21 @@ fn workspace_tick(
         publish_managed(state, &observed);
         ensure_workspace_assignments(state, me, &mut observed, areas);
         workspace_close_cleanup(state);
-        let outcome = match intent.op {
+        // Stable per-action context: one opaque correlation for the whole
+        // select/send/follow lifecycle even when inner geometry ticks
+        // increment. `queued_at` is the cheap callback stamp (no
+        // logging/syscalls in the callback); `start` is the dispatch
+        // beginning on the loop thread, captured before observation.
+        let op = intent.op;
+        let index = intent.index;
+        let edge = intent.edge;
+        let ctx = ActionCtx {
+            correlation: format!("act-{tick}"),
+            tick,
+            queued_at: intent.tick,
+            start: dispatch_start,
+        };
+        match op {
             WorkspaceOp::Select => {
                 // Resolve without preactivating: `select`/`select_trailing`
                 // mutate ACTIVE, which makes `workspace_do_select` see
@@ -3748,43 +4083,78 @@ fn workspace_tick(
                 // native effects. `resolve_send`/`resolve_send_trailing`
                 // resolve (and append trailing when needed) without touching
                 // ACTIVE; only the transition activates after hide/reveal.
-                if intent.index == 0 {
-                    match state.workspaces.resolve_send_trailing(&output) {
-                        Some((id, _)) => {
-                            let id_clone = id.clone();
-                            workspace_do_select(
-                                state,
-                                me,
-                                store,
-                                dir,
-                                fulls,
-                                areas,
-                                &mut observed,
-                                &output,
-                                &id_clone,
-                                "select",
-                            )
-                        }
-                        None => "unknown-output",
-                    }
+                let target = if index == 0 {
+                    state
+                        .workspaces
+                        .resolve_send_trailing(&output)
+                        .map(|(id, _)| id)
                 } else {
-                    match state.workspaces.resolve_send(&output, intent.index) {
-                        Some(id) => {
-                            let id_clone = id.clone();
-                            workspace_do_select(
+                    state.workspaces.resolve_send(&output, index)
+                };
+                match target {
+                    Some(id) => {
+                        let effect = workspace_do_select(
+                            state,
+                            me,
+                            store,
+                            dir,
+                            fulls,
+                            areas,
+                            &mut observed,
+                            &output,
+                            &id,
+                            &ctx,
+                            None,
+                        );
+                        log_json_at(
+                            &log_path,
+                            workspace_log(
                                 state,
-                                me,
-                                store,
-                                dir,
-                                fulls,
-                                areas,
-                                &mut observed,
-                                &output,
-                                &id_clone,
-                                "select",
-                            )
-                        }
-                        None => "unknown-target",
+                                tick,
+                                op.as_str(),
+                                index,
+                                edge.as_str(),
+                                effect.outcome,
+                            ),
+                        );
+                        log_workspace_action(
+                            state,
+                            &log_path,
+                            &ActionLine {
+                                ctx: &ctx,
+                                op: op.as_str(),
+                                index,
+                                edge: edge.as_str(),
+                                outcome: effect.outcome,
+                                focus: effect.focus,
+                                timings: &ActionTimings {
+                                    transition_ms: effect.transition_ms,
+                                    observation_ms: effect.observation_ms,
+                                    source_plan_ms: 0,
+                                    target_plan_ms: effect.plan_ms,
+                                    source_geometry_ms: 0,
+                                    target_geometry_ms: effect.geometry_ms,
+                                    hide_ms: effect.hide_ms,
+                                    reveal_ms: effect.reveal_ms,
+                                    focus_ms: effect.focus_ms,
+                                },
+                                source_workspace: &effect.source_workspace,
+                                target_workspace: &effect.target_workspace,
+                                source: None,
+                                target: effect.geometry.as_ref(),
+                            },
+                        );
+                    }
+                    None => {
+                        let outcome = if index == 0 {
+                            "unknown-output"
+                        } else {
+                            "unknown-target"
+                        };
+                        log_json_at(
+                            &log_path,
+                            workspace_log(state, tick, op.as_str(), index, edge.as_str(), outcome),
+                        );
                     }
                 }
             }
@@ -3792,37 +4162,79 @@ fn workspace_tick(
                 let foreground_hwnd = unsafe { GetForegroundWindow() } as usize as u64;
                 let origin = intent.origin.clone();
                 match origin.filter(|o| o.hwnd == foreground_hwnd) {
-                    Some(o) if !o.token.is_empty() => workspace_do_send(
-                        state,
-                        me,
-                        store,
-                        dir,
-                        fulls,
-                        areas,
-                        &mut observed,
-                        &retained,
-                        &output,
-                        intent.index,
-                        o.hwnd,
-                        &o.token,
-                        o.pid,
-                        &o.creation,
-                    ),
-                    _ => "unmanaged",
+                    Some(o) if !o.token.is_empty() => {
+                        let effect = workspace_do_send(
+                            state,
+                            me,
+                            store,
+                            dir,
+                            fulls,
+                            areas,
+                            &mut observed,
+                            &retained,
+                            &output,
+                            index,
+                            o.hwnd,
+                            &o.token,
+                            o.pid,
+                            &o.creation,
+                            &ctx,
+                        );
+                        log_json_at(
+                            &log_path,
+                            workspace_log(
+                                state,
+                                tick,
+                                op.as_str(),
+                                index,
+                                edge.as_str(),
+                                effect.outcome,
+                            ),
+                        );
+                        log_workspace_action(
+                            state,
+                            &log_path,
+                            &ActionLine {
+                                ctx: &ctx,
+                                op: op.as_str(),
+                                index,
+                                edge: edge.as_str(),
+                                outcome: effect.outcome,
+                                focus: effect.focus,
+                                timings: &ActionTimings {
+                                    transition_ms: effect.transition_ms,
+                                    observation_ms: effect.observation_ms,
+                                    source_plan_ms: effect.source_plan_ms,
+                                    target_plan_ms: effect.target_plan_ms,
+                                    source_geometry_ms: effect.source_geometry_ms,
+                                    target_geometry_ms: effect.target_geometry_ms,
+                                    hide_ms: effect.hide_ms,
+                                    reveal_ms: effect.reveal_ms,
+                                    focus_ms: effect.focus_ms,
+                                },
+                                source_workspace: &effect.source_workspace,
+                                target_workspace: &effect.target_workspace,
+                                source: effect.source.as_ref(),
+                                target: effect.target.as_ref(),
+                            },
+                        );
+                    }
+                    _ => {
+                        log_json_at(
+                            &log_path,
+                            workspace_log(
+                                state,
+                                tick,
+                                op.as_str(),
+                                index,
+                                edge.as_str(),
+                                "unmanaged",
+                            ),
+                        );
+                    }
                 }
             }
-        };
-        log_json_at(
-            &log_path,
-            workspace_log(
-                state,
-                tick,
-                intent.op.as_str(),
-                intent.index,
-                intent.edge.as_str(),
-                outcome,
-            ),
-        );
+        }
     }
 }
 
@@ -3858,6 +4270,166 @@ fn workspace_log(
     })
 }
 
+/// Stable per-action context: one opaque correlation for the whole select /
+/// send / follow lifecycle, even when inner reconcile ticks increment. Times
+/// are monotonic `Instant`s: `queued_at` is the cheap callback stamp from the
+/// existing hook event (no logging/syscalls in the callback), `start` is the
+/// dispatch instant on the loop thread.
+struct ActionCtx {
+    correlation: String,
+    tick: u64,
+    queued_at: Instant,
+    start: Instant,
+}
+
+/// Settled effect of one verified select transition: membership outcome
+/// plus honest per-phase geometry and focus evidence. `geometry` is `None`
+/// when no geometry pass ran (empty target, observation failure, early
+/// refusal, non-plan Engine reply with readback not run); otherwise it
+/// carries the verified verdict so `ok` never implies applied.
+/// `transition_ms` covers dispatch to activation (hide+reveal+activate,
+/// measured before the post-reveal observation); `observation_ms` covers the
+/// post-reveal observation alone. `action_ms` on the log line is the terminal
+/// dispatch-to-geometry-completion offset.
+struct SelectEffect {
+    outcome: &'static str,
+    geometry: Option<ApplySummary>,
+    focus: &'static str,
+    transition_ms: u64,
+    observation_ms: u64,
+    geometry_ms: u64,
+    hide_ms: u64,
+    reveal_ms: u64,
+    focus_ms: u64,
+    plan_ms: u64,
+    source_workspace: String,
+    target_workspace: String,
+}
+
+/// Settled effect of one send+follow action: membership outcome plus honest
+/// source (pre-hide reflow) and target (post-reveal) geometry evidence.
+/// `source`/`target` are `None` when that pass never ran. Plan and geometry
+/// durations stay split per domain, never collapsed. Tokens are captured
+/// before cleanup so a removed source still logs its opaque identity.
+struct SendEffect {
+    outcome: &'static str,
+    focus: &'static str,
+    source: Option<ApplySummary>,
+    target: Option<ApplySummary>,
+    transition_ms: u64,
+    observation_ms: u64,
+    source_geometry_ms: u64,
+    target_geometry_ms: u64,
+    hide_ms: u64,
+    reveal_ms: u64,
+    focus_ms: u64,
+    source_plan_ms: u64,
+    target_plan_ms: u64,
+    source_workspace: String,
+    target_workspace: String,
+}
+
+/// Grouped phase timings for one bounded action line: dispatch offsets plus
+/// per-phase durations. Source/target plan and geometry stay distinct.
+struct ActionTimings {
+    transition_ms: u64,
+    observation_ms: u64,
+    source_plan_ms: u64,
+    target_plan_ms: u64,
+    source_geometry_ms: u64,
+    target_geometry_ms: u64,
+    hide_ms: u64,
+    reveal_ms: u64,
+    focus_ms: u64,
+}
+
+/// One bounded action summary: opaque correlation plus monotonic
+/// queue/action/transition/geometry durations and per-phase
+/// applied/mismatched/readback states. A phase that never ran serializes as
+/// null (outcome carries empty vs deferred vs failed), never zeros implying
+/// applied; a vetoed pass carries its bounded `veto` reason.
+struct ActionLine<'a> {
+    ctx: &'a ActionCtx,
+    op: &'a str,
+    index: u8,
+    edge: &'a str,
+    outcome: &'a str,
+    focus: &'a str,
+    timings: &'a ActionTimings,
+    source_workspace: &'a str,
+    target_workspace: &'a str,
+    source: Option<&'a ApplySummary>,
+    target: Option<&'a ApplySummary>,
+}
+
+fn log_workspace_action(_state: &TileLoop, log_path: &Path, line: &ActionLine<'_>) {
+    let queue_wait_ms = line
+        .ctx
+        .start
+        .duration_since(line.ctx.queued_at)
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64;
+    let action_ms = line
+        .ctx
+        .start
+        .elapsed()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64;
+    let phase = |summary: Option<&ApplySummary>| match summary {
+        Some(s) => {
+            let mut v = serde_json::json!({
+                "applied": s.applied,
+                "mismatched": s.mismatched,
+                "readback_ok": s.readback_ok,
+            });
+            match s.veto {
+                Some(diag) => {
+                    v["veto"] = serde_json::json!({
+                        "reason": diag.reason,
+                        "desktop": diag.desktop,
+                        "visible": diag.visible,
+                        "captioned": diag.captioned,
+                        "dwm_readable": diag.dwm_readable,
+                    });
+                }
+                None => {
+                    v["veto"] = serde_json::Value::Null;
+                }
+            }
+            v
+        }
+        None => serde_json::Value::Null,
+    };
+    log_json_at(
+        log_path,
+        serde_json::json!({
+            "event": "workspace-action",
+            "tick": line.ctx.tick,
+            "correlation": line.ctx.correlation,
+            "op": line.op,
+            "index": line.index,
+            "edge": line.edge,
+            "outcome": line.outcome,
+            "focus": line.focus,
+            "queue_wait_ms": queue_wait_ms,
+            "action_ms": action_ms,
+            "transition_ms": line.timings.transition_ms,
+            "observation_ms": line.timings.observation_ms,
+            "source_plan_ms": line.timings.source_plan_ms,
+            "target_plan_ms": line.timings.target_plan_ms,
+            "source_geometry_ms": line.timings.source_geometry_ms,
+            "target_geometry_ms": line.timings.target_geometry_ms,
+            "hide_ms": line.timings.hide_ms,
+            "reveal_ms": line.timings.reveal_ms,
+            "focus_ms": line.timings.focus_ms,
+            "source_workspace": line.source_workspace,
+            "target_workspace": line.target_workspace,
+            "source": phase(line.source),
+            "target": phase(line.target),
+        }),
+    );
+}
+
 /// True when the foreground window's process is not medium integrity:
 /// elevated foreground gates workspace dispatch.
 fn foreground_elevated(me: &ProcessIdentity) -> bool {
@@ -3883,7 +4455,7 @@ fn foreground_elevated(me: &ProcessIdentity) -> bool {
 
 /// Actual-foreground hidden member selects its workspace. Only a real
 /// foreground change to an exactly verified hidden member switches; the
-/// `Wake` event alone never does. Returns the selected outcome or `None`.
+/// `Wake` event alone never does. Returns the settled select effect or `None`.
 fn poll_foreground_workspace(
     state: &mut TileLoop,
     me: &ProcessIdentity,
@@ -3892,7 +4464,7 @@ fn poll_foreground_workspace(
     fulls: &[Rect],
     areas: &[MonitorArea],
     observed: &mut [ObservedWindow],
-) -> Option<&'static str> {
+) -> Option<SelectEffect> {
     let foreground = unsafe { GetForegroundWindow() } as usize as u64;
     if foreground == 0 || foreground == state.last_foreground {
         return None;
@@ -3925,18 +4497,48 @@ fn poll_foreground_workspace(
     }
     let output = loc.output.clone();
     let workspace = loc.workspace.clone();
-    Some(workspace_do_select(
+    // No queued chord here: the external foreground is the trigger, so the
+    // queue wait is zero by construction.
+    state.tick += 1;
+    let tick = state.tick;
+    let start = Instant::now();
+    let ctx = ActionCtx {
+        correlation: format!("act-{tick}"),
+        tick,
+        queued_at: start,
+        start,
+    };
+    let effect = workspace_do_select(
+        state, me, store, dir, fulls, areas, observed, &output, &workspace, &ctx, None,
+    );
+    log_workspace_action(
         state,
-        me,
-        store,
-        dir,
-        fulls,
-        areas,
-        observed,
-        &output,
-        &workspace,
-        "foreground",
-    ))
+        &state.log_path.clone(),
+        &ActionLine {
+            ctx: &ctx,
+            op: "select",
+            index: 0,
+            edge: "foreground",
+            outcome: effect.outcome,
+            focus: effect.focus,
+            timings: &ActionTimings {
+                transition_ms: effect.transition_ms,
+                observation_ms: effect.observation_ms,
+                source_plan_ms: 0,
+                target_plan_ms: effect.plan_ms,
+                source_geometry_ms: 0,
+                target_geometry_ms: effect.geometry_ms,
+                hide_ms: effect.hide_ms,
+                reveal_ms: effect.reveal_ms,
+                focus_ms: effect.focus_ms,
+            },
+            source_workspace: &effect.source_workspace,
+            target_workspace: &effect.target_workspace,
+            source: None,
+            target: effect.geometry.as_ref(),
+        },
+    );
+    Some(effect)
 }
 
 /// Externally revealed hidden claims without foreground return to hidden
@@ -4420,30 +5022,128 @@ fn gesture_tick(
     state.gesture_before.clear();
 }
 
-fn foreground_fullscreen(fulls: &[Rect]) -> bool {
+/// Native foreground veto read: one fresh pass over the live foreground with
+/// exact desktop identity, fresh visibility, caption, and DWM frame facts fed
+/// into the portable [`crate::workspace_owner::classify_foreground`] policy.
+/// No titles, paths, PIDs, or content leave this function; the caller logs
+/// only the returned reason plus booleans. Pure reads, never IO.
+struct ForegroundRead {
+    veto: crate::workspace_owner::ForegroundVeto,
+    desktop: bool,
+    visible: bool,
+    captioned: bool,
+    dwm_readable: bool,
+}
+
+fn foreground_read(fulls: &[Rect]) -> ForegroundRead {
+    use crate::workspace_owner::{ForegroundFacts, ForegroundVetoReason, classify_foreground};
+    let settled = |veto: crate::workspace_owner::ForegroundVeto,
+                   desktop: bool,
+                   visible: bool,
+                   captioned: bool,
+                   dwm_readable: bool| {
+        ForegroundRead {
+            veto,
+            desktop,
+            visible,
+            captioned,
+            dwm_readable,
+        }
+    };
+    let allow = |reason: ForegroundVetoReason,
+                 desktop: bool,
+                 visible: bool,
+                 captioned: bool,
+                 dwm_readable: bool| {
+        settled(
+            crate::workspace_owner::ForegroundVeto {
+                block: false,
+                reason,
+            },
+            desktop,
+            visible,
+            captioned,
+            dwm_readable,
+        )
+    };
     let foreground = unsafe { GetForegroundWindow() };
     if foreground.is_null() {
-        return false;
+        // No foreground window: nothing covering.
+        return allow(ForegroundVetoReason::None, false, false, false, false);
     }
-    let style = unsafe { GetWindowLongW(foreground, GWL_STYLE) } as u32;
-    if style & WS_CAPTION != 0 {
-        return false;
+    if unsafe { IsWindow(foreground) } == 0 {
+        // `IsWindowVisible` returns false for invalid handles, so validity is
+        // checked first and fails closed.
+        return settled(
+            crate::workspace_owner::ForegroundVeto {
+                block: true,
+                reason: ForegroundVetoReason::Invalid,
+            },
+            false,
+            false,
+            false,
+            false,
+        );
     }
+    // Exact known desktop shell handles are the desktop, not a fullscreen
+    // application. Narrow API identity only: no class-name, exe, tool/popup,
+    // or unmanaged exceptions.
+    let shell = unsafe { GetShellWindow() };
+    let desktop_handle = unsafe { GetDesktopWindow() };
+    let is_desktop = (!shell.is_null() && shell == foreground)
+        || (!desktop_handle.is_null() && desktop_handle == foreground);
+    // Fresh unambiguous visibility read on the valid handle: invisible
+    // windows cannot be covering fullscreen.
+    let visible = unsafe { IsWindowVisible(foreground) } != 0;
+    let style = unsafe {
+        SetLastError(0);
+        GetWindowLongW(foreground, GWL_STYLE)
+    } as u32;
+    let style_err = unsafe { GetLastError() };
+    let style_ok = style != 0 || style_err == 0;
+    let captioned = style & WS_CAPTION != 0;
     let mut visible_raw: RECT = unsafe { std::mem::zeroed() };
-    if unsafe {
+    let dwm_ok = unsafe {
         DwmGetWindowAttribute(
             foreground,
             DWMWA_EXTENDED_FRAME_BOUNDS,
             (&mut visible_raw as *mut RECT).cast(),
             std::mem::size_of::<RECT>() as u32,
         )
-    } != 0
-    {
-        // Unreadable foreground fails closed as fullscreen: never tile under
-        // an unknown covering window.
-        return true;
+    } == 0;
+    if unsafe { IsWindow(foreground) } == 0 {
+        return settled(
+            crate::workspace_owner::ForegroundVeto {
+                block: true,
+                reason: ForegroundVetoReason::Invalid,
+            },
+            false,
+            false,
+            false,
+            false,
+        );
     }
-    rect_from_win(visible_raw).is_some_and(|visible| is_borderless_fullscreen(true, visible, fulls))
+    let readable = dwm_ok && style_ok;
+    let covers_monitor = readable
+        && rect_from_win(visible_raw)
+            .is_some_and(|visible| is_borderless_fullscreen(true, visible, fulls));
+    let veto = classify_foreground(ForegroundFacts {
+        valid: true,
+        is_desktop,
+        visible,
+        captioned,
+        dwm_readable: readable,
+        covers_monitor,
+    });
+    settled(veto, is_desktop, visible, captioned, readable)
+}
+
+fn foreground_veto(fulls: &[Rect]) -> crate::workspace_owner::ForegroundVeto {
+    foreground_read(fulls).veto
+}
+
+fn foreground_fullscreen(fulls: &[Rect]) -> bool {
+    foreground_veto(fulls).block
 }
 
 /// Owned inputs for one `run_tile_loop` invocation. Bundled so the loop
