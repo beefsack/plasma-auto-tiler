@@ -12,7 +12,7 @@
 //! (`kwin/native-effect/activewindowborder.cpp:373-380`) - with the
 //! configured `BorderColor` as fallback. The Windows analogue is the system
 //! accent from `DwmGetColorizationColor` (0xAARRGGBB): theme wins only when
-//! requested (`--no-active-border-theme` off), available, and positively
+//! requested (`--active-border-theme` on), available, and positively
 //! alpha-quantized per the shared `tiler-core::visual` gate.
 
 use tiler_core::geometry::Rect;
@@ -22,10 +22,13 @@ use tiler_core::visual::{VisualRect, active_border_inner_rect, active_border_sta
 pub const DEFAULT_WIDTH: f64 = 3.0;
 pub const DEFAULT_GAP: f64 = 0.0;
 pub const DEFAULT_RADIUS: f64 = 0.0;
-/// Fallback border colour (`#2a82da`), used when the system accent is unavailable.
-pub const DEFAULT_COLOR_HEX: &str = "#2a82da";
-pub const DEFAULT_COLOR_RGB: (u8, u8, u8) = (0x2a, 0x82, 0xda);
-pub const DEFAULT_USE_THEME: bool = true;
+/// Fallback border colour (`#ffff00`, bright-yellow development default), used
+/// when the system accent is unavailable or theming is off. KDE parity source
+/// keeps `#2a82da`; Windows diverges deliberately for visibility during
+/// development (long-term accent/settings work deferred).
+pub const DEFAULT_COLOR_HEX: &str = "#ffff00";
+pub const DEFAULT_COLOR_RGB: (u8, u8, u8) = (0xff, 0xff, 0x00);
+pub const DEFAULT_USE_THEME: bool = false;
 
 /// KCM spinbox maximums (`unifiedsettings.ui`): width 32, radius 64, gap 64.
 /// Minimums are 0 (a zero width paints nothing but stays valid).
@@ -185,9 +188,9 @@ impl SystemAccent {
 
 /// Effective border colour with the live system accent. Mirrors KDE
 /// `activeBorderColor` (`activeborderlogic.h:23-32`): the accent wins only
-/// when requested (`use_theme`, i.e. no `--no-active-border-theme`), present,
+/// when requested (`use_theme`, i.e. `--active-border-theme`), present,
 /// and positively alpha-quantized per `active_border_use_theme`; otherwise
-/// the configured fallback (`--active-border-color`, default `#2a82da`) wins.
+/// the configured fallback (`--active-border-color`, default `#ffff00`) wins.
 #[must_use]
 pub fn effective_color(style: &ActiveBorderStyle, accent: Option<SystemAccent>) -> (u8, u8, u8) {
     if let Some(theme) = accent
@@ -441,6 +444,7 @@ pub struct BorderArgvEcho {
     pub radius: Option<String>,
     pub color: Option<String>,
     pub no_theme: bool,
+    pub theme: bool,
 }
 
 #[cfg(test)]
@@ -452,15 +456,15 @@ mod tests {
     }
 
     #[test]
-    fn defaults_match_kde() {
+    fn defaults_match_dev_yellow() {
         let options = ActiveBorderOptions::default();
         assert!(options.enabled);
         assert_eq!(options.style.width, 3.0);
         assert_eq!(options.style.gap, 0.0);
         assert_eq!(options.style.radius, 0.0);
-        assert_eq!(options.style.color, (0x2a, 0x82, 0xda));
-        assert!(options.style.use_theme);
-        assert_eq!(render_color(options.style.color), "#2a82da");
+        assert_eq!(options.style.color, (0xff, 0xff, 0x00));
+        assert!(!options.style.use_theme);
+        assert_eq!(render_color(options.style.color), "#ffff00");
     }
 
     #[test]

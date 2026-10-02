@@ -345,10 +345,15 @@ the corresponding item ships; each such entry names its replacement.
   background from `KColorScheme` (desktop highlight). Windows uses the official
   [`DwmGetColorizationColor`](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmgetcolorizationcolor)
   system colourization/accent analogue, with the core availability/positive-
-  alpha gate and configured `#2a82da` fallback. The owned window flags a
+   alpha gate and configured fallback. The owned window flags a
   requery on `WM_DWMCOLORIZATIONCOLORCHANGED` or `WM_SETTINGCHANGE`; repaint
-  only if the resolved colour changes. `--no-active-border-theme` selects
-  configured colour, and `--no-active-border` disables the surface.
+   only if the resolved colour changes. User decision 2026-10-02: temporarily
+   default to bright-yellow `#ffff00` with theme/accent off during Windows
+   development to aid testing. `--active-border-theme` opts into accent;
+   `--no-active-border-theme` remains accepted and selects configured colour.
+   Revisit this default when the settings dialog (parity item 11) lands: the
+   long-term choice is system accent or settings-configured colour.
+   `--no-active-border` disables the surface.
 - Scoped machine evidence on Windows 11 build 26200, one 2560x1440 display at
   DPI 120, covers composed owned-ring pixels, focus, real directional/workspace
   routes, synthetic move/resize, suppression/restore, ordinary approved apps,

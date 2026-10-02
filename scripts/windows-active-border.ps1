@@ -814,7 +814,7 @@ function Invoke-BorderLive {
 
     # Proof owner (scoped fences protect every unrelated window; no
     # unrelated-app refusal: Terminal/Firefox are simply never targets).
-    Start-ExplorerGui $ownerCopy "tile-proof --allowlist `"$allowPath`" --seconds $OwnerSeconds --trace" $binDir
+    Start-ExplorerGui $ownerCopy "tile-proof --allowlist `"$allowPath`" --seconds $OwnerSeconds --trace --active-border-theme" $binDir
     $ready = $null
     $deadline = (Get-Date).AddSeconds(15)
     while ((Get-Date) -lt $deadline) {
@@ -1031,7 +1031,7 @@ function Invoke-BorderLive {
 
     # Crash probe: fresh owner, focus, then exact-identity emergency-stop.
     # Overlay must be destroyed implicitly; standalone restore cleans ledger.
-    Start-ExplorerGui $ownerCopy "tile-proof --allowlist `"$allowPath`" --seconds $OwnerSeconds --trace" $binDir
+    Start-ExplorerGui $ownerCopy "tile-proof --allowlist `"$allowPath`" --seconds $OwnerSeconds --trace --active-border-theme" $binDir
     $readyC = $null
     $deadline = (Get-Date).AddSeconds(15)
     while ((Get-Date) -lt $deadline) {
@@ -1632,7 +1632,7 @@ function Invoke-FuDirectionalPhase([string]$OwnerBin, [string]$HelperBin, [strin
       $entries += @{ hwnd = [uint64]$s.hwnd; pid = [uint32]$s.process.pid; process_creation = "$($s.process.process_creation)"; exe_path = "$($s.process.exe_path)"; user_sid = "$($s.process.user_sid)"; session_id = [uint32]$s.process.session_id; tag = "$($s.tag)" }
     }
     @{ windows = $entries } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $allowPath
-    $ready = Start-FuOwner $OwnerBin "shortcut-proof --allowlist `"$allowPath`" --seconds $($Ctx.ownerSeconds) --trace" (Split-Path -Parent $OwnerBin) "dir-owner"
+    $ready = Start-FuOwner $OwnerBin "shortcut-proof --allowlist `"$allowPath`" --seconds $($Ctx.ownerSeconds) --trace --active-border-theme" (Split-Path -Parent $OwnerBin) "dir-owner"
     $ownerPid = [int]$ready.owner.pid
     $logPath = "$($ready.log_path)"
     Rec-Fu "dir-owner-ready" @{ pid = $ownerPid; log = $logPath }
@@ -1732,7 +1732,7 @@ function Invoke-FuWorkspacePhase([string]$OwnerBin, [string]$HelperBin, [string]
       $entries += @{ hwnd = [uint64]$s.hwnd; pid = [uint32]$s.process.pid; process_creation = "$($s.process.process_creation)"; exe_path = "$($s.process.exe_path)"; user_sid = "$($s.process.user_sid)"; session_id = [uint32]$s.process.session_id; tag = "$($s.tag)" }
     }
     @{ windows = $entries } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $allowPath
-    $ready = Start-FuOwner $OwnerBin "workspace-proof --allowlist `"$allowPath`" --seconds $($Ctx.ownerSeconds) --trace" (Split-Path -Parent $OwnerBin) "ws-owner"
+    $ready = Start-FuOwner $OwnerBin "workspace-proof --allowlist `"$allowPath`" --seconds $($Ctx.ownerSeconds) --trace --active-border-theme" (Split-Path -Parent $OwnerBin) "ws-owner"
     $ownerPid = [int]$ready.owner.pid
     $logPath = "$($ready.log_path)"
     Rec-Fu "ws-owner-ready" @{ pid = $ownerPid; log = $logPath }
@@ -1821,7 +1821,7 @@ function Invoke-FuFullscreenShellPhase([string]$OwnerBin, [string]$HelperBin, [s
       $entries += @{ hwnd = [uint64]$s.hwnd; pid = [uint32]$s.process.pid; process_creation = "$($s.process.process_creation)"; exe_path = "$($s.process.exe_path)"; user_sid = "$($s.process.user_sid)"; session_id = [uint32]$s.process.session_id; tag = "$($s.tag)" }
     }
     @{ windows = $entries } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $allowPath
-    $ready = Start-FuOwner $OwnerBin "tile-proof --allowlist `"$allowPath`" --seconds $($Ctx.ownerSeconds) --trace" (Split-Path -Parent $OwnerBin) "fs-owner"
+    $ready = Start-FuOwner $OwnerBin "tile-proof --allowlist `"$allowPath`" --seconds $($Ctx.ownerSeconds) --trace --active-border-theme" (Split-Path -Parent $OwnerBin) "fs-owner"
     $ownerPid = [int]$ready.owner.pid
     $logPath = "$($ready.log_path)"
     Rec-Fu "fs-owner-ready" @{ pid = $ownerPid; log = $logPath }
@@ -2261,7 +2261,7 @@ function Invoke-FuOrdinaryPhase([string]$OwnerBin, [string]$PhaseDir, [hashtable
     if ($managed.Count -eq 0) { Fail-Fu "ord no managed approved app" }
     Rec-Fu "ord-managed" @($managed | ForEach-Object { @{ hwnd = $_.hwnd; exe = $_.exe; rect = $_.rect } })
     # Normal tile owner, scoped, border on.
-    $ready = Start-FuOwner $OwnerBin "tile --user-start --seconds $($Ctx.ownerSeconds) --trace$scopeArgs" (Split-Path -Parent $OwnerBin) "ord-owner"
+    $ready = Start-FuOwner $OwnerBin "tile --user-start --seconds $($Ctx.ownerSeconds) --trace --active-border-theme$scopeArgs" (Split-Path -Parent $OwnerBin) "ord-owner"
     $frozen = $ready.owner
     $logPath = "$($ready.log_path)"
     Rec-Fu "ord-owner-ready" @{ pid = $frozen.pid; log = $logPath }
@@ -2544,7 +2544,7 @@ function Invoke-FuFullscreenPhase([string]$OwnerBin, [string]$HelperBin, [string
         $entries += @{ hwnd = [uint64]$s.hwnd; pid = [uint32]$s.process.pid; process_creation = "$($s.process.process_creation)"; exe_path = "$($s.process.exe_path)"; user_sid = "$($s.process.user_sid)"; session_id = [uint32]$s.process.session_id; tag = "$($s.tag)" }
       }
       @{ windows = $entries } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $allowPath
-      $ready = Start-FuOwner $OwnerBin "tile-proof --allowlist `"$allowPath`" --seconds $($Ctx.ownerSeconds) --trace" (Split-Path -Parent $OwnerBin) "pfs-owner"
+      $ready = Start-FuOwner $OwnerBin "tile-proof --allowlist `"$allowPath`" --seconds $($Ctx.ownerSeconds) --trace --active-border-theme" (Split-Path -Parent $OwnerBin) "pfs-owner"
       $ownerPid = [int]$ready.owner.pid
       $logPath = "$($ready.log_path)"
       Rec-Fu "pfs-owner-ready" @{ pid = $ownerPid; log = $logPath }
@@ -2646,7 +2646,7 @@ function Invoke-FuShellPhase([string]$OwnerBin, [string]$HelperBin, [string]$Pha
       $entries += @{ hwnd = [uint64]$s.hwnd; pid = [uint32]$s.process.pid; process_creation = "$($s.process.process_creation)"; exe_path = "$($s.process.exe_path)"; user_sid = "$($s.process.user_sid)"; session_id = [uint32]$s.process.session_id; tag = "$($s.tag)" }
     }
     @{ windows = $entries } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $allowPath
-    $ready = Start-FuOwner $OwnerBin "tile-proof --allowlist `"$allowPath`" --seconds $($Ctx.ownerSeconds) --trace" (Split-Path -Parent $OwnerBin) "shell-owner"
+    $ready = Start-FuOwner $OwnerBin "tile-proof --allowlist `"$allowPath`" --seconds $($Ctx.ownerSeconds) --trace --active-border-theme" (Split-Path -Parent $OwnerBin) "shell-owner"
     $ownerPid = [int]$ready.owner.pid
     $logPath = "$($ready.log_path)"
     Rec-Fu "shell-owner-ready" @{ pid = $ownerPid; log = $logPath }
@@ -2751,7 +2751,7 @@ function Invoke-FuShellPhase([string]$OwnerBin, [string]$HelperBin, [string]$Pha
     # gate): a real shell foreground hides via the product path (observed
     # no-target), not the proof allowlist gate.
     $scopeArgs = " --scope-exe tiler-test-window.exe"
-    $ready2 = Start-FuOwner $OwnerBin "tile --user-start --seconds $($Ctx.ownerSeconds) --trace --no-keyboard-snap-takeover --no-mouse-snap-prevention$scopeArgs" (Split-Path -Parent $OwnerBin) "shell-normal-owner"
+    $ready2 = Start-FuOwner $OwnerBin "tile --user-start --seconds $($Ctx.ownerSeconds) --trace --no-keyboard-snap-takeover --no-mouse-snap-prevention --active-border-theme$scopeArgs" (Split-Path -Parent $OwnerBin) "shell-normal-owner"
     $frozen2 = $ready2.owner
     $log2 = "$($ready2.log_path)"
     Rec-Fu "shell-normal-ready" @{ pid = $frozen2.pid; log = $log2 }

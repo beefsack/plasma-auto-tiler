@@ -1020,7 +1020,7 @@ pub fn parse_scope_host_child(value: &str) -> Result<ScopeHostChild, String> {
 /// normal run. An empty `--scope-exe` value is a refusal, never a wildcard.
 /// A malformed `--scope-host-child` value is a refusal, never a widened scope.
 pub fn parse_tile_args(args: &[String]) -> Result<TileOptions, String> {
-    let usage = "usage: tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention] [--scope-exe NAME ...] [--scope-host-child HOST=CHILD ...] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--no-active-border-theme]";
+    let usage = "usage: tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention] [--scope-exe NAME ...] [--scope-host-child HOST=CHILD ...] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme]";
     let mut seconds: Option<u64> = None;
     let mut trace = false;
     let mut user_start = false;
@@ -1030,6 +1030,7 @@ pub fn parse_tile_args(args: &[String]) -> Result<TileOptions, String> {
     let mut scope_exes: Vec<String> = Vec::new();
     let mut scope_hosts: Vec<ScopeHostChild> = Vec::new();
     let mut border = crate::active_border::ActiveBorderOptions::default();
+    let mut theme_flags = 0u8;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -1082,7 +1083,19 @@ pub fn parse_tile_args(args: &[String]) -> Result<TileOptions, String> {
                 i += 1;
             }
             "--no-active-border-theme" => {
+                if theme_flags & 0x02 != 0 {
+                    return Err(usage.to_owned());
+                }
+                theme_flags |= 0x01;
                 border.style.use_theme = false;
+                i += 1;
+            }
+            "--active-border-theme" => {
+                if theme_flags & 0x01 != 0 {
+                    return Err(usage.to_owned());
+                }
+                theme_flags |= 0x02;
+                border.style.use_theme = true;
                 i += 1;
             }
             "--scope-exe" => {
@@ -1158,11 +1171,12 @@ pub struct TileProofOptions {
 /// Parse `tile-proof --allowlist PATH [--seconds N] [--trace]` plus the shared
 /// active-border flags (default on with `--no-active-border`).
 pub fn parse_tile_proof_args(args: &[String]) -> Result<TileProofOptions, String> {
-    let usage = "usage: tile-proof --allowlist PATH [--seconds N] [--trace] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--no-active-border-theme]";
+    let usage = "usage: tile-proof --allowlist PATH [--seconds N] [--trace] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme]";
     let mut seconds: Option<u64> = None;
     let mut trace = false;
     let mut allowlist: Option<PathBuf> = None;
     let mut border = crate::active_border::ActiveBorderOptions::default();
+    let mut theme_flags = 0u8;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -1199,7 +1213,19 @@ pub fn parse_tile_proof_args(args: &[String]) -> Result<TileProofOptions, String
                 i += 1;
             }
             "--no-active-border-theme" => {
+                if theme_flags & 0x02 != 0 {
+                    return Err(usage.to_owned());
+                }
+                theme_flags |= 0x01;
                 border.style.use_theme = false;
+                i += 1;
+            }
+            "--active-border-theme" => {
+                if theme_flags & 0x01 != 0 {
+                    return Err(usage.to_owned());
+                }
+                theme_flags |= 0x02;
+                border.style.use_theme = true;
                 i += 1;
             }
             "--seconds" => {
@@ -1381,12 +1407,13 @@ pub struct ShortcutProofOptions {
 /// `--no-keyboard-snap-takeover`), `--user-start`, or unknown flag is a
 /// refusal, never a silent normal run.
 pub fn parse_shortcut_proof_args(args: &[String]) -> Result<ShortcutProofOptions, String> {
-    let usage = "usage: shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--no-active-border-theme]";
+    let usage = "usage: shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme]";
     let mut seconds: Option<u64> = None;
     let mut trace = false;
     let mut allowlist: Option<PathBuf> = None;
     let mut no_mouse_snap_prevention = false;
     let mut border = crate::active_border::ActiveBorderOptions::default();
+    let mut theme_flags = 0u8;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -1427,7 +1454,19 @@ pub fn parse_shortcut_proof_args(args: &[String]) -> Result<ShortcutProofOptions
                 i += 1;
             }
             "--no-active-border-theme" => {
+                if theme_flags & 0x02 != 0 {
+                    return Err(usage.to_owned());
+                }
+                theme_flags |= 0x01;
                 border.style.use_theme = false;
+                i += 1;
+            }
+            "--active-border-theme" => {
+                if theme_flags & 0x01 != 0 {
+                    return Err(usage.to_owned());
+                }
+                theme_flags |= 0x02;
+                border.style.use_theme = true;
                 i += 1;
             }
             "--seconds" => {
@@ -1474,7 +1513,7 @@ pub fn verify_shortcut_proof_argv_consistency(
     raw: &[String],
     parsed: &ShortcutProofOptions,
 ) -> Result<(), String> {
-    let usage = "usage: shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--no-active-border-theme]";
+    let usage = "usage: shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme]";
     let (border_echo, rest) = scan_border_echo(raw, usage)?;
     verify_border_echo(&border_echo, &parsed.border, usage)?;
     let raw = rest;
@@ -1574,7 +1613,16 @@ fn verify_border_echo(
             }
         }
     }
-    if echo.no_theme != !border.style.use_theme {
+    if echo.no_theme && echo.theme {
+        return Err(impossible("border-theme"));
+    }
+    if echo.theme && !border.style.use_theme {
+        return Err(impossible("border-theme"));
+    }
+    if echo.no_theme && border.style.use_theme {
+        return Err(impossible("border-theme"));
+    }
+    if !echo.theme && !echo.no_theme && border.style.use_theme != defaults.style.use_theme {
         return Err(impossible("border-theme"));
     }
     // A raw flag that parses to the default is harmless; a missing flag with
@@ -1628,6 +1676,10 @@ fn scan_border_echo(
                 echo.no_theme = true;
                 i += 1;
             }
+            "--active-border-theme" => {
+                echo.theme = true;
+                i += 1;
+            }
             _ => {
                 rest.push(raw[i].clone());
                 i += 1;
@@ -1641,7 +1693,7 @@ pub fn verify_proof_argv_consistency(
     raw: &[String],
     parsed: &TileProofOptions,
 ) -> Result<(), String> {
-    let usage = "usage: tile-proof --allowlist PATH [--seconds N] [--trace] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--no-active-border-theme]";
+    let usage = "usage: tile-proof --allowlist PATH [--seconds N] [--trace] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme]";
     let (border_echo, rest) = scan_border_echo(raw, usage)?;
     verify_border_echo(&border_echo, &parsed.border, usage)?;
     let raw = rest;
@@ -1713,12 +1765,13 @@ pub struct WorkspaceProofOptions {
 /// Any keyboard flag, `--user-start`, or
 /// unknown flag is a refusal, never a silent normal run.
 pub fn parse_workspace_proof_args(args: &[String]) -> Result<WorkspaceProofOptions, String> {
-    let usage = "usage: workspace-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--no-active-border-theme]";
+    let usage = "usage: workspace-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme]";
     let mut seconds: Option<u64> = None;
     let mut trace = false;
     let mut allowlist: Option<PathBuf> = None;
     let mut no_mouse_snap_prevention = false;
     let mut border = crate::active_border::ActiveBorderOptions::default();
+    let mut theme_flags = 0u8;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -1759,7 +1812,19 @@ pub fn parse_workspace_proof_args(args: &[String]) -> Result<WorkspaceProofOptio
                 i += 1;
             }
             "--no-active-border-theme" => {
+                if theme_flags & 0x02 != 0 {
+                    return Err(usage.to_owned());
+                }
+                theme_flags |= 0x01;
                 border.style.use_theme = false;
+                i += 1;
+            }
+            "--active-border-theme" => {
+                if theme_flags & 0x01 != 0 {
+                    return Err(usage.to_owned());
+                }
+                theme_flags |= 0x02;
+                border.style.use_theme = true;
                 i += 1;
             }
             "--seconds" => {
@@ -1804,7 +1869,7 @@ pub fn verify_workspace_proof_argv_consistency(
     raw: &[String],
     parsed: &WorkspaceProofOptions,
 ) -> Result<(), String> {
-    let usage = "usage: workspace-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--no-active-border-theme]";
+    let usage = "usage: workspace-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--active-border-theme|--no-active-border-theme]";
     let (border_echo, rest) = scan_border_echo(raw, usage)?;
     verify_border_echo(&border_echo, &parsed.border, usage)?;
     let raw = rest;
