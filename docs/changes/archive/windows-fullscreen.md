@@ -70,7 +70,7 @@
 | `20261003-062657-13604` | Independent born-fullscreen close, token removal/release once, no refire, two siblings converge, graceful cleanup | All executed stage oracles pass |
 | `20261003-062944-24600` | Graceful stop/restore preserves project cover, valid preimage and sibling frames; zero overlays | Crash park unavailable; historical top-level `pass` is only partial evidence, fixed in final harness |
 
-## Foreground Diagnosis And Unaccepted Checks
+## Original Foreground Diagnosis And Unaccepted Checks
 
 - Direct native reads identify the persistent foreground as an Explorer-owned
   `ApplicationFrameWindow`, with no child windows/process, no owner/parent,
@@ -101,6 +101,46 @@
 - Lead's final read-only audit at 2026-10-03 06:36:58 +10:00 independently
   verifies zero project processes/native surfaces, no ledger/stop/workspace
   request, ready false, arranging 1, pen 35 and Windows Terminal present.
-- Next acceptance action: observe/dismiss the unidentified shell foreground
-  during user dogfood, then rerun the bounded fullscreen stages. Do not proceed
-  to parity item 5 as part of this change.
+- The follow-up below supersedes the original next acceptance action.
+
+## Foreground Recovery And Acceptance Follow-Up
+
+- 2026-10-03, `3f70136`: fresh DWM cloak facts now prevent invisible covering
+  foregrounds from suspending tiling; invalid/unreadable reads remain blocked,
+  real unmanaged fullscreen still suspends. Independently reviewed; native
+  four-package gates and hosted Windows/Rust/KWin/shell
+  [CI 37072709516](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37072709516)
+  pass. No blanket ApplicationFrameWindow/Explorer exception.
+- WM_CLOSE and graceful termination did not clear the unidentified shell frame.
+  Two authorized exact-identity Explorer restarts removed it and restored the
+  taskbar; the surface recurred between restarts. Approved-app activation later
+  succeeded. Its precise purpose and foreground refusal mechanism remain unknown.
+- New local receipts under `target/windows-fullscreen/`, owner SHA256
+  `E6CD9578B9AA49E7A7B5747764BE5B9303A0B2CF49194A593E7878F2F57646F4`, helper
+  `ADAB72A5E9EAD69E1F8577E82FF334121B0161BCEB1CDF815E995D29FCC160FB`:
+
+| Receipt | Additional observations | Still unaccepted |
+| --- | --- | --- |
+| `20261003-083115-23852`, `20261003-083403-20852` | Unmanaged suspend/resume; project cover/preimage/stable siblings/exact exit; one toggle for held F11 repeats | Sustained focus and complete refusal/held-underlay matrix; second exit gained WS_MAXIMIZE and failed exact-style oracle |
+| `20261003-083711-24948` | Born hold, hide/return and external release once | Retained-fullscreen workspace chain; convergence saw an unexpectedly maximized helper |
+| `20261003-083839-8284`, `20261003-083947-36816` | Recovery readiness and approved-app census only | Crash/watcher/restart; approved-app cover/exit; helpers/apps became cloaked |
+| `20261003-092018-35968` | Final shared preflight reports explicit environment failure before any recovery owner | Recovery stage never dispatched; no feature pass inferred |
+
+- Independent ownerless probes reproduce helper cloak 0->2 on exact native move,
+  with unchanged style and exact geometry; restoring geometry leaves cloak 2.
+  Both fixtures now check a disposable helper before any owner/stage, distinguish
+  unreadable cloak, and fail with structured environment-precondition facts.
+  Shared gate regressions and native runtime probes pass after independent review.
+- Ownerless cloak reproduction does not explain the shell's purpose, every
+  takeover, or unexpected maximize bits. Those attribution gaps remain open;
+  no production workaround or softened geometry/style oracle was introduced.
+- User-owned after bounded effort: full focus/refusal/held-underlay matrix,
+  retained-fullscreen workspace journeys, hidden crash/watcher/restart-owned
+  exit, approved-app actual cover/exit allocation, captionless pointer refusal,
+  physical input/display/feel and other output/DPI arrangements. Full acceptance
+  remains open. First restore a normal desktop session and verify the ownerless
+  move gate passes, then rerun OwnedFs/WorkspaceFs/RecoveryFs/NormalSmoke.
+- Lead audit at 09:23:27 +10:00: zero actors/native project surfaces, ready false,
+  ledger/stop/workspace requests absent, arranging 1, pen 35, taskbar visible,
+  hosting Terminal same creation. Follow-up record:
+  [Windows foreground acceptance](windows-foreground-acceptance.md).

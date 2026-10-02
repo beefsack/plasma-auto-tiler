@@ -2405,15 +2405,17 @@ function Assert-OriginalAppsIntact($Before, [string]$Tag) {
     if ($hex -cne "$($b.start)") {
       Fail-Shortcut "$Tag original $($b.name) restarted"
     }
+    $zoomed = $false
     try {
       $handle = $live.MainWindowHandle
       if ($handle -ne 0) {
-        if ([ShortcutProofNative]::IsZoomed($handle)) {
-          Fail-Shortcut "$Tag original $($b.name) maximized"
-        }
+        $zoomed = [ShortcutProofNative]::IsZoomed($handle)
       }
     } catch {
       Fail-Shortcut "$Tag original $($b.name) zoom check failed"
+    }
+    if ($zoomed) {
+      Fail-Shortcut "$Tag original $($b.name) maximized"
     }
   }
 }

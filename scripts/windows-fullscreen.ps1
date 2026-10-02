@@ -40,6 +40,7 @@ function Load-FsAst([string]$Path, [string[]]$Wanted) {
 }
 $FsBorderWanted = @("Fail-Ab", "Install-BorderNative", "Install-FollowupNative", "Read-CompleteTextAb", "Get-CompleteLinesAb", "Get-MarkBeforeActionAb",
   "Assert-HelperIdentityAb", "Set-OwnedForegroundAb", "Get-NativeRectAb", "Get-NativeFrameAb", "Get-FuCloaked",
+  "Test-OwnerlessMoveCloakAb", "Test-OwnerlessGateRegressionAb",
   "Find-TitlePointAb", "Read-CorrectSpiAb", "New-HeldProcessAb", "Close-HeldProcessAb", "ConvertTo-AbsoluteAb",
   "Get-VirtualScreenAb", "Assert-ButtonReleasedAb", "Get-OverlayHwndsForOwnerAb")
 $FsShortWanted = @("Rec-Shortcut", "Fail-Shortcut", "Get-ShortcutJourney", "Assert-NoWinLJourney", "Assert-ChordSendCounts",
@@ -716,6 +717,7 @@ function Invoke-FullscreenMock {
       "Set-PreformedCaptionlessFs", "Restore-SavedFrameFs", "Get-FsCoverState", "Get-FsExitState", "Install-FsPropNative", "FsPropNative", "GetPropW",
       "Assert-FsPreimageValid", "Assert-FsPropsAbsent", "Invoke-FsDragAttempt", "New-FsHelperSet", "Start-FsManagedOwner",
       "Set-OwnedForegroundAb", "Ensure-FsForeground", "Get-FsFgIdentity", "Get-FsFgPrecondition", "Get-FuCloaked",
+      "Test-OwnerlessMoveCloakAb", "Test-OwnerlessGateRegressionAb", "ownerless-move-precondition",
       "environment-precondition", "Test-FsReportGap", "Test-FsPreconditionReport", "Invoke-OwnedFocusEnsure", "Invoke-ExactHelperActivate", "Send-MarkedChord", "Assert-NoWriteForFs", "Stop-ExactOwner", "machine.json",
       "move-refused-fullscreen", "maximize-refused-fullscreen", "send-refused-fullscreen",
       "BornCloseFs", "RecoveryFs", "Invoke-BornCloseFsLive", "Invoke-RecoveryFsLive", "Invoke-RecoveryCrashFsLive",
@@ -723,6 +725,12 @@ function Invoke-FullscreenMock {
       "border-inspect", "underlay-inspect", "emergency-stop", "Get-OverlayHwndsForOwnerAb")) {
     if ($src -notmatch [regex]::Escape($need)) { Fail-Fs "mock harness missing $need" }
   }
+  foreach ($gone in @("Test-OwnerlessMove" + "CloakFs", "Get-FsHelper" + "FreshState", "Get-FsConverge" + "FailureFacts")) {
+    if ($src -match [regex]::Escape($gone)) { Fail-Fs "mock duplicated gate remains $gone" }
+  }
+  Install-BorderNative
+  Install-FollowupNative
+  Rec-Fs "mock-gate" (Test-OwnerlessGateRegressionAb "mock-fs")
   $oldAdm = 'Invoke-Fs' + 'AdmissionOwner'
   if ($src -match [regex]::Escape($oldAdm)) { Fail-Fs "mock rejects split contract: old admission owner call still present (double-owner risk)" }
   $regPat = 'Set-Item' + 'Property|New-Item' + 'Property'
@@ -2037,6 +2045,25 @@ function Invoke-FsLive {
   $want = @()
   if ($Stage -eq "All") { $want = @("OwnedFs", "WorkspaceFs", "NormalSmoke") } else { $want = @($Stage) }
   try {
+    # Ownerless DWM-cloak precondition ONCE before any owner/stage (including
+    # unmanaged), on ONE disposable probe helper (never an acceptance
+    # subject). Aborts before owner launch on unavailable; the catch below
+    # performs the normal exact cleanup.
+    Test-NoProjectActors $ownerCopy $helperCopy "probe-pre"
+    $probeSnap = Start-PassiveShortcutHelper $helperCopy $runDir "fs-probe"
+    $null = $Ctx.created.Add(@{ snap = $probeSnap; bin = $helperCopy })
+    Show-ExactHelper $probeSnap $probeSnap $helperCopy "probe-show"
+    $probeGate = Test-OwnerlessMoveCloakAb $helperCopy $probeSnap "probe-gate"
+    Rec-Fs "ownerless-move-precondition" @{ status = "$($probeGate.status)"; present = [bool]$probeGate.present;
+      before = $probeGate.before; mid = $probeGate.mid; restored = $probeGate.restored;
+      move_to = "$($probeGate.move_to)"; expect_ltrb = "$($probeGate.expect_ltrb)"; restore_to = "$($probeGate.restore_to)" }
+    Close-CreatedHelpers $Ctx "probe"
+    $Ctx.created = [System.Collections.ArrayList]@()
+    if ("$($probeGate.status)" -ne "pass") {
+      Rec-Fs "environment-precondition" @{ status = "unavailable";
+        reason = "environment-precondition: ownerless cloak baseline=$($probeGate.before.cloaked) mid=$($probeGate.mid.cloaked) restored=$($probeGate.restored.cloaked) on disposable probe (no owner runs)" }
+      Fail-Fs "environment-precondition: ownerless DWM cloak baseline=$($probeGate.before.cloaked) mid=$($probeGate.mid.cloaked) restored=$($probeGate.restored.cloaked) on disposable probe (no owner runs)"
+    }
     if ($want -contains "OwnedFs") {
       New-FsHelperSet $Ctx
       Invoke-UnmanagedFsLive $Ctx

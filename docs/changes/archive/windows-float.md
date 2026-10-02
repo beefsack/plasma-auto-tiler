@@ -120,6 +120,41 @@
 - Backlog proposal: item5 float shipped (Win+G), gated/independently reviewed;
   full live acceptance open under the Explorer activation blocker, crash band
   semantics provisional. Link this archive; next item6 belongs to another Lead.
-- Exact acceptance next action: user dismisses/identifies the shell foreground,
-  dogfoods ordinary-app Win+G, then reruns bounded OwnedFloat/WorkspaceFloat
-  stages. Do not proceed to item6 as part of this change.
+- The follow-up below supersedes the original next acceptance action.
+
+## Foreground Recovery And Acceptance Follow-Up
+
+- 2026-10-03, `3f70136`: cloak-aware foreground veto fixes the invisible-cover
+  suspension defect without bypassing admission or shell safety. Native gates,
+  independent review and hosted Windows/Rust/KWin/shell
+  [CI 37072709516](https://github.com/beefsack/plasma-auto-tiler/actions/runs/37072709516)
+  pass. Narrow WM_CLOSE failed; authorized exact-identity Explorer restarts
+  cleared the foreground surface, taskbar returned and Terminal survived.
+- New receipts under `target/windows-float/`; owner SHA256
+  `E6CD9578B9AA49E7A7B5747764BE5B9303A0B2CF49194A593E7878F2F57646F4`, helper
+  `ADAB72A5E9EAD69E1F8577E82FF334121B0161BCEB1CDF815E995D29FCC160FB`:
+
+| Receipt | Observed evidence | Limit |
+| --- | --- | --- |
+| `20261003-084346-28728` | Approved-app activation succeeded, attach true; helper owner ready | Admission failed with cloaked helpers, eligible=[]; no float action |
+| `20261003-084937-20684`, `20261003-085033-19256` | Approved-app read-only snapshots and cleanup | Originals unexpectedly maximized; no ordinary-app float proof |
+| `ownerless-20261003-085453-15412` | Tagged helper cloak 0 before/idle, 2 after exact move with zero owner; style unchanged | Cloak mechanism unknown; not float behavior |
+| `20261003-092035-18828` | Final shared gate records cloak 0->2->2, exact move/restore, explicit environment-precondition failure and exact probe close | WorkspaceFloat aborted before owner; no stage pass inferred |
+
+- Shared disposable-helper preflight now runs before any owner/stage, requires
+  readable cloak 0 before/after/restore, preserves exact identity/geometry guards,
+  and reports blocked execution explicitly. Six executed mock cases plus live
+  consumer verification pass after independent review. A cleanup diagnostic no
+  longer catches its own maximized-original refusal as a failed native read.
+- All live float behavior rows remain unaccepted/user-owned after bounded effort:
+  placement/reflow, focus/repeats, moved/resized retention/admission, visuals/band,
+  direction/send, workspace hide/return/close, overlay refusals, stop/crash/watcher/
+  restart and born-hold isolation. Normal mode still rejects synthetic chords;
+  ordinary-app Win+G remains physical dogfood. No product cloak bypass or new
+  float CLI added. Physical feel/input and other output/DPI checks remain open.
+- Exact next acceptance action: restore normal desktop state, verify a fresh
+  ownerless helper move remains uncloaked, then rerun OwnedFloat/WorkspaceFloat
+  and physically dogfood approved-app Win+G. Do not start item6 in this change.
+- Lead audit 09:23:27 +10:00: no project actors/surfaces/ledger/requests, ready
+  false, arranging 1, pen 35, taskbar visible, Terminal same creation. Follow-up
+  record: [Windows foreground acceptance](windows-foreground-acceptance.md).

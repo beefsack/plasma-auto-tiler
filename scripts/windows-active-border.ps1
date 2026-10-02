@@ -242,6 +242,146 @@ function Assert-HelperIdentityAb([string]$HelperBin, $Snap, [string]$Tag) {
   return $fresh
 }
 
+function Test-OwnerlessMoveCloakAb([string]$HelperBin, $Snap, [string]$Tag) {
+  # Ownerless DWM-cloak precondition (caller guarantees NO owner runs): one
+  # exact-bound owned-helper move (+40,+30 same size) via the official helper
+  # own `move` (no activation, never the acceptance subject). Compares the
+  # correct expected LTRB (move takes XYWH). Wrong readback throws (fixture
+  # break). Cloak -1/unreadable never counts as present. Minimal facts only.
+  [ActiveBorderNative]::EnsurePMv2()
+  $pre = Assert-HelperIdentityAb $HelperBin $Snap "$Tag-pre"
+  $w = [int]$pre.right - [int]$pre.left
+  $h = [int]$pre.bottom - [int]$pre.top
+  if ($w -lt 1 -or $h -lt 1) { Fail-Ab "$Tag bad size ${w}x${h}" }
+  $x0 = [int]$pre.left; $y0 = [int]$pre.top
+  $tx = $x0 + 40; $ty = $y0 + 30
+  $toXywh = "$tx,$ty,$w,$h"
+  $wantLtrb = "$tx,$ty,$($tx + $w),$($ty + $h)"
+  $origXywh = "$x0,$y0,$w,$h"
+  $origLtrb = "$x0,$y0,$($x0 + $w),$($y0 + $h)"
+  $beforeFresh = Assert-HelperIdentityAb $HelperBin $Snap "$Tag-before-ident"
+  $beforeCloak = "unreadable"
+  try { $beforeCloak = [int](Get-FuCloaked ([long]$beforeFresh.hwnd)) } catch {}
+  $beforeVis = "unreadable"
+  try { $beforeVis = [bool][ActiveBorderNative]::IsWindowVisible([IntPtr][long]$beforeFresh.hwnd) } catch {}
+  $beforeZoom = "unreadable"
+  try { $beforeZoom = [bool][ActiveBorderNative]::IsZoomed([IntPtr][long]$beforeFresh.hwnd) } catch {}
+  $beforeStyle = "unreadable"
+  try {
+    $bst = [ActiveBorderNative]::GetWindowLongW([IntPtr][long]$beforeFresh.hwnd, -16)
+    $beforeStyle = ("0x{0:X8}" -f [BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$bst), 0))
+  } catch {}
+  $before = @{ cloaked = $beforeCloak; visible = $beforeVis; zoomed = $beforeZoom; style = "$beforeStyle";
+    rect = "$($beforeFresh.left),$($beforeFresh.top),$($beforeFresh.right),$($beforeFresh.bottom)" }
+  $null = Invoke-Native $HelperBin @("move", "$($pre.hwnd)", "--tag", "$($pre.tag)", "--to", $toXywh) | ConvertFrom-Json
+  $midFresh = Assert-HelperIdentityAb $HelperBin $Snap "$Tag-mid"
+  $midKey = "$($midFresh.left),$($midFresh.top),$($midFresh.right),$($midFresh.bottom)"
+  if ($midKey -cne $wantLtrb) { Fail-Ab "$Tag moved readback [$midKey] != [$wantLtrb] (to $toXywh)" }
+  $midCloak = "unreadable"
+  try { $midCloak = [int](Get-FuCloaked ([long]$midFresh.hwnd)) } catch {}
+  $midVis = "unreadable"
+  try { $midVis = [bool][ActiveBorderNative]::IsWindowVisible([IntPtr][long]$midFresh.hwnd) } catch {}
+  $midZoom = "unreadable"
+  try { $midZoom = [bool][ActiveBorderNative]::IsZoomed([IntPtr][long]$midFresh.hwnd) } catch {}
+  $midStyle = "unreadable"
+  try {
+    $mst = [ActiveBorderNative]::GetWindowLongW([IntPtr][long]$midFresh.hwnd, -16)
+    $midStyle = ("0x{0:X8}" -f [BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$mst), 0))
+  } catch {}
+  $mid = @{ cloaked = $midCloak; visible = $midVis; zoomed = $midZoom; style = "$midStyle"; rect = $midKey }
+  $null = Invoke-Native $HelperBin @("move", "$($pre.hwnd)", "--tag", "$($pre.tag)", "--to", $origXywh) | ConvertFrom-Json
+  $backFresh = Assert-HelperIdentityAb $HelperBin $Snap "$Tag-restored"
+  $backKey = "$($backFresh.left),$($backFresh.top),$($backFresh.right),$($backFresh.bottom)"
+  if ($backKey -cne $origLtrb) { Fail-Ab "$Tag restore readback [$backKey] != [$origLtrb]" }
+  $finalCloak = "unreadable"
+  try { $finalCloak = [int](Get-FuCloaked ([long]$backFresh.hwnd)) } catch {}
+  $restored = @{ cloaked = $finalCloak; rect = $backKey }
+  $beforeZero = ($beforeCloak -is [int] -and [int]$beforeCloak -eq 0)
+  $midPos = ($midCloak -is [int] -and [int]$midCloak -gt 0)
+  $midZero = ($midCloak -is [int] -and [int]$midCloak -eq 0)
+  $finalZero = ($finalCloak -is [int] -and [int]$finalCloak -eq 0)
+  $present = ($beforeZero -and $midPos)
+  $status = "pass"
+  if (-not ($beforeZero -and $midZero -and $finalZero)) { $status = "unavailable" }
+  return @{ status = $status; present = $present; before = $before; mid = $mid; restored = $restored;
+    move_to = $toXywh; expect_ltrb = $wantLtrb; restore_to = $origXywh }
+}
+
+function Test-OwnerlessGateRegressionAb([string]$Tag) {
+  # Offline regression for the shared gate with mocked seams (no windows):
+  # valid XYWH move/LTRB readback + exact restore; cloak 0->2 unavailable;
+  # 0->0 pass; -1 unreadable never present; wrong readback stays fixture error.
+  $origAssert = ${function:Assert-HelperIdentityAb}
+  $hasInvoke = ($null -ne (Get-Command Invoke-Native -ErrorAction SilentlyContinue))
+  $origInvoke = $null
+  if ($hasInvoke) { $origInvoke = ${function:Invoke-Native} }
+  $origCloakFn = ${function:Get-FuCloaked}
+  $script:gateState = @{ l = 100; t = 200; r = 600; b = 450; cloakBefore = 0; cloakAfter = 2; cloakFinal = 2; calls = 0; breakMove = $false; log = @() }
+  function script:Assert-HelperIdentityAb([string]$HelperBin, $Snap, [string]$T) {
+    return @{ hwnd = [uint64]1; tag = "mock"; left = [int]$script:gateState.l; top = [int]$script:gateState.t;
+      right = [int]$script:gateState.r; bottom = [int]$script:gateState.b;
+      process = @{ pid = 4242; process_creation = "mock-creation"; user_sid = "mock-sid"; session_id = 1 } }
+  }
+  function script:Get-FuCloaked([long]$Hwnd) {
+    $script:gateState.calls++
+    if ($script:gateState.calls -eq 1) { return [int]$script:gateState.cloakBefore }
+    if ($script:gateState.calls -eq 3) { return [int]$script:gateState.cloakFinal }
+    return [int]$script:gateState.cloakAfter
+  }
+  function script:Invoke-Native([string]$Exe, [string[]]$CliArgs) {
+    if ($CliArgs[0] -ne "move") { return '{"ok":true}' }
+    $xywh = "$($CliArgs[5])"
+    $script:gateState.log += $xywh
+    if (-not $script:gateState.breakMove) {
+      $p = $xywh -split ","
+      $script:gateState.l = [int]$p[0]; $script:gateState.t = [int]$p[1]
+      $script:gateState.r = [int]$p[0] + [int]$p[2]; $script:gateState.b = [int]$p[1] + [int]$p[3]
+    }
+    $r = "$($script:gateState.l),$($script:gateState.t),$($script:gateState.r),$($script:gateState.b)"
+    return (@{ moved = 1; tag = "mock"; rect = @($script:gateState.l, $script:gateState.t, $script:gateState.r, $script:gateState.b); foreground = 0 } | ConvertTo-Json -Compress)
+  }
+  try {
+    $snap = @{ hwnd = [uint64]1; tag = "mock"; process = @{ pid = 4242; process_creation = "mock-creation"; user_sid = "mock-sid"; session_id = 1 } }
+    $reset = { param($cb, $ca)
+      $script:gateState.l = 100; $script:gateState.t = 200; $script:gateState.r = 600; $script:gateState.b = 450
+      $script:gateState.cloakBefore = $cb; $script:gateState.cloakAfter = $ca; $script:gateState.calls = 0
+      $script:gateState.cloakFinal = $ca
+      $script:gateState.breakMove = $false; $script:gateState.log = @() }
+    & $reset 0 2
+    $g1 = Test-OwnerlessMoveCloakAb "mockbin" $snap "$Tag-case1"
+    if ($g1.move_to -cne "140,230,500,250") { Fail-Ab "$Tag case1 move_to $($g1.move_to) != 140,230,500,250" }
+    if ($g1.expect_ltrb -cne "140,230,640,480") { Fail-Ab "$Tag case1 expect $($g1.expect_ltrb) != 140,230,640,480" }
+    if ($g1.restore_to -cne "100,200,500,250") { Fail-Ab "$Tag case1 restore $($g1.restore_to) != 100,200,500,250" }
+    if (-not [bool]$g1.present) { Fail-Ab "$Tag case1 0->2 not present" }
+    if ("$($g1.status)" -cne "unavailable") { Fail-Ab "$Tag case1 status $($g1.status) != unavailable" }
+    if (("$($script:gateState.l),$($script:gateState.t),$($script:gateState.r),$($script:gateState.b)") -cne "100,200,600,450") {
+      Fail-Ab "$Tag case1 not restored exactly" }
+    & $reset 0 0
+    $g2 = Test-OwnerlessMoveCloakAb "mockbin" $snap "$Tag-case2"
+    if ([bool]$g2.present) { Fail-Ab "$Tag case2 0->0 wrongly present" }
+    if ("$($g2.status)" -cne "pass") { Fail-Ab "$Tag case2 status $($g2.status) != pass" }
+    & $reset 0 -1
+    $g3 = Test-OwnerlessMoveCloakAb "mockbin" $snap "$Tag-case3"
+    if ([bool]$g3.present) { Fail-Ab "$Tag case3 -1 unreadable wrongly present" }
+    if ("$($g3.status)" -cne "unavailable") { Fail-Ab "$Tag case3 status $($g3.status) != unavailable" }
+    & $reset 0 2
+    $script:gateState.breakMove = $true
+    try { $null = Test-OwnerlessMoveCloakAb "mockbin" $snap "$Tag-case4"; Fail-Ab "$Tag case4 wrong readback did not throw" }
+    catch { if ("$($_.Exception.Message)" -notmatch "readback") { throw } }
+    foreach ($final in @(2, -1)) {
+      & $reset 0 0
+      $script:gateState.cloakFinal = $final
+      $g = Test-OwnerlessMoveCloakAb "mockbin" $snap "$Tag-final-$final"
+      if ("$($g.status)" -cne "unavailable") { Fail-Ab "$Tag final cloak $final wrongly passed" }
+    }
+  } finally {
+    ${function:Assert-HelperIdentityAb} = $origAssert
+    if ($hasInvoke) { ${function:Invoke-Native} = $origInvoke }
+    ${function:Get-FuCloaked} = $origCloakFn
+  }
+  return @{ cases = 6; move = "xywh-to-ltrb"; restore = "exact"; cloak = "0->2-unavailable/0->0-pass/-1-never-present/final-must-be-zero"; readback = "fixture-error" }
+}
+
 function Set-OwnedForegroundAb([string]$HelperBin, $Snap, [string]$Tag) {
   # Exact-bound fixture activation only: revalidate identity immediately
   # before the write, then E8 prime + AttachThreadInput + one
@@ -746,6 +886,11 @@ function Invoke-BorderMock {
   $regPat = 'Set-Item' + 'Property|New-Item' + 'Property'
   if ($src -match $regPat) { Fail-Ab "mock registry/policy write present" }
   Rec-Ab "cleanup-seams" @{ stop = "out-of-hook-stop-then-restore"; overlay = "class-scoped-exact-owner"; kills = "none-broad"; registry = "none" }
+  if ($src -notmatch "Test-OwnerlessMoveCloakAb") { Fail-Ab "mock shared ownerless gate missing" }
+  if ($src -notmatch "Test-OwnerlessGateRegressionAb") { Fail-Ab "mock shared gate regression missing" }
+  Install-BorderNative
+  Install-FollowupNative
+  Rec-Ab "mock-gate" (Test-OwnerlessGateRegressionAb "mock")
   & cargo test --locked --manifest-path (Join-Path $Repo "Cargo.toml") -p tiler-windows --test active_border 2>$null
   if ($LASTEXITCODE -ne 0) { Fail-Ab "mock cargo test active_border failed" }
   & cargo test --locked --manifest-path (Join-Path $Repo "Cargo.toml") -p tiler-windows --lib 2>$null

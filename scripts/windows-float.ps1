@@ -42,7 +42,7 @@ function Load-FlAst([string]$Path, [string[]]$Wanted) {
 }
 $FlBorderWanted = @("Install-BorderNative", "Install-FollowupNative", "Get-MarkBeforeActionAb",
   "Assert-HelperIdentityAb", "Set-OwnedForegroundAb", "Invoke-OwnedSysCommandAb", "Get-FuCloaked",
-  "Get-OverlayHwndsForOwnerAb")
+  "Test-OwnerlessMoveCloakAb", "Test-OwnerlessGateRegressionAb", "Get-OverlayHwndsForOwnerAb")
 $FlShortWanted = @("Install-ShortcutNative", "Get-ShortcutJourney", "Assert-NoWinLJourney", "Assert-ChordSendCounts",
   "Assert-InputStructSize", "Assert-EncodingInvariant", "Test-ExeEqualLocal", "Assert-FullIdentityMatches",
   "Assert-FramesEqual",   "Install-ShortcutNative", "Read-CompleteTextLocal", "Get-CompleteLinesLocal",
@@ -254,12 +254,19 @@ function Invoke-FloatMock {
   $src = Get-Content -LiteralPath (Join-Path $Repo "scripts\windows-float.ps1") -Raw
   foreach ($need in @("Wait-FloatOutcome", "Wait-SuspendFl", "Get-TopmostFl", "Get-ExpectedCentered60", "Assert-NoWriteForFloat",
       "Set-OwnedForegroundAb", "Set-ApprovedForegroundFl", "Get-PrimeTargetFl", "Get-FlFgPrecondition", "Get-FuCloaked", "Close-PrimeExtraFl",
+      "Test-OwnerlessMoveCloakAb", "Test-OwnerlessGateRegressionAb", "ownerless-move-precondition", "IsZoomed",
       "Send-MarkedChord", "Get-FloatReportStatus", "Get-RequiredUnimplementedRows", "environment-precondition",
       "Stop-ExactOwner", "Test-NoProjectActors", "Get-OriginalAppsSnapshot",
       "0x0082", "0x201E", "SHORTCUT_MARKER", "border-inspect", "underlay-inspect",
       "emergency-stop", "Get-OverlayHwndsForOwnerAb", "float-toggle", "WS_EX_TOPMOST")) {
     if ($src -notmatch [regex]::Escape($need)) { Fail-Fl "mock harness missing $need" }
   }
+  foreach ($gone in @("Test-OwnerlessMove" + "CloakFl", "Get-FlHelper" + "FreshState", "Get-FlConverge" + "FailureFacts")) {
+    if ($src -match [regex]::Escape($gone)) { Fail-Fl "mock duplicated gate remains $gone" }
+  }
+  Install-BorderNative
+  Install-FollowupNative
+  Rec-Fl "mock-gate" (Test-OwnerlessGateRegressionAb "mock-float")
   if ($src -match ('Show' + 'Window')) { Fail-Fl "mock direct no-owner hiding present" }
   $floorPat = '[math]::Fl' + 'oor($w * 0.6)'
   $roundPat = '[math]::Ro' + 'und($w * 0.6)'
@@ -972,6 +979,7 @@ function Invoke-NormalSmokeLive($Ctx) {
 function Invoke-FloatLive {
   Install-ShortcutNative
   Install-BorderNative
+  Install-FollowupNative
   if ($OwnerSeconds -lt 1 -or $OwnerSeconds -gt 600) { Fail-Fl "refuse: OwnerSeconds must be 1..=600" }
   $dirs = New-FloatRunDir
   $proofDir = $dirs.runDir; $binDir = $dirs.binDir
@@ -1081,6 +1089,26 @@ function Invoke-FloatLive {
     $runOwned = ($Stage -eq "All") -or ($Stage -eq "OwnedFloat")
     $runWs = ($Stage -eq "All") -or ($Stage -eq "WorkspaceFloat")
     $runNormal = ($Stage -eq "All") -or ($Stage -eq "NormalSmoke")
+    # Ownerless DWM-cloak precondition ONCE before any owner/stage, on ONE
+    # disposable probe helper (never an acceptance subject). Aborts before
+    # owner launch on unavailable; normal exact cleanup handles the failure.
+    Test-NoProjectActors $ownerCopy $helperCopy "probe-pre"
+    $probeDir = Join-Path $proofDir "probe"
+    New-Item -ItemType Directory -Path $probeDir | Out-Null
+    $probeHs = Start-FloatHelperSet $helperCopy $probeDir 1 $OwnerSeconds
+    $Ctx.created = @($probeHs.created)
+    $probeSnap = $probeHs.snaps[0]
+    $probeGate = Test-OwnerlessMoveCloakAb $helperCopy $probeSnap "probe-gate"
+    Rec-Fl "ownerless-move-precondition" @{ status = "$($probeGate.status)"; present = [bool]$probeGate.present;
+      before = $probeGate.before; mid = $probeGate.mid; restored = $probeGate.restored;
+      move_to = "$($probeGate.move_to)"; expect_ltrb = "$($probeGate.expect_ltrb)"; restore_to = "$($probeGate.restore_to)" }
+    Close-FloatHelpersExact $helperCopy $Ctx.created "probe"
+    $Ctx.created = @()
+    if ("$($probeGate.status)" -ne "pass") {
+      Rec-Fl "environment-precondition" @{ status = "unavailable";
+        reason = "environment-precondition: ownerless cloak baseline=$($probeGate.before.cloaked) mid=$($probeGate.mid.cloaked) restored=$($probeGate.restored.cloaked) on disposable probe (no owner runs)" }
+      Fail-Fl "environment-precondition: ownerless DWM cloak baseline=$($probeGate.before.cloaked) mid=$($probeGate.mid.cloaked) restored=$($probeGate.restored.cloaked) on disposable probe (no owner runs)"
+    }
     if ($runOwned) { Invoke-OwnedFloatLive $Ctx }
     if ($runOwned -and $runWs) {
       if ($Ctx.ownerRunning) { $null = Stop-FloatOwnerExact $Ctx "between-owned-ws" }

@@ -473,11 +473,18 @@ the corresponding item ships; each such entry names its replacement.
 - Scoped synthetic evidence covers project entry/exit and exact retained slot,
   stable siblings, immediate foreground retention, visual suppression, born
   hold/hide/return/native release/close and graceful frame preservation.
-  Activation also fails without a project owner on this desktop. A subsequent
-  Explorer-owned foreground takeover remains unexplained; full focus/repeat/
-  refusal/held-underlay, crash/restart and approved-app fullscreen journeys are
-  unaccepted, user-owned checks. Shipment is scoped, not full live acceptance.
+  Follow-up also observes one toggle for held repeats. Exact-identity Explorer
+  restart cleared activation refusal, but shell takeover recurred and its purpose
+  remains unidentified. Ownerless helper move now independently reproduces DWM
+  cloak 0->2; unexpected maximize attribution remains open. Full focus/refusal/
+  held-underlay, retained workspace, crash/restart and approved-app fullscreen
+  journeys remain unaccepted/user-owned. Shipment is scoped, not full acceptance.
   Physical input/display and other output/DPI arrangements remain user-owned.
+- Cloaked foreground is invisible to the compositor, even with a monitor-covering
+  frame: a fresh official DWM cloak read excludes it from the fullscreen veto.
+  Invalid/unreadable foreground facts remain fail-closed; real uncloaked unmanaged
+  fullscreen still suspends. Do not blanket-exclude ApplicationFrameWindow or
+  Explorer from foreground safety based on an unidentified shell surface.
   Evidence and limitations: [Windows fullscreen](changes/archive/windows-fullscreen.md).
 
 ### Windows float
@@ -510,12 +517,13 @@ the corresponding item ships; each such entry names its replacement.
   the verified runtime preimage. One attempt per discrete Win+G down; held
   repeats are consumed without dispatch or automatic effect retries.
 - Native gates and independent review pass. Live float acceptance remains
-  open: the known cloaked Explorer foreground blocks both approved-app prime
-  mechanisms and suspends the owner before float actions. Machine evidence
-  establishes bounded suspension, frame-preserving graceful cleanup and
-  approved-app visibility only, not float behavior. All float/helper/ordinary-
-  app and crash/restart rows, physical input/display/feel and other output/DPI
-  arrangements remain user-owned. See
+  open: Explorer restart cleared activation refusal and the cloak-aware veto
+  fixes invisible-cover suspension. A separate ownerless helper move reproduces
+  DWM cloak 0->2, preventing admission; fixtures now fail that environment
+  precondition before launching an owner. Machine evidence proves activation,
+  precondition detection and cleanup, not float behavior. All float/helper/
+  ordinary-app and crash/restart rows, physical input/display/feel and other
+  output/DPI arrangements remain user-owned. See
   [Windows float](changes/archive/windows-float.md).
 
 ## Native Integration Boundary
