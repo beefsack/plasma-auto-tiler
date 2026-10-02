@@ -407,6 +407,41 @@ the corresponding item ships; each such entry names its replacement.
   output/DPI arrangements remain follow-up checks. Evidence:
   `changes/archive/windows-group-underlay.md`.
 
+### Windows maximise
+
+- Windows parity item 3 (2026-10-03): Win+M matches the KDE catalog's Meta+M.
+  Native maximize and the shortcut use the same retained-tile overlay behavior:
+  keep membership, tree position and shares, skip native geometry writes while
+  maximized, and restore the current Engine allocation on unmaximize. Siblings
+  keep their layout. Maximize never suspends the whole workspace. Both active
+  border and group underlay remain suppressed while maximized.
+- Match current KDE code, without selecting the deferred COSMIC navigation
+  policy: directional focus can leave or enter a maximized member; directional
+  movement and pointer operations refuse a maximized subject. Win+Arrow remains
+  focus, never native Snap. Workspace send/follow, select-away hiding and return
+  preserve maximize; follow and remembered focus include verified maximized
+  members. Geometry eligibility remains separate from focus eligibility.
+- First non-fullscreen, otherwise-eligible maximized admission without a tile
+  slot makes one native restore attempt, with scope, identity and proof fences;
+  it never automatically retries. Retained slots are exempt. Fullscreen wins
+  over maximize. Use official `ShowWindowAsync(SW_MAXIMIZE)` and
+  `GetWindowPlacement`/`SetWindowPlacement` with `SW_SHOWNOACTIVATE` and
+  `WPF_ASYNCWINDOWPLACEMENT` for nonactivating restore. Dispatch is distinct
+  from observed completion. Stop/crash preserve frames and maximize state;
+  existing identity-safe recovery reveals hidden members.
+- Provisional, to discuss: each discrete Win+M down makes one native toggle
+  attempt; held repeats are consumed without dispatch and there is no persistent
+  attempted-state map. KDE's current map can refuse a later identical toggle
+  after a successful shortcut maximize followed by native restore. Windows live
+  proof reproduced that refusal in the initial implementation; the discrete
+  rule fixes it without retries or pending-state machinery. KDE is unchanged.
+- Scoped synthetic proof covers owned helpers and Notepad/Calculator/Paint,
+  retained slots, focus, populated/trailing sends, held-underlay suppression and
+  graceful/crash recovery. Physical maximize-button/input/feel and other
+  output/DPI arrangements remain user-owned; native system-command and
+  double-click paths are machine-proven. Evidence:
+  [Windows maximise](changes/windows-maximise.md).
+
 ## Native Integration Boundary
 
 - User decision (2026-09-24; governing statement under Architecture Direction):

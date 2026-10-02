@@ -8,10 +8,10 @@ use tiler_windows::snapkey::{
     Classified, INTENT_QUEUE_CAP, KeyboardConfig, MARKED_DIAG_CAP, MOD_DIAG_CAP, MarkedDiagBuf,
     MarkedKeyDiag, ModDiagBuf, ModSource, ModTrafficDiag, OriginVerdict, QueuedSnapEvent,
     SnapClassify, SnapEdge, SnapIntent, SnapOp, SnapOrigin, SnapQueue, VK_0, VK_CONTROL, VK_DOWN,
-    VK_H, VK_J, VK_K, VK_L, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MASK, VK_MENU, VK_RIGHT,
-    VK_RWIN, VK_SHIFT, VK_UP, WorkspaceOp, classify_and_queue, direction_name, is_proof_mod_vk,
-    is_win_vk, marked_diag_evidence, mod_diag_evidence, resolve_origin, stamp_mask_result,
-    win_up_mask_reserve,
+    VK_H, VK_J, VK_K, VK_L, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_M, VK_MASK, VK_MENU,
+    VK_RIGHT, VK_RWIN, VK_SHIFT, VK_UP, WorkspaceOp, classify_and_queue, direction_name,
+    is_chord_vk, is_proof_mod_vk, is_win_vk, marked_diag_evidence, mod_diag_evidence,
+    resolve_origin, stamp_mask_result, win_up_mask_reserve,
 };
 use tiler_windows::tiling::{ReconcileInput, build_reconcile_event, fingerprint, parse_tile_args};
 
@@ -50,7 +50,7 @@ fn push_snap(
 ) -> Option<SnapIntent> {
     match SnapClassify::push(m, vk, is_up, fg, inj)? {
         Classified::Snap(intent) => Some(intent),
-        Classified::Workspace(_) => panic!("expected directional chord"),
+        Classified::Workspace(_) | Classified::Maximize(_) => panic!("expected directional chord"),
     }
 }
 
@@ -63,7 +63,20 @@ fn push_workspace(
 ) -> Option<tiler_windows::snapkey::WorkspaceIntent> {
     match SnapClassify::push(m, vk, is_up, fg, inj)? {
         Classified::Workspace(intent) => Some(intent),
-        Classified::Snap(_) => panic!("expected workspace digit"),
+        Classified::Snap(_) | Classified::Maximize(_) => panic!("expected workspace digit"),
+    }
+}
+
+fn push_maximize(
+    m: &mut SnapClassify,
+    is_up: bool,
+    fg: bool,
+    inj: bool,
+) -> Option<tiler_windows::snapkey::MaximizeIntent> {
+    use tiler_windows::snapkey::VK_M;
+    match SnapClassify::push(m, VK_M, is_up, fg, inj)? {
+        Classified::Maximize(intent) => Some(intent),
+        Classified::Snap(_) | Classified::Workspace(_) => panic!("expected maximize chord"),
     }
 }
 
@@ -448,7 +461,9 @@ fn saturated_queue_passes_without_consuming() {
     // The queued record carries the chord-time origin for the owner recheck.
     match q.pop_front().expect("intent") {
         QueuedSnapEvent::Intent(queued) => assert_eq!(queued.origin, origin),
-        QueuedSnapEvent::Workspace(_) | QueuedSnapEvent::Mask(_) => panic!("expected intent"),
+        QueuedSnapEvent::Workspace(_) | QueuedSnapEvent::Maximize(_) | QueuedSnapEvent::Mask(_) => {
+            panic!("expected intent")
+        }
     }
     while q.len() < INTENT_QUEUE_CAP {
         assert!(q.push(QueuedSnapEvent::Intent(
@@ -1095,4 +1110,188 @@ fn active_unmanaged_select_consumes_without_origin() {
         classify_and_queue(&mut m, &mut q, VK_0 + 3, false, None, false, tick, true),
         Some(false)
     );
+}
+
+#[test]
+fn maximize_toggle_consumes_down_repeat_up_with_origin_pairing() {
+    // Win+M (KDE Meta+M parity): down consumes with announce, held repeat is
+    // swallowed (no re-toggle, like the discrete KDE shortcut), up closes the
+    // pair without announce. Win released before the key-up still pairs by
+    // origin.
+    assert!(is_chord_vk(VK_M));
+    assert_eq!(VK_M, 0x4D);
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    assert!(m.win_held());
+    assert!(!m.key_is_down(VK_M));
+    let down = push_maximize(&mut m, false, true, false).expect("maximize down");
+    assert_eq!(down.edge, SnapEdge::Down);
+    assert!(down.consumed && down.announce);
+    assert!(m.key_is_down(VK_M));
+    let repeat = push_maximize(&mut m, false, true, false).expect("maximize repeat");
+    assert_eq!(repeat.edge, SnapEdge::Repeat);
+    assert!(repeat.consumed && !repeat.announce);
+    // Win released before the key-up still pairs by origin.
+    push_snap(&mut m, VK_LWIN, true, true, false);
+    let up = push_maximize(&mut m, true, true, false).expect("paired up");
+    assert_eq!(up.edge, SnapEdge::Up);
+    assert!(up.consumed && !up.announce);
+    assert!(!m.key_is_down(VK_M));
+    assert_eq!(push_maximize(&mut m, true, true, false), None);
+    assert_eq!(
+        (m.max_counts.down, m.max_counts.repeat, m.max_counts.up),
+        (1, 1, 1)
+    );
+    assert_eq!(m.max_counts.consumed, 3);
+    // Directional catalog untouched by the M chord.
+    assert!(m.counts.iter().all(|c| c.down == 0 && c.up == 0));
+}
+
+#[test]
+fn maximize_modifier_exactness_passes_untracked() {
+    // Shift selects the directional move arm: Win+Shift+M passes through
+    // untracked, and its paired key-up passes too. Ctrl/Alt, missing Win,
+    // bare M, and injected M never classify and never arm the mask.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    push_snap(&mut m, VK_SHIFT, false, true, false);
+    assert_eq!(push_maximize(&mut m, false, true, false), None);
+    assert_eq!(push_maximize(&mut m, true, true, false), None);
+    push_snap(&mut m, VK_SHIFT, true, true, false);
+    assert_eq!((m.max_counts.down, m.max_counts.up), (0, 0));
+    for mod_vk in [VK_CONTROL, VK_MENU, VK_LMENU] {
+        let mut m = SnapClassify::new(takeover());
+        win_down(&mut m, VK_LWIN);
+        push_snap(&mut m, mod_vk, false, true, false);
+        assert_eq!(push_maximize(&mut m, false, true, false), None);
+        assert_eq!(push_maximize(&mut m, true, true, false), None);
+        push_snap(&mut m, mod_vk, true, true, false);
+    }
+    let mut m = SnapClassify::new(takeover());
+    assert_eq!(push_maximize(&mut m, false, true, false), None);
+    assert_eq!(push_maximize(&mut m, false, true, true), None);
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    assert_eq!(push_maximize(&mut m, false, true, true), None);
+    assert!(!win_up_mask_reserve(
+        &mut m,
+        &mut SnapQueue::new(),
+        VK_LWIN,
+        true,
+        std::time::Instant::now()
+    ));
+}
+
+#[test]
+fn maximize_background_origin_never_consumes() {
+    // The toggle needs a managed origin like send: background-origin holds
+    // never consume mid-hold, takeover off passes everything through, and a
+    // closed session gate passes everything through.
+    let mut m = SnapClassify::new(takeover());
+    win_down(&mut m, VK_LWIN);
+    let down = push_maximize(&mut m, false, false, false).expect("logged");
+    assert!(!down.consumed && !down.announce);
+    let repeat = push_maximize(&mut m, false, true, false).expect("logged");
+    assert!(!repeat.consumed);
+    let up = push_maximize(&mut m, true, true, false).expect("logged");
+    assert!(!up.consumed);
+    let mut m = SnapClassify::new(KeyboardConfig::disabled());
+    win_down(&mut m, VK_LWIN);
+    let down = push_maximize(&mut m, false, true, false).expect("logged");
+    assert!(!down.consumed && !down.announce);
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    let tick = std::time::Instant::now();
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_LWIN, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_M, false, None, false, tick, false),
+        Some(false)
+    );
+    match q.pop_front().expect("maximize intent") {
+        QueuedSnapEvent::Maximize(intent) => assert!(!intent.consumed),
+        _ => panic!("expected maximize intent"),
+    }
+}
+
+#[test]
+fn maximize_arms_start_menu_mask_and_survives_saturation() {
+    use tiler_windows::snapkey::{MaskTrigger, QueuedMaximizeIntent, SnapQueue};
+    // A consumed Win+M reserves the E8 mask at Win-up with trigger evidence.
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    let tick = std::time::Instant::now();
+    assert_eq!(
+        classify_and_queue(&mut m, &mut q, VK_LWIN, false, None, false, tick, true),
+        None
+    );
+    assert_eq!(
+        classify_and_queue(
+            &mut m,
+            &mut q,
+            VK_M,
+            false,
+            Some(origin_of(7, "w7")),
+            false,
+            tick,
+            true
+        ),
+        Some(true)
+    );
+    assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
+    match q.pop_front().expect("maximize intent") {
+        QueuedSnapEvent::Maximize(QueuedMaximizeIntent { origin, .. }) => {
+            assert_eq!(origin, Some(origin_of(7, "w7")));
+        }
+        _ => panic!("expected maximize intent"),
+    }
+    match q.pop_front().expect("mask") {
+        QueuedSnapEvent::Mask(mask) => assert_eq!(mask.trigger, MaskTrigger::Maximize),
+        _ => panic!("expected mask"),
+    }
+    // Saturation fails closed: the toggle passes through and counts loss,
+    // while an earlier consumed toggle's mask stays armed.
+    let mut m = SnapClassify::new(takeover());
+    let mut q = SnapQueue::new();
+    push_snap(&mut m, VK_LWIN, false, true, false);
+    assert_eq!(
+        classify_and_queue(
+            &mut m,
+            &mut q,
+            VK_M,
+            false,
+            Some(origin_of(9, "w9")),
+            false,
+            tick,
+            true
+        ),
+        Some(true)
+    );
+    while q.len() < INTENT_QUEUE_CAP {
+        let _ = q.push(QueuedSnapEvent::Mask(tiler_windows::snapkey::QueuedMask {
+            trigger: MaskTrigger::Maximize,
+            tick,
+            inserted: 0,
+            release_sent: false,
+        }));
+    }
+    assert!(q.is_full());
+    assert_eq!(
+        classify_and_queue(
+            &mut m,
+            &mut q,
+            VK_M,
+            false,
+            Some(origin_of(9, "w9")),
+            false,
+            tick,
+            true
+        ),
+        Some(false)
+    );
+    assert!(q.dropped >= 1);
+    q.pop_front();
+    assert!(win_up_mask_reserve(&mut m, &mut q, VK_LWIN, true, tick));
 }

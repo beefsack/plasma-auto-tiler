@@ -296,10 +296,13 @@ impl ManagedWorkspaces {
     }
 
     /// Post-reveal eligible visible set for focus: non-hidden members whose
-    /// Engine token is present in the fresh eligible observation. Pure so the
-    /// fresh-focus regression pins it without native calls: pre-switch
-    /// membership alone is never fresh enough, and retained/minimized members
-    /// without a fresh frame never take focus.
+    /// Engine token is present in the fresh focus observation. The caller
+    /// unions eligible-observed tokens with verified retained maximized
+    /// tokens (focus-only; geometry still excludes them), so a maximized
+    /// mover stays focusable. Pure so the fresh-focus regression pins it
+    /// without native calls: pre-switch membership alone is never fresh
+    /// enough, and hidden/frameless members without a fresh token never
+    /// take focus.
     #[must_use]
     pub fn eligible_focus_set(
         &self,
@@ -964,5 +967,41 @@ mod tests {
         let empty = m.eligible_focus_set(&members, &member_tokens, &HashSet::new());
         assert!(empty.is_empty());
         assert_eq!(m.focus_target("mon-1", &ws2, &empty), None);
+    }
+
+    #[test]
+    fn eligible_focus_includes_retained_maximized_token() {
+        // A maximized mover is retained, never eligible-observed: the caller
+        // unions its verified retained token into the fresh focus set (focus
+        // only; geometry still excludes it), so the follow/return focus
+        // target resolves to the maximized member with exact foreground proof.
+        use std::collections::{BTreeMap, HashSet};
+        let mut m = ManagedWorkspaces::new();
+        m.ensure_output("mon-1");
+        let ws2 = m.resolve_send("mon-1", 2).expect("ws2");
+        let maxed = key(1);
+        let sibling = key(2);
+        assert!(m.assign(maxed.clone(), "mon-1", &ws2, false));
+        assert!(m.assign(sibling.clone(), "mon-1", &ws2, false));
+        m.note_foreground(&maxed);
+        let mut member_tokens: BTreeMap<WindowKey, String> = BTreeMap::new();
+        member_tokens.insert(maxed.clone(), "tok-max".to_owned());
+        member_tokens.insert(sibling.clone(), "tok-sib".to_owned());
+        let members: BTreeSet<WindowKey> = [maxed.clone(), sibling.clone()].into_iter().collect();
+        // Eligible-only set misses the retained maximized member.
+        let eligible_only: HashSet<String> = ["tok-sib".to_owned()].into_iter().collect();
+        let eligible = m.eligible_focus_set(&members, &member_tokens, &eligible_only);
+        assert_eq!(eligible, [sibling.clone()].into_iter().collect());
+        // Retained-inclusive focus set (production union) keeps both; the
+        // last-focus maximized mover wins the follow target.
+        let focus_fresh: HashSet<String> = ["tok-sib".to_owned(), "tok-max".to_owned()]
+            .into_iter()
+            .collect();
+        let focus_eligible = m.eligible_focus_set(&members, &member_tokens, &focus_fresh);
+        assert_eq!(
+            focus_eligible,
+            [maxed.clone(), sibling.clone()].into_iter().collect()
+        );
+        assert_eq!(m.focus_target("mon-1", &ws2, &focus_eligible), Some(maxed));
     }
 }

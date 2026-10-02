@@ -284,8 +284,111 @@ pub fn classify(facts: &WindowFacts) -> Result<(), SkipReason> {
     if facts.minimized {
         return Err(SkipReason::Minimized);
     }
+    if facts.cloaked {
+        return Err(SkipReason::Cloaked);
+    }
+    if facts.elevated {
+        return Err(SkipReason::Elevated);
+    }
+    if facts.shell {
+        return Err(SkipReason::Shell);
+    }
+    if facts.tool_window {
+        return Err(SkipReason::Tool);
+    }
+    if facts.owned {
+        return Err(SkipReason::OwnedDialog);
+    }
+    if facts.dialog {
+        return Err(SkipReason::Dialog);
+    }
+    // Overlay states last, fullscreen first: matches `overlay_refusal` so a
+    // window holding both reports fullscreen everywhere. Safety skips above
+    // keep their relative order.
+    if facts.captionless_fullscreen {
+        return Err(SkipReason::Fullscreen);
+    }
     if facts.maximized {
         return Err(SkipReason::Maximized);
+    }
+    if facts.no_activate {
+        return Err(SkipReason::NoActivate);
+    }
+    Ok(())
+}
+
+/// Maximized-overlay refusal for directional and pointer routes (KDE
+/// `move-refused-maximize` / `pointer-refused-maximize` parity): a
+/// maximized focused window keeps its tile slot but directional move/resize
+/// on it would change its retained position/share, so it is refused
+/// fail-closed before any Engine mutation. Focus carries no geometry write
+/// and stays allowed. Fullscreen wins when both overlay states hold (item 4
+/// owns the fullscreen toggle; this only orders the refusal vocabulary).
+#[must_use]
+pub const fn overlay_refusal(fullscreen: bool, maximized: bool) -> Option<&'static str> {
+    if fullscreen {
+        Some("fullscreen")
+    } else if maximized {
+        Some("maximize")
+    } else {
+        None
+    }
+}
+
+/// Retained canonical rectangle for an overlay member (KDE carried-snapshot
+/// parity): a maximized/fullscreen member rides its last-known tile
+/// rectangle instead of the compositor-owned native maximum frame, so tile
+/// topology and sibling shares survive the overlay. Falls back to the fresh
+/// frame only when no retained allocation exists yet (first sighting).
+#[must_use]
+pub const fn canonical_retained_rect(overlay: bool, fresh: Rect, retained: Option<Rect>) -> Rect {
+    match (overlay, retained) {
+        (true, Some(rect)) => rect,
+        _ => fresh,
+    }
+}
+
+/// One-shot maximize-clear gate for first admission (KDE
+/// `maximize-admission-clear` parity): the first non-fullscreen admission of
+/// a maximized window without a retained tiled slot restores the native
+/// maximize exactly once with no automatic retry. Fullscreen never clears,
+/// already-slotted members never re-clear, and an attempted identity never
+/// retries.
+#[must_use]
+pub const fn should_clear_maximize_at_admission(
+    fullscreen: bool,
+    maximized: bool,
+    known_slot: bool,
+    attempted: bool,
+) -> bool {
+    !fullscreen && maximized && !known_slot && !attempted
+}
+
+/// Flag-stability gate before a workspace-send membership transfer (KDE
+/// `flagsStillMatch` parity): the mover's live overlay flags must still
+/// equal the dispatch snapshot, or the transfer refuses with no writes.
+#[must_use]
+pub const fn send_flags_stable(
+    snapshot_fullscreen: bool,
+    snapshot_maximized: bool,
+    fresh_fullscreen: bool,
+    fresh_maximized: bool,
+) -> bool {
+    snapshot_fullscreen == fresh_fullscreen && snapshot_maximized == fresh_maximized
+}
+
+/// Focus eligibility gate (KDE `requestFocus` parity for overlays): focus
+/// carries no geometry write, so a maximized member stays focusable while
+/// every other ineligible state still refuses. Fullscreen never focuses here
+/// (the foreground fence owns it); geometry classification is untouched.
+/// Every gate except maximized is checked, so a maximized window that is
+/// also minimized/no-activate/etc still refuses for that other reason.
+pub fn classify_focus(facts: &WindowFacts) -> Result<(), SkipReason> {
+    if !facts.visible {
+        return Err(SkipReason::Hidden);
+    }
+    if facts.minimized {
+        return Err(SkipReason::Minimized);
     }
     if facts.cloaked {
         return Err(SkipReason::Cloaked);

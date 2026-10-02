@@ -50,6 +50,7 @@ pub const VK_RIGHT: u32 = 39;
 pub const VK_DOWN: u32 = 40;
 pub const VK_LWIN: u32 = 91;
 pub const VK_RWIN: u32 = 92;
+pub const VK_M: u32 = 0x4D;
 pub const VK_SHIFT: u32 = 16;
 pub const VK_CONTROL: u32 = 17;
 pub const VK_MENU: u32 = 18;
@@ -183,11 +184,19 @@ pub const fn is_digit_vk(vk: u32) -> bool {
 }
 
 /// True for any chord key the single classifier owns: directional catalog
-/// plus workspace digits. Modifiers, Win keys, and ordinary keys are not
-/// chord keys.
+/// plus workspace digits plus the maximize toggle. Modifiers, Win keys, and
+/// ordinary keys are not chord keys.
 #[must_use]
 pub fn is_chord_vk(vk: u32) -> bool {
-    catalog_index(vk).is_some() || is_digit_vk(vk)
+    catalog_index(vk).is_some() || is_digit_vk(vk) || is_maximize_vk(vk)
+}
+
+/// True only for the maximize-toggle chord key (Win+M, KDE Meta+M parity).
+/// Shift/Ctrl/Alt select the directional/workspace arms instead: Win+Shift+M
+/// and any Ctrl/Alt combination pass through untracked.
+#[must_use]
+pub const fn is_maximize_vk(vk: u32) -> bool {
+    vk == VK_M
 }
 
 /// Direction for a catalog index. Letters and arrows are exact aliases.
@@ -265,13 +274,26 @@ pub struct WorkspaceIntent {
     pub announce: bool,
 }
 
-/// Unified classifier outcome: exactly one of directional or workspace.
-/// One machine, one modifier/mask authority; digits share Win/Shift/Ctrl/Alt
-/// tracking, origin pairing, saturation, and the E8 mask with H/J/K/L/arrows.
+/// Classifier outcome for one maximize-toggle event (Win+M, KDE Meta+M
+/// parity). The toggle carries no direction: only downs and repeats
+/// dispatch, ups close the pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MaximizeIntent {
+    pub edge: SnapEdge,
+    pub foreground: bool,
+    pub consumed: bool,
+    pub announce: bool,
+}
+
+/// Unified classifier outcome: exactly one of directional, workspace, or
+/// maximize. One machine, one modifier/mask authority; maximize shares
+/// Win/Shift/Ctrl/Alt tracking, origin pairing, saturation, and the E8 mask
+/// with H/J/K/L/arrows and digits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Classified {
     Snap(SnapIntent),
     Workspace(WorkspaceIntent),
+    Maximize(MaximizeIntent),
 }
 
 impl Classified {
@@ -280,6 +302,7 @@ impl Classified {
         match self {
             Self::Snap(intent) => intent.consumed,
             Self::Workspace(intent) => intent.consumed,
+            Self::Maximize(intent) => intent.consumed,
         }
     }
 
@@ -288,17 +311,19 @@ impl Classified {
         match self {
             Self::Snap(intent) => intent.announce,
             Self::Workspace(intent) => intent.announce,
+            Self::Maximize(intent) => intent.announce,
         }
     }
 }
 
-/// Which chord armed the Start-menu mask. Digits arm it exactly like
-/// directional chords: any consumed chord in the Win hold needs the E8 pair
-/// at Win-up, or the OS opens Start.
+/// Which chord armed the Start-menu mask. Digits and maximize arm it exactly
+/// like directional chords: any consumed chord in the Win hold needs the E8
+/// pair at Win-up, or the OS opens Start.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MaskTrigger {
     Snap { op: SnapOp, direction: Direction },
     Workspace { op: WorkspaceOp, index: u8 },
+    Maximize,
 }
 
 /// Pure product chord classifier. Tracks both Win keys plus the Shift family
@@ -327,6 +352,8 @@ pub struct SnapClassify {
     digit_down: [bool; 10],
     digit_origin: [bool; 10],
     digit_op: [Option<WorkspaceOp>; 10],
+    maximize_down: bool,
+    maximize_origin: bool,
     pub enabled: bool,
     /// Cached session gate published by the owner (takeover plus active,
     /// non-fullscreen, non-elevated, non-gesture). Distinct from the managed
@@ -337,6 +364,7 @@ pub struct SnapClassify {
     pub allow_win_l: bool,
     pub counts: [SnapCounts; 8],
     pub digit_counts: [SnapCounts; 10],
+    pub max_counts: SnapCounts,
     mask_pending: bool,
     mask_trigger: Option<MaskTrigger>,
     hold_masked: bool,
@@ -361,11 +389,14 @@ impl SnapClassify {
             digit_down: [false; 10],
             digit_origin: [false; 10],
             digit_op: [None; 10],
+            maximize_down: false,
+            maximize_origin: false,
             enabled: config.takeover,
             gate_active: true,
             allow_win_l: config.allow_win_l,
             counts: [SnapCounts::default(); 8],
             digit_counts: [SnapCounts::default(); 10],
+            max_counts: SnapCounts::default(),
             mask_pending: false,
             mask_trigger: None,
             hold_masked: false,
@@ -404,6 +435,9 @@ impl SnapClassify {
         }
         if is_digit_vk(vk) {
             return self.digit_down[(vk - VK_0) as usize];
+        }
+        if is_maximize_vk(vk) {
+            return self.maximize_down;
         }
         false
     }
@@ -494,6 +528,9 @@ impl SnapClassify {
         }
         if is_digit_vk(vk) {
             return self.push_digit(vk, is_up, foreground);
+        }
+        if is_maximize_vk(vk) {
+            return self.push_maximize(is_up, foreground);
         }
         let Some(idx) = catalog_index(vk) else {
             // Ordinary keys reach the OS and disguise Win by themselves.
@@ -744,6 +781,99 @@ impl SnapClassify {
             }
         }
     }
+
+    /// Maximize-toggle half of the unified classifier (Win+M, KDE Meta+M
+    /// parity): same Win/Ctrl/Alt/origin/mask contract as the directional
+    /// catalog. Shift selects the directional move arm instead, so any held
+    /// Shift (or Ctrl/Alt, or missing Win) passes M through untracked and the
+    /// paired key-up also passes. Only the down dispatches: KDE shortcuts are
+    /// discrete per press, so held repeats are swallowed (mask stays armed)
+    /// instead of re-toggling. Ups close the pair. The toggle needs a managed
+    /// origin like send: background foreground never consumes.
+    fn push_maximize(&mut self, is_up: bool, foreground: bool) -> Option<Classified> {
+        if is_up {
+            if !self.maximize_down {
+                return None;
+            }
+            self.maximize_down = false;
+            let origin = self.maximize_origin;
+            self.maximize_origin = false;
+            self.max_counts.up += 1;
+            if self.enabled && self.gate_active && foreground && origin {
+                self.max_counts.consumed += 1;
+                Some(Classified::Maximize(MaximizeIntent {
+                    edge: SnapEdge::Up,
+                    foreground,
+                    consumed: true,
+                    announce: false,
+                }))
+            } else {
+                self.max_counts.passed += 1;
+                self.mask_pending = false;
+                Some(Classified::Maximize(MaximizeIntent {
+                    edge: SnapEdge::Up,
+                    foreground,
+                    consumed: false,
+                    announce: false,
+                }))
+            }
+        } else {
+            if self.ctrl || self.alt || self.shift || !(self.win_l || self.win_r) {
+                self.mask_pending = false;
+                return None;
+            }
+            if self.maximize_down {
+                self.max_counts.repeat += 1;
+                if self.enabled && self.gate_active && foreground && self.maximize_origin {
+                    // Held repeat: swallowed, never re-dispatched. The hold
+                    // continues to disguise Win, so the mask stays armed.
+                    self.max_counts.consumed += 1;
+                    self.mask_pending = true;
+                    self.mask_trigger = Some(MaskTrigger::Maximize);
+                    Some(Classified::Maximize(MaximizeIntent {
+                        edge: SnapEdge::Repeat,
+                        foreground,
+                        consumed: true,
+                        announce: false,
+                    }))
+                } else {
+                    self.max_counts.passed += 1;
+                    self.mask_pending = false;
+                    Some(Classified::Maximize(MaximizeIntent {
+                        edge: SnapEdge::Repeat,
+                        foreground,
+                        consumed: false,
+                        announce: false,
+                    }))
+                }
+            } else {
+                self.maximize_down = true;
+                let origin = self.enabled && self.gate_active && foreground;
+                self.maximize_origin = origin;
+                self.max_counts.down += 1;
+                if origin {
+                    self.max_counts.consumed += 1;
+                    self.mask_pending = true;
+                    self.mask_trigger = Some(MaskTrigger::Maximize);
+                    Some(Classified::Maximize(MaximizeIntent {
+                        edge: SnapEdge::Down,
+                        foreground,
+                        consumed: true,
+                        announce: true,
+                    }))
+                } else {
+                    self.max_counts.passed += 1;
+                    self.mask_pending = false;
+                    Some(Classified::Maximize(MaximizeIntent {
+                        edge: SnapEdge::Down,
+                        foreground,
+                        consumed: false,
+                        announce: false,
+                    }))
+                }
+            }
+        }
+    }
 }
 
 /// One Start-menu mask reservation: the arming chord plus the Win-up instant
@@ -850,10 +980,24 @@ pub struct QueuedWorkspaceIntent {
     pub tick: std::time::Instant,
 }
 
+/// One approved maximize chord captured by the callback. `origin` is the
+/// managed identity bound at chord time (`None` means background/inactive or
+/// unmanaged foreground at chord time); without an origin the toggle never
+/// dispatches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedMaximizeIntent {
+    pub edge: SnapEdge,
+    pub origin: Option<SnapOrigin>,
+    pub consumed: bool,
+    pub announce: bool,
+    pub tick: std::time::Instant,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueuedSnapEvent {
     Intent(QueuedIntent),
     Workspace(QueuedWorkspaceIntent),
+    Maximize(QueuedMaximizeIntent),
     Mask(QueuedMask),
 }
 
@@ -984,6 +1128,13 @@ pub fn classify_and_queue(
         Classified::Workspace(intent) => QueuedSnapEvent::Workspace(QueuedWorkspaceIntent {
             op: intent.op,
             index: intent.index,
+            edge: intent.edge,
+            origin,
+            consumed: intent.consumed,
+            announce: intent.announce,
+            tick,
+        }),
+        Classified::Maximize(intent) => QueuedSnapEvent::Maximize(QueuedMaximizeIntent {
             edge: intent.edge,
             origin,
             consumed: intent.consumed,
@@ -1704,6 +1855,9 @@ pub mod sys {
             super::MaskTrigger::Workspace { op, index } => serde_json::json!({
                 "trigger_op": op.as_str(),
                 "trigger_index": index,
+            }),
+            super::MaskTrigger::Maximize => serde_json::json!({
+                "trigger_op": "maximize",
             }),
         };
         value["inserted"] = serde_json::Value::from(mask.inserted);

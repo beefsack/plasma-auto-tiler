@@ -42,12 +42,13 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_SHOW, EVENT_SYSTEM_FOREGROUND,
     EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZESTART, EnumChildWindows, EnumWindows, GW_OWNER,
     GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetCursorPos, GetDesktopWindow, GetForegroundWindow,
-    GetShellWindow, GetSystemMetrics, GetWindow, GetWindowLongW, GetWindowRect,
+    GetShellWindow, GetSystemMetrics, GetWindow, GetWindowLongW, GetWindowPlacement, GetWindowRect,
     GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, MINMAXINFO, MSG,
     PM_REMOVE, PeekMessageW, QS_ALLINPUT, SM_CXMAXTRACK, SM_CXMINTRACK, SM_CXSCREEN, SM_CYMAXTRACK,
-    SM_CYMINTRACK, SM_CYSCREEN, SMTO_ABORTIFHUNG, SWP_NOACTIVATE, SWP_NOZORDER,
-    SendMessageTimeoutW, SetForegroundWindow, SetWindowPos, TranslateMessage,
-    WINEVENT_OUTOFCONTEXT, WM_GETMINMAXINFO, WM_NCHITTEST, WS_CAPTION, WS_EX_NOACTIVATE,
+    SM_CYMINTRACK, SM_CYSCREEN, SMTO_ABORTIFHUNG, SW_MAXIMIZE, SW_SHOWMAXIMIZED, SW_SHOWNOACTIVATE,
+    SWP_NOACTIVATE, SWP_NOZORDER, SendMessageTimeoutW, SetForegroundWindow, SetWindowPlacement,
+    SetWindowPos, ShowWindowAsync, TranslateMessage, WINDOWPLACEMENT, WINEVENT_OUTOFCONTEXT,
+    WM_GETMINMAXINFO, WM_NCHITTEST, WPF_ASYNCWINDOWPLACEMENT, WS_CAPTION, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
 };
 
@@ -988,6 +989,13 @@ struct TileLoop {
     /// `verify_proof_owned` before every write. Normal `tile` allows
     /// ordinary-app hides; `shortcut-proof` and `tile-proof` never hide.
     workspace_proof: bool,
+    /// One-shot maximize-clear attempts at admission (KDE
+    /// `maximizeAdmissionAttempts` parity): the first non-fullscreen
+    /// admission of a maximized window without a retained tiled slot restores
+    /// the native maximize exactly once with no automatic retry. Keyed by
+    /// HWND plus process creation so a recycled HWND re-arms for the fresh
+    /// window while the same window never retries.
+    maximize_admission_attempted: HashSet<String>,
     /// Last observed foreground HWND. Only an actual foreground change to a
     /// hidden member selects its workspace; event-only notifications never do.
     last_foreground: u64,
@@ -1051,12 +1059,20 @@ struct HiddenRecord {
 /// (minimized without a DWM frame) or an ineligible state with a fresh
 /// frame (maximized, fullscreen, cloaked). `rect` is `None` only when no
 /// frame exists; the caller falls back to the last-known snapshot so hidden
-/// Engine membership and layout survive.
+/// Engine membership and layout survive. `maximized`/`fullscreen` carry the
+/// fresh overlay flags for this tick so directional/pointer routes can
+/// refuse before any Engine mutation (KDE maximize/fullscreen isolation
+/// parity) and admission can clear a first-seen maximize exactly once.
 #[derive(Debug, Clone)]
 struct RetainedRow {
     key: crate::workspace::WindowKey,
     token: String,
     rect: Option<Rect>,
+    maximized: bool,
+    fullscreen: bool,
+    /// Fresh facts for observed-ineligible rows (`None` for frameless known
+    /// rows): lets admission clear only otherwise-eligible maximized members.
+    facts: Option<WindowFacts>,
 }
 
 impl TileLoop {
@@ -1141,6 +1157,9 @@ impl TileLoop {
                         },
                         token: known.token.clone(),
                         rect: None,
+                        maximized: false,
+                        fullscreen: false,
+                        facts: None,
                     });
                     continue;
                 }
@@ -1194,6 +1213,9 @@ impl TileLoop {
                             },
                             token: window.token.clone(),
                             rect: None,
+                            maximized: false,
+                            fullscreen: false,
+                            facts: None,
                         });
                         continue;
                     }
@@ -1203,7 +1225,9 @@ impl TileLoop {
                     skipped.push((window.token.clone(), reason.as_str().to_owned()));
                     // Ineligible but fully observed: the fresh frame keeps
                     // retained occupancy (maximized, fullscreen, cloaked)
-                    // inside Engine membership with no geometry writes.
+                    // inside Engine membership with no geometry writes. The
+                    // fresh overlay flags ride along so move/pointer routes
+                    // refuse before mutation and admission clears once.
                     retained.push(RetainedRow {
                         key: crate::workspace::WindowKey {
                             hwnd: window.hwnd,
@@ -1212,6 +1236,9 @@ impl TileLoop {
                         },
                         token: window.token.clone(),
                         rect: Some(window.visible),
+                        maximized: window.facts.maximized,
+                        fullscreen: window.facts.captionless_fullscreen,
+                        facts: Some(window.facts),
                     });
                 }
             }
@@ -1267,10 +1294,81 @@ fn snap_origin_of(window: &ObservedWindow) -> SnapOrigin {
     }
 }
 
+/// Managed origins for chord resolution: eligible observed windows plus
+/// verified overlay-retained members (maximized/fullscreen). A maximized
+/// member is retained, never eligible, so eligible-only origins break Win+M
+/// restore, focus while maximized, and send from a maximized foreground.
+/// Only existing members with full identity plus live lifetime-tag match
+/// ride along: no foreign or invented members. Exactness stays with the
+/// per-intent owner recheck.
+fn managed_origins(
+    state: &TileLoop,
+    me: &ProcessIdentity,
+    observed: &[ObservedWindow],
+    retained: &[RetainedRow],
+) -> Vec<SnapOrigin> {
+    let mut out: Vec<SnapOrigin> = observed.iter().map(snap_origin_of).collect();
+    for row in retained {
+        if !row.maximized && !row.fullscreen {
+            continue;
+        }
+        let Some(stored) = state.member_identity.get(&row.key) else {
+            continue;
+        };
+        if stored.pid != row.key.pid
+            || stored.process_creation != row.key.creation
+            || stored.user_sid != me.user_sid
+            || stored.session_id != me.session_id
+        {
+            continue;
+        }
+        let live_tag = crate::product_hide::sys::read_member_tag(row.key.hwnd);
+        let Some(tag) = state.member_tags.get(&row.key) else {
+            continue;
+        };
+        if !crate::workspace_owner::visible_lifetime_ok(tag, live_tag.as_deref()) {
+            continue;
+        }
+        if !scope_allows(&state.scope, &stored.exe_path) {
+            continue;
+        }
+        if !hosted_gate_allows(
+            &stored.exe_path,
+            row.key.hwnd,
+            stored.pid,
+            &state.scope_hosts,
+        ) {
+            continue;
+        }
+        if let Some(entries) = state.allowlist.as_ref() {
+            let Some(entry) = entries.iter().find(|e| e.hwnd == row.key.hwnd) else {
+                continue;
+            };
+            if verify_proof_owned(row.key.hwnd, entry, me).is_err() {
+                continue;
+            }
+        }
+        out.push(SnapOrigin {
+            hwnd: row.key.hwnd,
+            token: row.token.clone(),
+            pid: row.key.pid,
+            creation: row.key.creation.clone(),
+        });
+    }
+    out
+}
+
 /// Refresh cached management state from a complete observation: managed set,
 /// stable rects, gesture retention, and the origin map the keyboard callback
-/// binds chords against. Exactness stays with the per-intent owner recheck.
-fn publish_managed(state: &mut TileLoop, observed: &[ObservedWindow]) {
+/// binds chords against. The origin map is retained-aware (verified overlay
+/// members included) so a maximized foreground still binds a chord origin.
+/// Exactness stays with the per-intent owner recheck.
+fn publish_managed(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    observed: &[ObservedWindow],
+    retained: &[RetainedRow],
+) {
     state.managed = observed.iter().map(|w| w.hwnd).collect();
     state.stable = observed.iter().map(|w| (w.hwnd, w.visible)).collect();
     state
@@ -1279,9 +1377,9 @@ fn publish_managed(state: &mut TileLoop, observed: &[ObservedWindow]) {
     state
         .move_kind
         .retain(|hwnd, _| state.managed.contains(hwnd));
-    state.snap_origins = observed
-        .iter()
-        .map(|w| (w.hwnd, snap_origin_of(w)))
+    state.snap_origins = managed_origins(state, me, observed, retained)
+        .into_iter()
+        .map(|origin| (origin.hwnd, origin))
         .collect();
 }
 
@@ -2069,6 +2167,7 @@ fn revalidate_target(
     scope: &[String],
     member_tag: Option<&str>,
     scope_hosts: &[ScopeHostChild],
+    allow_maximized: bool,
 ) -> std::result::Result<WriteTarget, &'static str> {
     let hwnd = expected.hwnd as isize as HWND;
     let mut pid: u32 = 0;
@@ -2133,7 +2232,14 @@ fn revalidate_target(
         // exe/class/tag, no ordinary fallback.
         verify_proof_owned(fresh.hwnd, entry, me)?;
     }
-    classify(&fresh.facts).map_err(|reason| reason.as_str())?;
+    // Focus carries no geometry write, so it stays allowed onto a maximized
+    // member (KDE `requestFocus` overlay exemption); geometry never allows
+    // it. Fullscreen and every other skip still refuse on both paths.
+    if allow_maximized {
+        crate::tiling::classify_focus(&fresh.facts).map_err(|reason| reason.as_str())?;
+    } else {
+        classify(&fresh.facts).map_err(|reason| reason.as_str())?;
+    }
     if fresh.token != expected.token {
         return Err("identity-changed");
     }
@@ -2151,6 +2257,250 @@ fn pid_current(hwnd_u64: u64, pid: u32) -> bool {
         GetWindowThreadProcessId(hwnd, &mut current);
     }
     current != 0 && current == pid
+}
+
+/// Fresh maximized read on one HWND (single `IsZoomed` query, no frame read).
+fn is_zoomed_now(hwnd_u64: u64) -> bool {
+    let hwnd = hwnd_u64 as isize as HWND;
+    let zoomed = unsafe { IsZoomed(hwnd) };
+    zoomed != 0
+}
+
+/// Restore one maximized window to its normal placement without activating
+/// it: the official `GetWindowPlacement`/`SetWindowPlacement` route with
+/// `SW_SHOWNOACTIVATE` (restores in place, active window stays active) plus
+/// `WPF_ASYNCWINDOWPLACEMENT` (the request posts to the owner thread, so the
+/// loop never blocks on a hung window). Single bounded call pair, no wait, no
+/// retry. Returns dispatch vs observed completion honestly: `restored` only
+/// when the window no longer reads maximized, `dispatched` when the setter
+/// accepted but the async completion is still pending (converges next tick),
+/// `threw` when nothing was dispatched.
+fn restore_zoom_placement(hwnd_u64: u64) -> &'static str {
+    let hwnd = hwnd_u64 as isize as HWND;
+    // Immediate pre-placement revalidation: a window that closed (or already
+    // restored) between the tick observation and this write takes no write.
+    if unsafe { IsWindow(hwnd) } == 0 {
+        return "threw";
+    }
+    if !is_zoomed_now(hwnd_u64) {
+        return "restored";
+    }
+    let mut placement: WINDOWPLACEMENT = unsafe { std::mem::zeroed() };
+    placement.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
+    if unsafe { GetWindowPlacement(hwnd, &mut placement) } == 0 {
+        return "threw";
+    }
+    if placement.showCmd != SW_SHOWMAXIMIZED as u32 {
+        return if is_zoomed_now(hwnd_u64) {
+            "dispatched"
+        } else {
+            "restored"
+        };
+    }
+    placement.showCmd = SW_SHOWNOACTIVATE as u32;
+    placement.flags |= WPF_ASYNCWINDOWPLACEMENT;
+    if unsafe { SetWindowPlacement(hwnd, &placement) } == 0 {
+        return "threw";
+    }
+    if is_zoomed_now(hwnd_u64) {
+        "dispatched"
+    } else {
+        "restored"
+    }
+}
+
+/// Toggle one verified managed window's native maximize state. Maximize uses
+/// the official async route (`ShowWindowAsync`, never blocks on a hung
+/// target); restore uses the nonactivating placement path above. Returns the
+/// readback-settled outcome for the bounded lifecycle log: `dispatched`
+/// whenever the setter accepted but native completion is still pending
+/// (converges next tick; the waiter proves `IsZoomed` separately).
+fn toggle_zoom_async(hwnd_u64: u64, wanted: bool) -> &'static str {
+    let hwnd = hwnd_u64 as isize as HWND;
+    if wanted {
+        if unsafe { ShowWindowAsync(hwnd, SW_MAXIMIZE) } == 0 {
+            return "threw";
+        }
+    } else {
+        match restore_zoom_placement(hwnd_u64) {
+            "restored" => return "restored",
+            "dispatched" => return "dispatched",
+            _ => return "threw",
+        }
+    }
+    if is_zoomed_now(hwnd_u64) == wanted {
+        if wanted { "maximized" } else { "restored" }
+    } else {
+        "dispatched"
+    }
+}
+
+/// Otherwise-eligible check for an admission-clear candidate: every safety
+/// gate must already pass, so the clear never mutates an elevated, shell,
+/// tool, owned, dialog, cloaked, or no-activate window. Maximized is the only
+/// permitted overlay state here (fullscreen never clears, checked separately).
+fn admission_clear_eligible(facts: WindowFacts) -> bool {
+    facts.visible
+        && !facts.minimized
+        && !facts.cloaked
+        && !facts.elevated
+        && !facts.shell
+        && !facts.tool_window
+        && !facts.owned
+        && !facts.dialog
+        && !facts.no_activate
+}
+
+/// One-shot maximize clear at admission (KDE `clearMaximizeAtAdmission`
+/// parity). Call after `ensure_workspace_assignments` (lifetime tags stamped)
+/// and before the first Engine admission of the tick. For every retained
+/// maximized, non-fullscreen row that is otherwise eligible, scoped,
+/// hosted-gated, and proof-verified with fresh identity, and that holds no
+/// retained tile slot (`member_rects`), restore the native maximize exactly
+/// once with no automatic retry. Fullscreen never clears. The cleared window
+/// converges as eligible on the next tick.
+///
+/// Attempts key on HWND plus process creation plus the live lifetime tag, so
+/// a recycled HWND re-arms for the fresh window while the same window never
+/// retries. Stale attempts prune when the HWND leaves the enumeration or the
+/// live occupant's pid/creation moved on.
+fn clear_maximize_at_admission(
+    state: &mut TileLoop,
+    me: &ProcessIdentity,
+    retained: &[RetainedRow],
+) {
+    let log_path = state.log_path.clone();
+    for row in retained {
+        if row.fullscreen || !row.maximized {
+            continue;
+        }
+        if !row.facts.is_some_and(admission_clear_eligible) {
+            continue;
+        }
+        // Truly no retained tile slot: a slotted member keeps its allocation
+        // and never re-clears. Workspace membership alone is not a slot.
+        if state.member_rects.contains_key(&row.token) {
+            continue;
+        }
+        // Fresh identity: the live window must still be the retained one with
+        // a same-session, medium-integrity identity. Scope, hosted-child, and
+        // proof gates match observation admission exactly.
+        let hwnd = row.key.hwnd as isize as HWND;
+        let mut live_pid: u32 = 0;
+        unsafe {
+            GetWindowThreadProcessId(hwnd, &mut live_pid);
+        }
+        if live_pid == 0 || live_pid != row.key.pid {
+            continue;
+        }
+        let live = match HeldProcess::open(live_pid).and_then(|held| {
+            let ident = held.identity()?;
+            let rid = held.integrity()?;
+            Ok((ident, rid))
+        }) {
+            Ok((ident, rid)) => {
+                if ident.pid != live_pid
+                    || ident.process_creation != row.key.creation
+                    || ident.user_sid != me.user_sid
+                    || ident.session_id != me.session_id
+                    || !is_medium_rid(rid)
+                {
+                    continue;
+                }
+                ident
+            }
+            Err(_) => continue,
+        };
+        if !scope_allows(&state.scope, &live.exe_path) {
+            continue;
+        }
+        if !hosted_gate_allows(&live.exe_path, row.key.hwnd, live_pid, &state.scope_hosts) {
+            continue;
+        }
+        if let Some(entries) = state.allowlist.as_ref() {
+            let Some(entry) = entries.iter().find(|e| e.hwnd == row.key.hwnd) else {
+                continue;
+            };
+            if verify_proof_owned(row.key.hwnd, entry, me).is_err() {
+                continue;
+            }
+        }
+        let live_tag = crate::product_hide::sys::read_member_tag(row.key.hwnd);
+        let attempt_key = format!(
+            "{}:{}:{}:{}",
+            row.key.hwnd,
+            row.key.creation,
+            live_pid,
+            live_tag.as_deref().unwrap_or("")
+        );
+        if !crate::tiling::should_clear_maximize_at_admission(
+            row.fullscreen,
+            row.maximized,
+            false,
+            state.maximize_admission_attempted.contains(&attempt_key),
+        ) {
+            continue;
+        }
+        // Mark before the native call so a failed write never retries.
+        state.maximize_admission_attempted.insert(attempt_key);
+        let outcome = restore_zoom_placement(row.key.hwnd);
+        log_json_at(
+            &log_path,
+            serde_json::json!({
+                "event": "maximize-admission-clear",
+                "window": row.token,
+                "outcome": outcome,
+            }),
+        );
+    }
+    // Prune attempts whose window left the enumeration or whose HWND now hosts
+    // a different pid/creation: the set stays bounded without ever re-arming
+    // a live window.
+    state.maximize_admission_attempted.retain(|key| {
+        let mut parts = key.splitn(4, ':');
+        let (Some(hwnd), Some(creation), Some(pid)) = (parts.next(), parts.next(), parts.next())
+        else {
+            return false;
+        };
+        let Ok(hwnd_u64) = hwnd.parse::<u64>() else {
+            return false;
+        };
+        if !state.last_hwnds.contains(&hwnd_u64) {
+            return false;
+        }
+        let Ok(pid_u32) = pid.parse::<u32>() else {
+            return false;
+        };
+        let hwnd_ptr = hwnd_u64 as isize as HWND;
+        if unsafe { IsWindow(hwnd_ptr) } == 0 {
+            return false;
+        }
+        let mut live_pid: u32 = 0;
+        unsafe {
+            GetWindowThreadProcessId(hwnd_ptr, &mut live_pid);
+        }
+        live_pid == pid_u32 && {
+            let key = crate::workspace::WindowKey {
+                hwnd: hwnd_u64,
+                pid: pid_u32,
+                creation: creation.to_owned(),
+            };
+            // A same-process reuse drops membership tables at assignment; a
+            // pruned attempt re-arms the fresh window below.
+            state.member_tags.contains_key(&key) || {
+                HeldProcess::open(live_pid)
+                    .and_then(|held| held.identity())
+                    .is_ok_and(|ident| ident.process_creation == creation)
+            }
+        }
+    });
+}
+
+/// Overlay refusal for one verified member before any Engine mutation (KDE
+/// move/pointer isolation parity): fullscreen wins, then maximize. Returns
+/// the refusal cause or `None` when the route may proceed.
+fn overlay_refusal_for(row: &RetainedRow) -> Option<&'static str> {
+    crate::tiling::overlay_refusal(row.fullscreen, row.maximized)
 }
 
 type DesiredEntry = crate::workspace_owner::PlannedWrite;
@@ -2254,18 +2604,21 @@ fn assemble_domain_rows(
             });
             continue;
         }
-        // Retained occupancy: fresh frame when observed, else last snapshot.
-        // Existing skip semantics preserved: retained rows carry no hint.
+        // Retained occupancy: an overlaid (maximized/fullscreen) member rides
+        // its last-known tile rectangle, never the compositor-owned native
+        // maximum frame, so tile topology and sibling shares survive the
+        // overlay; first sightings fall back to the fresh frame. Retained rows
+        // carry no hint and never take writes. Existing skip semantics
+        // preserved.
         if let Some(row) = retained.iter().find(|r| r.key == *key) {
-            if let Some(rect) = row.rect {
+            let overlay = row.maximized || row.fullscreen;
+            let kept = state.member_rects.get(&row.token).copied();
+            let rect = match row.rect {
+                Some(fresh) => Some(crate::tiling::canonical_retained_rect(overlay, fresh, kept)),
+                None => kept,
+            };
+            if let Some(rect) = rect {
                 state.member_rects.insert(row.token.clone(), rect);
-                views.push(crate::workspace_owner::MemberView {
-                    key: key.clone(),
-                    token: row.token.clone(),
-                    rect,
-                    hints: WindowSizeHints::none(),
-                });
-            } else if let Some(rect) = state.member_rects.get(&row.token).copied() {
                 views.push(crate::workspace_owner::MemberView {
                     key: key.clone(),
                     token: row.token.clone(),
@@ -2461,8 +2814,11 @@ fn reconcile_tick(
         );
         return;
     };
-    publish_managed(state, &observed);
+    publish_managed(state, me, &observed, &retained);
     ensure_workspace_assignments(state, me, &mut observed, areas);
+    // First-seen maximized windows restore once here: lifetime tags are
+    // stamped, and the cleared window converges as eligible next tick.
+    clear_maximize_at_admission(state, me, &retained);
     workspace_close_cleanup(state);
     // Structured observer tick before Engine dispatch: full EnumWindows
     // success with the raw enumerated count and the managed (eligible,
@@ -2739,6 +3095,7 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> Option<ApplySu
             &state.scope,
             stored_tag,
             &state.scope_hosts,
+            false,
         ) {
             Ok(target) => target,
             Err(reason) => {
@@ -2895,7 +3252,7 @@ fn apply_geometry(state: &mut TileLoop, input: ApplyInput<'_>) -> Option<ApplySu
         readback_ok = true;
         // Stable pre-gesture state follows the AFTER-actuation observation,
         // never the pre-apply frame the Engine just consumed.
-        publish_managed(state, &reread);
+        publish_managed(state, me, &reread, &reread_retained);
         let reread_by_token: HashMap<&str, Rect> = reread
             .iter()
             .map(|w| (w.token.as_str(), w.visible))
@@ -3127,6 +3484,7 @@ fn actuate_focus(
     me: &ProcessIdentity,
     fulls: &[Rect],
     observed: &[ObservedWindow],
+    retained: &[RetainedRow],
     to_token: &str,
 ) -> FocusActuation {
     let unsettled = |outcome: &'static str| FocusActuation {
@@ -3137,8 +3495,63 @@ fn actuate_focus(
         eventual: false,
         deferred: false,
     };
-    let Some(expected) = observed.iter().find(|w| w.token == to_token) else {
-        return unsettled("vanished");
+    // Eligible observed target first; otherwise a verified retained maximized
+    // member (KDE `requestFocus` overlay exemption): maximized is retained,
+    // never eligible, so eligible-only lookup never focuses it. The expected
+    // identity below still revalidates fresh with the full
+    // identity/scope/hosted/proof/lifetime gates; only the geometry
+    // classifier is focus-relaxed (maximized allowed, fullscreen still
+    // refused). Reuses the retained-aware origin set's membership rule.
+    let owned_expected: Option<ObservedWindow>;
+    let expected = if let Some(found) = observed.iter().find(|w| w.token == to_token) {
+        found
+    } else {
+        let Some(row) = retained.iter().find(|r| r.token == to_token) else {
+            return unsettled("vanished");
+        };
+        let Some(stored) = state.member_identity.get(&row.key).cloned() else {
+            return unsettled("vanished");
+        };
+        owned_expected = Some(ObservedWindow {
+            hwnd: row.key.hwnd,
+            token: row.token.clone(),
+            outer: Rect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+            },
+            visible: Rect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+            },
+            insets: FrameInsets::default(),
+            identity: crate::tiling::ObservedTarget {
+                hwnd: row.key.hwnd,
+                pid: row.key.pid,
+                process_creation: row.key.creation.clone(),
+                exe_path: stored.exe_path,
+                user_sid: stored.user_sid,
+                session_id: stored.session_id,
+                tag: String::new(),
+            },
+            facts: row.facts.unwrap_or(crate::tiling::WindowFacts {
+                visible: true,
+                minimized: false,
+                maximized: true,
+                cloaked: false,
+                elevated: false,
+                shell: false,
+                tool_window: false,
+                owned: false,
+                captionless_fullscreen: false,
+                no_activate: false,
+                dialog: false,
+            }),
+        });
+        owned_expected.as_ref().expect("retained expected built")
     };
     let proof_mode = state.allowlist.is_some();
     let member_key = crate::workspace::WindowKey {
@@ -3157,6 +3570,7 @@ fn actuate_focus(
         &state.scope,
         stored_tag,
         &state.scope_hosts,
+        true,
     ) {
         Ok(target) => target,
         Err(reason) => return unsettled(reason),
@@ -3342,6 +3756,7 @@ fn keyboard_tick(
                 }
                 QueuedSnapEvent::Intent(_) => stale += 1,
                 QueuedSnapEvent::Workspace(_) => stale += 1,
+                QueuedSnapEvent::Maximize(_) => stale += 1,
             }
         }
         if stale > 0 {
@@ -3434,9 +3849,12 @@ fn keyboard_tick(
                     );
                     continue;
                 };
-                publish_managed(state, &observed);
+                publish_managed(state, me, &observed, &retained);
                 ensure_workspace_assignments(state, me, &mut observed, areas);
-                let fresh: Vec<SnapOrigin> = observed.iter().map(snap_origin_of).collect();
+                // First-seen maximized windows restore once here: lifetime tags are
+                // stamped, and the cleared window converges as eligible next tick.
+                clear_maximize_at_admission(state, me, &retained);
+                let fresh: Vec<SnapOrigin> = state.snap_origins.values().cloned().collect();
                 let foreground_hwnd = Some(unsafe { GetForegroundWindow() } as usize as u64);
                 let (from, continued) = match resolve_origin(
                     &origin,
@@ -3553,6 +3971,33 @@ fn keyboard_tick(
                     );
                     continue;
                 };
+                // KDE maximize/fullscreen isolation parity: a maximized
+                // focused window keeps its tile slot but a directional move
+                // would change its retained position/share, so refuse
+                // fail-closed before any Engine mutation. Focus carries no
+                // geometry write and stays allowed. Fullscreen wins.
+                if intent.op == SnapOp::Move
+                    && let Some(row) = retained.iter().find(|r| r.key == member_key)
+                    && let Some(cause) = overlay_refusal_for(row)
+                {
+                    state.snap_advance = None;
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "snap",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "op": intent.op.as_str(),
+                            "direction": direction_name(intent.direction),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": if cause == "fullscreen" { "move-refused-fullscreen" } else { "move-refused-maximize" },
+                            "origin": origin.token,
+                            "window": from,
+                        }),
+                    );
+                    continue;
+                }
                 let mut hint_cx = HintCx::new();
                 let Some(rows) = assemble_domain_rows(
                     state,
@@ -3643,15 +4088,31 @@ fn keyboard_tick(
                     SnapOp::Focus => {
                         if let CoreReply::FocusDirectional(plan) = &reply {
                             let to = plan.to_window.0.clone();
-                            let actuation = actuate_focus(state, me, fulls, &observed, &to);
+                            let actuation =
+                                actuate_focus(state, me, fulls, &observed, &retained, &to);
                             let outcome = actuation.outcome;
                             if outcome == "focus-ok" {
                                 // Verified own advance: later intents in this
                                 // batch and across bounded drains may continue
                                 // from it; cleared on external focus,
                                 // mismatch, suspension, or gesture.
-                                state.snap_advance =
-                                    observed.iter().find(|w| w.token == to).map(snap_origin_of);
+                                // Retained-aware: a focus-ok into a maximized
+                                // member advances from its retained row, never
+                                // a stale None.
+                                state.snap_advance = observed
+                                    .iter()
+                                    .find(|w| w.token == to)
+                                    .map(snap_origin_of)
+                                    .or_else(|| {
+                                        retained.iter().find(|r| r.token == to).map(|row| {
+                                            crate::snapkey::SnapOrigin {
+                                                hwnd: row.key.hwnd,
+                                                token: row.token.clone(),
+                                                pid: row.key.pid,
+                                                creation: row.key.creation.clone(),
+                                            }
+                                        })
+                                    });
                             } else {
                                 state.snap_advance = None;
                             }
@@ -3729,6 +4190,276 @@ fn keyboard_tick(
                         "origin": origin.token,
                         "window": from.0,
                         "continued": continued,
+                    }),
+                );
+            }
+            QueuedSnapEvent::Maximize(intent) => {
+                // Win+M toggle (KDE Meta+M parity): key-ups close the pair
+                // and passed chords never dispatch, trace-only like the
+                // directional arms.
+                if !intent.consumed || !intent.announce {
+                    if state.trace {
+                        log_json_at(
+                            &log_path,
+                            serde_json::json!({
+                                "event": "maximize-toggle",
+                                "tick": state.tick,
+                                "edge": intent.edge.as_str(),
+                                "disposition": if intent.consumed { "consumed" } else { "passed" },
+                                "outcome": if intent.consumed { "key-up" } else { "passed" },
+                            }),
+                        );
+                    }
+                    continue;
+                }
+                state.tick += 1;
+                let tick = state.tick;
+                let correlation = state.correlation();
+                let Some(origin) = intent.origin.clone() else {
+                    state.snap_advance = None;
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "maximize-toggle",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": "origin-vanished",
+                        }),
+                    );
+                    continue;
+                };
+                let mut skipped: Vec<(String, String)> = Vec::new();
+                let mut retained: Vec<RetainedRow> = Vec::new();
+                let Some(mut observed) = state.observe(me, fulls, &mut skipped, &mut retained)
+                else {
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "maximize-toggle",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": "observation-failed",
+                            "origin": origin.token,
+                        }),
+                    );
+                    continue;
+                };
+                publish_managed(state, me, &observed, &retained);
+                ensure_workspace_assignments(state, me, &mut observed, areas);
+                // First-seen maximized windows restore once here: lifetime tags are
+                // stamped, and the cleared window converges as eligible next tick.
+                clear_maximize_at_admission(state, me, &retained);
+                let fresh: Vec<SnapOrigin> = state.snap_origins.values().cloned().collect();
+                let foreground_hwnd = Some(unsafe { GetForegroundWindow() } as usize as u64);
+                let (from, _) = match resolve_origin(
+                    &origin,
+                    foreground_hwnd,
+                    &fresh,
+                    state.snap_advance.as_ref(),
+                ) {
+                    OriginVerdict::Dispatch { token, continued } => (token, continued),
+                    OriginVerdict::Reject(reason) => {
+                        state.snap_advance = None;
+                        log_json_at(
+                            &log_path,
+                            serde_json::json!({
+                                "event": "maximize-toggle",
+                                "tick": tick,
+                                "correlation": correlation.as_str(),
+                                "edge": intent.edge.as_str(),
+                                "disposition": "consumed",
+                                "outcome": reason,
+                                "origin": origin.token,
+                            }),
+                        );
+                        continue;
+                    }
+                };
+                let Some(member_key) = state
+                    .member_tokens
+                    .iter()
+                    .find(|(_, token)| token.as_str() == from.as_str())
+                    .map(|(key, _)| key.clone())
+                else {
+                    state.snap_advance = None;
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "maximize-toggle",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": "unmanaged",
+                            "origin": origin.token,
+                        }),
+                    );
+                    continue;
+                };
+                if !crate::workspace_owner::member_matches(
+                    &member_key,
+                    origin.hwnd,
+                    origin.pid,
+                    &origin.creation,
+                ) {
+                    state.snap_advance = None;
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "maximize-toggle",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": "foreground-changed",
+                            "origin": origin.token,
+                        }),
+                    );
+                    continue;
+                }
+                // Fresh fullscreen/state fences before the native write (KDE
+                // `maximize-refused-fullscreen` parity): fullscreen wins and
+                // refuses, never toggles. A maximized member restores, any
+                // other managed member maximizes.
+                let retained_row = retained.iter().find(|r| r.key == member_key).cloned();
+                if retained_row.as_ref().is_some_and(|r| r.fullscreen) {
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "maximize-toggle",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": "maximize-refused-fullscreen",
+                            "origin": origin.token,
+                            "window": from,
+                        }),
+                    );
+                    continue;
+                }
+                // Visible lifetime gate: the live member tag must equal the
+                // stored tag, so a same-process HWND reuse authorizes no
+                // native write.
+                let live_tag = crate::product_hide::sys::read_member_tag(member_key.hwnd);
+                let lifetime_ok = state.member_tags.get(&member_key).is_some_and(|stored| {
+                    crate::workspace_owner::visible_lifetime_ok(stored, live_tag.as_deref())
+                });
+                if !lifetime_ok {
+                    if let Some(token) = state.member_tokens.remove(&member_key) {
+                        state.member_rects.remove(&token);
+                    }
+                    state.member_identity.remove(&member_key);
+                    state.member_tags.remove(&member_key);
+                    state.workspaces.remove_window(&member_key);
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "maximize-toggle",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": "identity-changed",
+                            "origin": origin.token,
+                        }),
+                    );
+                    continue;
+                }
+                let Some(stored) = state.member_identity.get(&member_key).cloned() else {
+                    state.snap_advance = None;
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "maximize-toggle",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": "unmanaged",
+                            "origin": origin.token,
+                        }),
+                    );
+                    continue;
+                };
+                // Proof-mode ownership gate before the native write: helpers
+                // re-verify against the frozen allowlist exactly like the
+                // hide path.
+                if let Some(entries) = state.allowlist.as_ref() {
+                    let owned = entries
+                        .iter()
+                        .find(|e| e.hwnd == member_key.hwnd)
+                        .is_some_and(|entry| {
+                            verify_proof_owned(member_key.hwnd, entry, me).is_ok()
+                        });
+                    if !owned {
+                        log_json_at(
+                            &log_path,
+                            serde_json::json!({
+                                "event": "maximize-toggle",
+                                "tick": tick,
+                                "correlation": correlation.as_str(),
+                                "edge": intent.edge.as_str(),
+                                "disposition": "consumed",
+                                "outcome": "identity-changed",
+                                "origin": origin.token,
+                            }),
+                        );
+                        continue;
+                    }
+                }
+                // Explicit scope fences before the native write: out-of-scope
+                // members and listed hosts without a live matching child
+                // refuse with no writes.
+                if !scope_allows(&state.scope, &stored.exe_path)
+                    || !hosted_gate_allows(
+                        &stored.exe_path,
+                        member_key.hwnd,
+                        stored.pid,
+                        &state.scope_hosts,
+                    )
+                {
+                    log_json_at(
+                        &log_path,
+                        serde_json::json!({
+                            "event": "maximize-toggle",
+                            "tick": tick,
+                            "correlation": correlation.as_str(),
+                            "edge": intent.edge.as_str(),
+                            "disposition": "consumed",
+                            "outcome": "scope-excluded",
+                            "origin": origin.token,
+                            "window": from,
+                        }),
+                    );
+                    continue;
+                }
+                let zoomed = is_zoomed_now(member_key.hwnd);
+                let wanted = !zoomed;
+                // Discrete-toggle parity (provisional): each fresh discrete
+                // Win+M down dispatches exactly one native toggle attempt.
+                // Held repeats never reach this drain (the classifier emits
+                // them as non-announce trace-only), so no persistent fence is
+                // kept: a press after a native restore simply dispatches
+                // again. Matches KDE's visible toggle while fixing the sticky
+                // `attempted` refusal after a native restore.
+                let outcome = toggle_zoom_async(member_key.hwnd, wanted);
+                log_json_at(
+                    &log_path,
+                    serde_json::json!({
+                        "event": "maximize-toggle",
+                        "tick": tick,
+                        "correlation": correlation.as_str(),
+                        "edge": intent.edge.as_str(),
+                        "disposition": "consumed",
+                        "outcome": outcome,
+                        "target": if wanted { "maximized" } else { "restored" },
+                        "origin": origin.token,
+                        "window": from,
                     }),
                 );
             }
@@ -4547,8 +5278,9 @@ fn workspace_do_select(
         .elapsed()
         .as_millis()
         .min(u128::from(u64::MAX)) as u64;
-    publish_managed(state, &fresh_observed);
+    publish_managed(state, me, &fresh_observed, &fresh_retained);
     ensure_workspace_assignments(state, me, &mut fresh_observed, areas);
+    clear_maximize_at_admission(state, me, &fresh_retained);
     workspace_close_cleanup(state);
     // Focus-before-geometry on the verified transition: the revealed target
     // must hold foreground before writes so a transient foreground cannot
@@ -4557,7 +5289,18 @@ fn workspace_do_select(
     // lifetime, scope, and observation gates inside `actuate_focus` still
     // apply. Skipping focus there lets geometry veto honestly.
     let members = state.workspaces.workspace_members(output, target);
-    let fresh_tokens: HashSet<String> = fresh_observed.iter().map(|w| w.token.clone()).collect();
+    // Retained-aware focus set: a maximized mover is retained, never
+    // eligible-observed, so its token rides along for focus only (geometry
+    // still excludes it via `writable_tokens`). Fullscreen never rides:
+    // `actuate_focus` still refuses it through `classify_focus`, and the
+    // foreground fence below never steals from it.
+    let mut fresh_tokens: HashSet<String> =
+        fresh_observed.iter().map(|w| w.token.clone()).collect();
+    for row in &fresh_retained {
+        if row.maximized && !row.fullscreen {
+            fresh_tokens.insert(row.token.clone());
+        }
+    }
     let eligible =
         state
             .workspaces
@@ -4583,7 +5326,8 @@ fn workspace_do_select(
                 foreground_elevated(me),
             ) {
                 let focus_start = Instant::now();
-                let actuation = actuate_focus(state, me, fulls, &fresh_observed, &token);
+                let actuation =
+                    actuate_focus(state, me, fulls, &fresh_observed, &fresh_retained, &token);
                 focus_ms = focus_start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
                 focus_outcome = actuation.outcome;
                 if actuation.outcome == "focus-ok" {
@@ -4843,6 +5587,22 @@ fn workspace_do_send(
     // incomplete defers with retained state, never a falsely complete pair.
     // One shared hint-query budget across both assemblies: source and target
     // never independently blow the per-operation bound.
+    //
+    // Pre-dispatch overlay gate for a retained mover: a maximized member is
+    // retained, never eligible, so it must still read maximized live before
+    // the Engine plans. Fullscreen never sends. The post-plan pre-effect
+    // check below re-verifies for post-plan uncertainty.
+    if !observed.iter().any(|w| w.hwnd == mover_hwnd) {
+        let Some(row) = retained.iter().find(|r| r.key == mover_key) else {
+            return fail_at("origin-vanished");
+        };
+        if row.fullscreen || !row.maximized {
+            return fail_at("origin-vanished");
+        }
+        if !is_zoomed_now(mover_hwnd) {
+            return fail_at("deferred");
+        }
+    }
     let mut hint_cx = HintCx::new();
     let Some(source_rows) = assemble_domain_rows(
         state,
@@ -4927,25 +5687,50 @@ fn workspace_do_send(
         return fail_at(outcome);
     };
     // Project-owned membership change after revalidation and the planned
-    // Engine mutation: exact identity table update, never HWND alone.
+    // Engine mutation: exact identity table update, never HWND alone. A
+    // tiled maximized member sends too (KDE parity): it is retained rather
+    // than eligible, so it resolves through its retained row with a fresh
+    // flag-stability recheck instead of the eligible observation. Its target
+    // allocation is kept by the plan while overlay geometry never writes.
     let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
-    let Some(fresh) = by_hwnd.get(&mover_hwnd) else {
-        return fail_at("origin-vanished");
-    };
     let Some(stored) = state.member_identity.get(&mover_key).cloned() else {
         return fail_at("unmanaged");
     };
-    if !crate::workspace_owner::member_matches(
-        &mover_key,
-        fresh.hwnd,
-        fresh.identity.pid,
-        &fresh.identity.process_creation,
-    ) || fresh.identity.exe_path != stored.exe_path
-        || fresh.identity.user_sid != stored.user_sid
-        || fresh.identity.session_id != stored.session_id
-    {
+    let mover_minimized = if let Some(fresh) = by_hwnd.get(&mover_hwnd) {
+        if !crate::workspace_owner::member_matches(
+            &mover_key,
+            fresh.hwnd,
+            fresh.identity.pid,
+            &fresh.identity.process_creation,
+        ) || fresh.identity.exe_path != stored.exe_path
+            || fresh.identity.user_sid != stored.user_sid
+            || fresh.identity.session_id != stored.session_id
+        {
+            return fail_at("origin-vanished");
+        }
+        fresh.facts.minimized
+    } else if let Some(row) = retained.iter().find(|r| r.key == mover_key) {
+        // Retained maximized mover: fullscreen never sends here (item 4
+        // owns fullscreen); only a maximized member proceeds, and
+        // only when its live flags still match the dispatch snapshot (KDE
+        // `flagsStillMatch` parity).
+        if row.fullscreen || !row.maximized {
+            return fail_at("origin-vanished");
+        }
+        if !crate::tiling::send_flags_stable(false, true, row.fullscreen, is_zoomed_now(mover_hwnd))
+        {
+            return fail_at("deferred");
+        }
+        if !is_zoomed_now(mover_hwnd) {
+            return fail_at("deferred");
+        }
+        if stored.pid != mover_key.pid || stored.process_creation != mover_key.creation {
+            return fail_at("origin-vanished");
+        }
+        false
+    } else {
         return fail_at("origin-vanished");
-    }
+    };
     // Post-Engine lifetime recheck: a same-process reuse across the in-memory
     // mutation still refuses before any membership change or hide.
     let post_tag = crate::product_hide::sys::read_member_tag(mover_hwnd);
@@ -5004,15 +5789,8 @@ fn workspace_do_send(
     // post-follow enumeration here. A committed claim is owned even on
     // uncertain post-hide readback: flag it hidden and report the stall
     // without pretending follow success.
-    let hide_outcome = workspace_hide_one(
-        state,
-        me,
-        store,
-        dir,
-        &mover_key,
-        &stored,
-        fresh.facts.minimized,
-    );
+    let hide_outcome =
+        workspace_hide_one(state, me, store, dir, &mover_key, &stored, mover_minimized);
     if state.hidden_claims.contains_key(&mover_key) {
         state.workspaces.set_hidden(&mover_key, true);
     }
@@ -5220,8 +5998,11 @@ fn poll_workspace_cli_request(
         );
         return;
     };
-    publish_managed(state, &observed);
+    publish_managed(state, me, &observed, &retained);
     ensure_workspace_assignments(state, me, &mut observed, areas);
+    // First-seen maximized windows restore once here: lifetime tags are
+    // stamped, and the cleared window converges as eligible next tick.
+    clear_maximize_at_admission(state, me, &retained);
     workspace_close_cleanup(state);
     // Resolve without preactivating (same as the hook select path):
     // `resolve_send*` never touch ACTIVE; only the transition activates.
@@ -5417,8 +6198,11 @@ fn workspace_tick(
             );
             continue;
         };
-        publish_managed(state, &observed);
+        publish_managed(state, me, &observed, &retained);
         ensure_workspace_assignments(state, me, &mut observed, areas);
+        // First-seen maximized windows restore once here: lifetime tags are
+        // stamped, and the cleared window converges as eligible next tick.
+        clear_maximize_at_admission(state, me, &retained);
         workspace_close_cleanup(state);
         // Stable per-action context: one opaque correlation for the whole
         // select/send/follow lifecycle even when inner geometry ticks
@@ -6205,8 +6989,11 @@ fn workspace_maintenance(
     let Some(mut observed) = state.observe(me, fulls, &mut skipped, &mut retained) else {
         return;
     };
-    publish_managed(state, &observed);
+    publish_managed(state, me, &observed, &retained);
     ensure_workspace_assignments(state, me, &mut observed, areas);
+    // First-seen maximized windows restore once here: lifetime tags are
+    // stamped, and the cleared window converges as eligible next tick.
+    clear_maximize_at_admission(state, me, &retained);
     workspace_close_cleanup(state);
     // Periodic hidden-claim retirement before any foreground-driven switch so
     // dead claims never select.
@@ -6236,11 +7023,50 @@ fn gesture_tick(
         );
         return;
     };
-    publish_managed(state, &observed);
+    publish_managed(state, me, &observed, &retained);
     ensure_workspace_assignments(state, me, &mut observed, areas);
+    // First-seen maximized windows restore once here: lifetime tags are
+    // stamped, and the cleared window converges as eligible next tick.
+    clear_maximize_at_admission(state, me, &retained);
     let by_hwnd: HashMap<u64, &ObservedWindow> = observed.iter().map(|w| (w.hwnd, w)).collect();
     for hwnd in ended {
         let Some(current) = by_hwnd.get(hwnd) else {
+            // A maximized/fullscreen member is retained, never eligible, so a
+            // gesture ending on one misses the observation above. Refuse
+            // explicitly with no Engine mutation; the next ordinary tick
+            // converges. Identity-fenced on the stored member identity.
+            if let Some(key) = state
+                .member_tokens
+                .iter()
+                .find(|(k, _)| k.hwnd == *hwnd)
+                .map(|(k, _)| k.clone())
+                && let Some(stored) = state.member_identity.get(&key).cloned()
+                && crate::workspace_owner::member_matches(
+                    &key,
+                    *hwnd,
+                    stored.pid,
+                    &stored.process_creation,
+                )
+                && let Some(row) = retained.iter().find(|r| r.key == key)
+                && let Some(cause) = overlay_refusal_for(row)
+                && let Some(token) = state.member_tokens.get(&key).cloned()
+            {
+                log_json_at(
+                    &log_path,
+                    serde_json::json!({
+                        "event": "gesture",
+                        "tick": state.tick,
+                        "op": "gesture",
+                        "disposition": "observed",
+                        "outcome": if cause == "fullscreen" {
+                            "gesture-refused-fullscreen"
+                        } else {
+                            "gesture-refused-maximize"
+                        },
+                        "window": token,
+                    }),
+                );
+            }
             continue;
         };
         let before = state
@@ -6679,6 +7505,7 @@ fn run_tile_loop(
         member_tags: std::collections::BTreeMap::new(),
         active_output: String::new(),
         workspace_proof: false,
+        maximize_admission_attempted: HashSet::new(),
         last_foreground: 0,
         known_outputs: Vec::new(),
         last_hwnds: HashSet::new(),
@@ -6959,7 +7786,9 @@ fn run_tile_loop(
             for event in snap_events {
                 match event {
                     QueuedSnapEvent::Workspace(intent) => workspace_events.push(intent),
-                    QueuedSnapEvent::Mask(_) | QueuedSnapEvent::Intent(_) => {
+                    QueuedSnapEvent::Mask(_)
+                    | QueuedSnapEvent::Intent(_)
+                    | QueuedSnapEvent::Maximize(_) => {
                         directional_events.push(event);
                     }
                 }

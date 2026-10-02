@@ -50,6 +50,7 @@ $VK_H = 72
 $VK_J = 74
 $VK_K = 75
 $VK_L = 76
+$VK_M = 77
 $VK_LEFT = 37
 $VK_UP = 38
 $VK_RIGHT = 39
@@ -95,6 +96,11 @@ function Get-ShortcutJourney {
     @{ name = "edge-noop-left"; vk = $VK_LEFT; shift = $false; ctrl = $false; op = "focus"; direction = "left"; family = "edge-noop" }
     @{ name = "passthrough-extra-modifier"; vk = $VK_H; shift = $false; ctrl = $true; op = "focus"; direction = "left"; family = "passed" }
     @{ name = "passthrough-background"; vk = $VK_H; shift = $false; ctrl = $true; op = "focus"; direction = "left"; family = "background-passed" }
+    # Win+M parity item 3 (KDE Meta+M): unshifted toggle only, consumed with
+    # a managed origin. Live stages filter by family and ignore this row
+    # until a later unit wires a live maximize journey; the mock harness
+    # below pins its shape (unshifted M, no Ctrl, toggle family).
+    @{ name = "maximize-toggle-m"; vk = $VK_M; shift = $false; ctrl = $false; op = "maximize"; direction = ""; family = "maximize-toggle" }
   )
 }
 
@@ -1058,6 +1064,15 @@ function Invoke-ShortcutMock {
     Fail-Shortcut "mock journey needs focus-ok rows for OwnedFocusMove"
   }
   Rec-Shortcut "journey-coverage" @{ moves = $moveRows.Count; arrow = $arrowMove.Count; alias = $aliasMove.Count; focus = $focusRows.Count }
+  $maxRows = @($rows | Where-Object { $_.family -eq "maximize-toggle" })
+  if ($maxRows.Count -ne 1) {
+    Fail-Shortcut "mock journey needs exactly one maximize-toggle row"
+  }
+  $maxRow = $maxRows[0]
+  if (([int]$maxRow.vk -ne $VK_M) -or ($maxRow.shift) -or ($maxRow.ctrl) -or ($maxRow.op -ne "maximize")) {
+    Fail-Shortcut "mock maximize-toggle row must be unshifted Win+M with op maximize"
+  }
+  Rec-Shortcut "journey-maximize" @{ rows = $maxRows.Count; vk = [int]$maxRow.vk }
   try {
     Assert-NoWinLJourney @(@{ vk = $VK_L; shift = $false })
     Fail-Shortcut "negative journey-guard did not throw"

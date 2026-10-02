@@ -5,16 +5,18 @@ use tiler_windows::tiling::{
     CaptureOptions, FrameInsets, GestureIntent, INNER_GAP, OUTER_GAP, ObservedTarget,
     ObservedTargetRef, ReadbackOutcome, RefusedTracker, ScopeHostChild, SkipReason,
     StatelessVerdict, TokenMap, WindowFacts, WorkspaceRequest, allow_match, allowlist_digest,
-    build_reconcile_event, build_reconcile_event_for, classify, classify_gesture, fingerprint,
-    hosted_child_allows, inspect_stateless_verdict, is_borderless_fullscreen, min_hints_from_outer,
-    normalize_min_track, parse_allowlist, parse_capture_args, parse_children_args,
-    parse_hide_proof_args, parse_inspect_args, parse_scope_host_child, parse_shortcut_proof_args,
-    parse_tile_args, parse_tile_proof_args, parse_workspace_proof_args, parse_workspace_request,
+    build_reconcile_event, build_reconcile_event_for, canonical_retained_rect, classify,
+    classify_focus, classify_gesture, fingerprint, hosted_child_allows, inspect_stateless_verdict,
+    is_borderless_fullscreen, min_hints_from_outer, normalize_min_track, overlay_refusal,
+    parse_allowlist, parse_capture_args, parse_children_args, parse_hide_proof_args,
+    parse_inspect_args, parse_scope_host_child, parse_shortcut_proof_args, parse_tile_args,
+    parse_tile_proof_args, parse_workspace_proof_args, parse_workspace_request,
     parse_workspace_select_args, readback_outcome, render_workspace_request, scope_allows,
-    scope_exe_basename, tick_summary_signature, tiling_domain_bounds,
-    verify_hide_proof_argv_consistency, verify_proof_argv_consistency,
-    verify_shortcut_proof_argv_consistency, verify_workspace_proof_argv_consistency,
-    verify_workspace_select_argv_consistency, visible_min_from_outer,
+    scope_exe_basename, send_flags_stable, should_clear_maximize_at_admission,
+    tick_summary_signature, tiling_domain_bounds, verify_hide_proof_argv_consistency,
+    verify_proof_argv_consistency, verify_shortcut_proof_argv_consistency,
+    verify_workspace_proof_argv_consistency, verify_workspace_select_argv_consistency,
+    visible_min_from_outer,
 };
 
 fn rect(x: i32, y: i32, w: i32, h: i32) -> Rect {
@@ -176,6 +178,169 @@ fn no_terminal_skip_reason() {
     ] {
         assert_ne!(reason.as_str(), "terminal");
     }
+}
+
+#[test]
+fn maximize_overlay_refusal_orders_fullscreen_first() {
+    // Directional/pointer routes refuse before any Engine mutation; focus
+    // stays allowed (no refusal helper on the focus path). Fullscreen wins
+    // when both overlay states hold.
+    assert_eq!(overlay_refusal(false, false), None);
+    assert_eq!(overlay_refusal(false, true), Some("maximize"));
+    assert_eq!(overlay_refusal(true, false), Some("fullscreen"));
+    assert_eq!(overlay_refusal(true, true), Some("fullscreen"));
+}
+
+#[test]
+fn maximize_retained_rect_keeps_tile_allocation() {
+    // A maximized member rides its retained tile rectangle, never the native
+    // maximum frame, so topology and sibling shares survive the overlay.
+    // First sightings (no retained allocation) fall back to the fresh frame.
+    let tile = rect(8, 8, 500, 884);
+    let native_max = rect(-8, -8, 1616, 916);
+    assert_eq!(canonical_retained_rect(true, native_max, Some(tile)), tile);
+    assert_eq!(canonical_retained_rect(true, native_max, None), native_max);
+    assert_eq!(
+        canonical_retained_rect(false, native_max, Some(tile)),
+        native_max
+    );
+}
+
+#[test]
+fn classify_orders_fullscreen_before_maximized() {
+    // A window holding both overlay states reports fullscreen, matching
+    // `overlay_refusal`. Safety skips keep their order: cloaked, elevated,
+    // and shell still win over either overlay state.
+    let mut facts = eligible_facts();
+    facts.maximized = true;
+    facts.captionless_fullscreen = true;
+    assert_eq!(classify(&facts), Err(SkipReason::Fullscreen));
+    let mut facts = eligible_facts();
+    facts.maximized = true;
+    facts.cloaked = true;
+    assert_eq!(classify(&facts), Err(SkipReason::Cloaked));
+    let mut facts = eligible_facts();
+    facts.captionless_fullscreen = true;
+    facts.elevated = true;
+    assert_eq!(classify(&facts), Err(SkipReason::Elevated));
+}
+
+#[test]
+fn maximize_admission_clears_once_never_fullscreen() {
+    // First non-fullscreen admission without a retained tiled slot restores
+    // once; fullscreen, already-slotted, and already-attempted members never
+    // clear, so there is no automatic retry loop.
+    assert!(should_clear_maximize_at_admission(
+        false, true, false, false
+    ));
+    assert!(!should_clear_maximize_at_admission(
+        true, true, false, false
+    ));
+    assert!(!should_clear_maximize_at_admission(
+        false, true, true, false
+    ));
+    assert!(!should_clear_maximize_at_admission(
+        false, true, false, true
+    ));
+    assert!(!should_clear_maximize_at_admission(
+        false, false, false, false
+    ));
+    assert!(!should_clear_maximize_at_admission(
+        true, false, false, false
+    ));
+}
+
+#[test]
+fn maximize_send_flags_must_match_before_transfer() {
+    // Workspace-send membership transfer requires live overlay flags to
+    // still equal the dispatch snapshot; any flag drift defers with no
+    // writes.
+    assert!(send_flags_stable(false, true, false, true));
+    assert!(send_flags_stable(false, false, false, false));
+    assert!(send_flags_stable(true, false, true, false));
+    assert!(!send_flags_stable(false, true, false, false));
+    assert!(!send_flags_stable(false, false, false, true));
+    assert!(!send_flags_stable(false, true, true, true));
+}
+
+#[test]
+fn maximize_focus_allows_maximized_never_fullscreen() {
+    // Focus carries no geometry write: a maximized member stays focusable
+    // (KDE `requestFocus` overlay exemption) while geometry still refuses
+    // it. Fullscreen never focuses; every other skip refuses on both paths
+    // so the geometry classifier is never weakened. A maximized window that
+    // is also no-activate still refuses focus (NoActivate), even though
+    // geometry reports it as Maximized first.
+    let mut facts = eligible_facts();
+    assert!(classify(&facts).is_ok());
+    assert!(classify_focus(&facts).is_ok());
+    facts.maximized = true;
+    assert_eq!(classify(&facts), Err(SkipReason::Maximized));
+    assert!(classify_focus(&facts).is_ok());
+    facts.captionless_fullscreen = true;
+    assert_eq!(classify(&facts), Err(SkipReason::Fullscreen));
+    assert_eq!(classify_focus(&facts), Err(SkipReason::Fullscreen));
+    let check = |mut facts: WindowFacts, reason: SkipReason| {
+        facts.maximized = true;
+        assert!(classify(&facts).is_err());
+        assert_eq!(classify_focus(&facts), Err(reason));
+    };
+    let mut base = eligible_facts();
+    base.minimized = true;
+    check(base, SkipReason::Minimized);
+    base = eligible_facts();
+    base.cloaked = true;
+    check(base, SkipReason::Cloaked);
+    base = eligible_facts();
+    base.elevated = true;
+    check(base, SkipReason::Elevated);
+    base = eligible_facts();
+    base.shell = true;
+    check(base, SkipReason::Shell);
+    base = eligible_facts();
+    base.tool_window = true;
+    check(base, SkipReason::Tool);
+    base = eligible_facts();
+    base.owned = true;
+    check(base, SkipReason::OwnedDialog);
+    base = eligible_facts();
+    base.dialog = true;
+    check(base, SkipReason::Dialog);
+    base = eligible_facts();
+    base.no_activate = true;
+    check(base, SkipReason::NoActivate);
+}
+
+#[test]
+fn maximized_member_never_takes_geometry_writes() {
+    // Production seam: a maximized member classifies out of the eligible
+    // observation, so the portable writable subset (the same
+    // `writable_subset` production calls) never includes its retained-only
+    // token: the overlaid tile keeps its allocation with no native write.
+    use std::collections::{BTreeMap, BTreeSet, HashSet};
+    use tiler_windows::workspace::WindowKey;
+    use tiler_windows::workspace_owner::writable_subset;
+    let mut facts = eligible_facts();
+    facts.maximized = true;
+    assert_eq!(classify(&facts), Err(SkipReason::Maximized));
+    let key = WindowKey {
+        hwnd: 11,
+        pid: 12,
+        creation: "creation-a".to_owned(),
+    };
+    let members: BTreeSet<WindowKey> = BTreeSet::from([key.clone()]);
+    let token_of: BTreeMap<WindowKey, String> = BTreeMap::from([(key.clone(), "w1".to_owned())]);
+    // Retained-only token: member but absent from the fresh eligible
+    // observation, so not writable.
+    let fresh: HashSet<String> = HashSet::new();
+    assert!(writable_subset(&members, |_| false, &token_of, &fresh).is_empty());
+    // Eligible-observed token stays writable; hidden members never are.
+    let fresh: HashSet<String> = HashSet::from(["w1".to_owned()]);
+    assert_eq!(
+        writable_subset(&members, |_| false, &token_of, &fresh),
+        HashSet::from(["w1".to_owned()])
+    );
+    assert!(writable_subset(&members, |_| true, &token_of, &fresh).is_empty());
 }
 
 #[test]
