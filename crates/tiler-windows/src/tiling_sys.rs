@@ -48,8 +48,11 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     SM_CYMINTRACK, SM_CYSCREEN, SMTO_ABORTIFHUNG, SWP_NOACTIVATE, SWP_NOZORDER,
     SendMessageTimeoutW, SetForegroundWindow, SetWindowPos, TranslateMessage,
     WINEVENT_OUTOFCONTEXT, WM_GETMINMAXINFO, WS_CAPTION, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST,
 };
 
+use crate::active_border::{ActiveBorderOptions, border_eligible, border_outer_rect, scale_style};
+use crate::active_border_sys::{BorderOverlay, OverlayOutcome};
 use crate::lifecycle::{
     WORKSPACE_REQUEST_FILE, exe_paths_equal, is_medium_rid,
     sys::{log_path_for, snap_resume, snap_suspend, stop_requested},
@@ -99,6 +102,42 @@ fn is_shell_class(class: &str) -> bool {
         class,
         "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd" | "DV2ControlHost"
     )
+}
+
+/// Border-only shell-popup exclusion: the KDE `isAppletPopup` analogue.
+/// Targeted, never blanket: ordinary dialogs (`#32770`), tool windows,
+/// owned windows, and `explorer.exe` file browsers stay eligible. Only exact
+/// shell classes plus XAML-island shell hosts gated on the shell process
+/// suppress the ring. Task View suspension also hides the owned surface.
+fn is_border_shell_popup(class: &str, exe_file: &str) -> bool {
+    if crate::product_hide::shell_class_excluded(class) {
+        return true;
+    }
+    if matches!(
+        class,
+        "MultitaskingViewFrame" | "TaskSwitcherWnd" | "NotifyIconOverflowWindow" | "Shell_Flyout"
+    ) {
+        return true;
+    }
+    // XAML-island shell surfaces (Start, Search, Widgets): class alone is
+    // generic, so require the shell experience process. Never matches
+    // explorer.exe file browsers or ApplicationFrameHost store apps.
+    if class == "Windows.UI.Core.CoreWindow" || class == "XamlExplorerHostIslandWindow" {
+        return matches!(
+            exe_file,
+            "startmenuexperiencehost.exe"
+                | "shellexperiencehost.exe"
+                | "searchhost.exe"
+                | "searchui.exe"
+                | "widgets.exe"
+                | "textinputhost.exe"
+        );
+    }
+    false
+}
+
+fn exe_file_name(exe_path: &str) -> &str {
+    exe_path.rsplit(['/', '\\']).next().unwrap_or(exe_path)
 }
 
 /// Generic Win32 dialog class. Unowned top-level dialogs are never tile
@@ -228,7 +267,7 @@ fn monitor_fulls(areas: &[MonitorArea]) -> Vec<Rect> {
 // and the callback takes it blocking (never try_lock-and-drop, lossless).
 #[derive(Debug, Clone, Copy)]
 enum HookEvent {
-    Wake,
+    Wake(isize),
     MoveSizeStart(isize),
     MoveSizeEnd(isize),
 }
@@ -268,7 +307,7 @@ unsafe extern "system" fn winevent_proc(
                 | EVENT_OBJECT_LOCATIONCHANGE
         )
     {
-        push_hook(HookEvent::Wake);
+        push_hook(HookEvent::Wake(hwnd as isize));
     }
 }
 
@@ -960,6 +999,14 @@ struct TileLoop {
     /// HWND (fresh token via reissue) never inherits a hint and a failed
     /// query never reuses a stale one.
     hint_logged: HashMap<String, WindowSizeHints>,
+    /// Active-border configuration for this run (default on with an explicit
+    /// off flag). The border never takes geometry writes: it only reads the
+    /// foreground target's fresh frame and paints the process-owned overlay.
+    border: ActiveBorderOptions,
+    /// Process-owned border overlay plus the last logged border signature
+    /// (visibility/rect/style/target) for change-only logging.
+    border_overlay: BorderOverlay,
+    border_last: Option<String>,
 }
 
 /// One hidden member: the committed ledger claim (carrying the durable
@@ -1021,6 +1068,11 @@ impl TileLoop {
         // keep stable tokens instead of churning one new token per tick.
         let mut enumerated: Vec<(u64, String)> = Vec::new();
         for raw in hwnds {
+            // The process-owned border overlay is never a tile target, a
+            // token source, or an unreadable count: skip it before any query.
+            if self.border_overlay.hwnd() == Some(raw as usize as u64) {
+                continue;
+            }
             let hwnd = raw as HWND;
             if proof_mode {
                 // Frozen-HWND prefilter before any per-window query.
@@ -1194,6 +1246,309 @@ fn publish_managed(state: &mut TileLoop, observed: &[ObservedWindow]) {
         .iter()
         .map(|w| (w.hwnd, snap_origin_of(w)))
         .collect();
+}
+
+/// Hide the border overlay with a change-only `active-border` log line.
+fn hide_border(state: &mut TileLoop, reason: &str) {
+    let was_visible = state.border_overlay.is_visible();
+    state.border_overlay.hide();
+    let signature = format!("hidden:{reason}");
+    if state.border_last.as_deref() == Some(signature.as_str()) && !was_visible {
+        if state.trace {
+            log_json_at(
+                &state.log_path,
+                serde_json::json!({
+                    "event": "active-border",
+                    "tick": state.tick,
+                    "outcome": "hidden",
+                    "reason": reason,
+                }),
+            );
+        }
+        return;
+    }
+    state.border_last = Some(signature);
+    log_json_at(
+        &state.log_path,
+        serde_json::json!({
+            "event": "active-border",
+            "tick": state.tick,
+            "outcome": "hidden",
+            "reason": reason,
+        }),
+    );
+}
+
+/// Fast active-border refresh for one loop wake: reads only the foreground
+/// window (fresh identity plus one fresh frame), without full window observation,
+/// so gesture following does not wait for reconciliation or the 100ms poll.
+/// Scope fences match tiling exactly: normal `--scope-exe`/`--scope-host-child`
+/// or the frozen allowlist (plus owned-helper verification) in proof mode.
+/// The overlay HWND itself is same-process and never resolves an identity, so
+/// its own move/paint events cannot retarget the border.
+fn refresh_active_border(state: &mut TileLoop, me: &ProcessIdentity, fulls: &[Rect]) {
+    if !state.border.enabled {
+        hide_border(state, "disabled");
+        return;
+    }
+    let foreground = unsafe { GetForegroundWindow() } as usize as u64;
+    if foreground == 0 {
+        hide_border(state, "no-target");
+        return;
+    }
+    if state.border_overlay.hwnd() == Some(foreground) {
+        return;
+    }
+    let hwnd = foreground as isize as HWND;
+    // Proof gate before any frame read: frozen-allowlist membership plus
+    // owned-helper verification, mirroring the geometry gate. A foreign
+    // foreground in proof mode is never a border target.
+    if let Some(entries) = state.allowlist.as_ref() {
+        let entry = entries.iter().find(|e| e.hwnd == foreground);
+        let Some(entry) = entry else {
+            hide_border(state, "allowlist-changed");
+            return;
+        };
+        if verify_proof_owned(foreground, entry, me).is_err() {
+            hide_border(state, "identity-changed");
+            return;
+        }
+    }
+    let window = match observe_window(hwnd, me, fulls, &mut state.tokens) {
+        Ok(window) => window,
+        Err(ObserveFailure::Known(_, reason)) => {
+            hide_border(
+                state,
+                match reason {
+                    SkipReason::Minimized => "minimized",
+                    SkipReason::Maximized => "maximized",
+                    SkipReason::Fullscreen => "fullscreen",
+                    SkipReason::Cloaked => "cloaked",
+                    SkipReason::Shell => "shell",
+                    _ => "no-target",
+                },
+            );
+            return;
+        }
+        Err(ObserveFailure::Unknown) => {
+            hide_border(state, "no-target");
+            return;
+        }
+    };
+    // Normal-mode scope fence (proof mode already gated above): out-of-scope
+    // executables never paint, mirroring observation membership.
+    if !scope_allows(&state.scope, &window.identity.exe_path)
+        || !hosted_gate_allows(
+            &window.identity.exe_path,
+            window.hwnd,
+            window.identity.pid,
+            &state.scope_hosts,
+        )
+    {
+        hide_border(state, "scope-excluded");
+        return;
+    }
+    let hidden_workspace = state.hidden_claims.keys().any(|k| k.hwnd == foreground)
+        && state
+            .workspaces
+            .member_loc(
+                &state
+                    .hidden_claims
+                    .keys()
+                    .find(|k| k.hwnd == foreground)
+                    .cloned()
+                    .expect("hidden key present"),
+            )
+            .is_some_and(|loc| loc.hidden);
+    // Targeted shell-popup gate (border-only): base tiling shell plus
+    // Start/taskbar-flyout/Alt+Tab/TaskView analogues. Ordinary dialogs,
+    // tool windows, and owned windows stay eligible here.
+    let exe_file = exe_file_name(&window.identity.exe_path).to_ascii_lowercase();
+    let border_shell = window.facts.shell || is_border_shell_popup(&class_of(hwnd), &exe_file);
+    if border_eligible(
+        true,
+        true,
+        window.visible,
+        window.facts.minimized,
+        window.facts.captionless_fullscreen,
+        window.facts.maximized,
+        window.facts.cloaked,
+        hidden_workspace,
+        border_shell,
+    )
+    .is_err()
+    {
+        hide_border(
+            state,
+            if window.facts.minimized {
+                "minimized"
+            } else if window.facts.captionless_fullscreen {
+                "fullscreen"
+            } else if window.facts.maximized {
+                "maximized"
+            } else if window.facts.cloaked {
+                "cloaked"
+            } else if hidden_workspace {
+                "hidden-workspace"
+            } else if border_shell {
+                "shell"
+            } else {
+                "no-target"
+            },
+        );
+        return;
+    }
+    // Mirror the target's topmost band so a topmost active window stays
+    // bordered; ordinary targets demote a previously topmost ring. Read-only
+    // style query, never a foreign write.
+    let topmost = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) } as u32 & WS_EX_TOPMOST != 0;
+    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    let Some((width_px, gap_px, radius_px)) = scale_style(&state.border.style, dpi) else {
+        hide_border(state, "dpi-scale");
+        return;
+    };
+    if width_px == 0 {
+        hide_border(state, "zero-width");
+        return;
+    }
+    let Some(outer) = border_outer_rect(window.visible, gap_px, width_px) else {
+        hide_border(state, "geometry");
+        return;
+    };
+    let outcome = state.border_overlay.show_at(
+        outer,
+        width_px,
+        gap_px,
+        radius_px,
+        &state.border.style,
+        &window.token,
+        topmost,
+        window.hwnd,
+    );
+    match outcome {
+        OverlayOutcome::Hidden => {
+            // Bounded failure line with the concrete error; change-only
+            // unless tracing. State was already hidden by the overlay.
+            // NOTE: the shown signature must NOT be installed first: doing
+            // so flips border_last between shown and failure every tick and
+            // re-logs the same failure per tick. Compare/set only failure.
+            let failure = format!(
+                "hidden:present-failed:{}",
+                state.border_overlay.last_error().unwrap_or("unknown")
+            );
+            let changed_failure = state.border_last.as_deref() != Some(failure.as_str());
+            if changed_failure {
+                state.border_last = Some(failure);
+            }
+            if changed_failure || state.trace {
+                log_json_at(
+                    &state.log_path,
+                    serde_json::json!({
+                        "event": "active-border",
+                        "tick": state.tick,
+                        "outcome": "hidden",
+                        "reason": "present-failed",
+                        "last_error": state.border_overlay.last_error(),
+                    }),
+                );
+            }
+        }
+        OverlayOutcome::Unchanged => {
+            // Resolved accent-or-fallback colour rides the signature so a
+            // theme change that repaints the same geometry still logs once.
+            let color_hex = state
+                .border_overlay
+                .current_color()
+                .map(crate::active_border::render_color)
+                .unwrap_or_else(|| crate::active_border::render_color(state.border.style.color));
+            let signature = format!(
+                "shown:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                window.token,
+                outer.x,
+                outer.y,
+                outer.w,
+                outer.h,
+                width_px,
+                gap_px,
+                topmost,
+                color_hex
+            );
+            let changed = state.border_last.as_deref() != Some(signature.as_str());
+            if changed {
+                state.border_last = Some(signature);
+            }
+            if state.trace && changed {
+                log_json_at(
+                    &state.log_path,
+                    serde_json::json!({
+                        "event": "active-border",
+                        "tick": state.tick,
+                        "outcome": "unchanged",
+                        "target": window.token,
+                    }),
+                );
+            }
+        }
+        OverlayOutcome::Moved if state.trace => {
+            // Position-only follows are trace-only; production stays quiet
+            // off the lifecycle transitions below.
+            log_json_at(
+                &state.log_path,
+                serde_json::json!({
+                    "event": "active-border",
+                    "tick": state.tick,
+                    "outcome": "moved",
+                    "target": window.token,
+                    "outer": [outer.x, outer.y, outer.w, outer.h],
+                    "style_px": [width_px, gap_px, radius_px],
+                }),
+            );
+        }
+        OverlayOutcome::Moved => {}
+        _ => {
+            let color_hex = state
+                .border_overlay
+                .current_color()
+                .map(crate::active_border::render_color)
+                .unwrap_or_else(|| crate::active_border::render_color(state.border.style.color));
+            let signature = format!(
+                "shown:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+                window.token,
+                outer.x,
+                outer.y,
+                outer.w,
+                outer.h,
+                width_px,
+                gap_px,
+                topmost,
+                color_hex
+            );
+            let changed = state.border_last.as_deref() != Some(signature.as_str());
+            if changed {
+                state.border_last = Some(signature);
+            }
+            if !(changed || state.trace) {
+                return;
+            }
+            log_json_at(
+                &state.log_path,
+                serde_json::json!({
+                    "event": "active-border",
+                    "tick": state.tick,
+                    "outcome": match outcome {
+                        OverlayOutcome::Shown => "shown",
+                        OverlayOutcome::Redrew => "redrew",
+                        _ => "shown",
+                    },
+                    "target": window.token,
+                    "outer": [outer.x, outer.y, outer.w, outer.h],
+                    "style_px": [width_px, gap_px, radius_px],
+                    "color": color_hex,
+                    "dib_checksum": state.border_overlay.snapshot()["dib_checksum"],
+                }),
+            );
+        }
+    }
 }
 
 /// Revalidate one write target immediately before `SetWindowPos`: fresh
@@ -5688,6 +6043,7 @@ struct TileRun {
     /// Explicit host-to-child scope pairs (empty means no child constraint).
     /// Proof runs always pass empty.
     scope_hosts: Vec<ScopeHostChild>,
+    border: ActiveBorderOptions,
 }
 
 fn run_tile_loop(
@@ -5708,6 +6064,7 @@ fn run_tile_loop(
         mouse_snap,
         scope,
         scope_hosts,
+        border,
     } = run;
     // Prevention needs an active loop: proof never arms it, and the guarded
     // setup already captured the preimage plus the initial effect.
@@ -5828,6 +6185,9 @@ fn run_tile_loop(
         last_hwnds: HashSet::new(),
         last_areas: Vec::new(),
         hint_logged: HashMap::new(),
+        border,
+        border_overlay: BorderOverlay::default(),
+        border_last: None,
     };
     state.engine.sync_binding(&owner, &generation);
     state.workspace_proof = workspace_proof;
@@ -5862,6 +6222,14 @@ fn run_tile_loop(
             "keyboard": {"takeover": takeover, "allow_win_l": state.keyboard.allow_win_l},
             "mouse_snap_prevention": snap_want,
             "scope_count": state.scope.len(),
+            "active_border": {
+                "enabled": state.border.enabled,
+                "width": state.border.style.width,
+                "gap": state.border.style.gap,
+                "radius": state.border.style.radius,
+                "color": crate::active_border::render_color(state.border.style.color),
+                "use_theme": state.border.style.use_theme,
+            },
         }),
     );
     // Hook on this thread; this thread pumps messages, so callbacks run here.
@@ -5959,6 +6327,7 @@ fn run_tile_loop(
                 snap_primed = true;
             }
             reconcile_tick(&mut state, me, &fulls, &areas);
+            refresh_active_border(&mut state, me, &fulls);
         }
         loop {
             if stop_requested(dir, me)? {
@@ -5975,8 +6344,18 @@ fn run_tile_loop(
             let mut woke = false;
             for event in events {
                 match event {
-                    HookEvent::Wake => woke = true,
+                    HookEvent::Wake(raw) => {
+                        // Own overlay events never wake the loop: no repeated
+                        // full reconcile off our own move/paint/show.
+                        if state.border_overlay.hwnd() == Some(raw as u64) {
+                            continue;
+                        }
+                        woke = true;
+                    }
                     HookEvent::MoveSizeStart(raw) => {
+                        if state.border_overlay.hwnd() == Some(raw as u64) {
+                            continue;
+                        }
                         woke = true;
                         let hwnd = raw as u64;
                         // PRE-gesture from the last stable observation, never
@@ -5987,6 +6366,9 @@ fn run_tile_loop(
                         state.active.insert(hwnd);
                     }
                     HookEvent::MoveSizeEnd(raw) => {
+                        if state.border_overlay.hwnd() == Some(raw as u64) {
+                            continue;
+                        }
                         woke = true;
                         state.active.remove(&(raw as u64));
                     }
@@ -6210,6 +6592,7 @@ fn run_tile_loop(
                 poll_workspace_cli_request(&mut state, me, store, dir, &fulls, &areas);
                 state.gesture_before.clear();
                 state.active.clear();
+                hide_border(&mut state, "suspended");
                 continue;
             }
             if state.suspended {
@@ -6231,6 +6614,10 @@ fn run_tile_loop(
                 snap_resume(dir, me, store);
                 snap_primed = true;
             }
+            // Border follows the live foreground on every active wake,
+            // including managed gestures that pause tiling below: the refresh
+            // reads one fresh frame and never waits for reconciliation.
+            refresh_active_border(&mut state, me, &fulls);
             // Only gestures on managed windows pause tiling; unrelated
             // windows never stall the loop.
             let ended: Vec<u64> = state
@@ -6312,6 +6699,11 @@ fn run_tile_loop(
                 gesture_tick(&mut state, me, &fulls, &areas, &ended);
                 poll_workspace_cli_request(&mut state, me, store, dir, &fulls, &areas);
             }
+            // Post-mutation border refresh: reconciliation may have moved the
+            // target this tick, so re-read the fresh frame instead of leaving
+            // the pre-reconcile geometry stale until the next wake. Own
+            // overlay events are filtered above, so no feedback loop.
+            refresh_active_border(&mut state, me, &fulls);
         }
     })();
     for hook in hooks {
@@ -6329,6 +6721,14 @@ fn run_tile_loop(
         }
         log_json_at(&log_path, release);
     }
+    // Owned overlay teardown: explicit destroy on graceful stop (process exit
+    // destroys it implicitly after a crash, so no residue either way).
+    let border_snapshot = state.border_overlay.snapshot();
+    state.border_overlay.destroy();
+    log_json_at(
+        &log_path,
+        serde_json::json!({"event":"active-border-end","overlay": border_snapshot}),
+    );
     log_json_at(
         &log_path,
         serde_json::json!({"event":"tile-end","ticks":state.tick}),
@@ -6358,6 +6758,7 @@ pub fn cmd_tile(options: &TileOptions) -> Result<String> {
     let mouse_snap = !options.no_mouse_snap_prevention;
     let scope = options.scope_exes.clone();
     let scope_hosts = options.scope_hosts.clone();
+    let border = options.border;
     crate::lifecycle::sys::run_product(trace, mouse_snap, move |dir, me, store| {
         run_tile_loop(
             dir,
@@ -6375,6 +6776,7 @@ pub fn cmd_tile(options: &TileOptions) -> Result<String> {
                 mouse_snap,
                 scope,
                 scope_hosts,
+                border,
             },
         )
     })
@@ -6513,6 +6915,7 @@ pub fn cmd_tile_proof(options: &TileProofOptions, raw_argv: &[String]) -> Result
     crate::tiling::verify_proof_argv_consistency(raw_argv, options).map_err(err)?;
     let trace = options.trace;
     let seconds = options.seconds;
+    let border = options.border;
     let raw_argv = raw_argv.to_vec();
     let keyboard = KeyboardConfig::disabled();
     // Proof installs no keyboard hook and takes no Snap setting: the proof
@@ -6534,6 +6937,7 @@ pub fn cmd_tile_proof(options: &TileProofOptions, raw_argv: &[String]) -> Result
                 mouse_snap: false,
                 scope: Vec::new(),
                 scope_hosts: Vec::new(),
+                border,
             },
         )
     })
@@ -6561,6 +6965,7 @@ pub fn cmd_shortcut_proof(
     crate::tiling::verify_shortcut_proof_argv_consistency(raw_argv, options).map_err(err)?;
     let trace = options.trace;
     let seconds = options.seconds;
+    let border = options.border;
     let mouse_snap = !options.no_mouse_snap_prevention;
     let raw_argv = raw_argv.to_vec();
     let keyboard = KeyboardConfig {
@@ -6584,6 +6989,7 @@ pub fn cmd_shortcut_proof(
                 mouse_snap,
                 scope: Vec::new(),
                 scope_hosts: Vec::new(),
+                border,
             },
         )
     })
@@ -6609,6 +7015,7 @@ pub fn cmd_workspace_proof(
     crate::tiling::verify_workspace_proof_argv_consistency(raw_argv, options).map_err(err)?;
     let trace = options.trace;
     let seconds = options.seconds;
+    let border = options.border;
     let mouse_snap = !options.no_mouse_snap_prevention;
     let raw_argv = raw_argv.to_vec();
     let keyboard = KeyboardConfig {
@@ -6632,6 +7039,7 @@ pub fn cmd_workspace_proof(
                 mouse_snap,
                 scope: Vec::new(),
                 scope_hosts: Vec::new(),
+                border,
             },
         )
     })
@@ -7208,4 +7616,177 @@ pub fn cmd_inspect(options: &InspectOptions) -> Result<String> {
         }
     }
     Ok(serde_json::json!({ "windows": windows, "foreground": foreground }).to_string())
+}
+/// Read-only z-order relation for `border-inspect`: the owned overlay versus
+/// the current foreground window in `EnumWindows` top-to-bottom order.
+/// `(above, adjacent_below)`. A background owner cannot place its surface
+/// above the foreground window, so adjacent-below (directly beneath the
+/// target, ring uncovered) is the achievable correct placement. `(None, None)`
+/// when either endpoint is gone. No writes.
+fn overlay_z_relation(overlay_u64: u64) -> (Option<bool>, Option<bool>) {
+    let foreground = unsafe { GetForegroundWindow() } as usize as u64;
+    if overlay_u64 == 0 || foreground == 0 || overlay_u64 == foreground {
+        return (None, None);
+    }
+    if unsafe { IsWindow(foreground as isize as HWND) } == 0
+        || unsafe { IsWindow(overlay_u64 as isize as HWND) } == 0
+    {
+        return (None, None);
+    }
+    let order = {
+        unsafe extern "system" fn enum_proc(hwnd: HWND, state: LPARAM) -> i32 {
+            let out = unsafe { &mut *(state as *mut Vec<u64>) };
+            out.push(hwnd as usize as u64);
+            1
+        }
+        let mut out: Vec<u64> = Vec::new();
+        let ok = unsafe { EnumWindows(Some(enum_proc), &mut out as *mut Vec<u64> as LPARAM) };
+        if ok == 0 {
+            return (None, None);
+        }
+        out
+    };
+    let mut upper_idx: Option<usize> = None;
+    let mut lower_idx: Option<usize> = None;
+    for (i, hwnd) in order.iter().enumerate() {
+        if *hwnd == overlay_u64 && upper_idx.is_none() {
+            upper_idx = Some(i);
+        }
+        if *hwnd == foreground && lower_idx.is_none() {
+            lower_idx = Some(i);
+        }
+        if upper_idx.is_some() && lower_idx.is_some() {
+            break;
+        }
+    }
+    match (upper_idx, lower_idx) {
+        (Some(u), Some(l)) if u < l => (Some(true), Some(false)),
+        (Some(u), Some(l)) if u == l + 1 => (Some(false), Some(true)),
+        (Some(_), Some(_)) => (Some(false), Some(false)),
+        _ => (None, None),
+    }
+}
+/// `border-inspect` command: read-only report of the running owner's
+/// process-owned overlay window (geometry/visibility only). Binds the exact
+/// ledger owner (creation/pid/exe/sid/session) and reports only that owner's
+/// overlay class windows: `present` is false when the owner runs with
+/// `--no-active-border` or has no eligible target. No titles, no content, no
+/// screen capture; the owned-pixel checksum rides the owner's `active-border`
+/// log events instead.
+pub fn cmd_border_inspect() -> Result<String> {
+    use windows_sys::Win32::Foundation::RECT;
+    ensure_pm_v2()?;
+    let me = medium_caller()?;
+    let dir =
+        crate::native::ledger_directory().map_err(|e| err(format!("error: ledger dir: {e}")))?;
+    let ledger_text =
+        std::fs::read_to_string(dir.join(crate::storage::LEDGER_FILE_NAME)).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                err("refuse: no owner running")
+            } else {
+                err(format!("error: ledger read: {e}"))
+            }
+        })?;
+    let record: crate::model::RecoveryLedger =
+        crate::model::parse_ledger(&ledger_text).map_err(|_| err("refuse: corrupt ledger"))?;
+    if me.user_sid != record.owner.user_sid || me.session_id != record.owner.session_id {
+        return Err(err("refuse: owner mismatch"));
+    }
+    let exe = crate::native::current_exe_path().map_err(|e| err(format!("error: exe {e}")))?;
+    if !exe_paths_equal(&exe, &record.owner.exe_path) {
+        return Err(err("refuse: owner mismatch"));
+    }
+    let held = HeldProcess::open(record.owner.pid).map_err(|e| match e {
+        crate::native::IdentityError::Absent => err("refuse: owner not running"),
+        other => err(format!("error: owner {other}")),
+    })?;
+    let live = held.identity().map_err(|e| match e {
+        crate::native::IdentityError::Absent => err("refuse: owner not running"),
+        other => err(format!("error: owner {other}")),
+    })?;
+    if live != record.owner || !held.is_alive() {
+        return Err(err("refuse: owner not running"));
+    }
+    let Some(hwnds) = enumerate_hwnds() else {
+        return Err(err("error: enumeration failed"));
+    };
+    let mut overlays = Vec::new();
+    for raw in hwnds {
+        let hwnd = raw as HWND;
+        if class_of(hwnd) != crate::active_border_sys::OVERLAY_CLASS {
+            continue;
+        }
+        let mut pid: u32 = 0;
+        unsafe {
+            GetWindowThreadProcessId(hwnd, &mut pid);
+        }
+        if pid == 0 || pid != record.owner.pid {
+            continue;
+        }
+        let mut rect: RECT = unsafe { std::mem::zeroed() };
+        if unsafe { GetWindowRect(hwnd, &mut rect) } == 0 {
+            continue;
+        }
+        let Some(rect) = rect_from_win(rect) else {
+            continue;
+        };
+        let exstyle = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) } as u32;
+        let (above_fg, adjacent_fg) = overlay_z_relation(raw as usize as u64);
+        overlays.push(serde_json::json!({
+            "hwnd": raw as u64,
+            "visible": unsafe { IsWindowVisible(hwnd) } != 0,
+            "rect": rect_array(&rect),
+            "dpi": unsafe { GetDpiForWindow(hwnd) },
+            "topmost": exstyle & WS_EX_TOPMOST != 0,
+            "above_foreground": above_fg,
+            "adjacent_below_foreground": adjacent_fg,
+        }));
+    }
+    let foreground = unsafe { GetForegroundWindow() } as usize as u64;
+    Ok(serde_json::json!({
+        "present": !overlays.is_empty(),
+        "overlays": overlays,
+        "foreground": foreground,
+    })
+    .to_string())
+}
+
+#[cfg(test)]
+mod border_shell_tests {
+    use super::*;
+
+    #[test]
+    fn applet_analogues_excluded_without_blanket_dialog_tool_owned() {
+        for class in [
+            "MultitaskingViewFrame",
+            "TaskSwitcherWnd",
+            "NotifyIconOverflowWindow",
+            "Shell_Flyout",
+            "Progman",
+            "MSCTFIME UI",
+            "SystemTray_Main",
+        ] {
+            assert!(is_border_shell_popup(class, "explorer.exe"), "{class}");
+        }
+        assert!(is_border_shell_popup(
+            "Windows.UI.Core.CoreWindow",
+            "startmenuexperiencehost.exe"
+        ));
+        assert!(is_border_shell_popup(
+            "XamlExplorerHostIslandWindow",
+            "searchhost.exe"
+        ));
+        assert!(!is_border_shell_popup(
+            "Windows.UI.Core.CoreWindow",
+            "explorer.exe"
+        ));
+        assert!(!is_border_shell_popup(
+            "Windows.UI.Core.CoreWindow",
+            "applicationframehost.exe"
+        ));
+        assert!(!is_border_shell_popup("Notepad", "notepad.exe"));
+        assert!(!is_border_shell_popup("#32770", "notepad.exe"));
+        assert!(!is_border_shell_popup("MSPaintApp", "mspaint.exe"));
+        assert!(!is_border_shell_popup("CabinetWClass", "explorer.exe"));
+    }
 }

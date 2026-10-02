@@ -21,7 +21,7 @@ fn real_main() -> Result<(), (i32, String)> {
     let output = match command {
         "--help" | "-h" | "help" => {
             println!(
-                "tiler-test-window commands:\n  run --receipt PATH [--seconds N] [--passive]  create owned test window (passive stays hidden until show)\n  close HWND [--tag TAG]  post WM_CLOSE to owned window (proof always passes the captured tag; bare form stays for the WinArrow harness)\n  inspect HWND  print owned window snapshot JSON\n  show HWND --tag TAG  admit a passive helper without activation or z-order change (no hide)\n  minimize HWND --tag TAG  minimize without activating\n  restore HWND --tag TAG  restore a minimized helper without activating"
+                "tiler-test-window commands:\n  run --receipt PATH [--seconds N] [--passive]  create owned test window (passive stays hidden until show)\n  close HWND [--tag TAG]  post WM_CLOSE to owned window (proof always passes the captured tag; bare form stays for the WinArrow harness)\n  inspect HWND  print owned window snapshot JSON\n  show HWND --tag TAG  admit a passive helper without activation or z-order change (no hide)\n  minimize HWND --tag TAG  minimize without activating\n  restore HWND --tag TAG  restore a minimized helper without activating\n  move HWND --tag TAG --to X,Y,W,H  exact-bound location move without activation or z-order change"
             );
             return Ok(());
         }
@@ -61,10 +61,15 @@ fn real_main() -> Result<(), (i32, String)> {
             }
             .map_err(|e| (1, e.to_string()))?
         }
+        "move" => {
+            let target = tiler_windows::test_window::parse_move_args(rest)
+                .map_err(|message| (2, message))?;
+            tiler_windows::test_window::sys::move_owned(&target).map_err(|e| (1, e.to_string()))?
+        }
         _ => {
             return Err((
                 2,
-                "usage: tiler-test-window run --receipt PATH [--seconds N] [--passive]|close HWND [--tag TAG]|inspect HWND|show HWND --tag TAG|minimize HWND --tag TAG|restore HWND --tag TAG"
+                "usage: tiler-test-window run --receipt PATH [--seconds N] [--passive]|close HWND [--tag TAG]|inspect HWND|show HWND --tag TAG|minimize HWND --tag TAG|restore HWND --tag TAG|move HWND --tag TAG --to X,Y,W,H"
                     .to_owned(),
             ));
         }

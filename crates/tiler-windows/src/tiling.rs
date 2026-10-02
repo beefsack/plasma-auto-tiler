@@ -922,7 +922,7 @@ pub fn parse_capture_args(args: &[String]) -> Result<CaptureOptions, String> {
 /// persisted before the first setter with readback, and restored
 /// conditionally on stop (or independent restore after a crash) only while
 /// the live value is still ours.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TileOptions {
     pub seconds: Option<u64>,
     pub trace: bool,
@@ -930,6 +930,7 @@ pub struct TileOptions {
     pub no_keyboard_snap_takeover: bool,
     pub allow_win_l: bool,
     pub no_mouse_snap_prevention: bool,
+    pub border: crate::active_border::ActiveBorderOptions,
     pub scope_exes: Vec<String>,
     /// Explicit host-to-child scope pairs (repeatable `--scope-host-child
     /// HOST=CHILD`). Empty (default) means no child constraint. A listed host
@@ -1013,12 +1014,13 @@ pub fn parse_scope_host_child(value: &str) -> Result<ScopeHostChild, String> {
     Ok(ScopeHostChild { host, child })
 }
 
-/// Parse `tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention] [--scope-exe NAME ...] [--scope-host-child HOST=CHILD ...]`.
+/// Parse `tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention] [--scope-exe NAME ...] [--scope-host-child HOST=CHILD ...]`
+/// plus the shared active-border flags (default on with `--no-active-border`).
 /// Missing `--user-start` or any `--allowlist` is a refusal, never a silent
 /// normal run. An empty `--scope-exe` value is a refusal, never a wildcard.
 /// A malformed `--scope-host-child` value is a refusal, never a widened scope.
 pub fn parse_tile_args(args: &[String]) -> Result<TileOptions, String> {
-    let usage = "usage: tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention] [--scope-exe NAME ...] [--scope-host-child HOST=CHILD ...]";
+    let usage = "usage: tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention] [--scope-exe NAME ...] [--scope-host-child HOST=CHILD ...] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--no-active-border-theme]";
     let mut seconds: Option<u64> = None;
     let mut trace = false;
     let mut user_start = false;
@@ -1027,6 +1029,7 @@ pub fn parse_tile_args(args: &[String]) -> Result<TileOptions, String> {
     let mut no_mouse_snap_prevention = false;
     let mut scope_exes: Vec<String> = Vec::new();
     let mut scope_hosts: Vec<ScopeHostChild> = Vec::new();
+    let mut border = crate::active_border::ActiveBorderOptions::default();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -1048,6 +1051,38 @@ pub fn parse_tile_args(args: &[String]) -> Result<TileOptions, String> {
             }
             "--no-mouse-snap-prevention" => {
                 no_mouse_snap_prevention = true;
+                i += 1;
+            }
+            "--no-active-border" => {
+                border.enabled = false;
+                i += 1;
+            }
+            "--active-border-width" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                border.style.width = crate::active_border::parse_width(value)?;
+                i += 1;
+            }
+            "--active-border-gap" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                border.style.gap = crate::active_border::parse_gap(value)?;
+                i += 1;
+            }
+            "--active-border-radius" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                border.style.radius = crate::active_border::parse_radius(value)?;
+                i += 1;
+            }
+            "--active-border-color" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                border.style.color = crate::active_border::parse_color(value)?;
+                i += 1;
+            }
+            "--no-active-border-theme" => {
+                border.style.use_theme = false;
                 i += 1;
             }
             "--scope-exe" => {
@@ -1103,6 +1138,7 @@ pub fn parse_tile_args(args: &[String]) -> Result<TileOptions, String> {
         no_keyboard_snap_takeover,
         allow_win_l,
         no_mouse_snap_prevention,
+        border,
         scope_exes,
         scope_hosts,
     })
@@ -1111,24 +1147,59 @@ pub fn parse_tile_args(args: &[String]) -> Result<TileOptions, String> {
 /// CLI options for the proof-only `tile-proof` command (owned helpers only).
 /// `--allowlist PATH` is required and nonempty; missing/empty/malformed input
 /// refuses before any lease or write and never falls back to normal mode.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TileProofOptions {
     pub seconds: Option<u64>,
     pub trace: bool,
     pub allowlist: PathBuf,
+    pub border: crate::active_border::ActiveBorderOptions,
 }
 
-/// Parse `tile-proof --allowlist PATH [--seconds N] [--trace]`.
+/// Parse `tile-proof --allowlist PATH [--seconds N] [--trace]` plus the shared
+/// active-border flags (default on with `--no-active-border`).
 pub fn parse_tile_proof_args(args: &[String]) -> Result<TileProofOptions, String> {
-    let usage = "usage: tile-proof --allowlist PATH [--seconds N] [--trace]";
+    let usage = "usage: tile-proof --allowlist PATH [--seconds N] [--trace] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--no-active-border-theme]";
     let mut seconds: Option<u64> = None;
     let mut trace = false;
     let mut allowlist: Option<PathBuf> = None;
+    let mut border = crate::active_border::ActiveBorderOptions::default();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--trace" => {
                 trace = true;
+                i += 1;
+            }
+            "--no-active-border" => {
+                border.enabled = false;
+                i += 1;
+            }
+            "--active-border-width" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                border.style.width = crate::active_border::parse_width(value)?;
+                i += 1;
+            }
+            "--active-border-gap" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                border.style.gap = crate::active_border::parse_gap(value)?;
+                i += 1;
+            }
+            "--active-border-radius" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                border.style.radius = crate::active_border::parse_radius(value)?;
+                i += 1;
+            }
+            "--active-border-color" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                border.style.color = crate::active_border::parse_color(value)?;
+                i += 1;
+            }
+            "--no-active-border-theme" => {
+                border.style.use_theme = false;
                 i += 1;
             }
             "--seconds" => {
@@ -1163,6 +1234,7 @@ pub fn parse_tile_proof_args(args: &[String]) -> Result<TileProofOptions, String
         seconds,
         trace,
         allowlist,
+        border,
     })
 }
 
@@ -1294,24 +1366,27 @@ pub fn verify_hide_proof_argv_consistency(
 /// ON like product (visible `--no-mouse-snap-prevention` off switch) so the
 /// same session-only preimage/restore routines run under the proof geometry
 /// gate.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShortcutProofOptions {
     pub seconds: Option<u64>,
     pub trace: bool,
     pub allowlist: PathBuf,
     pub no_mouse_snap_prevention: bool,
+    pub border: crate::active_border::ActiveBorderOptions,
 }
 
 /// Parse `shortcut-proof --allowlist PATH [--seconds N] [--trace]
-/// [--no-mouse-snap-prevention]`. Any keyboard flag (`--allow-win-l`,
+/// [--no-mouse-snap-prevention]` plus the shared active-border flags.
+/// Any keyboard flag (`--allow-win-l`,
 /// `--no-keyboard-snap-takeover`), `--user-start`, or unknown flag is a
 /// refusal, never a silent normal run.
 pub fn parse_shortcut_proof_args(args: &[String]) -> Result<ShortcutProofOptions, String> {
-    let usage = "usage: shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]";
+    let usage = "usage: shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--no-active-border-theme]";
     let mut seconds: Option<u64> = None;
     let mut trace = false;
     let mut allowlist: Option<PathBuf> = None;
     let mut no_mouse_snap_prevention = false;
+    let mut border = crate::active_border::ActiveBorderOptions::default();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -1321,6 +1396,38 @@ pub fn parse_shortcut_proof_args(args: &[String]) -> Result<ShortcutProofOptions
             }
             "--no-mouse-snap-prevention" => {
                 no_mouse_snap_prevention = true;
+                i += 1;
+            }
+            "--no-active-border" => {
+                border.enabled = false;
+                i += 1;
+            }
+            "--active-border-width" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                border.style.width = crate::active_border::parse_width(value)?;
+                i += 1;
+            }
+            "--active-border-gap" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                border.style.gap = crate::active_border::parse_gap(value)?;
+                i += 1;
+            }
+            "--active-border-radius" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                border.style.radius = crate::active_border::parse_radius(value)?;
+                i += 1;
+            }
+            "--active-border-color" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                border.style.color = crate::active_border::parse_color(value)?;
+                i += 1;
+            }
+            "--no-active-border-theme" => {
+                border.style.use_theme = false;
                 i += 1;
             }
             "--seconds" => {
@@ -1356,6 +1463,7 @@ pub fn parse_shortcut_proof_args(args: &[String]) -> Result<ShortcutProofOptions
         trace,
         allowlist,
         no_mouse_snap_prevention,
+        border,
     })
 }
 
@@ -1366,7 +1474,10 @@ pub fn verify_shortcut_proof_argv_consistency(
     raw: &[String],
     parsed: &ShortcutProofOptions,
 ) -> Result<(), String> {
-    let usage = "usage: shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]";
+    let usage = "usage: shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--no-active-border-theme]";
+    let (border_echo, rest) = scan_border_echo(raw, usage)?;
+    verify_border_echo(&border_echo, &parsed.border, usage)?;
+    let raw = rest;
     let mut allowlist: Option<&str> = None;
     let mut seconds: Option<&str> = None;
     let mut trace = false;
@@ -1425,11 +1536,115 @@ pub fn verify_shortcut_proof_argv_consistency(
 /// quoting), `--trace` presence matching, `--seconds` value matching, and no
 /// unknown flags. Any parsed/raw inconsistency is an impossible error: refuse
 /// before any lease or write, never fall back.
+/// Verify a raw-scanned border echo against parsed border options.
+fn verify_border_echo(
+    echo: &crate::active_border::BorderArgvEcho,
+    border: &crate::active_border::ActiveBorderOptions,
+    usage: &str,
+) -> Result<(), String> {
+    let impossible = |what: &str| format!("error: argv/parsed {what} mismatch (impossible)");
+    if echo.no_active_border != !border.enabled {
+        return Err(impossible("border-enabled"));
+    }
+    let check_value = |raw: &Option<String>, want: f64, what: &str| -> Result<(), String> {
+        match raw {
+            None => Ok(()),
+            Some(text) => {
+                let got: f64 = text.parse().map_err(|_| usage.to_owned())?;
+                if (got - want).abs() > f64::EPSILON {
+                    return Err(impossible(what));
+                }
+                Ok(())
+            }
+        }
+    };
+    // Presence must round-trip too: a parsed non-default with no raw flag,
+    // or a raw flag collapsing to the default, is still consistent as long
+    // as values match; only value mismatches refuse here.
+    let defaults = crate::active_border::ActiveBorderOptions::default();
+    check_value(&echo.width, border.style.width, "border-width")?;
+    check_value(&echo.gap, border.style.gap, "border-gap")?;
+    check_value(&echo.radius, border.style.radius, "border-radius")?;
+    match (&echo.color, border.style.color) {
+        (None, _) => {}
+        (Some(text), want) => {
+            let got = crate::active_border::parse_color(text).map_err(|_| usage.to_owned())?;
+            if got != want {
+                return Err(impossible("border-color"));
+            }
+        }
+    }
+    if echo.no_theme != !border.style.use_theme {
+        return Err(impossible("border-theme"));
+    }
+    // A raw flag that parses to the default is harmless; a missing flag with
+    // a non-default parsed value is impossible.
+    if echo.width.is_none() && border.style.width != defaults.style.width {
+        return Err(impossible("border-width"));
+    }
+    if echo.gap.is_none() && border.style.gap != defaults.style.gap {
+        return Err(impossible("border-gap"));
+    }
+    if echo.radius.is_none() && border.style.radius != defaults.style.radius {
+        return Err(impossible("border-radius"));
+    }
+    if echo.color.is_none() && border.style.color != defaults.style.color {
+        return Err(impossible("border-color"));
+    }
+    Ok(())
+}
+
+/// Scan raw argv border flags into an echo. Unknown non-border flags are left
+/// for the caller: this returns the echo plus the non-border remainder.
+fn scan_border_echo(
+    raw: &[String],
+    usage: &str,
+) -> Result<(crate::active_border::BorderArgvEcho, Vec<String>), String> {
+    let mut echo = crate::active_border::BorderArgvEcho::default();
+    let mut rest: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < raw.len() {
+        match raw[i].as_str() {
+            "--no-active-border" => {
+                echo.no_active_border = true;
+                i += 1;
+            }
+            "--active-border-width"
+            | "--active-border-gap"
+            | "--active-border-radius"
+            | "--active-border-color" => {
+                let flag = raw[i].clone();
+                i += 1;
+                let value = raw.get(i).ok_or_else(|| usage.to_owned())?.clone();
+                match flag.as_str() {
+                    "--active-border-width" => echo.width = Some(value),
+                    "--active-border-gap" => echo.gap = Some(value),
+                    "--active-border-radius" => echo.radius = Some(value),
+                    _ => echo.color = Some(value),
+                }
+                i += 1;
+            }
+            "--no-active-border-theme" => {
+                echo.no_theme = true;
+                i += 1;
+            }
+            _ => {
+                rest.push(raw[i].clone());
+                i += 1;
+            }
+        }
+    }
+    Ok((echo, rest))
+}
+
 pub fn verify_proof_argv_consistency(
     raw: &[String],
     parsed: &TileProofOptions,
 ) -> Result<(), String> {
-    let usage = "usage: tile-proof --allowlist PATH [--seconds N] [--trace]";
+    let usage = "usage: tile-proof --allowlist PATH [--seconds N] [--trace] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--no-active-border-theme]";
+    let (border_echo, rest) = scan_border_echo(raw, usage)?;
+    verify_border_echo(&border_echo, &parsed.border, usage)?;
+    let raw = rest;
     let mut allowlist: Option<&str> = None;
     let mut seconds: Option<&str> = None;
     let mut trace = false;
@@ -1484,23 +1699,26 @@ pub fn verify_proof_argv_consistency(
 /// hook accepts exactly [`crate::snapkey::SHORTCUT_PROOF_MARKER`].
 /// `shortcut-proof` never hides for workspace intents; `tile-proof` installs
 /// no hook at all.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WorkspaceProofOptions {
     pub seconds: Option<u64>,
     pub trace: bool,
     pub allowlist: PathBuf,
     pub no_mouse_snap_prevention: bool,
+    pub border: crate::active_border::ActiveBorderOptions,
 }
 
 /// Parse `workspace-proof --allowlist PATH [--seconds N] [--trace]
-/// [--no-mouse-snap-prevention]`. Any keyboard flag, `--user-start`, or
+/// [--no-mouse-snap-prevention]` plus the shared active-border flags.
+/// Any keyboard flag, `--user-start`, or
 /// unknown flag is a refusal, never a silent normal run.
 pub fn parse_workspace_proof_args(args: &[String]) -> Result<WorkspaceProofOptions, String> {
-    let usage = "usage: workspace-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]";
+    let usage = "usage: workspace-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--no-active-border-theme]";
     let mut seconds: Option<u64> = None;
     let mut trace = false;
     let mut allowlist: Option<PathBuf> = None;
     let mut no_mouse_snap_prevention = false;
+    let mut border = crate::active_border::ActiveBorderOptions::default();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -1510,6 +1728,38 @@ pub fn parse_workspace_proof_args(args: &[String]) -> Result<WorkspaceProofOptio
             }
             "--no-mouse-snap-prevention" => {
                 no_mouse_snap_prevention = true;
+                i += 1;
+            }
+            "--no-active-border" => {
+                border.enabled = false;
+                i += 1;
+            }
+            "--active-border-width" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                border.style.width = crate::active_border::parse_width(value)?;
+                i += 1;
+            }
+            "--active-border-gap" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                border.style.gap = crate::active_border::parse_gap(value)?;
+                i += 1;
+            }
+            "--active-border-radius" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                border.style.radius = crate::active_border::parse_radius(value)?;
+                i += 1;
+            }
+            "--active-border-color" => {
+                i += 1;
+                let value = args.get(i).ok_or_else(|| usage.to_owned())?;
+                border.style.color = crate::active_border::parse_color(value)?;
+                i += 1;
+            }
+            "--no-active-border-theme" => {
+                border.style.use_theme = false;
                 i += 1;
             }
             "--seconds" => {
@@ -1545,6 +1795,7 @@ pub fn parse_workspace_proof_args(args: &[String]) -> Result<WorkspaceProofOptio
         trace,
         allowlist,
         no_mouse_snap_prevention,
+        border,
     })
 }
 
@@ -1553,7 +1804,10 @@ pub fn verify_workspace_proof_argv_consistency(
     raw: &[String],
     parsed: &WorkspaceProofOptions,
 ) -> Result<(), String> {
-    let usage = "usage: workspace-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]";
+    let usage = "usage: workspace-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention] [--no-active-border] [--active-border-width 0..=32] [--active-border-gap 0..=64] [--active-border-radius 0..=64] [--active-border-color #rrggbb] [--no-active-border-theme]";
+    let (border_echo, rest) = scan_border_echo(raw, usage)?;
+    verify_border_echo(&border_echo, &parsed.border, usage)?;
+    let raw = rest;
     let mut allowlist: Option<&str> = None;
     let mut seconds: Option<&str> = None;
     let mut trace = false;

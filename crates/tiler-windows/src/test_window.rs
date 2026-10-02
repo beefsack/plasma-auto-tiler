@@ -119,6 +119,55 @@ pub fn parse_tagged_hwnd_args(command: &str, args: &[String]) -> Result<TaggedHw
     })
 }
 
+/// Exact-bound move target: `move HWND --tag TAG --to X,Y,W,H`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MoveTarget {
+    pub hwnd: u64,
+    pub tag: String,
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+/// Parse `move HWND --tag TAG --to X,Y,W,H` (physical pixels, no activation).
+pub fn parse_move_args(args: &[String]) -> Result<MoveTarget, String> {
+    let usage = "usage: tiler-test-window move HWND --tag TAG --to X,Y,W,H".to_owned();
+    if args.len() != 5 || args[1] != "--tag" || args[3] != "--to" {
+        return Err(usage);
+    }
+    let hwnd = parse_hwnd(&args[0]).ok_or_else(|| usage.clone())?;
+    if args[2].is_empty() {
+        return Err(usage);
+    }
+    let parts: Vec<&str> = args[4].split(',').collect();
+    if parts.len() != 4 {
+        return Err(usage);
+    }
+    let mut nums = [0i32; 4];
+    for (i, part) in parts.iter().enumerate() {
+        nums[i] = part.parse::<i32>().map_err(|_| usage.clone())?;
+    }
+    let [x, y, w, h] = nums;
+    if w < 1
+        || h < 1
+        || w > 16384
+        || h > 16384
+        || !(-16384..=16384).contains(&x)
+        || !(-16384..=16384).contains(&y)
+    {
+        return Err("refuse: move rect out of bounds".to_owned());
+    }
+    Ok(MoveTarget {
+        hwnd,
+        tag: args[2].clone(),
+        x,
+        y,
+        w,
+        h,
+    })
+}
+
 /// Parse `close HWND [--tag TAG]` trailing arguments. The bare form stays for
 /// the WinArrow harness; proof close/recovery paths always pass the captured
 /// `--tag` so a recycled HWND can never be closed by mistake.
@@ -453,6 +502,49 @@ pub mod sys {
         )
     }
 
+    /// Exact-bound location move without activation or z-order change:
+    /// `SetWindowPos` with `SWP_NOACTIVATE | SWP_NOZORDER`, then a fresh
+    /// geometry readback. Owned helper only; never a foreign window.
+    pub fn move_owned(target: &super::MoveTarget) -> SResult<String> {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SWP_NOACTIVATE, SWP_NOZORDER};
+        let (snap, held) = bound_target(target.hwnd, &target.tag)?;
+        let hwnd = snap.hwnd as isize as HWND;
+        let ok = unsafe {
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                target.x,
+                target.y,
+                target.w,
+                target.h,
+                SWP_NOACTIVATE | SWP_NOZORDER,
+            )
+        };
+        if ok == 0 {
+            return Err(failed("SetWindowPos move failed"));
+        }
+        let _ = &held;
+        let back = bound_readback(target.hwnd, &snap)?;
+        if back.left != target.x
+            || back.top != target.y
+            || back.right - back.left != target.w
+            || back.bottom - back.top != target.h
+        {
+            return Err(failed("move readback rect mismatch"));
+        }
+        let foreground = foreground_u64();
+        if foreground == back.hwnd {
+            return Err(failed("move stole focus"));
+        }
+        Ok(serde_json::json!({
+            "moved": back.hwnd,
+            "tag": back.tag,
+            "rect": [back.left, back.top, back.right, back.bottom],
+            "foreground": foreground,
+        })
+        .to_string())
+    }
+
     pub fn close_owned(hwnd_u64: u64, expected_tag: Option<&str>) -> SResult<String> {
         let me = current_identity().map_err(|e| failed(format!("identity {e}")))?;
         let snap = query_owned(hwnd_u64, &me.exe_path, &me.user_sid, me.session_id)?;
@@ -639,5 +731,31 @@ pub mod sys {
             }
         }
         Ok(json)
+    }
+}
+
+#[cfg(test)]
+mod move_args_tests {
+    use super::*;
+
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn move_args_require_exact_bound_rect() {
+        let ok = parse_move_args(&strings(&["123", "--tag", "abc", "--to", "10,20,300,200"]))
+            .expect("parsed");
+        assert_eq!(ok.hwnd, 123);
+        assert_eq!(ok.tag, "abc");
+        assert_eq!((ok.x, ok.y, ok.w, ok.h), (10, 20, 300, 200));
+        assert!(parse_move_args(&strings(&["123", "--tag", "", "--to", "10,20,300,200"])).is_err());
+        assert!(
+            parse_move_args(&strings(&["123", "--tag", "abc", "--to", "10,20,0,200"])).is_err()
+        );
+        assert!(parse_move_args(&strings(&["123", "--tag", "abc", "--to", "10,20"])).is_err());
+        assert!(
+            parse_move_args(&strings(&["0", "--tag", "abc", "--to", "10,20,300,200"])).is_err()
+        );
     }
 }

@@ -323,6 +323,40 @@ the corresponding item ships; each such entry names its replacement.
   its `#402a82da` default. All new keys live in the existing effect group and
   hot-apply through effect reconfigure; existing keys/defaults are unchanged.
 
+### Windows active border
+
+- Orchestrator decision 2026-10-02: default-on owned per-pixel-alpha layered,
+  click-through, nonactivating tool-window surface. Do not mutate foreign
+  window attributes. `DWMWA_BORDER_COLOR` controls colour only and cannot
+  provide KDE's configurable thickness/gap; the visible-frame thickness
+  attribute is Get-only. Use `tiler-core::visual` policy, KDE defaults
+  (width 3.0, gap/radius 0.0) and target-DPI rounding. The border follows
+  eligible active windows independently of tiling/floating membership, within
+  the adapter's scope/identity fences, with maximize/fullscreen/minimize,
+  hidden-workspace and targeted shell suppression.
+- Place the surface immediately below the fresh target in the target's
+  topmost/normal band, matching KWin's target-parented outline at Z=-1.
+  Reconcile actual visibility, geometry and z-order even when cached drawing
+  inputs are unchanged. DWM shadows can tint the composed ring; do not claim
+  that DIB RGB equals final screen RGB. Owned-surface creation, alpha drawing,
+  placement, hiding and teardown are the carrier for later group-underlay
+  work; this decision does not implement that underlay.
+- Theme mapping selected for user review: KDE uses the active Selection
+  background from `KColorScheme` (desktop highlight). Windows uses the official
+  [`DwmGetColorizationColor`](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmgetcolorizationcolor)
+  system colourization/accent analogue, with the core availability/positive-
+  alpha gate and configured `#2a82da` fallback. The owned window flags a
+  requery on `WM_DWMCOLORIZATIONCOLORCHANGED` or `WM_SETTINGCHANGE`; repaint
+  only if the resolved colour changes. `--no-active-border-theme` selects
+  configured colour, and `--no-active-border` disables the surface.
+- Scoped machine evidence on Windows 11 build 26200, one 2560x1440 display at
+  DPI 120, covers composed owned-ring pixels, focus, real directional/workspace
+  routes, synthetic move/resize, suppression/restore, ordinary approved apps,
+  shell journeys, off and graceful/crash cleanup. Physical display/input,
+  other DPI/output arrangements and topmost/style variants remain bounded
+  follow-up checks. Evidence and limitations:
+  `changes/windows-active-border.md` (archive after delivery checks).
+
 ## Native Integration Boundary
 
 - User decision (2026-09-24; governing statement under Architecture Direction):

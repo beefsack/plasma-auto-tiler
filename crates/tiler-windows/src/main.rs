@@ -23,7 +23,8 @@ fn real_main() -> Result<(), (i32, String)> {
             println!(
                 "tiler-windows commands:\n  identity  print current process identity as JSON\n  run --seconds N [--trace] [--hide HWND]  bounded owner run\n  ready  report owner readiness as JSON\n  restore  standalone reveal of owned hidden windows and ledger cleanup after owner exit (call explicitly after stop)\n  stop  request graceful exit of verified owner only; leaves ledger/windows for standalone restore\n  emergency-stop  terminate verified owner only; leaves ledger/windows for standalone restore\n  tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention] [--scope-exe NAME ...] [--scope-host-child HOST=CHILD ...]  normal user tiling loop until stop (no hide, geometry left in place; keyboard takeover on by default, unshifted Win+L needs --allow-win-l; session-only mouse-Snap prevention on by default; repeatable --scope-exe restricts management to named exes, empty default manages everything; repeatable --scope-host-child HOST=CHILD admits a listed host only with a live matching hosted child)\n  tile-proof --allowlist PATH [--seconds N] [--trace]  owned-helpers-only proof loop (refuses without a valid allowlist, never falls back to normal)\n  shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]  owned-helpers-only automated shortcut proof with test-only marked synthetic-input acceptance (never falls back to normal; Win+L stays gated off)
   workspace-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]  owned-helpers-only automated workspace proof (select/send/follow with hide/reveal for exactly the allowlist; never falls back to normal)
-  workspace --select INDEX  exact-owner out-of-hook select for the normal tile loop only (queues one bounded request 0..9; proof owners refuse)\n  capture --out PATH --hwnd HWND [--hwnd HWND ...]  read-only frozen-allowlist capture of explicitly listed owned helpers\n  inventory  read-only top-level window list for selecting capture targets (no titles)\n  children --hwnd HWND [--hwnd HWND ...]  read-only child-window report with verified process identity (no titles)\n  inspect --allowlist PATH  read-only fresh-state report for exactly the frozen allowlist (no titles)"
+  Active-border options for tile and proof loops: --no-active-border, --active-border-width N (0..32, default 3), --active-border-gap N (0..64, default 0), --active-border-radius N (0..64, default 0), --active-border-color #rrggbb (fallback #2a82da), --no-active-border-theme (use configured color instead of system accent). Border is on by default; dimensions are logical pixels.
+  workspace --select INDEX  exact-owner out-of-hook select for the normal tile loop only (queues one bounded request 0..9; proof owners refuse)\n  capture --out PATH --hwnd HWND [--hwnd HWND ...]  read-only frozen-allowlist capture of explicitly listed owned helpers\n  inventory  read-only top-level window list for selecting capture targets (no titles)\n  children --hwnd HWND [--hwnd HWND ...]  read-only child-window report with verified process identity (no titles)\n  inspect --allowlist PATH  read-only fresh-state report for exactly the frozen allowlist (no titles)\n  border-inspect  read-only report of the running owner's process-owned border overlay (geometry/visibility only; no titles, no content, no screen capture)"
             );
             return Ok(());
         }
@@ -119,6 +120,12 @@ fn real_main() -> Result<(), (i32, String)> {
                 tiler_windows::tiling::parse_inspect_args(rest).map_err(|message| (2, message))?;
             tiler_windows::tiling_sys::cmd_inspect(&options).map_err(|e| (1, e.to_string()))?
         }
+        "border-inspect" => {
+            if !rest.is_empty() {
+                return Err((2, "usage: tiler-windows border-inspect".to_owned()));
+            }
+            tiler_windows::tiling_sys::cmd_border_inspect().map_err(|e| (1, e.to_string()))?
+        }
         "emergency-stop" => {
             if !rest.is_empty() {
                 return Err((2, "usage: tiler-windows emergency-stop".to_owned()));
@@ -133,7 +140,7 @@ fn real_main() -> Result<(), (i32, String)> {
         _ => {
             return Err((
                 2,
-                "usage: tiler-windows identity|run --seconds N [--trace] [--hide HWND]|ready|restore|stop|emergency-stop|watch-owner --pid PID --creation HEX|tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention] [--scope-exe NAME ...] [--scope-host-child HOST=CHILD ...]|tile-proof --allowlist PATH [--seconds N] [--trace]|shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]|workspace-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]|workspace --select INDEX|hide-proof --allowlist PATH [--seconds N] [--trace]|capture --out PATH --hwnd HWND|inventory|children --hwnd HWND|inspect --allowlist PATH"
+                "usage: tiler-windows identity|run --seconds N [--trace] [--hide HWND]|ready|restore|stop|emergency-stop|watch-owner --pid PID --creation HEX|tile --user-start [--seconds N] [--trace] [--no-keyboard-snap-takeover] [--allow-win-l] [--no-mouse-snap-prevention] [--scope-exe NAME ...] [--scope-host-child HOST=CHILD ...]|tile-proof --allowlist PATH [--seconds N] [--trace]|shortcut-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]|workspace-proof --allowlist PATH [--seconds N] [--trace] [--no-mouse-snap-prevention]|workspace --select INDEX|hide-proof --allowlist PATH [--seconds N] [--trace]|capture --out PATH --hwnd HWND|inventory|children --hwnd HWND|inspect --allowlist PATH|border-inspect"
                     .to_owned(),
             ));
         }
