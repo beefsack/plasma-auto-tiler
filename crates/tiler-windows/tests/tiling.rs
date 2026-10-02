@@ -6,13 +6,15 @@ use tiler_windows::tiling::{
     ObservedTargetRef, ReadbackOutcome, RefusedTracker, ScopeHostChild, SkipReason,
     StatelessVerdict, TokenMap, WindowFacts, WorkspaceRequest, allow_match, allowlist_digest,
     build_reconcile_event, build_reconcile_event_for, classify, classify_gesture, fingerprint,
-    hosted_child_allows, inspect_stateless_verdict, is_borderless_fullscreen, parse_allowlist,
-    parse_capture_args, parse_children_args, parse_hide_proof_args, parse_inspect_args,
-    parse_scope_host_child, parse_tile_args, parse_tile_proof_args, parse_workspace_proof_args,
-    parse_workspace_request, parse_workspace_select_args, readback_outcome,
-    render_workspace_request, scope_allows, scope_exe_basename, tick_summary_signature,
-    tiling_domain_bounds, verify_hide_proof_argv_consistency, verify_proof_argv_consistency,
+    hosted_child_allows, inspect_stateless_verdict, is_borderless_fullscreen, min_hints_from_outer,
+    normalize_min_track, parse_allowlist, parse_capture_args, parse_children_args,
+    parse_hide_proof_args, parse_inspect_args, parse_scope_host_child, parse_tile_args,
+    parse_tile_proof_args, parse_workspace_proof_args, parse_workspace_request,
+    parse_workspace_select_args, readback_outcome, render_workspace_request, scope_allows,
+    scope_exe_basename, tick_summary_signature, tiling_domain_bounds,
+    verify_hide_proof_argv_consistency, verify_proof_argv_consistency,
     verify_workspace_proof_argv_consistency, verify_workspace_select_argv_consistency,
+    visible_min_from_outer,
 };
 
 fn rect(x: i32, y: i32, w: i32, h: i32) -> Rect {
@@ -817,6 +819,16 @@ fn ev(
     windows: &[(WindowId, Rect)],
     focused: Option<&WindowId>,
 ) -> tiler_core::boundary::CoreEvent {
+    let hinted: Vec<(WindowId, Rect, tiler_core::size_hints::WindowSizeHints)> = windows
+        .iter()
+        .map(|(w, r)| {
+            (
+                w.clone(),
+                *r,
+                tiler_core::size_hints::WindowSizeHints::none(),
+            )
+        })
+        .collect();
     build_reconcile_event(&tiler_windows::tiling::ReconcileInput {
         owner,
         generation,
@@ -824,7 +836,7 @@ fn ev(
         revision,
         fingerprint: fp,
         domain_bounds: bounds,
-        windows,
+        windows: &hinted,
         focused,
     })
 }
@@ -898,7 +910,11 @@ fn per_workspace_reconcile_binds_domain_key() {
         gap: INNER_GAP,
         adjacent: std::collections::BTreeMap::new(),
     };
-    let windows = vec![(WindowId("w1".to_owned()), rect(8, 8, 800, 600))];
+    let windows = vec![(
+        WindowId("w1".to_owned()),
+        rect(8, 8, 800, 600),
+        tiler_core::size_hints::WindowSizeHints::none(),
+    )];
     let event = build_reconcile_event_for(
         &owner,
         &generation,
@@ -1424,4 +1440,135 @@ fn workspace_request_roundtrip_and_refusals() {
     bad_owner.creation = String::new();
     assert!(parse_workspace_request(&render_workspace_request(&bad_owner)).is_err());
     assert!(parse_workspace_request("not json").is_err());
+}
+
+#[test]
+fn default_seeded_track_converts_but_zero_query_stays_unknown() {
+    // A correctly seeded system-default track (positive, in-bound) converts
+    // 1:1 with zero insets: an app that leaves the seeded default untouched
+    // reports a usable hint, never a fabricated absence. A zero return (query
+    // failure) stays unknown: the native path ignores the struct entirely.
+    let zero = FrameInsets {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    assert_eq!(visible_min_from_outer(160, 40, zero), Some((160, 40)));
+    assert_eq!(normalize_min_track(160, 40), Some((160, 40)));
+    assert_eq!(visible_min_from_outer(0, 0, zero), None);
+    assert!(min_hints_from_outer(0, 0, zero).is_empty());
+}
+
+#[test]
+fn min_track_normalization_rejects_invalid() {
+    // Valid outer track sizes pass through untouched.
+    assert_eq!(normalize_min_track(880, 625), Some((880, 625)));
+    assert_eq!(normalize_min_track(1, 1), Some((1, 1)));
+    assert_eq!(normalize_min_track(16384, 16384), Some((16384, 16384)));
+    // Zero, negative, and absurd values mean no usable minimum: unknown, not
+    // a zero floor.
+    assert_eq!(normalize_min_track(0, 625), None);
+    assert_eq!(normalize_min_track(880, 0), None);
+    assert_eq!(normalize_min_track(-8, 625), None);
+    assert_eq!(normalize_min_track(880, -8), None);
+    assert_eq!(normalize_min_track(16385, 625), None);
+    assert_eq!(normalize_min_track(880, i32::MAX), None);
+}
+
+#[test]
+fn visible_min_conversion_matches_known_apps() {
+    // Paint: outer minimum 880x625 with an 8/4/8/4 frame converts to visible
+    // 864x617 physical pixels.
+    let paint = FrameInsets {
+        left: 8,
+        top: 4,
+        right: 8,
+        bottom: 4,
+    };
+    assert_eq!(visible_min_from_outer(880, 625, paint), Some((864, 617)));
+    let hints = min_hints_from_outer(880, 625, paint);
+    assert_eq!(hints.min_w, Some(864));
+    assert_eq!(hints.min_h, Some(617));
+    assert_eq!(hints.max_w, None);
+    assert_eq!(hints.max_h, None);
+    // Notepad: outer minimum 415x253 with a 7/3/7/4 frame converts to visible
+    // 401x246 physical pixels.
+    let notepad = FrameInsets {
+        left: 7,
+        top: 3,
+        right: 7,
+        bottom: 4,
+    };
+    assert_eq!(visible_min_from_outer(415, 253, notepad), Some((401, 246)));
+    let hints = min_hints_from_outer(415, 253, notepad);
+    assert_eq!(hints.min_w, Some(401));
+    assert_eq!(hints.min_h, Some(246));
+}
+
+#[test]
+fn visible_min_unknown_when_invalid_or_swallowed_by_frame() {
+    let insets = FrameInsets {
+        left: 8,
+        top: 4,
+        right: 8,
+        bottom: 4,
+    };
+    // Invalid track sizes carry no hint.
+    assert_eq!(visible_min_from_outer(0, 625, insets), None);
+    assert!(min_hints_from_outer(0, 625, insets).is_empty());
+    // A minimum that vanishes inside its own frame carries no usable visible
+    // constraint: unknown, never a zero or negative floor.
+    assert_eq!(visible_min_from_outer(16, 8, insets), None);
+    assert_eq!(visible_min_from_outer(10, 4, insets), None);
+    assert!(min_hints_from_outer(16, 8, insets).is_empty());
+}
+
+#[test]
+fn reconcile_builder_carries_per_window_hints() {
+    use tiler_core::directional::{OutputId, WorkspaceId};
+    use tiler_core::session::{DomainKey, OutputDomain};
+    let owner = OwnerId::parse("tiler-windows").expect("valid");
+    let generation = GenerationId::parse("abcdef0123456789").expect("valid");
+    let correlation = CorrelationId::parse("tick-1").expect("valid");
+    let key = DomainKey {
+        output: OutputId("mon-a".to_owned()),
+        workspace: WorkspaceId("ws-1".to_owned()),
+    };
+    let domain = OutputDomain {
+        id: OutputId("mon-a".to_owned()),
+        workspace: WorkspaceId("ws-1".to_owned()),
+        bounds: rect(0, 0, 1600, 900),
+        gap: INNER_GAP,
+        adjacent: std::collections::BTreeMap::new(),
+    };
+    let hinted = tiler_core::size_hints::WindowSizeHints {
+        min_w: Some(864),
+        min_h: Some(617),
+        max_w: None,
+        max_h: None,
+    };
+    let windows = vec![
+        (WindowId("w1".to_owned()), rect(0, 0, 800, 884), hinted),
+        (
+            WindowId("w2".to_owned()),
+            rect(800, 0, 800, 884),
+            tiler_core::size_hints::WindowSizeHints::none(),
+        ),
+    ];
+    let event = build_reconcile_event_for(
+        &owner,
+        &generation,
+        &correlation,
+        0,
+        2,
+        &domain,
+        &key,
+        OUTER_GAP,
+        &windows,
+        None,
+    );
+    assert_eq!(event.windows.len(), 2);
+    assert_eq!(event.windows[0].hints, hinted);
+    assert!(event.windows[1].hints.is_empty());
 }

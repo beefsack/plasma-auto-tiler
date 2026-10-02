@@ -3,6 +3,7 @@ use tiler_core::directional::{Direction, WindowId};
 use tiler_core::engine::Engine;
 use tiler_core::geometry::Rect;
 use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
+use tiler_core::size_hints::WindowSizeHints;
 use tiler_windows::snapkey::{
     Classified, INTENT_QUEUE_CAP, KeyboardConfig, MARKED_DIAG_CAP, MOD_DIAG_CAP, MarkedDiagBuf,
     MarkedKeyDiag, ModDiagBuf, ModSource, ModTrafficDiag, OriginVerdict, QueuedSnapEvent,
@@ -751,6 +752,10 @@ fn engine_harness(
     let generation = GenerationId::parse("gen-1").expect("valid");
     engine.sync_binding(&owner, &generation);
     let pairs: Vec<(String, Rect)> = windows.iter().map(|(w, r)| (w.0.clone(), *r)).collect();
+    let hinted: Vec<(WindowId, Rect, WindowSizeHints)> = windows
+        .iter()
+        .map(|(w, r)| (w.clone(), *r, WindowSizeHints::none()))
+        .collect();
     let event = build_reconcile_event(&ReconcileInput {
         owner: &owner,
         generation: &generation,
@@ -763,7 +768,7 @@ fn engine_harness(
             w: 1600,
             h: 900,
         },
-        windows,
+        windows: &hinted,
         focused: Some(focused),
     });
     (engine, event)

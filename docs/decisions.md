@@ -84,6 +84,13 @@ Windows API behavior; see [Windows plan](research/windows-port/plan.md).
   Recovery ledger v4 stores min/max show-state without geometry; readers accept
   v1-v3. The window-lifetime membership property is inert, remains until window
   destruction, and is distrusted/replaced on the next run.
+- User decision 2026-10-02, option A (Windows minimum sizes): query fresh
+  application-declared minimum track sizes and supply visible-frame physical-
+  pixel hints to the existing shared minimum-aware projection. No learning;
+  generic learned limits remain parked. Match KDE when infeasible: retain
+  proportional allocation, flag overconstrained leaves and skip their writes;
+  overlap is possible, with no fighting. Failed, timed-out or invalid native
+  queries supply no hint. Keep existing refused-attempt suppression.
 - macOS decisions (version floor, App Store, shortcut consent, updates, UI
   language) are deferred until macOS spiking starts.
 

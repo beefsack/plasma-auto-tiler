@@ -21,6 +21,7 @@ use tiler_core::directional::WindowId;
 use tiler_core::engine::Engine;
 use tiler_core::geometry::Rect;
 use tiler_core::ids::{CorrelationId, GenerationId, OwnerId};
+use tiler_core::size_hints::WindowSizeHints;
 use windows_sys::Win32::Foundation::{GetLastError, HWND, LPARAM, RECT, SetLastError};
 use windows_sys::Win32::Graphics::Dwm::DwmGetWindowAttribute;
 use windows_sys::Win32::Graphics::Gdi::{
@@ -30,7 +31,7 @@ use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadI
 use windows_sys::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows_sys::Win32::UI::HiDpi::{
     AreDpiAwarenessContextsEqual, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow,
-    GetThreadDpiAwarenessContext, SetProcessDpiAwarenessContext,
+    GetSystemMetricsForDpi, GetThreadDpiAwarenessContext, SetProcessDpiAwarenessContext,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
@@ -41,10 +42,12 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_SHOW, EVENT_SYSTEM_FOREGROUND,
     EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZESTART, EnumChildWindows, EnumWindows, GW_OWNER,
     GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetCursorPos, GetDesktopWindow, GetForegroundWindow,
-    GetShellWindow, GetWindow, GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, IsIconic,
-    IsWindow, IsWindowVisible, IsZoomed, MSG, PM_REMOVE, PeekMessageW, QS_ALLINPUT, SWP_NOACTIVATE,
-    SWP_NOZORDER, SetForegroundWindow, SetWindowPos, TranslateMessage, WINEVENT_OUTOFCONTEXT,
-    WS_CAPTION, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    GetShellWindow, GetSystemMetrics, GetWindow, GetWindowLongW, GetWindowRect,
+    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, MINMAXINFO, MSG,
+    PM_REMOVE, PeekMessageW, QS_ALLINPUT, SM_CXMAXTRACK, SM_CXMINTRACK, SM_CXSCREEN, SM_CYMAXTRACK,
+    SM_CYMINTRACK, SM_CYSCREEN, SMTO_ABORTIFHUNG, SWP_NOACTIVATE, SWP_NOZORDER,
+    SendMessageTimeoutW, SetForegroundWindow, SetWindowPos, TranslateMessage,
+    WINEVENT_OUTOFCONTEXT, WM_GETMINMAXINFO, WS_CAPTION, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
 
 use crate::lifecycle::{
@@ -526,6 +529,304 @@ fn observe_window(
     })
 }
 
+/// Slow or hung managed windows supply unknown instead of blocking the loop.
+const MIN_HINT_TIMEOUT_MS: u32 = 10;
+
+/// Share a deadline across domains, reserving most of the poll interval for
+/// other work. Native identity/frame calls and scheduling are not hard realtime.
+const MIN_HINT_OP_BUDGET_MS: u64 = (TICK_POLL_MS * 2 / 5) as u64;
+
+/// `SendMessageTimeoutW` timeout failure code: distinguishes a hung-window
+/// abort from any other setter failure.
+const ERROR_TIMEOUT: u32 = 1460;
+
+/// One minimum-hint query outcome for bounded summaries. `Hint` carries a
+/// usable hint; every other variant maps to unknown (no hint).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HintOutcome {
+    Hint,
+    Timeout,
+    Failed,
+    Invalid,
+    Budget,
+}
+
+impl HintOutcome {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hint => "hint",
+            Self::Timeout => "timeout",
+            Self::Failed => "failed",
+            Self::Invalid => "invalid",
+            Self::Budget => "budget",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct HintStats {
+    queried: usize,
+    with_hint: usize,
+    timeout: usize,
+    failed: usize,
+    invalid: usize,
+    budget_skipped: usize,
+}
+
+impl HintStats {
+    fn note(&mut self, outcome: HintOutcome) {
+        match outcome {
+            HintOutcome::Hint => {
+                self.queried += 1;
+                self.with_hint += 1;
+            }
+            HintOutcome::Timeout => {
+                self.queried += 1;
+                self.timeout += 1;
+            }
+            HintOutcome::Failed => {
+                self.queried += 1;
+                self.failed += 1;
+            }
+            HintOutcome::Invalid => {
+                self.queried += 1;
+                self.invalid += 1;
+            }
+            HintOutcome::Budget => {
+                self.budget_skipped += 1;
+            }
+        }
+    }
+}
+
+/// Fresh query deadline shared by all domains in this operation.
+struct HintCx {
+    deadline: Instant,
+}
+
+impl HintCx {
+    fn new() -> Self {
+        Self {
+            deadline: Instant::now() + Duration::from_millis(MIN_HINT_OP_BUDGET_MS),
+        }
+    }
+
+    fn over_budget(&self) -> bool {
+        Instant::now() >= self.deadline
+    }
+
+    fn timeout_ms(&self) -> u32 {
+        self.deadline
+            .saturating_duration_since(Instant::now())
+            .as_millis()
+            .min(u128::from(MIN_HINT_TIMEOUT_MS)) as u32
+    }
+}
+
+/// One system-metrics read at the window's current DPI. `GetSystemMetricsForDpi`
+/// first, plain `GetSystemMetrics` fallback: a zero read fails closed to zero
+/// and the seeder leaves that field zero rather than inventing a size.
+fn system_metric_for_dpi(index: i32, dpi: u32) -> i32 {
+    let sized = unsafe { GetSystemMetricsForDpi(index, dpi) };
+    if sized > 0 {
+        return sized;
+    }
+    unsafe { GetSystemMetrics(index) }
+}
+
+/// Correctly seeded Rust `MINMAXINFO` for one window: minimum track from the
+/// window's current DPI, maximum track plus maximized size/position per the
+/// normal `WM_GETMINMAXINFO` contract. Seeded directly in Rust from supported
+/// system-metrics APIs, never by copying another window's struct. An app that
+/// leaves a field untouched therefore reports the system default instead of a
+/// fabricated zero absence.
+fn seed_minmaxinfo(hwnd: HWND) -> MINMAXINFO {
+    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    let dpi = if dpi == 0 { 96 } else { dpi };
+    let mut info: MINMAXINFO = unsafe { std::mem::zeroed() };
+    let min_w = system_metric_for_dpi(SM_CXMINTRACK, dpi);
+    let min_h = system_metric_for_dpi(SM_CYMINTRACK, dpi);
+    if min_w > 0 && min_h > 0 {
+        info.ptMinTrackSize.x = min_w;
+        info.ptMinTrackSize.y = min_h;
+    }
+    let max_track_w = system_metric_for_dpi(SM_CXMAXTRACK, dpi);
+    let max_track_h = system_metric_for_dpi(SM_CYMAXTRACK, dpi);
+    if max_track_w > 0 && max_track_h > 0 {
+        info.ptMaxTrackSize.x = max_track_w;
+        info.ptMaxTrackSize.y = max_track_h;
+    }
+    let scr_w = system_metric_for_dpi(SM_CXSCREEN, dpi);
+    let scr_h = system_metric_for_dpi(SM_CYSCREEN, dpi);
+    if scr_w > 0 && scr_h > 0 {
+        info.ptMaxSize.x = scr_w;
+        info.ptMaxSize.y = scr_h;
+    }
+    info
+}
+
+/// Fresh outer minimum-track size for one window in physical pixels plus its
+/// outcome.
+///
+/// `SendMessageTimeoutW` with `WM_GETMINMAXINFO`, `SMTO_ABORTIFHUNG`, and
+/// [`MIN_HINT_TIMEOUT_MS`] over the correctly seeded struct above. A zero
+/// return means failure or timeout and the struct is ignored entirely (never
+/// read); `ERROR_TIMEOUT` distinguishes hung aborts from other failures.
+/// Success with an invalid track size is `Invalid`. Requires the loop's
+/// verified PMv2 awareness so the track size is physical pixels.
+fn query_outer_min_track(hwnd: HWND, cx: &HintCx) -> (Option<(i32, i32)>, HintOutcome) {
+    let mut info = seed_minmaxinfo(hwnd);
+    let mut result: usize = 0;
+    let timeout_ms = cx.timeout_ms();
+    if timeout_ms == 0 {
+        return (None, HintOutcome::Budget);
+    }
+    let sent = unsafe {
+        SetLastError(0);
+        SendMessageTimeoutW(
+            hwnd,
+            WM_GETMINMAXINFO,
+            0,
+            &mut info as *mut MINMAXINFO as LPARAM,
+            SMTO_ABORTIFHUNG,
+            timeout_ms,
+            &mut result,
+        )
+    };
+    if sent == 0 {
+        let code = unsafe { GetLastError() };
+        if code == ERROR_TIMEOUT {
+            return (None, HintOutcome::Timeout);
+        }
+        return (None, HintOutcome::Failed);
+    }
+    match crate::tiling::normalize_min_track(info.ptMinTrackSize.x, info.ptMinTrackSize.y) {
+        Some(track) => (Some(track), HintOutcome::Hint),
+        None => (None, HintOutcome::Invalid),
+    }
+}
+
+/// Fresh minimum-size hint for one eligible observed window: a new
+/// `WM_GETMINMAXINFO` query converted from outer track pixels to visible
+/// physical pixels with the window's currently measured frame insets.
+/// Unknown on any query failure, timeout, budget skip, or invalid remainder:
+/// no hint, never a reused or persistent floor.
+fn min_hint_for(window: &ObservedWindow, cx: &HintCx) -> (WindowSizeHints, HintOutcome) {
+    let hwnd = window.hwnd as isize as HWND;
+    let (track, outcome) = query_outer_min_track(hwnd, cx);
+    if outcome != HintOutcome::Hint {
+        return (WindowSizeHints::none(), outcome);
+    }
+    let (outer_w, outer_h) = track.expect("hint outcome carries a track");
+    let hints = crate::tiling::min_hints_from_outer(outer_w, outer_h, window.insets);
+    if hints.is_empty() {
+        (hints, HintOutcome::Invalid)
+    } else {
+        (hints, HintOutcome::Hint)
+    }
+}
+
+/// Fresh minimum-size hint for one verified managed hidden member without
+/// showing or moving it: fresh identity fenced by the existing
+/// `WindowKey` plus owned lifetime-property checks, then fresh `GetWindowRect`
+/// plus `DWMWA_EXTENDED_FRAME_BOUNDS` for current insets, then a fresh
+/// `WM_GETMINMAXINFO` query converted with those insets. Hidden DWM frames
+/// may legitimately be absent; any measurement failure is unknown (no hint),
+/// never a stale cached inset. The Engine row rectangle stays the stored
+/// snapshot: fresh frames feed insets only, never adopted geometry.
+fn hidden_hint_for(
+    state: &TileLoop,
+    key: &crate::workspace::WindowKey,
+    cx: &HintCx,
+) -> (WindowSizeHints, HintOutcome) {
+    if cx.over_budget() {
+        return (WindowSizeHints::none(), HintOutcome::Budget);
+    }
+    let Some(stored) = state.member_identity.get(key).cloned() else {
+        return (WindowSizeHints::none(), HintOutcome::Invalid);
+    };
+    let Some(stored_tag) = state.member_tags.get(key).cloned() else {
+        return (WindowSizeHints::none(), HintOutcome::Invalid);
+    };
+    if key.hwnd == 0 {
+        return (WindowSizeHints::none(), HintOutcome::Invalid);
+    }
+    let hwnd = key.hwnd as isize as HWND;
+    if unsafe { IsWindow(hwnd) } == 0 {
+        return (WindowSizeHints::none(), HintOutcome::Invalid);
+    }
+    let mut live_pid: u32 = 0;
+    unsafe {
+        GetWindowThreadProcessId(hwnd, &mut live_pid);
+    }
+    if live_pid == 0 || live_pid != key.pid {
+        return (WindowSizeHints::none(), HintOutcome::Invalid);
+    }
+    let held = match HeldProcess::open(live_pid) {
+        Ok(held) => held,
+        Err(_) => return (WindowSizeHints::none(), HintOutcome::Invalid),
+    };
+    let live = match held.identity() {
+        Ok(live) => live,
+        Err(_) => return (WindowSizeHints::none(), HintOutcome::Invalid),
+    };
+    if !crate::workspace_owner::member_matches(key, key.hwnd, live.pid, &live.process_creation)
+        || live != stored
+    {
+        return (WindowSizeHints::none(), HintOutcome::Invalid);
+    }
+    let live_tag = crate::product_hide::sys::read_member_tag(key.hwnd);
+    if !crate::workspace_owner::visible_lifetime_ok(&stored_tag, live_tag.as_deref()) {
+        return (WindowSizeHints::none(), HintOutcome::Invalid);
+    }
+    let mut outer_raw: RECT = unsafe { std::mem::zeroed() };
+    if unsafe { GetWindowRect(hwnd, &mut outer_raw) } == 0 {
+        return (WindowSizeHints::none(), HintOutcome::Failed);
+    }
+    let Some(outer) = rect_from_win(outer_raw) else {
+        return (WindowSizeHints::none(), HintOutcome::Invalid);
+    };
+    let mut visible_raw: RECT = unsafe { std::mem::zeroed() };
+    if unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            (&mut visible_raw as *mut RECT).cast(),
+            std::mem::size_of::<RECT>() as u32,
+        )
+    } != 0
+    {
+        return (WindowSizeHints::none(), HintOutcome::Failed);
+    }
+    let Some(visible) = rect_from_win(visible_raw) else {
+        return (WindowSizeHints::none(), HintOutcome::Invalid);
+    };
+    if !tiler_core::bounds::valid_carried_rect(visible.x, visible.y, visible.w, visible.h) {
+        return (WindowSizeHints::none(), HintOutcome::Invalid);
+    }
+    let insets = FrameInsets::measure(outer, visible);
+    if cx.over_budget() {
+        return (WindowSizeHints::none(), HintOutcome::Budget);
+    }
+    let (track, outcome) = query_outer_min_track(hwnd, cx);
+    if outcome != HintOutcome::Hint {
+        return (WindowSizeHints::none(), outcome);
+    }
+    let (outer_w, outer_h) = track.expect("hint outcome carries a track");
+    let hints = crate::tiling::min_hints_from_outer(outer_w, outer_h, insets);
+    let outcome = if hints.is_empty() {
+        HintOutcome::Invalid
+    } else {
+        HintOutcome::Hint
+    };
+    let out = if outcome == HintOutcome::Hint {
+        hints
+    } else {
+        WindowSizeHints::none()
+    };
+    (out, outcome)
+}
+
 unsafe extern "system" fn enum_proc(hwnd: HWND, state: LPARAM) -> i32 {
     let out = unsafe { &mut *(state as *mut Vec<isize>) };
     out.push(hwnd as isize);
@@ -653,6 +954,12 @@ struct TileLoop {
     /// Monitor snapshot from the last loop pass: disconnect-time geometry
     /// for the survivor chooser, never post-disconnect frames as proxy.
     last_areas: Vec<MonitorArea>,
+    /// Last logged minimum-size hint per Engine token, for bounded
+    /// hint-change summaries only. Never an Engine input: every row assembly
+    /// queries fresh and feeds fresh-or-none to the Engine, so a recycled
+    /// HWND (fresh token via reissue) never inherits a hint and a failed
+    /// query never reuses a stale one.
+    hint_logged: HashMap<String, WindowSizeHints>,
 }
 
 /// One hidden member: the committed ledger claim (carrying the durable
@@ -1006,20 +1313,43 @@ fn desired_entries(reply: &CoreReply) -> Option<Vec<DesiredEntry>> {
 /// snapshots. Refreshes the member token/rect/identity tables for every row
 /// with a fresh read.
 ///
+/// Eligible visible members carry a fresh application-declared minimum-size
+/// hint: one bounded `WM_GETMINMAXINFO` query per member converted with its
+/// currently measured frame insets. Verified managed hidden members carry a
+/// fresh hint the same way (fresh identity fences plus fresh `GetWindowRect`
+/// and `DWMWA_EXTENDED_FRAME_BOUNDS` for current insets, never shown or
+/// moved); a failed hidden measurement is unknown, never a stale inset.
+/// Retained rows (minimized without a frame, or maximized/fullscreen/cloaked
+/// with existing skip semantics) carry no hint. `hint_cx` shares one
+/// aggregate deadline across every domain in
+/// the operation, so a send's source plus target never independently blow
+/// the per-operation budget; remaining members report unknown with no hint.
+/// Every Engine-building path funnels through here, so reconcile, directional
+/// actions, workspace send/select, and post-admission ticks all carry hints;
+/// hint-only changes still reach projection because no caller skips the
+/// Engine on an unchanged rectangle fingerprint.
+///
 /// Returns `None` when any member lacks a known snapshot: every Engine
 /// handle path must defer with retained state instead of converging a
 /// falsely complete observation that would drop membership and layout.
+#[allow(clippy::too_many_arguments)]
 fn assemble_domain_rows(
     state: &mut TileLoop,
     output: &str,
     workspace: &str,
     observed: &[ObservedWindow],
     retained: &[RetainedRow],
+    op: &str,
+    correlation: &str,
+    hint_cx: &mut HintCx,
 ) -> Option<Vec<crate::workspace_owner::OwnerRow>> {
     let members = state.workspaces.workspace_members(output, workspace);
     let by_token: HashMap<&str, &ObservedWindow> =
         observed.iter().map(|w| (w.token.as_str(), w)).collect();
     let mut views = Vec::new();
+    let query_start = Instant::now();
+    let mut stats = HintStats::default();
+    let mut reasons: HashMap<String, &'static str> = HashMap::new();
     for key in &members {
         if state.workspaces.is_hidden(key) {
             if let (Some(token), Some(rect)) = (
@@ -1029,10 +1359,14 @@ fn assemble_domain_rows(
                     .get(key)
                     .and_then(|t| state.member_rects.get(t).copied()),
             ) {
+                let (hints, outcome) = hidden_hint_for(state, key, hint_cx);
+                stats.note(outcome);
+                reasons.insert(token.clone(), outcome.as_str());
                 views.push(crate::workspace_owner::MemberView {
                     key: key.clone(),
                     token,
                     rect,
+                    hints,
                 });
             }
             continue;
@@ -1053,14 +1387,23 @@ fn assemble_domain_rows(
                 identity.user_sid = window.identity.user_sid.clone();
                 identity.session_id = window.identity.session_id;
             }
+            let (hints, outcome) = if hint_cx.over_budget() {
+                (WindowSizeHints::none(), HintOutcome::Budget)
+            } else {
+                min_hint_for(window, hint_cx)
+            };
+            stats.note(outcome);
+            reasons.insert(token.clone(), outcome.as_str());
             views.push(crate::workspace_owner::MemberView {
                 key: key.clone(),
                 token: token.clone(),
                 rect: window.visible,
+                hints,
             });
             continue;
         }
         // Retained occupancy: fresh frame when observed, else last snapshot.
+        // Existing skip semantics preserved: retained rows carry no hint.
         if let Some(row) = retained.iter().find(|r| r.key == *key) {
             if let Some(rect) = row.rect {
                 state.member_rects.insert(row.token.clone(), rect);
@@ -1068,19 +1411,134 @@ fn assemble_domain_rows(
                     key: key.clone(),
                     token: row.token.clone(),
                     rect,
+                    hints: WindowSizeHints::none(),
                 });
             } else if let Some(rect) = state.member_rects.get(&row.token).copied() {
                 views.push(crate::workspace_owner::MemberView {
                     key: key.clone(),
                     token: row.token.clone(),
                     rect,
+                    hints: WindowSizeHints::none(),
                 });
             }
         }
     }
     let mut rows = crate::workspace_owner::domain_rows(&members, &views)?;
     rows.sort_by(|a, b| a.token.cmp(&b.token));
+    let elapsed = query_start.elapsed();
+    log_min_hint_summary(
+        state,
+        op,
+        correlation,
+        output,
+        workspace,
+        &rows,
+        &stats,
+        &reasons,
+        elapsed,
+    );
     Some(rows)
+}
+
+/// Bounded minimum-hint observation summary for one row assembly: query
+/// outcomes plus the tokens whose fresh hint differs from the last logged
+/// value, threaded on the real operation correlation (`tick-N` for reconcile,
+/// `act-N` for select/send/directional) with opaque output/workspace tokens
+/// so the change joins to the projection adjustment and the
+/// `overconstrained`/`client-clamped` skips in the existing apply summaries
+/// by `(correlation, output, workspace, window)`. Per-window hint values and
+/// per-token query reasons ride the trace log only; the normal log carries
+/// counts plus changes so steady state stays quiet. The dedupe cache is
+/// log-only and pruned by actual live membership (every member token across
+/// all domains), never by the current domain alone, so multi-output and send
+/// domains never re-log unchanged hints: it never feeds the Engine.
+#[allow(clippy::too_many_arguments)]
+fn log_min_hint_summary(
+    state: &mut TileLoop,
+    op: &str,
+    correlation: &str,
+    output: &str,
+    workspace: &str,
+    rows: &[crate::workspace_owner::OwnerRow],
+    stats: &HintStats,
+    reasons: &HashMap<String, &'static str>,
+    elapsed: Duration,
+) {
+    let tick = state.tick;
+    let mut changed: Vec<String> = Vec::new();
+    for row in rows {
+        match state.hint_logged.get(&row.token) {
+            Some(previous) if *previous == row.hints => {}
+            _ => {
+                if !row.hints.is_empty() || state.hint_logged.contains_key(&row.token) {
+                    changed.push(row.token.clone());
+                }
+                if row.hints.is_empty() {
+                    state.hint_logged.remove(&row.token);
+                } else {
+                    state.hint_logged.insert(row.token.clone(), row.hints);
+                }
+            }
+        }
+    }
+    // Prune by actual live membership identity across all domains, not by the
+    // current domain's rows: multi-output ticks and send source/target pairs
+    // must not evict (and re-log) each other's unchanged hints.
+    let live: HashSet<String> = state.member_tokens.values().cloned().collect();
+    state
+        .hint_logged
+        .retain(|token, _| live.contains(token) || rows.iter().any(|row| row.token == *token));
+    changed.sort();
+    if changed.is_empty() && !state.trace {
+        return;
+    }
+    let log_path = state.log_path.clone();
+    let output_token = state.workspaces.output_token(output);
+    let workspace_token = state.workspaces.workspace_token(output, workspace);
+    log_json_at(
+        &log_path,
+        serde_json::json!({
+            "event": "min-hints",
+            "tick": tick,
+            "correlation": correlation,
+            "op": op,
+            "output": output_token,
+            "workspace": workspace_token,
+            "queried": stats.queried,
+            "with_hint": stats.with_hint,
+            "unknown": stats.queried.saturating_sub(stats.with_hint).saturating_add(stats.budget_skipped),
+            "timeout": stats.timeout,
+            "failed": stats.failed,
+            "invalid": stats.invalid,
+            "budget_skipped": stats.budget_skipped,
+            "query_ms": elapsed.as_millis().min(u128::from(u64::MAX)) as u64,
+            "changed": changed,
+        }),
+    );
+    if state.trace {
+        let detail: Vec<serde_json::Value> = rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "window": row.token,
+                    "min": [row.hints.min_w, row.hints.min_h],
+                    "reason": reasons.get(&row.token).copied().unwrap_or("retained"),
+                })
+            })
+            .collect();
+        log_json_at(
+            &log_path,
+            serde_json::json!({
+                "event": "min-hints-detail",
+                "tick": tick,
+                "correlation": correlation,
+                "op": op,
+                "output": output_token,
+                "workspace": workspace_token,
+                "entries": detail,
+            }),
+        );
+    }
 }
 
 /// Engine-writable tokens for one domain: eligible observed members only.
@@ -1185,6 +1643,9 @@ fn reconcile_tick(
             }),
         );
     }
+    // One shared hint-query budget for the whole tick across all outputs:
+    // no domain independently blows the per-operation bound.
+    let mut hint_cx = HintCx::new();
     for area in areas {
         let output = area.device.clone();
         state.workspaces.ensure_output(&output);
@@ -1196,12 +1657,21 @@ fn reconcile_tick(
         }
         // Incomplete snapshot defers with retained Engine state: a falsely
         // complete observation would drop membership and layout.
-        let Some(rows) = assemble_domain_rows(state, &output, &active, &observed, &retained) else {
+        let Some(rows) = assemble_domain_rows(
+            state,
+            &output,
+            &active,
+            &observed,
+            &retained,
+            "reconcile",
+            correlation.as_str(),
+            &mut hint_cx,
+        ) else {
             continue;
         };
-        let windows: Vec<(WindowId, Rect)> = rows
+        let windows: Vec<(WindowId, Rect, WindowSizeHints)> = rows
             .iter()
-            .map(|r| (WindowId(r.token.clone()), r.rect))
+            .map(|r| (WindowId(r.token.clone()), r.rect, r.hints))
             .collect();
         let fp = fingerprint(
             &rows
@@ -1211,7 +1681,7 @@ fn reconcile_tick(
         );
         let focused = state
             .focused_token(&observed)
-            .filter(|f| windows.iter().any(|(w, _)| w == f));
+            .filter(|f| windows.iter().any(|(w, _, _)| w == f));
         let Some((domain, domain_key)) = workspace_domain_for(&output, &active, areas) else {
             continue;
         };
@@ -2231,9 +2701,17 @@ fn keyboard_tick(
                     );
                     continue;
                 };
-                let Some(rows) =
-                    assemble_domain_rows(state, &loc.output, &loc.workspace, &observed, &retained)
-                else {
+                let mut hint_cx = HintCx::new();
+                let Some(rows) = assemble_domain_rows(
+                    state,
+                    &loc.output,
+                    &loc.workspace,
+                    &observed,
+                    &retained,
+                    "directional",
+                    correlation.as_str(),
+                    &mut hint_cx,
+                ) else {
                     state.snap_advance = None;
                     log_json_at(
                         &log_path,
@@ -2269,9 +2747,9 @@ fn keyboard_tick(
                     );
                     continue;
                 }
-                let windows: Vec<(WindowId, Rect)> = rows
+                let windows: Vec<(WindowId, Rect, WindowSizeHints)> = rows
                     .iter()
-                    .map(|r| (WindowId(r.token.clone()), r.rect))
+                    .map(|r| (WindowId(r.token.clone()), r.rect, r.hints))
                     .collect();
                 let fp = fingerprint(
                     &rows
@@ -3268,13 +3746,23 @@ fn workspace_do_select(
         }
     }
     let mut geometry: Option<ApplySummary> = None;
+    // One shared hint-query budget for the select's row assembly.
+    let mut hint_cx = HintCx::new();
     if let Some((domain, domain_key)) = workspace_domain_for(output, target, areas)
-        && let Some(rows) =
-            assemble_domain_rows(state, output, target, &fresh_observed, &fresh_retained)
+        && let Some(rows) = assemble_domain_rows(
+            state,
+            output,
+            target,
+            &fresh_observed,
+            &fresh_retained,
+            "select",
+            ctx.correlation.as_str(),
+            &mut hint_cx,
+        )
     {
-        let windows: Vec<(WindowId, Rect)> = rows
+        let windows: Vec<(WindowId, Rect, WindowSizeHints)> = rows
             .iter()
-            .map(|r| (WindowId(r.token.clone()), r.rect))
+            .map(|r| (WindowId(r.token.clone()), r.rect, r.hints))
             .collect();
         let fp = fingerprint(
             &rows
@@ -3286,7 +3774,7 @@ fn workspace_do_select(
         // established target focus when eligible.
         let focused = state
             .focused_token(&fresh_observed)
-            .filter(|f| windows.iter().any(|(w, _)| w == f));
+            .filter(|f| windows.iter().any(|(w, _, _)| w == f));
         state.tick += 1;
         let tick = state.tick;
         let correlation =
@@ -3501,12 +3989,31 @@ fn workspace_do_send(
     // Full source+target observations including hidden snapshots, so the
     // planned mutation reuses topology instead of remove/reseed. Either side
     // incomplete defers with retained state, never a falsely complete pair.
-    let Some(source_rows) = assemble_domain_rows(state, output, &loc.workspace, observed, retained)
-    else {
+    // One shared hint-query budget across both assemblies: source and target
+    // never independently blow the per-operation bound.
+    let mut hint_cx = HintCx::new();
+    let Some(source_rows) = assemble_domain_rows(
+        state,
+        output,
+        &loc.workspace,
+        observed,
+        retained,
+        "send",
+        ctx.correlation.as_str(),
+        &mut hint_cx,
+    ) else {
         return fail_at("deferred");
     };
-    let Some(target_rows) = assemble_domain_rows(state, output, &target_id, observed, retained)
-    else {
+    let Some(target_rows) = assemble_domain_rows(
+        state,
+        output,
+        &target_id,
+        observed,
+        retained,
+        "send",
+        ctx.correlation.as_str(),
+        &mut hint_cx,
+    ) else {
         return fail_at("deferred");
     };
     if !source_rows.iter().any(|r| r.token == origin_token) {
@@ -4923,14 +5430,22 @@ fn gesture_tick(
         state.tick += 1;
         let correlation = state.correlation();
         // Incomplete snapshot defers with retained Engine state.
-        let Some(rows) =
-            assemble_domain_rows(state, &loc.output, &loc.workspace, &observed, &retained)
-        else {
+        let mut hint_cx = HintCx::new();
+        let Some(rows) = assemble_domain_rows(
+            state,
+            &loc.output,
+            &loc.workspace,
+            &observed,
+            &retained,
+            "gesture",
+            correlation.as_str(),
+            &mut hint_cx,
+        ) else {
             continue;
         };
-        let windows: Vec<(WindowId, Rect)> = rows
+        let windows: Vec<(WindowId, Rect, WindowSizeHints)> = rows
             .iter()
-            .map(|r| (WindowId(r.token.clone()), r.rect))
+            .map(|r| (WindowId(r.token.clone()), r.rect, r.hints))
             .collect();
         let fp = fingerprint(
             &rows
@@ -5312,6 +5827,7 @@ fn run_tile_loop(
         known_outputs: Vec::new(),
         last_hwnds: HashSet::new(),
         last_areas: Vec::new(),
+        hint_logged: HashMap::new(),
     };
     state.engine.sync_binding(&owner, &generation);
     state.workspace_proof = workspace_proof;

@@ -45,12 +45,16 @@ pub fn output_context(
     spaces.output_keys().into_iter().next()
 }
 
-/// One Engine window row: token plus last-known rectangle. Hidden snapshots
-/// ride the same rows so convergence never drops retained membership.
+/// One Engine window row: token, last-known rectangle, and fresh
+/// application-declared minimum-size hint. Hidden snapshots ride the same
+/// rows so convergence never drops retained membership; hidden rows carry a
+/// fresh hint like visible rows (fresh observation only, never a stored
+/// floor) while retained rows carry none.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnerRow {
     pub token: String,
     pub rect: Rect,
+    pub hints: tiler_core::size_hints::WindowSizeHints,
 }
 
 /// Build the source/target domain pair plus window rows for one Engine
@@ -86,7 +90,7 @@ pub fn build_send_event(
             rect: row.rect,
             floating: false,
             fit_excluded: false,
-            hints: tiler_core::size_hints::WindowSizeHints::none(),
+            hints: row.hints,
         })
         .collect();
     let target_windows: Vec<EngineWindow> = target_rows
@@ -98,7 +102,7 @@ pub fn build_send_event(
             rect: row.rect,
             floating: false,
             fit_excluded: false,
-            hints: tiler_core::size_hints::WindowSizeHints::none(),
+            hints: row.hints,
         })
         .collect();
     Some(CoreEvent {
@@ -387,13 +391,15 @@ pub fn rows_for(
 }
 
 /// One member's portable view for domain-row assembly: stable session key,
-/// Engine token, and best-known rectangle (fresh visible read, fresh
-/// retained frame, or hidden snapshot).
+/// Engine token, best-known rectangle (fresh visible read, fresh retained
+/// frame, or hidden snapshot), and fresh minimum-size hint (eligible visible
+/// reads plus verified hidden snapshots; retained rows carry no hint).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemberView {
     pub key: WindowKey,
     pub token: String,
     pub rect: Rect,
+    pub hints: tiler_core::size_hints::WindowSizeHints,
 }
 
 /// Assemble complete Engine observation rows for one workspace domain from
@@ -416,6 +422,7 @@ pub fn domain_rows(
         rows.push(OwnerRow {
             token: view.token.clone(),
             rect: view.rect,
+            hints: view.hints,
         });
     }
     rows.sort_by(|a, b| a.token.cmp(&b.token));
@@ -545,10 +552,12 @@ mod tests {
         let source_rows = vec![OwnerRow {
             token: "w1".to_owned(),
             rect: bounds,
+            hints: tiler_core::size_hints::WindowSizeHints::none(),
         }];
         let target_rows = vec![OwnerRow {
             token: "w2".to_owned(),
             rect: bounds,
+            hints: tiler_core::size_hints::WindowSizeHints::none(),
         }];
         let mut event = build_send_event(
             &owner,
@@ -633,16 +642,19 @@ mod tests {
                 key: a.clone(),
                 token: "w1".to_owned(),
                 rect: rect(0, 0),
+                hints: tiler_core::size_hints::WindowSizeHints::none(),
             },
             MemberView {
                 key: b.clone(),
                 token: "w2".to_owned(),
                 rect: rect(100, 100),
+                hints: tiler_core::size_hints::WindowSizeHints::none(),
             },
             MemberView {
                 key: c.clone(),
                 token: "w3".to_owned(),
                 rect: rect(200, 200),
+                hints: tiler_core::size_hints::WindowSizeHints::none(),
             },
         ];
         let rows = domain_rows(&members, &views).expect("complete rows");
@@ -752,7 +764,11 @@ mod tests {
                 &domain,
                 &key,
                 8,
-                &[(tiler_core::directional::WindowId("w1".to_owned()), bounds)],
+                &[(
+                    tiler_core::directional::WindowId("w1".to_owned()),
+                    bounds,
+                    tiler_core::size_hints::WindowSizeHints::none(),
+                )],
                 None,
             );
             let _ = engine.handle(&event);
@@ -794,7 +810,13 @@ mod tests {
                 8,
                 &rows
                     .iter()
-                    .map(|(t, r)| (tiler_core::directional::WindowId((*t).to_owned()), *r))
+                    .map(|(t, r)| {
+                        (
+                            tiler_core::directional::WindowId((*t).to_owned()),
+                            *r,
+                            tiler_core::size_hints::WindowSizeHints::none(),
+                        )
+                    })
                     .collect::<Vec<_>>(),
                 None,
             );
@@ -817,10 +839,12 @@ mod tests {
                 OwnerRow {
                     token: "w1".to_owned(),
                     rect: bounds,
+                    hints: tiler_core::size_hints::WindowSizeHints::none(),
                 },
                 OwnerRow {
                     token: "w2".to_owned(),
                     rect: bounds,
+                    hints: tiler_core::size_hints::WindowSizeHints::none(),
                 },
             ],
             &[],
@@ -875,7 +899,13 @@ mod tests {
                 engine.outer_gap(key).unwrap_or(8),
                 &rows
                     .iter()
-                    .map(|(t, r)| (tiler_core::directional::WindowId((*t).to_owned()), *r))
+                    .map(|(t, r)| {
+                        (
+                            tiler_core::directional::WindowId((*t).to_owned()),
+                            *r,
+                            tiler_core::size_hints::WindowSizeHints::none(),
+                        )
+                    })
                     .collect::<Vec<_>>(),
                 None,
             );
@@ -933,7 +963,13 @@ mod tests {
                 8,
                 &rows
                     .iter()
-                    .map(|(t, r)| (tiler_core::directional::WindowId((*t).to_owned()), *r))
+                    .map(|(t, r)| {
+                        (
+                            tiler_core::directional::WindowId((*t).to_owned()),
+                            *r,
+                            tiler_core::size_hints::WindowSizeHints::none(),
+                        )
+                    })
                     .collect::<Vec<_>>(),
                 None,
             );
@@ -956,10 +992,12 @@ mod tests {
                 OwnerRow {
                     token: "w1".to_owned(),
                     rect: bounds,
+                    hints: tiler_core::size_hints::WindowSizeHints::none(),
                 },
                 OwnerRow {
                     token: "w2".to_owned(),
                     rect: bounds,
+                    hints: tiler_core::size_hints::WindowSizeHints::none(),
                 },
             ],
             &[],
@@ -1007,7 +1045,11 @@ mod tests {
             &target_domain,
             &target_key,
             8,
-            &[(tiler_core::directional::WindowId("w1".to_owned()), bounds)],
+            &[(
+                tiler_core::directional::WindowId("w1".to_owned()),
+                bounds,
+                tiler_core::size_hints::WindowSizeHints::none(),
+            )],
             None,
         );
         match engine.handle(&event) {
@@ -1055,7 +1097,11 @@ mod tests {
             &source_domain,
             &source_key,
             8,
-            &[(tiler_core::directional::WindowId("w2".to_owned()), bounds)],
+            &[(
+                tiler_core::directional::WindowId("w2".to_owned()),
+                bounds,
+                tiler_core::size_hints::WindowSizeHints::none(),
+            )],
             None,
         );
         match engine.handle(&event) {
@@ -1127,7 +1173,13 @@ mod tests {
                 8,
                 &rows
                     .iter()
-                    .map(|(t, r)| (tiler_core::directional::WindowId((*t).to_owned()), *r))
+                    .map(|(t, r)| {
+                        (
+                            tiler_core::directional::WindowId((*t).to_owned()),
+                            *r,
+                            tiler_core::size_hints::WindowSizeHints::none(),
+                        )
+                    })
                     .collect::<Vec<_>>(),
                 None,
             );
@@ -1150,10 +1202,12 @@ mod tests {
                 OwnerRow {
                     token: "w1".to_owned(),
                     rect: bounds,
+                    hints: tiler_core::size_hints::WindowSizeHints::none(),
                 },
                 OwnerRow {
                     token: "w2".to_owned(),
                     rect: bounds,
+                    hints: tiler_core::size_hints::WindowSizeHints::none(),
                 },
             ],
             &[],
@@ -1323,5 +1377,357 @@ mod tests {
         // Small visible borderless window never vetoes.
         let v = facts(true, false, true, false, true, false);
         assert!(!v.block && v.reason == ForegroundVetoReason::None);
+    }
+
+    #[test]
+    fn domain_rows_propagates_hints_and_send_carries_them() {
+        use super::{MemberView, build_send_event, domain_rows, stamp_send_target};
+        use tiler_core::boundary::CoreReply;
+        use tiler_core::size_hints::WindowSizeHints;
+        let a = key(1);
+        let b = key(2);
+        let members: BTreeSet<WindowKey> = [a.clone(), b.clone()].into_iter().collect();
+        let hinted = WindowSizeHints {
+            min_w: Some(500),
+            min_h: None,
+            max_w: None,
+            max_h: None,
+        };
+        let views = vec![
+            MemberView {
+                key: a.clone(),
+                token: "w1".to_owned(),
+                rect: rect(0, 0),
+                hints: hinted,
+            },
+            MemberView {
+                key: b.clone(),
+                token: "w2".to_owned(),
+                rect: rect(100, 100),
+                hints: WindowSizeHints::none(),
+            },
+        ];
+        let rows = domain_rows(&members, &views).expect("complete rows");
+        assert_eq!(rows[0].hints, hinted);
+        assert!(rows[1].hints.is_empty());
+        // The destination domain carries its own fresh hints (a hidden
+        // snapshot row included): the send path must not drop them.
+        let c = key(3);
+        let target_members: BTreeSet<WindowKey> = [c.clone()].into_iter().collect();
+        let target_views = vec![MemberView {
+            key: c.clone(),
+            token: "w3".to_owned(),
+            rect: rect(200, 200),
+            hints: hinted,
+        }];
+        let target_rows = domain_rows(&target_members, &target_views).expect("target rows");
+        assert_eq!(target_rows[0].hints, hinted);
+        // The send path carries the same rows into both Engine domains.
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        let correlation = CorrelationId::parse("tick-1").expect("correlation");
+        let bounds = rect(0, 0);
+        let source = workspace_domain("mon-a", "ws-1", bounds, 8);
+        let target = workspace_domain("mon-a", "ws-2", bounds, 8);
+        let mut engine = tiler_core::engine::Engine::new();
+        engine.sync_binding(&owner, &generation);
+        for (key, domain, rows) in [
+            (&source.1, &source.0, vec![("w1", bounds), ("w2", bounds)]),
+            (&target.1, &target.0, vec![("w3", bounds)]),
+        ] {
+            let seed_correlation = CorrelationId::parse("seed").expect("correlation");
+            let event = crate::tiling::build_reconcile_event_for(
+                &owner,
+                &generation,
+                &seed_correlation,
+                0,
+                rows.len() as u64,
+                domain,
+                key,
+                8,
+                &rows
+                    .iter()
+                    .map(|(t, r)| {
+                        (
+                            tiler_core::directional::WindowId((*t).to_owned()),
+                            *r,
+                            WindowSizeHints::none(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+                None,
+            );
+            let _ = engine.handle(&event);
+        }
+        let mut event = build_send_event(
+            &owner,
+            &generation,
+            &correlation,
+            engine
+                .session(&source.1)
+                .map(|s| s.accepted_revision())
+                .unwrap_or(0),
+            3,
+            source,
+            target.clone(),
+            &rows,
+            &target_rows,
+            "w1",
+            8,
+        )
+        .expect("event");
+        stamp_send_target(&mut event, &target.1);
+        assert_eq!(event.windows.len(), 2);
+        assert_eq!(event.windows[0].hints, hinted);
+        assert!(event.windows[1].hints.is_empty());
+        assert_eq!(event.target_windows.len(), 1);
+        assert_eq!(event.target_windows[0].hints, hinted);
+        let CoreReply::SendWorkspace(_) = engine.handle(&event) else {
+            panic!("hinted send commits through the real Engine");
+        };
+    }
+
+    #[test]
+    fn hint_only_change_reprojects_without_topology_change() {
+        // Same rectangles and fingerprint, only a fresh minimum hint on w2:
+        // the Engine still projects, and the deficit comes from w1's slack.
+        use tiler_core::boundary::CoreReply;
+        use tiler_core::geometry::Rect;
+        use tiler_core::size_hints::WindowSizeHints;
+        let mut engine = tiler_core::engine::Engine::new();
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        engine.sync_binding(&owner, &generation);
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 800,
+            h: 600,
+        };
+        let (domain, key) = workspace_domain("mon-a", "ws-1", bounds, 8);
+        let plain = || {
+            vec![
+                (
+                    tiler_core::directional::WindowId("w1".to_owned()),
+                    bounds,
+                    WindowSizeHints::none(),
+                ),
+                (
+                    tiler_core::directional::WindowId("w2".to_owned()),
+                    bounds,
+                    WindowSizeHints::none(),
+                ),
+            ]
+        };
+        let correlation = CorrelationId::parse("tick-1").expect("correlation");
+        let seed = crate::tiling::build_reconcile_event_for(
+            &owner,
+            &generation,
+            &correlation,
+            0,
+            2,
+            &domain,
+            &key,
+            8,
+            &plain(),
+            None,
+        );
+        let base = match engine.handle(&seed) {
+            CoreReply::Tiled(plan) => plan.base_revision,
+            CoreReply::Projection(plan) => plan.base_revision,
+            reply => panic!("seed converges, got {reply:?}"),
+        };
+        // Hint-only second observation: identical rectangles, one fresh hint.
+        let hinted = WindowSizeHints {
+            min_w: Some(500),
+            min_h: None,
+            max_w: None,
+            max_h: None,
+        };
+        let correlation = CorrelationId::parse("tick-2").expect("correlation");
+        let event = crate::tiling::build_reconcile_event_for(
+            &owner,
+            &generation,
+            &correlation,
+            engine
+                .session(&key)
+                .map(|s| s.accepted_revision())
+                .unwrap_or(base),
+            2,
+            &domain,
+            &key,
+            8,
+            &[
+                (
+                    tiler_core::directional::WindowId("w1".to_owned()),
+                    bounds,
+                    WindowSizeHints::none(),
+                ),
+                (
+                    tiler_core::directional::WindowId("w2".to_owned()),
+                    bounds,
+                    hinted,
+                ),
+            ],
+            None,
+        );
+        let reply = engine.handle(&event);
+        let CoreReply::Projection(plan) = reply else {
+            panic!("hint-only change projects, got {reply:?}");
+        };
+        assert!(plan.geometry.iter().all(|g| !g.overconstrained));
+        let widths: std::collections::BTreeMap<&str, i32> = plan
+            .geometry
+            .iter()
+            .map(|g| (g.window.0.as_str(), g.rect.w))
+            .collect();
+        // 800 extent, 8 inner gap: 792 shared; w2 keeps 500, w1 yields slack.
+        assert_eq!(widths["w2"], 500);
+        assert_eq!(widths["w1"], 792 - 500);
+    }
+
+    #[test]
+    fn infeasible_hints_keep_proportional_and_flag_overconstrained() {
+        // Minimums exceeding the extent keep the proportional allocation and
+        // flag every violating window: the native write path skips those
+        // entries (existing `overconstrained` skip), preserving the
+        // refused-tracker and KDE-infeasible behavior.
+        use tiler_core::boundary::CoreReply;
+        use tiler_core::geometry::Rect;
+        use tiler_core::size_hints::WindowSizeHints;
+        let mut engine = tiler_core::engine::Engine::new();
+        let owner = OwnerId::parse("tiler-windows").expect("owner");
+        let generation = GenerationId::parse("aa").expect("generation");
+        engine.sync_binding(&owner, &generation);
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 800,
+            h: 600,
+        };
+        let (domain, key) = workspace_domain("mon-a", "ws-1", bounds, 8);
+        let hinted = WindowSizeHints {
+            min_w: Some(500),
+            min_h: None,
+            max_w: None,
+            max_h: None,
+        };
+        let rows = vec![
+            (
+                tiler_core::directional::WindowId("w1".to_owned()),
+                bounds,
+                hinted,
+            ),
+            (
+                tiler_core::directional::WindowId("w2".to_owned()),
+                bounds,
+                hinted,
+            ),
+        ];
+        let correlation = CorrelationId::parse("tick-1").expect("correlation");
+        let seed = crate::tiling::build_reconcile_event_for(
+            &owner,
+            &generation,
+            &correlation,
+            0,
+            2,
+            &domain,
+            &key,
+            8,
+            &rows,
+            None,
+        );
+        let _ = engine.handle(&seed);
+        let correlation = CorrelationId::parse("tick-2").expect("correlation");
+        let event = crate::tiling::build_reconcile_event_for(
+            &owner,
+            &generation,
+            &correlation,
+            engine
+                .session(&key)
+                .map(|s| s.accepted_revision())
+                .unwrap_or(0),
+            2,
+            &domain,
+            &key,
+            8,
+            &rows,
+            None,
+        );
+        let reply = engine.handle(&event);
+        let widths: Vec<i32>;
+        let flags: Vec<bool>;
+        match reply {
+            CoreReply::Projection(plan) => {
+                widths = plan.geometry.iter().map(|g| g.rect.w).collect();
+                flags = plan.geometry.iter().map(|g| g.overconstrained).collect();
+                assert_eq!(plan.geometry.len(), 2);
+            }
+            CoreReply::Tiled(plan) => {
+                widths = plan.geometry.iter().map(|g| g.rect.w).collect();
+                flags = plan.geometry.iter().map(|g| g.overconstrained).collect();
+                assert_eq!(plan.geometry.len(), 2);
+            }
+            reply => panic!("infeasible hints still project, got {reply:?}"),
+        }
+        assert!(
+            flags.iter().all(|f| *f),
+            "both windows flag overconstrained"
+        );
+        // Proportional fallback: identical to the no-hint allocation.
+        let correlation = CorrelationId::parse("tick-3").expect("correlation");
+        let plain: Vec<(tiler_core::directional::WindowId, Rect, WindowSizeHints)> = rows
+            .iter()
+            .map(|(w, r, _)| (w.clone(), *r, WindowSizeHints::none()))
+            .collect();
+        let event = crate::tiling::build_reconcile_event_for(
+            &owner,
+            &generation,
+            &correlation,
+            engine
+                .session(&key)
+                .map(|s| s.accepted_revision())
+                .unwrap_or(0),
+            2,
+            &domain,
+            &key,
+            8,
+            &plain,
+            None,
+        );
+        let reply = engine.handle(&event);
+        let plain_widths: Vec<i32> = match reply {
+            CoreReply::Projection(plan) => plan.geometry.iter().map(|g| g.rect.w).collect(),
+            CoreReply::Tiled(plan) => plan.geometry.iter().map(|g| g.rect.w).collect(),
+            reply => panic!("plain projects, got {reply:?}"),
+        };
+        assert_eq!(widths, plain_widths, "infeasible keeps proportional sizes");
+        // The native extraction preserves the flags the write path skips on:
+        // rebuild the infeasible plan through the same builder and check the
+        // seam carries every overconstrained flag.
+        let correlation = CorrelationId::parse("tick-4").expect("correlation");
+        let event = crate::tiling::build_reconcile_event_for(
+            &owner,
+            &generation,
+            &correlation,
+            engine
+                .session(&key)
+                .map(|s| s.accepted_revision())
+                .unwrap_or(0),
+            2,
+            &domain,
+            &key,
+            8,
+            &rows,
+            None,
+        );
+        let reply = engine.handle(&event);
+        let plan = match reply {
+            CoreReply::Projection(plan) => plan,
+            reply => panic!("infeasible re-projects, got {reply:?}"),
+        };
+        let writes = super::planned_writes(&tiler_core::boundary::CoreReply::Projection(plan))
+            .expect("plan extracts");
+        assert!(writes.iter().all(|w| w.overconstrained));
     }
 }

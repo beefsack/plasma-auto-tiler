@@ -78,6 +78,65 @@ impl FrameInsets {
     }
 }
 
+/// Validate one raw outer minimum-track extent (`ptMinTrackSize`) in physical
+/// pixels. `Some` only when both axes carry a positive, in-bound size; zero,
+/// negative, or absurd values mean the app declares no usable minimum and
+/// map to unknown (`None`), never to a zero floor.
+#[must_use]
+pub fn normalize_min_track(outer_w: i32, outer_h: i32) -> Option<(i32, i32)> {
+    if (1..=tiler_core::bounds::GEOMETRY_BOUND).contains(&outer_w)
+        && (1..=tiler_core::bounds::GEOMETRY_BOUND).contains(&outer_h)
+    {
+        Some((outer_w, outer_h))
+    } else {
+        None
+    }
+}
+
+/// Convert a raw outer minimum-track size into visible physical pixels by
+/// subtracting the currently measured frame insets. `None` when the track
+/// size is invalid or the visible remainder is not a positive size: an app
+/// minimum that vanishes inside its own frame carries no usable constraint.
+#[must_use]
+pub fn visible_min_from_outer(
+    outer_w: i32,
+    outer_h: i32,
+    insets: FrameInsets,
+) -> Option<(i32, i32)> {
+    let (outer_w, outer_h) = normalize_min_track(outer_w, outer_h)?;
+    let frame_w = insets.left.checked_add(insets.right)?;
+    let frame_h = insets.top.checked_add(insets.bottom)?;
+    let visible_w = outer_w.checked_sub(frame_w)?;
+    let visible_h = outer_h.checked_sub(frame_h)?;
+    if visible_w >= 1 && visible_h >= 1 {
+        Some((visible_w, visible_h))
+    } else {
+        None
+    }
+}
+
+/// Portable minimum-size hint for one window from its fresh outer
+/// minimum-track size and currently measured frame insets. Timeout, failure,
+/// or invalid data already maps to unknown at the native query, which lands
+/// here as no hint: unknown means no hint, never a learned or persistent
+/// floor. Only minimum bounds are ever set; maximums stay absent.
+#[must_use]
+pub fn min_hints_from_outer(
+    outer_w: i32,
+    outer_h: i32,
+    insets: FrameInsets,
+) -> tiler_core::size_hints::WindowSizeHints {
+    match visible_min_from_outer(outer_w, outer_h, insets) {
+        Some((w, h)) => tiler_core::size_hints::WindowSizeHints {
+            min_w: Some(w),
+            min_h: Some(h),
+            max_w: None,
+            max_h: None,
+        },
+        None => tiler_core::size_hints::WindowSizeHints::none(),
+    }
+}
+
 /// Stable opaque per-run window tokens (`w1`, `w2`, ...). Keyed by
 /// `(HWND, process creation)` so a recycled HWND never inherits its
 /// predecessor's token, even within the same tick. HWND values never enter
@@ -687,7 +746,7 @@ pub struct ReconcileInput<'a> {
     pub revision: u64,
     pub fingerprint: u64,
     pub domain_bounds: Rect,
-    pub windows: &'a [(WindowId, Rect)],
+    pub windows: &'a [(WindowId, Rect, tiler_core::size_hints::WindowSizeHints)],
     pub focused: Option<&'a WindowId>,
 }
 
@@ -697,6 +756,11 @@ pub struct ReconcileInput<'a> {
 /// Hidden Engine membership is preserved by inclusion: a retained member that
 /// is invisible, minimized, maximized, or fullscreen rides its last-known
 /// rectangle instead of vanishing from the observation.
+/// Hints ride per window: fresh application-declared minimums for eligible
+/// visible and identity-verified hidden observations, no hint on failure.
+/// Hint-only changes still reach
+/// projection because the caller never skips the Engine on an unchanged
+/// rectangle fingerprint.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn build_reconcile_event_for(
@@ -708,7 +772,7 @@ pub fn build_reconcile_event_for(
     domain: &OutputDomain,
     domain_key: &DomainKey,
     outer_gap: i32,
-    windows: &[(WindowId, Rect)],
+    windows: &[(WindowId, Rect, tiler_core::size_hints::WindowSizeHints)],
     focused: Option<&WindowId>,
 ) -> CoreEvent {
     CoreEvent {
@@ -723,14 +787,14 @@ pub fn build_reconcile_event_for(
         focused_window: focused.cloned().unwrap_or(WindowId(String::new())),
         windows: windows
             .iter()
-            .map(|(window, rect)| EngineWindow {
+            .map(|(window, rect, hints)| EngineWindow {
                 window: window.clone(),
                 output: domain_key.output.clone(),
                 workspace: domain_key.workspace.clone(),
                 rect: *rect,
                 floating: false,
                 fit_excluded: false,
-                hints: tiler_core::size_hints::WindowSizeHints::none(),
+                hints: *hints,
             })
             .collect(),
         directional: None,
@@ -770,14 +834,14 @@ pub fn build_reconcile_event(input: &ReconcileInput<'_>) -> CoreEvent {
         windows: input
             .windows
             .iter()
-            .map(|(window, rect)| EngineWindow {
+            .map(|(window, rect, hints)| EngineWindow {
                 window: window.clone(),
                 output: OutputId(OUTPUT_ID.to_owned()),
                 workspace: WorkspaceId(WORKSPACE_ID.to_owned()),
                 rect: *rect,
                 floating: false,
                 fit_excluded: false,
-                hints: tiler_core::size_hints::WindowSizeHints::none(),
+                hints: *hints,
             })
             .collect(),
         directional: None,

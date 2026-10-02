@@ -65,10 +65,16 @@ decisions of 2026-09-24 are under
   [plan](research/windows-port/plan.md)
   [decision](decisions.md#windows-port)
   Day-one setup and pending governance: [Windows development environment](windows-dev-environment.md).
-- P1 | Windows minimum-size handling | After active border and group underlay,
-  honor application minimum width/height and adjust neighbours to avoid overlap,
-  matching KDE. Paint currently holds a larger frame than its allocation.
-  Design pending; separate from workspace delivery.
+- P1 | Windows minimum-size handling | Active (user option A, 2026-10-02):
+  fresh app-declared minimum track sizes feed the existing shared projection;
+  no learning, KDE proportional/overconstrained fallback when infeasible.
+  Native implementation/gates and independent review corrections complete.
+  Scoped live width/height redistribution, 8px gaps, infeasible no-fighting
+  and latency verified on the current artifact. Real workspace send into a
+  hidden destination remains pending physical input; CLI/proof harnesses do
+  not automate ordinary-app send. Keep open until accepted; next Windows
+  product item remains active border, then group underlay.
+  [Minimum-size change](changes/windows-minimum-size-hints.md).
 - P2 | Windows workspace overview | Visible taskbar or other workspace overview;
   discuss design with the user later. No presentation mechanism selected.
 - P2 | Hidden-workspace Alt+Tab option | Investigate whether official Windows
